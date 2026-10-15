@@ -235,38 +235,45 @@ def edition_reference(book: object) -> tuple[str, str, str]:
     return "", "", ""
 
 
-def _public_authors(book: object) -> tuple[str, ...]:
-    """One bounded, visible author projection for both list and detail.
+def _public_youth_values(raw: object, *, limit: int = 32) -> tuple[str, ...]:
+    """Only bounded, visible bibliographic values, never mapping field keys.
 
-    Cached notices may contain malformed values; never coerce unexpected
-    objects through __str__ or expose bidirectional control characters.
+    The cache can restore malformed provider metadata. Iterating a mapping
+    would publish internal attribute names as attested authors or sources;
+    a str subclass can be split into characters. Neither is evidence.
     """
-    raw = getattr(book, "authors", ()) or ()
     if type(raw) is str:
         raw = (raw,)
-    names = []
+    elif isinstance(raw, (Mapping, str)):
+        return ()
+    values = []
     try:
-        for value in islice(iter(raw), 32):
+        for value in islice(iter(raw if raw is not None else ()), limit):
             if type(value) is not str or any(
                 category(char) in {"Cc", "Cf", "Cs"} for char in value
             ):
                 continue
-            name = _text(value)
-            if 0 < len(name) <= 180:
-                names.append(name)
+            cleaned = _text(value)
+            if 0 < len(cleaned) <= 180:
+                values.append(cleaned)
     except Exception:
-        # A broken cached iterable must not leak an exception or block the
-        # other independently verifiable authors.
+        # A malformed cache iterable or provider object must not leak its
+        # exception text into a public row or suppress independent values.
         pass
-    return tuple(names)
+    return tuple(values)
+
+
+def _public_authors(book: object) -> tuple[str, ...]:
+    """One shared safe author projection for list and detail."""
+    return _public_youth_values(getattr(book, "authors", ()))
 
 
 def list_entry(book: object) -> UiBookListEntry:
     ranges = tuple(getattr(book, "age_ranges", ()) or ())
     age_summary = " · ".join(age_text(row) for row in ranges[:2])
     language = _text(getattr(book, "language", ""))
-    formats = tuple(getattr(book, "formats", ()) or ())
-    source = ", ".join(tuple(getattr(book, "provenance", ()) or ())[:3])
+    formats = _public_youth_values(getattr(book, "formats", ()))
+    source = ", ".join(_public_youth_values(getattr(book, "provenance", ()), limit=3))
     _, reference_label, reference_value = edition_reference(book)
     edition = f"{reference_label} {reference_value}" if reference_value else ""
     # Lead with edition evidence: the narrow (~440px) GTK master pane
@@ -301,31 +308,23 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     reference_id, reference_label, reference_value = edition_reference(book)
     if reference_value:
         metadata_fields.append(DetailField(reference_id, reference_label, reference_value, kind="isbn" if reference_id == "isbn" else "copy"))
-    for index, value in enumerate(tuple(getattr(book, "provenance", ()) or ())):
-        source = _text(value)
-        if source:
-            metadata_fields.append(DetailField(f"source-{index}", "Source", source, kind="copy"))
+    for index, source in enumerate(_public_youth_values(getattr(book, "provenance", ()))):
+        metadata_fields.append(DetailField(f"source-{index}", "Source", source, kind="copy"))
     language = _text(getattr(book, "language", ""))
     if language:
         metadata_fields.append(DetailField("language", "Langue", language, kind="language"))
-    formats = tuple(getattr(book, "formats", ()) or ())
-    for index, value in enumerate(formats):
-        cleaned = _text(value)
-        if cleaned:
-            metadata_fields.append(DetailField(f"format-{index}", "Format", cleaned, kind="all"))
+    formats = _public_youth_values(getattr(book, "formats", ()))
+    for index, cleaned in enumerate(formats):
+        metadata_fields.append(DetailField(f"format-{index}", "Format", cleaned, kind="all"))
     book_type = _text(getattr(book, "book_type", ""))
     if book_type:
         metadata_fields.append(DetailField("type", "Type", book_type, kind="all"))
-    themes = tuple(getattr(book, "themes", ()) or ())
-    for index, value in enumerate(themes):
-        cleaned = _text(value)
-        if cleaned:
-            metadata_fields.append(DetailField(f"theme-{index}", "Thème", cleaned, kind="subject"))
-    publishers = tuple(getattr(book, "publishers", ()) or ())
-    for index, value in enumerate(publishers):
-        cleaned = _text(value)
-        if cleaned:
-            metadata_fields.append(DetailField(f"publisher-{index}", "Éditeur", cleaned, kind="all"))
+    themes = _public_youth_values(getattr(book, "themes", ()))
+    for index, cleaned in enumerate(themes):
+        metadata_fields.append(DetailField(f"theme-{index}", "Thème", cleaned, kind="subject"))
+    publishers = _public_youth_values(getattr(book, "publishers", ()))
+    for index, cleaned in enumerate(publishers):
+        metadata_fields.append(DetailField(f"publisher-{index}", "Éditeur", cleaned, kind="all"))
     published_year = getattr(book, "published_year", None)
     if published_year:
         metadata_fields.append(DetailField("published-year", "Première publication", str(published_year), kind="copy"))
@@ -335,13 +334,11 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     description = _text(getattr(book, "description", ""))
     if description:
         metadata_fields.append(DetailField("summary", "Résumé éditeur", description, kind="copy"))
-    bibliography_sources = tuple(getattr(book, "bibliography_sources", ()) or ())
-    for index, value in enumerate(bibliography_sources):
-        cleaned = _text(value)
-        if cleaned:
-            metadata_fields.append(DetailField(
-                f"bibliography-source-{index}", "Source bibliographique", cleaned, kind="copy"
-            ))
+    bibliography_sources = _public_youth_values(getattr(book, "bibliography_sources", ()))
+    for index, cleaned in enumerate(bibliography_sources):
+        metadata_fields.append(DetailField(
+            f"bibliography-source-{index}", "Source bibliographique", cleaned, kind="copy"
+        ))
     # An unsafe friendly link must not hide an independently safe notice URL.
     link = (public_url(getattr(book, "friendly_url", ""))
             or public_url(getattr(book, "notice_url", "")))
