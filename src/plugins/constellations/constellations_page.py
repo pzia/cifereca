@@ -3,7 +3,7 @@ from collections.abc import Mapping
 from cifereca.plugin_api import (UiPageContribution, UiActionContribution,
     UiBookDetailPresentation, DetailSection, DetailField, DocumentLink)
 from constellation_view_model import (node_from_row, merge_nodes, neighbours,
-    promenade, replace_step, Navigation)
+    promenade, replace_step, Navigation, public_url)
 from itertools import islice
 
 # Read no more than N+1 books from the metadata broker, even if it yields
@@ -26,6 +26,35 @@ def _usable_nodes(rows, *, origin='catalogue'):
         except Exception:
             rejected += 1
     return tuple(nodes), rejected
+
+
+def _attested_cover_url(node) -> str | None:
+    """Public remote thumbnail from this precise catalogue record only.
+
+    Never use graph availability, title matching or a guessed cover service
+    to manufacture a cover. A signed, private, local or download URL cannot
+    cross the public DetailPanel boundary.
+    """
+    try:
+        record = getattr(node, "raw", None)
+        if not isinstance(record, Mapping):
+            return None
+        layers = [record]
+        metadata = record.get("metadata")
+        if isinstance(metadata, Mapping):
+            layers.append(metadata)
+            search = metadata.get("search_result")
+            if isinstance(search, Mapping):
+                layers.append(search)
+        for layer in layers:
+            for field in ("cover_url", "thumbnail_url"):
+                if safe := public_url(layer.get(field)):
+                    return safe
+    except Exception:
+        # A malformed provider field may carry credentials in the exception.
+        # Keep the detail valid, but omit the untrusted thumbnail.
+        return None
+    return None
 
 
 def constellation_detail_presentation(node) -> UiBookDetailPresentation:
@@ -66,6 +95,7 @@ def constellation_detail_presentation(node) -> UiBookDetailPresentation:
     return UiBookDetailPresentation(
         title=str(node.book.title or ''),
         subtitle=', '.join(authors),
+        thumbnail_url=_attested_cover_url(node),
         badges=tuple(node.availability or ()),
         links=links,
         sections=tuple(sections),
