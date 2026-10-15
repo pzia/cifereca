@@ -70,7 +70,8 @@ def test_cached_private_warnings_are_not_exposed_and_known_diagnostics_remain():
         (NOTICE, "Bearer PRIVATE_ACCOUNT_TOKEN", "/home/PRIVATE_USER/file.epub"),
         read_failures=3,
     )
-    assert result.ok and result.changed == 1
+    assert not result.ok and result.changed == 1
+    assert result.facts == {"planned": 1, "failures": 0, "read_failures": 3}
     assert len(ctx.mutation.requests) == 1
     assert result.warnings == (
         NOTICE,
@@ -97,10 +98,12 @@ def test_legacy_plan_without_notice_keeps_original_result_shape():
     True, False, -2, "Bearer PRIVATE_TOKEN", 1_000_001,
 ])
 def test_malformed_read_failure_count_cannot_be_exported(bad_count):
-    _, ctl, result = run_plan(
+    ctx, ctl, result = run_plan(
         ("Bearer PRIVATE_TOKEN",), read_failures=bad_count,
     )
-    assert result.ok and result.changed == 1
-    assert result.warnings == ()
+    assert not result.ok and result.changed == 0
+    assert result.facts == {"planned": 0, "failures": 1, "invalid_plan": 1}
+    assert ctx.broker_calls == 0 and ctx.mutation.requests == []
+    assert result.warnings == ("Plan de doublons invalide : aucune suppression.",)
     assert "PRIVATE" not in result.summary
     assert all("PRIVATE" not in e["message"] for e in ctl.events)
