@@ -203,8 +203,23 @@ class TaskRunner:
             gtk_pending_since = time.monotonic()
 
             def deliver() -> bool:
-                # Keep the historical callback self-contained: tests and
-                # UI teardown adapters may exercise it in isolation.
+                # This callback is part of the real GTK/TaskRunner lifecycle:
+                # it owns the pending coalescing reservation until delivery.
+                # Its historical name also identifies the actual event held
+                # in the GLib queue by deterministic race tests (#981).
+                # Existing teardown tests compile deliver() alone, so a
+                # missing enclosing observer must remain harmless.
+                try:
+                    phase_observer = observe
+                    queued_completion_at = gtk_pending_since
+                except NameError:
+                    pass
+                else:
+                    phase_observer(
+                        "gtk_delivery_wait",
+                        max(0, time.monotonic() - queued_completion_at),
+                        "success" if outcome[0] == "ok" else "failed",
+                    )
                 with self._lock:
                     self._count = max(0, self._count - 1)
                     remaining = self._count
@@ -248,17 +263,7 @@ class TaskRunner:
                         self.present_error(payload)
                 return False
 
-            def measured_deliver() -> bool:
-                # A wrapper observes GLib queue delay without modifying the
-                # independently usable legacy GTK delivery callback.
-                observe(
-                    "gtk_delivery_wait",
-                    max(0, time.monotonic() - gtk_pending_since),
-                    "success" if outcome[0] == "ok" else "failed",
-                )
-                return deliver()
-
-            GLib.idle_add(measured_deliver)
+            GLib.idle_add(deliver)
 
         future.add_done_callback(done)
 
