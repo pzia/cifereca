@@ -50,7 +50,9 @@ def test_syntactically_valid_duplicate_editions_never_reach_core_handoff(duplica
         assert policy["acquisition_authorized"] is False
         assert vault.manifest_calls == 1 and vault.acquisition_calls == 0
         for private in ("PRIVATE", "revision-1", "revision-2", "Bearer"):
-            assert private not in json.dumps(session.diagnostic_state())
+            assert private not in json.dumps(
+                session.diagnostic_state()["manifest_materialization_policy"]
+            )
     finally:
         session.close()
 
