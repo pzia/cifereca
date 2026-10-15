@@ -96,11 +96,30 @@ def sync_local_preflight_presentation(result: object) -> str:
         "aucun téléchargement autorisé depuis cet aperçu."
     )
 
+def sync_source_identity_label(source: object) -> str:
+    """Disambiguate identical public labels without exposing account IDs.
+
+    Provider identifiers are public plugin metadata, unlike opaque source,
+    account, identity and credential IDs. Never interpolate those identifiers
+    into the title or into the sync action's accessible name.
+    """
+    provider = getattr(source, "provider_id", "")
+    provider = provider.strip() if type(provider) is str else ""
+    provider = provider if provider and len(provider) <= 64 and all(
+        char.isascii() and (char.isalnum() or char in "._-") for char in provider
+    ) else "fournisseur inconnu"
+    label = getattr(source, "label", "")
+    label = label.strip() if type(label) is str else ""
+    if not label:
+        return provider
+    return label if label.casefold() == provider.casefold() else f"{label} · {provider}"
+
+
 def sync_source_presentation(source: object) -> SyncSourcePresentation:
     enabled = bool(getattr(source, "enabled", False))
     connected = bool(getattr(source, "connected", False))
     capable = bool(getattr(source, "sync_capable", False))
-    label = str(getattr(source, "label", "") or getattr(source, "provider_id", "") or "cette source")
+    label = sync_source_identity_label(source)
 
     activation = "Activée" if enabled else "Désactivée"
     connection = "Connectée" if connected else "Déconnectée"
