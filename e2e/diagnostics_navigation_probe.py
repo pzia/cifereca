@@ -1578,7 +1578,8 @@ def main() -> int:
                 for row in settings_rows(section, Adw.EntryRow)
             ),
             "sync": lambda: any(
-                row.get_title() == "Autoriser les téléchargements Kobo au démarrage"
+                row.get_title() == "Ancien réglage global Kobo (compatibilité)"
+                and "ne lance plus de téléchargements" in row.get_subtitle()
                 for row in settings_rows(section, Adw.ActionRow)
             ),
             "interface": lambda: any(
