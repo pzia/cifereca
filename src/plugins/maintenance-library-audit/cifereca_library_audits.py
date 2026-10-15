@@ -57,6 +57,23 @@ def _encoded_cover_has_control(value: str) -> bool:
     return False
 
 
+def _relative_cover_has_parent_segment(value: str) -> bool:
+    """Reject path traversal in a relative cover reference, including encodings.
+
+    This is an offline audit, not a path resolver. A parent segment is
+    ambiguous without the caller's content root; never present it as a
+    verified relative thumbnail. Keep ordinary nested filenames valid.
+    """
+    for _ in range(5):
+        if ".." in value.replace("\\", "/").split("/"):
+            return True
+        decoded = unquote(value)
+        if decoded == value:
+            break
+        value = decoded
+    return False
+
+
 def _language_values(row: Mapping[str, Any]) -> tuple[list[str], int]:
     """Return only text language tags and count malformed non-text values.
 
@@ -304,7 +321,10 @@ class CoverAuditTool(_ReadOnlyTool):
                         or parsed.password is not None
                     )
                 elif not scheme:
-                    suspicious = suspicious or bool(parsed.netloc)
+                    suspicious = (
+                        suspicious or bool(parsed.netloc)
+                        or _relative_cover_has_parent_segment(parsed.path)
+                    )
             except Exception:
                 # Even a malicious str subclass can fail outside urlsplit's
                 # documented ValueError cases. One bad reference must never
