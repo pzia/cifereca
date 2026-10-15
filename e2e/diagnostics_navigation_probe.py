@@ -1961,11 +1961,11 @@ def main() -> int:
             )
             later(60, lambda: coordination_identity_ready(index))
             return
-        assert coordination["task_id"] in w._active_tasks
-        assert coordination["opening_calls"] == 1
-        assert sorted(coordination["source_calls"]) == ["paris-one", "paris-two"]
-        assert w._library_loaded_generation == w._identity_context_generation
-        assert sum(owner == identity for owner, _ms in coordination["reads"]) == 1
+        assert coordination["task_id"] in w._active_tasks, "#981 opening-sync worker disappeared during profile change"
+        assert coordination["opening_calls"] == 1, ("#981 opening-sync coalescing", coordination["opening_calls"])
+        assert sorted(coordination["source_calls"]) == ["paris-one", "paris-two"], ("#981 source-sync isolation", len(coordination["source_calls"]))
+        assert w._library_loaded_generation == w._identity_context_generation, ("#981 loaded generation differs from active identity", w._library_loaded_generation, w._identity_context_generation)
+        assert sum(owner == identity for owner, _ms in coordination["reads"]) == 1, ("#981 unexpected library read count during profile switch", index, sum(owner == identity for owner, _ms in coordination["reads"]))
         before_reads = len(coordination["reads"])
         before_render = len(coordination["renders"])
         controls = w.library_controls.state()
@@ -1988,8 +1988,8 @@ def main() -> int:
             assert monotonic() < coordination["deadline"], "#981 manual refresh timeout"
             later(60, lambda: coordination_manual_done(index))
             return
-        assert len(coordination["reads"]) == coordination["manual_read_start"] + 1
-        assert coordination["task_id"] in w._active_tasks
+        assert len(coordination["reads"]) == coordination["manual_read_start"] + 1, ("#981 manual refresh read count", index, len(coordination["reads"]) - coordination["manual_read_start"])
+        assert coordination["task_id"] in w._active_tasks, "#981 opening-sync worker disappeared during manual refresh"
         identity = w.service.current_identity.identity_id
         coordination["measurements"].append({
             "profile": index + 1,
