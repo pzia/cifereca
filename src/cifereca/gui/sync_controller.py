@@ -298,6 +298,11 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
         priority=TaskPriority.USER_ACTION if control is not None else (TaskPriority.MAINTENANCE if deep else TaskPriority.ACTIVE_LOAN),
         kind="deep-sync" if deep else "opening-sync",
         with_progress=True,
+        # Opening sync covers *all configured identities*: its automatic
+        # shallow requests have one scope. Never coalesce a physical refresh
+        # button, a deep verification, or a distinct source sync.
+        coalesce_key="opening:global:shallow" if control is None and not deep else None,
+        origin="user" if control is not None else "maintenance" if deep else "automatic",
     )
 
 # Reader/storage targets are provided by storage.target plugins.
