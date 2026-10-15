@@ -291,3 +291,51 @@ def test_future_attempt_clock_does_not_cause_automatic_retry(tmp_path):
         assert on_start_due(service, service.accounts[0]) is False
     finally:
         service.close()
+
+
+def test_three_identities_have_independent_default_manual_and_explicit_on_start():
+    """#1346 CI acceptance: opt-in for one Kobo account never covers siblings.
+
+    Synthetic service with three independently bound accounts and no provider
+    operations: even when all sessions are connected, no source downloads
+    without its own persisted one-value permission.
+    """
+    identities = ("alice", "bob", "carol")
+    credentials = ("vault-a", "vault-b", "vault-c")
+    accounts = [
+        NS(identity_id=identity, provider_id="kobo", credential_id=credential,
+           unique_id="fictional-" + credential)
+        for identity, credential in zip(identities, credentials)
+    ]
+    sessions = {
+        credential: NS(provider_id="kobo", credential_id=credential, connected=True,
+                       capabilities=NS(backup=True))
+        for credential in credentials
+    }
+    owners = dict(zip(credentials, identities))
+    source_ids = [SynchronizationBrokerImpl._source_id(account) for account in accounts]
+    policy_values: dict[str, str] = {}
+    storage = NS(
+        metadata_get=lambda key: policy_values.get(key),
+        identity_for_connection=lambda provider, credential: (
+            owners[credential] if provider == "kobo" else None
+        ),
+        provider_connections=lambda identity_id: [{
+            "provider_id": "kobo", "credential_id": credential, "enabled": True,
+        } for credential, owner in owners.items() if owner == identity_id],
+    )
+    service = NS(
+        accounts=accounts, _sessions=sessions, storage=storage,
+        sync_source_enabled=lambda account: True,
+    )
+    assert kobo_on_start_sessions(service) == ()
+    policy_values[policy_key(source_ids[1])] = "1"
+    assert [s.credential_id for s in kobo_on_start_sessions(service)] == ["vault-b"]
+    policy_values[policy_key(source_ids[2])] = "1"
+    assert [s.credential_id for s in kobo_on_start_sessions(service)] == [
+        "vault-b", "vault-c",
+    ]
+    policy_values[policy_key(source_ids[1])] = "0"
+    assert [s.credential_id for s in kobo_on_start_sessions(service)] == ["vault-c"]
+    # A legacy global bit has no policy key and can never authorize Alice.
+    assert "vault-a" not in [s.credential_id for s in kobo_on_start_sessions(service)]
