@@ -110,9 +110,8 @@ def _headless_runner():
     selected = [
         node for node in original.body
         if isinstance(node, ast.ClassDef) and node.name == "TaskRunner"
-        or isinstance(node, ast.FunctionDef) and node.name == "_observe_task_phase"
     ]
-    assert len(selected) == 2
+    assert len(selected) == 1
     tree = ast.fix_missing_locations(ast.Module(body=[
         ast.ImportFrom(module="__future__",
                        names=[ast.alias(name="annotations")], level=0),
