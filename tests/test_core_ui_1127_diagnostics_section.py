@@ -68,7 +68,7 @@ def _render():
 
 def test_diagnostic_hierarchy_filter_and_actions_are_unchanged():
     ui, section, calls = _render()
-    assert len(section.children) == 2
+    assert len(section.children) == 3
     group = section.children[0]
     assert group.title == "Diagnostic système"
     assert len(group.children) == 5
@@ -79,10 +79,16 @@ def test_diagnostic_hierarchy_filter_and_actions_are_unchanged():
     assert ui.filter.values == ["À examiner", "Tous"]
     assert ui.filter.tooltip == "Afficher uniquement les anomalies ou l’inventaire complet"
     assert ui.summary.wrap is True
+    perf = section.children[1]
+    assert perf.title == "Performances · capture volontaire"
+    assert "ne démarre qu’après votre action" in perf.children[0].label
+    assert perf.children[1] is ui.performance_status
+    assert perf.children[2].children == [ui.performance_capture, ui.performance_export]
     assert [row[0] for row in calls] == [
+        "Démarrer la capture détaillée", "Exporter les mesures JSON",
         "Actualiser", "Copier dans le presse-papiers", "Exporter le diagnostic", "Effacer",
     ]
-    assert calls[1][2] == {"suggested": True}
+    assert calls[3][2] == {"suggested": True}
     assert ui.export.tooltip.startswith("Enregistrer le rapport de diagnostic expurgé")
 
 

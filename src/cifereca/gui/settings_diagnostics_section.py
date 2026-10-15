@@ -20,6 +20,9 @@ class DiagnosticSettingsWidgets:
     copy: Any
     export: Any
     clear: Any
+    performance_capture: Any
+    performance_export: Any
+    performance_status: Any
 
 
 def build_settings_diagnostics_section(
@@ -63,6 +66,34 @@ def build_settings_diagnostics_section(
     diag_scroll.set_visible(False)
     diag_group.add(diag_scroll)
 
+    # A separate, explicitly opted-in UI performance observer. The monitor
+    # already exists on MainWindow; opening Settings never starts capture.
+    perf_group = Adw.PreferencesGroup()
+    perf_group.set_title("Performances · capture volontaire")
+    perf_note = Gtk.Label(
+        label=(
+            "Les mesures passives restent actives. La chronologie détaillée "
+            "ne démarre qu’après votre action, reste locale et peut être "
+            "arrêtée à tout moment. Fermer cet onglet n’arrête pas une capture "
+            "déjà démarrée ; fermer l’application l’arrête."
+        ), xalign=0,
+    )
+    perf_note.set_wrap(True)
+    perf_group.add(perf_note)
+    performance_status = Gtk.Label(label="Capture détaillée désactivée.", xalign=0)
+    performance_status.set_wrap(True)
+    perf_group.add(performance_status)
+    perf_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    performance_capture = action_button("Démarrer la capture détaillée", "media-record-symbolic")
+    performance_export = action_button("Exporter les mesures JSON", "document-save-symbolic")
+    performance_export.set_tooltip_text(
+        "Enregistrer localement les mesures bornées et expurgées ; aucun envoi automatique"
+    )
+    perf_actions.append(performance_capture)
+    perf_actions.append(performance_export)
+    perf_group.add(perf_actions)
+    section.append(perf_group)
+
     buttons = adaptive_action_bar(source=section)
     section.append(buttons)
     refresh = action_button("Actualiser", "view-refresh-symbolic")
@@ -78,4 +109,7 @@ def build_settings_diagnostics_section(
         summary=diag_summary, filter=diag_filter, issues_box=diag_issues_box,
         details_toggle=details_toggle, text=diag_text, scroll=diag_scroll,
         refresh=refresh, copy=copy, export=export, clear=clear,
+        performance_capture=performance_capture,
+        performance_export=performance_export,
+        performance_status=performance_status,
     )

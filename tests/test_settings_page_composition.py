@@ -155,7 +155,7 @@ def test_editor_loading_keeps_bound_ids_and_choosers_read_current_directory(monk
 
 
 def test_diagnostic_factory_binds_controls_and_keeps_late_refresh_inert(monkeypatch):
-    ui = NS(**{name: Widget() for name in ('summary', 'filter', 'issues_box', 'details_toggle', 'text', 'scroll', 'refresh', 'copy', 'export', 'clear')})
+    ui = NS(**{name: Widget() for name in ('summary', 'filter', 'issues_box', 'details_toggle', 'text', 'scroll', 'refresh', 'copy', 'export', 'clear', 'performance_capture', 'performance_export', 'performance_status')})
     app = NS(level_dropdown=Widget(), diagnostics_switch=Widget(), levels=['normal'])
     host, lifetime = NS(_closed=False), SettingsPageLifetime()
     callbacks = tuple(Mock() for _ in range(4))
