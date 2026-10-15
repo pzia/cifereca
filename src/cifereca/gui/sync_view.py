@@ -179,7 +179,7 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
     last_attempt = _timestamp_label(getattr(source, "last_attempt", ""))
 
     if not capable:
-        sync_label = "Non prise en charge"
+        sync_label = "Sans synchronisation de données"
     elif status == "running":
         sync_label = "En cours…"
     elif status == "partial":
@@ -194,12 +194,12 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         sync_label = "Jamais synchronisée"
 
     action_enabled = enabled and connected and capable
-    if not enabled:
+    if not capable:
+        disabled_reason = "Catalogue consultable sans synchronisation de données."
+    elif not enabled:
         disabled_reason = "Activez cette source pour la synchroniser."
     elif not connected:
         disabled_reason = "Reconnectez ce compte avant de synchroniser."
-    elif not capable:
-        disabled_reason = "Cette source ne fournit pas de synchronisation de données."
     else:
         disabled_reason = ""
 
@@ -208,6 +208,24 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         f"Activation : {activation} · Connexion : {connection}\n"
         f"Synchronisation : {sync_label}"
     )
+    # Explicit scope, independent of provider-supplied free-form metadata.
+    # A manual source sync is not the global opening/acquisition workflow.
+    if capable:
+        capabilities = getattr(source, "sync_capabilities", ())
+        if not isinstance(capabilities, (tuple, list, frozenset)):
+            capabilities = ()
+        phases = []
+        if "remote_inventory" in capabilities:
+            phases.append("inventaire distant")
+        if "entitlements" in capabilities:
+            phases.append("droits et emprunts")
+        if phases:
+            summary += "\\nPortée de cette source : " + ", ".join(phases) + "."
+        else:
+            summary += "\\nPortée de cette source : données en ligne prises en charge."
+        summary += "\\nOpération ciblée : ne lance pas la synchronisation globale au démarrage."
+    else:
+        summary += "\\nCatalogue public consultable indépendamment de la synchronisation."
     # A Kobo source refresh only updates online metadata. It is deliberately
     # NOT equivalent to the separate opt-in Kobo backup/acquisition operation.
     kobo_notices_only = getattr(source, "provider_id", "") == "kobo"
