@@ -80,4 +80,7 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
     window._add_local_book_actions(detail,item)
     window._add_book_recommendation_action(detail, item)
     window._add_facets(window.library_page.detail, item, window.library_controls)
+    # show_presentation does not decorate dataclass books like show_loan does.
+    # Route plugin book actions through the same public registry exactly once.
+    window._add_plugin_book_actions(detail, item)
     window._request_cached_book_details("library", row.key, item)
