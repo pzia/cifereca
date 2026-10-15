@@ -306,6 +306,27 @@ fenêtre GTK, la collecte volontaire par une deuxième Entrée **avec une source
 sélectionnée** : ce dernier scénario reste à recetter indépendamment.
 Aucun nouveau scénario ni workflow CI n'a été créé.
 
+### UX P2 #962 — focus clavier au retour Recherche → Jeunesse
+
+Exécuter le parcours strict indépendant à **1366 px** :
+
+```bash
+dbus-run-session -- /usr/bin/python3 e2e/run.py --scenario youth-focus-return-1366
+```
+
+Le test utilise le même vrai trajet GTK/XTEST que le parcours P0 #906 :
+sélection d'une édition Jeunesse, clic « Rechercher en bibliothèque », unique
+recherche **locale** avec identité contrôlée, puis Retour GTK. Il capture
+`14-library-search-return.png`, lit `window.get_focus()` et exige que
+le focus soit sur le bouton d'origine ou son descendant, **avant tout appel
+à `grab_focus()`**. Le contrôle vérifie aussi la sélection, le filtre,
+l'identité et l'absence de collecte/recherche distante.
+
+Ce scénario P2 est **rouge intentionnellement** tant que la navigation
+ne restaure pas le focus. Le parcours P0 #906 reste inchangé et continue
+de vérifier Entrée/Espace indépendamment ; aucune modification du Core,
+des plugins ou des workflows et aucune cible à résolution inférieure.
+
 ### MainWindow preparation baseline (#1123)
 
 `mainwindow-baseline-1366` and `mainwindow-baseline-1600` reuse the real
