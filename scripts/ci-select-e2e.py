@@ -114,6 +114,8 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
         elif path.startswith(("src/plugins/youth-catalog/", "src/plugins/youth-source-",
                               "simulation/youth_sources/", "simulation/milan/")):
             selected.update(YOUTH)
+        elif path in SYNC_PRODUCERS:
+            selected.update(SYNC_CORE)
         elif path.startswith("src/cifereca/builtin_ui/"):
             selected.update(SHELL)
         elif path == "src/cifereca/gui/main_window.py":
