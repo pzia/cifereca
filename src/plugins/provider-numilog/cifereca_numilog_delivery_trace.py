@@ -108,7 +108,7 @@ class DeliveryTrace:
     def event(
         self, phase: str, code: str, *, status: object = None,
         mime: object = None, html_kind: object = None, hops: object = None,
-        destination: object = None,
+        destination: object = None, candidates: object = None,
     ) -> None:
         if phase not in _PUBLIC_PHASES or code not in _PUBLIC_CODES:
             return
@@ -127,6 +127,8 @@ class DeliveryTrace:
                 html_kind if type(html_kind) is str and html_kind in _PUBLIC_HTML
                 else "unknown"
             )
+        if type(candidates) is int and 0 <= candidates <= 10_000:
+            detail["candidates"] = candidates
         if type(hops) is int and 0 <= hops <= 12:
             detail["hops"] = hops
             self._hops = hops
