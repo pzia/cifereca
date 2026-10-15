@@ -945,21 +945,19 @@ class LibraryService:
                 continue
             provider_id = str(session.provider_id)
             credential_id = str(session.credential_id)
-            accounts = [
-                account for account in self.accounts
-                if account.provider_id == provider_id
-                and account.credential_id == credential_id
-            ]
-            if not accounts:
-                # An unbound session must not mirror private store purchases
-                # into the currently selected (possibly different) identity.
-                continue
-            if not any(self.sync_source_enabled(account) for account in accounts):
+            account = next((
+                a for a in self.accounts
+                if a.provider_id == provider_id and a.credential_id == credential_id
+            ), None)
+            if account is not None and not self.sync_source_enabled(account):
                 continue
             if provider_id == "numilog":
-                # For a personal store, a source/identity mismatch is never
-                # a reason to guess using current_identity or another account.
-                # Do not fetch even the inventory in this ambiguous case.
+                # Personal purchases are account-bound. A disconnected or
+                # ambiguous owner is NOT the currently selected identity.
+                accounts = [
+                    a for a in self.accounts
+                    if a.provider_id == "numilog" and a.credential_id == credential_id
+                ]
                 bound_identity = self.storage.identity_for_connection(
                     provider_id, credential_id,
                 )
@@ -974,21 +972,21 @@ class LibraryService:
                         "provider=numilog reason=source_binding_unavailable"
                     )
                     continue
+                identity = self.identity_by_id(bound_identity)
             else:
-                bound_identity = str(accounts[0].identity_id or "")
-            identity = self.identity_by_id(bound_identity)
-            if identity is None:
-                continue
+                # Preserve the pre-existing behavior for providers other than
+                # Numilog; this P0 concerns store-owned personal libraries.
+                identity = self.identity_for_connection(provider_id, credential_id)
             try:
                 # One-shot iterators feed the owned-rights projection and
                 # remote catalog exactly once. Neither phase downloads files.
                 rows = list(session.library())
-                if provider_id == "kobo":
+                if provider_id == "kobo" and account is not None:
                     from .core.kobo_manifest_rights import mirror_kobo_manifest_rights
                     mirror_kobo_manifest_rights(
                         self, rows, identity_id=identity.identity_id,
                         credential_id=credential_id,
-                        account_id=accounts[0].unique_id or None,
+                        account_id=account.unique_id or None,
                     )
                 result[f"{provider_id}:{credential_id}"] = self._mirror_remote_results(
                     rows, identity_id=identity.identity_id,
