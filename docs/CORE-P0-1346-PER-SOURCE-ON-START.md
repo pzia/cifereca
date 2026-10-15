@@ -30,6 +30,26 @@ activée, un **unique** compte pour le credential et un rattachement persistant
 identité↔credential concordant. L'autorisation n'est ni transmise dans les
 résultats publics ni inférée de l'historique des téléchargements.
 
+## Activation de la source (complément P0 #1346)
+
+La préférence `sync.source.enabled.<source_id>` est un **commutateur distinct**
+de l'autorisation `on_start` de matérialisation. Elle gouverne aussi les
+actualisations d'inventaire. Son interprétation est maintenant commune à
+`LibraryService.sync_source_enabled` et au Sync broker :
+
+- **absente** : activée pour la seule synchronisation des données (compatibilité) ;
+- **texte** `1`, `true`, `yes`, `on` (casse et espaces normalisés) : activée ;
+- toute autre valeur, notamment `false`, `0`, valeur corrompue ou privée :
+  **désactivée** — aucun rafraîchissement implicite au démarrage.
+
+Le Core réévalue la préférence dans `_synchronize_account_source_impl`, sous
+le verrou d'acquisition partagé, même lorsqu'un appelant évite le broker.
+Une opération ainsi ignorée donne `status=skipped` /
+`reason=source_disabled` sans fausse réussite métier, sans appel fournisseur
+et sans changement de fichiers. La préférence `on_start` locale reste en
+plus strictement contrôlée, sans migration automatique depuis les réglages
+legacy ou une préférence de source corrompue.
+
 ## Sécurité et cadencement
 
 Avant **chaque** lot ciblé, le coordinateur réévalue l'autorisation (y compris
