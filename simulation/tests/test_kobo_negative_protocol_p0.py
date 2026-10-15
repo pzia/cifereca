@@ -141,3 +141,57 @@ class KoboNegativeProtocolTests(unittest.TestCase):
         )
         assert "kvt_fake_for_tests" not in repr(missing)
 
+
+    def test_opt_in_manifest_http_failures_do_not_change_default_inventory(self):
+        vault = self.vault
+        auth = {"Authorization": "Bearer kvt_fake_for_tests"}
+        endpoint = "/api/v2/library/manifest?limit=2"
+        for fault, code, reason in (
+            ("429", 429, "rate_limited"),
+            ("503", 503, "temporary_unavailable"),
+            ("expired", 401, "expired_token"),
+        ):
+            req = Request(vault.base + endpoint + "&ux_fault=" + fault, headers=auth)
+            error = _denied(req, code=code, error=reason)
+            assert "kvt_fake_for_tests" not in repr(error)
+            if code == 429:
+                with self.assertRaises(HTTPError) as caught:
+                    urlopen(req, timeout=3)
+                assert caught.exception.headers.get("Retry-After") == "2"
+
+        # A publicly supplied fault flag cannot bypass Bearer authentication.
+        _denied(Request(vault.base + endpoint + "&ux_fault=503"), code=401)
+
+        # No fault must activate implicitly or mutate actual pages/cursors.
+        status, _, rows = vault.json(endpoint, headers=auth)
+        assert status == 200 and len(rows["items"]) == 2
+        assert rows["next_cursor"]
+        status, _, ignored = vault.json(
+            endpoint + "&ux_fault=not_supported", headers=auth,
+        )
+        assert status == 200 and ignored == rows
+
+    def test_opt_in_manifest_malformed_json_and_cursor_loop_are_reproducible(self):
+        vault = self.vault
+        auth = {"Authorization": "Bearer kvt_fake_for_tests"}
+        endpoint = "/api/v2/library/manifest?limit=2"
+        status, headers, raw = vault.get(
+            endpoint + "&ux_fault=malformed_json", headers=auth,
+        )
+        assert status == 200 and headers.get_content_type() == "application/json"
+        with self.assertRaises(json.JSONDecodeError):
+            json.loads(raw.decode("utf-8"))
+        assert b"kvt_fake_for_tests" not in raw
+
+        status, _, first = vault.json(
+            endpoint + "&ux_fault=cursor_loop", headers=auth,
+        )
+        assert status == 200 and len(first["items"]) == 2
+        assert first["next_cursor"]
+        status, _, again = vault.json(
+            endpoint + "&ux_fault=cursor_loop&cursor=" + first["next_cursor"],
+            headers=auth,
+        )
+        assert status == 200
+        assert again["next_cursor"] == first["next_cursor"]
+        assert again["items"] == first["items"]
