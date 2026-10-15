@@ -17,6 +17,25 @@ from gi.repository import GLib, Gtk
 _TRACE_LOG = logging.getLogger("cifereca")
 
 
+def _observe_task_phase(
+    window: Any, *, task_id: int, kind: str, origin: str,
+    phase: str, elapsed_seconds: float, outcome: str = "unknown",
+) -> None:
+    """Best-effort passive metric; never interfere with worker/GTK delivery."""
+    observer = getattr(getattr(window, "ui_perf", None), "record_phase", None)
+    if not callable(observer):
+        return
+    try:
+        observer(
+            kind, phase, elapsed_seconds * 1000,
+            operation_id=task_id, trigger=origin, outcome=outcome,
+        )
+    except Exception:
+        # A diagnostic plugin/monitor is not allowed to break real work.
+        pass
+
+
+
 class TaskRunner:
     """Run non-UI operations outside GTK with priority and global feedback."""
 
@@ -111,16 +130,30 @@ class TaskRunner:
 
         def traced_fn() -> Any:
             started = time.monotonic()
+            _observe_task_phase(
+                self.window, task_id=task_id, kind=kind, origin=origin,
+                phase="queue_wait", elapsed_seconds=max(0, started - queued_at),
+            )
             _TRACE_LOG.info(
                 "TRACE task begin id=%s priority=%s kind=%s queue_wait=%.3fs label=%s",
                 task_id, int(priority), kind, started - queued_at, label,
             )
+            outcome_status = "success"
             try:
                 return fn(report) if with_progress else fn()
+            except BaseException:
+                outcome_status = "failed"
+                raise
             finally:
+                elapsed = max(0, time.monotonic() - started)
+                _observe_task_phase(
+                    self.window, task_id=task_id, kind=kind, origin=origin,
+                    phase="worker", elapsed_seconds=elapsed,
+                    outcome=outcome_status,
+                )
                 _TRACE_LOG.info(
                     "TRACE task end id=%s kind=%s dt=%.3fs label=%s",
-                    task_id, kind, time.monotonic() - started, label,
+                    task_id, kind, elapsed, label,
                 )
 
         try:
@@ -174,7 +207,15 @@ class TaskRunner:
                 "success" if outcome[0] == "ok" else "failed",
             )
 
+            gtk_pending_since = time.monotonic()
+
             def deliver() -> bool:
+                _observe_task_phase(
+                    self.window, task_id=task_id, kind=kind, origin=origin,
+                    phase="gtk_delivery_wait",
+                    elapsed_seconds=max(0, time.monotonic() - gtk_pending_since),
+                    outcome="success" if outcome[0] == "ok" else "failed",
+                )
                 with self._lock:
                     self._count = max(0, self._count - 1)
                     remaining = self._count
