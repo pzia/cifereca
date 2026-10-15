@@ -101,3 +101,35 @@ def test_html_delivery_does_not_select_untrusted_acsm_links(bad):
                          allowed_origins=s.allowed_origins)
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("url", (
+    SIGNED.replace("entrepot2r.numilog.com", "entrepot2r.numilog.com:0"),
+    SIGNED.replace("entrepot2r.numilog.com", "entrepot2r.numilog.com:00"),
+    SIGNED.replace("entrepot2r.numilog.com", "entrepot2r.numilog.com:000"),
+    "https://www.numilog.com:0/Pages/Compte/readBook.ashx?lid=12",
+))
+def test_explicit_zero_port_is_not_reinterpreted_as_default_https(url):
+    s = session()
+    try:
+        with pytest.raises(ProviderError, match="destination réseau inattendue"):
+            checked_url(url, s.allowed_origins)
+        with pytest.raises(ParseError):
+            delivery_url(f'<a href="{url}">Livraison</a>', s.library_url,
+                         allowed_origins=s.allowed_origins)
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("url", (
+    SIGNED,
+    SIGNED.replace("entrepot2r.numilog.com", "entrepot2r.numilog.com:443"),
+))
+def test_default_and_explicit_https_443_still_match_the_same_trusted_origin(url):
+    s = session()
+    try:
+        assert checked_url(url, s.allowed_origins) == url
+        assert delivery_url(f'<a href="{url}">Livraison</a>', s.library_url,
+                            allowed_origins=s.allowed_origins) == url
+    finally:
+        s.close()
