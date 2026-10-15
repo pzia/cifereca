@@ -1150,7 +1150,7 @@ class YouthView:
             self.update_action_availability()
             return
         identity = self.identity_id()
-        if getattr(self, "_last_cache_identity", identity) != identity:
+        if identity and getattr(self, "_last_cache_identity", identity) != identity:
             # Equal record keys in different accounts do not attest ownership.
             self.selected_book = None
             self._detail_selection_generation = (
