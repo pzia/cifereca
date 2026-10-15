@@ -409,6 +409,7 @@ def main() -> int:
     slow_started = [None]
     d16_original_size = [None]
     sync_progress_check = {}
+    coordination = {}
 
     def save():
         report["duration_seconds"] = round(monotonic() - started, 2)
@@ -433,6 +434,7 @@ def main() -> int:
     def fail(exc):
         if report["status"] != "RUNNING":
             return
+        cleanup_sync_coordination()
         cleanup_constellations()
         cleanup_loan_sync()
         report["status"] = "FAIL"
@@ -1851,8 +1853,168 @@ def main() -> int:
         # footer. Only the provider operation is an offline fixture. Hold it
         # open until GTK has actually displayed the producer's identity text.
         w = window[0]
+        # Earlier baseline identity changes can report the absent synthetic
+        # local provider. Acknowledge that exact offline-fixture notification
+        # physically; never ignore an arbitrary product error or blocked click.
+        dialogs = [node for node in Gtk.Window.list_toplevels()
+                   if isinstance(node, Adw.MessageDialog) and node.get_visible()]
+        if dialogs:
+            assert all(node.get_body() == "Provider non connecté: local" for node in dialogs)
+            button = next(node for node in walk(dialogs[-1])
+                          if isinstance(node, Gtk.Button)
+                          and str(node.get_label()).replace("_", "") == "Fermer")
+            report["pointer_actions"].append(device[0].click_widget(button))
+            report["offline_fixture_notifications_acknowledged"] = report.get("offline_fixture_notifications_acknowledged", 0) + 1
+            later(150, begin_sync_progress_checks)
+            return
         sync_progress_check["original"] = w.service.opening_sync
         start_sync_progress_mode(False)
+
+    def cleanup_sync_coordination():
+        if not coordination.get("overrides"):
+            return
+        w = window[0]
+        for owner, name, existed, original in reversed(coordination["overrides"]):
+            if existed:
+                setattr(owner, name, original)
+            else:
+                delattr(owner, name)
+        coordination["overrides"] = []
+        w.service.identities[:] = coordination["identities"]
+        if not getattr(w, "_closed", False):
+            w._populate_accounts()
+
+    def begin_sync_coordination(task_id, completed):
+        """#981: real GTK/TaskRunner, synthetic producer, real local reads."""
+        w = window[0]
+        coordination.update(identities=list(w.service.identities), overrides=[],
+                            reads=[], renders=[], source_calls=[], measurements=[], errors=[])
+        def override(owner, name, value):
+            coordination["overrides"].append((owner, name, name in vars(owner), vars(owner).get(name)))
+            setattr(owner, name, value)
+        original_read = w.service.library_entries
+        original_render = w._render_library
+        def measured_read(**kwargs):
+            start = monotonic()
+            try:
+                assert kwargs.get("scan") is False
+                return original_read(**kwargs)
+            except BaseException as exc:
+                coordination["errors"].append((type(exc).__name__, kwargs.get("scan")))
+                raise
+            finally:
+                coordination["reads"].append((kwargs.get("identity_id"), (monotonic()-start)*1000))
+        def measured_render(*args, **kwargs):
+            start = monotonic()
+            identity = w.service.current_identity.identity_id
+            try:
+                return original_render(*args, **kwargs)
+            finally:
+                coordination["renders"].append((identity, (monotonic()-start)*1000))
+        override(w.service, "library_entries", measured_read)
+        override(w, "_render_library", measured_render)
+        # Only the provider refresh is synthetic in this no-plugins fixture;
+        # local SQLite reads, identity transitions and GTK rendering stay real.
+        def offline_loans(*, force=False, identity_id=None):
+            assert w.service.identity_by_id(identity_id) is not None
+            return []
+        override(w.service, "refresh_identity_loans", offline_loans)
+        # Distinct source missions must not reuse the automatic global task.
+        for source in ("paris-one", "paris-two"):
+            w.runner.submit("Source Paris fictive", lambda sid=source: coordination["source_calls"].append(sid),
+                            kind="source-sync", origin="user")
+        coordination["task_id"] = task_id
+        coordination["completed"] = completed
+        coordination["deadline"] = monotonic() + 7
+        def sources_ready():
+            if (len(coordination["source_calls"]) != 2
+                    or any(kind != "opening-sync" for _p, _t, kind in w._active_tasks.values())):
+                assert monotonic() < coordination["deadline"]
+                later(60, sources_ready)
+                return
+            select_coordination_identity(1)
+        sources_ready()
+
+    def select_coordination_identity(index):
+        w = window[0]
+        assert w.identity_dropdown.get_sensitive() and w.identity_dropdown.get_mapped()
+        capture("10b-before-profile-selection-" + str(index + 1))
+        report["pointer_actions"].append(device[0].click_widget(w.identity_dropdown))
+        def select():
+            capture("10c-profile-selection-popup-" + str(index + 1))
+            for key in ["Home" if index == 0 else "End", "Return"]:
+                device[0].key(key, True); device[0].key(key, False)
+            later(80, lambda: coordination_identity_ready(index))
+        later(220, select)
+
+    def coordination_identity_ready(index):
+        w = window[0]
+        identity = ("camille", "alex", "p0-zoe")[index]
+        if (w.service.current_identity.identity_id != identity
+                or any(kind != "opening-sync" for _p, _t, kind in w._active_tasks.values())
+                or w._library_refresh_pending):
+            assert monotonic() < coordination["deadline"], (
+                "#981 identity/load timeout", index, w.identity_dropdown.get_selected(),
+                w.service.current_identity.identity_id,
+                [kind for _p, _t, kind in w._active_tasks.values()], w._library_refresh_pending,
+                coordination["errors"],
+            )
+            later(60, lambda: coordination_identity_ready(index))
+            return
+        assert coordination["task_id"] in w._active_tasks
+        assert coordination["opening_calls"] == 1
+        assert sorted(coordination["source_calls"]) == ["paris-one", "paris-two"]
+        assert w._library_loaded_generation == w._identity_context_generation
+        assert sum(owner == identity for owner, _ms in coordination["reads"]) == 1
+        before_reads = len(coordination["reads"])
+        before_render = len(coordination["renders"])
+        controls = w.library_controls.state()
+        for _ in range(3):
+            w.navigate("search"); w.navigate("library")
+        w._restore_navigation_state(w._navigation_state("library"))
+        assert len(coordination["reads"]) == before_reads, "#981 cached navigation reloaded library"
+        assert len(coordination["renders"]) - before_render == 4, "#981 duplicate route/history render"
+        assert w.library_controls.state() == controls
+        assert w.service.current_identity.identity_id == identity
+        report["checks"]["P0_981_cached_navigation_single_render_" + str(index)] = True
+        # An explicit refresh remains an independent operation on this profile.
+        coordination["manual_read_start"] = before_reads
+        w.refresh_library(False, Gtk.Button())
+        later(60, lambda: coordination_manual_done(index))
+
+    def coordination_manual_done(index):
+        w = window[0]
+        if w._library_refresh_pending:
+            assert monotonic() < coordination["deadline"], "#981 manual refresh timeout"
+            later(60, lambda: coordination_manual_done(index))
+            return
+        assert len(coordination["reads"]) == coordination["manual_read_start"] + 1
+        assert coordination["task_id"] in w._active_tasks
+        identity = w.service.current_identity.identity_id
+        coordination["measurements"].append({
+            "profile": index + 1,
+            "reads_ms": [round(ms, 3) for owner, ms in coordination["reads"] if owner == identity],
+            "renders_ms": [round(ms, 3) for owner, ms in coordination["renders"] if owner == identity],
+            "cached_route_visits": 3, "history_restores": 1, "explicit_refreshes": 1,
+        })
+        capture("10a-sync-navigation-profile-" + str(index + 1))
+        if index in (1, 2):
+            if index == 1:
+                from cifereca.identities import Identity
+                w.service.identities.append(Identity("p0-zoe", "Zoé fictive", directory_name="p0-zoe"))
+                w._populate_accounts()
+            select_coordination_identity(2 if index == 1 else 0)
+            return
+        report["sync_coordination"] = {
+            "automatic_requests": 5, "automatic_executions": coordination["opening_calls"],
+            "distinct_source_executions": len(coordination["source_calls"]),
+            "profiles": coordination["measurements"],
+            "limits": "Real GTK/local SQLite and rendering; synthetic producer and Paris tasks. No live provider latency, acquisitions or absolute timing gate.",
+        }
+        report["checks"]["P0_981_three_profiles_during_one_coalesced_opening_and_two_source_tasks"] = True
+        completed = coordination["completed"]
+        cleanup_sync_coordination()
+        completed()
 
     def start_sync_progress_mode(deep):
         import threading
@@ -1868,6 +2030,8 @@ def main() -> int:
             sync_progress_check["gate"] = gate
 
             def offline_sync(progress=None, *, deep=False):
+                if not deep:
+                    coordination["opening_calls"] = coordination.get("opening_calls", 0) + 1
                 sync_progress_check["callback"] = progress
                 progress({"event": "identity_begin", "label": "Camille"})
                 assert gate.wait(8), "P0: sync progress fixture was not released"
@@ -1875,6 +2039,9 @@ def main() -> int:
 
             w.service.opening_sync = offline_sync
             w.run_opening_sync(deep=deep)
+            if not deep:
+                for _ in range(4):
+                    w.run_opening_sync()
             await_progress()
 
         def await_progress():
@@ -1894,8 +2061,10 @@ def main() -> int:
                     sync_progress_check["closing_pending_task"] = task_id
                     close_baseline_window()
                 else:
-                    sync_progress_check["gate"].set()
-                    later(60, lambda: await_completion(task_id))
+                    def complete():
+                        sync_progress_check["gate"].set()
+                        later(60, lambda: await_completion(task_id))
+                    begin_sync_coordination(task_id, complete)
                 return
             assert monotonic() < deadline, "P0: identity progress hidden: " + label
             later(60, await_progress)
