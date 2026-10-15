@@ -133,17 +133,28 @@ def baseline_render_library(self, entries: list[dict[str, Any]] | None = None) -
 
 
 def compare_library_render(window):
-    """Compare synchronous full rebuilds; excludes GTK frame/layout latency.
+    """Compare the real GTK rebuild against frozen U0, attributing its phases.
 
-    Both paths use the current row widgets, same snapshot and same process.
-    This isolates extraction/projection cost, not historical whole-app speed.
-    Clear the store before each timed call so neither uses append-fast.
-    Alternate order to limit warm-cache/order bias; report raw samples without
-    a machine-dependent pass/fail time threshold.
+    Timings are inclusive, measured on both paths in the same process, widget
+    tree, row volume and alternating order. Interception is confined to this
+    E2E fixture; it does not modify production UI or instrument every row.
+    GTK show_rows also includes native ListStore signals/callbacks, while
+    selected callbacks may be nested inside it. Do not add inclusive timings
+    to claim an exclusive sum. No wall-time success gate is inferred.
     """
+    import gc
+
     entries = list(window._library_entries_cache)
     assert len(entries) == 563
     samples = {"baseline_u0": [], "extracted": []}
+    phases = ("facets", "gtk_show_rows", "pending_selection", "selection_callback")
+    phase_samples = {
+        name: {phase: [] for phase in phases}
+        for name in samples
+    }
+    phase_calls = {name: {phase: [] for phase in phases} for name in samples}
+    gc_collections = {name: [] for name in samples}
+    cpu_samples = {name: [] for name in samples}
     renderers = {
         "baseline_u0": lambda: baseline_render_library(window, entries),
         "extracted": lambda: window._render_library(entries),
@@ -153,9 +164,41 @@ def compare_library_render(window):
         order = ("baseline_u0", "extracted") if iteration % 2 == 0 else ("extracted", "baseline_u0")
         for name in order:
             window.library_page.clear_rows()
-            started = time.perf_counter()
-            renderers[name]()
-            elapsed_ms = (time.perf_counter() - started) * 1000
+            measured = {phase: 0.0 for phase in phases}
+            calls = {phase: 0 for phase in phases}
+            originals = []
+
+            def instrument(owner, method, phase):
+                original = getattr(owner, method)
+
+                def timed(*args, **kwargs):
+                    started = time.perf_counter_ns()
+                    calls[phase] += 1
+                    try:
+                        return original(*args, **kwargs)
+                    finally:
+                        measured[phase] += (time.perf_counter_ns() - started) / 1_000_000
+
+                setattr(owner, method, timed)
+                originals.append((owner, method, original))
+
+            try:
+                instrument(window, "_attach_row_facets", "facets")
+                instrument(window.library_page, "show_rows", "gtk_show_rows")
+                instrument(window, "_select_pending_library_item", "pending_selection")
+                instrument(window, "_library_selected", "selection_callback")
+                before_gc = tuple(g["collections"] for g in gc.get_stats())
+                cpu_started = time.process_time()
+                started = time.perf_counter()
+                renderers[name]()
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                cpu_ms = (time.process_time() - cpu_started) * 1000
+                after_gc = tuple(g["collections"] for g in gc.get_stats())
+            finally:
+                # Restore original bound methods even if an assertion fails.
+                for owner, method, original in reversed(originals):
+                    setattr(owner, method, original)
+
             store = window.library_page.store
             rows = tuple(
                 tuple(getattr(store.get_item(i), attr)
@@ -167,15 +210,42 @@ def compare_library_render(window):
             assert rows == reference, "La projection extraite diffère du rendu U0"
             assert len(rows) == 563 and window.library_page.selection.get_selected_item() is None
             assert list(window._library_objects) == [row[0] for row in reference]
+            assert calls["facets"] == calls["gtk_show_rows"] == calls["pending_selection"] == 1
+            # Callbacks may be fired by the GTK store and by the explicit
+            # empty-selection fallback; report counts, not an assumption.
             if iteration:  # First pair warms both renderers; not a sample.
                 samples[name].append(round(elapsed_ms, 3))
+                cpu_samples[name].append(round(cpu_ms, 3))
+                gc_collections[name].append(tuple(
+                    current - previous for previous, current in zip(before_gc, after_gc)
+                ))
+                for phase in phases:
+                    phase_samples[name][phase].append(round(measured[phase], 3))
+                    phase_calls[name][phase].append(calls[phase])
     medians = {name: round(statistics.median(values), 3) for name, values in samples.items()}
+    phase_medians = {
+        name: {
+            phase: round(statistics.median(phase_samples[name][phase]), 3)
+            for phase in phases
+        }
+        for name in samples
+    }
     return {
         "reference_blob": "6ec09453f1495ac0415ef27e0f4fa31535af282d",
         "rows": len(entries), "mode": "synchronous_full_rebuild_same_current_widgets",
         "samples_ms": samples, "median_ms": medians,
         "extracted_over_u0": round(medians["extracted"] / max(medians["baseline_u0"], 0.001), 3),
         "row_projection_equal": True,
+        "phase_samples_ms": phase_samples,
+        "phase_median_ms": phase_medians,
+        "phase_call_counts": phase_calls,
+        "process_cpu_samples_ms": cpu_samples,
+        "gc_collection_deltas_by_generation": gc_collections,
+        "phase_limits": (
+            "Measured spans are inclusive; GTK show_rows includes signals; selection_callback "
+            "may be nested. Projection/factory is not measured exclusively. Three pairs only; "
+            "no frame timing, no live provider; differences are observational, not causal proof."
+        ),
         "limits": "Same runtime/widgets; excludes frame latency and live providers; no absolute timing gate.",
     }
 
