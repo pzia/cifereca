@@ -686,7 +686,7 @@ def main() -> int:
                 for row in settings_rows(section, Adw.EntryRow)
             ),
             "sync": lambda: any(
-                row.get_title() == "Synchroniser automatiquement les ebooks Kobo"
+                row.get_title() == "Autoriser les téléchargements Kobo au démarrage"
                 for row in settings_rows(section, Adw.ActionRow)
             ),
             "interface": lambda: any(
