@@ -75,3 +75,39 @@ def test_valid_remote_local_and_relative_cover_references_remain_accepted(cover)
     )
     assert plan.facts == {"entries": 1, "missing": 0, "invalid": 0}
     assert plan.warnings == ()
+
+
+@pytest.mark.parametrize("cover", (
+    "../private/cover.jpg",
+    "covers/../../private.png",
+    r"covers\\..\\PRIVATE_IMAGE.png",
+    "covers/%2e%2e/PRIVATE_IMAGE.jpg",
+    "covers/%252e%252e/PRIVATE_IMAGE.jpg",
+    "covers/%25252E%25252e/private.png",
+    "covers/%2f../private.jpg",
+))
+def test_relative_parent_traversal_is_an_invalid_cover_reference(cover):
+    ctx = Context([{"cover_url": cover}])
+    plan = CoverAuditTool().activate(ctx).plan(
+        MaintenanceContext(scope="library", identity_id="reader"),
+    )
+    assert plan.facts == {"entries": 1, "missing": 0, "invalid": 1}
+    assert plan.warnings == ("Couverture non reconnue : notice n°1",)
+    assert ctx.catalog.calls == [{"identity_id": "reader"}]
+    for private in ("PRIVATE_IMAGE", "private.png", "private.jpg", "covers/"):
+        assert private not in json.dumps({"warnings": plan.warnings, "summary": plan.summary})
+
+
+@pytest.mark.parametrize("cover", (
+    "covers/edition..draft.jpg",
+    "covers/volume-2/cover.jpg",
+    "covers/%20illustrated.jpg",
+    "covers/%2520illustrated.jpg",
+))
+def test_safe_relative_cover_subpaths_remain_valid(cover):
+    ctx = Context([{"cover_url": cover}])
+    plan = CoverAuditTool().activate(ctx).plan(
+        MaintenanceContext(scope="library", identity_id=None),
+    )
+    assert plan.facts == {"entries": 1, "missing": 0, "invalid": 0}
+    assert plan.warnings == ()
