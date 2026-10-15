@@ -178,9 +178,9 @@ def test_sync_settings_never_mislabel_local_acquisition_as_remote_inventory_refr
     _, section, _ = _build({"kobo_backup.enabled": True})
     group = section.children[0]
     automatic, manual = group.children[:2]
-    assert "téléchargements Kobo" in automatic.title
-    assert "notices et droits" in automatic.subtitle
-    assert "ne télécharge aucun livre" in automatic.subtitle
+    assert "Ancien réglage global Kobo" in automatic.title
+    assert "ne lance plus de téléchargements" in automatic.subtitle
+    assert "par compte dans Synchronisation" in automatic.subtitle
     assert "comptes et aperçus" in manual.title
     assert "depuis Paramètres" in manual.subtitle
     assert "lot global" in manual.subtitle
@@ -197,9 +197,9 @@ def test_opening_interval_is_not_described_as_periodic_timer():
 def test_unlinked_option_explicitly_warns_about_duplicate_downloads():
     _, section, _ = _build()
     risky = section.children[0].children[2]
-    assert "Option risquée" in risky.title
-    assert "risque de copies supplémentaires" in risky.subtitle
-    assert "idempotence" in risky.subtitle
+    assert "Ancienne dérogation Kobo" in risky.title
+    assert "ne contourne ni la vérification des droits" in risky.subtitle
+    assert "anti-doublons" in risky.subtitle
 
 
 def test_sync_setting_builder_has_no_implicit_acquisition_or_config_mutation():
