@@ -66,8 +66,17 @@ def test_library_detail_omits_redundant_availability_row_and_badge():
     source = ast.unparse(next(node for node in owner.body
                               if isinstance(node, ast.FunctionDef) and node.name == "library_selected"))
 
-    assert "availability = window._library_availability_label(item)" in source
+    assert "availability_label=window._library_availability_label" in source
     assert "Disponible hors ligne" not in source
-    assert "('Disponibilité', availability)" in source
+    assert "offline_if_local=True" not in source
     assert "badges=[]" in source
+    helper = ast.parse(MAIN.with_name(
+        "local_book_detail_sections.py"
+    ).read_text(encoding="utf-8"))
+    projection = ast.unparse(next(node for node in helper.body
+                                  if isinstance(node, ast.FunctionDef)
+                                  and node.name == "local_book_detail_sections"))
+    assert "('Disponibilité', availability)" in projection
+    assert "if offline_if_local and (not availability)" in projection
+    assert "'Disponible hors ligne'" in projection
 
