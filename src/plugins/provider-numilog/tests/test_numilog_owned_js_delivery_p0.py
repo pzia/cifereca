@@ -844,3 +844,55 @@ def test_orphan_card_without_title_does_not_license_js_signed_get(tmp_path):
         _assert_no_stage(tmp_path)
     finally:
         session.close()
+
+
+@pytest.mark.parametrize('across_pages', [False, True])
+def test_unrelated_duplicate_does_not_prevent_unique_selected_book(
+    tmp_path, across_pages,
+):
+    """Only a duplicate of the selected record is blocking."""
+    second_page = LIBRARY + '?page=2'
+    first_page = _page(
+        _card(12, 9001, SIGNED), _card(34, 9002, SECOND),
+        *([] if across_pages else [_card(12, 9007, SIGNED)]),
+    )
+    if across_pages:
+        first_page = first_page.replace(
+            '</body></html>',
+            '<a rel="next" href="/Pages/Compte/MesLivres.aspx?page=2">'
+            'Next</a></body></html>',
+        )
+    requested = []
+
+    def handler(request):
+        url = str(request.url)
+        requested.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=first_page,
+                                  headers={'content-type': 'text/html'})
+        if across_pages and url == second_page:
+            return httpx.Response(200, text=_page(_card(12, 9007, SIGNED)),
+                                  headers={'content-type': 'text/html'})
+        if url == SECOND:
+            return httpx.Response(
+                200, content=ACSM,
+                headers={'content-type': 'application/vnd.adobe.adept+xml'},
+            )
+        pytest.fail('Unexpected URL or attempt to consume other book signature')
+
+    session, diag, broker = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        all_items = session.library()
+        assert len(all_items) == 2
+        chosen = next(x for x in all_items if x.title.endswith('34'))
+        produced, _ = session.download_direct(chosen, tmp_path)
+        assert produced.is_file()
+        prefix = [LIBRARY, second_page] if across_pages else [LIBRARY]
+        assert requested == prefix + prefix + [SECOND]
+        assert SIGNED not in requested
+        assert len(broker.calls) == 1
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diag.events)
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
