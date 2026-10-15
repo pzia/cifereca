@@ -22,6 +22,20 @@ historique de fin s'occupe de réémettre **au maximum une** demande simple
 pour l'identité actuelle. Une demande utilisateur de scan devenue périmée
 ne se transforme jamais en scan automatique du nouveau profil.
 
+## État vide déjà chargé ≠ cache jamais initialisé
+
+Après un chargement **réussi**, les adaptateurs mémorisent uniquement la
+génération numérique de l'identité : `_library_loaded_generation` et
+`_recent_loaded_generation`. Ces drapeaux ne contiennent aucun identifiant
+privé. La route GTK ne lance plus de rafraîchissement paresseux sur une page
+vide lorsque sa génération est déjà connue comme chargée. Le prochain
+changement d'identité modifie le compteur et invalide automatiquement ces
+marqueurs ; une erreur ou un travail obsolète ne les met jamais à jour.
+
+Un clic utilisateur sur l'action Actualiser n'est jamais supprimé par ce
+mécanisme : la garde ne s'applique qu'aux rafraîchissements paresseux de
+navigation. La vue vide reste rendue normalement depuis le cache.
+
 Le mécanisme n'annule **pas** une opération déjà entrée dans le service :
 le changement de profil peut encore intervenir après le test d'entrée.
 Cela reste protégé par le rejet du résultat obsolète et par les verrous
