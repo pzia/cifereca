@@ -295,11 +295,39 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 )
         emit("identity_end", **summary)
 
+    # Personal store catalog mirroring is INVENTORY ONLY (#1862). Do not
+    # report an automatic local acquisition merely because a provider advertises
+    # direct_download or a mirrored notice is already owned. The old Numilog
+    # bulk-backup path is intentionally disabled until a separate scoped policy.
+    catalog_mirror = {
+        "status": "not_run", "notices_mirrored": 0, "sources_reported": 0,
+        "materialization": {
+            "status": "not_requested", "complete": 0, "unchanged": 0,
+            "skipped": 0, "blocked": 0, "failed": 0, "attention_required": 0,
+        },
+    }
     try:
         mirror = self.mirror_personal_libraries()
-        emit("catalog_mirror", result=mirror)
+        counts = (
+            list(mirror.values()) if type(mirror) is dict
+            and all(type(count) is int and 0 <= count <= 1_000_000
+                    for count in mirror.values())
+            and len(mirror) <= 1_000_000
+            else None
+        )
+        if counts is None:
+            catalog_mirror["status"] = "unknown"
+        else:
+            catalog_mirror["status"] = "inventory_only"
+            catalog_mirror["notices_mirrored"] = min(1_000_000, sum(counts))
+            catalog_mirror["sources_reported"] = len(counts)
     except Exception as exc:
-        logger.warning("TRACE catalog mirror opening error=%s", exc)
+        # A provider exception may contain a signed ACSM URL or bearer cookie.
+        # The error type and phase are sufficient to explain the failure.
+        catalog_mirror["status"] = "failed"
+        logger.warning("TRACE catalog mirror opening error type=%s",
+                       type(exc).__name__)
+    emit("catalog_mirror", result=catalog_mirror)
 
     # Kobo owned sync is one global batch because the existing engine already
     # serializes and reconciles all connected Vault sessions.
@@ -468,6 +496,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         "started_at": started, "finished_at": int(time.time()), "recovered_interrupted": recovered,
         "expired_realized": expired_before, "identities": summaries, "kobo": kobo_summary, "kobo_decision": kobo_decision, "catalog": catalog,
         "sync_mode": sync_mode, "acsm_cleanup": acsm_cleanup,
+        "catalog_mirror": catalog_mirror,
     }
 
 
