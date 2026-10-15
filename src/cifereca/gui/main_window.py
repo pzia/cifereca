@@ -688,6 +688,7 @@ class MainWindow(Adw.ApplicationWindow):
                 "languages.audit": "Vérification des langues",
                 "library.naming.audit": "Audit des noms",
                 "library.naming.repair": "Renormalisation des noms",
+                "library.duplicates.cleanup": "Nettoyage des doublons",
             }
             activity_label = activity_labels.get(getattr(info, "id", None))
             if activity_label is not None:
@@ -736,12 +737,14 @@ class MainWindow(Adw.ApplicationWindow):
                     "languages.audit": "Analyse des langues impossible.",
                     "library.naming.audit": "Analyse des noms impossible.",
                     "library.naming.repair": "Analyse des renommages impossible.",
+                    "library.duplicates.cleanup": "Analyse des doublons impossible.",
                 }.get(getattr(meta, "id", None), "Analyse des caches impossible.")
                 execution_error = {
                     "covers.audit": "Vérification des couvertures impossible.",
                     "languages.audit": "Vérification des langues impossible.",
                     "library.naming.audit": "Audit des noms impossible.",
                     "library.naming.repair": "Renormalisation des noms impossible.",
+                    "library.duplicates.cleanup": "Nettoyage des doublons impossible.",
                 }.get(getattr(meta, "id", None), "Nettoyage des caches impossible.")
                 context_generation = getattr(self, "_identity_context_generation", None)
                 progress_scope.update(
