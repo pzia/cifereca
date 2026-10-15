@@ -1311,16 +1311,26 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         pairs: list[tuple[str, str]] = []
         changes: list[str] = []
         read_failures: list[str] = []
-        seen_views: set[str] = set()
+        seen_views: set[tuple[str, str, tuple[str, ...]]] = set()
 
         for _row, view in _iter_views(metadata, library_read, context.identity_id, read_failures):
             try:
                 # These values come from a third-party Core-backed view.
                 # Invalid fields must not abort other artifacts in the plan.
-                key = str(getattr(view.book, "book_id", "") or "") + ":" + ",".join(
+                book_key = str(getattr(view.book, "book_id", "") or "")
+                artifact_key = ",".join(
                     sorted(str(a.artifact_id) for a in getattr(view, "artifacts", ()))
                 )
                 placements = tuple(getattr(view, "placements", ()) or ())
+                # Some legacy Core views expose no artifact list. Book ID
+                # alone then conflates independently fetched placement sets,
+                # suppressing real duplicate candidates from later views.
+                # Keep a fingerprint of actual, native placement references.
+                placement_key = tuple(sorted({
+                    identifier for placement in placements
+                    if type(identifier := getattr(placement, "placement_id", None)) is str
+                }))
+                key = (book_key, artifact_key, placement_key)
             except Exception:
                 read_failures.append("unavailable")
                 continue
