@@ -339,7 +339,16 @@ class LanguageAuditTool(_ReadOnlyTool):
             # free-form book titles nor untrusted raw language tags are safe
             # diagnostic labels (both may contain credentials or private paths).
             # Keep only the deterministic catalogue ordinal and issue class.
-            tags, rejected = _language_values(row)
+            try:
+                tags, rejected = _language_values(row)
+            except Exception:
+                # Provider mappings/iterables may throw from get() or
+                # iteration. Do not abandon other books or expose any
+                # exception class, text, or raw language in diagnostics.
+                malformed += 1
+                if len(samples) < 12:
+                    samples.append(f"Langue non textuelle : notice n°{notice_index}")
+                continue
             malformed += rejected
             if rejected and len(samples) < 12:
                 samples.append(f"Langue non textuelle : notice n°{notice_index}")
