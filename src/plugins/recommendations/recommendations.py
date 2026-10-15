@@ -4,6 +4,7 @@ import logging
 import re
 import time
 from ipaddress import ip_address
+from itertools import islice
 from typing import Any, Mapping
 from urllib.parse import unquote, urlsplit
 
@@ -217,25 +218,42 @@ _LANGUAGE_LABELS = {
 
 
 def _candidate_languages(item: Any) -> tuple[str, ...]:
-    metadata = get_field(item, "metadata", {}) or {}
-    values = []
+    """Project only safely normalized language tags from explicit evidence.
+
+    Provider metadata and legacy language normalizers are independent trust
+    boundaries: one poisoned accessor/tag must not hide later valid languages,
+    break the language filter or expose private exception messages.
+    """
+    def field(container: Any, key: str) -> Any:
+        try:
+            return get_field(container, key, None)
+        except Exception:
+            return None
+
+    metadata = field(item, "metadata")
+    values: list[str] = []
     for raw in (
-        get_field(item, "language", None),
-        get_field(item, "languages", None),
-        metadata.get("language") if isinstance(metadata, Mapping) else None,
-        metadata.get("languages") if isinstance(metadata, Mapping) else None,
+        field(item, "language"),
+        field(item, "languages"),
+        field(metadata, "language") if isinstance(metadata, Mapping) else None,
+        field(metadata, "languages") if isinstance(metadata, Mapping) else None,
     ):
-        if isinstance(raw, (list, tuple, set)):
-            # Catalogue metadata is untrusted: nested maps, numbers and
-            # foreign objects are not language tags. Never stringify them.
-            values.extend(item for item in raw if isinstance(item, str))
-        elif isinstance(raw, str) and raw.strip():
+        if type(raw) in (list, tuple, set):
+            # Bound untrusted provider arrays; never stringify nested values
+            # or accept a str subclass with overridable text methods.
+            for tag in islice(raw, 128):
+                if type(tag) is str and tag.strip():
+                    values.append(tag)
+        elif type(raw) is str and raw.strip():
             values.append(raw)
 
-    normalized = []
-    for raw in values:
-        canonical = normalize_language_tag(raw)
-        if canonical and canonical not in normalized:
+    normalized: list[str] = []
+    for raw in values[:256]:
+        try:
+            canonical = normalize_language_tag(raw)
+        except Exception:
+            continue
+        if type(canonical) is str and canonical and canonical not in normalized:
             normalized.append(canonical)
     return tuple(normalized)
 
