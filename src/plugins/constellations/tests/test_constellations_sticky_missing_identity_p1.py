@@ -59,6 +59,7 @@ def test_explicit_new_selection_revokes_sticky_requirement():
 def test_initially_empty_profile_list_may_use_first_new_identity():
     new = []
     view, dropdown, loads = view_with_profiles([], new, selected=0xFFFFFFFF)
+    view._profile_selection_required = False  # Headless __new__ omits __init__.
     new[:] = [{"identity_id": "bob"}]
     view.invalidate()
     assert view.identity_id() == "bob"
