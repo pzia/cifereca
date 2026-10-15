@@ -540,14 +540,43 @@ class LanguageAuditTool(_ReadOnlyTool):
             valid = type(plan.warnings) in (tuple, list) and len(plan.warnings) <= 12
             if valid:
                 import re
+                labels = {
+                    "non textuelle": "malformed",
+                    "non vérifiable": "normalization_failures",
+                    "invalide": "invalid",
+                    "non canonique": "noncanonical",
+                }
+                sample_counts = {key: 0 for key in labels.values()}
+                last_ordinal = 0
                 for warning in plan.warnings:
-                    if type(warning) is not str or re.fullmatch(
-                        r"Langue (?:non textuelle|non vérifiable|invalide|non canonique) : notice n°[1-9][0-9]{0,6}",
+                    if type(warning) is not str:
+                        valid = False
+                        break
+                    match = re.fullmatch(
+                        r"Langue (non textuelle|non vérifiable|invalide|non canonique) : notice n°([1-9][0-9]{0,6})",
                         warning,
-                    ) is None:
+                    )
+                    if match is None:
+                        valid = False
+                        break
+                    ordinal = int(match.group(2))
+                    # Several tags of one notice can legitimately be faulty.
+                    # Notices, however, are scanned in order, never backwards.
+                    if ordinal < last_ordinal:
+                        valid = False
+                        break
+                    last_ordinal = ordinal
+                    kind = labels[match.group(1)]
+                    sample_counts[kind] += 1
+                    if sample_counts[kind] > counts[kind]:
                         valid = False
                         break
                     safe_warnings.append(warning)
+                # Samples are optional and may omit entire categories,
+                # including when fewer than twelve anomalies were counted.
+                # Some historical/cached providers only expose an excerpt.
+                # Each *present* sample must still be ordered and supported
+                # by a corresponding positive, bounded count.
         control.check_cancelled()
         if not valid:
             control.report(message="Audit des langues impossible : plan invalide")
