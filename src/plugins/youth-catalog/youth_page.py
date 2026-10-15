@@ -738,6 +738,8 @@ class YouthView:
             for row in self.identities
         ])
         self.identity.set_tooltip_text("Choisit le profil dont le cache Jeunesse est affiché. Aucun changement d’identité implicite.")
+        # Bind the visible cached rows to their originating identity.
+        self._last_cache_identity = self.identity_id()
         # GTK emits transient selections while the identity model changes.
         # No cache query or task may run under a temporary other profile.
         self.identity.connect(
@@ -1148,6 +1150,14 @@ class YouthView:
             self.update_action_availability()
             return
         identity = self.identity_id()
+        if getattr(self, "_last_cache_identity", identity) != identity:
+            # A reused record key never grants the previous profile's detail.
+            self.selected_book = None
+            self._detail_selection_generation = (
+                getattr(self, "_detail_selection_generation", 0) + 1
+            )
+            self.master.empty_detail()
+        self._last_cache_identity = identity
         if not identity:
             self.rows = {}
             self.selected_book = None
