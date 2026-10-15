@@ -156,3 +156,36 @@ def test_independent_provenance_sources_and_format_use_public_field_kinds():
     assert len(formats) == 1
     assert (formats[0].value, formats[0].kind) == ("EPUB", "all")
     assert presentation.actions == ()  # source labels never confer rights
+
+
+def test_attested_languages_are_projected_individually_with_public_field_kind():
+    item = {
+        "title": "Livre multilingue",
+        "authors": ["Alice", "Bob"],
+        "language": "fr",
+        "languages": ["en", "fr"],
+        "metadata": {"languages": ["de", "en"]},
+    }
+    view, rows, details, _ = _make_view(item)
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+    catalogue = next(section for section in details[0].sections if section.id == "catalogue")
+    languages = [field for field in catalogue.fields if field.label == "Langue"]
+    assert [(field.id, field.value, field.kind) for field in languages] == [
+        ("language-0", "fr", "language"),
+        ("language-1", "en", "language"),
+        ("language-2", "de", "language"),
+    ]
+    assert details[0].actions == ()
+
+
+def test_no_language_metadata_never_creates_synthetic_language_field():
+    view, rows, details, _ = _make_view({
+        "title": "Titre français sans langue attestée",
+        "authors": ["Auteur français"],
+        "format": "EPUB",
+    })
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+    catalogue = next(section for section in details[0].sections if section.id == "catalogue")
+    assert all(field.label != "Langue" for field in catalogue.fields)
