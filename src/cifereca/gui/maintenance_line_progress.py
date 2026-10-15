@@ -9,6 +9,13 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Callable
 
+# Public, fixed operational labels; never derive GTK progress from a plugin
+# message (which may contain a private path, title or signed URL).
+_LINE_MODES = {
+    "cache": ("Analyse…", "Purge en cours"),
+    "covers": ("Analyse des couvertures…", "Vérification des couvertures"),
+}
+
 
 @dataclass(frozen=True)
 class MaintenanceLineState:
@@ -26,7 +33,11 @@ class MaintenanceLineProgress:
         idle_add: Callable[[Callable[[], bool]], object],
         render: Callable[[MaintenanceLineState], None],
         alive: Callable[[], bool] = lambda: True,
+        mode: str = "cache",
     ) -> None:
+        if type(mode) is not str or mode not in _LINE_MODES:
+            raise ValueError("invalid maintenance progress mode")
+        self._analysis_label, self._running_label = _LINE_MODES[mode]
         self._idle_add = idle_add
         self._render = render
         self._alive = alive
@@ -78,7 +89,7 @@ class MaintenanceLineProgress:
                 return self._generation
             self._generation += 1
             ticket = self._generation
-        self._publish(MaintenanceLineState("analysis", "Analyse…"), ticket=ticket)
+        self._publish(MaintenanceLineState("analysis", self._analysis_label), ticket=ticket)
         return ticket
 
     def _current(self, ticket: int, *, phases: tuple[str, ...] = ()) -> bool:
@@ -97,7 +108,7 @@ class MaintenanceLineProgress:
 
     def running(self, ticket: int) -> None:
         self._publish(
-            MaintenanceLineState("running", "Purge en cours…"),
+            MaintenanceLineState("running", self._running_label + "…"),
             ticket=ticket, phases=("confirmation",),
         )
 
@@ -113,10 +124,10 @@ class MaintenanceLineProgress:
             # 100% is reserved for the success callback, NOT for a report
             # that the plugin may emit before returning a failed result.
             percent = min(99, (current * 100) // total)
-            label = f"Purge en cours · {percent} %"
+            label = f"{self._running_label} · {percent} %"
             fraction = percent / 100.0
         else:
-            label = "Purge en cours…"
+            label = self._running_label + "…"
             fraction = None
         self._publish(MaintenanceLineState("running", label, fraction), ticket=ticket, phases=("running",))
 
