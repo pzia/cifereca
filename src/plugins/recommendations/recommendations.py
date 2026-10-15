@@ -22,7 +22,7 @@ from cifereca.plugin_api import (
 )
 from recommendation_llm import explain_reasons
 
-from recommendation_engine import RankedCandidate, author_values, candidate_key, get_field, identifier_values, normalize
+from recommendation_engine import RankedCandidate, candidate_key, get_field, identifier_values, normalize
 from recommendation_service import LibrarySnapshotCache, RecommendationPartial, RecommendationResult, compute_recommendations
 from reference_recommendation import compute_reference_recommendations
 
@@ -72,6 +72,57 @@ def _public_candidate_description(item: Any) -> str:
     )
 
 
+
+def _public_candidate_authors(item: Any) -> tuple[str, ...]:
+    """Only attested, bounded author strings reach the public host detail.
+
+    The recommendation ranking engine accepts a broader legacy data model;
+    its text coercion must not be repeated at the UI boundary, where a cache
+    can contain arbitrary objects, malformed mappings or private values.
+    """
+    def read(container: Any, key: str) -> Any:
+        try:
+            return get_field(container, key, None)
+        except Exception:
+            return None
+
+    metadata = read(item, "metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    epub = read(metadata, "epub_metadata")
+    epub = epub if isinstance(epub, Mapping) else {}
+    values: list[str] = []
+    seen: set[str] = set()
+    for field_name in ("author", "authors", "creator", "creators"):
+        for source in (item, metadata, epub):
+            raw = read(source, field_name)
+            if type(raw) is str:
+                rows = (raw,)
+            elif type(raw) in (list, tuple):
+                rows = raw[:32]
+            elif isinstance(raw, Mapping):
+                rows = (raw,)
+            else:
+                continue
+            for row in rows:
+                if isinstance(row, Mapping):
+                    # An invalid first mapping value must not mask a valid
+                    # independently attested label or name.
+                    row = next((
+                        safe for key in ("value", "label", "name")
+                        if (safe := _public_candidate_text(read(row, key)))
+                    ), "")
+                author = _public_candidate_text(row)
+                if not author:
+                    continue
+                identity = normalize(author)
+                if identity and identity not in seen:
+                    seen.add(identity)
+                    values.append(author)
+                    if len(values) == 32:
+                        return tuple(values)
+    return tuple(values)
+
+
 def _reference_isbn(book: Any) -> str:
     """One checksum-validated edition ISBN, not an inferred title match."""
     identifiers = identifier_values(book)
@@ -80,7 +131,7 @@ def _reference_isbn(book: Any) -> str:
 
 def _reference_label(book: Any) -> str:
     title = _candidate_public_field(book, "title", limit=2048) or "Sans titre"
-    authors = author_values(book)
+    authors = _public_candidate_authors(book)
     author = authors[0] if authors else ""
     label = f"{title} — {author}" if author else title
     isbn = _reference_isbn(book)
@@ -897,7 +948,7 @@ class UxRecommendationsView:
             # be empty even when "authors" contains several names.
             haystack = normalize(" ".join((
                 _candidate_public_field(item, "title", limit=2048),
-                " ".join(author_values(item)),
+                " ".join(_public_candidate_authors(item)),
             )))
             if needle not in haystack:
                 return False
@@ -1332,7 +1383,7 @@ class UxRecommendationsView:
                     key = f"{original_key}:{suffix}"
             mapping[key] = ranked
 
-            author = ", ".join(author_values(item))
+            author = ", ".join(_public_candidate_authors(item))
             source_labels = [
                 self._display_source(source)
                 for source in ranked.sources
@@ -1398,7 +1449,7 @@ class UxRecommendationsView:
 
         item = ranked.item
         title = _candidate_public_field(item, "title", limit=2048) or "Sans titre"
-        authors = tuple(author_values(item))
+        authors = _public_candidate_authors(item)
         author = ", ".join(authors)
         fmt = _candidate_public_field(item, "format")
         published = _candidate_public_field(item, "published_at")
