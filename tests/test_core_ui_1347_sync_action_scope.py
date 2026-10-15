@@ -316,7 +316,7 @@ def test_mismatched_broker_source_owner_is_not_rendered_or_enabled():
     )
     assert window._sync_all_button.sensitive is False
     assert window.runner.tasks == []
-    assert _source_row(window).label == (
+    assert window._sync_sources_box.children[0].label == (
         "Aucune source synchronisable pour cette identité"
     )
 
