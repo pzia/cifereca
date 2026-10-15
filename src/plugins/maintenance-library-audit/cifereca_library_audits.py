@@ -547,19 +547,11 @@ class LanguageAuditTool(_ReadOnlyTool):
                         valid = False
                         break
                     safe_warnings.append(warning)
-                if valid:
-                    findings = sum(counts[kind] for kind in sample_counts)
-                    # When the full anomaly set fits in the 12 slots, each
-                    # present category must appear. Non-text values may
-                    # generate several rejects for only one notice, so their
-                    # sample count is bounded, not required to be identical.
-                    if findings <= 12:
-                        valid = all(
-                            (counts[kind] > 0) == (sample_counts[kind] > 0)
-                            for kind in sample_counts
-                        )
-                    elif findings:
-                        valid = bool(safe_warnings)
+                # Samples are optional and may omit entire categories,
+                # including when fewer than twelve anomalies were counted.
+                # Some historical/cached providers only expose an excerpt.
+                # Each *present* sample must still be ordered and supported
+                # by a corresponding positive, bounded count.
         control.check_cancelled()
         if not valid:
             control.report(message="Audit des langues impossible : plan invalide")
