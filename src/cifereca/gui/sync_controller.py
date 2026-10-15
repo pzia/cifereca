@@ -276,8 +276,23 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             return
         kind = str(event.get("event") or "")
         if kind == "identity_begin":
-            label = f"Synchronisation · {event.get('label') or event.get('identity_id')}…"
+            # Identity IDs are private internal routing keys. If the service
+            # has no user-facing name, do not fall back to the raw ID.
+            identity_label = event.get("label")
+            identity_label = identity_label.strip() if type(identity_label) is str else ""
+            label = f"Synchronisation · {identity_label or 'une identité'}…"
             report(label)
+    def work(report):
+        try:
+            return self.service.opening_sync(
+                progress=lambda event: progress(event, report), deep=deep,
+            )
+        except Exception:
+            # TaskRunner also renders failed worker payloads in global GTK
+            # feedback *before* invoking err(). Never enqueue a raw provider
+            # exception with a bearer URL/path/account ID into that boundary.
+            raise RuntimeError("Synchronisation des bibliothèques indisponible") from None
+
     def ok(summary: dict[str, Any]) -> None:
         if getattr(self, "_closed", False):
             return
@@ -294,14 +309,13 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
     def err(exc: BaseException) -> None:
         if getattr(self, "_closed", False):
             return
-        self.diagnostics.add("SYNC", "opening sync", "error", detail={"error": type(exc).__name__, "message": str(exc)})
+        self.diagnostics.add("SYNC", "opening sync", "error", detail={"reason": "opening_sync_failed"})
         self._render_dashboard()
-        if control is not None: self.show_error(str(exc), "Synchronisation impossible")
+        if control is not None:
+            self.show_error("Synchronisation des bibliothèques indisponible.", "Synchronisation impossible")
     task_label = "Vérification complète de la bibliothèque…" if deep else "Synchronisation des bibliothèques…"
     self.runner.submit(
-        task_label, lambda report: self.service.opening_sync(
-            progress=lambda event: progress(event, report), deep=deep,
-        ), ok, err, control=control,
+        task_label, work, ok, err, control=control,
         priority=TaskPriority.USER_ACTION if control is not None else (TaskPriority.MAINTENANCE if deep else TaskPriority.ACTIVE_LOAN),
         kind="deep-sync" if deep else "opening-sync",
         with_progress=True,
@@ -369,7 +383,12 @@ def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None
         GLib.idle_add(update_label)
 
     def work() -> dict[str, Any]:
-        return self.service.sync_kobo_backup(progress=progress)
+        try:
+            return self.service.sync_kobo_backup(progress=progress)
+        except Exception:
+            # The global task feedback path prints worker exceptions. A raw
+            # provider failure can contain private delegation URLs or tokens.
+            raise RuntimeError("Synchronisation locale Kobo indisponible") from None
 
     def restore_label() -> None:
         if getattr(self, "_closed", False):
@@ -432,9 +451,9 @@ def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None
             return
         restore_label()
         if manual:
-            self.show_error(str(exc), "Synchronisation Kobo impossible")
+            self.show_error("Synchronisation locale Kobo indisponible.", "Synchronisation Kobo impossible")
         else:
-            self.diagnostics.add("KOBO", "automatic backup task", "error", detail={"error": type(exc).__name__, "message": str(exc)})
+            self.diagnostics.add("KOBO", "automatic backup task", "error", detail={"reason": "kobo_sync_failed"})
     self.runner.submit(
         "Synchronisation locale Kobo…", work, ok, err, control=control,
         priority=TaskPriority.USER_ACTION if manual else TaskPriority.ACTIVE_LOAN, kind="kobo-acquisition",
