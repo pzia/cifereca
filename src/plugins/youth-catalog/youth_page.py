@@ -1150,7 +1150,8 @@ class YouthView:
             self.update_action_availability()
             return
         identity = self.identity_id()
-        if getattr(self, "_last_cache_identity", identity) != identity:
+        identity_changed = getattr(self, "_last_cache_identity", identity) != identity
+        if identity_changed:
             # A reused record key never grants the previous profile's detail.
             self.selected_book = None
             self._detail_selection_generation = (
@@ -1161,9 +1162,10 @@ class YouthView:
         if not identity:
             self.rows = {}
             self.selected_book = None
-            self._detail_selection_generation = (
-                getattr(self, "_detail_selection_generation", 0) + 1
-            )
+            if not identity_changed:
+                self._detail_selection_generation = (
+                    getattr(self, "_detail_selection_generation", 0) + 1
+                )
             self.master.set_list_state("Aucun profil disponible", "Créez ou activez un profil Cifereca.")
             self.master.empty_detail()
             self.update_action_availability()
