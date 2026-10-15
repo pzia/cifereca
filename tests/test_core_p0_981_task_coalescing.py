@@ -158,6 +158,47 @@ def test_manual_button_bypasses_even_identical_auto_key(session):
     assert not s.runner._coalesced
 
 
+def test_explicit_user_without_gtk_control_is_not_coalesced(session):
+    """A user's keyboard/headless action is still manual when control=None."""
+    s = session
+    background, bg_entered, bg_gate, bg_calls = s.work()
+    manual, user_entered, user_gate, user_calls = s.work()
+    s.runner.submit(
+        "Background", background, kind="opening-sync",
+        coalesce_key="global:shallow", origin="automatic",
+    )
+    assert bg_entered.wait(3)
+    # No widget is passed: the declared trigger, not widget presence, makes
+    # this a physical user request.
+    s.runner.submit(
+        "Keyboard", manual, kind="opening-sync",
+        coalesce_key="global:shallow", origin="user",
+    )
+    assert user_entered.wait(3)
+    assert bg_calls == user_calls == ["started"]
+    assert s.runner._count == 2 and len(s.runner._coalesced) == 1
+    bg_gate.set()
+    user_gate.set()
+    s.drain_until(lambda: len([e for e in s.events if e[0] == "finished"]) == 2)
+    assert s.runner._count == 0 and not s.runner._coalesced
+
+
+def test_two_explicit_users_without_controls_both_run(session):
+    s = session
+    tasks = [s.work() for _ in range(2)]
+    for work, _, _, _ in tasks:
+        s.runner.submit(
+            "Keyboard", work, kind="opening-sync",
+            coalesce_key="global:shallow", origin="user",
+        )
+    for _, entered, _, _ in tasks:
+        assert entered.wait(3)
+    assert s.runner._count == 2 and not s.runner._coalesced
+    for _, _, gate, _ in tasks:
+        gate.set()
+    s.drain_until(lambda: len([e for e in s.events if e[0] == "finished"]) == 2)
+
+
 def test_result_in_gtk_queue_is_reused_until_delivery(session):
     s = session
     worker, entered, gate, calls = s.work()

@@ -73,9 +73,15 @@ class TaskRunner:
             "automatic", "navigation", "user", "maintenance", "unspecified",
         }:
             origin = "unspecified"
-        # A physical user action must *always* be admitted, even if its caller
-        # accidentally supplied the same automatic key.
-        admission = (kind, coalesce_key) if coalesce_key is not None and control is None else None
+        # An explicit user request must always run, including callers that
+        # deliberately have no GTK control (keyboard actions, headless host).
+        # A missing widget is not evidence that a task is automatic (#981).
+        # Keep legacy unspecified-key coalescing for compatibility.
+        admission = (
+            (kind, coalesce_key)
+            if coalesce_key is not None and control is None and origin != "user"
+            else None
+        )
         # A detached Gtk widget must be checked before activity counters or
         # reservations are allocated, as with the original TaskRunner. User
         # controls cannot be coalesced, so this cannot touch a skipped task.
