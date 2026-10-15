@@ -63,6 +63,19 @@ def test_forged_language_preview_fails_closed(warnings):
     assert control.checks == 2
 
 
+def test_language_samples_must_remain_in_scan_order():
+    result, control = execute(
+        values=2, invalid=1, noncanonical=1,
+        warnings=(
+            "Langue non canonique : notice n°3",
+            "Langue invalide : notice n°2",
+        ),
+    )
+    assert result.ok is False
+    assert result.facts == {"invalid_plan": 1}
+    assert control.events == [{"message": "Audit des langues impossible : plan invalide"}]
+
+
 def test_multiple_unreadable_values_on_one_notice_count_once_in_preview():
     result, control = execute(
         values=1, invalid=1, malformed=2,
