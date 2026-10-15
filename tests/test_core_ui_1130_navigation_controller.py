@@ -29,6 +29,15 @@ def _host():
         _show_route=lambda route: calls.append(("show", route)),
         _update_navigation_buttons=lambda: calls.append(("buttons", None)),
     )
+    # MainWindow._show_route("library") already renders Library; mirror that
+    # contract instead of pretending route display is presentation-free.
+    def show(route):
+        calls.append(("show", route))
+        if route == "library":
+            renderer = getattr(host, "_render_library", None)
+            if callable(renderer):
+                renderer()
+    host._show_route = show
     host._navigation_state = lambda route: navigation.navigation_state(host, route)
     host._restore_navigation_state = lambda state: navigation.restore_navigation_state(host, state)
     host._visit_route = lambda route: navigation.visit_route(host, route)
