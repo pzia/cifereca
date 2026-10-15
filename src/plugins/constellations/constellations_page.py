@@ -225,6 +225,8 @@ class View:
         return False
 
     def load(self, *, remote='', refresh=False):
+        if getattr(self, 'disposed', False):
+            return
         identity = self.identity_id()
         if not identity:
             self.generation += 1
@@ -383,16 +385,22 @@ class View:
             self.task.cancel()
 
     def visit(self, node):
+        if getattr(self, 'disposed', False):
+            return
         self.cancel_calculation()
         self.center = node; self.nav.visit(node.key); self.render()
 
     def move(self, offset):
+        if getattr(self, 'disposed', False):
+            return
         self.cancel_calculation()
         key = self.nav.move(offset)
         self.center = next((n for n in self.nodes if n.key == key), self.center)
         self.render()
 
     def open_book(self):
+        if getattr(self, 'disposed', False):
+            return
         method = getattr(self.host, 'open_book_detail', None)
         if self.center and callable(method) and method(self.center.book, identity_id=self.identity_id()):
             return
@@ -400,6 +408,8 @@ class View:
 
     def open_origin(self):
         """Return through public book-detail hosting with the original book."""
+        if getattr(self, 'disposed', False):
+            return
         original = getattr(self, 'origin_book', None)
         if original is None:
             self.host.toast('Sélectionnez d’abord un livre dans Recherche ou Bibliothèque.')
