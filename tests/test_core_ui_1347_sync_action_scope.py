@@ -16,6 +16,7 @@ from cifereca.gui.sync_view import (
     sync_identity_action_label, sync_source_presentation,
     sync_source_row_labels,
     sync_local_preflight_presentation, sync_local_reconciliation_presentation,
+    sync_materialization_schedule_presentation,
 )
 
 
@@ -100,6 +101,7 @@ def _methods():
         sync_source_row_labels=sync_source_row_labels,
         sync_local_preflight_presentation=sync_local_preflight_presentation,
         sync_local_reconciliation_presentation=sync_local_reconciliation_presentation,
+        sync_materialization_schedule_presentation=sync_materialization_schedule_presentation,
         capture_sync_action_scope=capture_sync_action_scope,
         sync_action_scope_current=sync_action_scope_current,
         SyncRequest=lambda identity_id: NS(identity_id=identity_id),
