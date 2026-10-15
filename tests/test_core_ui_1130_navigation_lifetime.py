@@ -38,6 +38,12 @@ def _host():
         _render_search_results=lambda: events.append(("search",)),
         _activate_identity=lambda ident: events.append(("activate", ident)),
     )
+    # Route display rebuilds Library itself; history must not do it twice.
+    def show(route):
+        events.append(("show", route))
+        if route == "library":
+            host._render_library()
+    host._show_route = show
     host._navigation_state = lambda route: nav.navigation_state(host, route)
     host._visit_route = lambda route: nav.visit_route(host, route)
     host._restore_navigation_state = lambda state: nav.restore_navigation_state(host, state)
