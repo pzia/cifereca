@@ -595,9 +595,10 @@ class NamingAuditTool(_ReadOnlyTool):
                 # and never downgrade an absolute or nested path by basename.
                 if type(expected) is not str:
                     raise ValueError("unusable naming policy proposal")
-                proposed = expected.strip()
+                proposed = expected
                 if (
-                    not proposed or len(proposed) > 512
+                    not proposed or proposed != proposed.strip()
+                    or len(proposed) > 512
                     or proposed in {".", ".."}
                     or "/" in proposed or "\\" in proposed
                     or any(ord(ch) < 32 or ord(ch) == 127 for ch in proposed)
@@ -1079,9 +1080,10 @@ class NamingRepairTool(_ReadOnlyTool):
                     # an invalid preview must never enter a mutation plan.
                     if type(proposed) is not str:
                         raise ValueError("unusable naming policy proposal")
-                    expected = proposed.strip()
+                    expected = proposed
                     if (
-                        not expected or len(expected) > 512
+                        not expected or expected != expected.strip()
+                        or len(expected) > 512
                         or expected in {".", ".."}
                         or "/" in expected or "\\" in expected
                         or any(ord(ch) < 32 or ord(ch) == 127 for ch in expected)

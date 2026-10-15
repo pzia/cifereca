@@ -27,6 +27,7 @@ class Poison:
     r"C:\PRIVATE_ACCOUNT\new.epub",
     r"..\new.epub",
     ".", "..", " ",
+    " safe.epub", "safe.epub ", "  safe.epub  ", "\u00a0safe.epub",
     "PRIVATE\nnew.epub",
     "PRIVATE\x7fnew.epub",
     "x" * 513,
