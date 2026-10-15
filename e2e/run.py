@@ -34,6 +34,13 @@ SCENARIOS = {
         "runner": "gtk-detail",
         "width": 1366,
     },
+    "book-detail-1600": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": "P1 #1598 : même fiche partagée Recherche/Bibliothèque, auteurs multivalués et actions GTK 1600.",
+        "runner": "gtk-detail",
+        "width": 1600,
+    },
     "mainwindow-baseline-1366": {
         "plugin": "core", "fixture": "search-filters",
         "description": "P0 #1123: MainWindow, async navigation, keyboard, two identities and normal close.",
@@ -354,7 +361,7 @@ def main() -> int:
             elif scenario.get("runner") == "gtk-detail":
                 width = scenario["width"]
                 command = [
-                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
                     args.python, str(ROOT / "e2e/book_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                 ]
