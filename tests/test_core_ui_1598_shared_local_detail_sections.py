@@ -180,6 +180,7 @@ def _adapters(item, availability):
         _cancel_cached_book_details=lambda: None,
         _add_book_notice=lambda *a, **k: None,
         _add_local_book_actions=lambda *a: None,
+        _add_plugin_book_actions=lambda *a: None,
         _add_facets=lambda *a: None,
         _request_cached_book_details=lambda *a: None,
     )

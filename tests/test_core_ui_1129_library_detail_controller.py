@@ -26,6 +26,9 @@ class Button:
     def add_css_class(self, klass):
         self.css_classes.append(klass)
 
+    def set_sensitive(self, value):
+        self.sensitive = value
+
     def set_tooltip_text(self, title):
         self.tooltip = title
 
@@ -71,6 +74,7 @@ def _context(item=None, *, can_download=False, resolved_loan=None):
         _add_local_book_actions=lambda panel, value: events.append(("local",)),
         _add_book_recommendation_action=lambda panel, value: events.append(("recommend",)),
         _add_facets=lambda panel, value, controls: events.append(("facets",)),
+        _add_plugin_book_actions=lambda panel, value: events.append(("plugin", panel, value)),
         _request_cached_book_details=lambda route, key, value: events.append(
             ("cache", route, key)
         ),
@@ -173,7 +177,7 @@ def test_multi_identity_provenance_is_deduplicated_and_metadata_is_preserved():
         [("Alice", "Stockage : disk"), ("Bob", "Droit distant : Paris")],
     )
     assert [entry[0] for entry in events[3:]] == [
-        "notice", "local", "recommend", "facets", "cache",
+        "notice", "local", "recommend", "facets", "plugin", "cache",
     ]
     assert events[-1] == ("cache", "library", "book-1")
     window.service.can_download_loan.assert_not_called()
@@ -213,7 +217,7 @@ def test_ambiguous_loan_uses_neutral_catalogue_detail_not_wrong_borrower():
     assert all(entry[0] != "loan" for entry in events)
     assert all(entry[0] != "prepare" for entry in events)
     assert [entry[0] for entry in events] == [
-        "cancel", "presentation", "notice", "local", "recommend", "facets", "cache",
+        "cancel", "presentation", "notice", "local", "recommend", "facets", "plugin", "cache",
     ]
     window.service.can_download_loan.assert_not_called()
 
@@ -232,3 +236,36 @@ def test_loan_without_download_right_still_renders_facets_and_recommendation():
     assert [entry[0] for entry in events[3:]] == [
         "facets", "local", "recommend", "cache",
     ]
+
+
+def test_standard_library_detail_exposes_real_public_plugin_contribution():
+    from cifereca.gui.plugin_book_action_controller import add_plugin_book_actions
+    from cifereca.gui.shell_model import contextual_actions
+    from cifereca.plugin_api import BookRef, UiActionContext, UiActionContribution, UiPageContribution
+    item = {"key": "book-1", "item_id": "source-a", "title": "A"}
+    window, events, projected, lookup, call = _context(item)
+    activations = []
+    action = UiActionContribution(
+        "test.explore", "Explorer ce livre", lambda host: activations.append(host.action_context()),
+        target="book.detail", visible_when=lambda context: context.book is not None,
+    )
+    context = UiActionContext(target="book.detail", route="library", book=BookRef("source-a", "A"))
+    window._pages = {"explore": UiPageContribution("explore", "Explorer", "", 30, lambda host: None, actions=(action,))}
+    window._book_action_context = lambda row: context
+    window.action_button = lambda label, icon: Button(label=label)
+    window._UiHost = lambda owner, selected: NS(action_context=lambda: selected)
+    window._invoke_ui_action = lambda selected, host: selected.callback(host)
+    window._add_plugin_book_actions = lambda panel, row: add_plugin_book_actions(
+        window, panel, row, contextual_actions=contextual_actions)
+    Button.instances.clear()
+    call(NS(key="book-1"))
+    buttons = [button for button in Button.instances if button.label == "Explorer ce livre"]
+    assert len(buttons) == 1
+    assert activations == []  # rendering never invokes the plugin
+    buttons[0].click()
+    assert activations == [context]
+    assert activations[0].book.book_id == "source-a"
+    # Once the contribution is removed, the old button is inert.
+    window._pages.clear()
+    buttons[0].click()
+    assert activations == [context]
