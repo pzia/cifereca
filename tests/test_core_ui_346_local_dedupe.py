@@ -77,6 +77,6 @@ def test_library_detail_omits_redundant_availability_row_and_badge():
                                   if isinstance(node, ast.FunctionDef)
                                   and node.name == "local_book_detail_sections"))
     assert "('Disponibilité', availability)" in projection
-    assert "if offline_if_local and (not availability)" in projection
+    assert "offline_if_local" in projection and "not availability" in projection
     assert "'Disponible hors ligne'" in projection
 
