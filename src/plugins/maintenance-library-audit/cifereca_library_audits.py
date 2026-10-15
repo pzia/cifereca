@@ -407,16 +407,22 @@ class NamingAuditTool(_ReadOnlyTool):
         policy_failures = 0
         samples: list[str] = []
         for notice_index, row in enumerate(entries, start=1):
-            title = str(row.get("title") or "").strip()
-            current = str(row.get("filename") or row.get("file_name") or "").strip()
-            if not current:
-                path = str(row.get("path") or "").strip()
-                current = PurePath(path).name if path else ""
-            if not title or not current:
-                unavailable += 1
-                continue
-            extension = PurePath(current).suffix.lstrip(".") or str(row.get("format") or "epub").lower()
+            # Everything from a metadata row (including str(), pathlib and
+            # broker output) is untrusted. An exception raised *before* the
+            # old preview() try block used to abort the entire batch.
             try:
+                title = str(row.get("title") or "").strip()
+                current = str(row.get("filename") or row.get("file_name") or "").strip()
+                if not current:
+                    path = str(row.get("path") or "").strip()
+                    current = PurePath(path).name if path else ""
+                if not title or not current:
+                    unavailable += 1
+                    continue
+                extension = (
+                    PurePath(current).suffix.lstrip(".")
+                    or str(row.get("format") or "epub").lower()
+                )
                 expected = naming.preview(
                     title=title,
                     author=str(row.get("author") or ""),
@@ -424,28 +430,25 @@ class NamingAuditTool(_ReadOnlyTool):
                     index=str(row.get("series_index") or row.get("index") or ""),
                     extension=extension,
                 )
+                # A null/empty/non-stringifiable proposal is not a valid
+                # comparison target and must not count as a mismatch.
+                if expected is None:
+                    raise ValueError("unusable naming policy proposal")
+                proposed = str(expected).strip()
+                if not proposed:
+                    raise ValueError("empty naming policy proposal")
+                different = PurePath(current).name != PurePath(proposed).name
             except Exception:
-                # A single unreadable/malformed entry must not abort the
-                # remaining read-only audit. The broker can embed private
-                # titles, paths or credentials in its error/class name.
-                policy_failures += 1
-                if len(samples) < 12:
-                    samples.append(f"Politique de nommage indisponible : notice n°{notice_index}")
-                continue
-            if expected is None or not str(expected).strip():
-                # An empty proposed name is not a legitimate discrepancy:
-                # comparison with it would classify every file as mismatched.
+                # Never include provider values, exception texts or dynamic
+                # exception class names in the public preview/progress.
                 policy_failures += 1
                 if len(samples) < 12:
                     samples.append(f"Politique de nommage indisponible : notice n°{notice_index}")
                 continue
             checked += 1
-            if PurePath(current).name != PurePath(str(expected)).name:
+            if different:
                 mismatch += 1
                 if len(samples) < 12:
-                    # Names suggested by the policy can contain private
-                    # titles, authors, paths or arbitrary provider metadata.
-                    # Surface the finding, never the raw filenames.
                     samples.append(f"Nom non conforme : notice n°{notice_index}")
         summary = f"{mismatch} nom(s) différent(s) de la politique Core sur {checked} fichier(s) vérifiable(s)."
         warnings = list(samples)
