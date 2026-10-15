@@ -139,6 +139,7 @@ class View:
         self.origin_identity = plugin.pending_identity
         self.generation, self.task, self.disposed = 0, None, False
         self._reloading_identities = False
+        self._profile_selection_required = False
         config = getattr(plugin.context, 'config', {}) or {}
         self._semantic_enabled = config.get('llm_semantic_hypotheses') is True if isinstance(config, Mapping) else False
         self._semantic_generation, self._semantic_task = 0, None
@@ -230,6 +231,10 @@ class View:
             return False
         self.cache.clear()
         current = self.identity_id()
+        if current:
+            # A deliberate GTK selection clears a prior missing-profile
+            # state; a model rebuild must never clear it implicitly.
+            self._profile_selection_required = False
         rows = list(self.plugin.context.broker('identities').identities())
         if rows != self.identities:
             self._reloading_identities = True
@@ -243,12 +248,17 @@ class View:
                     i for i, row in enumerate(rows)
                     if str(row.get('identity_id') or '') == current
                 ), None)
-                # Initial activation may select the first profile. If a
-                # previously selected identity disappeared, require a new
-                # explicit choice instead of exposing another account.
+                # A vanished profile requires an explicit user choice.
+                # Keep that state across *subsequent* identity-overview
+                # updates, when identity_id() will be empty (GTK invalid
+                # index) and would otherwise fall back to profile zero.
+                if current and selected is None:
+                    self._profile_selection_required = True
                 self.identity.set_selected(
                     selected if selected is not None else (
-                        0xFFFFFFFF if current or not rows else 0
+                        0xFFFFFFFF
+                        if getattr(self, '_profile_selection_required', False) or not rows
+                        else 0
                     )
                 )
             finally:
