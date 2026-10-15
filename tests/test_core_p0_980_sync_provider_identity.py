@@ -77,6 +77,45 @@ def test_gtk_sync_row_and_worker_use_same_safe_identity_projection():
     refresh = next(node for node in tree.body
                    if isinstance(node, ast.FunctionDef) and node.name == "_refresh_sync_page")
     source = ast.unparse(refresh)
-    assert "row.set_title(sync_source_identity_label(source))" in source
-    assert "label=sync_source_identity_label(source)" in source
+    assert "row.set_title(display_label)" in source
+    assert "label=display_label" in source
+    assert "source_names.count(" in source
     assert "row.set_title(source.label or source.provider_id)" not in source
+
+
+def test_gtk_controller_titles_disambiguate_public_catalogues_only_when_same_name():
+    from tests.test_core_ui_1347_sync_action_scope import _fixture, _source
+    sources = [
+        _source(provider_id="gutenberg", source_id="public-g", label="Catalogue public",
+                sync_capable=False, enabled=False),
+        _source(provider_id="gallica", source_id="public-b", label="Catalogue public",
+                sync_capable=False, enabled=False),
+        _source(provider_id="paris", source_id="card-1", label="Paris · Camille"),
+    ]
+    window, broker, calls, _build, _page = _fixture(sources=sources)
+    rows = [group.children[0] for group in window._sync_sources_box.children]
+    assert [row.title for row in rows] == [
+        "Catalogue public · gutenberg",
+        "Catalogue public · gallica",
+        "Paris · Camille",
+    ]
+    assert all("Fournisseur : " in row.subtitle for row in rows)
+    assert "Fournisseur : gutenberg" in rows[0].subtitle
+    assert "Fournisseur : gallica" in rows[1].subtitle
+    assert "Fournisseur : paris" in rows[2].subtitle
+    assert window.runner.tasks == []
+    assert all(name == "sources" for name, *_ in calls)
+
+
+def test_gtk_controller_action_and_task_preserve_single_non_kobo_source_name():
+    from tests.test_core_ui_1347_sync_action_scope import _fixture, _source
+    source = _source(provider_id="paris", source_id="card-1", label="Paris · Camille")
+    window, broker, calls, _build, _page = _fixture(sources=[source])
+    row = window._sync_sources_box.children[0].children[0]
+    assert row.title == "Paris · Camille"
+    assert row.subtitle.startswith("Fournisseur : paris")
+    button = row.suffixes[1]
+    assert button.label == "Synchroniser Paris · Camille"
+    button.click()
+    assert window.runner.tasks[0].label == "Synchronisation Paris · Camille…"
+    assert not any(name == "sync-source" for name, *_ in calls)
