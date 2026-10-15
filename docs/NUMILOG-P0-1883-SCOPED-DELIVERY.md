@@ -46,13 +46,44 @@ Ce correctif ne constitue donc pas une preuve de résolution réelle.
 
 Événements déjà prévus dans les diagnostics du plugin :
 
-- `bibliothèque livraison` : phase `owned_card`, pagination et nombre
-  de fiches / liens structurés reconnus (jamais leur contenu).
+- `bibliothèque livraison` : phase `owned_card`,
+  `page_kind=meslivres`, pagination et **quatre compteurs numériques bornés** :
+  `cards`, `js_shapes_in_cards`, `js_shapes_outside_cards`,
+  `bound_links`. Le diagnostic ne dit rien des valeurs privées.
 - `livraison ACSM` : origine de la décision `owned_card` ou `readbook`.
-- `livraison HTML` : catégorie `login / error / intermediate / invalid`
-  et code `session_expired / html_error / missing / ambiguous /`
-  `single_allowed_candidate`. Pas de chemin, query string, cookie, titre,
-  `ProductId`, `IndexExemplaire` ou document HTML.
+- `livraison HTML` : `page_kind=readbook/meslivres/delivery_intermediate`,
+  catégorie `login/error/intermediate/invalid`, code
+  `session_expired/html_error/missing/ambiguous/single_allowed_candidate`
+  et, pour les pages HTML intermédiaires parsables, uniquement
+  `js_delivery_shapes`, `absolute_html_hrefs`,
+  `absolute_script_literals`, `allowed_candidates` (entiers bornés).
+  Pas de chemin, query string, cookie, titre, `ProductId`,
+  `IndexExemplaire` ni document HTML.
+
+Interprétation **sans présumer le comportement du site réel** :
+
+- `js_shapes_outside_cards>0` avec `bound_links=0` : l'objet est
+  détectable mais la page privée ne prouve **pas** sa correspondance avec
+  un livre acheté précis. Aucun GET direct depuis cet objet.
+- `js_shapes_in_cards>0`, `bound_links=0` : un objet a été vu dans une
+  fiche, mais l'association, le format, l'hôte, le port, le chemin,
+  la cardinalité des liens ou les marqueurs sont insuffisants.
+- `bound_links>0` puis échec HTTP : une preuve structurée a été retenue,
+  mais aucun succès ACSM/ADEPT ne peut être déduit du compteur.
+- `page_kind=readbook`, `js_delivery_shapes>0` et
+  `allowed_candidates=1` : le parcours intermédiaire avait un lien
+  admissible, indépendamment de la forme de la fiche MesLivres.
+- `page_kind=readbook`, `allowed_candidates=0` : le HTML réellement
+  reçu ne fournit pas de destination sûre identifiable par le parseur.
+  Ce **n'est pas** une preuve de session expirée sans marqueur de login.
+
+Un tableau HTML avec plusieurs livres (`tbody/tr/td`) est désormais découpé
+en fiches distinctes avant d'associer titres, liens et objets JavaScript.
+Toute ligne multlivre impossible à découper est refusée, plutôt que
+d'associer le titre du premier livre au lien du second.
+La validation d'identité et du broker ACSM est appliquée **avant le GET
+signé également lors des redirections 302/HTML**. L'origine de livraison
+n'autorise pas un chemin autre que `/fulfillment/URLLink.acsm`.
 
 Pour déterminer la différence avec la page réelle, ne collecter
 **que** : catégorie de page (MesLivres/fiche/readBook), support de l'objet
