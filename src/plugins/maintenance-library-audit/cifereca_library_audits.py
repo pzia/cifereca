@@ -324,6 +324,75 @@ class CoverAuditTool(_ReadOnlyTool):
         )
 
 
+    def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
+        """Never republish an untrusted/stale preview's arbitrary strings.
+
+        Cover previews can be restored from a cache. Plan summaries and
+        warnings are not authority to render provider-controlled text in the
+        tool's live progress line or in exported diagnostics.
+        """
+        facts = plan.facts
+        valid = (
+            plan.tool_id == self.info.id
+            and type(facts) is dict
+            and set(facts) == {"entries", "missing", "invalid"}
+        )
+        counts = {}
+        if valid:
+            for key in ("entries", "missing", "invalid"):
+                value = facts.get(key)
+                if type(value) is not int or not 0 <= value <= 1_000_000:
+                    valid = False
+                    break
+                counts[key] = value
+            if valid and counts["missing"] + counts["invalid"] > counts["entries"]:
+                valid = False
+        expected_summary = (
+            f'{counts["missing"]} notice(s) sans couverture, '
+            f'{counts["invalid"]} référence(s) suspecte(s), '
+            f'sur {counts["entries"]} notice(s).'
+        ) if valid else ""
+        if valid:
+            valid = type(plan.summary) is str and plan.summary == expected_summary
+        safe_warnings = []
+        if valid:
+            valid = type(plan.warnings) in (tuple, list) and len(plan.warnings) <= 12
+            if valid:
+                import re
+                for warning in plan.warnings:
+                    if type(warning) is not str:
+                        valid = False
+                        break
+                    match = re.fullmatch(
+                        r"(Sans couverture|Couverture non reconnue) : notice n°([1-9][0-9]{0,6})",
+                        warning,
+                    )
+                    if match is None or int(match.group(2)) > counts["entries"]:
+                        valid = False
+                        break
+                    safe_warnings.append(warning)
+        control.check_cancelled()
+        if not valid:
+            control.report(message="Audit des couvertures impossible : plan invalide")
+            control.check_cancelled()
+            return MaintenanceResult(
+                ok=False,
+                changed=0,
+                summary="Audit des couvertures non vérifiable : plan invalide.",
+                warnings=("Plan de couvertures invalide : relancez l’analyse.",),
+                facts={"invalid_plan": 1},
+            )
+        control.report(message=expected_summary)
+        control.check_cancelled()
+        return MaintenanceResult(
+            ok=True,
+            changed=0,
+            summary=expected_summary,
+            warnings=tuple(safe_warnings),
+            facts=counts,
+        )
+
+
 class LanguageAuditTool(_ReadOnlyTool):
     info = MaintenanceToolInfo(
         id="languages.audit",
