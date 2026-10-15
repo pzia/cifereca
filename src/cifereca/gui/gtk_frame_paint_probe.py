@@ -44,7 +44,10 @@ class GtkFramePaintProbe:
             except Exception:
                 pass
 
-    def observe(self, category: str, widget, monitor, *, clock=None) -> bool:
+    def observe(
+        self, category: str, widget, monitor, *, clock=None,
+        operation_id: int | None = None,
+    ) -> bool:
         """Observe a future frame only when the user has opted into capture."""
         if category not in self._CATEGORIES:
             return False
@@ -57,6 +60,7 @@ class GtkFramePaintProbe:
             frame_clock = widget.get_frame_clock()
             if frame_clock is None:
                 return False
+            generation = getattr(monitor, "capture_generation", None)
             now = clock or self._clock
             started = now()
             if not isinstance(started, (int, float)) or not math.isfinite(started):
@@ -71,7 +75,11 @@ class GtkFramePaintProbe:
             if current is None or current["token"] is not token:
                 return
             self._remove(category)
-            if self._closed or getattr(monitor, "detailed_capture_enabled", False) is not True:
+            if (
+                self._closed
+                or getattr(monitor, "detailed_capture_enabled", False) is not True
+                or getattr(monitor, "capture_generation", None) != generation
+            ):
                 return
             try:
                 elapsed_ms = (now() - started) * 1000
@@ -80,6 +88,7 @@ class GtkFramePaintProbe:
                 if math.isfinite(elapsed_ms) and 0 <= elapsed_ms <= self._timeout_ms:
                     monitor.record_phase(
                         category, "frame_wait", elapsed_ms, trigger="navigation",
+                        operation_id=operation_id,
                     )
             except Exception:
                 # Diagnostics must never break the GDK frame clock.
