@@ -187,3 +187,41 @@ def test_cli_exposes_opt_in_plan_without_enabling_sync_or_implicit_download():
     assert "kobo_manual_reconciliation_plan(result)" in code
     assert '"kobo-audit"' in code.split("local_adept_commands =", 1)[1]
     assert "service.connect_configured()" in code  # bypassed for kobo-audit
+
+
+def test_cli_plan_outputs_only_redacted_report_and_does_not_connect(
+    capsys, monkeypatch,
+):
+    from unittest.mock import Mock
+    from cifereca import cli
+    import cifereca.core.kobo_local_audit as audit_module
+
+    report = _report(cases=[("confirmed_binary_match", 2)])
+    service = NS(connect_configured=Mock(
+        side_effect=AssertionError("offline command must not connect"),
+    ))
+    core = NS(library=service, close=Mock())
+    monkeypatch.setattr(cli.CiferecaCore, "open", Mock(return_value=core))
+    calls = []
+    def audit(_service, *, credential_id):
+        assert _service is service
+        calls.append(credential_id)
+        return report
+    monkeypatch.setattr(audit_module, "kobo_local_reconciliation_audit", audit)
+
+    assert cli.main(["kobo-audit", "--plan", "--credential", "private-vault"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert set(result) == {"audit", "plan"}
+    assert result["plan"]["case_count"] == 1
+    assert result["plan"]["delete_authorized"] is False
+    assert "private-vault" not in json.dumps(result)
+    service.connect_configured.assert_not_called()
+    core.close.assert_called_once()
+    assert calls == ["private-vault"]
+
+    core.close.reset_mock()
+    assert cli.main(["kobo-audit"]) == 0
+    assert json.loads(capsys.readouterr().out) == report
+    service.connect_configured.assert_not_called()
+    core.close.assert_called_once()
+    assert calls == ["private-vault", None]
