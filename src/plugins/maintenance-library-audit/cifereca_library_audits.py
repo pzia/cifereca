@@ -1352,8 +1352,17 @@ class DuplicateCleanupTool(_ReadOnlyTool):
 
         # Validate the entire potentially restored plan before the destructive
         # broker is accessed; never stringify untrusted placement IDs.
-        raw_pairs = plan.facts.get("pairs", ())
-        invalid_plan = type(raw_pairs) not in (list, tuple)
+        # An otherwise plausible list of placement pairs may come from a
+        # restored plan for an unrelated tool or a corrupted plugin cache.
+        # A destructive broker must never be reached for either case.
+        facts = plan.facts
+        invalid_plan = (
+            type(plan.tool_id) is not str
+            or plan.tool_id != self.info.id
+            or type(facts) is not dict
+        )
+        raw_pairs = facts.get("pairs", ()) if type(facts) is dict else ()
+        invalid_plan = invalid_plan or type(raw_pairs) not in (list, tuple)
         if not invalid_plan and len(raw_pairs) > 100_000:
             invalid_plan = True
         pairs: list[tuple[str, str]] = []
@@ -1385,7 +1394,7 @@ class DuplicateCleanupTool(_ReadOnlyTool):
             if duplicates.intersection(keepers):
                 invalid_plan = True
 
-        read_failures = plan.facts.get("read_failures", 0)
+        read_failures = facts.get("read_failures", 0)
         if type(read_failures) is not int or not 0 <= read_failures <= 1_000_000:
             invalid_plan = True
 
