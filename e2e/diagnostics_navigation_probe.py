@@ -147,7 +147,7 @@ def compare_library_render(window):
     entries = list(window._library_entries_cache)
     assert len(entries) == 563
     samples = {"baseline_u0": [], "extracted": []}
-    phases = ("facets", "gtk_show_rows", "pending_selection", "selection_callback")
+    phases = ("row_constructor", "facets", "gtk_show_rows", "pending_selection", "selection_callback")
     phase_samples = {
         name: {phase: [] for phase in phases}
         for name in samples
@@ -155,6 +155,8 @@ def compare_library_render(window):
     phase_calls = {name: {phase: [] for phase in phases} for name in samples}
     gc_collections = {name: [] for name in samples}
     cpu_samples = {name: [] for name in samples}
+    gc_pause_samples = {name: [] for name in samples}
+    liststore_signal_samples = {name: [] for name in samples}
     renderers = {
         "baseline_u0": lambda: baseline_render_library(window, entries),
         "extracted": lambda: window._render_library(entries),
@@ -167,6 +169,29 @@ def compare_library_render(window):
             measured = {phase: 0.0 for phase in phases}
             calls = {phase: 0 for phase in phases}
             originals = []
+            # Scoped instrumentation only: both U0 and extracted use the
+            # same GObject row class, actual Gio.ListStore and GTK callbacks.
+            # Never install global telemetry in the product.
+            gc_pauses = []
+            gc_started = {}
+            store_events = []
+
+            def on_gc(phase, info):
+                generation = info.get("generation")
+                if phase == "start":
+                    gc_started[generation] = time.perf_counter_ns()
+                elif phase == "stop":
+                    start_ns = gc_started.pop(generation, None)
+                    if start_ns is not None:
+                        gc_pauses.append({
+                            "generation": generation,
+                            "duration_ms": round(
+                                (time.perf_counter_ns() - start_ns) / 1_000_000, 3
+                            ),
+                        })
+
+            def on_items_changed(_store, position, removed, added):
+                store_events.append((position, removed, added))
 
             def instrument(owner, method, phase):
                 original = getattr(owner, method)
@@ -182,7 +207,27 @@ def compare_library_render(window):
                 setattr(owner, method, timed)
                 originals.append((owner, method, original))
 
+            original_row_init = BookListItem.__init__
+            store_signal_id = None
+            gc_watching = False
+
+            def timed_row_init(row, *args, **kwargs):
+                started_ns = time.perf_counter_ns()
+                calls["row_constructor"] += 1
+                try:
+                    return original_row_init(row, *args, **kwargs)
+                finally:
+                    measured["row_constructor"] += (
+                        time.perf_counter_ns() - started_ns
+                    ) / 1_000_000
+
             try:
+                BookListItem.__init__ = timed_row_init
+                store_signal_id = window.library_page.store.connect(
+                    "items-changed", on_items_changed,
+                )
+                gc.callbacks.append(on_gc)
+                gc_watching = True
                 instrument(window, "_attach_row_facets", "facets")
                 instrument(window.library_page, "show_rows", "gtk_show_rows")
                 instrument(window, "_select_pending_library_item", "pending_selection")
@@ -195,7 +240,12 @@ def compare_library_render(window):
                 cpu_ms = (time.process_time() - cpu_started) * 1000
                 after_gc = tuple(g["collections"] for g in gc.get_stats())
             finally:
-                # Restore original bound methods even if an assertion fails.
+                # Restore all per-render instrumentation, even on errors.
+                if gc_watching:
+                    gc.callbacks.remove(on_gc)
+                if store_signal_id is not None:
+                    window.library_page.store.disconnect(store_signal_id)
+                BookListItem.__init__ = original_row_init
                 for owner, method, original in reversed(originals):
                     setattr(owner, method, original)
 
@@ -211,11 +261,15 @@ def compare_library_render(window):
             assert len(rows) == 563 and window.library_page.selection.get_selected_item() is None
             assert list(window._library_objects) == [row[0] for row in reference]
             assert calls["facets"] == calls["gtk_show_rows"] == calls["pending_selection"] == 1
+            assert calls["row_constructor"] == 563
+            assert sum(event[2] for event in store_events) == 563
             # Callbacks may be fired by the GTK store and by the explicit
             # empty-selection fallback; report counts, not an assumption.
             if iteration:  # First pair warms both renderers; not a sample.
                 samples[name].append(round(elapsed_ms, 3))
                 cpu_samples[name].append(round(cpu_ms, 3))
+                gc_pause_samples[name].append(gc_pauses)
+                liststore_signal_samples[name].append(store_events)
                 gc_collections[name].append(tuple(
                     current - previous for previous, current in zip(before_gc, after_gc)
                 ))
@@ -240,11 +294,15 @@ def compare_library_render(window):
         "phase_median_ms": phase_medians,
         "phase_call_counts": phase_calls,
         "process_cpu_samples_ms": cpu_samples,
+        "gc_pause_events": gc_pause_samples,
+        "liststore_items_changed": liststore_signal_samples,
         "gc_collection_deltas_by_generation": gc_collections,
         "phase_limits": (
             "Measured spans are inclusive; GTK show_rows includes signals; selection_callback "
-            "may be nested. Projection/factory is not measured exclusively. Three pairs only; "
-            "no frame timing, no live provider; differences are observational, not causal proof."
+            "may be nested. GObject row constructors and ListStore items-changed "
+            "are observed symmetrically, but row timing is inclusive and GC callbacks "
+            "perturb timing. Three pairs only; no frame, network or live provider "
+            "latency; no causal conclusion from a single sampling campaign."
         ),
         "limits": "Same runtime/widgets; excludes frame latency and live providers; no absolute timing gate.",
     }
