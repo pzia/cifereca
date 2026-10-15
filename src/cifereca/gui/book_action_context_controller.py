@@ -8,6 +8,11 @@ from __future__ import annotations
 
 
 def book_action_context(window, item, *, Path, ArtifactRef, ArtifactFormat, UiActionContext, book_ref_from_row):
+    # Capture host provenance before artifact/storage lookups. Metadata from a
+    # provider is not authority to select another profile for this UI action.
+    identity = getattr(window.service, "current_identity", None)
+    identity_id = getattr(identity, "identity_id", "")
+    identity_id = identity_id if isinstance(identity_id, str) else ""
     metadata = dict(item.get("metadata") or {}) if isinstance(item, dict) else {}
     book = book_ref_from_row(item)
     artifact = None
@@ -27,5 +32,5 @@ def book_action_context(window, item, *, Path, ArtifactRef, ArtifactFormat, UiAc
         artifact = ArtifactRef(artifact_id=artifact_id, book_id=book.book_id or None,
             format=ArtifactFormat("application/epub+zip" if fmt.lower() == "epub" else "application/octet-stream", fmt),
             size_bytes=size, sha256=sha, filename=path.name)
-    return UiActionContext(target="book.detail", route=window.view_stack.get_visible_child_name() or "", book=book, artifact=artifact, metadata=metadata)
+    return UiActionContext(target="book.detail", route=window.view_stack.get_visible_child_name() or "", book=book, artifact=artifact, metadata=metadata, identity_id=identity_id)
 

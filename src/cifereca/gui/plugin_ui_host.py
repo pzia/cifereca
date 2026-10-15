@@ -30,7 +30,12 @@ class _UiHost:
         if self._action_context is None:
             from cifereca.plugin_api import UiActionContext
             route = self.window.view_stack.get_visible_child_name() if hasattr(self.window, "view_stack") else ""
-            self._action_context = UiActionContext(target="page", route=route)
+            identity = getattr(getattr(self.window, "service", None), "current_identity", None)
+            identity_id = getattr(identity, "identity_id", "")
+            self._action_context = UiActionContext(
+                target="page", route=route,
+                identity_id=identity_id if isinstance(identity_id, str) else "",
+            )
         return self._action_context
     def refresh_context(self) -> None:
         if not self._window_alive():

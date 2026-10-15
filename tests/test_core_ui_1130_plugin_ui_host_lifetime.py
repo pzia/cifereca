@@ -150,3 +150,22 @@ def test_cancel_old_replaced_overview_listener_list_does_not_touch_new_generatio
     window._overview_listeners = [current]
     cancel_old()
     assert window._overview_listeners == [current]
+
+
+def test_page_context_captures_active_identity_once():
+    identity = NS(identity_id="alice")
+    window = NS(service=NS(current_identity=identity),
+                view_stack=NS(get_visible_child_name=lambda: "constellations"))
+    host = _host(window)
+    context = host.action_context()
+    assert context.route == "constellations"
+    assert context.identity_id == "alice"
+    identity.identity_id = "bob"
+    assert host.action_context() is context
+    assert host.action_context().identity_id == "alice"
+    assert _host(window).action_context().identity_id == "bob"
+
+
+def test_page_context_without_profile_keeps_legacy_empty_identity():
+    for window in (NS(), NS(service=NS(current_identity=None))):
+        assert _host(window).action_context().identity_id == ""
