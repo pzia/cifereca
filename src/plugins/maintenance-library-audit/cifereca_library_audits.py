@@ -585,14 +585,21 @@ class NamingAuditTool(_ReadOnlyTool):
                     index=str(row.get("series_index") or row.get("index") or ""),
                     extension=extension,
                 )
-                # A null/empty/non-stringifiable proposal is not a valid
-                # comparison target and must not count as a mismatch.
-                if expected is None:
+                # A broker preview is a filename proposal, not an arbitrary
+                # object or a complete filesystem path. Never coerce a bool,
+                # number or provider-supplied object into a plausible name,
+                # and never downgrade an absolute or nested path by basename.
+                if type(expected) is not str:
                     raise ValueError("unusable naming policy proposal")
-                proposed = str(expected).strip()
-                if not proposed:
-                    raise ValueError("empty naming policy proposal")
-                different = PurePath(current).name != PurePath(proposed).name
+                proposed = expected.strip()
+                if (
+                    not proposed or len(proposed) > 512
+                    or proposed in {".", ".."}
+                    or "/" in proposed or "\\" in proposed
+                    or any(ord(ch) < 32 or ord(ch) == 127 for ch in proposed)
+                ):
+                    raise ValueError("invalid naming policy filename")
+                different = PurePath(current).name != proposed
             except Exception:
                 # Never include provider values, exception texts or dynamic
                 # exception class names in the public preview/progress.
