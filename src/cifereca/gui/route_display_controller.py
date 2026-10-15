@@ -65,7 +65,16 @@ def show_route(window, route: str, *, Gtk) -> None:
         if not is_current():
             return
         if isinstance(root, Gtk.Window):
-            widget.child_focus(Gtk.DirectionType.TAB_FORWARD)
+            # GTK may call _show_route twice while restoring history: once
+            # from select_row() and once explicitly from the coordinator.
+            # Do not overwrite the focus restored by the first call with a
+            # generic FlowBoxChild on the second call (#962).
+            restoring_same_youth = (
+                route == "youth" and outgoing == "youth"
+                and getattr(window, "_restoring_navigation", False)
+            )
+            if not restoring_same_youth:
+                widget.child_focus(Gtk.DirectionType.TAB_FORWARD)
             if not is_current():
                 return
 
