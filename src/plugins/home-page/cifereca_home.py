@@ -81,13 +81,13 @@ def statistics_lines(row):
     stats=row.get('statistics')
     if not isinstance(stats,dict):return ['Statistiques : Core029 requis']
     loans=stats.get('known_loans')
-    lines=[f"{stats.get('local_books',0)} livres locaux · {loans if loans is not None else '—'} emprunts connus"]
-    names={'paris':'Paris','kobo':'Kobo','gallica':'Gallica','gutenberg':'Gutenberg','bnf-catalogue':'BnF','local':'Local (origine non rapprochée)'}
+    lines=[f"{stats.get('local_books',0)} livres locaux · {loans if loans is not None else '—'} prêts de bibliothèque connus"]
+    names={'paris':'Paris','kobo':'Kobo','gallica':'Gallica','gutenberg':'Gutenberg','bnf-catalogue':'BnF','numilog':'Numilog','local':'Local (origine non rapprochée)'}
     sources=stats.get('sources') or {}
     if sources:lines.append('Livres par catalogue : '+ ' · '.join(f"{names.get(key,key)} : {count}" for key,count in sorted(sources.items())))
     lines.append(f"{stats.get('local_placements',0)} emplacements · {stats.get('remote_owned_rights',0)} droits d’achat distants")
-    if loans is None:lines.append('Emprunts non actualisés')
-    lines.append('Dernier inventaire ; comptes de prêts éventuellement partiels. Les sources peuvent se chevaucher.')
+    if loans is None:lines.append('Prêts de bibliothèque non actualisés')
+    lines.append('Inventaire local et droits d’achat distincts des prêts de bibliothèque. Les sources peuvent se chevaucher.')
     return lines
 
 def attention_items(row, *, now=None):
