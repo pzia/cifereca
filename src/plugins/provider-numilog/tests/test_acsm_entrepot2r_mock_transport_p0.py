@@ -66,7 +66,15 @@ class Identities:
             provider_id="numilog",
             label="Compte fictif",
         )
-        self.rows = (account, account) if ambiguous else (account,)
+        # Two different identities claiming the same account are ambiguous;
+        # duplicated identical bindings do not change the set of owners.
+        second = AccountRef(
+            account_id="numilog:" + scope,
+            identity_id="reader-2",
+            provider_id="numilog",
+            label="Compte fictif (autre identité)",
+        )
+        self.rows = (account, second) if ambiguous else (account,)
 
     def accounts(self, identity_id=None):
         return self.rows
