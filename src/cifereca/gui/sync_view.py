@@ -16,6 +16,56 @@ class SyncSourcePresentation:
     disabled_reason: str
 
 
+
+@dataclass(frozen=True)
+class SyncMaterializationSchedulePresentation:
+    """Source-local Kobo consent, separate from an inventory refresh."""
+    subtitle: str
+    action_label: str
+    action_enabled: bool
+    tooltip: str
+    mode: str
+
+
+def sync_materialization_schedule_presentation(
+    mode: object, *, source_enabled: bool, connected: bool,
+    capable: bool, broker_supported: bool,
+) -> SyncMaterializationSchedulePresentation:
+    """Return allowlisted French UI text; never echo raw broker values.
+
+    A configured on_start can always be revoked, even if the provider later
+    becomes unavailable. Enabling it requires a live source, then an
+    independent confirmation dialog and Core validation.
+    """
+    if not broker_supported or type(mode) is not str or mode not in {
+        "manual", "on_start",
+    }:
+        return SyncMaterializationSchedulePresentation(
+            "Planification indisponible · aucun téléchargement automatique autorisé.",
+            "Planification indisponible", False,
+            "Le broker ne propose pas la planification par source.", "unavailable",
+        )
+    if mode == "on_start":
+        return SyncMaterializationSchedulePresentation(
+            "Activée pour ce compte au démarrage uniquement · "
+            "les acquisitions restent contrôlées par le Core. "
+            "Pas de synchronisation périodique.",
+            "Désactiver au démarrage", True,
+            "Révoquer l’autorisation automatique propre à ce compte Kobo.",
+            "on_start",
+        )
+    return SyncMaterializationSchedulePresentation(
+        "Mode manuel (par défaut) · la mise à jour des notices et droits "
+        "ne télécharge aucun fichier local.",
+        "Activer au démarrage…",
+        bool(source_enabled and connected and capable),
+        "Demander une autorisation explicite pour les acquisitions de ce compte "
+        "au prochain démarrage uniquement."
+        if source_enabled and connected and capable else
+        "Connectez et activez ce compte Kobo pour autoriser le démarrage.",
+        "manual",
+    )
+
 def _timestamp_label(value: object) -> str:
     text = str(value or "").strip()
     if not text:
