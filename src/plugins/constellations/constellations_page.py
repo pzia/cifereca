@@ -265,6 +265,8 @@ class View:
         self.plugin, self.host, self.Gtk, self.GLib = plugin, host, Gtk, GLib
         self.nodes, self.local, self.cache = (), (), {}
         self.nav, self.center = Navigation(), None
+        # Scope the visible graph independently of transient GTK dropdown state.
+        self._nodes_identity = ''
         self.origin_book = plugin.pending
         self.origin_identity = plugin.pending_identity
         self.generation, self.task, self.disposed = 0, None, False
@@ -400,6 +402,9 @@ class View:
         if getattr(self, 'disposed', False):
             return
         identity = self.identity_id()
+        # Discard old graph authority as soon as the profile is changed,
+        # even while the next asynchronous graph is still loading.
+        self._nodes_identity = ''
         if not identity:
             self.generation += 1
             if self.task:
@@ -481,6 +486,7 @@ class View:
         if error:
             self.status.set_label(error); return False
         rows, self.local, self.nodes, seed_key, *extra = result
+        self._nodes_identity = identity
         truncated = bool(extra[0]) if extra else False
         rejected = int(extra[1]) if len(extra) > 1 else 0
         self.cache.pop(identity, None)
@@ -569,6 +575,14 @@ class View:
     def visit(self, node):
         if getattr(self, 'disposed', False):
             return
+        # A retained GTK button may still call visit() after graph reload or
+        # identity change. Only a node *object* in the current scoped graph
+        # can be visited: matching ISBN/title/key is not account evidence.
+        if not any(candidate is node for candidate in getattr(self, 'nodes', ())):
+            return
+        graph_identity = getattr(self, '_nodes_identity', '')
+        if graph_identity and graph_identity != self.identity_id():
+            return
         self.cancel_calculation()
         self.center = node; self.nav.visit(node.key); self.render()
 
@@ -582,6 +596,11 @@ class View:
 
     def open_book(self):
         if getattr(self, 'disposed', False):
+            return
+        # Never reinterpret the previous account's center as a book in the
+        # currently selected profile while a GTK identity switch settles.
+        graph_identity = getattr(self, '_nodes_identity', '')
+        if graph_identity and graph_identity != self.identity_id():
             return
         method = getattr(self.host, 'open_book_detail', None)
         if self.center and callable(method) and method(self.center.book, identity_id=self.identity_id()):
