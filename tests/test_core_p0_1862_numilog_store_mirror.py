@@ -109,7 +109,10 @@ def test_manual_source_inventory_sync_does_not_use_backup_or_direct_download(
     try:
         _account, _session, calls = _connect(service)
         broker = SynchronizationBrokerImpl(service)
-        source = broker.sources("default")[0]
+        source = next(
+            row for row in broker.sources("default")
+            if row.provider_id == "numilog"
+        )
         assert "remote_inventory" in source.sync_capabilities
         assert "local_materialization" not in source.sync_capabilities
         monkeypatch.setattr(
@@ -132,7 +135,10 @@ def test_disabled_source_skips_remote_inventory_and_every_download(tmp_path):
     try:
         _account, _session, calls = _connect(service)
         broker = SynchronizationBrokerImpl(service)
-        source = broker.sources("default")[0]
+        source = next(
+            row for row in broker.sources("default")
+            if row.provider_id == "numilog"
+        )
         broker.set_enabled(source.source_id, False)
         assert service.mirror_personal_libraries() == {}
         result = broker.synchronize_source(source.source_id)
