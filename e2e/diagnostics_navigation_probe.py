@@ -925,7 +925,7 @@ def main() -> int:
         items = [dict(
             placement_id=f"p0-recent-{index:03d}", title=f"Acquisition fictive {index:03d}",
             author="Auteur fictif", provider_id="kobo" if index % 2 else "local",
-            acquired_at="2026-10-10T12:00:00+00:00", thumbnail_url=None,
+            acquired_at=1791633600, thumbnail_url=None,
             metadata={"language": "fr"},
         ) for index in range(563)]
         w.recent_page.clear_rows()
@@ -954,7 +954,17 @@ def main() -> int:
         assert w.recent_page.detail.get_mapped()
         assert w.search_controls.state() == recent_volume["search_state"]
         assert w.service.current_identity.identity_id == "camille"
+        assert all(w.recent_page.store.get_item(i).meta != "Date inconnue" for i in range(563))
         report["checks"]["P0_recent_real_detail_preserves_identity_and_search_filter"] = True
+        # The benchmark blocks the main loop; allow layout/repaint to catch up
+        # before capturing and restoring the snapshot.
+        later(250, recent_volume_capture)
+
+    def recent_volume_capture():
+        w = window[0]
+        title = next(node for node in walk(w.recent_page.detail)
+                     if isinstance(node, Gtk.Label) and node.get_text() == "Acquisition fictive 562")
+        assert title.get_mapped() and title.get_width() > 0
         capture("03f-recent-563-selected-detail")
         w._render_recent(recent_volume["items"])
         if recent_volume["selected"] is not None:
