@@ -21,23 +21,6 @@ _TRACE_LOG = logging.getLogger("cifereca")
 class TaskRunner:
     """Run non-UI operations outside GTK with priority and global feedback."""
 
-    @staticmethod
-    def _observe_task_phase(
-        window: Any, *, task_id: int, kind: str, origin: str,
-        phase: str, elapsed_seconds: float, outcome: str = "unknown",
-    ) -> None:
-        """Best-effort passive metric; never interfere with worker/GTK delivery."""
-        observer = getattr(getattr(window, "ui_perf", None), "record_phase", None)
-        if not callable(observer):
-            return
-        try:
-            observer(
-                kind, phase, elapsed_seconds * 1000,
-                operation_id=task_id, trigger=origin, outcome=outcome,
-            )
-        except Exception:
-            # A failing observer is not allowed to break a real task.
-            pass
 
     def __init__(self, window: Any, *, max_workers: int = 3):
         self.window = window
@@ -113,6 +96,23 @@ class TaskRunner:
                 self._coalesced[admission] = task_id
         GLib.idle_add(self.window._task_started, task_id, count, label, int(priority), kind)
 
+        def observe(
+            phase: str, elapsed_seconds: float, outcome: str = "unknown",
+        ) -> None:
+            # Local closure also supports the historical isolated submit()
+            # adapters that execute against a lightweight window host.
+            observer = getattr(getattr(self.window, "ui_perf", None), "record_phase", None)
+            if not callable(observer):
+                return
+            try:
+                observer(
+                    kind, phase, elapsed_seconds * 1000,
+                    operation_id=task_id, trigger=origin, outcome=outcome,
+                )
+            except Exception:
+                # Instrumentation must never affect a real task or GTK.
+                pass
+
         queued_at = time.monotonic()
         _TRACE_LOG.info(
             "TRACE task submit id=%s priority=%s kind=%s origin=%s label=%s",
@@ -130,10 +130,7 @@ class TaskRunner:
 
         def traced_fn() -> Any:
             started = time.monotonic()
-            self._observe_task_phase(
-                self.window, task_id=task_id, kind=kind, origin=origin,
-                phase="queue_wait", elapsed_seconds=max(0, started - queued_at),
-            )
+            observe("queue_wait", max(0, started - queued_at))
             _TRACE_LOG.info(
                 "TRACE task begin id=%s priority=%s kind=%s queue_wait=%.3fs label=%s",
                 task_id, int(priority), kind, started - queued_at, label,
@@ -146,11 +143,7 @@ class TaskRunner:
                 raise
             finally:
                 elapsed = max(0, time.monotonic() - started)
-                self._observe_task_phase(
-                    self.window, task_id=task_id, kind=kind, origin=origin,
-                    phase="worker", elapsed_seconds=elapsed,
-                    outcome=outcome_status,
-                )
+                observe("worker", elapsed, outcome_status)
                 _TRACE_LOG.info(
                     "TRACE task end id=%s kind=%s dt=%.3fs label=%s",
                     task_id, kind, elapsed, label,
@@ -210,11 +203,10 @@ class TaskRunner:
             gtk_pending_since = time.monotonic()
 
             def deliver() -> bool:
-                self._observe_task_phase(
-                    self.window, task_id=task_id, kind=kind, origin=origin,
-                    phase="gtk_delivery_wait",
-                    elapsed_seconds=max(0, time.monotonic() - gtk_pending_since),
-                    outcome="success" if outcome[0] == "ok" else "failed",
+                observe(
+                    "gtk_delivery_wait",
+                    max(0, time.monotonic() - gtk_pending_since),
+                    "success" if outcome[0] == "ok" else "failed",
                 )
                 with self._lock:
                     self._count = max(0, self._count - 1)
