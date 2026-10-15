@@ -101,7 +101,12 @@ class KoboCatalogService:
                 try:
                     address = ip_address(host)
                 except ValueError:
-                    pass
+                    # Some URL clients resolve shorthand IPv4 notations
+                    # (127.1, 0177.0.0.1, 192.168.1) to private networks,
+                    # while ipaddress() rejects their noncanonical spelling.
+                    # A numeric final DNS label is not a public hostname.
+                    if host.rsplit(".", 1)[-1].isdigit():
+                        return None
                 else:
                     if not address.is_global:
                         return None
