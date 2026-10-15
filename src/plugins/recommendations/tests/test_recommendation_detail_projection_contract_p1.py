@@ -11,7 +11,7 @@ import pytest
 
 from cifereca.plugin_api import UiBookListEntry
 from recommendation_engine import RankedCandidate
-from recommendations import UxRecommendationsView, _public_cover_url, _reference_label, _public_candidate_description
+from recommendations import UxRecommendationsView, _public_cover_url, _public_candidate_authors, _reference_label, _reference_label, _public_candidate_description
 
 
 @pytest.mark.parametrize("unsafe", (
@@ -302,3 +302,66 @@ def test_recommendation_scalar_text_rejects_untrusted_string_subclasses():
     assert rows[0].title == details[0].title == "Sans titre"
     fields = [field for section in details[0].sections for field in section.fields]
     assert next(field.value for field in fields if field.id == "description") == "Notice publique"
+
+
+def test_recommendations_authors_reject_private_untrusted_cache_objects():
+    class Poison:
+        def __str__(self):
+            raise AssertionError("PRIVATE_ACCOUNT_TOKEN")
+
+    class SecretString(str):
+        pass
+
+    item = {
+        "title": "Une édition attestée",
+        "author": Poison(),
+        "authors": [
+            " Alice ", Poison(), "PRIVATE\\nSESSION",
+            SecretString("PRIVATE_CREDENTIAL"),
+            {"value": Poison(), "label": " Bob "},
+            {"PRIVATE_PROVIDER_KEY": "not a public author"},
+            "Alice",
+        ],
+        "metadata": {
+            "creators": ["Claire", {"name": "David"}],
+            "epub_metadata": {"author": "Émile"},
+        },
+    }
+    view, rows, details, _ = _make_view(item)
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+
+    expected = ("Alice", "Bob", "Claire", "Émile", "David")
+    # Source order is field first, then metadata, then EPUB metadata.
+    assert _public_candidate_authors(item) == expected
+    assert rows[0].subtitle == details[0].subtitle == ", ".join(expected)
+    catalogue = next(section for section in details[0].sections if section.id == "catalogue")
+    assert [field.value for field in catalogue.fields if field.kind == "author"] == list(expected)
+    assert "PRIVATE" not in repr((rows[0].subtitle, details[0].subtitle))
+
+
+def test_recommendation_author_projection_is_bounded_and_reference_consistent():
+    item = {
+        "title": "Une édition",
+        "authors": [f"Author {i}" for i in range(200)],
+    }
+    authors = _public_candidate_authors(item)
+    assert authors == tuple(f"Author {i}" for i in range(32))
+    view, rows, details, _ = _make_view(item)
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+    assert rows[0].subtitle == details[0].subtitle == ", ".join(authors)
+    assert _reference_label(item) == "Une édition — Author 0"
+
+
+def test_untrusted_authors_never_create_public_metadata_or_duplicate_values():
+    item = {
+        "title": "Un livre",
+        "authors": {"PRIVATE_PASSWORD": "name in unrelated mapping"},
+        "metadata": {"author": [" Alice ", "alice", "Bob"]},
+    }
+    view, rows, details, _ = _make_view(item)
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+    assert _public_candidate_authors(item) == ("Alice", "Bob")
+    assert rows[0].subtitle == details[0].subtitle == "Alice, Bob"
