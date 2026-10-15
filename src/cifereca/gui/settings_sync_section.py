@@ -23,13 +23,14 @@ def kobo_backup_action_state(*, persisted_enabled: bool, draft_enabled: bool, di
         return ("Modifications à enregistrer avant de consulter la synchronisation.", False)
     if persisted_enabled is False:
         return (
-            "Acquisition au démarrage désactivée. La page Synchronisation permet "
-            "de consulter les sources et droits en ligne sans télécharger de livres.", True,
+            "Ancien réglage global désactivé. Les téléchargements au démarrage "
+            "se règlent désormais compte par compte dans Synchronisation ; "
+            "l’actualisation des notices ne télécharge aucun livre.", True,
         )
     return (
-        "Acquisition locale configurée au démarrage si l’intervalle est écoulé. "
-        "Consultez chaque compte sur la page Synchronisation et son aperçu local "
-        "sans lancement de lot global depuis Paramètres.", True,
+        "Ancien réglage global enregistré, mais sans effet sur l’acquisition "
+        "au démarrage. Seule l’autorisation explicite de chaque compte dans "
+        "Synchronisation peut activer ses téléchargements.", True,
     )
 
 
@@ -51,11 +52,13 @@ def build_kobo_sync_section(
 ) -> KoboSyncSettings:
     """Build original controls in original order, without binding new signals."""
     backup_group = Adw.PreferencesGroup(); backup_group.set_title("Kobo — acquisition locale des fichiers"); section.append(backup_group)
-    backup_auto_row = Adw.ActionRow(); backup_auto_row.set_title("Autoriser les téléchargements Kobo au démarrage")
+    backup_auto_row = Adw.ActionRow(); backup_auto_row.set_title(
+        "Ancien réglage global Kobo (compatibilité)"
+    )
     backup_auto_row.set_subtitle(
-        "Tente une acquisition locale à l’ouverture, uniquement si l’intervalle est écoulé. "
-        "N’installe pas de minuterie périodique ; actualiser les notices et droits "
-        "sur la page Synchronisation ne télécharge aucun livre."
+        "Ce réglage historique ne lance plus de téléchargements. Les acquisitions "
+        "au démarrage se configurent et se révoquent par compte dans Synchronisation. "
+        "Il n’existe pas de minuterie périodique de téléchargement."
     )
     backup_switch = Gtk.Switch(); backup_switch.set_active((config.get("kobo_backup.enabled", False) is True)); backup_switch.set_valign(Gtk.Align.CENTER); backup_auto_row.add_suffix(backup_switch); backup_group.add(backup_auto_row)
     # The source sync page only refreshes online metadata. Downloading books
@@ -75,11 +78,13 @@ def build_kobo_sync_section(
     run_backup_now.set_valign(Gtk.Align.CENTER)
     manual_row.add_suffix(run_backup_now)
     backup_group.add(manual_row)
-    unlinked_row = Adw.ActionRow(); unlinked_row.set_title("Option risquée : acquisitions avec fichiers locaux non rapprochés")
+    unlinked_row = Adw.ActionRow(); unlinked_row.set_title(
+        "Ancienne dérogation Kobo (compatibilité)"
+    )
     unlinked_row.set_subtitle(
-        "Par défaut, les livres importés sans liaison bloquent la reprise. "
-        "Activer cette dérogation augmente le risque de copies supplémentaires ; "
-        "ne remplace jamais la vérification des droits et de l’idempotence."
+        "Ce réglage hérité ne contourne ni la vérification des droits, "
+        "ni l’anti-doublons : tout fichier local candidat ambigu exige "
+        "un rapprochement sûr avant une nouvelle acquisition."
     )
     unlinked_switch = Gtk.Switch(); unlinked_switch.set_active(config.get("kobo_backup.allow_unlinked_acquisition", False) is True); unlinked_switch.set_valign(Gtk.Align.CENTER); unlinked_row.add_suffix(unlinked_switch); backup_group.add(unlinked_row)
     library_dir_row = Adw.EntryRow(); library_dir_row.set_title("Bibliothèque locale possédée par cifereca")
