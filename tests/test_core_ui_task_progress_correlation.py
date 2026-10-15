@@ -147,7 +147,10 @@ def test_retained_callback_cannot_overwrite_another_task_with_the_same_title(hos
     host.start(w)
     host.dispatch_until(lambda: w.busy_label.text.endswith("Synchronisation · Camille…"))
     first_id = next(iter(w._active_tasks))
-    host.start(w)
+    # An explicit physical refresh is intentionally *not* coalesced with the
+    # ongoing automatic opening sync. Two same-titled tasks still retain
+    # distinct progress IDs and their callbacks stay isolated.
+    host.start(w, control=NS(get_root=lambda: None))
     host.dispatch_until(lambda: len(host.callbacks) == 2 and w.busy_label.text == (
         "En cours · 2 opérations · Synchronisation · Camille…"
     ))
@@ -191,3 +194,46 @@ def test_explicit_identity_is_independent_of_wording_and_unknown_ids_are_rejecte
         "En cours · 2 opérations · Camille…"
     )
     assert live_task_progress_label(tasks, "Titre identique 50 %", task_id=3) is None
+
+
+def test_repeated_automatic_opening_calls_coalesce_into_one_worker_and_one_result(host):
+    """#981: four redundant GLib opening-sync triggers must not hit the Core lock."""
+    w = host.window
+    host.start(w)
+    host.dispatch_until(lambda: host.calls == [False] and len(w._active_tasks) == 1)
+    original = next(iter(w._active_tasks))
+    for _ in range(4):
+        host.start(w)
+    host.dispatch_remaining()
+    assert host.calls == [False]
+    assert w.runner._count == 1
+    assert len(w._active_tasks) == 1
+    assert list(w.runner._coalesced.values()) == [original]
+    host.gates[0].set()
+    host.dispatch_until(lambda: original in w._finished_task_ids)
+    assert len(w.activity_feedback.rows()) == 1
+    assert not w.runner._coalesced
+    # Explicitly recurring automatic sync after the first completion is valid.
+    host.start(w)
+    host.dispatch_until(lambda: len(host.calls) == 2)
+    assert host.calls == [False, False]
+    host.gates[1].set()
+
+
+def test_manual_and_deep_opening_stay_independent_of_auto_request(host):
+    """#981: a physical user refresh and a deep scan have distinct scopes."""
+    w = host.window
+    host.start(w)
+    host.dispatch_until(lambda: host.calls == [False])
+    host.start(w, control=NS(get_root=lambda: None))
+    host.dispatch_until(lambda: host.calls == [False, False])
+    host.start(w, deep=True)
+    host.dispatch_until(lambda: len(w._active_tasks) == 3)
+    assert w.runner._count == 3
+    assert len(w.runner._coalesced) == 1
+    # Two workers are active; deep will start when a slot is free.
+    host.gates[0].set()
+    host.dispatch_until(lambda: len(host.calls) == 3)
+    assert host.calls.count(True) == 1
+    host.gates[1].set()
+    host.gates[2].set()
