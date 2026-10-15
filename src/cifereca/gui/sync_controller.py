@@ -19,9 +19,14 @@ from .sync_view import (
     sync_local_preflight_presentation,
 )
 from .task_runner import TaskPriority
+from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
 
 
 def _build_sync_page(self):
+    if getattr(self, "_closed", False):
+        return Gtk.Label(label="Synchronisation indisponible")
+    page_token = object()
+    self._sync_page_token = page_token
     scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
     outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
     for edge in ("top", "bottom", "start", "end"):
@@ -43,16 +48,35 @@ def _build_sync_page(self):
     scope_note.set_wrap(True)
     outer.append(scope_note)
     self._sync_sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); outer.append(self._sync_sources_box)
-    refresh.connect("clicked", lambda _b: self._refresh_sync_page())
+    refresh.connect(
+        "clicked",
+        lambda _b: self._refresh_sync_page()
+        if capture_sync_action_scope(self, page_token=page_token) is not None
+        else None,
+    )
     def sync_all(button):
+        # This button must never silently turn a missing identity into the
+        # multi-account SyncRequest(identity_id=None) default.
+        scope = capture_sync_action_scope(self, page_token=page_token)
+        if scope is None:
+            return
         broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
-        identity = self.service.current_identity
-        if broker is None: return
-        request = SyncRequest(identity_id=identity.identity_id if identity else None)
+        if broker is None or not sync_action_scope_current(self, scope):
+            return
+        request = SyncRequest(identity_id=scope.identity_id)
+
+        def completed(_result):
+            if not sync_action_scope_current(self, scope):
+                return
+            self._refresh_sync_page()
+            if sync_action_scope_current(self, scope):
+                self.refresh_library(False)
+
         self.runner.submit(
             "Synchronisation des sources…",
-            lambda: broker.synchronize(request),
-            lambda _r: (self._refresh_sync_page(), self.refresh_library(False)),
+            lambda: broker.synchronize(request)
+            if sync_action_scope_current(self, scope) else None,
+            completed,
             control=button,
             priority=TaskPriority.USER_ACTION,
             kind="source-sync",
@@ -62,9 +86,14 @@ def _build_sync_page(self):
 
 
 def _refresh_sync_page(self) -> None:
+    if getattr(self, "_closed", False):
+        return
     box = getattr(self, "_sync_sources_box", None)
     if box is None: return
     clear_box(box)
+    if getattr(self, "_closed", False):
+        return
+    page_token = getattr(self, "_sync_page_token", None)
     self._sync_preview_generation = getattr(self, "_sync_preview_generation", 0) + 1
     preview_generation = self._sync_preview_generation
     broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
@@ -83,7 +112,26 @@ def _refresh_sync_page(self) -> None:
         if all_now is not None:
             all_now.set_tooltip_text("Synchronisation indisponible : broker absent")
         box.append(Gtk.Label(label="Broker de synchronisation indisponible", xalign=0)); return
-    rows = broker.sources(identity.identity_id if identity else None)
+    # A page showing no identity cannot expose per-account sync controls.
+    scope = capture_sync_action_scope(
+        self, page_token=page_token, preview_generation=preview_generation,
+    )
+    if scope is None:
+        if all_now is not None:
+            all_now.set_sensitive(False)
+        box.append(Gtk.Label(
+            label="Sélectionnez une identité avant de synchroniser.",
+            xalign=0,
+        ))
+        return
+    rows = broker.sources(scope.identity_id)
+    if not sync_action_scope_current(self, scope):
+        return
+    # Never render or enable another identity's broker row.
+    rows = [
+        source for source in rows
+        if getattr(source, "identity_id", None) == scope.identity_id
+    ]
     presentations = [sync_source_presentation(source) for source in rows]
     actionable = any(item.action_enabled for item in presentations)
     if all_now is not None:
@@ -95,6 +143,12 @@ def _refresh_sync_page(self) -> None:
     if not rows:
         box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0)); return
     for source, presentation in zip(rows, presentations):
+        if not sync_action_scope_current(self, scope):
+            return
+        # Refuse a broker row whose ownership does not match the explicitly
+        # selected profile. No toggle/preview may be wired to that row.
+        if getattr(source, "identity_id", None) != scope.identity_id:
+            continue
         group = Adw.PreferencesGroup(); box.append(group)
         row = Adw.ActionRow(); row.set_title(source.label or source.provider_id)
         row.set_subtitle(presentation.summary)
@@ -102,11 +156,19 @@ def _refresh_sync_page(self) -> None:
         toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
         toggle.set_tooltip_text("Activation : inclure cette source dans les synchronisations")
         def toggled(widget, _param, sid=source.source_id):
+            if not sync_action_scope_current(self, scope):
+                return
             try:
                 broker.set_enabled(sid, widget.get_active())
-                self._refresh_sync_page()
-            except Exception as exc:
-                self.show_error(str(exc), "Synchronisation")
+                if sync_action_scope_current(self, scope):
+                    self._refresh_sync_page()
+            except Exception:
+                if sync_action_scope_current(self, scope):
+                    # Exceptions from provider hooks may contain credentials.
+                    self.show_error(
+                        "Modification de la source indisponible.",
+                        "Synchronisation",
+                    )
         toggle.connect("notify::active", toggled); row.add_suffix(toggle)
         now = self.action_button(presentation.action_label, "emblem-synchronizing-symbolic")
         now.set_sensitive(presentation.action_enabled)
@@ -114,9 +176,24 @@ def _refresh_sync_page(self) -> None:
             presentation.action_label if presentation.action_enabled else presentation.disabled_reason
         )
         def one(_button, sid=source.source_id, label=source.label or source.provider_id):
-            self.runner.submit(f"Synchronisation {label}…", lambda: broker.synchronize_source(sid),
-                lambda _r: (self._refresh_sync_page(), self.refresh_library(False)), control=_button,
-                priority=TaskPriority.USER_ACTION, kind="source-sync")
+            if not sync_action_scope_current(self, scope):
+                return
+            def completed(_result):
+                if not sync_action_scope_current(self, scope):
+                    return
+                self._refresh_sync_page()
+                # Refresh replaces preview_generation by design. Preserve
+                # Library refresh only if identity and page owner are intact.
+                refreshed = capture_sync_action_scope(self, page_token=page_token)
+                if refreshed is not None and refreshed.identity_id == scope.identity_id:
+                    self.refresh_library(False)
+            self.runner.submit(
+                f"Synchronisation {label}…",
+                lambda: broker.synchronize_source(sid)
+                if sync_action_scope_current(self, scope) else None,
+                completed, control=_button,
+                priority=TaskPriority.USER_ACTION, kind="source-sync",
+            )
         now.connect("clicked", one); row.add_suffix(now)
         if source.provider_id == "kobo":
             # Only a targeted Core broker may resolve the private credential.
@@ -144,7 +221,10 @@ def _refresh_sync_page(self) -> None:
                 version=preview_generation, output=preview_row,
             ):
                 current = getattr(self.service.current_identity, "identity_id", None)
-                if getattr(self, "_closed", False) or current != identity_id:
+                if (
+                    not sync_action_scope_current(self, scope)
+                    or current != identity_id
+                ):
                     return
                 output.set_subtitle("Calcul local en cours…")
                 def still_current():
@@ -152,6 +232,7 @@ def _refresh_sync_page(self) -> None:
                         not getattr(self, "_closed", False)
                         and getattr(self, "_sync_preview_generation", None) == version
                         and getattr(self.service.current_identity, "identity_id", None) == identity_id
+                        and sync_action_scope_current(self, scope)
                     )
                 def completed(result):
                     if still_current():
@@ -165,7 +246,8 @@ def _refresh_sync_page(self) -> None:
                         )
                 self.runner.submit(
                     "Prévisualisation locale Kobo…",
-                    lambda: broker.preview_local_materialization(sid),
+                    lambda: broker.preview_local_materialization(sid)
+                    if sync_action_scope_current(self, scope) else None,
                     completed, failed, control=button,
                     priority=TaskPriority.USER_ACTION, kind="sync-preflight",
                 )
