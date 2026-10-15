@@ -9,6 +9,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
+from cifereca.plugin_api import SourceMaterializationScheduleBroker
 from cifereca.core.kobo_backup import _kobo_checkpoint_key
 from cifereca.core.source_materialization_schedule import (
     kobo_on_start_sessions, policy_key, on_start_due, mark_on_start_attempt,
@@ -55,6 +56,7 @@ def test_source_schedule_api_defaults_manual_and_rejects_implicit_migration(tmp_
     service = _service(tmp_path)
     try:
         broker = SynchronizationBrokerImpl(service)
+        assert isinstance(broker, SourceMaterializationScheduleBroker)
         source = broker._source_id(service.accounts[0])
         assert broker.local_materialization_schedule(source) == "manual"
         service.config.set("kobo_backup.enabled", True)
