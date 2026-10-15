@@ -433,33 +433,56 @@ class DeliverySelectionError(ParseError):
 QUOTED = re.compile(r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*' ''',re.X)
 
 
-def delivery_url(text, base_url, *, allowed_origins=None):
+def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
+    """Locate exactly one allowlisted HTML delivery; optionally count shapes.
+
+    Evidence contains only bounded integers. Raw URLs and HTML never escape
+    through the diagnostic channel, including when the selection fails.
+    """
     root = Parser(text).root
     allowed=set(allowed_origins or {origin('https://services.numilog.com/')})
     candidates = set()
+    signed_shapes = html_links = html_scripts = 0
     for node in root.walk():
-        values = [node.attrs.get('href') or '']
+        values = [('href', node.attrs.get('href') or '')]
         if node.tag == 'script':
+            if evidence is not None:
+                signed_shapes = min(10000, signed_shapes + _js_delivery_shape_count(node))
             for match in QUOTED.finditer(''.join(node.pieces)):
                 raw = match.group(0)
                 try:
                     value = json.loads(raw) if raw[0] == '"' else raw[1:-1].replace('\\/','/').replace('\\u0026','&').replace("\\'", "'")
                 except ValueError:
                     continue
-                values.append(value)
-        for value in values:
+                values.append(('script', value))
+        for source, value in values:
             if not isinstance(value,str) or not value.startswith(('https://','http://')):
                 continue
-            url = urljoin(base_url,unescape(value))
-            parsed = urlsplit(url)
-            # Every HTML-derived delivery URL obeys the same exact origin
-            # and credential/fragment policy as the subsequent GET.
-            if (
-                origin(url) in allowed and not parsed.username
-                and not parsed.password and not parsed.fragment
-                and parsed.port in {None,80,443} | {o[2] for o in allowed if o[2]}
-            ):
-                candidates.add(url)
+            if evidence is not None:
+                if source == 'href':
+                    html_links = min(10000, html_links + 1)
+                else:
+                    html_scripts = min(10000, html_scripts + 1)
+            try:
+                url = urljoin(base_url,unescape(value))
+                parsed = urlsplit(url)
+                # Every HTML-derived delivery URL obeys the same exact origin
+                # and credential/fragment policy as the subsequent GET.
+                if (
+                    origin(url) in allowed and not parsed.username
+                    and not parsed.password and not parsed.fragment
+                    and parsed.port in {None,80,443} | {o[2] for o in allowed if o[2]}
+                ):
+                    candidates.add(url)
+            except (ValueError, AttributeError, TypeError):
+                continue
+    if evidence is not None:
+        evidence.update({
+            'js_delivery_shapes': signed_shapes,
+            'absolute_html_hrefs': html_links,
+            'absolute_script_literals': html_scripts,
+            'allowed_candidates': min(10000, len(candidates)),
+        })
     if len(candidates) != 1:
         raise DeliverySelectionError('missing' if not candidates else 'ambiguous')
     return candidates.pop()
