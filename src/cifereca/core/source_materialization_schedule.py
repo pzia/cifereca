@@ -7,6 +7,7 @@ No provider, file or ADEPT request is made when evaluating the policy.
 from __future__ import annotations
 
 from typing import Any
+import time
 
 _PREFIX = "sync.source.materialization.on_start."
 
@@ -95,3 +96,37 @@ def kobo_on_start_sessions(service: Any) -> tuple[Any, ...]:
             and getattr(session, "credential_id", None) == credential
         )
     return tuple(ready)
+
+
+def on_start_due(service: Any, account: Any) -> bool:
+    """Independent clock for sources without a checkpoint or download rows."""
+    from .kobo_backup import _kobo_checkpoint_for
+    credential = account.credential_id
+    identity = account.identity_id
+    if _kobo_checkpoint_for(service, identity, credential) is not None:
+        return bool(service._kobo_backup_account_due(credential))
+    try:
+        raw = service.storage.metadata_get("sync.source.materialization.last_attempt." + _account_id(account))
+        last = int(raw) if type(raw) is str and raw.isdecimal() else 0
+        interval = max(1, min(1440, int(service.kobo_backup_interval_minutes())))
+        now = int(time.time())
+        return last <= 0 or last > now + 300 or now - last >= interval * 60
+    except (AttributeError, ValueError, TypeError, OverflowError):
+        # A bad clock/configuration is never evidence of a successful download.
+        return True
+
+
+def mark_on_start_attempt(service: Any, account: Any) -> bool:
+    """Persist a per-source attempt *before* dispatch; fail closed on DB errors.
+
+    This bounds repeated empty-manifest launches without converting an attempt
+    into a success or borrowing the old global success clock.
+    """
+    try:
+        service.storage.metadata_set(
+            "sync.source.materialization.last_attempt." + _account_id(account),
+            str(int(time.time())),
+        )
+        return True
+    except (AttributeError, TypeError, ValueError, OSError):
+        return False
