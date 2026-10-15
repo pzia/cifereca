@@ -32,7 +32,7 @@ def test_public_notice_url_fallback_from_each_declared_layer(layer):
     assert node.url == SAFE
     projected = constellation_detail_presentation(node)
     assert len(projected.links) == 1
-    assert projected.links[0].uri == SAFE
+    assert projected.links[0].url == SAFE
     assert projected.title == "Public edition"
 
 
