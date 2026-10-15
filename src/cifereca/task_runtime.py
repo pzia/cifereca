@@ -152,28 +152,40 @@ class TaskBrokerImpl:
         control = _TaskControl(on_progress)
         queued_at = time.monotonic()
 
+        # A plugin controls its public labels and kind and can also supply a
+        # free-form scoped ID. None of these is trusted for persistent logs:
+        # a label or ID may contain bearer URLs, local paths or account names.
+        # Keep the original values for execution, without reflecting them in
+        # the Core TRACE transport (#981 / #1741).
+        trace_owner = "core" if plugin_id == "core" else "plugin"
+        trace_kind = kind if type(kind) is str and kind in {
+            "core", "plugin", "task", "source-sync", "opening-sync",
+            "deep-sync", "sync-preflight", "kobo-acquisition", "maintenance",
+            "library", "recent", "search", "other",
+        } else "other"
+
         def invoke() -> Any:
             control.check_cancelled()
             started = time.monotonic()
             _TRACE_LOG.info(
-                "TRACE plugin-task begin id=%s plugin=%s priority=%s kind=%s queue_wait=%.3fs label=%s",
-                task_id,
-                plugin_id,
-                int(priority),
-                str(kind or "plugin"),
+                "TRACE plugin-task begin id=%s plugin=%s priority=%s kind=%s queue_wait=%.3fs",
+                task_id, trace_owner, int(priority), trace_kind,
                 started - queued_at,
-                str(label or ""),
             )
+            outcome = "success"
             try:
                 return operation(control)
+            except Cancelled:
+                outcome = "cancelled"
+                raise
+            except BaseException:
+                outcome = "failed"
+                raise
             finally:
                 _TRACE_LOG.info(
-                    "TRACE plugin-task end id=%s plugin=%s kind=%s dt=%.3fs label=%s",
-                    task_id,
-                    plugin_id,
-                    str(kind or "plugin"),
+                    "TRACE plugin-task end id=%s plugin=%s kind=%s status=%s dt=%.3fs",
+                    task_id, trace_owner, trace_kind, outcome,
                     time.monotonic() - started,
-                    str(label or ""),
                 )
 
         with self._lock:
