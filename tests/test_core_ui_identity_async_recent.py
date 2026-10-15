@@ -64,7 +64,8 @@ def test_recent_refresh_scopes_work_and_restarts_after_identity_change():
     host.refresh_recent()
     alice = host.runner.requests[-1]
     _change_identity(host, "bob")
-    assert alice.work() == [{"identity_id": "alice"}]
+    # A queued task must not fetch an identity already left behind.
+    assert alice.work() == []
     alice.ok(alice.work())
     assert host.recent_shown == []
     assert len(host.runner.requests) == 2
