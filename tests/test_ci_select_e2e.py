@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 22)
+        self.assertEqual(len(mod.ALL), 23)
 
     def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
         for path in ("src/cifereca/gui/settings_ai_actions.py",
@@ -96,7 +96,7 @@ class SelectionTests(unittest.TestCase):
     def test_1269_mainwindow_imports_cover_core_youth_diagnostics_navigation(self):
         selected = mod.select(["src/cifereca/gui/main_window.py"])
         self.assertEqual(set(selected), set(mod.MAINWINDOW))
-        self.assertEqual(len(selected), 17)
+        self.assertEqual(len(selected), 18)
         for name in mod.CORE + mod.YOUTH + (
             "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366"
         ):
