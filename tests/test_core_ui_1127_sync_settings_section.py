@@ -59,9 +59,9 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert group.title == "Kobo — acquisition locale des fichiers"
     assert len(group.children) == 6
     assert [row.title for row in group.children] == [
-        "Autoriser les téléchargements Kobo au démarrage",
+        "Ancien réglage global Kobo (compatibilité)",
         "Synchronisation Kobo — comptes et aperçus",
-        "Option risquée : acquisitions avec fichiers locaux non rapprochés",
+        "Ancienne dérogation Kobo (compatibilité)",
         "Sous-répertoire/override Kobo (vide = bibliothèque locale)",
         "Délai entre tentatives au démarrage (minutes, minimum 15)",
         "DisplayProfile Kobo-Vault",
@@ -71,7 +71,7 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert controls.backup_switch.active is False
     assert controls.run_backup_now.label == "Examiner les comptes Kobo…"
     assert controls.run_backup_now.sensitive is True
-    assert "Acquisition au démarrage désactivée" in controls.backup_status.subtitle
+    assert "Ancien réglage global désactivé" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is False
     assert controls.library_dir_row.text == "~/EBooks"
     assert controls.backup_interval_row.text == "60"
@@ -92,7 +92,7 @@ def test_saved_values_match_old_view_and_unknown_vault_profile_falls_back():
     controls, _, _ = _build(values)
     assert controls.backup_switch.active is True
     assert controls.run_backup_now.sensitive is True
-    assert "au démarrage" in controls.backup_status.subtitle
+    assert "sans effet sur l’acquisition" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is True
     assert controls.backup_dir_row.text == "Kobo"
     assert controls.backup_interval_row.text == "90"
@@ -118,7 +118,7 @@ def test_kobo_account_navigation_requires_saved_settings_not_acquisition_opt_in(
     assert kobo_backup_action_state(persisted_enabled=True, draft_enabled=False, dirty=True)[1] is False
     message, allowed = kobo_backup_action_state(persisted_enabled=True, draft_enabled=True, dirty=False)
     assert allowed is True
-    assert "au démarrage" in message
+    assert "sans effet sur l’acquisition" in message
 
 
 def test_mainwindow_kobo_action_is_navigation_only_saved_and_lifetime_gated():
@@ -145,7 +145,7 @@ def test_malformed_backup_opt_in_does_not_activate_automatic_acquisition():
         controls, _, _ = _build({"kobo_backup.enabled": invalid})
         assert controls.backup_switch.active is False
         assert controls.run_backup_now.sensitive is True
-        assert "Acquisition au démarrage désactivée" in controls.backup_status.subtitle
+        assert "Ancien réglage global désactivé" in controls.backup_status.subtitle
         assert kobo_backup_action_state(
             persisted_enabled=invalid,
             draft_enabled=invalid,
@@ -225,3 +225,13 @@ def test_malformed_unlinked_bypass_config_is_disabled_like_core_policy():
         "kobo_backup.allow_unlinked_acquisition": True,
     })
     assert valid.unlinked_switch.active is True
+
+
+def test_legacy_kobo_switch_cannot_claim_authorization_by_itself():
+    controls, section, _ = _build({"kobo_backup.enabled": True})
+    group = section.children[0]
+    assert "ne lance plus" in group.children[0].subtitle
+    assert "compte" in group.children[0].subtitle
+    assert "sans effet sur l’acquisition" in controls.backup_status.subtitle
+    assert "anti-doublons" in group.children[2].subtitle
+    assert "contourne" in group.children[2].subtitle
