@@ -737,7 +737,9 @@ class View:
             self.neighbours_summary.set_label('Aucun point de départ. Utilisez « Explorer les livres proches » depuis une fiche.')
             self.master.empty_detail(); return
         node = self.center
-        self.heading.set_label('Centre : ' + node.book.title)
+        # The heading is public GTK text too: use the same validated title
+        # already projected by DetailPanel and neighbour cards.
+        self.heading.set_label('Centre : ' + _public_detail_text(node.book.title, limit=2048))
         self.master.show_detail(constellation_detail_presentation(node))
         # A single stable ranking keeps the first exploration comprehensible.
         edges = neighbours(self.nodes, node, mode='Confort', surprise=.25, profile=self.local, limit=12)
