@@ -13,6 +13,10 @@ DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
 YOUTH = ("youth-1366", "youth-filter-help-1366", "youth-milan-1366",
          "youth-editions-1366", "youth-library-search-1366")
+# CI smoke for P1 bibliographic detail plugins (#1599). These existing GTK
+# scenarios are regression guards, not plugin-specific acceptance evidence.
+DETAIL = ("book-detail-1366", "mainwindow-baseline-1366",
+          "mainwindow-baseline-1600")
 ALL = CORE + DIAG + YOUTH
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          "startup", "core-navigation", "diagnostics-navigation-1366",
@@ -92,6 +96,11 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             return ALL  # unknown or shared E2E helper
         elif path.startswith("src/plugins/diagnostics-page/"):
             selected.update(DIAG)
+        elif path.startswith(("src/plugins/constellations/",
+                              "src/plugins/recommendations/")):
+            selected.update(DETAIL)
+        elif path.startswith("src/plugins/youth-detail-enrichment/"):
+            selected.update(YOUTH)
         elif path.startswith(("src/plugins/youth-catalog/", "src/plugins/youth-source-",
                               "simulation/youth_sources/", "simulation/milan/")):
             selected.update(YOUTH)
