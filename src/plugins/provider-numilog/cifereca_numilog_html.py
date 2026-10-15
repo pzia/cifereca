@@ -180,7 +180,7 @@ def _js_delivery_shape_count(script):
     ))
 
 
-def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None):
+def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None, delivery_selector=None):
     root = Parser(text).root
     tables = [n for n in root.walk() if n.attrs.get('id') == 'myTable']
     if len(tables) != 1:
@@ -231,15 +231,9 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                 public_candidates.append(resolved)
         public_candidates=list(dict.fromkeys(public_candidates))
         public_url=public_candidates[0] if len(public_candidates)==1 else None
-        # Never inspect signed JS deliveries during search or inventory sync.
-        delivery = (_card_delivery(
-            card, links,
-            {('https', 'entrepot2r.numilog.com', 443)},
-        ) if delivery_evidence else None)
-        if delivery is not None and delivery_diagnostics is not None:
-            delivery_diagnostics['bound_links'] = min(
-                10000, delivery_diagnostics.get('bound_links', 0) + 1,
-            )
+        # Delay parsing JS URLs until AFTER the validated source row is
+        # known. The caller can select one exact scoped record ID, so signed
+        # links for unrelated purchases never enter memory on a user click.
         for link in links:
             href = urljoin(base_url, link.attrs.get('href') or '')
             url = urlsplit(href)
@@ -260,8 +254,18 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                 if origin(cover) not in allowed_covers or parsed_cover.username or parsed_cover.password or parsed_cover.fragment or parsed_cover.query:
                     cover = None
             row = {'lid':lid[0],'variant':repr(key[1]),'title':titles[0] if titles else 'Livre Numilog '+lid[0], 'cover':cover, 'href':href, 'public_url':public_url}
-            if delivery is not None:
-                row['delivery'] = delivery  # ephemeral; never serialized
+            if delivery_evidence and (delivery_selector is None or delivery_selector(row)):
+                # An ambiguous card (multiple links, products, or revisions)
+                # never yields an attested ACSM. Never equate ProductId to lid.
+                delivery = _card_delivery(
+                    card, links, {('https', 'entrepot2r.numilog.com', 443)},
+                )
+                if delivery is not None:
+                    row['delivery'] = delivery  # transient, target-specific
+                    if delivery_diagnostics is not None:
+                        delivery_diagnostics['bound_links'] = min(
+                            10000, delivery_diagnostics.get('bound_links', 0) + 1,
+                        )
             items.append(row)
 
     next_links=[]
