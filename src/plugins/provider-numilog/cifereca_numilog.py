@@ -425,6 +425,14 @@ class NumilogSession(ProviderSession):
                 # supply a signed URL. ProductId != lid unless independently
                 # attested; the DOM card binding is the evidence, not numbers.
                 if isinstance(evidence, OwnedDelivery):
+                    # A pre-bound account identity is mandatory BEFORE a
+                    # signed ACSM GET. The broker will re-check it at import;
+                    # direct EPUB fallback retains its existing contract.
+                    self._identity_id()
+                    if self.acquisition_broker is None:
+                        raise ProviderCapabilityError(
+                            'Numilog : broker acquisition requis pour traiter un ACSM'
+                        )
                     checked_url(evidence.url, self.allowed_origins)
                     start = evidence.url
                     self._diag('livraison ACSM',phase='owned_card',kind='card_bound',result='single_allowed_candidate')
