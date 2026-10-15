@@ -1305,24 +1305,34 @@ class NamingRepairTool(_ReadOnlyTool):
                 warnings.append(f"Renormalisation {index}/{total} : échec du service")
         # A cancellation during the last mutation must not emit completion.
         control.check_cancelled()
+        # A skipped placement was never checked against the naming policy.
+        # Do not report a fully successful run solely because the remaining
+        # placements were renamed without error.
+        incomplete = bool(
+            failures or preview_failures
+            or plan_counts["read_failures"] or plan_counts["skipped"]
+        )
         if total:
             status = (
                 "Renormalisation terminée"
-                if not failures and not preview_failures and not plan_counts["read_failures"]
+                if not incomplete
                 else (
-                    f"Renormalisation : {failures} échec(s), "
+                    f"Renormalisation partielle : {failures} échec(s), "
                     f"{preview_failures} proposition(s) indisponible(s), "
-                    f"{plan_counts['read_failures']} artefact(s) non inspecté(s)"
+                    f"{plan_counts['read_failures']} artefact(s) non inspecté(s), "
+                    f"{plan_counts['skipped']} entrée(s) ignorée(s)"
                 )
             )
             control.report(current=total, total=total, message=status)
         else:
             message = (
-                f"Renormalisation : {preview_failures} placement(s) sans proposition"
-                if preview_failures else (
-                    f"Renormalisation incomplète : {plan_counts['read_failures']} artefact(s) non inspecté(s)"
-                    if plan_counts["read_failures"] else
-                    "Renormalisation terminée : aucun placement"
+                "Renormalisation terminée : aucun placement"
+                if not incomplete
+                else (
+                    f"Renormalisation incomplète : "
+                    f"{preview_failures} proposition(s) indisponible(s), "
+                    f"{plan_counts['read_failures']} artefact(s) non inspecté(s), "
+                    f"{plan_counts['skipped']} entrée(s) ignorée(s)"
                 )
             )
             control.report(message=message)
@@ -1331,10 +1341,15 @@ class NamingRepairTool(_ReadOnlyTool):
             facts["policy_failures"] = preview_failures
         if plan_counts["read_failures"]:
             facts["read_failures"] = plan_counts["read_failures"]
+        if plan_counts["skipped"]:
+            facts["skipped"] = plan_counts["skipped"]
+        summary = f"{changed} placement(s) renormalisé(s)."
+        if plan_counts["skipped"]:
+            summary += f" {plan_counts['skipped']} entrée(s) ignorée(s)."
         return MaintenanceResult(
-            ok=failures == 0 and preview_failures == 0 and plan_counts["read_failures"] == 0,
+            ok=not incomplete,
             changed=changed,
-            summary=f"{changed} placement(s) renormalisé(s).",
+            summary=summary,
             warnings=tuple(warnings),
             facts=facts,
         )
