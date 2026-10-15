@@ -154,6 +154,17 @@ def _external_book_url(value: Any) -> str | None:
     return None
 
 
+def _public_recommendation_notice(item: Any) -> str | None:
+    """Prefer a validated friendly page, then an independent public notice.
+
+    Never use download or acquisition coordinates as a fallback.
+    """
+    return (
+        _external_book_url(get_field(item, "friendly_url", ""))
+        or _external_book_url(get_field(item, "notice_url", ""))
+    )
+
+
 def _public_cover_url(item: Any) -> str | None:
     """Conservative cover URL for both list rows and the detail panel.
 
@@ -1437,7 +1448,10 @@ class UxRecommendationsView:
                     f"Chercher l’édition ISBN {isbn} dans Recherche",
                     "system-search-symbolic", callback=open_isbn,
                 ))
-        url = _external_book_url(get_field(item, "friendly_url", ""))
+        # An unsafe/missing friendly link must not mask an independently
+        # attested public notice. Both candidates pass the same strict
+        # validation; no download, token or private URL reaches CoreUI.
+        url = _public_recommendation_notice(item)
         if url:
             actions.append(
                 UiBookDetailAction(
