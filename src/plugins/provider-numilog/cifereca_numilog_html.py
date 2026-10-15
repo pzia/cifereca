@@ -220,11 +220,13 @@ def parse_library(text, base_url=LIBRARY, *, cover_origins=None):
 # Private signed links are read ONLY during an explicit download action.
 # The object is not a SearchResult/public catalog field and must not be
 # serialized or logged. The upstream misspelling is intentionally preserved.
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class OwnedDelivery:
-    product_id: str
-    copy_index: str
-    url: str
+    # Identifiers and signed URL are private transient acquisition evidence.
+    # Default dataclass repr would otherwise expose them via debug exceptions.
+    product_id: str = field(repr=False)
+    copy_index: str = field(repr=False)
+    url: str = field(repr=False)
 
 
 # Strictly bounded, non-evaluating extraction of simple JS object literals.
