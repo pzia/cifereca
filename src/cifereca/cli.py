@@ -88,6 +88,10 @@ def main(argv: list[str] | None = None) -> int:
     kobo_audit.add_argument(
         "--credential", help="Limiter l'audit à un compte Kobo (non affiché dans le rapport)"
     )
+    kobo_audit.add_argument(
+        "--plan", action="store_true",
+        help="Joindre un plan de vérifications manuelles, sans modifier ni télécharger de fichiers",
+    )
     kobo_preview = sub.add_parser(
         "kobo-resume-preview",
         help="Aperçu en lecture seule des candidats Kobo (aucun téléchargement)",
@@ -435,6 +439,13 @@ def main(argv: list[str] | None = None) -> int:
             result = kobo_local_reconciliation_audit(
                 service, credential_id=a.credential,
             )
+            if a.plan:
+                from .core.kobo_reconciliation_plan import kobo_manual_reconciliation_plan
+                # A checklist is never a write or a download authorization.
+                result = {
+                    "audit": result,
+                    "plan": kobo_manual_reconciliation_plan(result),
+                }
         elif a.cmd == "kobo-resume-preview":
             if a.refresh_manifest:
                 # Only explicit --refresh-manifest may contact the Kobo
