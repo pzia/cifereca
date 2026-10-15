@@ -170,14 +170,28 @@ def book_key(book: object) -> str:
     return f"{_text(getattr(book, 'source_id', 'source'))}:{_text(getattr(book, 'record_id', 'record'))}"
 
 
+def _safe_book_identifiers(book: object) -> dict:
+    """Share one fail-closed identifier envelope for detail and host navigation."""
+    raw = getattr(book, "identifiers", None)
+    if not isinstance(raw, Mapping):
+        return {}
+    try:
+        return dict(raw)
+    except Exception:
+        # A custom/restored Mapping may fail iteration or indexed lookup;
+        # its error payload is not an attestation or a public diagnostic.
+        return {}
+
+
 def book_ref(book: object) -> BookRef:
+    identifiers = _safe_book_identifiers(book)
     return BookRef(
         book_id=_text(getattr(book, "record_id", "")),
         title=_text(getattr(book, "title", "")),
         # BookRef is handed to the host for navigation: apply the same public
         # author projection as the list and detail before crossing that API.
         authors=_public_authors(book),
-        identifiers=dict(getattr(book, "identifiers", {}) or {}),
+        identifiers=identifiers,
         metadata={
             "youth_age_ranges": tuple(
                 {
@@ -224,9 +238,7 @@ def edition_reference(book: object) -> tuple[str, str, str]:
     Labels are explicit so same-title editions stay distinguishable without
     inferring an edition or merging by author/title.
     """
-    identifiers = getattr(book, "identifiers", {}) or {}
-    if not isinstance(identifiers, Mapping):
-        identifiers = {}
+    identifiers = _safe_book_identifiers(book)
     isbn = normalize_isbn(identifiers.get("isbn"))
     if isbn:
         return "isbn", "ISBN", isbn
