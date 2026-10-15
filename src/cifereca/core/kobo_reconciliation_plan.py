@@ -38,6 +38,12 @@ _MANUAL_CHECKS = {
         "quarantine_for_manual_review_without_mutation",
         "retain_all_originals",
     ),
+    "unindexed_identity_file_candidate": (
+        "verify_identity_scoped_directory_provenance",
+        "compare_against_persisted_library_index",
+        "verify_rights_and_product_identity_manually",
+        "retain_all_originals",
+    ),
 }
 _MAX_CASES = 24
 _MAX_ACCOUNTS = 4096
@@ -70,6 +76,7 @@ def _valid_audit(audit: object) -> Mapping[str, Any]:
             "missing_or_unlinked", "stored_hash_mismatch",
             "unproven_catalogue_links", "same_product_different_bytes",
             "binary_match_groups", "active_entitlements_unmaterialized",
+            "unindexed_regular_file_candidates", "identity_flat_file_candidates",
         } or not _count(value)
         for key, value in counts.items()
     ):
@@ -128,6 +135,7 @@ def kobo_manual_reconciliation_plan(audit: object) -> dict[str, Any]:
         category for category in (
             "unverified_placements", "missing_or_unlinked",
             "unproven_catalogue_links",
+            "unindexed_regular_file_candidates",
         ) if totals.get(category, 0)
     ]
     if report["truncated"]:
