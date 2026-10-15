@@ -34,7 +34,6 @@ def test_malformed_persisted_source_preference_blocks_network(tmp_path, stored):
         # in every representation; only non-empty private payloads can be
         # asserted absent from the public result.
         if stored:
-            if stored:  # The empty string is contained in every Python repr.
             assert stored not in repr(result)
         assert storage.metadata_get("sync.source.state." + sid) is None
     finally:
