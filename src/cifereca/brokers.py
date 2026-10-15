@@ -487,6 +487,18 @@ class SynchronizationBrokerImpl:
         if not self._enabled(source_id):
             return SyncResult(ok=True, changed=0, warnings=("source disabled",),
                               facts={"source_id": source_id, "skipped": True})
+        # GTK rows are only a snapshot. A plugin, CLI client, stale callback
+        # or a session that disconnected after the row was rendered must not
+        # bypass the same connection/capability gates at the broker boundary.
+        # Rechecking the account ref is local and never reconnects or probes
+        # the remote provider. No attempted state is written on rejection.
+        current = _account_ref(self.service, account)
+        if not current.connected:
+            return SyncResult(ok=False, changed=0, warnings=("source disconnected",),
+                              facts={"reason": "source_disconnected"})
+        if not (set(current.capabilities) & {"loans", "personal_library"}):
+            return SyncResult(ok=False, changed=0, warnings=("source sync unsupported",),
+                              facts={"reason": "not_supported"})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         state = self._state(source_id)
         state.update(last_attempt=now, status="running", error="", scope="manual",
