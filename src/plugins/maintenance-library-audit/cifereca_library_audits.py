@@ -1337,10 +1337,17 @@ class NamingRepairTool(_ReadOnlyTool):
                 # A changed counter is evidence of completed mutations, not
                 # an arbitrary provider value to coerce with int(). Refuse
                 # negative, boolean, non-numeric or unbounded claims.
-                raw_changed = getattr(result, "changed", 0)
-                if type(raw_changed) is not int or raw_changed not in (0, 1):
-                    raise ValueError("unverifiable Core mutation count")
-                if getattr(result, "ok", True) is False:
+                raw_changed = getattr(result, "changed", None)
+                raw_ok = getattr(result, "ok", None)
+                if (
+                    type(raw_changed) is not int or raw_changed not in (0, 1)
+                    or type(raw_ok) is not bool
+                ):
+                    # The Core mutation response must attest *both* status
+                    # and modification count; no implicit success from a
+                    # partial or malformed broker result.
+                    raise ValueError("unverifiable Core mutation outcome")
+                if raw_ok is False:
                     failures += 1
                 changed += raw_changed
                 # Broker warnings may include private local paths or provider
