@@ -725,9 +725,9 @@ class MainWindow(Adw.ApplicationWindow):
                 # Each enabled line owns safe, literal error wording. Never
                 # display provider exceptions, which may contain private paths.
                 preview_error = ("Analyse des couvertures impossible."
-                                 if meta.id == "covers.audit" else "Analyse des caches impossible.")
+                                 if getattr(meta, "id", None) == "covers.audit" else "Analyse des caches impossible.")
                 execution_error = ("Vérification des couvertures impossible."
-                                   if meta.id == "covers.audit" else "Nettoyage des caches impossible.")
+                                   if getattr(meta, "id", None) == "covers.audit" else "Nettoyage des caches impossible.")
                 context_generation = getattr(self, "_identity_context_generation", None)
                 progress_scope.update(
                     active=True, identity=context.identity_id, generation=context_generation,
