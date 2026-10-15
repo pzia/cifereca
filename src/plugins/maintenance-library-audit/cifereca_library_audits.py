@@ -764,27 +764,48 @@ class NamingRepairTool(_ReadOnlyTool):
         seen: set[str] = set()
 
         for row, view in _iter_views(metadata, library_read, context.identity_id, read_failures):
-            title = str(row.get("title") or getattr(view.book, "title", "") or "").strip()
-            authors = getattr(view.book, "authors", ()) or ()
-            author = str(row.get("author") or (authors[0] if authors else "") or "").strip()
-            series = str(row.get("series") or row.get("collection") or "").strip()
-            index = str(row.get("series_index") or row.get("index") or "").strip()
+            # A poisoned metadata field or partial Core book view must not
+            # interrupt planning unrelated, independently verifiable books.
+            try:
+                book = view.book
+                title = str(row.get("title") or getattr(book, "title", "") or "").strip()
+                authors = getattr(book, "authors", ()) or ()
+                author = str(row.get("author") or (authors[0] if authors else "") or "").strip()
+                series = str(row.get("series") or row.get("collection") or "").strip()
+                index = str(row.get("series_index") or row.get("index") or "").strip()
+                placements = tuple(getattr(view, "placements", ()) or ())
+            except Exception:
+                skipped += 1
+                continue
             if not title:
                 skipped += 1
                 continue
-            for placement in getattr(view, "placements", ()):
-                if placement.kind != "library":
-                    continue
-                if context.identity_id is not None and placement.identity_id != context.identity_id:
-                    continue
-                if placement.placement_id in seen:
-                    continue
-                seen.add(placement.placement_id)
-                current = str(placement.filename or "").strip()
-                if not current:
+            for placement in placements:
+                try:
+                    if placement.kind != "library":
+                        continue
+                    if context.identity_id is not None and placement.identity_id != context.identity_id:
+                        continue
+                    placement_id = placement.placement_id
+                    if (
+                        type(placement_id) is not str
+                        or not 0 < len(placement_id) <= 1024
+                        or placement_id.strip() != placement_id
+                        or any(ord(char) < 32 or ord(char) == 127 for char in placement_id)
+                    ):
+                        skipped += 1
+                        continue
+                    if placement_id in seen:
+                        continue
+                    seen.add(placement_id)
+                    current = str(placement.filename or "").strip()
+                    if not current:
+                        skipped += 1
+                        continue
+                    extension = PurePath(current).suffix.lstrip(".") or "epub"
+                except Exception:
                     skipped += 1
                     continue
-                extension = PurePath(current).suffix.lstrip(".") or "epub"
                 try:
                     proposed = naming.preview(
                         title=title,
@@ -793,25 +814,23 @@ class NamingRepairTool(_ReadOnlyTool):
                         index=index,
                         extension=extension,
                     )
+                    if proposed is None:
+                        raise ValueError("no naming policy proposal")
+                    expected = str(proposed).strip()
+                    if not expected:
+                        raise ValueError("empty naming policy proposal")
+                    matches = PurePath(current).name == PurePath(expected).name
                 except Exception:
-                    # A malformed item or a failed Core policy must not abort
-                    # unrelated placements, nor leak the private exception
-                    # message or class name into the Outils preview.
+                    # Untrusted proposed filenames may fail while converted,
+                    # even when the Core preview call itself succeeded.
                     policy_failures += 1
                     continue
-                if proposed is None or not str(proposed).strip():
-                    # No valid proposal means no authorized rename target.
-                    policy_failures += 1
+                if matches:
                     continue
-                expected = str(proposed)
-                if PurePath(current).name == PurePath(expected).name:
-                    continue
-                placement_ids.append(placement.placement_id)
+                placement_ids.append(placement_id)
                 if len(changes) < 100:
-                    # Preview rows are displayed outside the trusted broker.
-                    # Filenames and suggested names may contain private
-                    # titles, paths and tokens. Preserve the real placement
-                    # identifier only in facts for the Core mutation.
+                    # The proposal and current filename can be private. Keep
+                    # only an ordinal in the user-visible maintenance preview.
                     changes.append(f"Renommer le placement n°{len(placement_ids)}")
 
         summary = f"{len(placement_ids)} placement(s) à renormaliser selon la politique Core."
