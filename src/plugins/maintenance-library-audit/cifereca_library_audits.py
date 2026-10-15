@@ -631,7 +631,25 @@ INTEGRITY_AUDIT = IntegrityAuditTool()
 
 
 def _artifact_id(row: Mapping[str, Any]) -> str:
-    return str(row.get("artifact_id") or row.get("artifact") or "").strip()
+    """Return only a bounded opaque reference, never stringify provider objects.
+
+    Metadata may include broken identifiers or objects whose __str__/__bool__
+    raises, blocks, or reveals private text. Core library.read must only
+    receive an explicit, plain identifier.
+    """
+    try:
+        value = row.get("artifact_id")
+        if value is None or (type(value) is str and not value):
+            value = row.get("artifact")
+    except Exception:
+        return ""
+    if (
+        type(value) is not str or not 0 < len(value) <= 1024
+        or value.strip() != value
+        or any(ord(char) < 32 or ord(char) == 127 for char in value)
+    ):
+        return ""
+    return value
 
 
 def _iter_views(metadata, library_read, identity_id: str | None, failures: list[str] | None = None):
@@ -643,9 +661,12 @@ def _iter_views(metadata, library_read, identity_id: str | None, failures: list[
         seen.add(artifact_id)
         try:
             view = library_read.for_artifact(artifact_id)
-        except Exception as exc:
+        except Exception:
             if failures is not None:
-                failures.append(type(exc).__name__)
+                # Only the *count* leaves the plan, but even temporary
+                # diagnostics should not retain provider exception class
+                # names, which can embed credential or private path data.
+                failures.append("unavailable")
             continue
         if view is not None:
             yield row, view
