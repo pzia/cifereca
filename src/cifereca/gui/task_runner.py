@@ -203,11 +203,19 @@ class TaskRunner:
             gtk_pending_since = time.monotonic()
 
             def deliver() -> bool:
-                observe(
-                    "gtk_delivery_wait",
-                    max(0, time.monotonic() - gtk_pending_since),
-                    "success" if outcome[0] == "ok" else "failed",
-                )
+                # The historical teardown contract also executes this exact
+                # callback in isolation, without the enclosing submit scope.
+                # Observability must be an optional closure dependency.
+                try:
+                    phase_observer = observe
+                except NameError:
+                    phase_observer = None
+                if phase_observer is not None:
+                    phase_observer(
+                        "gtk_delivery_wait",
+                        max(0, time.monotonic() - gtk_pending_since),
+                        "success" if outcome[0] == "ok" else "failed",
+                    )
                 with self._lock:
                     self._count = max(0, self._count - 1)
                     remaining = self._count
