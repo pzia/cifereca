@@ -1073,12 +1073,21 @@ class NamingRepairTool(_ReadOnlyTool):
                         index=index,
                         extension=extension,
                     )
-                    if proposed is None:
-                        raise ValueError("no naming policy proposal")
-                    expected = str(proposed).strip()
-                    if not expected:
-                        raise ValueError("empty naming policy proposal")
-                    matches = PurePath(current).name == PurePath(expected).name
+                    # A Core naming preview is a single filename, not a
+                    # file path or a stringifiable provider object. Match the
+                    # read-only naming audit's strict proposal contract:
+                    # an invalid preview must never enter a mutation plan.
+                    if type(proposed) is not str:
+                        raise ValueError("unusable naming policy proposal")
+                    expected = proposed.strip()
+                    if (
+                        not expected or len(expected) > 512
+                        or expected in {".", ".."}
+                        or "/" in expected or "\\" in expected
+                        or any(ord(ch) < 32 or ord(ch) == 127 for ch in expected)
+                    ):
+                        raise ValueError("invalid naming policy filename")
+                    matches = PurePath(current).name == expected
                 except Exception:
                     # Untrusted proposed filenames may fail while converted,
                     # even when the Core preview call itself succeeded.
