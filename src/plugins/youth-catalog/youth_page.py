@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from itertools import islice
+from unicodedata import category
 import ipaddress
 import re
 from time import perf_counter
@@ -233,6 +235,32 @@ def edition_reference(book: object) -> tuple[str, str, str]:
     return "", "", ""
 
 
+def _public_authors(book: object) -> tuple[str, ...]:
+    """One bounded, visible author projection for both list and detail.
+
+    Cached notices may contain malformed values; never coerce unexpected
+    objects through __str__ or expose bidirectional control characters.
+    """
+    raw = getattr(book, "authors", ()) or ()
+    if type(raw) is str:
+        raw = (raw,)
+    names = []
+    try:
+        for value in islice(iter(raw), 32):
+            if type(value) is not str or any(
+                category(char) in {"Cc", "Cf", "Cs"} for char in value
+            ):
+                continue
+            name = _text(value)
+            if 0 < len(name) <= 180:
+                names.append(name)
+    except Exception:
+        # A broken cached iterable must not leak an exception or block the
+        # other independently verifiable authors.
+        pass
+    return tuple(names)
+
+
 def list_entry(book: object) -> UiBookListEntry:
     ranges = tuple(getattr(book, "age_ranges", ()) or ())
     age_summary = " · ".join(age_text(row) for row in ranges[:2])
@@ -248,7 +276,7 @@ def list_entry(book: object) -> UiBookListEntry:
     return UiBookListEntry(
         key=book_key(book),
         title=_text(getattr(book, "title", "")),
-        subtitle=", ".join(tuple(getattr(book, "authors", ()) or ())),
+        subtitle=", ".join(_public_authors(book)),
         meta=meta,
         badge=badge,
         thumbnail_url=public_url(getattr(book, "cover_url", "")) or None,
@@ -267,7 +295,7 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     title = _text(getattr(book, "title", ""))
     if title:
         metadata_fields.append(DetailField("title", "Titre", title, kind="title"))
-    authors = tuple(_text(value) for value in (getattr(book, "authors", ()) or ()) if _text(value))
+    authors = _public_authors(book)
     for index, author in enumerate(authors):
         metadata_fields.append(DetailField(f"author-{index}", "Auteur", author, kind="author"))
     reference_id, reference_label, reference_value = edition_reference(book)
@@ -323,7 +351,7 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
         sections.append(DetailSection("metadata-detail", "Détail", tuple(metadata_fields), order=1000))
     return UiBookDetailPresentation(
         title=_text(getattr(book, "title", "")),
-        subtitle=", ".join(tuple(getattr(book, "authors", ()) or ())),
+        subtitle=", ".join(authors),
         thumbnail_url=public_url(getattr(book, "cover_url", "")) or None,
         badges=tuple(age_text(row) for row in ranges[:3]),
         sections=tuple(sections),
