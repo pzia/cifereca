@@ -70,7 +70,7 @@ def build_kobo_sync_section(
         "Activer cette dérogation augmente le risque de copies supplémentaires ; "
         "ne remplace jamais la vérification des droits et de l’idempotence."
     )
-    unlinked_switch = Gtk.Switch(); unlinked_switch.set_active(bool(config.get("kobo_backup.allow_unlinked_acquisition", False))); unlinked_switch.set_valign(Gtk.Align.CENTER); unlinked_row.add_suffix(unlinked_switch); backup_group.add(unlinked_row)
+    unlinked_switch = Gtk.Switch(); unlinked_switch.set_active(config.get("kobo_backup.allow_unlinked_acquisition", False) is True); unlinked_switch.set_valign(Gtk.Align.CENTER); unlinked_row.add_suffix(unlinked_switch); backup_group.add(unlinked_row)
     library_dir_row = Adw.EntryRow(); library_dir_row.set_title("Bibliothèque locale possédée par cifereca")
     library_dir_row.set_text(str(config.get("library.directory", "~/EBooks") or "~/EBooks")); download_group.add(library_dir_row)
     backup_dir_row = Adw.EntryRow(); backup_dir_row.set_title("Sous-répertoire/override Kobo (vide = bibliothèque locale)")
