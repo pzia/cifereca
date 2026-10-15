@@ -229,7 +229,13 @@ def delivery_url(text, base_url, *, allowed_origins=None):
                 continue
             url = urljoin(base_url,unescape(value))
             parsed = urlsplit(url)
-            if origin(url) in allowed and not parsed.username and not parsed.password and parsed.port in {None,80,443} | {o[2] for o in allowed if o[2]}:
+            # Every HTML-derived delivery URL obeys the same exact origin
+            # and credential/fragment policy as the subsequent GET.
+            if (
+                origin(url) in allowed and not parsed.username
+                and not parsed.password and not parsed.fragment
+                and parsed.port in {None,80,443} | {o[2] for o in allowed if o[2]}
+            ):
                 candidates.add(url)
     if len(candidates) != 1:
         raise ParseError('Lien de livraison absent ou ambigu : page modifiée ou session expirée')
