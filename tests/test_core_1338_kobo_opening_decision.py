@@ -6,7 +6,7 @@ import json
 import pytest
 
 from cifereca.core.sync_coordination import _kobo_opening_decision
-from tests.test_kobo_sync_modes import _service, _neutralize_unrelated_sync_work
+from tests.test_kobo_sync_modes import _service, _neutralize_unrelated_sync_work, _enable_on_start
 
 
 @pytest.mark.parametrize(
@@ -16,8 +16,8 @@ from tests.test_kobo_sync_modes import _service, _neutralize_unrelated_sync_work
         (True, False, True, True, True, "no_session"),
         (True, True, False, True, True, "capability_unavailable"),
         (True, True, True, False, True, "source_disabled"),
-        (True, True, True, True, False, "fresh_cache"),
-        (True, True, True, True, True, "started"),
+        (True, True, True, True, False, "manual_only"),
+        (True, True, True, True, True, "manual_only"),
     ],
 )
 def test_decision_distinguishes_reasons_without_provider_request(
@@ -40,8 +40,9 @@ def test_decision_distinguishes_reasons_without_provider_request(
         assert "credential" not in json.dumps(result).lower()
         assert "account" not in json.dumps(result).lower()
         assert "vault" not in json.dumps(result).lower()
-        if expected == "started":
-            assert _kobo_opening_decision(service, deep=True)["status"] == "started"
+        # Deep scans must never authorize previously manual-only downloads.
+        if expected == "manual_only":
+            assert _kobo_opening_decision(service, deep=True)["status"] == "manual_only"
     finally:
         service.close()
 
@@ -68,6 +69,7 @@ def test_opening_records_one_sanitized_summary_on_partial(tmp_path, monkeypatch)
     service = _service(tmp_path)
     try:
         _neutralize_unrelated_sync_work(service, monkeypatch)
+        _enable_on_start(service)
         service.config.set("kobo_backup.enabled", True)
         monkeypatch.setattr(service, "_kobo_backup_due", lambda: True)
         called = []
@@ -75,7 +77,14 @@ def test_opening_records_one_sanitized_summary_on_partial(tmp_path, monkeypatch)
             called.append(True)
             return {"errors": 2, "downloaded": 1, "attempted": 3,
                     "secret": "token-VERY-PRIVATE", "item_id": "sensitive-book"}
-        monkeypatch.setattr(service, "_sync_kobo_backup_locked", summary)
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_locked",
+            lambda **_kwargs: pytest.fail("global batch is forbidden"),
+        )
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_account_locked",
+            lambda credential_id, progress=None: summary(progress=progress),
+        )
         result = service._opening_sync_locked(deep=False)
         assert len(called) == 1
         decision = result["kobo_decision"]
@@ -197,10 +206,11 @@ def test_kobo_reported_batch_error_is_persisted_as_error(tmp_path, monkeypatch):
     service = _service(tmp_path)
     try:
         _neutralize_unrelated_sync_work(service, monkeypatch)
+        _enable_on_start(service)
         service.config.set("kobo_backup.enabled", True)
         monkeypatch.setattr(service, "_kobo_backup_due", lambda: True)
-        monkeypatch.setattr(service, "_sync_kobo_backup_locked",
-                            lambda progress=None: {"status": "error", "errors": 0})
+        monkeypatch.setattr(service, "_sync_kobo_backup_account_locked",
+                            lambda credential_id, progress=None: {"status": "error", "errors": 0})
         result = service._opening_sync_locked(deep=False)
         assert result["kobo_decision"]["status"] == "error"
         report = safe_kobo_backup_report(service.kobo_backup_diagnostic())
