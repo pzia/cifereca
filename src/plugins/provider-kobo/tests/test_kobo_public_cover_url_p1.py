@@ -171,3 +171,37 @@ def test_benign_percent_encoded_cover_paths_remain_valid(cover):
     assert expected is not None
     projected = catalog.normalize_item({"product_id": "edition", "cover_url": cover})
     assert projected.thumbnail_url == expected
+
+
+@pytest.mark.parametrize("unsafe", (
+    "http://127.1/PRIVATE_COVER.jpg",
+    "http://127.0.1/PRIVATE_COVER.jpg",
+    "http://0177.0.0.1/PRIVATE_COVER.jpg",
+    "http://192.168.1/PRIVATE_COVER.jpg",
+    "http://0x7f.0.0.1/PRIVATE_COVER.jpg",
+    "https://cdn.example.123/PRIVATE_COVER.jpg",
+))
+def test_noncanonical_numeric_hosts_cannot_trigger_private_cover_fetch(unsafe):
+    catalog = _catalog()
+    assert catalog.cover_url({"cover_url": unsafe}) is None
+    result = catalog.normalize_item({
+        "product_id": "edition", "title": "Public",
+        "cover_url": unsafe, "collection": "catalog",
+    })
+    assert result.thumbnail_url is None
+    assert "cover_url" not in result.metadata
+    assert "catalog_cover" not in result.metadata
+    assert "PRIVATE" not in json.dumps(result.metadata)
+
+
+def test_configured_local_vault_origin_still_allows_its_explicit_cover():
+    catalog = KoboCatalogService(
+        SimpleNamespace(base_url="http://127.0.0.1:9854/api"),
+        credential_id="fixture",
+    )
+    assert catalog.cover_url({
+        "cover_url": "http://127.0.0.1:9854/covers/cover.jpg",
+    }) == "http://127.0.0.1:9854/covers/cover.jpg"
+    assert catalog.cover_url({
+        "cover_url": "http://127.1:9854/covers/private.jpg",
+    }) is None
