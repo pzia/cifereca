@@ -1231,7 +1231,7 @@ class NamingRepairTool(_ReadOnlyTool):
                 # an arbitrary provider value to coerce with int(). Refuse
                 # negative, boolean, non-numeric or unbounded claims.
                 raw_changed = getattr(result, "changed", 0)
-                if type(raw_changed) is not int or not 0 <= raw_changed <= 1_000_000:
+                if type(raw_changed) is not int or raw_changed not in (0, 1):
                     raise ValueError("unverifiable Core mutation count")
                 if getattr(result, "ok", True) is False:
                     failures += 1
@@ -1548,7 +1548,7 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                 # an arbitrary provider value to coerce with int(). Refuse
                 # negative, boolean, non-numeric or unbounded claims.
                 raw_changed = getattr(result, "changed", 0)
-                if type(raw_changed) is not int or not 0 <= raw_changed <= 1_000_000:
+                if type(raw_changed) is not int or raw_changed not in (0, 1):
                     raise ValueError("unverifiable Core mutation count")
                 if getattr(result, "ok", True) is False:
                     failures += 1
