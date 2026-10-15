@@ -36,9 +36,9 @@ def test_public_catalogue_is_not_described_as_a_failed_sync():
         provider_id="gutenberg", label="Catalogue public",
         enabled=False, connected=True, sync_capable=False,
     ))
-    assert result.sync_label == "Sans synchronisation de données"
+    assert result.sync_label == "Non prise en charge"
     assert "Catalogue public consultable indépendamment" in result.summary
-    assert "Catalogue consultable sans synchronisation" in result.disabled_reason
+    assert "ne fournit pas de synchronisation" in result.disabled_reason
     assert not result.action_enabled
     assert "Échec" not in result.summary
 
