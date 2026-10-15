@@ -27,6 +27,14 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
     identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
     generation = self._identity_context_generation
     def work() -> list[dict[str, Any]]:
+        # A request can remain queued while navigation switches identity or
+        # a newer manual refresh supersedes it. Avoid expensive filesystem
+        # scans or service queries for a context whose GTK result must be
+        # discarded anyway (#981). In-flight work is not interrupted.
+        if (getattr(self, "_closed", False)
+                or request_generation != self._library_refresh_generation
+                or not self._identity_request_current(identity_id, generation)):
+            return []
         if refresh_covers:
             self.service.catalog_scan(force_covers=True)
         return self.service.library_entries(identity_id=identity_id, scan=scan and not refresh_covers)
@@ -69,6 +77,12 @@ def refresh_recent(self, control: Gtk.Widget | None = None) -> None:
     identity_id = identity.identity_id if identity is not None else None
     generation = self._identity_context_generation
     def work() -> list[dict[str, Any]]:
+        # No service fetch for a queued request invalidated by a newer
+        # request, profile switch or MainWindow close (#981).
+        if (getattr(self, "_closed", False)
+                or request_generation != self._recent_refresh_generation
+                or not self._identity_request_current(identity_id, generation)):
+            return []
         return self.service.recent_acquisitions(identity_id=identity_id)
     def ok(items: list[dict[str, Any]]) -> None:
         if (getattr(self, "_closed", False) or
