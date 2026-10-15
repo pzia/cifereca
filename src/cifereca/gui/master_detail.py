@@ -296,7 +296,7 @@ class MasterDetailPage(Gtk.Box):
             self._update_count(total_count if total_count is not None else len(rows))
             self.list_stack.set_visible_child_name("list" if rows else "empty")
             if hasattr(self.window, "ui_perf"):
-                self.window.ui_perf.record(f"list:{self.title}:append-fast", (time.perf_counter() - started) * 1000.0)
+                self.window.ui_perf.record("list.append-fast", (time.perf_counter() - started) * 1000.0)
             return
 
         self.selection.set_selected(0xFFFFFFFF)
@@ -313,7 +313,7 @@ class MasterDetailPage(Gtk.Box):
             if restored is not None:
                 self.selection.set_selected(restored)
         if hasattr(self.window, "ui_perf"):
-            self.window.ui_perf.record(f"list:{self.title}:replace", (time.perf_counter() - started) * 1000.0)
+            self.window.ui_perf.record("list.replace", (time.perf_counter() - started) * 1000.0)
 
     def append_rows(self, rows: list[BookListItem], total_count: int | None = None) -> None:
         started = time.perf_counter()
@@ -327,5 +327,5 @@ class MasterDetailPage(Gtk.Box):
         if self.store.get_n_items() > 0:
             self.list_stack.set_visible_child_name("list")
         if hasattr(self.window, "ui_perf"):
-            self.window.ui_perf.record(f"list:{self.title}:append", (time.perf_counter() - started) * 1000.0)
+            self.window.ui_perf.record("list.append", (time.perf_counter() - started) * 1000.0)
 
