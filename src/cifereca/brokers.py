@@ -394,6 +394,47 @@ class SynchronizationBrokerImpl:
         self._notify()
         return self._ref(account)
 
+    def local_materialization_schedule(self, source_id: str) -> str:
+        """Read the *materialize* schedule only; inventory uses its own flow.
+
+        Defaults to manual for missing/legacy/malformed preferences, including
+        the old global kobo_backup.enabled switch. Never exposes credentials.
+        """
+        from .core.source_materialization_schedule import policy_key
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            raise ValueError("unknown sync source") from None
+        if account.provider_id != "kobo":
+            return "not_supported"
+        raw = self.service.storage.metadata_get(policy_key(source_id))
+        return "on_start" if raw == "1" else "manual"
+
+    def set_local_materialization_schedule(self, source_id: str, mode: str) -> str:
+        """Explicit, durable, per-source opt-in. No remote operation.
+
+        There is deliberately no periodic option until a real source-owned
+        scheduler exists; no hidden fallback to the old global backup batch.
+        """
+        from .core.source_materialization_schedule import (
+            can_enable_kobo_on_start, policy_key,
+        )
+        if type(mode) is not str or mode not in {"manual", "on_start"}:
+            raise ValueError("unsupported materialization schedule")
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            raise ValueError("unknown sync source") from None
+        if account.provider_id != "kobo":
+            raise ValueError("local materialization not supported")
+        if mode == "on_start" and not can_enable_kobo_on_start(self.service, account):
+            raise ValueError("source not eligible for automatic materialization")
+        self.service.storage.metadata_set(
+            policy_key(source_id), "1" if mode == "on_start" else "0",
+        )
+        self._notify()
+        return mode
+
     def preview_local_materialization(
         self, source_id: str, *, verify_local_files: bool = False,
     ) -> SyncResult:
