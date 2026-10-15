@@ -529,10 +529,16 @@ class KoboSession(ProviderSession):
         # Transfer only a bounded *count* across the public provider boundary:
         # no upstream raw items, message strings, URLs or credentials.
         rejected = getattr(self.client, "last_manifest_rejections", ())
-        if isinstance(rejected, (list, tuple)):
-            self.backup_manifest_rejection_count = min(
-                1_000_000, sum(isinstance(item, dict) for item in rejected),
-            )
+        if type(rejected) in (list, tuple):
+            # A malformed rejection entry is still proof that the fetched
+            # snapshot is incomplete. Counting only dict entries previously
+            # erased that evidence and could mark a partial rights manifest
+            # authoritative for Core reconciliation. Never copy the payload.
+            self.backup_manifest_rejection_count = min(1_000_000, len(rejected))
+        else:
+            # An explicit non-sequence (None, string, mapping, etc.) is an
+            # unverified rejection envelope, not evidence of zero failures.
+            self.backup_manifest_rejection_count = 1
         # Provider-only projection: no local file checks or entitlement
         # authorization, no further Vault request. Core can consume the
         # bounded summary after it has independently resolved the identity.
