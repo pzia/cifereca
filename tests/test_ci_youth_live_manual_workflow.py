@@ -28,7 +28,13 @@ def test_live_workflow_is_bounded_and_keeps_nonpass_evidence():
     assert "timeout-minutes: 4" in source
     assert '--age "$AGE" --limit 2 --timeout 6' in source
     assert 'if [[ "$SOURCE" == "ecole-loisirs" ]]; then AGE=3; fi' in source
-    assert "--confirm-live > youth-live-evidence/result.json" in source
+    assert '--confirm-live > "$raw" 2>/dev/null' in source
+    assert "trap 'rm -f \"$raw\"' EXIT" in source
+    assert "python - \"$raw\" <<'PY' > youth-live-evidence/result.json" in source
+    assert "module.public_report(raw_report)" in source
+    assert 'raw_report.get("source") != os.environ["SOURCE"]' in source
+    assert 'safe.get("requests_count", 0) < 1' in source
+    assert 'safe.get("qualified_notice_count", 0) < 1' in source
     assert source.count("if: always()") == 2
     assert "actions/upload-artifact@v4" in source
     assert "retention-days: 7" in source

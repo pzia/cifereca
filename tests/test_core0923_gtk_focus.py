@@ -84,7 +84,10 @@ def test_focus_guard_is_local_and_does_not_suppress_gtk_warnings():
     method_source = ast.unparse(next(node for node in ast.parse(source).body
                                      if isinstance(node, ast.FunctionDef) and node.name == "show_route"))
 
-    assert "isinstance(widget.get_root(), Gtk.Window)" in method_source
+    # Evaluate root first, then recheck teardown before focusing the widget.
+    assert "root = widget.get_root()" in method_source
+    assert "if not is_current():" in method_source
+    assert "isinstance(root, Gtk.Window)" in method_source
     assert "child_focus(Gtk.DirectionType.TAB_FORWARD)" in method_source
     assert "warnings.filterwarnings" not in method_source
     assert "set_log_handler" not in method_source

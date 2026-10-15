@@ -32,6 +32,10 @@ def _method(name: str) -> str:
         tree = ast.parse(MAIN.with_name("library_detail_controller.py").read_text(encoding="utf-8"))
         return ast.unparse(next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                                 and n.name == "library_selected"))
+    if name == "_book_recommendation_target":
+        tree = ast.parse(MAIN.with_name("recommendation_target_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                                and n.name == "book_recommendation_target"))
     if name == "_add_book_recommendation_action":
         tree = ast.parse(MAIN.with_name("book_recommendation_controller.py").read_text(encoding="utf-8"))
         return ast.unparse(next(n for n in tree.body if isinstance(n, ast.FunctionDef)

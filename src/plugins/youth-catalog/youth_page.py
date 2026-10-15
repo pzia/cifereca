@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 import ipaddress
 import re
 from time import perf_counter
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from cifereca.plugin_api import (
     BookRef,
@@ -76,27 +76,59 @@ def public_url(value: object) -> str:
     if (hostname in {"localhost", "local", "internal"}
             or hostname.endswith((".localhost", ".local", ".internal", ".lan", ".home.arpa"))):
         return ""
+    # A DNS name must not conceal a loopback alias (127.1, 0177.0.0.1),
+    # nor a Unicode alternate dot. Use only ordinary DNS labels/punycode.
+    if (not hostname.isascii() or len(hostname) > 253
+            or not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part)
+                       for part in hostname.split("."))):
+        return ""
     try:
         address = ipaddress.ip_address(hostname)
     except ValueError:
-        pass
+        if "." not in hostname or hostname.rsplit(".", 1)[-1].isdigit():
+            return ""
     else:
         if not address.is_global:
             return ""
-    parameters = parse_qsl(parts.query, keep_blank_values=True)
-    if len(parameters) > 32:
-        return ""
-    for key, val in parameters:
-        field = re.sub(r"[^a-z0-9]", "", key.casefold())
-        if any(word in field for word in (
-                "token", "secret", "password", "session", "auth",
-                "signature", "apikey", "accesskey", "credential",
-                "jwt", "csrf", "signed", "policy", "expires",
-        )) or field.startswith(("xamz", "xgoog")):
+
+    # Decode only for *rejecting* unsafe links, never to rewrite an URL or
+    # infer acquisition rights. Double-encoded control bytes or path segments
+    # must not become a public detail/cover link downstream.
+    forbidden_segments = {
+        "download", "downloads", "acquire", "acquisition",
+        "license", "licence", "licenses", "licences", "drm",
+        "token", "tokens", "oauth", "authorize", "authorization",
+    }
+    decoded_path, decoded_query = parts.path, parts.query
+    for _ in range(4):
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in decoded_path + decoded_query):
             return ""
-        if "@" in val or re.search(r"\bbearer\s", val, re.I):
+        path_parts = (part.casefold() for part in decoded_path.split("/") if part)
+        if any(
+            part in forbidden_segments
+            or part.endswith((".acsm", ".lcpl", ".epub", ".kepub"))
+            for part in path_parts
+        ):
             return ""
-    return value
+        parameters = parse_qsl(decoded_query, keep_blank_values=True)
+        if len(parameters) > 32:
+            return ""
+        for key, val in parameters:
+            field = re.sub(r"[^a-z0-9]", "", key.casefold())
+            if any(word in field for word in (
+                    "token", "secret", "password", "session", "auth",
+                    "signature", "apikey", "accesskey", "credential",
+                    "jwt", "csrf", "signed", "policy", "expires",
+            )) or field in {"sig", "key"} or field.startswith(("xamz", "xgoog")):
+                return ""
+            if "@" in val or re.search(r"\bbearer\s", val, re.I):
+                return ""
+        path_next, query_next = unquote(decoded_path), unquote(decoded_query)
+        if (path_next, query_next) == (decoded_path, decoded_query):
+            return value
+        decoded_path, decoded_query = path_next, query_next
+    # Uninspected nesting of percent-encodings is not a public attestation.
+    return ""
 
 
 def age_text(age_range: object) -> str:
@@ -1096,6 +1128,15 @@ class YouthView:
         self.update_action_availability()
 
     def selected(self, row):
+        if getattr(self, "disposed", False):
+            # A late GTK selection callback must not resurrect the detail.
+            return
+        # Invalidate callbacks from the previous book on *every* selection,
+        # including an empty selection and a new edition with the same title.
+        # The public bridge also invokes this method on a lightweight host.
+        self._detail_selection_generation = (
+            getattr(self, "_detail_selection_generation", 0) + 1
+        )
         # The public bridge may reuse this callback without the whole GTK view.
         # A real YouthView always exposes the updater; a partial host may not.
         updater = getattr(self, 'update_action_availability', None)
@@ -1115,14 +1156,17 @@ class YouthView:
         search = getattr(self.host, "search_books", None)
         if callable(search):
             identity_id = self.identity_id()
+            selection_generation = self._detail_selection_generation
+            selected_book = self.selected_book
+            selection_key = row.key
             actions = list(presentation.actions)
             if 2 <= len(title) <= 512:
                 actions.append(UiBookDetailAction(
                     id="search-library",
                     title="Rechercher en bibliothèque",
                     icon_name="system-search-symbolic",
-                    callback=lambda q=title, identity=identity_id: self._search_library(
-                        q, identity, field="title",
+                    callback=lambda q=title, identity=identity_id, token=selection_generation, key=selection_key, book=selected_book: self._search_selected_book(
+                        q, identity, token, key, book, field="title",
                     ),
                 ))
             # ISBN is a bibliographic *lookup* only. It does not establish
@@ -1139,14 +1183,34 @@ class YouthView:
                     id="search-library-isbn",
                     title="Rechercher cette édition par ISBN",
                     icon_name="system-search-symbolic",
-                    callback=lambda q=isbn, identity=identity_id: self._search_library(
-                        q, identity, field="isbn",
+                    callback=lambda q=isbn, identity=identity_id, token=selection_generation, key=selection_key, book=selected_book: self._search_selected_book(
+                        q, identity, token, key, book, field="isbn",
                     ),
                 ))
             if actions:
                 presentation = replace(presentation, actions=tuple(actions))
         self.master.show_detail(presentation)
         refresh_actions()
+
+    def _search_selected_book(
+        self, query: str, identity_id: str, generation: int,
+        selection_key: str, book: object, *, field: str = "title",
+    ) -> bool:
+        """Never invoke an action from an old book edition or old profile.
+
+        The host owns real library search and availability. The callback only
+        attests the current UI selection; it grants no ownership or download.
+        """
+        if (
+            getattr(self, "disposed", False)
+            or generation != getattr(self, "_detail_selection_generation", 0)
+            or self.identity_id() != identity_id
+            or getattr(self, "selected_book", None) is not book
+            or getattr(self, "rows", {}).get(selection_key) is not book
+        ):
+            return False
+        self._search_library(query, identity_id, field=field)
+        return True
 
     def _search_library(self, query: str, identity_id: str, *, field: str = "title") -> None:
         """Explicit local search; no proof of holdings or automatic network I/O."""
@@ -1474,6 +1538,12 @@ class YouthView:
     def dispose(self):
         self.disposed = True
         self.generation += 1
+        # Actions in the shared detail can outlive GTK widgets if a callback
+        # was captured externally. Closing revokes their selection lease.
+        self._detail_selection_generation = (
+            getattr(self, "_detail_selection_generation", 0) + 1
+        )
+        self.selected_book = None
         if self.task:
             self.task.cancel()
         self.unsubscribe_sources()

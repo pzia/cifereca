@@ -34,8 +34,22 @@ from .book_actions import identity_has_attested_possession
 from .booking_view import booking_presentation
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 from . import route_display_controller
+from . import public_catalogue_action_controller
+from . import recommendation_target_controller
+from . import secondary_results_controller
+from . import acsm_import_chooser_controller
+from . import shell_stylesheet_controller
+from . import settings_chooser_controller
+from . import query_widget_factory_controller
+from . import history_language_projection
+from . import known_languages_controller
+from . import adept_loan_choice_controller
+from . import sync_issues_dialog_controller
 from . import facet_value_controller
 from . import shell_shortcut_controller
+from . import identity_activation_controller
+from . import identity_view_controller
+from . import secondary_page_controller
 from . import statistics_presentation_controller
 from . import dashboard_page_controller
 from . import dashboard_render_controller
@@ -248,43 +262,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- infrastructure ----------
     def _install_css(self) -> None:
-        css = b"""
-        .login-card { background: @card_bg_color; border-radius: 16px; padding: 28px; }
-        .sidebar { background: @sidebar_bg_color; border-right: 1px solid @borders; }
-        .sidebar row { border-radius: 8px; margin: 2px 8px; padding: 4px; }
-        .sidebar row:selected { background: @accent_bg_color; color: @accent_fg_color; }
-        .book-row { border-radius: 10px; }
-        .book-row:hover { background: alpha(currentColor, 0.055); }
-        .book-title { font-weight: 650; font-size: 1.05em; }
-        .page-title { font-weight: 750; font-size: 1.55em; }
-        .detail-title { font-weight: 800; font-size: 1.7em; }
-        .detail-subtitle { font-size: 1.08em; }
-        .badge { border-radius: 999px; padding: 3px 8px; background: alpha(currentColor, 0.10); font-size: 0.88em; }
-        .book-tag { border-radius: 10px; padding: 2px 6px; font-size: 0.88em; }
-        .tag-content { background: alpha(@accent_color, 0.14); font-weight: 600; }
-        .tag-form { background: alpha(@success_color, 0.14); }
-        .book-tag:focus { outline: 2px solid @accent_color; }
-        .facet-value { border-radius: 8px; padding: 2px 6px; background: alpha(@accent_color, 0.08); }
-        .facet-value:hover { background: alpha(@accent_color, 0.16); }
-        .facet-value:focus { outline: 2px solid @accent_color; }
-        .success-badge { background: alpha(@success_color, 0.20); color: @success_color; }
-        .cover-frame { border-radius: 7px; background: alpha(currentColor, 0.06); }
-        .busy-bar { background: @headerbar_bg_color; border-top: 1px solid @borders; padding: 8px 14px; }
-        .notification-bar { background: @headerbar_bg_color; border-top: 1px solid @borders; padding: 7px 12px; }
-        .settings-tabs button { padding-left: 8px; padding-right: 8px; min-width: 0; }
-        .activity-success { color: @success_color; }
-        .activity-error { color: @error_color; }
-        .loan-overdue { background: alpha(@error_color, 0.14); color: @error_color; font-weight: 650; }
-        .loan-imminent { background: alpha(@warning_color, 0.14); color: @warning_color; font-weight: 650; }
-        .loan-normal { opacity: 0.85; }
-        .metric { font-size: 1.35em; font-weight: 700; }
-        .login-brand { font-size: 2.1em; font-weight: 800; }
-        """
-        provider = Gtk.CssProvider()
-        provider.load_from_data(css)
-        display = Gdk.Display.get_default()
-        if display:
-            Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        return shell_stylesheet_controller.install_css(
+            self, Gtk=Gtk, Gdk=Gdk,
+        )
 
     def _cancel_notification_hide(self) -> None:
         return feedback_timers.cancel_notification_hide(self, source_remove=GLib.source_remove)
@@ -360,6 +340,9 @@ class MainWindow(Adw.ApplicationWindow):
         if getattr(self, '_closed', False):
             return False
         return task_activity_adapter.task_progress(self, label)
+
+    def _task_progress_for_task(self, task_id: int, label: str) -> bool:
+        return task_activity_adapter.task_progress(self, label, task_id=task_id)
 
     def _task_finished(self, task_id: int, remaining: int, label: str, success: bool, error: str | None) -> bool:
         if getattr(self, '_closed', False):
@@ -603,100 +586,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.navigate("library")
 
     def open_identity_view(self, identity_id: str, *, route: str, providers=()) -> None:
-        from .query_model import QueryState
-        if route not in {"search", "library"}:
-            raise ValueError("Vue filtrée inconnue")
-        if isinstance(providers, str) or any(not isinstance(p, str) or not p for p in providers):
-            raise ValueError("Sources invalides")
-        allowed = {d.id for d in self.service.provider_descriptors()} | {"local"}
-        selected = tuple(dict.fromkeys(providers))
-        if not set(selected) <= allowed:
-            raise ValueError("Source inconnue")
-        self._activate_identity(identity_id)
-        controls = self.search_controls if route == "search" else self.library_controls
-        controls.set_state(QueryState(scope="digital", providers=selected))
-        self.navigate(route)
-        if route == "search": self.run_search(False)
-        else: self._render_library()
+        return identity_view_controller.open_identity_view(
+            self, identity_id, route=route, providers=providers,
+        )
 
     def _activate_identity(self, identity_id: str) -> None:
-        identity = self.service.identity_by_id(identity_id)
-        if identity is None:
-            raise ValueError("Identité inconnue")
-        current = self.service.current_identity
-        current_identity_id = current.identity_id if current is not None else None
-        if not identity_change_required(current_identity_id, identity.identity_id):
-            _TRACE_LOG.debug("Identity selection notification ignored: already current identity=%s", identity.identity_id)
-            return
-        self.service.select_identity(identity.identity_id)
-        self._identity_context_generation += 1
-        self._dispose_maintenance_lines()
-        if self.view_stack.get_visible_child_name() == "tools":
-            self._refresh_tools_page()
-        self._account_context_generation += 1
-        self._cached_book_request_generation += 1
-        self._cached_book_context = None
-        # Pending Library navigation belongs to the previous identity context.
-        # Cancel it before rendering the new identity's (initially empty) list.
-        self._pending_library_selection_key = None
-        self._pending_library_selection_identity_id = None
-        self._pending_library_selection_generation = None
-        identity_generation = self._identity_context_generation
-        self._populate_accounts()
-        self._render_dashboard()
-        self._search_generation = getattr(self, "_search_generation", 0) + 1
-        self._search_detail_request_generation += 1
-        self._search_local_objects = {}; self.search_objects = {}; self._remote_search_results = []
-        self._search_mode = "local"; self._remote_query_key = None; self._selected_search_id = None
-        if hasattr(self, "search_page"):
-            self.search_page.clear_rows()
-            self.search_page.detail.empty("Nouvelle identité", "Lancez une recherche dans le connu.")
-        # Do not rebuild the identity dropdown from its own notify::selected callback:
-        # GTK may deliver the resulting notification asynchronously after the guard
-        # is released, causing an unbounded refresh/task loop.
-        self._populate_account_dropdown(identity.identity_id)
-        self.service.last_history = []
-        self.service.last_bookings = []
-        self.history_objects = {}
-        self.booking_objects = {}
-        self._history_all_rows = []
-        self._history_rows = []
-        self._history_loaded_count = 0
-        self._history_append_scheduled = False
-        if hasattr(self, "history_page"):
-            self.history_page.clear_rows()
-        if hasattr(self, "booking_page"):
-            self.booking_page.clear_rows()
-        self._library_entries_cache = []
-        self._recent_entries_cache = []
-        self._recent_objects = {}
-        if hasattr(self, "recent_page"):
-            self.recent_page.clear_rows()
-            self.recent_page.detail.empty("Nouvelle identité", "Chargement des récupérations…")
-        if hasattr(self, "library_page"):
-            self._render_library([])
-            self.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")
-        def identity_loaded(rows: list[Loan]) -> None:
-            if not self.service.current_identity or self.service.current_identity.identity_id != identity.identity_id:
-                return
-            if not self._identity_request_current(identity.identity_id, identity_generation):
-                return
-            self._populate_loans(rows)
-            self.refresh_library(False)
-            self.refresh_recent()
-            route = self.view_stack.get_visible_child_name() if hasattr(self, "view_stack") else None
-            if route == "history":
-                self.refresh_history(False)
-            elif route == "bookings":
-                self.refresh_bookings(False)
-            self._activity_result(f"Identité chargée : {identity.label}")
-        self.runner.submit(
-            f"Chargement de {identity.label}…",
-            lambda: self.service.refresh_identity_loans(force=False, identity_id=identity.identity_id),
-            identity_loaded,
-            priority=TaskPriority.USER_ACTION,
-            kind="identity",
-        )
+        return identity_activation_controller.activate_identity(self, identity_id)
 
     def _account_changed(self, dropdown: Gtk.DropDown, _pspec) -> None:
         return shell_account_selection_controller.account_changed(self, dropdown, _pspec)
@@ -722,58 +617,17 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _choose_identity_directory(self, entry, root: Path) -> None:
-        from ..identities.directory_selection import directory_choice
-        chooser = Gtk.FileChooserNative.new("Choisir un dossier d’identité", self,
-                     Gtk.FileChooserAction.SELECT_FOLDER, "Choisir", "Annuler")
-        chooser.set_current_folder(Gio.File.new_for_path(str(root.expanduser())))
-        self._identity_directory_chooser = chooser
-        def response(dialog, selected):
-            try:
-                if selected == Gtk.ResponseType.ACCEPT:
-                    file = dialog.get_file()
-                    if file is None or not file.get_path():
-                        raise ValueError("Choisissez un dossier local.")
-                    entry.set_text(directory_choice(file.get_path(), root))
-            except Exception as exc:
-                self.show_error(str(exc), "Choix du répertoire impossible")
-            finally:
-                dialog.destroy()
-                if getattr(self, "_identity_directory_chooser", None) is dialog:
-                    self._identity_directory_chooser = None
-        chooser.connect("response", response); chooser.show()
+        return settings_chooser_controller.choose_identity_directory(
+            self, entry, root, Gtk=Gtk, Gio=Gio,
+        )
 
     def _choose_adept_profile(self, entry, control) -> None:
-        def done(choices):
-            if not choices:
-                self.show_error("Autorisez un profil Adobe capable de récupérer les ACSM dans Kobo-Adept, puis réessayez.", "Aucun profil ADE prêt")
-                return
-            dialog = Adw.MessageDialog.new(self, "Choisir le profil ADE", "Choisissez le profil Adobe correspondant aux prêts de cette identité. Enregistrez ensuite les paramètres, puis relancez la synchronisation.")
-            references = {}
-            for index, choice in enumerate(choices):
-                response = "profile-" + str(index)
-                references[response] = choice["reference"]
-                dialog.add_response(response, choice["name"] + " · " + choice["reference"])
-            dialog.add_response("cancel", "Annuler")
-            dialog.set_close_response("cancel")
-            def selected(_dialog, response):
-                if response in references:
-                    entry.set_text(references[response])
-            dialog.connect("response", selected)
-            dialog.present()
-        self.runner.submit("Profils ADE…", self.service.adept_profile_choices, done,
-                           lambda exc: self.show_error(str(exc), "Profils ADE"), control=control)
+        return settings_chooser_controller.choose_adept_profile(
+            self, entry, control, Adw=Adw,
+        )
 
     def _show_sync_issues(self, card):
-        from .sync_issues import sync_issues_text
-        dialog = Adw.MessageDialog.new(self, "Synchronisation · " + str(card.get("label") or ""), sync_issues_text(card.get("sync") or {}))
-        dialog.add_response("settings", "Paramètres des identités")
-        dialog.add_response("close", "Fermer")
-        def response(_dialog, selected):
-            if selected == "settings":
-                self.navigate("settings")
-                self._settings_tabs.set_visible_child_name("accounts")
-        dialog.connect("response", response)
-        dialog.present()
+        return sync_issues_dialog_controller.show_sync_issues(self, card, Adw=Adw)
 
     def _build_sync_page(self):
         return sync_controller._build_sync_page(self)
@@ -1136,19 +990,9 @@ class MainWindow(Adw.ApplicationWindow):
         return sync_controller.run_opening_sync(self, control, deep=deep)
 
     def _known_item_languages(self, provider_id: str, item_id: str | None, metadata: dict[str, Any] | None = None) -> set[str]:
-        from cifereca.language import normalize_language_tag
-        values = []
-        meta = dict(metadata or {})
-        raw = meta.get('languages') or meta.get('language') or ()
-        values.extend(raw if isinstance(raw, (list, tuple, set)) else (raw,))
-        if item_id:
-            for row in self.service.storage.catalog_entries():
-                if str(row.get('provider_id') or '') != str(provider_id or ''): continue
-                if str(row.get('item_id') or '') != str(item_id): continue
-                row_meta = dict(row.get('metadata') or {})
-                raw = row_meta.get('languages') or row_meta.get('language') or ()
-                values.extend(raw if isinstance(raw, (list, tuple, set)) else (raw,))
-        return {tag for value in values if (tag := normalize_language_tag(value))}
+        return known_languages_controller.known_item_languages(
+            self, provider_id, item_id, metadata,
+        )
 
     def _build_loans_page(self) -> MasterDetailPage:
         return loans_controller._build_loans_page(self)
@@ -1191,26 +1035,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- search ----------
     def _query_controls(self, changed, activate, *, library=False):
-        providers = dict(self.service.searchable_providers())
-        providers["local"] = "Local"
-        for row in self.service.catalog_entries():
-            provider = str(row.get("provider_id") or "local")
-            providers.setdefault(provider, self.service.provider_display_name(provider))
-        providers = sorted(providers.items(), key=lambda pair: pair[1])
-        catalog = self.plugin_manager.widget_catalog() if self.plugin_manager else None
-        factory = getattr(catalog, "build_query_controls", None)
-        controls = None
-        if callable(factory):
-            try:
-                controls = factory(providers, changed, activate, library=library)
-            except Exception as exc:
-                self.diagnostics.add("PLUGIN", "query widget", "error", detail={"error": str(exc)})
-        if controls is None:
-            controls = QueryControls(providers, changed, activate, library=library)
-        setter = getattr(controls, "set_provider_search_capabilities", None)
-        if callable(setter) and not library:
-            setter(self.service.provider_search_capabilities())
-        return controls
+        return query_widget_factory_controller.build_query_controls(
+            self, changed, activate, library=library, QueryControls=QueryControls,
+        )
 
     def _reset_search_enter(self):
         return search_controller._reset_search_enter(self)
@@ -1288,16 +1115,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- history ----------
     def _build_history_page(self) -> MasterDetailPage:
-        page = MasterDetailPage(self, "Historique", "Documents précédemment empruntés", "Historique non chargé", "Ouvrez cet écran ou actualisez pour récupérer l'historique.")
-        page.set_total_only_count(True)
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Actualiser l'historique")
-        refresh.connect("clicked", lambda _b: self.refresh_history(True, refresh)); page.header_actions.append(refresh)
-        from cifereca.language import language_label
-        self.history_languages = MultiSelect('Langues', [(code, language_label(code)) for code in ('fr','en','de','es','it','pt','nl')], self._rerender_history)
-        page.toolbar.append(self.history_languages)
-        page.connect_selected(self._history_selected)
-        page.scroll.get_vadjustment().connect("value-changed", self._history_scroll_changed)
-        return page
+        return secondary_page_controller.build_history_page(
+            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage, MultiSelect=MultiSelect,
+        )
 
     def _identity_request_current(self, identity_id: str | None, generation: int) -> bool:
         current = self.service.current_identity
@@ -1350,69 +1170,13 @@ class MainWindow(Adw.ApplicationWindow):
         self._populate_history(rows, preserve_all=True)
 
     def _populate_history(self, rows: list[HistoryItem], preserve_all: bool = False) -> None:
-        if not preserve_all:
-            self._history_all_rows = list(rows)
-        wanted_languages = set(self.history_languages.values()) if hasattr(self, 'history_languages') else set()
-        if wanted_languages:
-            rows = [x for x in rows if self._known_item_languages(x.source_provider, x.record_id or x.id).intersection(wanted_languages)]
-        self.history_objects = {x.id: x for x in rows}
-        self._history_rows = list(rows)
-        self._history_loaded_count = 0
-        self._history_append_scheduled = False
-        initial = self._history_rows[: self._history_page_size]
-        self._history_loaded_count = len(initial)
-        self.history_page.show_rows(
-            [self._history_book_row(x) for x in initial],
-            total_count=len(self._history_rows),
-        )
-        if len(self._history_rows) > self._history_loaded_count:
-            self.diagnostics.add(
-                "UI", "history progressive load", "ok",
-                detail={
-                    "loaded": self._history_loaded_count,
-                    "total": len(self._history_rows),
-                    "page_size": self._history_page_size,
-                },
-                level="detailed",
-            )
-
+        return secondary_results_controller.populate_history(self, rows, preserve_all)
     def _history_scroll_changed(self, adjustment: Gtk.Adjustment) -> None:
-        if getattr(self, "_closed", False):
-            return
-        if self._history_loaded_count >= len(self._history_rows) or self._history_append_scheduled:
-            return
-        remaining = adjustment.get_upper() - (adjustment.get_value() + adjustment.get_page_size())
-        threshold = max(420.0, adjustment.get_page_size() * 0.75)
-        if remaining <= threshold:
-            self._history_append_scheduled = True
-            GLib.idle_add(self._append_history_chunk)
-
+        return secondary_results_controller.history_scroll_changed(
+            self, adjustment, GLib=GLib,
+        )
     def _append_history_chunk(self) -> bool:
-        self._history_append_scheduled = False
-        # A queued GTK idle may outlive the window and its history widgets.
-        if getattr(self, "_closed", False):
-            return False
-        if self._history_loaded_count >= len(self._history_rows):
-            return False
-        start = self._history_loaded_count
-        end = min(len(self._history_rows), start + self._history_page_size)
-        chunk = self._history_rows[start:end]
-        self._history_loaded_count = end
-        self.history_page.append_rows(
-            [self._history_book_row(x) for x in chunk],
-            total_count=len(self._history_rows),
-        )
-        self.diagnostics.add(
-            "UI", "history progressive load", "ok",
-            detail={
-                "loaded": self._history_loaded_count,
-                "total": len(self._history_rows),
-                "page_size": self._history_page_size,
-            },
-            level="detailed",
-        )
-        return False
-
+        return secondary_results_controller.append_history_chunk(self)
     def _history_selected(self, row: BookListItem | None) -> None:
         if row:
             item = self.history_objects.get(row.key)
@@ -1424,11 +1188,9 @@ class MainWindow(Adw.ApplicationWindow):
 
     # ---------- bookings ----------
     def _build_bookings_page(self) -> MasterDetailPage:
-        page = MasterDetailPage(self, "Réservations", "Réservations physiques et numériques", "Aucune réservation", "Vos réservations apparaîtront ici.")
-        refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Actualiser les réservations")
-        refresh.connect("clicked", lambda _b: self.refresh_bookings(True, refresh)); page.header_actions.append(refresh)
-        page.connect_selected(self._booking_selected)
-        return page
+        return secondary_page_controller.build_bookings_page(
+            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage,
+        )
 
     def refresh_bookings(self, force: bool = False, control: Gtk.Widget | None = None) -> None:
         current = self.service.current_identity
@@ -1449,22 +1211,10 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _populate_bookings(self, rows: list[Booking]) -> None:
-        self.booking_objects = {x.id: x for x in rows}
-        ui_rows = []
-        for item in rows:
-            presentation = booking_presentation(item)
-            ui_rows.append(BookListItem(
-                item.id,
-                item.title,
-                item.location or "",
-                f"Réservé le {fr_date(item.booking_date)}",
-                presentation.status_label,
-                None,
-            ))
-        objects={x.id:{"source_provider":x.source_provider} for x in rows}
-        self._attach_row_facets(ui_rows,objects,self.search_controls)
-        self.booking_page.show_rows(ui_rows)
-
+        return secondary_results_controller.populate_bookings(
+            self, rows, BookListItem=BookListItem,
+            booking_presentation=booking_presentation, fr_date=fr_date,
+        )
     def _booking_selected(self, row: BookListItem | None) -> None:
         if row:
             item = self.booking_objects.get(row.key)
@@ -1543,33 +1293,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.run_search(False)
 
     def choose_acsm(self):
-        if getattr(self, "_acsm_chooser", None):
-            self._acsm_chooser.present(); return
-        identity = self.service.current_identity
-        if identity is None:
-            self.show_error("Choisissez une identité pour importer un ACSM"); return
-        identity_id = identity.identity_id
-        chooser = Gtk.FileChooserDialog(title=f"Importer un ACSM — {identity.label}", transient_for=self, modal=True, action=Gtk.FileChooserAction.OPEN)
-        chooser.add_buttons("Annuler", Gtk.ResponseType.CANCEL, "Importer", Gtk.ResponseType.ACCEPT)
-        self._acsm_chooser = chooser
-        filt = Gtk.FileFilter(); filt.set_name("ACSM (*.acsm)"); filt.add_pattern("*.acsm"); filt.add_pattern("*.ACSM"); chooser.add_filter(filt)
-        def chosen(dialog, response):
-            file = dialog.get_file() if response == Gtk.ResponseType.ACCEPT else None
-            path = file.get_path() if file else None
-            dialog.destroy()
-            self._acsm_chooser = None
-            if not path: return
-            def done(result):
-                if result.get("status") == "attention_required":
-                    self.show_attention("Import en attente : " + str(result.get("code") or "runtime DRM à configurer") + "\nLe staging est conservé pour une nouvelle tentative.", code=result.get("code") or "attention_required")
-                else:
-                    self._activity_result(
-                        "ACSM importé" if result.get("status") != "unchanged" else "ACSM déjà importé"
-                    )
-                    self.refresh_library(False)
-            self.runner.submit("Import ACSM…", lambda: self.service.import_acsm(Path(path), identity_id=identity_id), done,
-                priority=TaskPriority.USER_ACTION, kind="acsm-import")
-        chooser.connect("response", chosen); chooser.present()
+        return acsm_import_chooser_controller.choose_acsm(self, Gtk=Gtk)
 
     def _search_facet(self, field, text, controls):
         return facet_value_controller.search_facet(self, field, text, controls)
@@ -1650,25 +1374,12 @@ class MainWindow(Adw.ApplicationWindow):
     def open_book_detail(self, book: BookRef, *, identity_id: str | None = None) -> bool:
         """Open an attested book in the active identity's standard Library detail.
 
-        Public plugin callers cannot navigate to another identity implicitly.
-        The lookup uses only the already loaded Library snapshot, with no
-        filesystem scan or network operation on the GTK main thread.
+        Public plugins never navigate to another identity implicitly. Resolution
+        is local-only; the Core rechecks identity context before dispatch.
         """
-        if getattr(self, "_closed", False):
-            return False
-        from ..core.book_navigation import library_key_for_book
-
-        identity = getattr(self.service, "current_identity", None)
-        active_id = str(getattr(identity, "identity_id", "") or "")
-        if not active_id or (identity_id is not None and identity_id != active_id):
-            return False
-        key = library_key_for_book(
-            book, getattr(self, "_library_entries_cache", ()), identity_id=active_id,
+        return library_navigation.open_book_detail(
+            self, book, identity_id=identity_id,
         )
-        if not key:
-            return False
-        self._open_library_item(key)
-        return True
 
     def _open_library_item(self, key: str) -> None:
         return library_navigation.open_library_item(self, key)
@@ -1718,38 +1429,9 @@ class MainWindow(Adw.ApplicationWindow):
         except Exception as exc: self.show_error(str(exc), 'Ouverture du livre impossible')
 
     def _add_catalogue_action(self, detail, item):
-        target = self.service.public_catalogue_target(item)
-        if not target:
-            return
-        kind, url = target
-        if url in getattr(detail, "_rendered_document_urls", set()):
-            return
-        is_notice = kind == 'notice'
-        button = self.action_button(
-            'Ouvrir la notice' if is_notice else 'Ouvrir le catalogue',
-            'web-browser-symbolic',
+        return public_catalogue_action_controller.add_catalogue_action(
+            self, detail, item, Gio=Gio,
         )
-        button._cifereca_action_id = 'open-notice' if is_notice else 'open-catalogue'
-        button.set_tooltip_text(
-            'Ouvrir la page publique de ce livre'
-            if is_notice else 'Ouvrir le catalogue général pour y rechercher ce livre'
-        )
-
-        def open_catalogue(_button):
-            try:
-                # The classification may have changed since rendering. Never
-                # turn a button promising a book notice into a generic homepage.
-                current = self.service.public_catalogue_target(item)
-                if current and current[0] == kind:
-                    Gio.AppInfo.launch_default_for_uri(current[1], None)
-                elif current:
-                    self.toast('La destination du lien a changé ; actualisez la fiche.')
-            except Exception as exc:
-                self.show_error(str(exc), 'Ouverture de la page publique impossible')
-
-        button.connect('clicked', open_catalogue)
-        detail.add_actions([button])
-
 
     @staticmethod
     def _book_description(item):
@@ -1773,24 +1455,10 @@ class MainWindow(Adw.ApplicationWindow):
 
 
     def _book_recommendation_target(self, item):
-        manager = getattr(self, "plugin_manager", None)
-        if manager is None:
-            return None
-        context = self._book_action_context(item)
-        book = context.book
-        if book is None:
-            return None
-        try:
-            services = manager.services("recommendation")
-        except Exception:
-            return None
-        for resolved in services:
-            if "recommendation.book-reference" not in set(resolved.capabilities):
-                continue
-            service = resolved.service
-            if isinstance(service, BookReferenceRecommendationService):
-                return service, book
-        return None
+        return recommendation_target_controller.book_recommendation_target(
+            self, item,
+            BookReferenceRecommendationService=BookReferenceRecommendationService,
+        )
 
     def _add_book_recommendation_action(self, detail, item) -> None:
         return book_recommendation_controller.add_book_recommendation_action(
@@ -1820,38 +1488,9 @@ class MainWindow(Adw.ApplicationWindow):
             priority=TaskPriority.USER_ACTION, kind="adept-inventory")
 
     def _present_adept_loan_choices(self, acquisition_id, loan, result):
-        options = result["options"]
-        if not options:
-            self.toast("Aucun prêt ADEPT dans les profils liés" if result["complete"] else "Inventaire incomplet : aucun prêt disponible", 6)
-            return
-        dialog = Adw.MessageDialog.new(self, "Rattacher un prêt ADEPT", "Choisissez le prêt correspondant au fichier local. Le titre aide au choix ; il ne constitue pas une preuve automatique. Aucun livre ne sera téléchargé ni restitué.")
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        title = Gtk.Label(label=loan.title, xalign=0); title.set_wrap(True); box.append(title)
-        if not result["complete"]:
-            warning = Gtk.Label(label="Inventaire partiel : seuls les profils lus avec succès sont proposés.", xalign=0); warning.set_wrap(True); box.append(warning)
-        labels = [f"{o['title']} · {o['profile_name']} · {o['state']} · {o['loan_id']}" for o in options]
-        dropdown = Gtk.DropDown.new_from_strings(labels); dropdown.set_enable_search(True)
-        dropdown.set_selected(Gtk.INVALID_LIST_POSITION); dropdown.set_tooltip_text("Titre · profil · état · identifiant ADEPT")
-        box.append(dropdown)
-        detail = Gtk.Label(label="Sélectionnez un prêt pour voir sa validité et son chemin connu.", xalign=0); detail.set_wrap(True); box.append(detail)
-        dialog.set_extra_child(box); dialog.add_response("cancel", "Annuler"); dialog.add_response("attach", "Confirmer le rattachement")
-        dialog.set_response_enabled("attach", False); dialog.set_close_response("cancel")
-        def selected(_dropdown, _pspec):
-            index = dropdown.get_selected(); valid = index < len(options)
-            dialog.set_response_enabled("attach", valid)
-            if valid:
-                option = options[index]; detail.set_label(f"Validité : {option.get('validity') or 'Inconnue'}\nChemin ADEPT : {option.get('local_book') or 'Non fourni'}")
-        dropdown.connect("notify::selected", selected)
-        def response(_dialog, choice):
-            index = dropdown.get_selected()
-            if choice != "attach" or index >= len(options): return
-            option = options[index]
-            def ok(_result):
-                self.loan_page.detail.show_loan(loan); self.refresh_library(False)
-                self._activity_result("Prêt ADEPT rattaché · fichier conservé")
-            self.runner.submit("Rattachement du prêt ADEPT…", lambda: self.service.attach_adept_loan(acquisition_id, option["profile_id"], option["loan_id"]), ok,
-                lambda exc: self.show_error(str(exc), "Rattachement impossible"), priority=TaskPriority.USER_ACTION, kind="adept-binding")
-        dialog.connect("response", response); dialog.present()
+        return adept_loan_choice_controller.present_adept_loan_choices(
+            self, acquisition_id, loan, result, Gtk=Gtk, Adw=Adw,
+        )
 
     def reconcile_adept_from_detail(self, acquisition_id, loan, control):
         def ok(result):

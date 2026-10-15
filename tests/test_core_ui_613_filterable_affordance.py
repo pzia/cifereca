@@ -10,6 +10,10 @@ MAIN = ROOT / "src/cifereca/gui/main_window.py"
 
 
 def _method(name: str) -> str:
+    if name == "_install_css":
+        owner = ast.parse(MAIN.with_name("shell_stylesheet_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(n for n in owner.body
+                                if isinstance(n, ast.FunctionDef) and n.name == "install_css"))
     if name in {"_search_facet", "_facet_value_group", "_facet_value_button"}:
         target = name.lstrip("_")
         owner = ast.parse(MAIN.with_name("facet_value_controller.py").read_text(encoding="utf-8"))
@@ -18,11 +22,6 @@ def _method(name: str) -> str:
     if name == "_add_facets":
         owner = ast.parse(MAIN.with_name("detail_facets_controller.py").read_text(encoding="utf-8"))
         return ast.unparse(next(n for n in owner.body if isinstance(n, ast.FunctionDef) and n.name == "add_facets"))
-    if name in {"_facet_value_button", "_facet_value_group"}:
-        tree = ast.parse(MAIN.with_name("facet_value_controller.py").read_text(encoding="utf-8"))
-        owner = {"_facet_value_button": "facet_value_button", "_facet_value_group": "facet_value_group"}[name]
-        return ast.unparse(next(n for n in tree.body
-                                if isinstance(n, ast.FunctionDef) and n.name == owner))
     tree = ast.parse(gui_source_text(MAIN))
     cls = next(
         node for node in tree.body

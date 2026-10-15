@@ -239,3 +239,133 @@ def test_quit_closes_before_application_shutdown_and_handles_missing_app():
     window.get_application = lambda: None
     quit_application(window)
     assert events == ["close"]
+
+def test_close_during_action_creation_stops_registration():
+    host, events, actions, accelerators = _application_host()
+    class ClosingAction(Action):
+        @classmethod
+        def new(cls, name, _parameter):
+            host._closed = True
+            return cls(name)
+    install_shell_shortcuts(host, Gio=NS(SimpleAction=ClosingAction))
+    assert actions == {} and accelerators == {} and events == []
+
+
+def test_close_during_first_action_registration_skips_remaining_and_accelerators():
+    host, events, actions, accelerators = _application_host()
+    def register(action):
+        actions[action.name] = action
+        host._closed = True
+    host.add_action = register
+    install_shell_shortcuts(host, Gio=NS(SimpleAction=Action))
+    assert len(actions) == 1
+    assert accelerators == {}
+    for action in actions.values():
+        action.activate()
+    assert events == []
+
+
+def test_close_during_application_lookup_skips_accelerators():
+    host, events, actions, accelerators = _application_host()
+    def application():
+        host._closed = True
+        return NS(set_accels_for_action=lambda *a: events.append("binding"))
+    host.get_application = application
+    install_shell_shortcuts(host, Gio=NS(SimpleAction=Action))
+    assert len(actions) == 11
+    assert accelerators == {} and events == []
+
+
+def test_close_during_first_accelerator_binding_skips_remaining_bindings():
+    host, events, actions, accelerators = _application_host()
+    def bind(name, keys):
+        accelerators[name] = keys
+        host._closed = True
+    host.get_application = lambda: NS(set_accels_for_action=bind)
+    install_shell_shortcuts(host, Gio=NS(SimpleAction=Action))
+    assert len(actions) == 11
+    assert len(accelerators) == 1
+    assert set(accelerators) == {"win.quit"}
+
+
+def test_focus_shortcut_aborts_when_visible_route_lookup_closes_window():
+    events = []
+    host = NS(_closed=False, _pages={"search": object()})
+    def selected():
+        host._closed = True
+        return "search"
+    host.view_stack = NS(get_visible_child_name=selected)
+    host.search_controls = NS(entry=NS(grab_focus=lambda: events.append("focus")))
+    focus_search(host)
+    assert events == []
+
+
+def test_focus_shortcut_aborts_when_navigation_closes_window():
+    events = []
+    host = NS(
+        _closed=False, _pages={"search": object(), "settings": object()},
+        view_stack=NS(get_visible_child_name=lambda: "settings"),
+        search_controls=NS(entry=NS(grab_focus=lambda: events.append("focus"))),
+    )
+    def navigate(route):
+        events.append(("navigate", route))
+        host._closed = True
+    host.navigate = navigate
+    focus_search(host)
+    assert events == [("navigate", "search")]
+
+
+def test_cycle_shortcut_aborts_when_visible_route_lookup_closes_window():
+    events = []
+    host = NS(_closed=False, _pages={"search": object(), "library": object()})
+    def selected():
+        host._closed = True
+        return "search"
+    host.view_stack = NS(get_visible_child_name=selected)
+    host.navigate = events.append
+    cycle_page(host, 1)
+    assert events == []
+
+
+def test_shortcut_help_aborts_when_dialog_factory_closes_owner():
+    events = []
+    host = NS(_closed=False)
+    class Dialog:
+        @staticmethod
+        def new(window, title, body):
+            host._closed = True
+            return NS(
+                add_response=lambda *a: events.append("response"),
+                present=lambda: events.append("present"),
+            )
+    show_shortcuts(host, Adw=NS(MessageDialog=Dialog))
+    assert events == []
+
+
+def test_shortcut_help_aborts_when_response_callback_closes_owner():
+    events = []
+    host = NS(_closed=False)
+    class Dialog:
+        @staticmethod
+        def new(window, title, body):
+            def response(*args):
+                events.append("response")
+                host._closed = True
+            return NS(
+                add_response=response,
+                present=lambda: events.append("present"),
+            )
+    show_shortcuts(host, Adw=NS(MessageDialog=Dialog))
+    assert events == ["response"]
+
+
+def test_pages_menu_button_lookup_that_closes_owner_skips_popup():
+    events = []
+    class Host:
+        _closed = False
+        @property
+        def pages_menu_button(self):
+            self._closed = True
+            return NS(popup=lambda: events.append("popup"))
+    open_pages_menu(Host())
+    assert events == []

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -151,7 +152,8 @@ def test_failed_live_qualification_preserves_structural_plugin_diagnostic(
     with pytest.raises(RuntimeError, match="no recognizable book links"):
         script.qualify(args, report)
     assert report["requests_count"] == 1
-    assert report["https_requests"] == ["https://www.editionsmilan.com/livres/"]
+    assert "https_requests" not in report
+    assert "https://www.editionsmilan.com/livres/" not in json.dumps(report)
     assert report["plugin_diagnostic"] == {
         "source": "milan", "phase": "listing",
         "http_status": 200, "anchor_count": 31,
@@ -195,7 +197,7 @@ def test_ecole_loisirs_routes_only_one_explicit_search_page_not_browse():
               "scripts/qualify-youth-source-live.py").read_text(encoding="utf-8")
     assert 'raw = source.search("loup", cursor=None, limit=40)' in source
     assert '"age": args.age' in source  # local cache filter, never HTTP age parameter
-    assert 'report["public_query"] = "loup"' in source
+    assert 'report["public_query"]' not in source
     assert '"max_requests": 1' in source
 
 
@@ -348,3 +350,88 @@ def test_live_evidence_rejects_valid_ean_check_digits_without_isbn_prefix():
             row = NS(**(base | {"identifiers": {"isbn": good}}))
             actual = script.evidence_for((row,), source_id)
             assert len(actual) == 1 and actual[0]["isbn13"] == good
+
+
+def test_published_evidence_is_fail_closed_even_for_poisoned_report():
+    script = script_module()
+    private = "Bearer PRIVATE_TOKEN /home/alice/book.acsm ?token=SECRET"
+    raw = {
+        "source": "milan", "result": "PASS", "requests_count": 2,
+        "accepted": 1, "rejected": 2, "ingest_error_count": 1,
+        "qualified_notice_count": 1, "next_cursor_present": False,
+        "age": 8, "limit": 2, "request_budget": 9, "timeout_seconds": 6,
+        "source_plugin_id": "youth.source.milan",
+        "https_requests": ["https://www.editionsmilan.com/private?token=SECRET"],
+        "qualified_notices": [{"title": private, "isbn13": "9782211309684"}],
+        "ingest_errors": [private], "reason": private,
+        "error_type": private, "public_query": private,
+        "plugin_diagnostic": {
+            "source": "milan", "http_status": 200,
+            "error_type": "PRIVATE_ACCESS_TOKEN",
+            "raw_html": private, "url": private, "cookie": private,
+        },
+    }
+    safe = script.public_report(raw)
+    assert safe["result"] == "PASS"
+    assert safe["requests_count"] == 2
+    assert safe["qualified_notice_count"] == 1
+    assert safe["plugin_diagnostic"] == {"source": "milan", "http_status": 200}
+    assert set(safe).isdisjoint({
+        "https_requests", "qualified_notices", "ingest_errors", "reason",
+        "error_type", "public_query",
+    })
+    published = json.dumps(safe, ensure_ascii=False)
+    for secret in ("PRIVATE", "SECRET", "/home/", "?token=", "Bearer"):
+        assert secret not in published
+
+
+def test_published_evidence_rejects_untrusted_types_and_unknown_source():
+    script = script_module()
+    assert script.public_report({
+        "source": "../bad", "result": "PASS", "reason": "PRIVATE"
+    }) == {"result": "BLOCKED", "error_code": "invalid_evidence"}
+    safe = script.public_report({
+        "source": "ecole-loisirs", "result": {"text": "PRIVATE"},
+        "requests_count": True, "accepted": -1, "qualified_notice_count": 10**15,
+        "timeout_seconds": float("nan"), "source_commit": "PRIVATE_TOKEN",
+        "core_version": "PRIVATE_TOKEN", "error_code": "PRIVATE_TOKEN",
+        "plugin_diagnostic": {"source": "ecole-loisirs", "http_status": 200,
+                              "error_type": "PRIVATE_TOKEN"},
+    })
+    assert safe == {
+        "result": "BLOCKED", "source": "ecole-loisirs",
+        "allowed_host": "www.ecoledesloisirs.fr",
+        "plugin_diagnostic": {"source": "ecole-loisirs", "http_status": 200},
+    }
+
+
+def test_main_exception_never_serializes_private_message(monkeypatch, capsys):
+    script = script_module()
+
+    def poisoned_qualify(_args, _report):
+        raise RuntimeError(
+            "Cookie=PRIVATE_TOKEN /home/alice/books?secret=SECRET_TOKEN"
+        )
+
+    monkeypatch.setattr(script, "qualify", poisoned_qualify)
+    assert script.main(["--source", "milan", "--confirm-live"]) == 1
+    published = capsys.readouterr().out
+    safe = json.loads(published)
+    assert safe["result"] == "BLOCKED"
+    assert safe["error_code"] == "execution_failed"
+    for secret in ("PRIVATE", "/home/alice", "Cookie=", "SECRET_TOKEN"):
+        assert secret not in published
+
+
+def test_pass_requires_nonzero_request_and_qualified_notice_counts():
+    script = script_module()
+    for report in (
+        {"source": "milan", "result": "PASS", "requests_count": 0,
+         "qualified_notice_count": 2},
+        {"source": "milan", "result": "PASS", "requests_count": 1,
+         "qualified_notice_count": 0},
+        {"source": "milan", "result": "PASS", "qualified_notice_count": 2},
+    ):
+        safe = script.public_report(report)
+        assert safe["result"] == "BLOCKED"
+        assert safe["error_code"] == "invalid_evidence"

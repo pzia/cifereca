@@ -27,6 +27,16 @@ COLLECTION_STATES = {
     "timeout", "error", "cancelled",
 }
 _PUBLIC_SOURCE_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,49}")
+# Class names are provider-controlled (a dynamic exception type can include a
+# token). Only these static, diagnostic-safe categories may reach diagnostics.
+_PUBLIC_COLLECTION_ERROR_TYPES = frozenset({
+    "RuntimeError", "ValueError", "TypeError", "KeyError", "OSError",
+    "ConnectionError", "TimeoutError", "ReadTimeout", "ConnectTimeout",
+    "PoolTimeout", "HTTPStatusError", "HTTPError", "ConnectError",
+    "ReadError", "RemoteProtocolError", "InvalidCatalogueStructureError",
+    "InvalidYouthSourcePage", "YouthSourceCancelled", "CancelledError",
+    "ResponseError", "SourceError",
+})
 
 
 def public_source_id(value: object) -> str:
@@ -55,12 +65,16 @@ def collection_failure_diagnostic(exc: BaseException) -> dict[str, object]:
     if type(code) is not int or not 100 <= code <= 599:
         code = getattr(exc, "http_status", None)
     status = code if type(code) is int and 100 <= code <= 599 else None
-    error_type = type(exc).__name__
+    raw_error_type = type(exc).__name__
+    error_type = (
+        raw_error_type if raw_error_type in _PUBLIC_COLLECTION_ERROR_TYPES
+        else "SourceError"
+    )
     state = (
-        "cancelled" if "cancel" in error_type.casefold()
-        else "timeout" if "timeout" in error_type.casefold()
+        "cancelled" if error_type in {"YouthSourceCancelled", "CancelledError"}
+        else "timeout" if error_type in {"TimeoutError", "ReadTimeout", "ConnectTimeout", "PoolTimeout"}
         else "http_error" if status is not None
-        else "invalid" if error_type == "InvalidCatalogueStructureError"
+        else "invalid" if error_type in {"InvalidCatalogueStructureError", "InvalidYouthSourcePage"}
         else "error"
     )
     # Only a directly attached per-call integer is authoritative; never read
@@ -1214,8 +1228,9 @@ class YouthCatalogIndex:
             "duration_ms": max(0, min(int(duration_ms), 600_000)),
             "next_cursor_present": bool(next_cursor_present),
             "error_type": (
-                error_type[:64]
-                if error_type.isidentifier() and len(error_type) <= 64 else ""
+                error_type
+                if type(error_type) is str and error_type in _PUBLIC_COLLECTION_ERROR_TYPES
+                else ""
             ),
             "http_status": (
                 int(http_status)

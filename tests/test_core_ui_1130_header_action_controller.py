@@ -190,3 +190,125 @@ def test_menu_replaces_action_group_and_callback_uses_current_host():
     assert window._page_menu_actions is not first
     assert window.events[-1] == "rightmost"
     assert len(window.shell_menu.model.sections) >= 2
+
+
+def test_closed_header_skips_widgets_plugin_service_and_menu_dispatch():
+    window, diagnostics = _window(["search.online"])
+    window._closed = True
+    del window.header_actions
+    _refresh(window, "search")
+    assert window.events == []
+    assert diagnostics == []
+
+
+def test_detached_titlebar_button_cannot_dispatch_after_route_refresh():
+    window, diagnostics = _window(["search.online", "library.import-acsm"])
+    _refresh(window, "search")
+    old_button = next(b for b in window.header_actions.children if b.tooltip == "Online")
+    _refresh(window, "library")
+    window.events.clear()
+    old_button.click()
+    assert window.events == []
+    button = next(b for b in window.header_actions.children if b.tooltip == "Import-Acsm")
+    button.click()
+    assert window.events == ["import-acsm"]
+
+
+def test_stale_gio_action_group_cannot_navigate_after_menu_replacement():
+    window, diagnostics = _window()
+    _refresh(window, "search")
+    old_group = window._page_menu_actions
+    old_action = old_group.actions["item0"]
+    _refresh(window, "library")
+    window.events.clear()
+    old_action.activate()
+    assert window.events == []
+    current = window._page_menu_actions
+    assert current is not old_group
+    current.actions["item0"].activate()
+    assert window.events
+
+
+def test_closed_window_refuses_previously_queued_header_and_gio_clicks():
+    window, diagnostics = _window(["search.online"])
+    _refresh(window, "search")
+    button = window.header_actions.children[0]
+    menu_action = window._page_menu_actions.actions["item0"]
+    window._closed = True
+    window.events.clear()
+    button.click()
+    menu_action.activate()
+    assert window.events == []
+
+
+def test_close_during_clear_box_never_queries_actions_or_inserts_group():
+    window, diagnostics = _window(["search.online"])
+    class Closing:
+        def clear(self):
+            window._closed = True
+    window.header_actions.children = Closing()
+    _refresh(window, "search")
+    assert window.events == []
+    assert diagnostics == []
+
+
+def test_close_during_titlebar_selection_never_builds_buttons():
+    window, diagnostics = _window(["search.online"])
+    def selected():
+        window._closed = True
+        return ["search.online"]
+    window._titlebar_service.selected_actions = selected
+    _refresh(window, "search")
+    assert window.header_actions.children == []
+    assert window.events == []
+
+
+def test_close_during_obsolete_diagnostic_prevents_menu_build():
+    window, diagnostics = _window(["stale.action", "search.online"])
+    def close(*args, **kwargs):
+        diagnostics.append((args, kwargs))
+        window._closed = True
+    window.diagnostics.add = close
+    _refresh(window, "search")
+    assert len(diagnostics) == 1
+    assert window.header_actions.children == []
+    assert window.events == []
+
+
+def test_close_during_button_append_stops_before_any_action_group():
+    window, diagnostics = _window(["search.online"])
+    class ClosingBox(Box):
+        def append(self, item):
+            super().append(item)
+            window._closed = True
+    window.header_actions = ClosingBox()
+    _refresh(window, "search")
+    assert len(window.header_actions.children) == 1
+    assert window.events == []
+
+
+def test_nested_refresh_wins_and_outer_build_does_not_override_menu():
+    window, diagnostics = _window(["library.import-acsm"])
+    entered = [False]
+    def selected():
+        if not entered[0]:
+            entered[0] = True
+            _refresh(window, "library")
+        return ["library.import-acsm"]
+    window._titlebar_service.selected_actions = selected
+    _refresh(window, "search")
+    assert len([e for e in window.events if isinstance(e, tuple) and e[0] == "group"]) == 1
+    assert [button.tooltip for button in window.header_actions.children] == ["Import-Acsm"]
+    assert window.events[-1] == "rightmost"
+
+
+def test_close_during_action_group_registration_skips_stale_menu_assignment():
+    window, diagnostics = _window()
+    def register(prefix, group):
+        window.events.append(("insert", prefix))
+        window._closed = True
+    window.insert_action_group = register
+    _refresh(window, "search")
+    assert window.events == [("insert", "pagemenu")]
+    assert not hasattr(window, "_page_menu_actions")
+    assert not hasattr(window.shell_menu, "model")

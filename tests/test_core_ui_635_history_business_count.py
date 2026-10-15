@@ -17,8 +17,12 @@ def _method(class_name: str, method_name: str) -> str:
 
 
 def test_history_uses_business_total_count_mode():
-    source = _method("MainWindow", "_build_history_page")
+    owner = ast.parse(MAIN.with_name("secondary_page_controller.py").read_text(encoding="utf-8"))
+    source = ast.unparse(next(n for n in owner.body
+                              if isinstance(n, ast.FunctionDef) and n.name == "build_history_page"))
     assert "page.set_total_only_count(True)" in source
+    facade = _method("MainWindow", "_build_history_page")
+    assert "secondary_page_controller.build_history_page" in facade
 
 
 def test_total_only_mode_never_exposes_materialized_batch_size():
@@ -36,10 +40,15 @@ def test_default_master_detail_keeps_loaded_over_total_behavior_for_other_pages(
 
 
 def test_history_progressive_append_keeps_same_business_total():
-    populate = _method("MainWindow", "_populate_history")
-    append = _method("MainWindow", "_append_history_chunk")
-    assert "total_count=len(self._history_rows)" in populate
-    assert "total_count=len(self._history_rows)" in append
+    owner = ast.parse(MAIN.with_name("secondary_results_controller.py").read_text(encoding="utf-8"))
+    source = {method.name: ast.unparse(method) for method in owner.body
+              if isinstance(method, ast.FunctionDef)}
+    populate = source["populate_history"]
+    append = source["append_history_chunk"]
+    assert "total_count=len(window._history_rows)" in populate
+    assert "total_count=len(window._history_rows)" in append
+    assert "secondary_results_controller.populate_history" in _method("MainWindow", "_populate_history")
+    assert "secondary_results_controller.append_history_chunk" in _method("MainWindow", "_append_history_chunk")
 
 
 def test_total_count_pluralization_is_user_facing():

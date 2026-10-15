@@ -49,7 +49,11 @@ def test_ready_cancelled_expired_and_unknown_states_never_expose_raw_codes():
 
 
 def test_booking_list_and_detail_share_same_business_projection():
-    listing = _method("MainWindow", "_populate_bookings")
+    owner = ast.parse(MAIN.with_name("secondary_results_controller.py").read_text(encoding="utf-8"))
+    listing = ast.unparse(next(node for node in owner.body
+                               if isinstance(node, ast.FunctionDef)
+                               and node.name == "populate_bookings"))
+    assert "secondary_results_controller.populate_bookings" in _method("MainWindow", "_populate_bookings")
     detail = _method("DetailPanel", "show_booking")
     assert "presentation = booking_presentation(item)" in listing
     assert "presentation.status_label" in listing

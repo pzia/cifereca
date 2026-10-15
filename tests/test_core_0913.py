@@ -122,22 +122,18 @@ class Core0913(unittest.TestCase):
         self.service.kobo_profiles=Mock(side_effect=RuntimeError('runtime unavailable'))
         with self.assertRaises(RuntimeError): self.service.adept_profile_choices()
     def test_chooser_requires_click_and_stages_stable_reference(self):
-        source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
-        fn=next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n,ast.FunctionDef) and n.name=='_choose_adept_profile')
+        from cifereca.gui.settings_chooser_controller import choose_adept_profile
         dialog=Mock(); window=NS(service=NS(adept_profile_choices=Mock()),runner=Mock(),show_error=Mock())
-        ns={'Adw':NS(MessageDialog=NS(new=Mock(return_value=dialog)))}
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),str(source),'exec'),ns)
-        entry=Mock(); button=Mock(); ns['_choose_adept_profile'](window,entry,button)
+        adw=NS(MessageDialog=NS(new=Mock(return_value=dialog)))
+        entry=Mock(); button=Mock(); choose_adept_profile(window,entry,button,Adw=adw)
         done=window.runner.submit.call_args.args[2]; done([{'reference':'stable','name':'hb'}]); entry.set_text.assert_not_called()
         callback=dialog.connect.call_args.args[1]; callback(dialog,'cancel'); entry.set_text.assert_not_called()
         callback(dialog,'profile-0'); entry.set_text.assert_called_once_with('stable')
         window.service.adept_profile_choices.assert_not_called()
     def test_empty_chooser_reports_action_without_selection(self):
-        source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
-        fn=next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n,ast.FunctionDef) and n.name=='_choose_adept_profile')
+        from cifereca.gui.settings_chooser_controller import choose_adept_profile
         window=NS(service=NS(adept_profile_choices=Mock()),runner=Mock(),show_error=Mock())
-        ns={};exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),str(source),'exec'),ns)
-        entry=Mock();ns['_choose_adept_profile'](window,entry,Mock());window.runner.submit.call_args.args[2]([])
+        entry=Mock();choose_adept_profile(window,entry,Mock(),Adw=None);window.runner.submit.call_args.args[2]([])
         window.show_error.assert_called_once();entry.set_text.assert_not_called()
 
     def test_token_expiration_precedes_cache_ttl(self):
@@ -159,14 +155,19 @@ class Core0913(unittest.TestCase):
             self.assertEqual(self.service._acquire_active_loan_automatically(self.loan)['status'],'retryable_error')
         self.session.download_digital.assert_called_once();self.assertEqual(self.service.execute_acquisition_request.call_count,2)
     def test_sync_issue_link_opens_identity_tab(self):
+        from cifereca.gui.sync_issues_dialog_controller import show_sync_issues
         source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
-        fn=next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n,ast.FunctionDef) and n.name=='_show_sync_issues')
-        dialog=Mock();window=NS(navigate=Mock(),_settings_tabs=Mock())
-        ns={'__package__':'cifereca.gui','Adw':NS(MessageDialog=NS(new=Mock(return_value=dialog)))}
-        exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),str(source),'exec'),ns)
-        ns['_show_sync_issues'](window,{'sync':{}});callback=dialog.connect.call_args.args[1]
+        tree=ast.parse(source.read_text(encoding="utf-8"))
+        cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=="MainWindow")
+        facade=next(n for n in cls.body if isinstance(n,ast.FunctionDef) and n.name=="_show_sync_issues")
+        self.assertIn("sync_issues_dialog_controller.show_sync_issues",ast.unparse(facade))
+        dialog=Mock();window=NS(_closed=False,navigate=Mock(),_settings_tabs=Mock())
+        Adw=NS(MessageDialog=NS(new=Mock(return_value=dialog)))
+        show_sync_issues(window,{'sync':{}},Adw=Adw)
+        callback=dialog.connect.call_args.args[1]
         callback(dialog,'close');window.navigate.assert_not_called()
-        callback(dialog,'settings');window.navigate.assert_called_once_with('settings');window._settings_tabs.set_visible_child_name.assert_called_once_with('accounts')
+        callback(dialog,'settings');window.navigate.assert_called_once_with('settings')
+        window._settings_tabs.set_visible_child_name.assert_called_once_with('accounts')
     def test_manual_loan_recovery_forces_provider_refresh(self):
         source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
         fn=next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n,ast.FunctionDef) and n.name=='prepare_pnb_for_loan')

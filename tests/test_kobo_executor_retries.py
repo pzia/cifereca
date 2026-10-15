@@ -394,6 +394,8 @@ def test_delegation_scope_denied_after_expired_url_is_not_retried(tmp_path: Path
     from cifereca.kobo.vault import KoboVaultError as CoreKoboVaultError
 
     plugin_path = Path(__file__).resolve().parents[1] / "src/plugins/provider-kobo/cifereca_kobo_vault.py"
+    # Keep direct-file provider imports independent from the global test path.
+    monkeypatch.syspath_prepend(str(plugin_path.parent))
     spec = importlib.util.spec_from_file_location("test_real_vault_refresh_scope", plugin_path)
     assert spec is not None and spec.loader is not None
     plugin = importlib.util.module_from_spec(spec)
@@ -455,6 +457,8 @@ def test_provider_permission_denial_cannot_override_nonretryable_ledger(
     import importlib.util
 
     plugin_path = Path(__file__).resolve().parents[1] / "src/plugins/provider-kobo/cifereca_kobo_vault.py"
+    # Keep direct-file provider imports independent from the global test path.
+    monkeypatch.syspath_prepend(str(plugin_path.parent))
     spec = importlib.util.spec_from_file_location(
         "test_vault_nonretryable_permission", plugin_path,
     )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 from typing import Any
+from ipaddress import ip_address
+import re
 from urllib.parse import urljoin, urlsplit
 
 from cifereca.plugin_api import ProviderError, SearchResult, normalize_language_tag, description_text, description_element
@@ -25,19 +27,72 @@ class KoboCatalogService:
         keys = {"url", "src", "href", "large", "medium", "thumbnail", "small", "cover_url", "thumbnail_url", "image_url", "coverimageurl", "imageurl"}
         budget = [256]
         def valid(value):
-            if not isinstance(value, str) or len(value) > 8192:return None
-            text=value.strip()
-            if not text or any(ord(c)<32 for c in text):return None
+            # A cover can be fetched by the UI without an explicit user click.
+            # Never emit signed links, local/private destinations or credentials
+            # from untrusted catalogue/personal-manifest JSON.
+            if type(value) is not str or not 1 <= len(value) <= 4096:
+                return None
+            if (
+                value != value.strip()
+                or any(ord(ch) < 33 or ord(ch) == 127 for ch in value)
+                or any(ch in value for ch in '<>\\')
+            ):
+                return None
             try:
-                raw=urlsplit(text)
-                if not raw.scheme and not raw.netloc and '/' not in raw.path and '.' not in raw.path:return None
-                if raw.scheme and raw.scheme.lower() not in {'http','https'}:return None
-                resolved=urljoin(self.client.base_url.rstrip('/')+'/',text)
-                parsed=urlsplit(resolved)
-                if parsed.scheme not in {'http','https'} or not parsed.hostname or parsed.username or parsed.password:return None
-                parsed.port
-                return resolved
-            except ValueError:return None
+                raw = urlsplit(value)
+                if raw.query or raw.fragment:
+                    return None
+                if not raw.scheme and not raw.netloc and '/' not in raw.path and '.' not in raw.path:
+                    return None
+                if raw.scheme and raw.scheme.lower() not in {'http', 'https'}:
+                    return None
+                base = urlsplit(self.client.base_url)
+                resolved = urljoin(self.client.base_url.rstrip('/') + '/', value)
+                parsed = urlsplit(resolved)
+                hostname = parsed.hostname
+                port = parsed.port
+                base_port = base.port
+            except (ValueError, TypeError):
+                return None
+            # A user may explicitly configure a local Kobo Vault on loopback
+            # or LAN. Loading a cover from that *same exact API origin* is
+            # intentional, unlike following a URL supplied by a book record
+            # to a different private host or port.
+            trusted_vault_origin = (
+                parsed.scheme == base.scheme
+                and hostname == base.hostname
+                and port == base_port
+                and base.username is None and base.password is None
+                and not base.query and not base.fragment
+            )
+            if (
+                parsed.scheme not in {'http', 'https'}
+                or not hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment
+                or (
+                    not trusted_vault_origin
+                    and port not in (None, 443 if parsed.scheme == 'https' else 80)
+                )
+                or re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I)
+            ):
+                return None
+            host = hostname.rstrip('.').casefold()
+            if not trusted_vault_origin:
+                if (
+                    '.' not in host or '%' in host
+                    or host in {'localhost', 'local', 'internal'}
+                    or host.endswith(('.localhost', '.local', '.internal', '.lan', '.home.arpa'))
+                ):
+                    return None
+                try:
+                    address = ip_address(host)
+                except ValueError:
+                    pass
+                else:
+                    if not address.is_global:
+                        return None
+            return resolved
         def candidate(value, depth=0):
             budget[0]-=1
             if depth>6 or budget[0]<0:return None
@@ -64,6 +119,63 @@ class KoboCatalogService:
         return None
 
     @staticmethod
+    def _public_product_url(value: Any) -> str | None:
+        """Expose only ordinary public product pages, never private URLs.
+
+        Vault can return acquisition or signed-license destinations in a
+        product_url field. The URI appears both as a clickable friendly_url
+        and inside SearchResult.metadata, so both surfaces must be sanitized.
+        """
+        if type(value) is not str or not 1 <= len(value) <= 2048:
+            return None
+        if (
+            value != value.strip()
+            or any(ord(ch) < 33 or ord(ch) == 127 for ch in value)
+            or any(ch in value for ch in '<>\\')
+        ):
+            return None
+        try:
+            parsed = urlsplit(value)
+            host = parsed.hostname
+            port = parsed.port
+        except ValueError:
+            return None
+        if (
+            parsed.scheme not in {'https', 'http'}
+            or not host
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or '%' in host
+            or port not in (None, 443 if parsed.scheme == 'https' else 80)
+        ):
+            return None
+        hostname = host.rstrip('.').casefold()
+        if (
+            '.' not in hostname
+            or hostname in {'localhost', 'local', 'internal'}
+            or hostname.endswith(
+                ('.localhost', '.local', '.internal', '.lan', '.home.arpa')
+            )
+            or re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I)
+        ):
+            return None
+        try:
+            address = ip_address(hostname)
+        except ValueError:
+            pass
+        else:
+            if not address.is_global:
+                return None
+        # Download/license/acquisition endpoints are not bibliographic
+        # product notices even if hosted on an otherwise public domain.
+        segments = [segment.casefold() for segment in parsed.path.split('/')]
+        if any(segment in {'download', 'downloads', 'license', 'licence', 'acquisition', 'authorize', 'oauth', 'token'} for segment in segments):
+            return None
+        return value
+
+    @staticmethod
     def _price(item: dict[str, Any]) -> tuple[str | None, str | None]:
         price = item.get("price")
         if isinstance(price, dict):
@@ -81,10 +193,16 @@ class KoboCatalogService:
         if product_id is None:
             raise ProviderError("Kobo-Vault : identifiant de notice non vérifiable")
         authors = item.get("authors")
-        if isinstance(authors, list):
-            author = ", ".join(str(x) for x in authors if str(x).strip()) or None
+        if type(authors) in (list, tuple):
+            accepted_authors = [
+                value.strip() for value in authors
+                if type(value) is str and value.strip()
+            ]
+            author = ", ".join(accepted_authors) or None
         else:
-            author = str(item.get("author") or "").strip() or None
+            accepted_authors = []
+            raw_author = item.get("author")
+            author = raw_author.strip() or None if type(raw_author) is str else None
         fmt = str(item.get("format") or item.get("file_format") or "").strip().upper() or None
         content_type = str(item.get("content_type") or "ebook").lower()
         owned = item.get("owned")
@@ -107,14 +225,69 @@ class KoboCatalogService:
         downloadable_flag = downloadable if type(downloadable) is bool else None
         price, currency = self._price(item)
         cover = self.cover_url(item)
-        metadata = {k: v for k, v in item.items() if k not in {"description"}}
-        if isinstance(metadata.get("language"), str):
-            metadata["language"] = normalize_language_tag(metadata["language"])
-        if isinstance(metadata.get("languages"), (list, tuple)):
-            metadata["languages"] = list(dict.fromkeys(
-                canonical for raw in metadata["languages"]
-                if (canonical := normalize_language_tag(str(raw))) is not None
-            ))
+        # The normalized cover URL is the only cover reference safe to export.
+        # Dropping raw nested variants prevents an unsafe fallback (including
+        # query tokens) from surviving in SearchResult.metadata.
+        cover_keys = {
+            "cover_url", "thumbnail_url", "image_url", "cover", "image",
+            "images", "covers", "CoverImageUrl", "ImageUrl",
+        }
+        metadata = {
+            k: v for k, v in item.items()
+            if k != "description" and k not in cover_keys
+        }
+        if cover:
+            metadata["cover_url"] = cover
+        product_url = self._public_product_url(item.get("product_url"))
+        if product_url is None:
+            metadata.pop("product_url", None)
+        else:
+            metadata["product_url"] = product_url
+        # SearchResult.metadata also reaches public details and diagnostics.
+        # Replace (or remove) malformed author/language fields rather than
+        # retaining the raw nested objects that the byline just rejected.
+        if "authors" in metadata:
+            if type(authors) in (list, tuple):
+                metadata["authors"] = list(accepted_authors)
+            else:
+                metadata.pop("authors")
+        if "author" in metadata and type(item.get("author")) is not str:
+            metadata.pop("author")
+        if "language" in metadata:
+            raw_language = metadata["language"]
+            if type(raw_language) is not str:
+                metadata.pop("language")
+            elif not raw_language.strip():
+                metadata["language"] = None
+            else:
+                try:
+                    canonical = normalize_language_tag(raw_language)
+                    metadata["language"] = (
+                        canonical if type(canonical) is str and canonical.strip() else None
+                    )
+                except Exception:
+                    # An upstream invalid tag or failing normalizer must not
+                    # abort all other catalogue hits or export its exception.
+                    metadata["language"] = None
+        if "languages" in metadata:
+            raw_languages = metadata["languages"]
+            if type(raw_languages) not in (list, tuple):
+                metadata.pop("languages")
+            else:
+                accepted_languages: list[str] = []
+                for raw in raw_languages:
+                    if type(raw) is not str or not raw.strip():
+                        continue
+                    try:
+                        canonical = normalize_language_tag(raw)
+                    except Exception:
+                        continue
+                    if (
+                        type(canonical) is str and canonical.strip()
+                        and canonical not in accepted_languages
+                    ):
+                        accepted_languages.append(canonical)
+                metadata["languages"] = accepted_languages
         if cover and collection == "catalog":
             metadata["catalog_cover"] = {
                 "url": cover,
@@ -129,7 +302,7 @@ class KoboCatalogService:
             publisher=str(item.get("publisher") or "").strip() or None,
             published_at=str(item.get("publication_date") or item.get("published_at") or "").strip() or None,
             description=description_text(item.get("description")),
-            thumbnail_url=cover, friendly_url=str(item.get("product_url") or "").strip() or None,
+            thumbnail_url=cover, friendly_url=product_url,
             scenario="KOBO", source_provider=self.provider_id, source_credential=self.credential_id,
             download_url=None, content_type=content_type, source_collection=collection,
             owned=owned_flag,

@@ -11,16 +11,53 @@ from datetime import datetime
 def render_dashboard(window, *, Gtk, add_css) -> None:
     if getattr(window, '_closed', False):
         return
-    if hasattr(window,'_refresh_statistics'):window._refresh_statistics()
+    token = object()
+    window._dashboard_render_token = token
+
+    def is_current():
+        return (
+            not getattr(window, "_closed", False)
+            and getattr(window, "_dashboard_render_token", None) is token
+        )
+
+    if hasattr(window, '_refresh_statistics'):
+        window._refresh_statistics()
+    if not is_current():
+        return
+
+    # A plugin may unsubscribe, replace the entire listener list or dispose
+    # MainWindow while handling the first notification. Snapshot iteration is
+    # safe only while the original callback is still actively registered.
     for callback in list(getattr(window, "_overview_listeners", [])):
-        try: callback()
-        except Exception as exc: window.diagnostics.add("UI", "identity overview callback", "error", detail={"error": type(exc).__name__})
-    if not hasattr(window, "dashboard_cards"):
+        if not is_current():
+            return
+        if not any(listener is callback for listener in getattr(window, "_overview_listeners", ())):
+            continue
+        try:
+            callback()
+        except Exception as exc:
+            if is_current():
+                window.diagnostics.add(
+                    "UI", "identity overview callback", "error",
+                    detail={"error": type(exc).__name__},
+                )
+    if not is_current() or not hasattr(window, "dashboard_cards"):
         return
     child = window.dashboard_cards.get_first_child()
     while child is not None:
-        nxt = child.get_next_sibling(); window.dashboard_cards.remove(child); child = nxt
-    for card in window.service.dashboard_state():
+        if not is_current():
+            return
+        nxt = child.get_next_sibling()
+        window.dashboard_cards.remove(child)
+        child = nxt
+    if not is_current():
+        return
+    cards = window.service.dashboard_state()
+    if not is_current():
+        return
+    for card in cards:
+        if not is_current():
+            return
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.set_margin_top(12); box.set_margin_bottom(12); box.set_margin_start(14); box.set_margin_end(14)
         add_css(box, "cover-frame")
@@ -28,7 +65,9 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
         name = Gtk.Button(label=str(card.get("label") or "Utilisateur")); name.set_hexpand(True)
         name.get_child().set_wrap(True)
         name.set_tooltip_text("Sélectionner cette identité et ouvrir sa bibliothèque")
-        name.connect("clicked", lambda _b, iid=card["identity_id"]: window.open_identity_library(iid))
+        name.connect("clicked", lambda _b, iid=card["identity_id"]: (
+            window.open_identity_library(iid) if is_current() else None
+        ))
         add_css(name, "flat", "book-title"); head.append(name)
         sync = card.get("sync") or {}
         badge = Gtk.Label(label=window._sync_status_label(sync.get("status"))); add_css(badge, "badge"); head.append(badge)
@@ -64,7 +103,10 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
             lab = Gtk.Label(label=details, xalign=0); lab.set_wrap(True); add_css(lab, "caption", "dim-label"); box.append(lab)
             if sync.get("errors") or sync.get("attention_required"):
                 issues = Gtk.Button(label="Voir les erreurs et actions")
-                issues.connect("clicked", lambda _b, c=card: window._show_sync_issues(c)); box.append(issues)
+                issues.connect("clicked", lambda _b, c=card: (
+                    window._show_sync_issues(c) if is_current() else None
+                ))
+                box.append(issues)
         box.set_size_request(300, -1)
         for capability in card.get("capabilities", []):
             label = Gtk.Label(label="✓ " + capability["label"], xalign=0); add_css(label, "caption")

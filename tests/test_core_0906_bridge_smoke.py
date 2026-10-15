@@ -80,6 +80,7 @@ def _setup(active="alice", selected="alice"):
     })
     youth_type = type("Youth", (), {
         "selected": _method(YOUTH_FILE, "YouthView", "selected", env),
+        "_search_selected_book": _method(YOUTH_FILE, "YouthView", "_search_selected_book", env),
         "_search_library": _method(YOUTH_FILE, "YouthView", "_search_library", env),
     })
     events, shown, toasts, empty = [], [], [], []
@@ -135,10 +136,15 @@ def test_906_does_not_claim_two_homonymous_editions_are_same_isbn():
         "b": NS(title="Même titre", isbn="9780140328721"),
     }
     view.selected(NS(key="a"))
+    old_action = shown[-1].actions[0]
+    old_action.callback()
     view.selected(NS(key="b"))
-    assert not events
-    for detail in shown:
-        detail.actions[0].callback()
+    current_action = shown[-1].actions[0]
+    assert len([x for x in events if x[0] == "run"]) == 1
+    # #1609 prevents a stale action for edition A from searching B.
+    old_action.callback()
+    assert len([x for x in events if x[0] == "run"]) == 1
+    current_action.callback()
     assert len([x for x in events if x[0] == "run"]) == 2
     assert [x[1].field for x in events if x[0] == "state"] == ["title", "title"]
 

@@ -12,6 +12,17 @@ PLUGIN_RELOAD_OWNER = ROOT / "src/cifereca/gui/plugin_reload_controller.py"
 
 
 def _method_source(class_name: str, method_name: str) -> str:
+    secondary_methods = {
+        "_append_history_chunk": "append_history_chunk",
+        "_history_scroll_changed": "history_scroll_changed",
+    }
+    if method_name in secondary_methods:
+        owner = MAIN_WINDOW.with_name("secondary_results_controller.py")
+        tree = ast.parse(owner.read_text(encoding="utf-8"))
+        method = next(node for node in tree.body
+                      if isinstance(node, ast.FunctionDef)
+                      and node.name == secondary_methods[method_name])
+        return ast.unparse(method)
     if method_name == "_subscribe_cached_book_details":
         tree = ast.parse(PLUGIN_RELOAD_OWNER.read_text(encoding="utf-8"))
         method = next(n for n in tree.body
@@ -110,16 +121,16 @@ def test_startup_without_plugin_manager_still_connects_providers():
 def test_queued_history_chunk_does_not_touch_disposed_widgets():
     """#1132: a queued history idle must bail out after GTK disposal."""
     source = _method_source("MainWindow", "_append_history_chunk")
-    assert "self._history_append_scheduled = False" in source
-    assert "getattr(self, '_closed', False)" in source
-    assert source.index("getattr(self, '_closed', False)") < source.index("self.history_page.append_rows")
+    assert "window._history_append_scheduled = False" in source
+    assert "getattr(window, '_closed', False)" in source
+    assert source.index("getattr(window, '_closed', False)") < source.index("window.history_page.append_rows")
 
 
 def test_history_scroll_signal_ignores_disposed_window():
     """#1132: late adjustment signals must not queue work on a dead window."""
     source = _method_source("MainWindow", "_history_scroll_changed")
-    assert "getattr(self, '_closed', False)" in source
-    assert source.index("getattr(self, '_closed', False)") < source.index("adjustment.get_upper()")
+    assert "getattr(window, '_closed', False)" in source
+    assert source.index("getattr(window, '_closed', False)") < source.index("adjustment.get_upper()")
 
 
 def test_window_close_clears_timer_handle_even_when_removal_fails():
@@ -162,7 +173,9 @@ def test_window_close_clears_timer_handle_even_when_removal_fails():
 def test_book_cache_subscription_does_not_schedule_after_close():
     """#1132: callbacks racing unsubscribe cannot queue GTK work."""
     source = _method_source("MainWindow", "_subscribe_cached_book_details")
-    assert "None if window._closed else idle_add(window._cached_book_cache_invalidated)" in source
+    assert "not getattr(window, '_closed', False)" in source
+    assert "if not is_current():" in source
+    assert "idle_add(deliver)" in source
 
 
 def test_window_close_drops_cached_book_subscription_references():

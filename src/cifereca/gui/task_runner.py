@@ -33,7 +33,7 @@ class TaskRunner:
     def submit(
         self,
         label: str,
-        fn: Callable[[], Any],
+        fn: Callable[[], Any] | Callable[[Callable[[str], None]], Any],
         ok: Callable[[Any], None] | None = None,
         err: Callable[[BaseException], None] | None = None,
         control: Gtk.Widget | None = None,
@@ -41,7 +41,13 @@ class TaskRunner:
         *,
         priority: TaskPriority = TaskPriority.NORMAL,
         kind: str = "task",
+        with_progress: bool = False,
     ) -> None:
+        """Enqueue work; opt-in work receives a task-scoped progress callback.
+
+        The callback accepts text and posts it to GTK. Existing zero-argument
+        work, priorities, completion delivery and cancellation are unchanged.
+        """
         # A late plugin/action must not disable a detached GTK control or
         # enqueue a worker after the window owner has been torn down.
         if getattr(self.window, "_closed", False):
@@ -63,6 +69,15 @@ class TaskRunner:
             task_id, int(priority), kind, label,
         )
 
+        def report(progress_label: str) -> None:
+            # Bind before enqueue: a fast worker can report before submit()
+            # returns. The GTK adapter rechecks this exact task's lifetime
+            # when dispatching, including callbacks retained by a producer.
+            if not getattr(self.window, "_closed", False):
+                GLib.idle_add(
+                    self.window._task_progress_for_task, task_id, str(progress_label),
+                )
+
         def traced_fn() -> Any:
             started = time.monotonic()
             _TRACE_LOG.info(
@@ -70,7 +85,7 @@ class TaskRunner:
                 task_id, int(priority), kind, started - queued_at, label,
             )
             try:
-                return fn()
+                return fn(report) if with_progress else fn()
             finally:
                 _TRACE_LOG.info(
                     "TRACE task end id=%s kind=%s dt=%.3fs label=%s",

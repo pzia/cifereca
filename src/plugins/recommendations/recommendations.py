@@ -5,7 +5,7 @@ import re
 import time
 from ipaddress import ip_address
 from typing import Any, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from cifereca.plugin_api import (
     Cancelled,
@@ -50,38 +50,95 @@ def _reference_selection_key(book: Any) -> str:
 
 
 def _external_book_url(value: Any) -> str | None:
-    url = str(value or "").strip()
-    if not url or any(char.isspace() for char in url):
+    """Only ordinary public book pages may become external detail actions.
+
+    Catalogue values are untrusted. In particular, direct acquisition links,
+    signed paths, localhost aliases and non-standard ports must not escape
+    through the shared detail panel as if they were public notices.
+    """
+    if type(value) is not str or not 1 <= len(value) <= 2048:
+        return None
+    url = value.strip()
+    if (
+        not url
+        or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url)
+        or any(char in url for char in "<>\\")
+    ):
         return None
     try:
         parsed = urlsplit(url)
-        _ = parsed.port
+        port = parsed.port
     except ValueError:
         return None
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return None
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        # A signed acquisition URL, referral token or fragment is not an
-        # attested public book notice. Never reflect it in an external action.
+    if parsed.username is not None or parsed.password is not None:
         return None
+    if parsed.query or parsed.fragment:
+        # Never export signed acquisition links or session identifiers.
+        return None
+    if port is not None and port != (443 if parsed.scheme == "https" else 80):
+        return None
+
     host = parsed.hostname.lower().rstrip(".")
     if (
         not host or "." not in host
-        or host == "localhost" or host.endswith((".local", ".localhost", ".internal"))
-        or any(ord(ch) < 33 or ord(ch) == 127 for ch in host)
+        or host == "localhost" or host.endswith((".local", ".localhost", ".internal", ".lan", ".home.arpa"))
+        or len(host) > 253
+        or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part)
+               for part in host.split("."))
     ):
         return None
     try:
         address = ip_address(host)
     except ValueError:
         address = None
-    if address is not None and not address.is_global:
+    if address is not None:
+        if not address.is_global:
+            return None
+    elif not re.fullmatch(r"[a-z][a-z0-9-]{1,62}", host.rsplit(".", 1)[-1]):
+        # Reject noncanonical numeric hosts such as 127.1 and 0177.0.0.1.
         return None
-    if "%" in parsed.path and re.search(r"%(?:0[0-9a-f]|1[0-9a-f]|7f)", parsed.path, re.I):
-        # Do not let encoded control characters round-trip through the browser
-        # or into a book-action link handed off to a helper.
-        return None
-    return url
+
+    path = parsed.path
+    forbidden_segments = {
+        "download", "downloads", "acquisition", "acquire",
+        "licence", "license", "licenses", "licences",
+        "token", "tokens", "oauth", "authorize", "authorization",
+        "login", "signin", "drm", "adept",
+    }
+    # A path segment or control byte may be encoded several times. Never
+    # dereference it; decoding here is used exclusively for rejection.
+    for _ in range(4):
+        if any(ord(char) < 32 or ord(char) == 127 for char in path):
+            return None
+        segments = [part.casefold() for part in path.split("/") if part]
+        if any(
+            part in forbidden_segments
+            or part.endswith((".acsm", ".lcpl", ".epub", ".kepub"))
+            for part in segments
+        ):
+            return None
+        decoded = unquote(path)
+        if decoded == path:
+            return url
+        path = decoded
+    # Do not accept deeply nested encodings with uninspected final content.
+    return None
+
+
+def _public_cover_url(item: Any) -> str | None:
+    """Conservative cover URL for both list rows and the detail panel.
+
+    The renderer may load thumbnails automatically, without a user click.
+    Reject credentials, signed URLs and private origins before either view
+    receives the image URL. Try the second declared image if the first fails.
+    """
+    for field in ("thumbnail_url", "cover_url"):
+        url = _external_book_url(get_field(item, field, None))
+        if url:
+            return url
+    return None
 
 
 def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
@@ -131,13 +188,15 @@ def _candidate_languages(item: Any) -> tuple[str, ...]:
         metadata.get("languages") if isinstance(metadata, Mapping) else None,
     ):
         if isinstance(raw, (list, tuple, set)):
-            values.extend(raw)
-        elif raw not in {None, ""}:
+            # Catalogue metadata is untrusted: nested maps, numbers and
+            # foreign objects are not language tags. Never stringify them.
+            values.extend(item for item in raw if isinstance(item, str))
+        elif isinstance(raw, str) and raw.strip():
             values.append(raw)
 
     normalized = []
     for raw in values:
-        canonical = normalize_language_tag(str(raw))
+        canonical = normalize_language_tag(raw)
         if canonical and canonical not in normalized:
             normalized.append(canonical)
     return tuple(normalized)
@@ -619,7 +678,9 @@ class UxRecommendationsView:
         if not self._identity_ids:
             return None
         index = int(self._identity.get_selected())
-        return self._identity_ids[index] if 0 <= index < len(self._identity_ids) else self._identity_ids[0]
+        # GTK can transiently report an invalid row while a model is
+        # reloaded or removed. Never fall back to another user's profile.
+        return self._identity_ids[index] if 0 <= index < len(self._identity_ids) else None
 
     def _identity_changed(self, *_args) -> None:
         if self._reloading_identities:
@@ -807,8 +868,19 @@ class UxRecommendationsView:
 
     def _start_refresh(self):
         self._reset_llm_selection(None)
+        # Advance the generation before any early return. Otherwise a prior
+        # worker's already queued GTK callback can repaint the wrong profile.
+        self._generation += 1
         if self._task_handle is not None:
             self._task_handle.cancel()
+        self._task_handle = None
+        # The previous task may have been busy even when the newly selected
+        # profile is no longer valid or the Core brokers disappear.
+        self._busy = False
+        stop_spinner = getattr(self._spinner, "stop", None)
+        if callable(stop_spinner):
+            stop_spinner()
+        self._refresh_button.set_sensitive(True)
 
         identity_id = self.selected_identity_id()
         if not identity_id:
@@ -825,7 +897,6 @@ class UxRecommendationsView:
             self._summary.set_label("Core incompatible : brokers metadata/catalog/tasks indisponibles.")
             return False
 
-        self._generation += 1
         generation = self._generation
         self._refresh_started_at = time.perf_counter()
         self._busy = True
@@ -909,8 +980,11 @@ class UxRecommendationsView:
                 result = done_handle.result()
             except Cancelled:
                 return
-            except Exception as exc:
-                self.GLib.idle_add(self._complete, generation, None, str(exc))
+            except Exception:
+                # Provider and storage exceptions can include account IDs,
+                # signed URLs and access tokens. The public UI only needs to
+                # know that the calculation failed, never the raw exception.
+                self.GLib.idle_add(self._complete, generation, None, "calculation_failed")
             else:
                 self.GLib.idle_add(self._complete, generation, result, None)
 
@@ -924,7 +998,6 @@ class UxRecommendationsView:
         identity_id = self.selected_identity_id()
         profile_changed = (
             self._active_identity_id is not None
-            and identity_id is not None
             and identity_id != self._active_identity_id
         )
         self._active_identity_id = identity_id
@@ -1136,11 +1209,7 @@ class UxRecommendationsView:
                     subtitle=author,
                     meta=" · ".join(meta_parts),
                     badge=f"Affinité {ranked.score}/100",
-                    thumbnail_url=str(
-                        get_field(item, "thumbnail_url", "")
-                        or get_field(item, "cover_url", "")
-                        or ""
-                    ) or None,
+                    thumbnail_url=_public_cover_url(item),
                 )
             )
 
@@ -1165,6 +1234,14 @@ class UxRecommendationsView:
             return
         ranked = self._ranked_by_key.get(row.key)
         if ranked is None:
+            # A fast filter refresh can invalidate the selected row before
+            # GTK delivers its selection callback. Never leave the previous
+            # book's detail and actions attached to a stale list identity.
+            self._reset_llm_selection(None)
+            self._master.empty_detail(
+                "Notice indisponible",
+                "Cette recommandation n’est plus dans les résultats du profil.",
+            )
             return
         self._llm_selected_row = row
         if self._llm_button is not None:
@@ -1172,7 +1249,8 @@ class UxRecommendationsView:
 
         item = ranked.item
         title = str(get_field(item, "title", "") or "Sans titre")
-        author = str(get_field(item, "author", "") or "").strip()
+        authors = tuple(author_values(item))
+        author = ", ".join(authors)
         fmt = str(get_field(item, "format", "") or "").strip()
         published = str(get_field(item, "published_at", "") or "").strip()
         reasons = " · ".join(ranked.reasons)
@@ -1202,7 +1280,10 @@ class UxRecommendationsView:
                 reasons or "Plusieurs signaux concordants",
             ),
         ]
-        catalogue_fields = []
+        catalogue_fields = [
+            DetailField(f"author-{index}", "Auteur", value, kind="author")
+            for index, value in enumerate(authors)
+        ]
         if source_labels:
             catalogue_fields.append(
                 DetailField("source", "Source", " · ".join(source_labels))
@@ -1319,11 +1400,7 @@ class UxRecommendationsView:
                 )
             )
 
-        thumbnail = str(
-            get_field(item, "thumbnail_url", "")
-            or get_field(item, "cover_url", "")
-            or ""
-        ) or None
+        thumbnail = _public_cover_url(item)
         badges = [f"Affinité {ranked.score}/100", *source_labels]
         if self._provisional_active:
             badges.append("Provisoire")
@@ -1430,7 +1507,9 @@ class UxRecommendationsView:
         self._spinner.stop()
         if error or result is None:
             self._ranked = []
-            message = "Calcul impossible" + (f" : {error}" if error else "")
+            # An error may originate in an untrusted provider or backend.
+            # Never reflect raw provider messages into the GTK status/toast.
+            message = "Calcul impossible. Réessayez ou vérifiez les catalogues connectés."
             self._summary.set_label(message)
             try:
                 self.host.toast(message)
