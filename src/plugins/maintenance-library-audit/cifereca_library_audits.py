@@ -515,14 +515,51 @@ class LanguageAuditTool(_ReadOnlyTool):
             valid = type(plan.warnings) in (tuple, list) and len(plan.warnings) <= 12
             if valid:
                 import re
+                labels = {
+                    "non textuelle": "malformed",
+                    "non vérifiable": "normalization_failures",
+                    "invalide": "invalid",
+                    "non canonique": "noncanonical",
+                }
+                sample_counts = {key: 0 for key in labels.values()}
+                last_ordinal = 0
                 for warning in plan.warnings:
-                    if type(warning) is not str or re.fullmatch(
-                        r"Langue (?:non textuelle|non vérifiable|invalide|non canonique) : notice n°[1-9][0-9]{0,6}",
+                    if type(warning) is not str:
+                        valid = False
+                        break
+                    match = re.fullmatch(
+                        r"Langue (non textuelle|non vérifiable|invalide|non canonique) : notice n°([1-9][0-9]{0,6})",
                         warning,
-                    ) is None:
+                    )
+                    if match is None:
+                        valid = False
+                        break
+                    ordinal = int(match.group(2))
+                    # Several tags of one notice can legitimately be faulty.
+                    # Notices, however, are scanned in order, never backwards.
+                    if ordinal < last_ordinal:
+                        valid = False
+                        break
+                    last_ordinal = ordinal
+                    kind = labels[match.group(1)]
+                    sample_counts[kind] += 1
+                    if sample_counts[kind] > counts[kind]:
                         valid = False
                         break
                     safe_warnings.append(warning)
+                if valid:
+                    findings = sum(counts[kind] for kind in sample_counts)
+                    # When the full anomaly set fits in the 12 slots, each
+                    # present category must appear. Non-text values may
+                    # generate several rejects for only one notice, so their
+                    # sample count is bounded, not required to be identical.
+                    if findings <= 12:
+                        valid = all(
+                            (counts[kind] > 0) == (sample_counts[kind] > 0)
+                            for kind in sample_counts
+                        )
+                    elif findings:
+                        valid = bool(safe_warnings)
         control.check_cancelled()
         if not valid:
             control.report(message="Audit des langues impossible : plan invalide")
