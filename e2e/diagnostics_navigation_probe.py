@@ -1142,7 +1142,27 @@ def main() -> int:
                           last_success="2026-10-10T12:00:00+00:00"),
             SyncSourceRef("p0-offline", "camille", "paris", "fictif-b", "Source déconnectée fictive",
                           connected=False, status="failed"),
+            SyncSourceRef("p0-public-g", "camille", "gutenberg", "", "Catalogue public",
+                          sync_capable=False, enabled=False),
+            SyncSourceRef("p0-public-b", "camille", "gallica", "", "Catalogue public",
+                          sync_capable=False),
+            SyncSourceRef("p0-paris-one", "camille", "paris", "fictif-c", "Paris homonyme",
+                          status="success", last_success="2026-10-10T12:00:00+00:00",
+                          sync_capabilities=("entitlements",)),
+            SyncSourceRef("p0-paris-two", "camille", "paris", "fictif-d", "Paris homonyme",
+                          status="error", error="Bearer PRIVATE_SYNC_ERROR",
+                          sync_capabilities=("entitlements",)),
         ]
+        f["source_sync_calls"] = []
+        f["library_refresh_calls"] = []
+        override(w, "refresh_library", lambda *args: f["library_refresh_calls"].append(args))
+        def synchronize_one(source_id):
+            from dataclasses import replace
+            assert source_id == "p0-paris-two", "Le clic a ciblé un autre compte"
+            f["source_sync_calls"].append(source_id)
+            sources[-1] = replace(sources[-1], status="success", error="",
+                                  last_success="2026-10-15T12:00:00+00:00")
+            return NS(ok=True, changed=0)
         f["source_queries"] = []
         def read_sources(identity_id):
             assert identity_id == "camille"
@@ -1177,7 +1197,7 @@ def main() -> int:
 
         sync_broker = NS(
             sources=read_sources, synchronize=forbidden,
-            synchronize_source=forbidden, set_enabled=forbidden,
+            synchronize_source=synchronize_one, set_enabled=forbidden,
             audit_local_reconciliation=audit_local_reconciliation,
         )
         class FixtureManager:
@@ -1280,6 +1300,91 @@ def main() -> int:
         report["checks"]["P0_sync_real_gtk_partial_preserves_last_success_and_identity"] = True
         report["checks"]["P0_sync_real_gtk_disconnected_source_action_disabled"] = True
         capture("03i-sync-partial-last-success-and-offline-source")
+        # #980 acceptance uses the real MainWindow/controller/widgets and
+        # XTEST, with seven synthetic broker rows; no provider/network/DRM.
+        assert len(rows) == 9  # Seven sources plus Kobo preview/audit outputs.
+        for provider in ("gutenberg", "gallica"):
+            row = next(row for row in rows if row.get_title() == f"Catalogue public · {provider}")
+            assert f"Fournisseur : {provider}" in row.get_subtitle()
+            assert "Non prise en charge" in row.get_subtitle()
+            assert "Catalogue public consultable indépendamment" in row.get_subtitle()
+            assert "Échec" not in row.get_subtitle()
+            assert any(isinstance(node, Gtk.Button) and not node.get_sensitive()
+                       and "ne fournit pas de synchronisation" in (node.get_tooltip_text() or "")
+                       for node in walk(row))
+        paris = [next(row for row in rows
+                      if row.get_title() == f"Paris homonyme · paris · connexion {i}/2")
+                 for i in (1, 2)]
+        assert "Dernier succès 10/10/2026 12:00" in paris[0].get_subtitle()
+        assert "Synchronisation : Échec" in paris[1].get_subtitle()
+        for row in paris:
+            assert "Portée de cette source : droits et emprunts." in row.get_subtitle()
+            assert "ne lance pas la synchronisation globale au démarrage" in row.get_subtitle()
+        assert not f["source_sync_calls"] and not f["library_refresh_calls"]
+        visible_text = "\n".join(row.get_title() + row.get_subtitle() for row in rows)
+        assert "PRIVATE_SYNC_ERROR" not in visible_text and "fictif-" not in visible_text
+        report["checks"]["P0_980_seven_sources_homonyms_states_scope_no_implicit_sync"] = True
+        # Bring both homonymous Paris rows into the viewport before a physical
+        # click. Mapping alone does not prove the action is visible on screen.
+        scroll = w._sync_sources_box.get_parent().get_parent()
+        while not isinstance(scroll, Gtk.ScrolledWindow):
+            scroll = scroll.get_parent()
+        f["sync_scroll"] = scroll
+        adjustment = scroll.get_vadjustment()
+        adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+        later(200, sync_homonyms_click)
+
+    def sync_homonyms_click():
+        w = window[0]
+        f = loan_sync_fixture
+        row = next(row for row in walk(w._sync_sources_box)
+                   if isinstance(row, Adw.ActionRow)
+                   and row.get_title() == "Paris homonyme · paris · connexion 2/2")
+        button = next(node for node in walk(row) if isinstance(node, Gtk.Button)
+                      and node.get_tooltip_text() == "Synchroniser Paris homonyme")
+        assert button.get_sensitive() and button.get_mapped()
+        ok, bounds = button.compute_bounds(f["sync_scroll"])
+        assert ok and bounds.get_y() >= 0
+        assert bounds.get_y() + bounds.get_height() <= f["sync_scroll"].get_height()
+        capture("03i2-sync-public-and-paris-homonyms")
+        report["pointer_actions"].append(device[0].click_widget(button))
+        f["source_sync_deadline"] = monotonic() + 6
+        later(100, sync_homonyms_completed)
+
+    def sync_homonyms_completed():
+        w = window[0]
+        f = loan_sync_fixture
+        rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
+        row = next(row for row in rows if row.get_title() == "Paris homonyme · paris · connexion 2/2")
+        if "Dernier succès 15/10/2026 12:00" not in row.get_subtitle():
+            assert monotonic() < f["source_sync_deadline"], "Résultat de synchronisation absent"
+            later(100, sync_homonyms_completed)
+            return
+        assert f["source_sync_calls"] == ["p0-paris-two"]
+        assert f["library_refresh_calls"] == [(False,)]
+        assert not f["mutations"] and w.service.current_identity.identity_id == "camille"
+        assert w.search_controls.state() == f["search_state"]
+        assert w.library_controls.state() == f["library_state"]
+        report["checks"]["P0_980_XTEST_second_homonym_only_and_success_feedback"] = True
+        # A changed GObject subtitle is observable before the next paint.
+        # Capture the successful feedback only after GTK has repainted it.
+        later(200, sync_homonyms_capture_success)
+
+    def sync_homonyms_capture_success():
+        w = window[0]
+        f = loan_sync_fixture
+        row = next(row for row in walk(w._sync_sources_box)
+                   if isinstance(row, Adw.ActionRow)
+                   and row.get_title() == "Paris homonyme · paris · connexion 2/2")
+        assert "Dernier succès 15/10/2026 12:00" in row.get_subtitle()
+        capture("03i3-sync-targeted-success")
+        f["sync_scroll"].get_vadjustment().set_value(0)
+        later(200, loan_sync_audit_click)
+
+    def loan_sync_audit_click():
+        w = window[0]
+        f = loan_sync_fixture
+        rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
         kobo = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
         assert "Connexion : Déconnectée" in kobo.get_subtitle()
         audit = next(
