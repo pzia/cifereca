@@ -219,6 +219,10 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
         if not links:
             continue
         title_nodes = [n for n in nodes if 'pTitle' in classes(n) and n.text()]
+        if delivery_evidence and len(title_nodes) > 1:
+            # A single readBook link under multiple title nodes cannot
+            # establish which product the delivery card is advertising.
+            raise ParseError('Titres ambigus dans la fiche de livraison')
         titles = [n.text() for n in title_nodes]
         images = [n.attrs.get('src') for n in nodes if n.tag == 'img' and 'imgCouv' in classes(n)]
         public_candidates=[]
@@ -402,6 +406,13 @@ def _card_delivery(card, links, allowed_origins):
     attested that those identifiers share a namespace.
     """
     if len(links) != 1:
+        return None
+    # A scoped numeric lid establishes a technical download endpoint, not
+    # an equivalence with the product ID of a JS object. Requiring a single
+    # titled owner card avoids treating a bare/orphan link as store evidence.
+    titles = [n for n in card.walk()
+              if 'pTitle' in classes(n) and n.text()]
+    if len(titles) != 1:
         return None
     items = _owned_delivery_candidates(card, allowed_origins=allowed_origins)
     if len(items) != 1:
