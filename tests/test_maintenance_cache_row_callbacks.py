@@ -24,14 +24,14 @@ class Widget(harness.Container):
     def stop(self): self.running = False
 
 
-def mounted(tool_id="core.cache.cleanup"):
+def mounted(tool_id="core.cache.cleanup", *, danger_level="readonly"):
     harness.Dialog.shown.clear()
     tool = harness.Tool()
     original = tool.describe
     def describe():
         info = original()
         info.id = tool_id
-        info.danger_level = 'readonly'
+        info.danger_level = danger_level
         return info
     tool.describe = describe
     jobs, errors, activity, pending = [], [], [], []
