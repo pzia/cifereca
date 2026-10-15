@@ -592,6 +592,132 @@ def _refresh_sync_page(self) -> None:
                     kind="sync-preflight", origin="user",
                 )
             download_button.connect("clicked", prepare_download)
+
+            # #1346/#1347: optional source-specific *startup* materialization.
+            # This is an independent preference, never the old global Kobo
+            # toggle. Reading it neither contacts the provider nor prepares a
+            # batch; only a dedicated human click can change it.
+            read_schedule = getattr(broker, "local_materialization_schedule", None)
+            write_schedule = getattr(broker, "set_local_materialization_schedule", None)
+            schedule_mode = "unavailable"
+            if callable(read_schedule) and callable(write_schedule):
+                try:
+                    raw_schedule = read_schedule(source.source_id)
+                    if type(raw_schedule) is str and raw_schedule in {
+                        "manual", "on_start", "not_supported",
+                    }:
+                        schedule_mode = raw_schedule
+                except Exception:
+                    # A plugin might raise an exception containing private
+                    # account names, URLs or tokens. Never echo that exception.
+                    pass
+            schedule_row = Adw.ActionRow()
+            schedule_row.set_title("Téléchargement automatique de ce compte")
+            schedule_row.set_subtitle_lines(0)
+            if schedule_mode == "on_start":
+                schedule_row.set_subtitle(
+                    "Autorisé à l’ouverture pour ce compte uniquement ; "
+                    "pas de minuterie périodique. Les contrôles anti-doublons "
+                    "et les blocages s’appliquent toujours."
+                )
+            elif schedule_mode == "manual":
+                schedule_row.set_subtitle(
+                    "Mode manuel (par défaut) : aucun téléchargement automatique. "
+                    "L’actualisation des notices et droits reste indépendante."
+                )
+            else:
+                schedule_row.set_subtitle(
+                    "Planification indisponible pour ce compte ; "
+                    "aucun téléchargement automatique autorisé depuis cette page."
+                )
+            schedule_button = self.action_button(
+                "Désactiver au démarrage" if schedule_mode == "on_start"
+                else "Autoriser au démarrage…",
+                "preferences-system-symbolic",
+            )
+            schedule_button.set_sensitive(bool(
+                callable(read_schedule) and callable(write_schedule)
+                and (
+                    schedule_mode == "on_start"  # disabling is always possible
+                    or (
+                        schedule_mode == "manual" and source.enabled
+                        and source.connected and capability
+                    )
+                )
+            ))
+            schedule_button.set_tooltip_text(
+                "Ne modifie que la planification de ce compte Kobo. "
+                "Aucun téléchargement n’est lancé par ce bouton."
+            )
+            schedule_row.add_suffix(schedule_button)
+            group.add(schedule_row)
+
+            def schedule_change(
+                button, sid=source.source_id, account_label=display_label,
+                mode=schedule_mode, current=download_current,
+                output=schedule_row,
+            ):
+                if not current() or mode not in {"manual", "on_start"}:
+                    return
+                target = "manual" if mode == "on_start" else "on_start"
+
+                def apply_mode():
+                    # A dialog may have remained open across another edit.
+                    # Check both the scoped UI generation and the persisted
+                    # source value immediately before the attempted mutation.
+                    if not current():
+                        return
+                    try:
+                        if read_schedule(sid) != mode:
+                            if current():
+                                self._refresh_sync_page()
+                            return
+                        updated = write_schedule(sid, target)
+                        if updated != target:
+                            raise ValueError("invalid schedule response")
+                    except Exception:
+                        if current():
+                            self.show_error(
+                                "Planification de ce compte Kobo indisponible.",
+                                "Synchronisation",
+                            )
+                        return
+                    if current():
+                        self._refresh_sync_page()
+
+                if target == "manual":
+                    # A source can be disabled even when disconnected. No
+                    # dialog is needed to revoke an automatic authorization.
+                    apply_mode()
+                    return
+
+                dialog = Adw.MessageDialog.new(
+                    self, "Autoriser les téléchargements au démarrage ?",
+                    f"Compte : {account_label}.\n\n"
+                    "Cette autorisation persistante concerne uniquement ce "
+                    "compte Kobo. À une prochaine ouverture, l’application "
+                    "pourra acquérir automatiquement les fichiers encore "
+                    "manquants et admissibles, sans nouvelle confirmation par "
+                    "livre. Le volume peut être important et des erreurs "
+                    "ADEPT ou des rapprochements incertains peuvent bloquer "
+                    "des acquisitions. Aucun fichier n’est téléchargé maintenant.\n\n"
+                    "Pour conserver les acquisitions manuelles seulement, "
+                    "choisissez Annuler.",
+                )
+                dialog.add_response("cancel", "Annuler")
+                dialog.add_response("confirm", "Autoriser pour ce compte")
+                dialog.set_response_appearance(
+                    "confirm", Adw.ResponseAppearance.SUGGESTED,
+                )
+
+                def response(_dialog, choice):
+                    if choice == "confirm" and current():
+                        apply_mode()
+
+                dialog.connect("response", response)
+                dialog.present()
+
+            schedule_button.connect("clicked", schedule_change)
         else:
             group.add(row)
 

@@ -1304,7 +1304,14 @@ def main() -> int:
         capture("03i-sync-partial-last-success-and-offline-source")
         # #980 acceptance uses the real MainWindow/controller/widgets and
         # XTEST, with seven synthetic broker rows; no provider/network/DRM.
-        assert len(rows) == 10  # Seven sources plus Kobo preview/audit/confirmation outputs.
+        # Seven sources and four distinct Kobo rows: preview, audit,
+        # manual confirmation and the independent on_start consent (#1346).
+        assert len(rows) == 11, ("Unexpected GTK sync action-row count", len(rows))
+        schedule_row = next(row for row in rows
+                            if row.get_title() == "Téléchargement automatique de ce compte")
+        assert "Planification indisponible" in schedule_row.get_subtitle()
+        assert not any(isinstance(node, Gtk.Button) and node.get_sensitive()
+                       for node in walk(schedule_row))
         acquisition_row = next(row for row in rows
                                if row.get_title() == "Téléchargement local · confirmation obligatoire")
         assert "Non préparé" in acquisition_row.get_subtitle()
@@ -1571,7 +1578,8 @@ def main() -> int:
                 for row in settings_rows(section, Adw.EntryRow)
             ),
             "sync": lambda: any(
-                row.get_title() == "Autoriser les téléchargements Kobo au démarrage"
+                row.get_title() == "Ancien réglage global Kobo (compatibilité)"
+                and "ne lance plus de téléchargements" in row.get_subtitle()
                 for row in settings_rows(section, Adw.ActionRow)
             ),
             "interface": lambda: any(
