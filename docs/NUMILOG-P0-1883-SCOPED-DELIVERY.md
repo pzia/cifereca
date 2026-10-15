@@ -92,6 +92,41 @@ comptes de candidats, suites de statuts HTTP/MIME **sans URL**, et état
 de connexion. Ni HTML privé brut, ni URL signée, ni jeton, ni identifiant
 de commande ne doivent entrer dans les logs ou artefacts CI.
 
+## Diagnostic local d'une page HTML privée (sans aucun HTTP)
+
+Pour qualifier précisément l'origine du JS, le propriétaire peut analyser
+**localement**, sans l'envoyer à GitHub, un HTML enregistré depuis la page
+qu'il a effectivement consultée :
+
+```bash
+python scripts/numilog_html_shape.py --context book-detail /chemin/local/page-privee.html
+```
+
+Choisir `--context` parmi `meslivres`, `book-detail`, `readbook`,
+`confirmation`, `unknown`. Ce contexte est **déclaré par l'utilisateur**,
+non inféré du nom de fichier ou du contenu secret.
+
+L'outil ne dépend que de Python et du parseur HTML local du plugin ; il ne
+récupère **aucun cookie**, ne déclenche **aucun GET**, n'exécute **aucun JS**,
+ne crée **aucun fichier** et limite l'entrée à 4 Mio. Sortie stdout : JSON
+avec contexte de page déclaré, nombre de `myTable`, scripts, objets de la
+forme attendue, actions de téléchargement, fiches découpées et liens
+rattachés. **Aucun** titre, identifiant, `ProductId`, `lid`, `auth`,
+`orderid`, URL, chemin local, nom de fichier ou fragment de HTML ne sort.
+
+Si `declared_context=confirmation` ou `book-detail` avec
+`js_delivery_shapes>0` mais `library_table_count=0`, cela prouve
+uniquement que l'objet est sur **cette page déclarée**, pas qu'il est
+retrouvable via `MesLivres.aspx` : ne pas ajouter de nouvel endpoint
+d'acquisition ni supposer une relation `ProductId == lid` sans attestation
+supplémentaire. Un rapport `invalid_or_ambiguous` n'expose pas la cause
+HTML brute ; conserver le refus.
+
+Le propriétaire peut transmettre **uniquement ce petit JSON expurgé** au
+ticket #1883. Conserver le HTML brut et les URLs ACSM signées hors de toute
+issue, fixture, CI, capture et dépôt Git ; supprimer la copie privée lorsque
+son diagnostic n'est plus nécessaire.
+
 ## Validation et limites
 
 Les fixtures utilisent des comptes, numéros, signatures et réponses
