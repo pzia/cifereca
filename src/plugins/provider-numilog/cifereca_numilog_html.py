@@ -256,7 +256,10 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                 # present competing ProductId/copy/order data. Inventory may
                 # deduplicate legacy pages, but an EXPLICIT acquisition must
                 # refuse ambiguity instead of trusting the first link.
-                if delivery_evidence:
+                if delivery_evidence and (
+                    delivery_selector is None
+                    or delivery_selector({'lid':lid[0],'variant':repr(key[1])})
+                ):
                     raise ParseError('Fiches de livraison dupliquées : téléchargement arrêté')
                 continue
             keys.add(key)
