@@ -16,7 +16,7 @@ from ..plugin_api import SyncRequest
 from .action_widgets import AdaptiveActionBar, add_css, clear_box
 from .sync_view import (
     sync_identity_action_label, sync_source_presentation,
-    sync_source_identity_label,
+    sync_source_row_labels,
     sync_local_preflight_presentation,
 )
 from .task_runner import TaskPriority
@@ -134,12 +134,10 @@ def _refresh_sync_page(self) -> None:
         if getattr(source, "identity_id", None) == scope.identity_id
     ]
     presentations = [sync_source_presentation(source) for source in rows]
-    # Only disambiguate duplicate titles in the currently selected identity.
-    # Keep established titles unchanged for unique sources and E2E baselines.
-    source_names = [
-        str(getattr(item, "label", "") or getattr(item, "provider_id", "") or "").strip().casefold()
-        for item in rows
-    ]
+    # Number genuinely indistinguishable same-provider connections without
+    # exposing any private credential/account/source ID. Unique titles stay
+    # unchanged to preserve existing keyboard navigation and accessible names.
+    row_titles = sync_source_row_labels(rows)
     actionable = any(item.action_enabled for item in presentations)
     if all_now is not None:
         all_now.set_sensitive(actionable)
@@ -149,19 +147,15 @@ def _refresh_sync_page(self) -> None:
         )
     if not rows:
         box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0)); return
-    for source, presentation in zip(rows, presentations):
+    for source, presentation, display_label in zip(rows, presentations, row_titles):
         if not sync_action_scope_current(self, scope):
             return
         # Refuse a broker row whose ownership does not match the explicitly
         # selected profile. No toggle/preview may be wired to that row.
         if getattr(source, "identity_id", None) != scope.identity_id:
             continue
-        display_label = sync_source_identity_label(
-            source,
-            disambiguate=source_names.count(
-                str(getattr(source, "label", "") or getattr(source, "provider_id", "") or "").strip().casefold()
-            ) > 1,
-        )
+        # The scoped broker order determines ephemeral labels only; sid remains
+        # the opaque, separate source route for each row.
         group = Adw.PreferencesGroup(); box.append(group)
         row = Adw.ActionRow(); row.set_title(display_label)
         row.set_subtitle(presentation.summary)
