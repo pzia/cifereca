@@ -1112,8 +1112,22 @@ class NamingRepairTool(_ReadOnlyTool):
         # Cached or caller-supplied plans can be stale or malformed. Mutation
         # identifiers must be plain opaque strings; never call str() on
         # arbitrary inputs before a Core filesystem operation.
-        raw_ids = plan.facts.get("placement_ids", ())
-        invalid_plan = type(raw_ids) not in (tuple, list)
+        # Cached plans are untrusted. Never let the metadata of a
+        # different tool (or a non-mapping facts payload) authorize a Core
+        # filesystem mutation, even if it happens to expose placement_ids.
+        facts = plan.facts
+        invalid_plan = (
+            type(plan.tool_id) is not str
+            or plan.tool_id != self.info.id
+            or type(facts) is not dict
+        )
+        # A wrong-shaped facts object may not implement get(). Keep the
+        # invalid_plan marker, but inspect a harmless empty dictionary while
+        # building the same expurgated failure result.
+        if type(facts) is not dict:
+            facts = {}
+        raw_ids = facts.get("placement_ids", ()) if type(facts) is dict else ()
+        invalid_plan = invalid_plan or type(raw_ids) not in (tuple, list)
         if not invalid_plan and len(raw_ids) > 100_000:
             invalid_plan = True
         ids: list[str] = []
@@ -1131,7 +1145,7 @@ class NamingRepairTool(_ReadOnlyTool):
                 seen_ids.add(value)
                 ids.append(value)
 
-        raw_failures = plan.facts.get("policy_failures", 0)
+        raw_failures = facts.get("policy_failures", 0)
         if raw_failures is None:
             preview_failures = 0
         elif type(raw_failures) is int and 0 <= raw_failures <= 1_000_000:
@@ -1152,7 +1166,7 @@ class NamingRepairTool(_ReadOnlyTool):
         # from bounded counters produced by plan().
         plan_counts: dict[str, int] = {}
         for name in ("skipped", "read_failures"):
-            count = plan.facts.get(name, 0)
+            count = facts.get(name, 0)
             if type(count) is not int or not 0 <= count <= 1_000_000:
                 invalid_plan = True
             else:
