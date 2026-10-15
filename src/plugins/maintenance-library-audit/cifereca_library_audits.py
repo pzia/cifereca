@@ -524,15 +524,19 @@ class IntegrityAuditTool(_ReadOnlyTool):
             try:
                 if not row.get("local"):
                     continue
-                path = str(row.get("local_path") or "").strip()
-                artifact_id = str(row.get("artifact_id") or "").strip()
+                raw_path = row.get("local_path")
+                if type(raw_path) is not str:
+                    missing_path += 1
+                    continue
+                path = raw_path.strip()
+                if not path:
+                    missing_path += 1
+                    continue
+                # Only a verified opaque identifier may reach library.read.
+                artifact_id = _artifact_id(row)
             except Exception:
-                # Malformed mapping or custom str/bool must not abort the
-                # remaining integrity candidates or expose private metadata.
+                # Malformed rows cannot abort the batch or leak private data.
                 reference_failures += 1
-                continue
-            if not path:
-                missing_path += 1
                 continue
             artifact = None
             if artifact_id:
