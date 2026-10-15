@@ -297,3 +297,20 @@ def test_destroyed_gtk_control_cannot_strand_task_reservation(session):
     assert s.runner._count == 0
     assert not s.runner._coalesced
     assert s.queue.empty()
+
+
+def test_gtk_queue_exposes_actual_deliver_callback_not_a_wrapper():
+    """#981/#1741: avoid retaining a reservation behind an unrecognized thunk."""
+    source = (ROOT / "task_runner.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    runner = next(node for node in tree.body
+                  if isinstance(node, ast.ClassDef) and node.name == "TaskRunner")
+    submit = next(node for node in runner.body
+                  if isinstance(node, ast.FunctionDef) and node.name == "submit")
+    done = next(node for node in ast.walk(submit)
+                if isinstance(node, ast.FunctionDef) and node.name == "done")
+    body = ast.unparse(done)
+    assert "GLib.idle_add(deliver)" in body
+    assert "measured_deliver" not in body
+    assert 'phase_observer("gtk_delivery_wait"' in body
+    assert "queued_completion_at = gtk_pending_since" in body
