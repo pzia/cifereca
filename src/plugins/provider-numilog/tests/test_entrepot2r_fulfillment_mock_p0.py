@@ -193,3 +193,93 @@ def test_ambiguous_account_owner_never_invokes_broker(tmp_path):
         assert not list(tmp_path.glob(".numilog-*"))
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("unsafe", (
+    "https://entrepot2r.numilog.com.evil.example/fulfillment/unsafe",
+    "http://entrepot2r.numilog.com/fulfillment/unsafe",
+    "https://entrepot2r.numilog.com:8443/fulfillment/unsafe",
+    "https://user:secret@entrepot2r.numilog.com/fulfillment/unsafe",
+))
+def test_second_hop_outside_trusted_origin_is_stopped_before_get(tmp_path, unsafe):
+    seen = []
+    def handler(request):
+        seen.append(str(request.url))
+        if str(request.url) == START:
+            return httpx.Response(302, headers={"location": SIGNED})
+        if str(request.url) == SIGNED:
+            return httpx.Response(302, headers={"location": unsafe})
+        pytest.fail("never fetch an untrusted redirect destination")
+
+    session, broker = make_session(handler, tmp_path)
+    try:
+        with pytest.raises(ProviderError, match="destination réseau inattendue") as caught:
+            session._download(START, tmp_path / "out.epub")
+        assert seen == [START, SIGNED]
+        assert broker.calls == []
+        assert "SYNTHETIC_SIGNATURE" not in str(caught.value)
+        assert not list(tmp_path.glob(".numilog-*"))
+    finally:
+        session.close()
+
+
+def test_fulfillment_redirect_loop_stops_before_repeated_get(tmp_path):
+    seen = []
+    def handler(request):
+        url = str(request.url)
+        seen.append(url)
+        return httpx.Response(
+            302, headers={"location": SIGNED if url == START else START}
+        )
+    session, broker = make_session(handler, tmp_path)
+    try:
+        with pytest.raises(ProviderError, match="boucle de téléchargement"):
+            session._download(START, tmp_path / "out.epub")
+        assert seen == [START, SIGNED]
+        assert broker.calls == []
+        assert not list(tmp_path.glob(".numilog-*"))
+    finally:
+        session.close()
+
+
+def test_fulfillment_redirect_budget_is_bounded(tmp_path):
+    seen = []
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(
+            302,
+            headers={"location": "https://www.numilog.com/steps/" + str(len(seen))},
+        )
+    session, broker = make_session(handler, tmp_path)
+    try:
+        with pytest.raises(ProviderError, match="trop de redirections"):
+            session._download(START, tmp_path / "out.epub")
+        assert len(seen) == 12
+        assert broker.calls == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("header_present", (False, True))
+def test_oversized_acsm_response_fails_without_broker_or_staging(
+    tmp_path, header_present,
+):
+    seen = []
+    oversized = b"x" * 1025
+    def handler(request):
+        seen.append(str(request.url))
+        headers = {"content-type": "application/vnd.adobe.adept+xml"}
+        if header_present:
+            headers["content-length"] = str(len(oversized))
+        return httpx.Response(200, headers=headers, content=oversized)
+    session, broker = make_session(handler, tmp_path)
+    session.maximum = 1024
+    try:
+        with pytest.raises(ProviderError, match="trop volumineux") as caught:
+            session._download(SIGNED, tmp_path / "out.epub")
+        assert seen == [SIGNED]
+        assert broker.calls == []
+        assert "SYNTHETIC_SIGNATURE" not in str(caught.value)
+        assert not list(tmp_path.glob(".numilog-*"))
+    finally:
+        session.close()
