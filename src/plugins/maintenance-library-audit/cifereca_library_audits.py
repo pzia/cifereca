@@ -332,7 +332,11 @@ class CoverAuditTool(_ReadOnlyTool):
         tool's live progress line or in exported diagnostics.
         """
         facts = plan.facts
-        valid = plan.tool_id == self.info.id and type(facts) is dict
+        valid = (
+            plan.tool_id == self.info.id
+            and type(facts) is dict
+            and set(facts) == {"entries", "missing", "invalid"}
+        )
         counts = {}
         if valid:
             for key in ("entries", "missing", "invalid"):
