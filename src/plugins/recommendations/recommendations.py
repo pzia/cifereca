@@ -20,7 +20,7 @@ from cifereca.plugin_api import (
 )
 from recommendation_llm import explain_reasons
 
-from recommendation_engine import RankedCandidate, author_values, candidate_key, get_field, normalize
+from recommendation_engine import RankedCandidate, author_values, candidate_key, get_field, identifier_values, normalize
 from recommendation_service import LibrarySnapshotCache, RecommendationPartial, RecommendationResult, compute_recommendations
 from reference_recommendation import compute_reference_recommendations
 
@@ -36,17 +36,44 @@ _DIVERSITY_TOOLTIP = (
     "une valeur élevée varie davantage auteurs, sujets et sources."
 )
 
+def _reference_isbn(book: Any) -> str:
+    """One checksum-validated edition ISBN, not an inferred title match."""
+    identifiers = identifier_values(book)
+    return next((value[5:] for value in sorted(identifiers) if value.startswith("isbn:")), "")
+
+
 def _reference_label(book: Any) -> str:
     title = str(get_field(book, "title", "") or "").strip() or "Sans titre"
     authors = author_values(book)
     author = authors[0] if authors else ""
-    return f"{title} — {author}" if author else title
+    label = f"{title} — {author}" if author else title
+    isbn = _reference_isbn(book)
+    return f"{label} · ISBN {isbn}" if isbn else label
 
 
 def _reference_selection_key(book: Any) -> str:
-    title = normalize(get_field(book, "title", ""))
-    authors = sorted(normalize(author) for author in author_values(book) if normalize(author))
-    return f"{title}|{'/'.join(authors)}"
+    """Select a *specific* reference edition, never a title/author cluster.
+
+    Prefer identity of a local library book (stable over list reload), then
+    attested ISBN or provider-scoped identifiers. An unresolved entry has no
+    cross-object identity: keeping its Python object avoids substituting a
+    homonym when the library list refreshes.
+    """
+    book_id = get_field(book, "book_id", None)
+    if isinstance(book_id, (str, int)) and not isinstance(book_id, bool):
+        stable_id = str(book_id).strip()
+        if stable_id:
+            return "book:" + stable_id
+    identifiers = identifier_values(book)
+    isbn = next((value for value in sorted(identifiers) if value.startswith("isbn:")), "")
+    if isbn:
+        return isbn
+    source_id = next((value for value in sorted(identifiers) if value.startswith("source:")), "")
+    if source_id:
+        return source_id
+    if identifiers:
+        return "id:" + sorted(identifiers)[0]
+    return "object:" + str(id(book))
 
 
 def _external_book_url(value: Any) -> str | None:
