@@ -16,11 +16,11 @@ OWNER = ROOT / "book_action_context_controller.py"
 MAIN = ROOT / "main_window.py"
 
 
-def _build(item, *, route="library", storage=None):
+def _build(item, *, route="library", storage=None, identity=None):
     if storage is None:
         storage = NS(artifacts=lambda: ())
     window = NS(
-        service=NS(storage=storage),
+        service=NS(storage=storage, current_identity=identity),
         view_stack=NS(get_visible_child_name=lambda: route),
     )
     return book_action_context(
@@ -175,3 +175,39 @@ def test_metadata_and_public_book_are_independent_dict_projections():
     ctx.metadata["series"] = "B"
     assert row["metadata"]["series"] == "A"
     assert ctx.book.metadata["series"] == "A"
+
+
+def test_public_context_keeps_legacy_positional_constructor():
+    metadata = {"language": "fr"}
+    context = UiActionContext("book.detail", "library", None, None, (), metadata)
+    assert context.metadata is metadata
+    assert context.identity_id == ""
+
+
+def test_book_context_captures_active_profile_for_all_origins():
+    for route in ("library", "search", "constellations"):
+        context = _build({"item_id": "a", "title": "A"}, route=route,
+                         identity=NS(identity_id="alice"))
+        assert context.route == route
+        assert context.identity_id == "alice"
+
+
+def test_provider_metadata_cannot_replace_host_profile():
+    context = _build({"item_id": "a", "identity_id": "bob",
+                      "metadata": {"identity_id": "bob"}},
+                     identity=NS(identity_id="alice"))
+    assert context.identity_id == "alice"
+    assert context.metadata == {"identity_id": "bob"}
+
+
+def test_missing_or_invalid_active_profile_is_not_inferred_from_book():
+    for identity in (None, NS(), NS(identity_id=None), NS(identity_id=object())):
+        context = _build({"item_id": "a", "identity_id": "bob"}, identity=identity)
+        assert context.identity_id == ""
+
+
+def test_captured_profile_does_not_follow_later_identity_changes():
+    identity = NS(identity_id="alice")
+    context = _build({"item_id": "a"}, identity=identity)
+    identity.identity_id = "bob"
+    assert context.identity_id == "alice"

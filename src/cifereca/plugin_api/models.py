@@ -911,6 +911,9 @@ class UiActionContext:
     artifact: ArtifactRef | None = None
     selection: tuple[BookRef, ...] = ()
     metadata: Mapping[str, object] = field(default_factory=dict)
+    # Origin profile captured by the host; empty means no active identity.
+    # Trailing default preserves existing positional plugin constructors.
+    identity_id: str = ""
 
 
 @runtime_checkable
