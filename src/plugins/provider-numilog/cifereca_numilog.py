@@ -36,7 +36,8 @@ MAX_HTML = 4*1024*1024
 
 def url_origin(value):
     p=urlsplit(value)
-    port=p.port or (443 if p.scheme=='https' else 80 if p.scheme=='http' else None)
+    # An explicit :0 is not an omitted port: it must never inherit 443/80.
+    port=p.port if p.port is not None else (443 if p.scheme=='https' else 80 if p.scheme=='http' else None)
     return (p.scheme.casefold(),(p.hostname or '').casefold(),port)
 
 def normalized_base_url(value):
