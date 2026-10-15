@@ -1259,11 +1259,24 @@ class UxRecommendationsView:
 
         rows = []
         mapping = {}
-        for index, ranked in enumerate(visible):
+        # Keep the original identities reserved, including those on *later*
+        # rows: a generated suffix must never shadow a real edition key.
+        # This matters when two providers legitimately return the same
+        # candidate key or a key already ending in ":<index>".
+        original_keys = tuple(
+            self._candidate_key(ranked) or f"recommendation-{index}"
+            for index, ranked in enumerate(visible)
+        )
+        reserved_keys = set(original_keys)
+        for index, (ranked, original_key) in enumerate(zip(visible, original_keys)):
             item = ranked.item
-            key = self._candidate_key(ranked) or f"recommendation-{index}"
+            key = original_key
             if key in mapping:
-                key = f"{key}:{index}"
+                suffix = index
+                key = f"{original_key}:{suffix}"
+                while key in mapping or key in reserved_keys:
+                    suffix += 1
+                    key = f"{original_key}:{suffix}"
             mapping[key] = ranked
 
             author = ", ".join(author_values(item))
