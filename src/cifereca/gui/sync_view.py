@@ -194,12 +194,14 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         sync_label = "Jamais synchronisée"
 
     action_enabled = enabled and connected and capable
-    if not enabled:
+    # Capability is intrinsic to the source: disabling an unsupported
+    # public catalogue must not suggest that enabling it would allow sync.
+    if not capable:
+        disabled_reason = "Cette source ne fournit pas de synchronisation de données."
+    elif not enabled:
         disabled_reason = "Activez cette source pour la synchroniser."
     elif not connected:
         disabled_reason = "Reconnectez ce compte avant de synchroniser."
-    elif not capable:
-        disabled_reason = "Cette source ne fournit pas de synchronisation de données."
     else:
         disabled_reason = ""
 
