@@ -1,14 +1,30 @@
 from __future__ import annotations
 
 import logging
+import math
 import statistics
 import threading
 import time
 from collections import defaultdict, deque
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Callable, Iterator
 
 _LOG = logging.getLogger("cifereca")
+
+# Only enumerated public operation labels may enter a performance export.
+_PERF_CATEGORIES = frozenset({
+    "task", "opening-sync", "deep-sync", "source-sync", "sync-preflight",
+    "kobo-acquisition", "maintenance", "library", "search", "plugin", "other",
+})
+_PERF_PHASES = frozenset({
+    "queue_wait", "worker", "gtk_delivery_wait", "lock_wait", "provider",
+    "storage", "projection", "render", "frame_wait",
+})
+_PERF_TRIGGERS = frozenset({
+    "automatic", "user", "navigation", "maintenance", "unspecified",
+})
+_PERF_OUTCOMES = frozenset({"success", "failed", "cancelled", "unknown"})
+
 
 
 class UiPerfMonitor:
@@ -19,11 +35,29 @@ class UiPerfMonitor:
     diagnostics without introducing a profiler runtime dependency.
     """
 
-    def __init__(self, *, max_samples: int = 200, slow_ms: float = 50.0):
-        self.max_samples = max(20, int(max_samples))
+    def __init__(
+        self, *, max_samples: int = 200, slow_ms: float = 50.0,
+        max_events: int = 240, measurement_origin: str = "observed",
+        clock: Callable[[], float] | None = None,
+    ):
+        self.max_samples = min(1000, max(20, int(max_samples)))
         self.slow_ms = float(slow_ms)
         self._samples: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=self.max_samples))
         self._lock = threading.Lock()
+        self._phase_samples: dict[str, deque[float]] = defaultdict(
+            lambda: deque(maxlen=self.max_samples)
+        )
+        self._max_events = min(1000, max(1, int(max_events)))
+        self._phase_events: deque[dict[str, object]] = deque(maxlen=self._max_events)
+        self._detailed_capture = False
+        self._events_dropped = 0
+        self._invalid_samples = 0
+        self._clock = clock or time.monotonic
+        self._started_at = self._clock()
+        self._measurement_origin = (
+            measurement_origin if measurement_origin in {"observed", "simulated"}
+            else "unknown"
+        )
 
     def record(self, operation: str, duration_ms: float) -> None:
         value = float(duration_ms)
