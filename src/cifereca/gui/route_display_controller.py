@@ -35,18 +35,35 @@ def show_route(window, route: str, *, Gtk) -> None:
     route_name = getattr(window.view_stack, "get_visible_child_name", None)
     outgoing = route_name() if callable(route_name) else None
     if outgoing == "youth" and route == "search":
-        current_focus = getattr(window, "get_focus", lambda: None)()
-        old_widget = window._plugin_page_widgets.get("youth")
-        button_type = getattr(Gtk, "Button", None)
-        if (
-            button_type is not None and isinstance(current_focus, button_type)
-            and old_widget is not None and old_widget.is_ancestor(current_focus)
-            and current_focus.get_mapped() and current_focus.get_sensitive()
-        ):
-            identity = getattr(getattr(getattr(window, "service", None), "current_identity", None), "identity_id", None)
-            window._youth_return_focus = (current_focus, identity)
-        else:
+        # The clicked action is captured by PublicBookMasterDetailView before
+        # its callback navigates. Preserve it instead of relying on GTK focus
+        # (a pointer click does not necessarily focus the clicked button).
+        youth_widget = window._plugin_page_widgets.get("youth")
+        current_identity = getattr(
+            getattr(getattr(window, "service", None), "current_identity", None),
+            "identity_id", None,
+        )
+        saved = getattr(window, "_youth_return_focus", None)
+        explicit_valid = False
+        if saved is not None and youth_widget is not None:
+            focus_widget, saved_identity = saved
+            explicit_valid = (
+                saved_identity == current_identity
+                and youth_widget.is_ancestor(focus_widget)
+                and focus_widget.get_mapped() and focus_widget.get_sensitive()
+            )
+        if not explicit_valid:
             window._youth_return_focus = None
+            # Compatibility for keyboard-originated routes where the focused
+            # button itself initiated the navigation.
+            current_focus = getattr(window, "get_focus", lambda: None)()
+            button_type = getattr(Gtk, "Button", None)
+            if (
+                button_type is not None and isinstance(current_focus, button_type)
+                and youth_widget is not None and youth_widget.is_ancestor(current_focus)
+                and current_focus.get_mapped() and current_focus.get_sensitive()
+            ):
+                window._youth_return_focus = (current_focus, current_identity)
     elif route != "youth" and not getattr(window, "_restoring_navigation", False):
         window._youth_return_focus = None
     window.view_stack.set_visible_child_name(route)
