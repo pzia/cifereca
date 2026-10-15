@@ -151,6 +151,52 @@ def sync_local_reconciliation_presentation(result: object) -> str:
     )
 
 
+def sync_source_phase_summary(source: object) -> str:
+    """Present only Core-enumerated phase states, never provider diagnostics.
+
+    Inventory/rights and local acquisition have different success clocks.
+    A partial acquisition must not inherit an inventory success timestamp.
+    """
+    entries = getattr(source, "phase_states", ())
+    if not isinstance(entries, (tuple, list)) or len(entries) > 8:
+        return ""
+    known = {
+        "idle": "Jamais exécutée", "running": "En cours",
+        "success": "Réussie", "partial": "Partielle",
+        "failed": "Échec", "cancelled": "Annulée",
+        "blocked": "Bloquée", "attention_required": "Action nécessaire",
+        "interrupted": "Interrompue", "unknown": "État inconnu",
+        "not_supported": "Non prise en charge",
+        "materialization_failed": "Indisponible",
+        "source_changed": "Source modifiée",
+        "source_disabled": "Source désactivée",
+        "source_disconnected": "Source déconnectée",
+    }
+    captions = (
+        ("discover_rights", "Notices et droits"),
+        ("materialize", "Téléchargement local"),
+    )
+    parts = []
+    for phase, heading in captions:
+        row = next((
+            value for value in entries
+            if getattr(value, "phase", None) == phase
+        ), None)
+        if row is None:
+            continue
+        raw_status = getattr(row, "status", None)
+        status = known.get(raw_status if type(raw_status) is str else None, "État inconnu")
+        attempt = _timestamp_label(getattr(row, "last_attempt", ""))
+        success = _timestamp_label(getattr(row, "last_success", ""))
+        detail = heading + " : " + status
+        if attempt:
+            detail += " · dernier essai " + attempt
+        if success:
+            detail += " · dernier succès confirmé " + success
+        parts.append(detail)
+    return "\n".join(parts)
+
+
 def _public_sync_provider_slug(source: object) -> str:
     """Bound public plugin ID; never render private connection coordinates."""
     provider = getattr(source, "provider_id", "")
@@ -264,6 +310,9 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         f"Activation : {activation} · Connexion : {connection}\n"
         f"Synchronisation : {sync_label}"
     )
+    phase_summary = sync_source_phase_summary(source)
+    if phase_summary:
+        summary += "\n" + phase_summary
     # Explicit scope, independent of provider-supplied free-form metadata.
     # A manual source sync is not the global opening/acquisition workflow.
     if capable:
