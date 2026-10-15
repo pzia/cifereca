@@ -5,6 +5,8 @@ links and actions remain with MainWindow and are passed via its stable facade.
 """
 from __future__ import annotations
 
+from .local_book_detail_sections import local_book_detail_sections
+
 
 def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_presentation, detail_language, document_links) -> None:
     # Selection signals can arrive while widgets are being disposed.
@@ -39,31 +41,20 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
             return
 
     detail = window.library_page.detail
-    provider = str(item.get("provider_id") or "local")
-    availability = window._library_availability_label(item)
-    identity = window.service.identity_by_id(str(item.get("identity_id") or ""))
-    sync_label = window._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else ""
-    if sync_label == "À jour":
-        sync_label = ""
     description = window._book_description(item)
     detail.show_presentation(book_detail_presentation(
         title=str(item.get("title") or "Sans titre"),
         subtitle=str(item.get("author") or ""),
         thumbnail=item.get("thumbnail_url"),
         badges=[],
-        section_rows=[
-            ("Essentiel", [
-                ("Source", window.service.provider_display_name(provider)),
-                ("Format", str(item.get("media_format") or "").upper()),
-                ("Langue", detail_language(item.get("metadata"))),
-                ("Disponibilité", availability),
-            ]),
-            ("Bibliothèque", [
-                ("Identité", identity.label if identity else str(item.get("identity_id") or "")),
-                ("Fichier local", str(item.get("local_path") or "")),
-                ("État acquisition", sync_label),
-            ]),
-        ],
+        section_rows=local_book_detail_sections(
+            item,
+            provider_display_name=window.service.provider_display_name,
+            availability_label=window._library_availability_label,
+            identity_by_id=window.service.identity_by_id,
+            sync_status_label=window._kobo_backup_status_label,
+            language_label=detail_language,
+        ),
         links=document_links(item),
         metadata=item.get('metadata'),
     ), description=description)

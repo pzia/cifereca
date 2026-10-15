@@ -16,6 +16,7 @@ from ..models import SearchResult, ItemDetail
 from .book_widgets import BookListItem
 from .query_model import result_row
 from .detail_model import book_detail_presentation, detail_language
+from .local_book_detail_sections import local_book_detail_sections
 from .task_runner import TaskPriority
 from .search_detail_context import detail_callback_is_current
 
@@ -36,33 +37,21 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         if not item:
             return
         self._selected_search_id = row.key
-        provider = str(item.get("provider_id") or "local")
-        availability = self._library_availability_label(item)
-        if not availability and str(item.get("state") or "") == "local":
-            availability = "Disponible hors ligne"
-        identity = self.service.identity_by_id(str(item.get("identity_id") or ""))
-        sync_label = self._kobo_backup_status_label(str(item.get("sync_status") or "")) if item.get("sync_status") else ""
-        if sync_label == "À jour":
-            sync_label = ""
         description = self._book_description(item)
         self.search_page.detail.show_presentation(book_detail_presentation(
             title=str(item.get("title") or "Sans titre"),
             subtitle=str(item.get("author") or ""),
             thumbnail=item.get("thumbnail_url"),
             badges=[],
-            section_rows=[
-                ("Essentiel", [
-                    ("Source", self.service.provider_display_name(provider)),
-                    ("Format", str(item.get("media_format") or "").upper()),
-                    ("Langue", detail_language(item.get("metadata"))),
-                    ("Disponibilité", availability),
-                ]),
-                ("Bibliothèque", [
-                    ("Identité", identity.label if identity else str(item.get("identity_id") or "")),
-                    ("Fichier local", str(item.get("local_path") or "")),
-                    ("État acquisition", sync_label),
-                ]),
-            ],
+            section_rows=local_book_detail_sections(
+                item,
+                provider_display_name=self.service.provider_display_name,
+                availability_label=self._library_availability_label,
+                identity_by_id=self.service.identity_by_id,
+                sync_status_label=self._kobo_backup_status_label,
+                language_label=detail_language,
+                offline_if_local=True,
+            ),
             metadata=item.get('metadata'),
         ), description=description)
         actions = []
