@@ -127,7 +127,7 @@ def public_book_url(value, base_url=LIBRARY):
         return None
 
 
-def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None):
+def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False):
     root = Parser(text).root
     tables = [n for n in root.walk() if n.attrs.get('id') == 'myTable']
     if len(tables) != 1:
@@ -162,6 +162,11 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None):
                 public_candidates.append(resolved)
         public_candidates=list(dict.fromkeys(public_candidates))
         public_url=public_candidates[0] if len(public_candidates)==1 else None
+        # Never inspect signed JS deliveries during search or inventory sync.
+        delivery = (_card_delivery(
+            card, links,
+            {('https', 'entrepot2r.numilog.com', 443)},
+        ) if delivery_evidence else None)
         for link in links:
             href = urljoin(base_url, link.attrs.get('href') or '')
             url = urlsplit(href)
@@ -181,7 +186,10 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None):
                 parsed_cover=urlsplit(cover)
                 if origin(cover) not in allowed_covers or parsed_cover.username or parsed_cover.password or parsed_cover.fragment or parsed_cover.query:
                     cover = None
-            items.append({'lid':lid[0],'variant':repr(key[1]),'title':titles[0] if titles else 'Livre Numilog '+lid[0], 'cover':cover, 'href':href, 'public_url':public_url})
+            row = {'lid':lid[0],'variant':repr(key[1]),'title':titles[0] if titles else 'Livre Numilog '+lid[0], 'cover':cover, 'href':href, 'public_url':public_url}
+            if delivery is not None:
+                row['delivery'] = delivery  # ephemeral; never serialized
+            items.append(row)
 
     next_links=[]
     for node in root.walk():
@@ -206,6 +214,142 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None):
 def parse_library(text, base_url=LIBRARY, *, cover_origins=None):
     items,_next=parse_library_page(text,base_url,cover_origins=cover_origins)
     return items
+
+
+
+# Private signed links are read ONLY during an explicit download action.
+# The object is not a SearchResult/public catalog field and must not be
+# serialized or logged. The upstream misspelling is intentionally preserved.
+@dataclass(frozen=True)
+class OwnedDelivery:
+    product_id: str
+    copy_index: str
+    url: str
+
+
+# Strictly bounded, non-evaluating extraction of simple JS object literals.
+# Nested/dynamic JS is deliberately unsupported; no ProductId=lid assumption.
+_JS_OBJECT = re.compile(r'\\{[^{}]{1,4096}\\}', re.S)
+_JS_VALUE = r'''(?P<value>"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|[0-9]{1,16})'''
+
+
+def _js_literal(value):
+    if not isinstance(value, str) or len(value) > 4096:
+        return None
+    if not value.startswith(('"', "'")):
+        return value if value.isdecimal() and len(value) <= 16 else None
+    if len(value) < 2 or value[-1] != value[0]:
+        return None
+    if value[0] == '"':
+        try:
+            decoded = json.loads(value)
+        except (ValueError, TypeError):
+            return None
+    else:
+        decoded = value[1:-1]
+        for escaped, plain in (
+            ('\\\\/', '/'), ('\\\\u0026', '&'), ("\\\\'", "'"), ('\\\\\\\\', '\\\\'),
+        ):
+            decoded = decoded.replace(escaped, plain)
+        if '\\\\' in decoded:
+            return None
+    if not isinstance(decoded, str) or not 0 < len(decoded) <= 4096:
+        return None
+    if any(ord(c) < 32 or ord(c) == 127 for c in decoded):
+        return None
+    return decoded
+
+
+def _field(block, name):
+    pattern = re.compile(
+        r'''(?<![\\w$])(?:["']?)''' + re.escape(name)
+        + r'''(?:["']?)\\s*:\\s*''' + _JS_VALUE + r'''\\s*(?=,|}|$)''', re.S,
+    )
+    values = [_js_literal(m.group('value')) for m in pattern.finditer(block)]
+    return values[0] if len(values) == 1 else None
+
+
+def _owned_delivery_candidates(node, *, allowed_origins):
+    """Inspect descendant scripts, never evaluate JS or fetch a signed URL."""
+    deliveries = []
+    for script in node.walk():
+        if script.tag != 'script':
+            continue
+        raw = ''.join(script.pieces)
+        if len(raw) > 64 * 1024:
+            continue
+        for match in _JS_OBJECT.finditer(raw):
+            block = match.group(0)
+            product = _field(block, 'ProductId')
+            index = _field(block, 'IndexExemplaire')
+            drm = _field(block, 'DrmTechnlology')
+            url = _field(block, 'link')
+            if (not product or not product.isdecimal() or not index
+                    or not index.isdecimal() or str(drm).upper() != 'ADOBE'
+                    or not isinstance(url, str) or len(url) > 4096):
+                continue
+            try:
+                parsed = urlsplit(unescape(url))
+                # Only the exact ACSM delivery origin/path, with no user-info,
+                # fragment, whitespace, relative URL, or disguised port.
+                if (
+                    origin(url) not in allowed_origins
+                    or origin(url) != ('https', 'entrepot2r.numilog.com', 443)
+                    or parsed.username or parsed.password or parsed.fragment
+                    or parsed.path != '/fulfillment/URLLink.acsm'
+                    or not parsed.query or any(c.isspace() for c in url)
+                    or '\\\\' in url or any(ord(c) < 32 for c in url)
+                ):
+                    continue
+            except (TypeError, ValueError, AttributeError):
+                continue
+            deliveries.append(OwnedDelivery(product, index, unescape(url)))
+    return deliveries
+
+
+def _card_delivery(card, links, allowed_origins):
+    """Allow only a single download in a card with one *descendant* JS object.
+
+    ProductId/IndexExemplaire are checked against independent card attributes
+    if available. They are NEVER compared to the readBook lid: Numilog has not
+    attested that those identifiers share a namespace.
+    """
+    if len(links) != 1:
+        return None
+    items = _owned_delivery_candidates(card, allowed_origins=allowed_origins)
+    if len(items) != 1:
+        return None
+    item = items[0]
+    attributes = (
+        ('data-product-id', item.product_id),
+        ('data-index-exemplaire', item.copy_index),
+    )
+    for key, expected in attributes:
+        supplied = card.attrs.get(key)
+        if supplied is not None and str(supplied).strip() != expected:
+            return None
+    return item
+
+
+def html_response_kind(text):
+    """Return only sanitized structural evidence for a 200 HTML response."""
+    root = Parser(text).root
+    inputs = [node for node in root.walk() if node.tag == 'input']
+    if any(str(node.attrs.get('type') or '').casefold() == 'password' for node in inputs):
+        return 'login'
+    headings = [node.text().casefold() for node in root.walk()
+                if node.tag in {'title', 'h1', 'h2'}]
+    if any(label in {'erreur', 'error', 'accès refusé', 'access denied'}
+           for label in headings):
+        return 'error'
+    return 'intermediate'
+
+
+class DeliverySelectionError(ParseError):
+    def __init__(self, code):
+        # Codes are fixed and public; never include a signed delivery URL.
+        self.code = code
+        super().__init__('Livraison Numilog ' + code)
 
 
 QUOTED = re.compile(r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*' ''',re.X)
@@ -239,5 +383,5 @@ def delivery_url(text, base_url, *, allowed_origins=None):
             ):
                 candidates.add(url)
     if len(candidates) != 1:
-        raise ParseError('Lien de livraison absent ou ambigu : page modifiée ou session expirée')
+        raise DeliverySelectionError('missing' if not candidates else 'ambiguous')
     return candidates.pop()
