@@ -109,20 +109,43 @@ def _attested_bibliography_fields(node) -> tuple[DetailField, ...]:
     return tuple(fields)
 
 
+def _public_detail_text(value, *, limit=180) -> str:
+    """Accept visible, bounded public text without coercing provider objects."""
+    if type(value) is not str:
+        return ''
+    cleaned = value.strip()
+    if (
+        not cleaned or len(cleaned) > limit
+        or any(category(char) in {'Cc', 'Cf', 'Cs'} for char in cleaned)
+    ):
+        return ''
+    return cleaned
+
+
+def _public_detail_values(values, *, limit=32) -> tuple[str, ...]:
+    """Bound lists and isolate malformed source/author/badge values."""
+    if type(values) is str:
+        values = (values,)
+    out = []
+    try:
+        for value in islice(iter(values or ()), limit):
+            cleaned = _public_detail_text(value)
+            if cleaned:
+                out.append(cleaned)
+    except Exception:
+        # Do not stringify or expose arbitrary provider exception messages.
+        pass
+    return tuple(out)
+
+
 def constellation_detail_presentation(node) -> UiBookDetailPresentation:
     """Public book-detail projection with individual bibliographic values.
 
     The host continues to render its single DetailPanel. The graphed node
     contributes neither an acquisition action nor proof of entitlement.
     """
-    authors = tuple(
-        str(value).strip() for value in tuple(node.book.authors or ())
-        if str(value).strip()
-    )
-    sources = tuple(
-        str(value).strip() for value in tuple(node.sources or ())
-        if str(value).strip()
-    )
+    authors = _public_detail_values(node.book.authors)
+    sources = _public_detail_values(node.sources)
     sections = []
     if authors:
         sections.append(DetailSection(
@@ -146,15 +169,18 @@ def constellation_detail_presentation(node) -> UiBookDetailPresentation:
                 for index, value in enumerate(sources)
             ), order=20,
         ))
+    # Recheck at the final public-model boundary as well as at ingestion:
+    # a transformed, restored or caller-supplied Card is not a URL attestation.
+    notice_url = public_url(node.url)
     links = (
-        (DocumentLink('notice', 'Voir la notice en ligne', node.url),)
-        if node.url else ()
+        (DocumentLink('notice', 'Voir la notice en ligne', notice_url),)
+        if notice_url else ()
     )
     return UiBookDetailPresentation(
-        title=str(node.book.title or ''),
+        title=_public_detail_text(node.book.title, limit=2048),
         subtitle=', '.join(authors),
         thumbnail_url=_attested_cover_url(node),
-        badges=tuple(node.availability or ()),
+        badges=_public_detail_values(node.availability),
         links=links,
         sections=tuple(sections),
     )
