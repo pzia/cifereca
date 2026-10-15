@@ -9,12 +9,27 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncSourceRef
+from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncPhaseState, SyncSourceRef
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
 from .task_runtime import TaskBrokerImpl
 
 _SYNC_LOG = logging.getLogger("cifereca.sync")
+# The synchronization broker is a public plugin/UI boundary: no exception,
+# provider message or persisted legacy error is safe to echo verbatim.
+_SYNC_PUBLIC_FAILURE = "Échec de synchronisation"
+_SYNC_PUBLIC_ERRORS = frozenset({
+    "", _SYNC_PUBLIC_FAILURE, "Synchronisation partielle",
+    "Ouverture partielle", "Échec de synchronisation au démarrage",
+})
+_SYNC_PUBLIC_COUNTS = (
+    "loans", "library", "owned_rights", "acquired",
+    "attention_required", "errors", "warnings",
+)
+_SYNC_PUBLIC_STATUSES = frozenset({
+    "ok", "success", "skipped", "partial", "failed", "error",
+    "attention_required", "retryable_error",
+})
 
 
 def _account_id(account: Any) -> str:
@@ -166,6 +181,11 @@ class SynchronizationBrokerImpl:
                 "last_attempt", "last_success", "status", "error", "scope", "identity_id",
             ) if key in value and isinstance(value[key], str)
         }
+        # Historical state could contain raw exception strings with URLs,
+        # book titles or credential-bearing paths. Reading it must not expose
+        # those values via the public SyncSourceRef or the GTK page.
+        if state.get("error", "") not in _SYNC_PUBLIC_ERRORS:
+            state["error"] = _SYNC_PUBLIC_FAILURE
         if legacy:
             self._set_state(source_id, state)
         return state
@@ -202,6 +222,78 @@ class SynchronizationBrokerImpl:
             if self._source_id(account) == source_id:
                 return account
         raise ValueError(f"unknown sync source: {source_id}")
+
+    @staticmethod
+    def _safe_phase_timestamp(value: Any) -> str:
+        """Normalize strictly bounded UTC timestamps; never reflect raw storage."""
+        if type(value) is not str or not 20 <= len(value) <= 35:
+            return ""
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None or not 2000 <= parsed.year <= 2100:
+                return ""
+            return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
+        except (ValueError, OverflowError):
+            return ""
+
+    def _phase_states(
+        self, account: Any, state: dict[str, Any], sync_caps: tuple[str, ...],
+    ) -> tuple[SyncPhaseState, ...]:
+        """Safe, read-only projection: no remote call, migration or acquisition."""
+        raw_status = state.get("status")
+        inventory_status = {
+            "ok": "success", "success": "success",
+            "running": "running", "partial": "partial",
+            "error": "failed", "failed": "failed",
+        }.get(raw_status, "idle")
+        inventory = SyncPhaseState(
+            phase="discover_rights", status=inventory_status,
+            last_attempt=self._safe_phase_timestamp(state.get("last_attempt")),
+            last_success=self._safe_phase_timestamp(state.get("last_success")),
+        )
+        if "local_materialization" not in sync_caps:
+            materialization = SyncPhaseState("materialize", "not_supported")
+        else:
+            identity = str(getattr(account, "identity_id", "") or "")
+            credential = str(getattr(account, "credential_id", "") or "")
+            # A checkpoint is credible only for its currently owning identity.
+            try:
+                bound = self.service.storage.identity_for_connection("kobo", credential)
+            except (AttributeError, TypeError, ValueError, KeyError):
+                bound = None
+            if not identity or not credential or bound != identity:
+                materialization = SyncPhaseState("materialize", "unknown")
+            else:
+                from .core.kobo_backup import _kobo_checkpoint_for
+                row = _kobo_checkpoint_for(self.service, identity, credential)
+                if row is None:
+                    materialization = SyncPhaseState("materialize")
+                else:
+                    raw_checkpoint_status = row.get("status")
+                    status = {
+                        "complete": "success", "partial": "partial",
+                        "running": "running", "interrupted": "interrupted",
+                        "attention_required": "attention_required",
+                        "failed": "failed", "aborted": "failed",
+                        "cancelled": "cancelled",
+                    }.get(
+                        raw_checkpoint_status if type(raw_checkpoint_status) is str
+                        else "", "unknown",
+                    )
+                    timestamp = row.get("updated_at")
+                    when = (
+                        datetime.fromtimestamp(timestamp, timezone.utc)
+                            .isoformat(timespec="seconds")
+                        if type(timestamp) is int and 946684800 <= timestamp <= 4102444800
+                        else ""
+                    )
+                    materialization = SyncPhaseState(
+                        phase="materialize", status=status, last_attempt=when,
+                        # A partial checkpoint does not attest historical success;
+                        # never substitute an inventory clock or fabricate it.
+                        last_success=when if status == "success" else "",
+                    )
+        return (inventory, materialization, SyncPhaseState("reconcile", "not_supported"))
 
     def _ref(self, account: Any) -> SyncSourceRef:
         source_id = self._source_id(account)
@@ -243,6 +335,7 @@ class SynchronizationBrokerImpl:
             status=str(state.get("status") or "idle"),
             error=str(state.get("error") or ""),
             sync_capabilities=tuple(declared_sync_caps),
+            phase_states=self._phase_states(account, state, tuple(declared_sync_caps)),
         )
 
     def sources(self, identity_id: str | None = None) -> tuple[SyncSourceRef, ...]:
@@ -403,16 +496,32 @@ class SynchronizationBrokerImpl:
             result = self.service.synchronize_account_source(
                 account, deep=bool(request.deep), control=control,
             )
-            changed = sum(
-                v for v in result.values() if isinstance(v, int) and not isinstance(v, bool)
-            ) if isinstance(result, dict) else 0
-            facts = dict(result) if isinstance(result, dict) else {"result": result}
-            outcome = str(facts.get("status") or "").lower()
-            incomplete = (outcome in {"partial", "failed", "error", "attention_required",
-                                      "retryable_error"}
-                          or bool(facts.get("errors")) or bool(facts.get("attention_required"))
-                          or bool(facts.get("warnings")))
+            # A provider result may include private account identifiers,
+            # diagnostic details and free-text errors. Only publish bounded
+            # counters and known status/reason codes to plugins and GTK.
+            if not isinstance(result, dict):
+                state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
+                self._set_state(source_id, state); self._notify()
+                return SyncResult(ok=False, warnings=("invalid sync response",),
+                                  facts={"reason": "invalid_response"})
+            facts = {
+                name: result[name] for name in _SYNC_PUBLIC_COUNTS
+                if type(result.get(name)) is int and 0 <= result[name] <= 1_000_000
+            }
+            changed = sum(facts.values())
+            raw_status = result.get("status")
+            outcome = raw_status.lower() if type(raw_status) is str else ""
+            invalid_status = raw_status not in (None, "") and outcome not in _SYNC_PUBLIC_STATUSES
+            if outcome in _SYNC_PUBLIC_STATUSES:
+                facts["status"] = outcome
+            incomplete = (invalid_status
+                          or outcome in {"partial", "failed", "error", "attention_required",
+                                         "retryable_error"}
+                          or bool(result.get("errors"))
+                          or bool(result.get("attention_required"))
+                          or bool(result.get("warnings")))
             if incomplete:
+                facts["reason"] = "invalid_response" if invalid_status else "source_partial"
                 state.update(status="partial", error="Synchronisation partielle")
                 self._set_state(source_id, state); self._notify()
                 return SyncResult(ok=False, changed=changed,
@@ -421,10 +530,11 @@ class SynchronizationBrokerImpl:
                          status="ok", error="")
             self._set_state(source_id, state); self._notify()
             return SyncResult(ok=True, changed=changed, facts=facts)
-        except Exception as exc:
-            state.update(status="error", error=str(exc))
+        except Exception:
+            state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
             self._set_state(source_id, state); self._notify()
-            return SyncResult(ok=False, warnings=(str(exc),), facts={"source_id": source_id})
+            return SyncResult(ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
+                              facts={"reason": "source_unavailable"})
 
     def synchronize(self, request: SyncRequest, control: Any = None) -> SyncResult:
         # An omitted identity must never turn a nominal "Sync" into an

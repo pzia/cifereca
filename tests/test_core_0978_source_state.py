@@ -38,6 +38,87 @@ def fake_broker(storage, *, fail=False, partial=False):
     return SynchronizationBrokerImpl(service)
 
 
+def test_provider_exception_and_legacy_state_never_expose_private_text(tmp_path):
+    """#1346: raw provider messages must not cross the public sync boundary."""
+    storage = Storage(tmp_path / "redacted-sync.sqlite3")
+    private = "https://private.invalid/book?token=SECRET_VALUE /home/reader/private.epub"
+    try:
+        broker = fake_broker(storage)
+        source_id = broker.sources()[0].source_id
+        key = "sync.source.state." + source_id
+        storage.metadata_set(key, json.dumps({
+            "status": "error", "last_success": "2026-10-01T07:00:00+00:00",
+            "error": private,
+        }))
+        restored = broker.sources()[0]
+        assert restored.error == "Échec de synchronisation"
+        assert restored.last_success == "2026-10-01T07:00:00+00:00"
+        assert private not in sync_source_presentation(restored).summary
+
+        def fail(*_args, **_kwargs):
+            raise RuntimeError(private)
+
+        broker.service.synchronize_account_source = fail
+        receipt = broker.synchronize_source(source_id)
+        assert not receipt.ok and receipt.changed == 0
+        assert receipt.facts == {"reason": "source_unavailable"}
+        assert receipt.warnings == ("Échec de synchronisation",)
+        assert private not in repr(receipt)
+        assert private not in storage.metadata_get(key)
+        assert broker.sources()[0].last_success == restored.last_success
+    finally:
+        storage.close()
+
+
+def test_provider_result_projects_only_safe_counters_and_reason_codes(tmp_path):
+    """#1346: never echo free-text errors, account IDs or provider extras."""
+    storage = Storage(tmp_path / "private-sync-facts.sqlite3")
+    secret = "reader-alice https://private.invalid/?bearer=SECRET_VALUE"
+    try:
+        broker = fake_broker(storage)
+        source_id = broker.sources()[0].source_id
+        broker.service.synchronize_account_source = lambda *_a, **_kw: {
+            "loans": 3, "attention_required": 1, "status": "partial",
+            "errors": [secret], "warnings": [secret],
+            "provider": secret, "account_id": secret,
+            "secret_total": 10000, "path": "/private/reader.epub",
+        }
+        receipt = broker.synchronize_source(source_id)
+        assert not receipt.ok and receipt.changed == 4
+        assert receipt.facts == {
+            "loans": 3, "attention_required": 1,
+            "status": "partial", "reason": "source_partial",
+        }
+        assert secret not in repr(receipt)
+        assert broker.sources()[0].status == "partial"
+        assert storage.metadata_get("sync.source.state." + source_id).find(secret) == -1
+    finally:
+        storage.close()
+
+
+def test_source_sync_rejects_invalid_provider_reply_without_echoing_payload(tmp_path):
+    storage = Storage(tmp_path / "invalid-sync-response.sqlite3")
+    secret = "https://private.invalid/?token=SECRET_VALUE"
+    try:
+        broker = fake_broker(storage)
+        source_id = broker.sources()[0].source_id
+        broker.service.synchronize_account_source = lambda *_a, **_kw: secret
+        receipt = broker.synchronize_source(source_id)
+        assert not receipt.ok and receipt.facts == {"reason": "invalid_response"}
+        assert receipt.changed == 0 and secret not in repr(receipt)
+
+        broker.service.synchronize_account_source = lambda *_a, **_kw: {
+            "loans": 1, "status": secret,
+        }
+        receipt = broker.synchronize_source(source_id)
+        assert not receipt.ok and receipt.changed == 1
+        assert receipt.facts == {"loans": 1, "reason": "invalid_response"}
+        assert secret not in repr(receipt)
+        assert broker.sources()[0].last_success == ""
+    finally:
+        storage.close()
+
+
 def test_manual_success_sqlite_json_and_reopen(tmp_path):
     path = tmp_path / "state.sqlite3"
     storage = Storage(path)
