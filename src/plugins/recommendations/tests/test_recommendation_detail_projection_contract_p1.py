@@ -190,3 +190,60 @@ def test_no_language_metadata_never_creates_synthetic_language_field():
     view._selected_row(rows[0])
     catalogue = next(section for section in details[0].sections if section.id == "catalogue")
     assert all(field.label != "Langue" for field in catalogue.fields)
+
+
+@pytest.mark.parametrize("candidate_keys", (
+    ("edition", "edition", "edition:1", "edition:2"),
+    ("edition", "edition:2", "edition", "edition:3"),
+    ("recommendation-0", "", "recommendation-1", "recommendation-1"),
+))
+def test_colliding_recommendation_keys_never_select_another_book(candidate_keys):
+    """#1599: synthetic suffixes cannot overwrite existing or future keys."""
+    view, rows, details, empties = _make_view({"title": "seed"})
+    view._ranked = [
+        RankedCandidate(
+            item={"title": f"Edition {index}", "key": key, "authors": ["Author"]},
+            score=80 + index, reasons=("Source attestée",), sources=("kobo",),
+        )
+        for index, key in enumerate(candidate_keys)
+    ]
+    view._candidate_key = lambda ranked: ranked.item["key"]
+    view._render(preserve_summary=True)
+
+    visible_keys = [row.key for row in rows]
+    assert len(rows) == len(candidate_keys)
+    assert len(visible_keys) == len(set(visible_keys))
+    assert len(view._ranked_by_key) == len(rows)
+    assert all(
+        view._ranked_by_key[row.key].item["title"] == row.title
+        for row in rows
+    )
+    # A raw future key keeps its own row; generated keys are always unique.
+    for index, original in enumerate(candidate_keys):
+        if original:
+            assert view._ranked_by_key.get(original) is not None
+
+    for row in rows:
+        view._selected_row(row)
+    assert [detail.title for detail in details] == [
+        f"Edition {index}" for index in range(len(candidate_keys))
+    ]
+    assert empties == []
+    assert all(detail.actions == () for detail in details)
+
+
+def test_same_candidate_key_collision_keeps_original_key_stable():
+    view, rows, details, _ = _make_view({"title": "seed"})
+    view._ranked = [
+        RankedCandidate(
+            item={"title": title, "key": "same", "authors": []},
+            score=80, reasons=(), sources=(),
+        )
+        for title in ("First", "Second", "Third")
+    ]
+    view._candidate_key = lambda ranked: ranked.item["key"]
+    view._render(preserve_summary=True)
+    assert [row.key for row in rows] == ["same", "same:1", "same:2"]
+    for row in rows:
+        view._selected_row(row)
+    assert [detail.title for detail in details] == ["First", "Second", "Third"]
