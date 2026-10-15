@@ -3,7 +3,7 @@ from dataclasses import dataclass, asdict, is_dataclass, replace
 from collections.abc import Mapping
 from ipaddress import ip_address
 import re
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from cifereca.plugin_api import BookRef, book_ref_from_row
 from constellations import ConstellationGraph, normalize_book
 
@@ -51,20 +51,47 @@ def public_url(value):
         '.' not in hostname
         or hostname in {'localhost', 'local', 'internal'}
         or hostname.endswith(('.localhost', '.local', '.internal', '.lan', '.home.arpa'))
+        or not hostname.isascii() or len(hostname) > 253
+        or not all(
+            re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label)
+            for label in hostname.split('.')
+        )
     ):
-        return ''
-    if re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I):
-        # Encoded C0/DEL control characters must not be forwarded to the
-        # public browser or used to disguise a signed/private target.
         return ''
     try:
         address = ip_address(hostname)
     except ValueError:
-        pass
+        # Numeric-shorthand loopback addresses such as 127.1, 0177.0.0.1
+        # and single-integer IPv4 can resolve privately in HTTP clients.
+        if hostname.rsplit('.', 1)[-1].isdigit():
+            return ''
     else:
         if not address.is_global:
             return ''
-    return value
+
+    # Never mistake a delivery or DRM resource for a public book notice.
+    # Decode only to reject nested disguises; the URL is never rewritten.
+    forbidden_segments = {
+        'download', 'downloads', 'acquire', 'acquisition',
+        'license', 'licence', 'licenses', 'licences', 'fulfillment',
+        'assaredirect', 'loan', 'drm', 'token', 'tokens', 'oauth',
+    }
+    path = parsed.path
+    for _ in range(4):
+        if any(ord(char) < 32 or ord(char) == 127 for char in path):
+            return ''
+        segments = (part.casefold() for part in path.split('/') if part)
+        if any(
+            segment in forbidden_segments
+            or segment.endswith(('.acsm', '.lcpl', '.epub', '.kepub', '.pdf'))
+            for segment in segments
+        ):
+            return ''
+        decoded = unquote(path)
+        if decoded == path:
+            return value
+        path = decoded
+    return ''
 
 
 @dataclass
