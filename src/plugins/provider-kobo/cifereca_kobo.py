@@ -212,7 +212,9 @@ class KoboSession(ProviderSession):
         self.api_version = _vault_public_version(status.get("api_version") or status.get("version"))
         self.vault_release = _vault_public_version(status.get("release"))
         try:
-            parts = self.api_version.split(".")
+            parts = self.api_version.removeprefix("v").split(".")
+            # The version validator explicitly accepts "v2.3", but the
+            # compatibility guard must parse that same legal spelling.
             major = int(parts[0]) if parts else 0
             minor = int(parts[1]) if len(parts) > 1 else 0
         except (TypeError, ValueError):
