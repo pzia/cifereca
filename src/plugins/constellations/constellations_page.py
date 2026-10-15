@@ -126,6 +126,11 @@ def _public_detail_values(values, *, limit=32) -> tuple[str, ...]:
     """Bound lists and isolate malformed source/author/badge values."""
     if type(values) is str:
         values = (values,)
+    elif isinstance(values, Mapping) or isinstance(values, str):
+        # A mapping's keys are field names, not attested authors/sources.
+        # A str subclass is similarly not a trusted scalar: iterating it
+        # character by character would manufacture bibliographic values.
+        return ()
     out = []
     try:
         for value in islice(iter(values or ()), limit):
