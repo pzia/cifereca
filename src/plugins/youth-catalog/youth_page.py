@@ -712,6 +712,7 @@ class YouthView:
         self.catalog = plugin.context.service("catalog.youth")
         self.rows, self.selected_book = {}, None
         self.generation, self.task, self.disposed = 0, None, False
+        self._reloading_identities = False
         self.enter_sequence = YouthEnterSequence()
         self._remote_running_token = None
         self.next_cursor, self.next_source_plugin = "", ""
@@ -728,7 +729,12 @@ class YouthView:
             for row in self.identities
         ])
         self.identity.set_tooltip_text("Choisit le profil dont le cache Jeunesse est affiché. Aucun changement d’identité implicite.")
-        self.identity.connect("notify::selected", lambda *_: self.identity_changed())
+        # GTK emits transient selections while the identity model changes.
+        # No cache query or task may run under a temporary other profile.
+        self.identity.connect(
+            "notify::selected",
+            lambda *_: None if self._reloading_identities else self.identity_changed(),
+        )
         identity_label = Gtk.Label(label="_Profil", use_underline=True, xalign=0)
         identity_label.set_mnemonic_widget(self.identity)
         self.widget.append(identity_label)
@@ -978,20 +984,36 @@ class YouthView:
 
     def identity_id(self):
         index = self.identity.get_selected()
-        return str(self.identities[index].get("identity_id") or "") if index < len(self.identities) else ""
+        if type(index) is not int or not 0 <= index < len(self.identities):
+            return ""
+        row = self.identities[index]
+        return str(row.get("identity_id") or "") if isinstance(row, Mapping) else ""
 
     def reload_identities(self):
         if self.disposed:
             return False
         current = self.identity_id()
         rows = self._identity_rows()
-        self.identities = rows
-        self.identity.set_model(self.Gtk.StringList.new([
-            str(row.get("label") or row.get("name") or row.get("identity_id") or "Profil")
-            for row in rows
-        ]))
-        selected = next((index for index, row in enumerate(rows) if str(row.get("identity_id")) == current), 0)
-        self.identity.set_selected(selected)
+        self._reloading_identities = True
+        try:
+            self.identities = rows
+            self.identity.set_model(self.Gtk.StringList.new([
+                str(row.get("label") or row.get("name") or row.get("identity_id") or "Profil")
+                for row in rows
+            ]))
+            selected = next((
+                index for index, row in enumerate(rows)
+                if str(row.get("identity_id") or "") == current
+            ), None)
+            # Only initial activation selects a first profile implicitly.
+            # A deleted profile must never switch to another user's cache.
+            self.identity.set_selected(
+                selected if selected is not None else (
+                    0xFFFFFFFF if current or not rows else 0
+                )
+            )
+        finally:
+            self._reloading_identities = False
         self.filters_changed()
         self.refresh_source_diagnostics()
         return False
@@ -1027,7 +1049,7 @@ class YouthView:
         source = self.selected_source()
         source_id = source_info(source)[0] if source else ""
         kind_index = self.age_kind.get_selected()
-        kind = KIND_VALUES[kind_index] if kind_index < len(KIND_VALUES) else ""
+        kind = KIND_VALUES[kind_index] if 0 <= kind_index < len(KIND_VALUES) else ""
         return FilterState(
             query=self.query.get_text().strip(),
             age=self.age_value(),
@@ -1099,6 +1121,10 @@ class YouthView:
         identity = self.identity_id()
         if not identity:
             self.rows = {}
+            self.selected_book = None
+            self._detail_selection_generation = (
+                getattr(self, "_detail_selection_generation", 0) + 1
+            )
             self.master.set_list_state("Aucun profil disponible", "Créez ou activez un profil Cifereca.")
             self.master.empty_detail()
             self.update_action_availability()
