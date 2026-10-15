@@ -1297,6 +1297,11 @@ class UxRecommendationsView:
             self._update_view_summary(provisional=self._provisional_active)
 
     def _selected_row(self, row: UiBookListEntry | None) -> None:
+        # Invalidate all callbacks from prior presentations, even on an
+        # A→B→A revisit or when two editions reuse the same list key.
+        self._detail_selection_generation = (
+            getattr(self, "_detail_selection_generation", 0) + 1
+        )
         self._reset_llm_selection(row.key if row is not None else None)
         if row is None:
             self._master.empty_detail(
@@ -1442,13 +1447,17 @@ class UxRecommendationsView:
         # acquisition decision; Recommandations never duplicates that policy.
         identity_at_selection = self.selected_identity_id()
         generation_at_selection = self._generation
+        detail_generation_at_selection = self._detail_selection_generation
         key_at_selection = row.key
+        ranked_at_selection = ranked
         if identity_at_selection:
             for isbn in _attested_catalogue_isbns(variants):
                 def open_isbn(isbn=isbn):
                     if (
                         self._generation != generation_at_selection
+                        or self._detail_selection_generation != detail_generation_at_selection
                         or self._llm_selection_key != key_at_selection
+                        or self._ranked_by_key.get(key_at_selection) is not ranked_at_selection
                         or self.selected_identity_id() != identity_at_selection
                     ):
                         return False

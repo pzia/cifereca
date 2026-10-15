@@ -131,3 +131,63 @@ def test_local_search_unavailable_never_falls_back_to_remote_or_borrow():
     callback = next(a.callback for a in detail.actions if a.id.startswith("recommendation.search.isbn."))
     assert callback() is False
     assert not calls
+
+
+def test_old_isbn_callback_stays_revoked_after_same_book_is_reselected():
+    view, _, calls, detail, row = _view((_variant(),))
+    previous = next(a.callback for a in detail.actions if a.id.startswith("recommendation.search.isbn."))
+    new_presentations = []
+    view._master.show_detail = new_presentations.append
+
+    view._selected_row(None)
+    view._selected_row(row)
+    assert view._generation == 3  # no ranking refresh between the selections
+    assert previous() is False
+    assert len(new_presentations) == 1
+    fresh = next(
+        a.callback for a in new_presentations[0].actions
+        if a.id.startswith("recommendation.search.isbn.")
+    )
+    assert fresh() is True
+    assert calls == [((ISBN_1,), {
+        "field": "isbn", "online": False, "identity_id": "reader-1",
+    })]
+
+
+def test_same_list_key_rebound_to_another_edition_revokes_previous_isbn_action():
+    view, _, calls, detail, row = _view((_variant(),))
+    previous = next(a.callback for a in detail.actions if a.id.startswith("recommendation.search.isbn."))
+    previous_ranked = view._ranked_by_key[row.key]
+    replacement = RankedCandidate(
+        item=previous_ranked.item,
+        score=previous_ranked.score,
+        reasons=previous_ranked.reasons,
+        sources=previous_ranked.sources,
+        notices=(_variant(isbn=ISBN_2, record="other-edition"),),
+    )
+    # Provisional and final ranking lists may reuse keys for newer catalogue
+    # objects before GTK emits another selection callback.
+    view._ranked_by_key[row.key] = replacement
+    assert previous() is False
+
+    new_presentations = []
+    view._master.show_detail = new_presentations.append
+    view._selected_row(row)
+    fresh = next(
+        a.callback for a in new_presentations[0].actions
+        if a.id.startswith("recommendation.search.isbn.")
+    )
+    assert fresh() is True
+    assert calls == [((ISBN_2,), {
+        "field": "isbn", "online": False, "identity_id": "reader-1",
+    })]
+
+
+def test_same_key_callback_replaced_even_without_llm_selection_reset():
+    view, _, calls, detail, row = _view((_variant(),))
+    previous = next(a.callback for a in detail.actions if a.id.startswith("recommendation.search.isbn."))
+    assert view._llm_selection_key == row.key
+    view._selected_row(row)
+    assert view._llm_selection_key == row.key
+    assert previous() is False
+    assert calls == []
