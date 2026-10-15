@@ -118,7 +118,7 @@ def on_start_due(service: Any, account: Any) -> bool:
     try:
         raw = service.storage.metadata_get("sync.source.materialization.last_attempt." + _account_id(account))
         last = int(raw) if type(raw) is str and raw.isdecimal() else 0
-        interval = max(1, min(1440, int(service.kobo_backup_interval_minutes())))
+        interval = max(15, int(service.kobo_backup_interval_minutes()))
         now = int(time.time())
         return last <= 0 or last > now + 300 or now - last >= interval * 60
     except Exception:
