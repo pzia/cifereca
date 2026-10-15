@@ -73,6 +73,14 @@ class TaskRunner:
             "automatic", "navigation", "user", "maintenance", "unspecified",
         }:
             origin = "unspecified"
+        # Never log raw display labels or plugin-supplied kind strings: these
+        # may contain URLs, credentials or account details. Preserve the real
+        # kind and label for routing and on-screen progress; sanitize TRACE only.
+        trace_kind = kind if type(kind) is str and kind in {
+            "task", "opening-sync", "deep-sync", "source-sync",
+            "sync-preflight", "kobo-acquisition", "maintenance", "library",
+            "recent", "search", "plugin", "other",
+        } else "other"
         # An explicit user request must always run, including callers that
         # deliberately have no GTK control (keyboard actions, headless host).
         # A missing widget is not evidence that a task is automatic (#981).
@@ -92,7 +100,7 @@ class TaskRunner:
             if admission is not None and admission in active:
                 _TRACE_LOG.info(
                     "TRACE task coalesced active_id=%s kind=%s origin=%s",
-                    active[admission], kind, origin,
+                    active[admission], trace_kind, origin,
                 )
                 return
             task_id = next(self._task_ids)
@@ -121,8 +129,8 @@ class TaskRunner:
 
         queued_at = time.monotonic()
         _TRACE_LOG.info(
-            "TRACE task submit id=%s priority=%s kind=%s origin=%s label=%s",
-            task_id, int(priority), kind, origin, label,
+            "TRACE task submit id=%s priority=%s kind=%s origin=%s",
+            task_id, int(priority), trace_kind, origin,
         )
 
         def report(progress_label: str) -> None:
@@ -138,8 +146,8 @@ class TaskRunner:
             started = time.monotonic()
             observe("queue_wait", max(0, started - queued_at))
             _TRACE_LOG.info(
-                "TRACE task begin id=%s priority=%s kind=%s queue_wait=%.3fs label=%s",
-                task_id, int(priority), kind, started - queued_at, label,
+                "TRACE task begin id=%s priority=%s kind=%s queue_wait=%.3fs",
+                task_id, int(priority), trace_kind, started - queued_at,
             )
             outcome_status = "success"
             try:
@@ -151,8 +159,8 @@ class TaskRunner:
                 elapsed = max(0, time.monotonic() - started)
                 observe("worker", elapsed, outcome_status)
                 _TRACE_LOG.info(
-                    "TRACE task end id=%s kind=%s dt=%.3fs label=%s",
-                    task_id, kind, elapsed, label,
+                    "TRACE task end id=%s kind=%s dt=%.3fs",
+                    task_id, trace_kind, elapsed,
                 )
 
         try:
@@ -168,7 +176,7 @@ class TaskRunner:
                     del self._coalesced[admission]
             _TRACE_LOG.info(
                 "TRACE task outcome id=%s kind=%s origin=%s status=rejected",
-                task_id, kind, origin,
+                task_id, trace_kind, origin,
             )
 
             def rejected() -> bool:
@@ -202,7 +210,7 @@ class TaskRunner:
             # until the UI consumes it; close() clears detached reservations.
             _TRACE_LOG.info(
                 "TRACE task outcome id=%s kind=%s origin=%s status=%s",
-                task_id, kind, origin,
+                task_id, trace_kind, origin,
                 "success" if outcome[0] == "ok" else "failed",
             )
 
