@@ -8,7 +8,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.gui.sync_view import (
-    sync_source_identity_label, sync_source_presentation,
+    sync_source_identity_label, sync_source_presentation, sync_source_row_labels,
 )
 
 
@@ -79,7 +79,7 @@ def test_gtk_sync_row_and_worker_use_same_safe_identity_projection():
     source = ast.unparse(refresh)
     assert "row.set_title(display_label)" in source
     assert "label=display_label" in source
-    assert "source_names.count(" in source
+    assert "row_titles = sync_source_row_labels(rows)" in source
     assert "row.set_title(source.label or source.provider_id)" not in source
 
 
