@@ -181,6 +181,9 @@ def node_from_row(item, *, origin='catalogue'):
             row.get('friendly_url'),
             metadata.get('friendly_url'),
             search_meta.get('friendly_url'),
+            row.get('notice_url'),
+            metadata.get('notice_url'),
+            search_meta.get('notice_url'),
         )
         if (safe := public_url(candidate))
     ), '')
