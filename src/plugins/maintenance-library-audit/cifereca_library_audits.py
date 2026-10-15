@@ -808,11 +808,49 @@ class IntegrityAuditTool(_ReadOnlyTool):
         )
 
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
-        candidates=tuple(plan.facts.get("candidates",()))
-        total=len(candidates)
-        warnings=list(plan.warnings)
-        read_failures=int(plan.facts.get("read_failures") or 0)
-        reference_failures=int(plan.facts.get("reference_failures") or 0)
+        # Cached or caller-supplied maintenance plans are untrusted at the
+        # execution boundary. In particular, never echo plan.warnings into
+        # the operation row: they may contain local paths or credentials.
+        facts = plan.facts
+        valid = plan.tool_id == self.info.id and type(facts) is dict
+        if valid:
+            raw_candidates = facts.get("candidates", ())
+            valid = type(raw_candidates) in (tuple, list) and len(raw_candidates) <= 100_000
+        counts = {}
+        if valid:
+            for name in ("missing_path", "read_failures", "reference_failures"):
+                value = facts.get(name, 0)
+                if type(value) is not int or not 0 <= value <= 1_000_000:
+                    valid = False
+                    break
+                counts[name] = value
+        control.check_cancelled()
+        if not valid:
+            control.report(message="Audit d’intégrité impossible : plan invalide")
+            control.check_cancelled()
+            return MaintenanceResult(
+                ok=False, changed=0,
+                summary="Audit d’intégrité non vérifiable : plan invalide.",
+                warnings=("Plan d’intégrité invalide : relancez l’analyse.",),
+                facts={"invalid_plan": 1},
+            )
+        candidates = tuple(raw_candidates)
+        total = len(candidates)
+        read_failures = counts["read_failures"]
+        reference_failures = counts["reference_failures"]
+        warnings = []
+        if counts["missing_path"]:
+            warnings.append(
+                f'{counts["missing_path"]} entrée(s) locale(s) sans chemin observable.'
+            )
+        if read_failures:
+            warnings.append(
+                f"{read_failures} artefact(s) sans métadonnées de référence : broker library.read en erreur."
+            )
+        if reference_failures:
+            warnings.append(
+                f"{reference_failures} référence(s) d’intégrité invalide(s) : certains contrôles indisponibles."
+            )
         invalid=0
         missing=0
         by_issue={}
