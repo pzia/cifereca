@@ -42,8 +42,6 @@ _MANUAL_CHECKS = {
 _MAX_CASES = 24
 _MAX_ACCOUNTS = 4096
 _MAX_COUNT = 1_000_000
-_CASE_CODE = re.compile(r"case-([0-9]{3})\Z")
-_ACCOUNT_CODE = re.compile(r"account-([1-9][0-9]{0,3})\Z")
 
 
 def _count(value: object) -> bool:
