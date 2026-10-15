@@ -573,3 +573,72 @@ def test_readbook_diagnostic_reveals_only_http_structure(tmp_path):
         'allowed_candidates': 1,
     }
     assert 'SIGNATURE' not in repr(evidence)
+
+
+@pytest.mark.parametrize("identities", [(), ("first", "second")])
+@pytest.mark.parametrize("via_html", [False, True])
+def test_legacy_readbook_signed_redirect_also_checks_owner_before_get(
+    tmp_path, identities, via_html,
+):
+    library = _page(
+        '<div><span class="pTitle">One owned ebook</span>'
+        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=12&m=download">'
+        'Download</a></div>'
+    )
+    requested = []
+
+    def handler(request):
+        url = str(request.url)
+        requested.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=library, headers={'content-type': 'text/html'})
+        if url == READ_12:
+            if via_html:
+                return httpx.Response(
+                    200, text=f'<script>window.delivery="{SIGNED}";</script>',
+                    headers={'content-type': 'text/html'},
+                )
+            return httpx.Response(302, headers={'location': SIGNED})
+        raise AssertionError('No signed GET is permitted for ambiguous ownership')
+
+    session, diag, broker = setup(tmp_path, handler, identities=identities)
+    session.connected = True
+    try:
+        book = session.library()[0]
+        with pytest.raises(ProviderCapabilityError, match='identité propriétaire'):
+            session.download_direct(book, tmp_path)
+        assert requested == [LIBRARY, LIBRARY, READ_12]
+        assert broker.calls == []
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diag.events)
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize('path', [
+    '/fulfillment/Other.acsm',
+    '/fulfillment/URLLink.acsm/../Other.acsm',
+    '/admin/private',
+])
+def test_signed_origin_is_not_a_wildcard_path(tmp_path, path):
+    from cifereca_numilog import checked_url
+    malicious = 'https://entrepot2r.numilog.com' + path + '?auth=SYNTHETIC'
+    with pytest.raises(ProviderError, match='destination réseau inattendue'):
+        checked_url(malicious)
+    requested = []
+
+    def handler(request):
+        requested.append(str(request.url))
+        if str(request.url) == READ_12:
+            return httpx.Response(302, headers={'location': malicious})
+        raise AssertionError('Invalid ACSM path must be rejected before GET')
+
+    session, diag, broker = setup(tmp_path, handler)
+    try:
+        with pytest.raises(ProviderError, match='destination réseau inattendue'):
+            session._download(READ_12, tmp_path / 'target.epub')
+        assert requested == [READ_12]
+        assert broker.calls == []
+        assert 'SYNTHETIC' not in repr(diag.events)
+    finally:
+        session.close()
