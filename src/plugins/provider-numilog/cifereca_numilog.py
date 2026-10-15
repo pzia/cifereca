@@ -202,7 +202,15 @@ class NumilogSession(ProviderSession):
             self._accounts = []
             self.credentials.clear()
 
-    def _rows(self, *, include_delivery=False):
+    def _rows(self, *, include_delivery=False, delivery_record_id=None):
+        # A signed library URL is only ever decoded for a single selected
+        # account-scoped book at an explicit action; never during inventory,
+        # search, or a broad scan of all owned purchases.
+        if include_delivery and (
+            type(delivery_record_id) is not str
+            or not delivery_record_id.startswith('numilog:'+self.scope+':')
+        ):
+            raise ProviderError('Numilog : livre ciblé du compte requis pour la livraison')
         if not self.connected:
             raise ProviderError('Numilog : connecter le compte avant cette opération')
         try:
@@ -223,6 +231,10 @@ class NumilogSession(ProviderSession):
                     text,final_url,cover_origins=self.allowed_origins,
                     delivery_evidence=include_delivery,
                     delivery_diagnostics=structural,
+                    delivery_selector=(
+                        (lambda row: self._id(row) == delivery_record_id)
+                        if include_delivery else None
+                    ),
                 )
                 if include_delivery:
                     # Fixed enum + bounded numeric structure only; enough to
@@ -450,7 +462,9 @@ class NumilogSession(ProviderSession):
             # Read a fresh private library only for an explicit user action.
             # Search/sync call _rows() without delivery_evidence, so no signed
             # ACSM link escapes into SearchResult, catalog, or diagnostics.
-            rows = self._rows(include_delivery=True)
+            rows = self._rows(
+                include_delivery=True, delivery_record_id=item.record_id,
+            )
             row = next((row for row in rows if self._id(row) == item.record_id),None)
             if row is None:
                 raise ProviderError('Numilog : livre absent de la bibliothèque actuelle')
