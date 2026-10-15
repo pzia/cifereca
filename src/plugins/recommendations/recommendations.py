@@ -97,7 +97,7 @@ def _public_candidate_authors(item: Any) -> tuple[str, ...]:
             raw = read(source, field_name)
             if type(raw) is str:
                 rows = (raw,)
-            elif isinstance(raw, (list, tuple)):
+            elif type(raw) in (list, tuple):
                 rows = raw[:32]
             elif isinstance(raw, Mapping):
                 rows = (raw,)
@@ -105,11 +105,12 @@ def _public_candidate_authors(item: Any) -> tuple[str, ...]:
                 continue
             for row in rows:
                 if isinstance(row, Mapping):
-                    row = (
-                        read(row, "value")
-                        or read(row, "label")
-                        or read(row, "name")
-                    )
+                    # An invalid first mapping value must not mask a valid
+                    # independently attested label or name.
+                    row = next((
+                        safe for key in ("value", "label", "name")
+                        if (safe := _public_candidate_text(read(row, key)))
+                    ), "")
                 author = _public_candidate_text(row)
                 if not author:
                     continue
