@@ -202,17 +202,52 @@ def book_key(book: object) -> str:
     return f"{_text(getattr(book, 'source_id', 'source'))}:{_text(getattr(book, 'record_id', 'record'))}"
 
 
-def _safe_book_identifiers(book: object) -> dict:
-    """Share one fail-closed identifier envelope for detail and host navigation."""
+_PUBLIC_YOUTH_IDENTIFIER_KEYS = frozenset({
+    "isbn", "isbn10", "isbn13", "provider", "source_item_id",
+    "doi", "ean", "issn", "oclc", "lccn",
+})
+
+
+def _public_identifier_value(value: object) -> str:
+    """No signed URLs, credentials, provider objects or control bytes in IDs."""
+    if (
+        type(value) is not str or not 1 <= len(value) <= 256
+        or any(not 33 <= ord(char) <= 126 for char in value)
+        or any(char in value for char in "?&#@\\%")
+    ):
+        return ""
+    return value
+
+
+def _safe_book_identifiers(book: object) -> dict[str, str]:
+    """Use only public bibliographic coordinates in detail/host BookRef.
+
+    The source ingest accepts arbitrary identifier keys for its own cache,
+    but a cache key named auth/session/token is not public bibliographic
+    evidence and must not escape through a BookRef or edition detail.
+    """
     raw = getattr(book, "identifiers", None)
     if not isinstance(raw, Mapping):
         return {}
     try:
-        return dict(raw)
+        fields = dict(raw)
     except Exception:
         # A custom/restored Mapping may fail iteration or indexed lookup;
         # its error payload is not an attestation or a public diagnostic.
         return {}
+    result: dict[str, str] = {}
+    for key, value in fields.items():
+        if type(key) is not str or key not in _PUBLIC_YOUTH_IDENTIFIER_KEYS:
+            continue
+        clean = _public_identifier_value(value)
+        if not clean:
+            continue
+        if key == "provider" and not public_source_id(clean):
+            continue
+        if key in {"isbn", "isbn10", "isbn13"} and not normalize_isbn(clean):
+            continue
+        result[key] = clean
+    return result
 
 
 def book_ref(book: object) -> BookRef:
@@ -280,8 +315,11 @@ def edition_reference(book: object) -> tuple[str, str, str]:
     isbn = normalize_isbn(identifiers.get("isbn"))
     if isbn:
         return "isbn", "ISBN", isbn
-    source = _text(getattr(book, "source_id", ""))
-    local_id = _text(identifiers.get("source_item_id") or getattr(book, "record_id", ""))
+    source = public_source_id(getattr(book, "source_id", ""))
+    # A signed URL or account token is not a source-local edition reference.
+    local_id = identifiers.get("source_item_id") or _public_identifier_value(
+        getattr(book, "record_id", "")
+    )
     if source and local_id:
         return "source-reference", "Référence source", f"{source}:{local_id}"
     return "", "", ""
