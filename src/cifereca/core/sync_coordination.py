@@ -333,6 +333,13 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         executed: list[dict[str, Any]] = []
         for session in due:
             account = scheduled_accounts[session.credential_id]
+            # Settings/identity bindings may change while an opening task
+            # progresses. A stale planned source never gains authorization.
+            if session.credential_id not in {
+                current.credential_id for current in kobo_on_start_sessions(self)
+            }:
+                executed.append({"status": "failed", "errors": 1, "sources": []})
+                continue
             if not mark_on_start_attempt(self, account):
                 executed.append({"status": "failed", "errors": 1, "sources": []})
                 continue
@@ -375,7 +382,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             if isinstance(source, dict)
         ] + cached_sources
         states = {str(row.get("status") or "partial") for row in sources}
-        if counters["errors"] or {"aborted", "cancelled", "failed", "partial", "interrupted"} & states:
+        if any(result.get("status") == "error" for result in executed):
+            batch_status = "error"
+        elif counters["errors"] or {"aborted", "cancelled", "failed", "partial", "interrupted"} & states:
             batch_status = "partial"
         elif "attention_required" in states:
             batch_status = "attention_required"
@@ -395,7 +404,8 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             "sources": sources, "skipped_fresh": not bool(due),
         }
         kobo_decision["status"] = (
-            "partial" if batch_status in {
+            "error" if batch_status == "error"
+            else "partial" if batch_status in {
                 "partial", "attention_required", "fresh_cache_partial", "cancelled",
             } else "fresh_cache" if batch_status == "fresh_cache" else "started"
         )
@@ -424,6 +434,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             "persisted_enabled": kobo_decision["persisted_enabled"] is True,
             "connected_kobo": kobo_decision["connected_kobo"],
             "eligible_kobo": kobo_decision["eligible_kobo"],
+            "scheduled_kobo": kobo_decision["scheduled_kobo"],
             "checked_at": int(time.time()),
         }, sort_keys=True))
     except Exception as exc:
