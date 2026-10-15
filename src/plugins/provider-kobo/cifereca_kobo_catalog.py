@@ -390,12 +390,17 @@ class KoboCatalogService:
                 continue
             try:
                 rows.append(self.normalize_item(raw))
-            except ProviderError:
-                reason = (
-                    "missing_product_id"
-                    if _strict_product_id(raw) is None
-                    else "normalization_error"
-                )
+            except Exception:
+                # A malformed scalar or custom mapping may throw while
+                # normalizing a single row (e.g. __str__/__bool__ on a
+                # provider value). Keep other safe books searchable, but
+                # never echo its private exception text or class name.
+                reason = "normalization_error"
+                try:
+                    if type(raw) is dict and _strict_product_id(raw) is None:
+                        reason = "missing_product_id"
+                except Exception:
+                    pass
                 self.last_search_rejections.append({
                     "type": "ProviderError",
                     "reason": reason,
