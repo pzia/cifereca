@@ -9,6 +9,19 @@ from cifereca_kobo_policy import _strict_product_id
 from cifereca_kobo_vault import KoboVaultClient, KoboVaultError
 
 
+def _unsafe_encoded_cover_path(path: str) -> bool:
+    """Reject controls hidden under repeated URI decoding, without network I/O."""
+    for _ in range(5):
+        if any(ord(char) < 32 or ord(char) == 127 for char in path):
+            return True
+        decoded = unquote(path)
+        if decoded == path:
+            return False
+        path = decoded
+    # An excessively wrapped path has not been fully inspected.
+    return True
+
+
 class KoboCatalogService:
     """Credential-bound Kobo catalogue projection.
 
@@ -74,7 +87,7 @@ class KoboCatalogService:
                     not trusted_vault_origin
                     and port not in (None, 443 if parsed.scheme == 'https' else 80)
                 )
-                or re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I)
+                or _unsafe_encoded_cover_path(parsed.path)
             ):
                 return None
             host = hostname.rstrip('.').casefold()
