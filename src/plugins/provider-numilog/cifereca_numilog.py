@@ -212,16 +212,19 @@ class NumilogSession(ProviderSession):
                 if urlsplit(final_url).path.lower() != '/pages/compte/meslivres.aspx':
                     self.connected = False
                     raise ProviderError('Numilog : session expirée ; reconnecter le compte')
+                structural = {} if include_delivery else None
                 page_rows,next_url = parse_library_page(
                     text,final_url,cover_origins=self.allowed_origins,
                     delivery_evidence=include_delivery,
+                    delivery_diagnostics=structural,
                 )
                 if include_delivery:
-                    # Only bounded structural counts. Never log IDs, HTML,
-                    # titles, signed URLs or query strings (#1883).
+                    # Fixed enum + bounded numeric structure only; enough to
+                    # distinguish an out-of-card JS object from a bound one,
+                    # without capturing private account HTML or signed URLs.
                     self._diag('bibliothèque livraison',phase='owned_card',
-                        page_kind='personal_library',page_index=page_index+1,
-                        cards=len(page_rows),linked=sum('delivery' in r for r in page_rows))
+                        page_kind='meslivres',page_index=page_index+1,
+                        **structural)
                 for row in page_rows:
                     key=(row['lid'],row['variant'])
                     if key not in seen_items:
