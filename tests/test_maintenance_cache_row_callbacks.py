@@ -59,8 +59,9 @@ def mounted(*, tool_id="core.cache.cleanup", danger_level="readonly"):
     )
     method(host)
     row = host._tools_box.children[0].children[0]
-    preview, cancel, status = row.children
-    feedback = host._maintenance_line_rows[0][0]
+    preview, cancel, *status_widgets = row.children
+    status = status_widgets[0] if status_widgets else None
+    feedback = host._maintenance_line_rows[0][0] if host._maintenance_line_rows else None
     return NS(host=host, tool=tool, jobs=jobs, errors=errors, activity=activity,
               pending=pending, preview=preview, cancel=cancel, status=status,
               feedback=feedback, refresh=lambda: method(host))
