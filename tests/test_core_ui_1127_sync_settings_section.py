@@ -56,22 +56,22 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     controls, section, downloads = _build()
     assert len(section.children) == 1
     group = section.children[0]
-    assert group.title == "Acquisition automatique / activité Kobo"
+    assert group.title == "Kobo — acquisition locale des fichiers"
     assert len(group.children) == 6
     assert [row.title for row in group.children] == [
-        "Synchroniser automatiquement les ebooks Kobo",
-        "Télécharger/sauvegarder mes livres Kobo",
-        "Autoriser les acquisitions Kobo malgré des livres locaux sans liaison",
+        "Autoriser les téléchargements Kobo au démarrage",
+        "Acquisition manuelle Kobo — portée globale",
+        "Option risquée : acquisitions avec fichiers locaux non rapprochés",
         "Sous-répertoire/override Kobo (vide = bibliothèque locale)",
-        "Intervalle automatique (minutes, minimum 15)",
+        "Délai entre tentatives au démarrage (minutes, minimum 15)",
         "DisplayProfile Kobo-Vault",
     ]
     assert len(downloads.children) == 1
     assert downloads.children[0].title == "Bibliothèque locale possédée par cifereca"
     assert controls.backup_switch.active is False
-    assert controls.run_backup_now.label == "Lancer maintenant"
+    assert controls.run_backup_now.label == "Lancer le lot Kobo…"
     assert controls.run_backup_now.sensitive is False
-    assert "Désactivée" in controls.backup_status.subtitle
+    assert "Acquisition Kobo désactivée" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is False
     assert controls.library_dir_row.text == "~/EBooks"
     assert controls.backup_interval_row.text == "60"
@@ -92,7 +92,7 @@ def test_saved_values_match_old_view_and_unknown_vault_profile_falls_back():
     controls, _, _ = _build(values)
     assert controls.backup_switch.active is True
     assert controls.run_backup_now.sensitive is True
-    assert "à l’ouverture" in controls.backup_status.subtitle
+    assert "au démarrage" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is True
     assert controls.backup_dir_row.text == "Kobo"
     assert controls.backup_interval_row.text == "90"
@@ -118,7 +118,7 @@ def test_manual_kobo_backup_requires_saved_enabled_state():
     assert kobo_backup_action_state(persisted_enabled=True, draft_enabled=False, dirty=True)[1] is False
     message, allowed = kobo_backup_action_state(persisted_enabled=True, draft_enabled=True, dirty=False)
     assert allowed is True
-    assert "à l’ouverture" in message
+    assert "au démarrage" in message
 
 
 def test_mainwindow_explicit_kobo_action_is_saved_and_lifetime_gated():
@@ -144,7 +144,7 @@ def test_bad_saved_kobo_opt_in_never_looks_enabled_or_unlocks_manual_action():
         controls, _, _ = _build({"kobo_backup.enabled": invalid})
         assert controls.backup_switch.active is False
         assert controls.run_backup_now.sensitive is False
-        assert "Désactivée" in controls.backup_status.subtitle
+        assert "Acquisition Kobo désactivée" in controls.backup_status.subtitle
         assert kobo_backup_action_state(
             persisted_enabled=invalid,
             draft_enabled=invalid,
@@ -171,3 +171,56 @@ def test_manual_kobo_callback_requires_exact_saved_boolean_opt_in():
         source = ast.unparse(fn)
         assert "self.config.get('kobo_backup.enabled', False) is True" in source
         assert "bool(self.config.get(" not in source
+
+
+def test_sync_settings_never_mislabel_local_acquisition_as_remote_inventory_refresh():
+    _, section, _ = _build({"kobo_backup.enabled": True})
+    group = section.children[0]
+    automatic, manual = group.children[:2]
+    assert "téléchargements Kobo" in automatic.title
+    assert "notices et droits" in automatic.subtitle
+    assert "ne télécharge aucun livre" in automatic.subtitle
+    assert "portée globale" in manual.title
+    assert "lot global" in manual.subtitle
+    assert "simple actualisation" in manual.subtitle
+
+
+def test_opening_interval_is_not_described_as_periodic_timer():
+    _, section, _ = _build()
+    group = section.children[0]
+    interval = group.children[4]
+    assert "au démarrage" in interval.title
+    assert "minuterie périodique" in group.children[0].subtitle
+
+
+def test_unlinked_option_explicitly_warns_about_duplicate_downloads():
+    _, section, _ = _build()
+    risky = section.children[0].children[2]
+    assert "Option risquée" in risky.title
+    assert "risque de copies supplémentaires" in risky.subtitle
+    assert "idempotence" in risky.subtitle
+
+
+def test_sync_setting_builder_has_no_implicit_acquisition_or_config_mutation():
+    values = {"kobo_backup.enabled": True, "kobo_backup.allow_unlinked_acquisition": False}
+    before = dict(values)
+    controls, section, _ = _build(values)
+    assert values == before
+    assert controls.backup_switch.active is True
+    assert controls.unlinked_switch.active is False
+    assert controls.run_backup_now.sensitive is True
+    assert controls.run_backup_now.label == "Lancer le lot Kobo…"
+
+
+def test_malformed_unlinked_bypass_config_is_disabled_like_core_policy():
+    """Core checks `is True`, not bool(value); GTK must use the same gate."""
+    for invalid in ("false", "true", 1, 0, [], {}, None):
+        controls, _, _ = _build({
+            "kobo_backup.enabled": True,
+            "kobo_backup.allow_unlinked_acquisition": invalid,
+        })
+        assert controls.unlinked_switch.active is False
+    valid, _, _ = _build({
+        "kobo_backup.allow_unlinked_acquisition": True,
+    })
+    assert valid.unlinked_switch.active is True
