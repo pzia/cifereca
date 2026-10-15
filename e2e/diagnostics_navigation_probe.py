@@ -1402,6 +1402,20 @@ def main() -> int:
             )
         )
         assert audit.get_sensitive() and audit.get_mapped()
+        # The extra explicit acquisition line makes this real Kobo card
+        # taller. GTK mapped != physically inside the XTEST viewport; scroll
+        # to the exact audit button before dispatching any pointer event.
+        scroll = f["sync_scroll"]
+        ok, bounds = audit.compute_bounds(scroll)
+        assert ok
+        if bounds.get_y() < 0 or bounds.get_y() + bounds.get_height() > scroll.get_height():
+            adjustment = scroll.get_vadjustment()
+            target = adjustment.get_value() + bounds.get_y() - 80
+            adjustment.set_value(max(
+                0, min(target, adjustment.get_upper() - adjustment.get_page_size())
+            ))
+            later(200, loan_sync_audit_click)
+            return
         assert not f["audit_calls"] and not f["mutations"]
         report["checks"]["P0_kobo_audit_offline_button_no_implicit_scan"] = True
         # A physical XTEST action is the sole trigger; rendering the row does
