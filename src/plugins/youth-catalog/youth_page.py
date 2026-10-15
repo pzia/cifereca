@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from itertools import islice
+from math import isfinite
 from unicodedata import category
 import ipaddress
 import re
@@ -21,7 +22,7 @@ from cifereca.plugin_api import (
     UiBookListEntry,
     UiPageContribution,
 )
-from youth_catalog import (InvalidYouthSourcePage, _extract_page,
+from youth_catalog import (InvalidYouthSourcePage, YouthAgeRange, _extract_page,
                            collection_failure_diagnostic, normalize_isbn,
                            safe_ingest_rejection_categories,
                            source_yield_diagnostic, youth_source_support_snapshot,
@@ -148,22 +149,53 @@ def age_text(age_range: object) -> str:
         bounds = f"jusqu’à {hi} ans"
     else:
         bounds = "âge inconnu"
-    kind = KIND_LABELS.get(_fold(getattr(age_range, "age_kind", "")), _text(getattr(age_range, "age_kind", "")) or "Âge")
+    raw_kind = getattr(age_range, "age_kind", "")
+    kind = KIND_LABELS.get(raw_kind if type(raw_kind) is str else "", "Âge")
     return f"{kind} · {bounds}"
 
 
 def age_detail(age_range: object) -> str:
     parts = [age_text(age_range)]
-    source_id = _text(getattr(age_range, "source_id", ""))
-    label = _text(getattr(age_range, "source_label", ""))
+    source_id = public_source_id(getattr(age_range, "source_id", ""))
+    label = _public_age_string(getattr(age_range, "source_label", ""))
     confidence = getattr(age_range, "confidence", None)
     if source_id:
         parts.append(f"source {source_id}")
     if label:
         parts.append(f"« {label} »")
-    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+    if (type(confidence) in (int, float) and isfinite(confidence)
+            and 0 <= confidence <= 1):
         parts.append(f"confiance {round(float(confidence) * 100)} %")
     return " · ".join(parts)
+
+
+def _public_age_string(value: object) -> str:
+    """Only visible, bounded text can document a public age attestation."""
+    if type(value) is not str or len(value) > 180 or any(
+        category(char) in {"Cc", "Cf", "Cs"} for char in value
+    ):
+        return ""
+    return _text(value)
+
+
+def _public_age_ranges(book: object) -> tuple[YouthAgeRange, ...]:
+    """Do not mistake malformed cache iterables for attested age brackets."""
+    raw = getattr(book, "age_ranges", ())
+    if type(raw) not in (list, tuple):
+        return ()
+    attested = []
+    for row in raw[:32]:
+        if type(row) is not YouthAgeRange:
+            continue
+        lo, hi = row.age_min, row.age_max
+        if (type(lo) is not int or not 0 <= lo < 18
+                or (hi is not None and
+                    (type(hi) is not int or not lo <= hi < 18))
+                or type(row.age_kind) is not str
+                or row.age_kind not in {"recommended", "interest", "reading", "publisher", "inferred"}):
+            continue
+        attested.append(row)
+    return tuple(attested)
 
 
 def book_key(book: object) -> str:
@@ -195,14 +227,19 @@ def book_ref(book: object) -> BookRef:
         metadata={
             "youth_age_ranges": tuple(
                 {
-                    "age_min": getattr(row, "age_min", None),
-                    "age_max": getattr(row, "age_max", None),
-                    "age_kind": getattr(row, "age_kind", ""),
-                    "source_label": getattr(row, "source_label", ""),
-                    "source_id": getattr(row, "source_id", ""),
-                    "confidence": getattr(row, "confidence", None),
+                    "age_min": row.age_min,
+                    "age_max": row.age_max,
+                    "age_kind": row.age_kind,
+                    "source_label": _public_age_string(row.source_label),
+                    "source_id": public_source_id(row.source_id),
+                    "confidence": (
+                        row.confidence
+                        if type(row.confidence) in (int, float)
+                        and isfinite(row.confidence)
+                        and 0 <= row.confidence <= 1 else None
+                    ),
                 }
-                for row in tuple(getattr(book, "age_ranges", ()) or ())
+                for row in _public_age_ranges(book)
             )
         },
     )
@@ -222,7 +259,8 @@ def age_badge(age_range: object) -> str:
         bounds = str(lo)
     else:
         bounds = f"{lo}–{hi}"
-    kind = _fold(getattr(age_range, "age_kind", ""))
+    raw_kind = getattr(age_range, "age_kind", "")
+    kind = raw_kind if type(raw_kind) is str else ""
     prefix = {
         "interest": "Intérêt ",
         "reading": "Lecture ",
@@ -283,7 +321,7 @@ def _public_authors(book: object) -> tuple[str, ...]:
 
 
 def list_entry(book: object) -> UiBookListEntry:
-    ranges = tuple(getattr(book, "age_ranges", ()) or ())
+    ranges = _public_age_ranges(book)
     age_summary = " · ".join(age_text(row) for row in ranges[:2])
     language = _text(getattr(book, "language", ""))
     formats = _public_youth_values(getattr(book, "formats", ()))
@@ -332,7 +370,7 @@ def _mapped_youth_entries(books) -> tuple[dict[str, object], tuple[UiBookListEnt
 
 
 def detail_presentation(book: object) -> UiBookDetailPresentation:
-    ranges = tuple(getattr(book, "age_ranges", ()) or ())
+    ranges = _public_age_ranges(book)
     age_fields = tuple(
         DetailField(f"age-{index}", KIND_LABELS.get(_fold(getattr(row, "age_kind", "")), "Âge"), age_detail(row))
         for index, row in enumerate(ranges)
