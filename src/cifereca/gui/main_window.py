@@ -682,7 +682,7 @@ class MainWindow(Adw.ApplicationWindow):
             active_cancel = {"control": None, "ticket": None}
             line_feedback = None
             line_scope = {"active": False, "identity": None, "generation": None}
-            if getattr(info, "id", None) in ("core.cache.cleanup", "covers.audit", "maintenance.audit.covers"):
+            if getattr(info, "id", None) in ("core.cache.cleanup", "covers.audit", "languages.audit"):
                 def line_alive(button=run, scope=line_scope):
                     if self._closed or button.get_root() is None:
                         return False
@@ -696,7 +696,7 @@ class MainWindow(Adw.ApplicationWindow):
                 status_widget, line_feedback = build_maintenance_line(
                     Gtk=Gtk, idle_add=GLib.idle_add, alive=line_alive,
                     activity_label=("Vérification des couvertures"
-                                    if info.id in ("covers.audit", "maintenance.audit.covers") else "Purge"),
+                                    if info.id == "covers.audit" else "Vérification des langues" if info.id == "languages.audit" else "Purge"),
                 )
                 row.add_suffix(status_widget)
                 self._maintenance_line_rows.append((line_feedback, active_cancel))
@@ -725,9 +725,9 @@ class MainWindow(Adw.ApplicationWindow):
                 # Each enabled line owns safe, literal error wording. Never
                 # display provider exceptions, which may contain private paths.
                 preview_error = ("Analyse des couvertures impossible."
-                                 if getattr(meta, "id", None) in ("covers.audit", "maintenance.audit.covers") else "Analyse des caches impossible.")
+                                 if getattr(meta, "id", None) == "covers.audit" else "Analyse des langues impossible." if getattr(meta, "id", None) == "languages.audit" else "Analyse des caches impossible.")
                 execution_error = ("Vérification des couvertures impossible."
-                                   if getattr(meta, "id", None) in ("covers.audit", "maintenance.audit.covers") else "Nettoyage des caches impossible.")
+                                   if getattr(meta, "id", None) == "covers.audit" else "Vérification des langues impossible." if getattr(meta, "id", None) == "languages.audit" else "Nettoyage des caches impossible.")
                 context_generation = getattr(self, "_identity_context_generation", None)
                 progress_scope.update(
                     active=True, identity=context.identity_id, generation=context_generation,
