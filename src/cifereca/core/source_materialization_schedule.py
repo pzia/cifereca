@@ -68,7 +68,8 @@ def can_enable_kobo_on_start(service: Any, account: Any) -> bool:
     """A policy can be enabled only for an unambiguous connected source."""
     try:
         return _configured_binding(service, account)
-    except (AttributeError, TypeError, ValueError, KeyError):
+    except Exception:
+        # Database or mapping failures cannot authorize automatic downloads.
         return False
 
 
@@ -85,7 +86,7 @@ def kobo_on_start_sessions(service: Any) -> tuple[Any, ...]:
         source_id = _account_id(account)
         try:
             enabled = service.storage.metadata_get(policy_key(source_id)) == "1"
-        except (AttributeError, TypeError, ValueError, KeyError):
+        except Exception:
             enabled = False
         if not enabled:
             continue
@@ -111,9 +112,9 @@ def on_start_due(service: Any, account: Any) -> bool:
         interval = max(1, min(1440, int(service.kobo_backup_interval_minutes())))
         now = int(time.time())
         return last <= 0 or last > now + 300 or now - last >= interval * 60
-    except (AttributeError, ValueError, TypeError, OverflowError):
-        # A bad clock/configuration is never evidence of a successful download.
-        return True
+    except Exception:
+        # Inability to read the attempt clock is not permission to retry.
+        return False
 
 
 def mark_on_start_attempt(service: Any, account: Any) -> bool:
@@ -128,5 +129,5 @@ def mark_on_start_attempt(service: Any, account: Any) -> bool:
             str(int(time.time())),
         )
         return True
-    except (AttributeError, TypeError, ValueError, OSError):
+    except Exception:
         return False
