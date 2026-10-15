@@ -43,7 +43,18 @@ Le collecteur retient au plus 1 000 durées par série (200 par défaut) et
 1 000 événements (240 par défaut). Les valeurs non finies, négatives et
 dépassant 24 h sont rejetées. La capture détaillée est **désactivée au départ** ;
 l'activer efface son ancienne chronologie, pas les agrégats passifs.
-Les statistiques historiques `snapshot()` de rendu restent inchangées.
+Les statistiques historiques `snapshot()` de rendu restent disponibles
+(`render`, `render_library`, `render_recent`, les trois phases de
+démarrage). Depuis le lot de sécurisation P1 #1741, les mesures GTK historiques
+`list:{titre libre}:append|append-fast|replace` sont **agrégées par action**
+sous `list.append`, `list.append-fast`, `list.replace` plutôt que par titre
+de page. Le titre pouvait contenir des informations privées et provoquer une
+cardinalité de séries illimitée. Les noms inconnus sont agrégés sous `other`
+et les durées invalides sont ignorées. Les chronologies `record_phase()`,
+les étapes de tâche, les durées et les mesures `render_library` ne changent
+pas. La comparaison de performance par titre libre n'est donc volontairement
+plus disponible dans la sortie Diagnostics ; cela n'infère pas une amélioration
+du rendu ou une latence frame GTK.
 
 ## Hors de ce lot (suite #1741)
 
