@@ -3,6 +3,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
+from tests import test_core_ui_1358_maintenance_preview_cancellation as harness
 from tests.test_maintenance_cache_row_callbacks import (
     confirmation, execute, flush, mounted,
 )
@@ -24,19 +25,15 @@ def test_cover_audit_preview_and_run_use_indeterminate_activity_then_real_counts
     args, kwargs = m.jobs[-1]
     assert kwargs["kind"] == "maintenance-plan"
     args[2](args[1]())
-    dialog = m.host._maintenance_line_rows[0][0]
-    assert dialog.state.phase == "confirmation"
+    assert m.feedback.state.phase == "confirmation"
     flush(m)
     assert label.text == "Confirmation attendue"
     assert not spinner.visible and not bar.visible
 
     # The real GTK confirmation opens a distinct worker; no percent before
     # the producer reports valid counts.
-    shown = confirmation_dialog = __import__(
-        "tests.test_core_ui_1358_maintenance_preview_cancellation",
-        fromlist=["Dialog"],
-    ).Dialog.shown[-1]
-    confirmation_dialog.handlers["response"](shown, "run")
+    dialog = harness.Dialog.shown[-1]
+    dialog.handlers["response"](dialog, "run")
     flush(m)
     assert label.text == "Vérification des couvertures en cours…"
     assert spinner.visible and not bar.visible
