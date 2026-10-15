@@ -56,20 +56,20 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     controls, section, downloads = _build()
     assert len(section.children) == 1
     group = section.children[0]
-    assert group.title == "Acquisition automatique / activité Kobo"
+    assert group.title == "Kobo — acquisition locale des fichiers"
     assert len(group.children) == 6
     assert [row.title for row in group.children] == [
-        "Synchroniser automatiquement les ebooks Kobo",
-        "Télécharger/sauvegarder mes livres Kobo",
-        "Autoriser les acquisitions Kobo malgré des livres locaux sans liaison",
+        "Autoriser les téléchargements Kobo au démarrage",
+        "Acquisition manuelle Kobo — portée globale",
+        "Option risquée : acquisitions avec fichiers locaux non rapprochés",
         "Sous-répertoire/override Kobo (vide = bibliothèque locale)",
-        "Intervalle automatique (minutes, minimum 15)",
+        "Délai entre tentatives au démarrage (minutes, minimum 15)",
         "DisplayProfile Kobo-Vault",
     ]
     assert len(downloads.children) == 1
     assert downloads.children[0].title == "Bibliothèque locale possédée par cifereca"
     assert controls.backup_switch.active is False
-    assert controls.run_backup_now.label == "Lancer maintenant"
+    assert controls.run_backup_now.label == "Lancer le lot Kobo…"
     assert controls.run_backup_now.sensitive is False
     assert "Désactivée" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is False
@@ -92,7 +92,7 @@ def test_saved_values_match_old_view_and_unknown_vault_profile_falls_back():
     controls, _, _ = _build(values)
     assert controls.backup_switch.active is True
     assert controls.run_backup_now.sensitive is True
-    assert "à l’ouverture" in controls.backup_status.subtitle
+    assert "au démarrage" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is True
     assert controls.backup_dir_row.text == "Kobo"
     assert controls.backup_interval_row.text == "90"
@@ -118,7 +118,7 @@ def test_manual_kobo_backup_requires_saved_enabled_state():
     assert kobo_backup_action_state(persisted_enabled=True, draft_enabled=False, dirty=True)[1] is False
     message, allowed = kobo_backup_action_state(persisted_enabled=True, draft_enabled=True, dirty=False)
     assert allowed is True
-    assert "à l’ouverture" in message
+    assert "au démarrage" in message
 
 
 def test_mainwindow_explicit_kobo_action_is_saved_and_lifetime_gated():
