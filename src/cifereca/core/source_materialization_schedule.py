@@ -41,6 +41,15 @@ def _configured_binding(service: Any, account: Any) -> bool:
     if not service.sync_source_enabled(account):
         return False
     storage = service.storage
+    # Generic inventory may tolerate historical source switches. Automatic
+    # downloads do not: malformed source-enable metadata must fail closed.
+    raw_source_enabled = storage.metadata_get(
+        "sync.source.enabled." + _account_id(account)
+    )
+    if raw_source_enabled is not None and raw_source_enabled not in {
+        "1", "true", "yes", "on",
+    }:
+        return False
     if storage.identity_for_connection("kobo", credential) != identity:
         return False
     connections = [
