@@ -108,3 +108,34 @@ def test_default_cache_progress_phrasing_is_preserved():
     progress.report(ticket, current=1, total=4)
     pending.pop()()
     assert output[-1].label == "Purge en cours · 25 %"
+
+
+def test_cover_preview_failure_reports_correct_generic_message_without_payload():
+    m = mounted()
+    secret = "https://private.invalid/?token=VERY_PRIVATE"
+    m.tool.plan = lambda _context: (_ for _ in ()).throw(RuntimeError(secret))
+    m.preview.click()
+    args, _kwargs = m.jobs[-1]
+    with pytest.raises(RuntimeError, match="Analyse des couvertures impossible") as caught:
+        args[1]()
+    assert secret not in str(caught.value)
+    assert caught.value.__suppress_context__
+    args[3](caught.value)
+    harness.flush(m)
+    assert m.errors[-1][0] == "Analyse des couvertures impossible."
+    assert m.feedback.state.phase == "error"
+
+
+def test_cover_run_failure_reports_correct_generic_message_without_payload():
+    m = mounted()
+    args = harness.execute(m)
+    secret = "/private/SECRET_COVER_URL"
+    m.tool.run = lambda *_args: (_ for _ in ()).throw(RuntimeError(secret))
+    with pytest.raises(RuntimeError, match="Vérification des couvertures impossible") as caught:
+        args[1]()
+    assert secret not in str(caught.value)
+    assert caught.value.__suppress_context__
+    args[3](caught.value)
+    harness.flush(m)
+    assert m.errors[-1][0] == "Vérification des couvertures impossible."
+    assert m.feedback.state.phase == "error"
