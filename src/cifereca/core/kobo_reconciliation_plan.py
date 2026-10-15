@@ -7,7 +7,6 @@ to delete an original. Plans cannot be replayed as mutation commands.
 """
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -56,6 +55,7 @@ def _valid_audit(audit: object) -> Mapping[str, Any]:
         raise ValueError("invalid_kobo_audit_report")
     if (
         audit.get("schema") != _AUDIT_SCHEMA
+        or type(audit.get("scope")) is not str
         or audit.get("scope") not in _ALLOWED_SCOPES
         or audit.get("offline") is not True
         or audit.get("read_only") is not True
@@ -96,6 +96,7 @@ def _valid_audit(audit: object) -> Mapping[str, Any]:
         if (
             not isinstance(case, Mapping)
             or case.get("case") != f"case-{index:03d}"
+            or type(case.get("category")) is not str
             or case.get("category") not in _MANUAL_CHECKS
             or not _count(case.get("artifacts"))
             or case.get("decision") != "manual_review_only"
