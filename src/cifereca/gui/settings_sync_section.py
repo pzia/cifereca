@@ -60,7 +60,12 @@ def build_kobo_sync_section(
         "au démarrage se configurent et se révoquent par compte dans Synchronisation. "
         "Il n’existe pas de minuterie périodique de téléchargement."
     )
-    backup_switch = Gtk.Switch(); backup_switch.set_active((config.get("kobo_backup.enabled", False) is True)); backup_switch.set_valign(Gtk.Align.CENTER); backup_auto_row.add_suffix(backup_switch); backup_group.add(backup_auto_row)
+    backup_switch = Gtk.Switch(); backup_switch.set_active((config.get("kobo_backup.enabled", False) is True)); backup_switch.set_valign(Gtk.Align.CENTER)
+    # #1346: keep the stored legacy value visible for diagnosis/migration, but
+    # prevent users from editing an ineffective global acquisition switch.
+    # Only the per-source Synchro opt-in is actionable after explicit consent.
+    backup_switch.set_sensitive(False)
+    backup_auto_row.add_suffix(backup_switch); backup_group.add(backup_auto_row)
     # The source sync page only refreshes online metadata. Downloading books
     # is a separate, explicit operation with the persisted safety settings.
     manual_row = Adw.ActionRow()
