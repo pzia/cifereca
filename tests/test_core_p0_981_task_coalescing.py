@@ -312,5 +312,5 @@ def test_gtk_queue_exposes_actual_deliver_callback_not_a_wrapper():
     body = ast.unparse(done)
     assert "GLib.idle_add(deliver)" in body
     assert "measured_deliver" not in body
-    assert 'phase_observer("gtk_delivery_wait"' in body
+    assert "phase_observer(" in body and "'gtk_delivery_wait'" in body
     assert "queued_completion_at = gtk_pending_since" in body
