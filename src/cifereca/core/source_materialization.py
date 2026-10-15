@@ -261,6 +261,16 @@ def execute(broker, source_id, token, control=None):
             _require(current_scope == scope and current_configuration == configuration
                      and current_session is session, "source_changed")
 
+        revisions = {row.get("product_id", row.get("id")).strip(): row["revision_id"].strip() for row in manifest}
+
+        def guard_item(item, product_id, revision_id):
+            guard()
+            _require(item.source_provider == account.provider_id
+                     and item.source_credential == account.credential_id
+                     and item.record_id == product_id and item.revision_id == revision_id
+                     and revisions.get(product_id) == revision_id
+                     and item.owned is True, "normalized_item_mismatch")
+
         guard()
         scope_credential = account.credential_id
         baseline = completed()
@@ -268,7 +278,7 @@ def execute(broker, source_id, token, control=None):
         running = True
         report = kobo_backup._sync_kobo_backup_locked(
             service, logger=_LOG, credential_id=account.credential_id,
-            confirmed_manifest=manifest, source_guard=guard,
+            confirmed_manifest=manifest, source_guard=guard, item_guard=guard_item,
             cancelled=cancelled, progress=progress,
         )
         sources = report.get("sources", [])

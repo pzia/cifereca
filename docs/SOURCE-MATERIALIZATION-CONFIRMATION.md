@@ -36,6 +36,10 @@ Lors de la confirmation, le broker reprend le verrou commun, revalide la source
 activée/connectée, relit son manifeste et les preuves locales, puis refuse toute
 différence avant une écriture métier ou acquisition. Le manifeste validé est
 réutilisé par l'exécuteur : aucun nouveau manifeste ne peut élargir la portée.
+Après normalisation fournisseur, le produit et sa révision doivent encore
+correspondre à cette ligne précise du manifeste, avec le même fournisseur,
+credential et droit possédé. Même un autre livre approuvé ne peut s'y substituer.
+La source est revalidée à cette frontière avant toute résolution d'acquisition.
 Un credential partagé entre comptes, un compte absent/ambigu, une migration de
 dossier en attente, des symlinks ou des preuves incomplètes bloquent le parcours.
 Le bypass historique `allow_unlinked_acquisition` n'est jamais hérité : des livres

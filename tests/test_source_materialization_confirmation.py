@@ -393,3 +393,36 @@ def test_untrusted_phase_projection_does_not_crash_or_echo_persisted_data(case, 
     phases = case.broker._ref(case.target.accounts[0]).phase_states
     assert "PRIVATE" not in repr(phases)
     assert next(p for p in phases if p.phase == "materialize").last_success == ""
+
+
+@pytest.mark.parametrize("field,value", [("record_id", "UNAPPROVED"), ("revision_id", "NEW"),
+                                       ("source_credential", "vault-3"), ("owned", False), ("other_approved", None)])
+def test_provider_normalization_cannot_change_the_confirmed_item_scope(case, field, value):
+    token = _prepare(case)
+    original = case.target.normalize_item
+    def normalize(raw, **kwargs):
+        result = original(raw, **kwargs)
+        if field == "other_approved":
+            # Even another approved book cannot replace this row's product.
+            result.record_id = "PRIVATE-book-2" if raw["product_id"] == "PRIVATE-book-1" else "PRIVATE-book-1"
+            result.revision_id = "r2" if raw["revision_id"] == "r1" else "r1"
+        else:
+            setattr(result, field, value)
+        return result
+    case.target.normalize_item = normalize
+    result = case.broker.materialize_source(case.source, token)
+    assert not result.ok and result.changed == 0 and not case.downloaded
+    assert not any(s.resolve_calls for s in case.sessions)
+
+
+def test_source_change_during_normalization_is_rejected_before_provider_resolution(case):
+    token = _prepare(case)
+    original = case.target.normalize_item
+    def normalize(raw, **kwargs):
+        result = original(raw, **kwargs)
+        case.target.accounts[0].unique_id = "CHANGED"
+        return result
+    case.target.normalize_item = normalize
+    result = case.broker.materialize_source(case.source, token)
+    assert not result.ok and result.changed == 0 and not case.downloaded
+    assert not any(s.resolve_calls for s in case.sessions)

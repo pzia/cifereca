@@ -856,7 +856,7 @@ def kobo_unlinked_local_count(self, identity_id: str) -> int:
     return len(paths)
 
 
-def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, cancelled: Callable[[], bool] | None = None, retry_scope_blocked: bool = False, confirmed_manifest: list | None = None, source_guard: Callable[[], None] | None = None) -> dict[str, Any]:
+def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, cancelled: Callable[[], bool] | None = None, retry_scope_blocked: bool = False, confirmed_manifest: list | None = None, source_guard: Callable[[], None] | None = None, item_guard: Callable[[SearchResult, str, str | None], None] | None = None) -> dict[str, Any]:
     """Reconcile the Vault manifest and acquire missing Kobo books locally.
 
     Paris owns the destination and orchestration. Vault Provider API v2.x
@@ -875,7 +875,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # a global catalogue scan, remnant recovery or authoritative pruning.
     confirmed = confirmed_manifest is not None
     if confirmed:
-        if credential_id is None or source_guard is None:
+        if credential_id is None or source_guard is None or item_guard is None:
             raise ProviderConfigurationError("Confirmation de source invalide")
         source_guard()
     cancellation_latched = False
@@ -1230,7 +1230,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
 
                 if source_guard is not None:
                     source_guard()
-                if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, defer_item_event, record_error, logger):
+                if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, defer_item_event, record_error, logger, item_guard=item_guard):
                     abort_all = True
                     item_committed = True
                     break
@@ -1870,7 +1870,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
 
 
 
-def _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, total, summary, emit, record_error, logger):
+def _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, total, summary, emit, record_error, logger, *, item_guard=None):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     summary["attempted"] += 1
@@ -1890,6 +1890,8 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
         if normalizer is None:
             raise ProviderConfigurationError("Kobo provider sans normalisation LibraryItem")
         search_item = normalizer(raw, default_collection="library")
+        if item_guard is not None:
+            item_guard(search_item, product_id, revision_id)
         result = self._execute_kobo_acquisition(search_item, session_target_dir)
         artifact = result.path
         if artifact is None or not artifact.is_file():
