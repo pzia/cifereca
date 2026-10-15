@@ -49,10 +49,31 @@ la compatibilité/diagnostic. Le bilan distingue `manual_only` de
 nombre borné de sources `scheduled_kobo`, sans identifiants, livres, chemins,
 URL, tokens ou messages bruts de fournisseurs.
 
+## Configuration dans l'interface Synchronisation
+
+La page **Synchronisation** montre pour chaque source Kobo une ligne distincte
+**« Acquisition Kobo · au démarrage »** :
+
+- Par défaut : **Mode manuel**. « Mettre à jour les notices Kobo en ligne »
+  et « Synchroniser les sources » ne téléchargent aucun EPUB.
+- **Activer au démarrage…** ouvre un dialogue de confirmation décrivant la portée
+  exacte (un seul compte), les risques et les contrôles, puis appelle
+  `set_local_materialization_schedule(source_id, "on_start")` ; il n'y a
+  aucune acquisition au clic et aucun téléchargement pendant l'ouverture du
+  dialogue.
+- **Désactiver au démarrage** révoque immédiatement le consentement, même si
+  le compte est désormais déconnecté ou sa source désactivée.
+- Si le broker ou la capacité n'est pas disponible, le contrôle est
+  désactivé. Une identité changée, un dialogue devenu obsolète ou une fenêtre
+  fermée n'autorise aucune mutation.
+
+Il n'y a **pas de mode périodique** : cette version ne crée aucun timer
+récurrent, et ne doit jamais afficher de périodicité factice.
+
 ## À réaliser avant clôture #1346
 
-- UI de programmation par source (et éventuelle planification périodique
-  réelle de l'inventaire, distincte de l'acquisition).
+- Planification périodique réelle de l'inventaire si retenue, distincte
+  de l'acquisition (actuellement uniquement au démarrage ou manuel).
 - Recette GTK 1366/1600 et trois identités sur installation réelle, avec
   autorisations explicites et compteurs d'acquisition vérifiés.
 - CI/CD : tester HEAD exact et intégrer les PR Core/GUI sans double départ.
