@@ -119,7 +119,9 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
     enabled = bool(getattr(source, "enabled", False))
     connected = bool(getattr(source, "connected", False))
     capable = bool(getattr(source, "sync_capable", False))
-    label = sync_source_identity_label(source)
+    # Preserve stable action labels for non-Kobo sources; the GTK row and
+    # task label provide the disambiguated provider presentation (#980).
+    label = str(getattr(source, "label", "") or getattr(source, "provider_id", "") or "cette source")
 
     activation = "Activée" if enabled else "Désactivée"
     connection = "Connectée" if connected else "Déconnectée"
