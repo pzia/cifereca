@@ -19,14 +19,16 @@ def reason_text(reason):
     return REASONS.get(kind, kind) + ' : ' + value
 
 
-def _hidden_url_controls(text: str) -> bool:
-    """Reject invisible format/bidi controls before a URL reaches public GTK.
+def _hidden_url_controls(text: str, *, decoded_path: bool = False) -> bool:
+    """Reject invisible Unicode controls in the raw and decoded URL layers.
 
-    Percent-encoded URL paths can decode once or multiple times in a browser;
-    validate each decoded layer without rewriting the original URL.
+    Percent-encoded *ordinary spaces* are a valid bibliographic path
+    spelling (%20) and were already supported. Reject raw spaces, all
+    control/format/surrogate codepoints and other Unicode separators.
     """
     return any(
-        category(char) in {"Cc", "Cf", "Cs"} or char.isspace()
+        category(char) in {"Cc", "Cf", "Cs"}
+        or (char.isspace() and (not decoded_path or char != " "))
         for char in text
     )
 
@@ -91,7 +93,7 @@ def public_url(value):
     }
     path = parsed.path
     for _ in range(4):
-        if _hidden_url_controls(path):
+        if _hidden_url_controls(path, decoded_path=True):
             return ''
         segments = (part.casefold() for part in path.split('/') if part)
         if any(
