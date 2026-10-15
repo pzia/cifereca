@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.15, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.17, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -21,7 +21,7 @@ from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionE
     html_response_kind)
 from cifereca_numilog_filename import publish
 
-VERSION = '0.1.16'
+VERSION = '0.1.17'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -216,6 +216,12 @@ class NumilogSession(ProviderSession):
                     text,final_url,cover_origins=self.allowed_origins,
                     delivery_evidence=include_delivery,
                 )
+                if include_delivery:
+                    # Only bounded structural counts. Never log IDs, HTML,
+                    # titles, signed URLs or query strings (#1883).
+                    self._diag('bibliothèque livraison',phase='owned_card',
+                        page_kind='personal_library',page_index=page_index+1,
+                        cards=len(page_rows),linked=sum('delivery' in r for r in page_rows))
                 for row in page_rows:
                     key=(row['lid'],row['variant'])
                     if key not in seen_items:
