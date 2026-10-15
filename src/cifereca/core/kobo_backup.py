@@ -499,7 +499,7 @@ def _safe_kobo_opening_decision(raw: Any) -> dict[str, Any] | None:
         return None
     allowed = {
         "disabled", "no_session", "capability_unavailable", "source_disabled",
-        "fresh_cache", "started", "partial", "error",
+        "fresh_cache", "started", "partial", "error", "manual_only",
     }
     status = raw.get("status")
     result: dict[str, Any] = {
