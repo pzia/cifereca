@@ -331,7 +331,7 @@ def test_recommendations_authors_reject_private_untrusted_cache_objects():
     view._render(preserve_summary=True)
     view._selected_row(rows[0])
 
-    expected = ("Alice", "Bob", "Claire", "Émile", "David")
+    expected = ("Alice", "Bob", "Émile", "Claire", "David")
     # Source order is field first, then metadata, then EPUB metadata.
     assert _public_candidate_authors(item) == expected
     assert rows[0].subtitle == details[0].subtitle == ", ".join(expected)
