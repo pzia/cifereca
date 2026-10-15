@@ -57,7 +57,7 @@ def owned_store_inventory_counts(storage: Any, identity_id: str, accounts: Itera
             rights.add((provider, credential, product))
     # Numilog currently mirrors purchases to local catalog only (#1862);
     # remote_owned must come from its private library, not generic search.
-    for row in storage.catalog_entries():
+    for row in storage.catalog_entries(state="remote_owned"):
         if not isinstance(row, dict) or row.get("provider_id") != "numilog":
             continue
         if (
