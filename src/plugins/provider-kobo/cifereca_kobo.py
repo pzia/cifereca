@@ -599,15 +599,31 @@ class KoboSession(ProviderSession):
 
     def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:
         if item.owned:
-            archived = bool(item.metadata.get("archived")) if isinstance(item.metadata, dict) else False
-            if archived:
+            # The read-only holdings view must not promote an unknown Vault
+            # permission into a verified local acquisition. JSON booleans are
+            # the only attested archived/downloadable flags: bool("false")
+            # would otherwise invent an archived state.
+            raw_archived = (
+                item.metadata.get("archived")
+                if type(item.metadata) is dict else None
+            )
+            if raw_archived is not None and type(raw_archived) is not bool:
+                label = "Dans votre bibliothèque Kobo · état d’archive non vérifiable"
+                status = "attention_required"
+            elif raw_archived is True:
                 label = "Dans votre bibliothèque Kobo · archivé · restaurer sur Kobo"
                 status = "attention_required"
             elif item.downloadable is False:
                 label = "Dans votre bibliothèque Kobo · non téléchargeable"
                 status = "owned"
-            else:
+            elif item.downloadable is True:
                 label = "Dans votre bibliothèque Kobo · synchronisation locale disponible"
+                status = "owned"
+            else:
+                # No entitlement to *download* has been attested. Inventory
+                # membership proves only bibliographic possession, not file
+                # delivery, DRM capability or local materialization.
+                label = "Dans votre bibliothèque Kobo · téléchargement non vérifié"
                 status = "owned"
         elif item.price:
             label = f"Disponible sur Kobo · {item.price} {item.currency or ''}".strip()
