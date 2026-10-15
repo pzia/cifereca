@@ -86,6 +86,8 @@ class UiPerfMonitor:
         self._max_events = min(1000, max(1, int(max_events)))
         self._phase_events: deque[dict[str, object]] = deque(maxlen=self._max_events)
         self._detailed_capture = False
+        self._capture_generation = 0
+        self._operation_sequence = 0
         self._events_dropped = 0
         self._invalid_samples = 0
         self._gc_samples_dropped = 0
@@ -126,6 +128,7 @@ class UiPerfMonitor:
             raise ValueError("invalid_performance_capture_option")
         with self._lock:
             if enabled and not self._detailed_capture:
+                self._capture_generation += 1
                 self._phase_events.clear()
                 self._events_dropped = 0
                 self._gc_samples_dropped = 0
@@ -134,6 +137,7 @@ class UiPerfMonitor:
                 self._resource_end = None
                 self._resource_stopped_at = None
             elif not enabled and self._detailed_capture:
+                self._capture_generation += 1
                 self._resource_end = self._sample_resources()
                 self._resource_stopped_at = self._clock()
             self._detailed_capture = enabled
@@ -143,6 +147,20 @@ class UiPerfMonitor:
         """Read-only opt-in flag for low-overhead GTK phase probes."""
         with self._lock:
             return self._detailed_capture
+
+    @property
+    def capture_generation(self) -> int:
+        """Epoch for invalidating GTK callbacks across stop/start transitions."""
+        with self._lock:
+            return self._capture_generation
+
+    def new_operation_id(self) -> int | None:
+        """Ephemeral correlation key; no identity, title, source or account."""
+        with self._lock:
+            if not self._detailed_capture:
+                return None
+            self._operation_sequence = (self._operation_sequence % 1_000_000_000) + 1
+            return self._operation_sequence
 
     def record_phase(
         self, category: str, phase: str, duration_ms: float, *,
