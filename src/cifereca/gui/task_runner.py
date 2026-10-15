@@ -56,7 +56,7 @@ class TaskRunner:
         provided) is *never* coalesced. The first task retains its normal
         progress/completion callbacks, and all duplicate automatic requests
         observe that same running operation rather than opening new workers.
-        No result cache is retained after the worker finishes.
+        No result is durably cached after GTK delivery.
         """
         # A late plugin/action must not disable a detached GTK control or
         # enqueue a worker after the window owner has been torn down.
@@ -67,11 +67,18 @@ class TaskRunner:
         ):
             raise ValueError("invalid task coalescing key")
         # The origin is an enumerated diagnostic, never an echoed plugin field.
-        if origin not in {"automatic", "navigation", "user", "maintenance", "unspecified"}:
+        if type(origin) is not str or origin not in {
+            "automatic", "navigation", "user", "maintenance", "unspecified",
+        }:
             origin = "unspecified"
         # A physical user action must *always* be admitted, even if its caller
         # accidentally supplied the same automatic key.
         admission = (kind, coalesce_key) if coalesce_key is not None and control is None else None
+        # A detached Gtk widget must be checked before activity counters or
+        # reservations are allocated, as with the original TaskRunner. User
+        # controls cannot be coalesced, so this cannot touch a skipped task.
+        if control is not None and control.get_root() is not None:
+            control.set_sensitive(False)
         with self._lock:
             active = getattr(self, "_coalesced", {})
             if admission is not None and admission in active:
@@ -85,10 +92,6 @@ class TaskRunner:
             count = self._count
             if admission is not None:
                 self._coalesced[admission] = task_id
-        # A navigation/rebuild may have detached the caller's widget even
-        # though the window is still open. Do not touch orphan GTK controls.
-        if control is not None and control.get_root() is not None:
-            control.set_sensitive(False)
         GLib.idle_add(self.window._task_started, task_id, count, label, int(priority), kind)
 
         queued_at = time.monotonic()
