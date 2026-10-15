@@ -1952,7 +1952,8 @@ def main() -> int:
         identity = ("camille", "alex", "p0-zoe")[index]
         if (w.service.current_identity.identity_id != identity
                 or any(kind != "opening-sync" for _p, _t, kind in w._active_tasks.values())
-                or w._library_refresh_pending):
+                or w._library_refresh_pending
+                or w._library_loaded_generation != w._identity_context_generation):
             assert monotonic() < coordination["deadline"], (
                 "#981 identity/load timeout", index, w.identity_dropdown.get_selected(),
                 w.service.current_identity.identity_id,
