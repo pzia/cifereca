@@ -14,7 +14,7 @@ from threading import BoundedSemaphore, Event, Thread
 from time import monotonic
 from typing import Any, Mapping
 from urllib.parse import urlsplit
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from cifereca.plugin_api.llm import LLMRequest, LLMResult
@@ -252,6 +252,20 @@ class OptionalLLMService:
                     result.append(failed("rate_limited"))
                 else:
                     result.append(failed("backend_unavailable"))
+            except TimeoutError:
+                # urllib's own socket timeout can win the race with the
+                # surrounding request deadline. Both are the same public
+                # outcome, never an intermittent backend-unavailable error.
+                result.append(failed("timeout"))
+            except URLError as exc:
+                # urllib wraps connect/read timeouts in URLError on some
+                # platforms. Inspect only the exception TYPE, not its text:
+                # error messages can contain the endpoint or credentials.
+                reason = getattr(exc, "reason", None)
+                result.append(failed(
+                    "timeout" if isinstance(reason, TimeoutError)
+                    else "backend_unavailable"
+                ))
             except Exception:
                 result.append(failed("backend_unavailable"))
             finally:
