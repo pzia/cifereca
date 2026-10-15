@@ -398,3 +398,34 @@ def test_parser_invents_no_product_lid_equivalence_and_links_are_ephemeral():
     with pytest.raises(DeliverySelectionError) as exc:
         delivery_url('<html></html>', READ_12)
     assert exc.value.code == "missing"
+
+
+@pytest.mark.parametrize("identities", [(), ("first", "second")])
+def test_owner_resolution_is_required_before_signed_acsm_get(tmp_path, identities):
+    page = _page(_card(12, 9001, SIGNED))
+    handler, requested = _handler_for_library(page)
+    session, _, broker = setup(tmp_path, handler, identities=identities)
+    session.connected = True
+    try:
+        book = session.library()[0]
+        with pytest.raises(ProviderCapabilityError, match="identité propriétaire"):
+            session.download_direct(book, tmp_path)
+        assert requested == [LIBRARY, LIBRARY]
+        assert broker.calls == []
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+def test_missing_acsm_broker_blocks_direct_signed_get(tmp_path):
+    session, _, broker, requested = _session(tmp_path, _page(_card(12, 9001, SIGNED)))
+    session.acquisition_broker = None
+    try:
+        book = session.library()[0]
+        with pytest.raises(ProviderCapabilityError, match="broker acquisition requis"):
+            session.download_direct(book, tmp_path)
+        assert requested == [LIBRARY, LIBRARY]
+        assert broker.calls == []
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
