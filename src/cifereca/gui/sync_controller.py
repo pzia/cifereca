@@ -356,19 +356,20 @@ def _refresh_sync_page(self) -> None:
             group.add(acquisition_row)
             acquisition_state = {"serial": 0, "cancel": None}
 
-            def download_current():
+            def download_current(expected_identity=source.identity_id, captured_scope=scope):
                 return (
-                    sync_action_scope_current(self, scope)
+                    sync_action_scope_current(self, captured_scope)
                     and getattr(self.service.current_identity, "identity_id", None)
-                        == source.identity_id
+                        == expected_identity
                 )
 
-            def cancel_download(_button, state=acquisition_state, output=acquisition_row):
+            def cancel_download(_button, state=acquisition_state, output=acquisition_row,
+                                current=download_current):
                 active = state["cancel"]
                 if active is not None:
                     active.set()
                     _button.set_sensitive(False)
-                    if download_current():
+                    if current():
                         output.set_subtitle(
                             "Annulation demandée. Les fichiers déjà terminés sont conservés."
                         )
@@ -378,8 +379,9 @@ def _refresh_sync_page(self) -> None:
                 button, sid=source.source_id, identity_id=source.identity_id,
                 account_label=display_label, output=acquisition_row,
                 stop=stop_download, state=acquisition_state,
+                current=download_current, allowed=bool(can_download),
             ):
-                if not download_current() or not can_download:
+                if not current() or not allowed or state["cancel"] is not None:
                     return
                 state["serial"] += 1
                 serial = state["serial"]
@@ -390,7 +392,7 @@ def _refresh_sync_page(self) -> None:
                 )
 
                 def prepared(result):
-                    if not download_current() or state["serial"] != serial:
+                    if not current() or state["serial"] != serial:
                         return
                     facts = getattr(result, "facts", None)
                     if (
@@ -458,7 +460,7 @@ def _refresh_sync_page(self) -> None:
                     )
 
                     def response(_dialog, choice):
-                        if choice != "run" or not download_current() or state["serial"] != serial:
+                        if choice != "run" or not current() or state["serial"] != serial:
                             return
                         # The token remains in this closure only: no logs,
                         # widget property or persisted setting may hold it.
@@ -473,12 +475,12 @@ def _refresh_sync_page(self) -> None:
                         def work(report):
                             # No widget access from the worker. Scope is a
                             # GTK-free identity/page generation predicate.
-                            if cancellation.is_set() or not download_current():
+                            if cancellation.is_set() or not current():
                                 return None
 
                             class ScopedControl:
                                 def cancelled(self):
-                                    return cancellation.is_set() or not download_current()
+                                    return cancellation.is_set() or not current()
 
                                 def check_cancelled(self):
                                     if self.cancelled():
@@ -502,7 +504,7 @@ def _refresh_sync_page(self) -> None:
                                 raise RuntimeError("Téléchargement Kobo indisponible") from None
 
                         def done(result):
-                            if not download_current() or state["serial"] != serial:
+                            if not current() or state["serial"] != serial:
                                 return
                             stop.set_sensitive(False)
                             state["cancel"] = None
@@ -540,11 +542,11 @@ def _refresh_sync_page(self) -> None:
                                 output.set_subtitle(
                                     "Résultat incomplet : vérifier les fichiers avant toute reprise."
                                 )
-                            if changed and download_current():
+                            if changed and current():
                                 self.refresh_library(False)
 
                         def failed(_exc):
-                            if download_current() and state["serial"] == serial:
+                            if current() and state["serial"] == serial:
                                 stop.set_sensitive(False)
                                 state["cancel"] = None
                                 output.set_subtitle(
@@ -563,15 +565,23 @@ def _refresh_sync_page(self) -> None:
                     dialog.present()
 
                 def failed(_error):
-                    if download_current() and state["serial"] == serial:
+                    if current() and state["serial"] == serial:
                         output.set_subtitle(
                             "Préparation indisponible. Aucun téléchargement lancé."
                         )
 
+                def prepare_work():
+                    if not current():
+                        return None
+                    try:
+                        return broker.prepare_local_materialization(sid)
+                    except Exception:
+                        # Do not leak a provider exception via TaskRunner.
+                        raise RuntimeError("Préparation Kobo indisponible") from None
+
                 self.runner.submit(
                     "Préparer les acquisitions Kobo…",
-                    lambda: broker.prepare_local_materialization(sid)
-                    if download_current() else None,
+                    prepare_work,
                     prepared, failed, control=button,
                     priority=TaskPriority.USER_ACTION,
                     kind="sync-preflight", origin="user",
