@@ -939,7 +939,8 @@ class LibraryService:
         selected SearchResult, not bulk download_library_item backups.
         In particular Numilog does not implement that backup contract (#1862).
         """
-        result: dict[str, int] = {}
+        from .core.personal_library_mirror import PersonalLibraryMirrorCounts
+        result = PersonalLibraryMirrorCounts()
         for session in self._sessions.values():
             if not session.connected or not session.capabilities.personal_library:
                 continue
@@ -958,15 +959,19 @@ class LibraryService:
                     a for a in self.accounts
                     if a.provider_id == "numilog" and a.credential_id == credential_id
                 ]
-                bound_identity = self.storage.identity_for_connection(
-                    provider_id, credential_id,
-                )
+                try:
+                    bound_identity = self.storage.identity_for_connection(
+                        provider_id, credential_id,
+                    )
+                except Exception:
+                    bound_identity = None
                 if (
                     len(accounts) != 1
                     or not bound_identity
                     or accounts[0].identity_id != bound_identity
                     or self.identity_by_id(bound_identity) is None
                 ):
+                    result.blocked_sources += 1
                     _TRACE_LOG.warning(
                         "TRACE catalog personal-library inventory skipped "
                         "provider=numilog reason=source_binding_unavailable"
@@ -992,6 +997,7 @@ class LibraryService:
                     rows, identity_id=identity.identity_id,
                 )
             except Exception as exc:
+                result.failed_sources += 1
                 # Do not print a provider exception: it can contain a signed
                 # ACSM URL, cookie, private title or credential.
                 _TRACE_LOG.warning(
