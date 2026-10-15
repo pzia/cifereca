@@ -381,7 +381,12 @@ def main():
             assert_line("Annulé")
             report["checks"]["cancelled_scan_never_reopens_confirmation"] = True
             until(lambda: preview_button[0].get_sensitive(), begin_stale)
-        later(discarded, 850)
+        # Cancellation completes asynchronously after the simulated plan worker
+        # has observed its cancellation token. A fixed 850 ms delay races
+        # runner scheduling (the fake scan itself takes 650 ms), so assert
+        # the eventual GTK state with an explicit upper bound instead.
+        # A broken cancellation still fails rather than being silently retried.
+        until(lambda: line_is("Annulé"), discarded, timeout=3.0)
 
     def begin_stale():
         tool.delay = 0.12
