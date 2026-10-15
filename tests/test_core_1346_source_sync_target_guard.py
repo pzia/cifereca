@@ -7,7 +7,7 @@ import pytest
 
 from cifereca.brokers import build_public_brokers
 from cifereca.plugin_api import SyncRequest
-from tests.test_core039_contract_surface import Account, FakeService
+from tests.test_core039_contract_surface import Account, FakeService, Session
 
 
 def _setup():
@@ -15,6 +15,10 @@ def _setup():
     service.accounts.append(Account(
         "reader-b", "kobo", "vault-b", "kobo-b", "Private Reader B",
     ))
+    # A source is eligible for real synchronization only with a connected
+    # session. The original cross-identity fixture accidentally omitted it,
+    # letting an unreachable provider pass the old broker path (#1346).
+    service._sessions[service._session_key("kobo", "vault-b")] = Session()
     broker = build_public_brokers(service)["sync"]
     refs = {row.account_id: row for row in broker.sources()}
     return service, broker, refs
