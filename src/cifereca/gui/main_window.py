@@ -682,7 +682,14 @@ class MainWindow(Adw.ApplicationWindow):
             active_cancel = {"control": None, "ticket": None}
             line_feedback = None
             line_scope = {"active": False, "identity": None, "generation": None}
-            if getattr(info, "id", None) == "core.cache.cleanup":
+            # Opt-in only the audited built-in and read-only cover tool.
+            # Other maintenance tools keep their current UX until separately
+            # qualified under their own P1 issues; no plugin-supplied labels.
+            line_mode = {
+                "core.cache.cleanup": "cache",
+                "covers.audit": "covers",
+            }.get(getattr(info, "id", None))
+            if line_mode is not None:
                 def line_alive(button=run, scope=line_scope):
                     if self._closed or button.get_root() is None:
                         return False
@@ -695,6 +702,7 @@ class MainWindow(Adw.ApplicationWindow):
                     )
                 status_widget, line_feedback = build_maintenance_line(
                     Gtk=Gtk, idle_add=GLib.idle_add, alive=line_alive,
+                    mode=line_mode,
                 )
                 row.add_suffix(status_widget)
                 self._maintenance_line_rows.append((line_feedback, active_cancel))
