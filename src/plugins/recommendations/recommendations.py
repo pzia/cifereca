@@ -355,6 +355,7 @@ class UxRecommendationsView:
         self._identity_library_signatures: dict[str, Any | None] = {}
         self._active_identity_id: str | None = None
         self._reloading_identities = False
+        self._profile_selection_required = False
         self._overview_refresh_source_id = 0
         self._overview_refresh_pending = False
         self._diagnostic_cache = 0
@@ -683,13 +684,25 @@ class UxRecommendationsView:
                     current_index = index
                 if row.get("selected"):
                     selected_index = index
+            if current is not None and current_index is None:
+                # The previously displayed profile vanished. Do not
+                # interpret the subsequent INVALID_LIST_POSITION as a first
+                # activation and silently select a different account.
+                self._profile_selection_required = True
+            elif current_index is not None:
+                self._profile_selection_required = False
             if selected_index is not None:
                 selected = selected_index
             elif current_index is not None:
                 selected = current_index
             self._identity.set_sensitive(bool(self._identity_ids))
-            if self._identity_ids:
-                self._identity.set_selected(selected)
+            self._identity.set_selected(
+                0xFFFFFFFF
+                if not self._identity_ids or getattr(
+                    self, "_profile_selection_required", False
+                )
+                else selected
+            )
         finally:
             self._reloading_identities = False
         self._identity_library_signatures = current_signatures
@@ -704,14 +717,22 @@ class UxRecommendationsView:
     def selected_identity_id(self) -> str | None:
         if not self._identity_ids:
             return None
-        index = int(self._identity.get_selected())
-        # GTK can transiently report an invalid row while a model is
-        # reloaded or removed. Never fall back to another user's profile.
-        return self._identity_ids[index] if 0 <= index < len(self._identity_ids) else None
+        index = self._identity.get_selected()
+        # Invalid GTK positions, booleans and partial test hosts must never
+        # select an unrelated profile by implicit int coercion.
+        return (
+            self._identity_ids[index]
+            if type(index) is int and 0 <= index < len(self._identity_ids)
+            else None
+        )
 
     def _identity_changed(self, *_args) -> None:
         if self._reloading_identities:
             return
+        if self.selected_identity_id() is not None:
+            # A real GTK selection is the only way to leave a missing-profile
+            # state. Overview notifications are not explicit user consent.
+            self._profile_selection_required = False
         if self._identity_ids:
             self._reference_book = None
             self.plugin._pending_reference = None
