@@ -156,20 +156,16 @@ def test_disabled_numilog_source_never_fetches_or_acquires(
         service.close()
 
 
-def test_source_sync_does_not_silently_change_automatic_mirror_policy():
-    """Legacy on-start acquisition is a separate, explicit product decision.
-
-    Keep its existing caller and implementation intact; the source-broker
-    regression must not accidentally move that path into this method.
-    """
+def test_source_sync_and_opening_mirror_never_call_legacy_numilog_backup():
+    """P0 #1862: neither source sync nor opening inventory is bulk backup."""
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     source = (root / "src/cifereca/core/sync_coordination.py").read_text(encoding="utf-8")
     first = source.split("def _synchronize_account_source_impl(", 1)[1]
     account_impl = first.split("\ndef synchronize_account_source(", 1)[0]
     assert "_acquire_personal_library_item" not in account_impl
-    legacy = (root / "src/cifereca/services.py").read_text(encoding="utf-8")
-    body = legacy.split("def mirror_personal_libraries(", 1)[1]
-    body = body.split("\n    def _acquire_personal_library_item(", 1)[0]
-    assert 'session.provider_id == "numilog"' in body
-    assert "self._acquire_personal_library_item(session, row, identity.identity_id)" in body
+    code = (root / "src/cifereca/services.py").read_text(encoding="utf-8")
+    mirror = code.split("def mirror_personal_libraries(", 1)[1]
+    mirror = mirror.split("\n    def _acquire_personal_library_item(", 1)[0]
+    assert "_acquire_personal_library_item" not in mirror
+    assert "download_library_item" not in mirror.split("result: dict[str, int] = {}", 1)[1]
