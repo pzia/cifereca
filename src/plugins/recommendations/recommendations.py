@@ -1368,6 +1368,13 @@ class UxRecommendationsView:
             catalogue_fields.append(DetailField(
                 f"source-{index}", "Source", source, kind="copy",
             ))
+        # Use the exact same normalized, source-attested values as the
+        # existing language filter. A recommendation never invents a
+        # language merely from its title or provider.
+        for index, language in enumerate(_candidate_languages(item)):
+            catalogue_fields.append(DetailField(
+                f"language-{index}", "Langue", language, kind="language",
+            ))
         if fmt:
             catalogue_fields.append(DetailField("format", "Format", fmt, kind="all"))
         if published:
