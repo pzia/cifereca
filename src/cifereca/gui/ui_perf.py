@@ -26,6 +26,16 @@ _PERF_TRIGGERS = frozenset({
 })
 _PERF_OUTCOMES = frozenset({"success", "failed", "cancelled", "unknown"})
 
+# Public, fixed names for historical passive UI timings. These reach Settings
+# Diagnostics via snapshot() as dictionary keys, so arbitrary page titles or
+# plugin-provided operation names must never be retained (P1 #1741).
+_PASSIVE_UI_OPERATIONS = frozenset({
+    "render", "render_library", "render_recent",
+    "startup.window_presented", "startup.plugins_activation",
+    "startup.shell_interactive",
+    "list.append", "list.append-fast", "list.replace", "other",
+})
+
 
 
 class UiPerfMonitor:
@@ -158,11 +168,28 @@ class UiPerfMonitor:
         }
 
     def record(self, operation: str, duration_ms: float) -> None:
-        value = float(duration_ms)
+        """Record legacy passive timings without keeping untrusted labels.
+
+        The bounded names used by snapshot() are also safe to put in TRACE.
+        Unknown operation strings collapse to one bucket rather than creating
+        an unbounded cardinality of retained series.
+        """
+        try:
+            value = float(duration_ms) if type(duration_ms) is not bool else float("nan")
+        except (TypeError, ValueError, OverflowError):
+            value = float("nan")
+        if not math.isfinite(value) or not 0 <= value <= 86_400_000:
+            with self._lock:
+                self._invalid_samples += 1
+            return
+        name = (
+            operation if type(operation) is str
+            and operation in _PASSIVE_UI_OPERATIONS else "other"
+        )
         with self._lock:
-            self._samples[str(operation)].append(value)
+            self._samples[name].append(value)
         if value >= self.slow_ms:
-            _LOG.info("TRACE ui-perf slow operation=%s duration_ms=%.1f", operation, value)
+            _LOG.info("TRACE ui-perf slow operation=%s duration_ms=%.1f", name, value)
 
     @contextmanager
     def measure(self, operation: str) -> Iterator[None]:
