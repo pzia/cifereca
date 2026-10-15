@@ -179,7 +179,7 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
     last_attempt = _timestamp_label(getattr(source, "last_attempt", ""))
 
     if not capable:
-        sync_label = "Sans synchronisation de données"
+        sync_label = "Non prise en charge"
     elif status == "running":
         sync_label = "En cours…"
     elif status == "partial":
@@ -194,12 +194,12 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         sync_label = "Jamais synchronisée"
 
     action_enabled = enabled and connected and capable
-    if not capable:
-        disabled_reason = "Catalogue consultable sans synchronisation de données."
-    elif not enabled:
+    if not enabled:
         disabled_reason = "Activez cette source pour la synchroniser."
     elif not connected:
         disabled_reason = "Reconnectez ce compte avant de synchroniser."
+    elif not capable:
+        disabled_reason = "Cette source ne fournit pas de synchronisation de données."
     else:
         disabled_reason = ""
 
