@@ -48,6 +48,25 @@ def _text(value: object) -> str:
     return " ".join(str(value or "").strip().split())
 
 
+def _public_youth_title(book: object) -> str:
+    """One bounded, visible title for list, detail, navigation and search.
+
+    Legacy cache restoration can supply a provider object instead of a title.
+    Its __str__ or unusual Unicode controls must never reach GTK or a host
+    search action, where even a transient value is public.
+    """
+    value = getattr(book, "title", "")
+    if type(value) is not str or not 1 <= len(value) <= 2048:
+        return ""
+    if any(category(char) in {"Cc", "Cf", "Cs"} for char in value):
+        return ""
+    return _text(value)
+
+
+def _public_youth_display_title(book: object) -> str:
+    return _public_youth_title(book) or "Sans titre"
+
+
 def _fold(value: object) -> str:
     return _text(value).casefold()
 
@@ -254,7 +273,7 @@ def book_ref(book: object) -> BookRef:
     identifiers = _safe_book_identifiers(book)
     return BookRef(
         book_id=_text(getattr(book, "record_id", "")),
-        title=_text(getattr(book, "title", "")),
+        title=_public_youth_display_title(book),
         # BookRef is handed to the host for navigation: apply the same public
         # author projection as the list and detail before crossing that API.
         authors=_public_authors(book),
@@ -372,7 +391,7 @@ def list_entry(book: object) -> UiBookListEntry:
     badge = age_badge(ranges[0]) if ranges else "Âge inconnu"
     return UiBookListEntry(
         key=book_key(book),
-        title=_text(getattr(book, "title", "")),
+        title=_public_youth_display_title(book),
         subtitle=", ".join(_public_authors(book)),
         meta=meta,
         badge=badge,
@@ -416,7 +435,7 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     if not age_fields:
         age_fields = (DetailField("age-empty", "Âge", "Aucune tranche d’âge attestée en cache."),)
     metadata_fields = []
-    title = _text(getattr(book, "title", ""))
+    title = _public_youth_title(book)
     if title:
         metadata_fields.append(DetailField("title", "Titre", title, kind="title"))
     authors = _public_authors(book)
@@ -464,7 +483,7 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     if metadata_fields:
         sections.append(DetailSection("metadata-detail", "Détail", tuple(metadata_fields), order=1000))
     return UiBookDetailPresentation(
-        title=_text(getattr(book, "title", "")),
+        title=_public_youth_display_title(book),
         subtitle=", ".join(authors),
         thumbnail_url=public_url(getattr(book, "cover_url", "")) or None,
         badges=tuple(age_text(row) for row in ranges[:3]),
@@ -1285,7 +1304,7 @@ class YouthView:
             self.identity.set_selected(selected)
             if self.identity_id() != identity_id:
                 return False
-        title = _text(getattr(book, "title", ""))
+        title = _public_youth_title(book)
         if title:
             self.query.set_text(title)
         self.render_cached()
@@ -1369,7 +1388,7 @@ class YouthView:
             refresh_actions()
             return
         presentation = detail_presentation(self.selected_book)
-        title = _text(getattr(self.selected_book, "title", ""))
+        title = _public_youth_title(self.selected_book)
         search = getattr(self.host, "search_books", None)
         if callable(search):
             identity_id = self.identity_id()
@@ -1388,9 +1407,8 @@ class YouthView:
                 ))
             # ISBN is a bibliographic *lookup* only. It does not establish
             # inventory, ownership, availability or a direct notice link.
-            identifiers = getattr(self.selected_book, "identifiers", {})
-            getter = getattr(identifiers, "get", None)
-            raw_isbn = getter("isbn", "") if callable(getter) else ""
+            identifiers = _safe_book_identifiers(self.selected_book)
+            raw_isbn = identifiers.get("isbn", "")
             # The public host bridge can reuse this method without importing
             # the whole Youth module. No normalization is needed when the
             # selected row provides no ISBN mapping.
