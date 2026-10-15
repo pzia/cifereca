@@ -246,6 +246,12 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
             variant = tuple((k,tuple(params[k])) for k in ('m','format','FormatId','FORMAT_ID') if k in params)
             key = (lid[0],variant)
             if key in keys:
+                # Multiple distinct cards with the same download ID can
+                # present competing ProductId/copy/order data. Inventory may
+                # deduplicate legacy pages, but an EXPLICIT acquisition must
+                # refuse ambiguity instead of trusting the first link.
+                if delivery_evidence:
+                    raise ParseError('Fiches de livraison dupliquées : téléchargement arrêté')
                 continue
             keys.add(key)
             cover = urljoin(site_root,images[0]) if images and images[0] else None
