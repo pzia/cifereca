@@ -134,6 +134,12 @@ def _refresh_sync_page(self) -> None:
         if getattr(source, "identity_id", None) == scope.identity_id
     ]
     presentations = [sync_source_presentation(source) for source in rows]
+    # Only disambiguate duplicate titles in the currently selected identity.
+    # Keep established titles unchanged for unique sources and E2E baselines.
+    source_names = [
+        str(getattr(item, "label", "") or getattr(item, "provider_id", "") or "").strip().casefold()
+        for item in rows
+    ]
     actionable = any(item.action_enabled for item in presentations)
     if all_now is not None:
         all_now.set_sensitive(actionable)
@@ -150,8 +156,14 @@ def _refresh_sync_page(self) -> None:
         # selected profile. No toggle/preview may be wired to that row.
         if getattr(source, "identity_id", None) != scope.identity_id:
             continue
+        display_label = sync_source_identity_label(
+            source,
+            disambiguate=source_names.count(
+                str(getattr(source, "label", "") or getattr(source, "provider_id", "") or "").strip().casefold()
+            ) > 1,
+        )
         group = Adw.PreferencesGroup(); box.append(group)
-        row = Adw.ActionRow(); row.set_title(sync_source_identity_label(source))
+        row = Adw.ActionRow(); row.set_title(display_label)
         row.set_subtitle(presentation.summary)
         row.set_subtitle_lines(0)
         toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
@@ -176,7 +188,7 @@ def _refresh_sync_page(self) -> None:
         now.set_tooltip_text(
             presentation.action_label if presentation.action_enabled else presentation.disabled_reason
         )
-        def one(_button, sid=source.source_id, label=sync_source_identity_label(source)):
+        def one(_button, sid=source.source_id, label=display_label):
             if not sync_action_scope_current(self, scope):
                 return
             def completed(_result):
