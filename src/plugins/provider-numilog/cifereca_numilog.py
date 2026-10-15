@@ -300,13 +300,20 @@ class NumilogSession(ProviderSession):
             Path(path), identity_id=identity_id, provider_id='numilog', title=title or None)
         if not isinstance(result,dict):
             raise ProviderError('Numilog : résultat de fulfillment ACSM invalide')
-        status=str(result.get('status') or '')
+        # The broker is the authority for fulfillment, not for arbitrary
+        # provider-visible error text. Only published fixed ADEPT reasons
+        # may cross the plugin boundary; never stringify unknown objects.
+        status = result.get('status') if type(result.get('status')) is str else ''
         if status=='attention_required':
-            code=str(result.get('code') or 'adept_attention_required')
+            raw_code = result.get('code')
+            code = raw_code if type(raw_code) is str and raw_code in {
+                'adept_profile_required', 'adept_profile_ambiguous',
+            } else 'adept_attention_required'
             raise ProviderCapabilityError('Numilog : fulfillment ACSM nécessite une action ('+code+')')
-        if status not in {'complete','unchanged'} or not result.get('path'):
+        path = result.get('path')
+        if status not in {'complete','unchanged'} or type(path) is not str or not path:
             raise ProviderError('Numilog : fulfillment ACSM non confirmé')
-        produced=Path(str(result['path']))
+        produced=Path(path)
         if not produced.is_file():
             raise ProviderError('Numilog : fichier final ADEPT introuvable')
         self._diag('téléchargement',format='ACSM/ADEPT',fulfillment=status)
