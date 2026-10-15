@@ -294,9 +294,12 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
     def err(exc: BaseException) -> None:
         if getattr(self, "_closed", False):
             return
-        # Provider exceptions may embed bearer URLs, private paths or account\n        # credentials. Diagnostics only receive a fixed, public reason code.\n        self.diagnostics.add("SYNC", "opening sync", "error", detail={"reason": "opening_sync_failed"})
+        # Provider exceptions may embed bearer URLs, private paths or account
+        # credentials. Diagnostics only receive a fixed, public reason code.
+        self.diagnostics.add("SYNC", "opening sync", "error", detail={"reason": "opening_sync_failed"})
         self._render_dashboard()
-        if control is not None:\n            self.show_error("Synchronisation indisponible. Consultez les diagnostics.", "Synchronisation impossible")
+        if control is not None:
+            self.show_error("Synchronisation indisponible. Consultez les diagnostics.", "Synchronisation impossible")
     task_label = "Vérification complète de la bibliothèque…" if deep else "Synchronisation des bibliothèques…"
     self.runner.submit(
         task_label, lambda report: self.service.opening_sync(
