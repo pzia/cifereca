@@ -15,24 +15,24 @@ def _home() -> Path:
     return Path.home()
 
 
-def config_dir() -> Path:
+def config_dir(*, create: bool = True) -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", _home() / "AppData" / "Roaming"))
     elif sys.platform == "darwin":
         base = _home() / "Library" / "Application Support"
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME", _home() / ".config"))
-    return _ensure(base / APP_NAME)
+    return _ensure(base / APP_NAME) if create else base / APP_NAME
 
 
-def data_dir() -> Path:
+def data_dir(*, create: bool = True) -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", _home() / "AppData" / "Local"))
     elif sys.platform == "darwin":
         base = _home() / "Library" / "Application Support"
     else:
         base = Path(os.environ.get("XDG_DATA_HOME", _home() / ".local" / "share"))
-    return _ensure(base / APP_NAME)
+    return _ensure(base / APP_NAME) if create else base / APP_NAME
 
 
 def cache_dir() -> Path:
@@ -60,12 +60,12 @@ def log_dir() -> Path:
     return state_dir()
 
 
-def config_file() -> Path:
-    return config_dir() / "config.json"
+def config_file(*, create: bool = True) -> Path:
+    return config_dir(create=create) / "config.json"
 
 
-def database_file() -> Path:
-    return data_dir() / "library.sqlite3"
+def database_file(*, create: bool = True) -> Path:
+    return data_dir(create=create) / "library.sqlite3"
 
 
 def log_file() -> Path:
