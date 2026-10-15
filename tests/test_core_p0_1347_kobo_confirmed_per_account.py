@@ -90,8 +90,13 @@ def fixture(monkeypatch, sources=None):
 
 def controls(window, idx=0):
     group = window._sync_sources_box.children[idx]
-    row = group.children[0]
-    return row.suffixes[4], row.suffixes[5], group.children[3]
+    source_row = group.children[0]
+    acquisition_row = group.children[3]
+    # Keep the new mutating controls on their *own* row. Otherwise the
+    # crowded source row becomes thousands of pixels tall in real GTK.
+    assert len(source_row.suffixes) == 4
+    assert len(acquisition_row.suffixes) == 2
+    return acquisition_row.suffixes[0], acquisition_row.suffixes[1], acquisition_row
 
 
 def test_no_download_on_page_open_refresh_or_preparation(monkeypatch):
