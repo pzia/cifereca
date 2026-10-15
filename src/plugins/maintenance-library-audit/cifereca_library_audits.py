@@ -521,25 +521,29 @@ class IntegrityAuditTool(_ReadOnlyTool):
         read_failures=0
         reference_failures=0
         for row in _rows(metadata.library_entries(identity_id=context.identity_id)):
-            if not row.get("local"):
+            try:
+                if not row.get("local"):
+                    continue
+                path = str(row.get("local_path") or "").strip()
+                artifact_id = str(row.get("artifact_id") or "").strip()
+            except Exception:
+                # Malformed mapping or custom str/bool must not abort the
+                # remaining integrity candidates or expose private metadata.
+                reference_failures += 1
                 continue
-            path=str(row.get("local_path") or "").strip()
-            artifact_id=str(row.get("artifact_id") or "").strip()
             if not path:
                 missing_path += 1
                 continue
-            artifact=None
+            artifact = None
             if artifact_id:
                 try:
-                    artifact=library_read.artifact(artifact_id)
+                    artifact = library_read.artifact(artifact_id)
                 except Exception:
                     read_failures += 1
-            # Broker-supplied size metadata is untrusted, even when it comes
-            # from a typed artifact facade. Do not abort the whole audit if a
-            # single reference is malformed, or silently coerce booleans,
-            # floats and negative sizes into an apparent successful check.
-            raw_size = getattr(artifact, "size_bytes", 0)
+            # A broken accessor is also an invalid reference, not a reason
+            # to skip unrelated files. Unknown size means "not attested".
             try:
+                raw_size = getattr(artifact, "size_bytes", 0)
                 if type(raw_size) is int and raw_size >= 0:
                     expected_size = raw_size
                 elif (
@@ -551,16 +555,26 @@ class IntegrityAuditTool(_ReadOnlyTool):
                     expected_size = 0
                 else:
                     raise ValueError("invalid reference size")
-            except (ValueError, OverflowError, TypeError):
+            except Exception:
                 reference_failures += 1
                 expected_size = 0
+            try:
+                media_format = str(
+                    row.get("media_format") or getattr(artifact, "format", "") or ""
+                )
+                expected_sha256 = str(
+                    getattr(artifact, "sha256", "") or row.get("sha256") or ""
+                )
+            except Exception:
+                # Never pass partial or poisoned format/hash coordinates to
+                # the filesystem scan; other candidates can still run.
+                reference_failures += 1
+                continue
             candidates.append({
-                # The private path is needed for execution and remains in
-                # facts, not warnings/progress. A book title is unnecessary.
                 "path": path,
-                "format": str(row.get("media_format") or getattr(artifact,"format","") or ""),
+                "format": media_format,
                 "expected_size": expected_size,
-                "expected_sha256": str(getattr(artifact,"sha256","") or row.get("sha256") or ""),
+                "expected_sha256": expected_sha256,
             })
         warnings=[]
         if missing_path:
