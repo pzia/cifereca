@@ -14,6 +14,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import statistics
+import time
 import subprocess
 import sys
 from time import monotonic, sleep
@@ -30,7 +32,7 @@ from gi.repository import Adw, Gio, GLib, Gtk
 from PIL import ImageGrab
 
 from cifereca.core import CiferecaCore
-from cifereca.gui.main_window import MainWindow
+from cifereca.gui.main_window import MainWindow, BookListItem, fr_date
 from cifereca.builtin_ui.cifereca_builtin_ui import Pages
 from diagnostics_page_probe import Broker, Context, Host, Tasks
 from diagnostics_states_probe import StateTasks
@@ -80,6 +82,101 @@ class IsolatedContributions:
 
     def services(self, _capability):
         return ()
+
+
+
+# Frozen #1129/U0 oracle: main_window.py blob
+# 6ec09453f1495ac0415ef27e0f4fa31535af282d. Never called by product code.
+def baseline_render_library(self, entries: list[dict[str, Any]] | None = None) -> None:
+        if not hasattr(self, "library_page"):
+            return
+        _perf_started = time.perf_counter()
+        identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
+        if entries is None:
+            entries = list(self._library_entries_cache)
+        self._library_entries_cache = list(entries)
+        rows: list[BookListItem] = []
+        self._library_objects = {}
+        for item in self.library_controls.state().filter(entries):
+            provider = str(item.get("provider_id") or "local")
+            providers = list(item.get("providers") or [provider])
+            provider_label = (f"{len(providers)} sources" if len(providers) > 1 else self.service.provider_display_name(provider))
+            state = self._library_availability_label(item)
+            key = str(item.get("key") or f"library:{len(self._library_objects)}")
+            self._library_objects[key] = item
+            metadata = item.get("metadata") or {}
+            meta_parts = [state] if state else []
+            if item.get("due_at"):
+                meta_parts.append(f"retour {fr_date(str(item.get('due_at')))}")
+            sync_status = item.get("sync_status")
+            if sync_status and not item.get("local"):
+                meta_parts.append(self._kobo_backup_status_label(str(sync_status)))
+            device_statuses = item.get("device_statuses") if isinstance(item.get("device_statuses"), list) else []
+            if device_statuses:
+                present_count = sum(1 for status_row in device_statuses if status_row.get("observed_state") == "present")
+                keep_count = sum(1 for status_row in device_statuses if status_row.get("desired_state") == "keep")
+                if present_count:
+                    meta_parts.append(f"Kobo {present_count}/{len(device_statuses)}")
+                elif keep_count:
+                    meta_parts.append("Kobo à synchroniser")
+            rows.append(BookListItem(
+                key, str(item.get("title") or "Sans titre"), str(item.get("author") or ""),
+                " · ".join(part for part in meta_parts if part), provider_label, item.get("thumbnail_url"),
+            ))
+        self._attach_row_facets(rows, self._library_objects, self.library_controls)
+        self.library_page.show_rows(rows, total_count=len(entries))
+        restored_pending = self._select_pending_library_item()
+        if not restored_pending and self.library_page.selection.get_selected_item() is None:
+            self._library_selected(None)
+        self.ui_perf.record("render_library", (time.perf_counter() - _perf_started) * 1000.0)
+
+
+def compare_library_render(window):
+    """Compare synchronous full rebuilds; excludes GTK frame/layout latency.
+
+    Both paths use the current row widgets, same snapshot and same process.
+    This isolates extraction/projection cost, not historical whole-app speed.
+    Clear the store before each timed call so neither uses append-fast.
+    Alternate order to limit warm-cache/order bias; report raw samples without
+    a machine-dependent pass/fail time threshold.
+    """
+    entries = list(window._library_entries_cache)
+    assert len(entries) == 563
+    samples = {"baseline_u0": [], "extracted": []}
+    renderers = {
+        "baseline_u0": lambda: baseline_render_library(window, entries),
+        "extracted": lambda: window._render_library(entries),
+    }
+    reference = None
+    for iteration in range(4):
+        order = ("baseline_u0", "extracted") if iteration % 2 == 0 else ("extracted", "baseline_u0")
+        for name in order:
+            window.library_page.clear_rows()
+            started = time.perf_counter()
+            renderers[name]()
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            store = window.library_page.store
+            rows = tuple(
+                tuple(getattr(store.get_item(i), attr)
+                      for attr in ("key", "title", "subtitle", "meta", "badge", "thumbnail_url"))
+                for i in range(store.get_n_items())
+            )
+            if reference is None:
+                reference = rows
+            assert rows == reference, "La projection extraite diffère du rendu U0"
+            assert len(rows) == 563 and window.library_page.selection.get_selected_item() is None
+            assert list(window._library_objects) == [row[0] for row in reference]
+            if iteration:  # First pair warms both renderers; not a sample.
+                samples[name].append(round(elapsed_ms, 3))
+    medians = {name: round(statistics.median(values), 3) for name, values in samples.items()}
+    return {
+        "reference_blob": "6ec09453f1495ac0415ef27e0f4fa31535af282d",
+        "rows": len(entries), "mode": "synchronous_full_rebuild_same_current_widgets",
+        "samples_ms": samples, "median_ms": medians,
+        "extracted_over_u0": round(medians["extracted"] / max(medians["baseline_u0"], 0.001), 3),
+        "row_projection_equal": True,
+        "limits": "Same runtime/widgets; excludes frame latency and live providers; no absolute timing gate.",
+    }
 
 
 def main() -> int:
@@ -489,6 +586,8 @@ def main() -> int:
         report["checks"]["P0_library_563_real_rows_no_autoselection"] = True
         report["library_563_render_perf"] = w.ui_perf.snapshot()["render_library"]
         capture("03b-library-563-real-gtk")
+        report["library_563_u0_comparison"] = compare_library_render(w)
+        report["checks"]["P0_library_563_u0_projection_equivalent"] = True
         state = replace(w.library_controls.state(), text="Notice volume 562", field="title")
         library_volume["filtered"] = state
         w.library_controls.set_state(state, notify=False)
