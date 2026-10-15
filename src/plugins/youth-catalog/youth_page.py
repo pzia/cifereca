@@ -170,15 +170,21 @@ def book_key(book: object) -> str:
     return f"{_text(getattr(book, 'source_id', 'source'))}:{_text(getattr(book, 'record_id', 'record'))}"
 
 
-def book_ref(book: object) -> BookRef:
-    # Stored youth notices can have malformed identifier envelopes. The
-    # public navigation contract must never interpret a string as a sequence
-    # of (key, value) pairs, nor serialize arbitrary provider objects.
-    raw_identifiers = getattr(book, "identifiers", None)
+def _safe_book_identifiers(book: object) -> dict:
+    """Share one fail-closed identifier envelope for detail and host navigation."""
+    raw = getattr(book, "identifiers", None)
+    if not isinstance(raw, Mapping):
+        return {}
     try:
-        identifiers = dict(raw_identifiers) if isinstance(raw_identifiers, Mapping) else {}
+        return dict(raw)
     except Exception:
-        identifiers = {}
+        # A custom/restored Mapping may fail iteration or indexed lookup;
+        # its error payload is not an attestation or a public diagnostic.
+        return {}
+
+
+def book_ref(book: object) -> BookRef:
+    identifiers = _safe_book_identifiers(book)
     return BookRef(
         book_id=_text(getattr(book, "record_id", "")),
         title=_text(getattr(book, "title", "")),
@@ -232,9 +238,7 @@ def edition_reference(book: object) -> tuple[str, str, str]:
     Labels are explicit so same-title editions stay distinguishable without
     inferring an edition or merging by author/title.
     """
-    identifiers = getattr(book, "identifiers", {}) or {}
-    if not isinstance(identifiers, Mapping):
-        identifiers = {}
+    identifiers = _safe_book_identifiers(book)
     isbn = normalize_isbn(identifiers.get("isbn"))
     if isbn:
         return "isbn", "ISBN", isbn
