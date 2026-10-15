@@ -1366,6 +1366,17 @@ def main() -> int:
         assert w.search_controls.state() == f["search_state"]
         assert w.library_controls.state() == f["library_state"]
         report["checks"]["P0_980_XTEST_second_homonym_only_and_success_feedback"] = True
+        # A changed GObject subtitle is observable before the next paint.
+        # Capture the successful feedback only after GTK has repainted it.
+        later(200, sync_homonyms_capture_success)
+
+    def sync_homonyms_capture_success():
+        w = window[0]
+        f = loan_sync_fixture
+        row = next(row for row in walk(w._sync_sources_box)
+                   if isinstance(row, Adw.ActionRow)
+                   and row.get_title() == "Paris homonyme · paris · connexion 2/2")
+        assert "Dernier succès 15/10/2026 12:00" in row.get_subtitle()
         capture("03i3-sync-targeted-success")
         f["sync_scroll"].get_vadjustment().set_value(0)
         later(200, loan_sync_audit_click)
