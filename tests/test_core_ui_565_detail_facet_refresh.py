@@ -12,7 +12,14 @@ CONTROLS = ROOT / "src/cifereca/gui/query_controls.py"
 
 
 def _method(path: Path, class_name: str, method_name: str) -> str:
+    if path == MAIN and method_name == "_search_facet":
+        owner = ast.parse(MAIN.with_name("facet_value_controller.py").read_text(encoding="utf-8"))
+        return ast.unparse(next(node for node in owner.body
+                                if isinstance(node, ast.FunctionDef) and node.name == "search_facet"))
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    if class_name is None:
+        return ast.unparse(next(node for node in tree.body
+                                if isinstance(node, ast.FunctionDef) and node.name == method_name))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
     return ast.unparse(method)
@@ -27,10 +34,10 @@ def test_language_facet_uses_same_multiselect_contract_as_top_bar():
 
 
 def test_detail_facet_updates_controls_silently_then_refreshes_once():
-    source = _method(MAIN, "MainWindow", "_search_facet")
-    assert "controls.set_state(updated, notify=False)" in source
-    assert "self._render_library()" in source
-    assert "self.run_search(False)" in source
+    source = _method(MAIN.with_name("facet_value_controller.py"), None, "search_facet")
+    assert "target_controls.set_state(updated, notify=False)" in source
+    assert "window._render_library()" in source
+    assert "window.run_search(False)" in source
     assert "self.library_controls.set_state(updated)" not in source
     assert "self.search_controls.set_state(updated)" not in source
 
@@ -44,8 +51,8 @@ def test_programmatic_state_can_skip_changed_callback_for_explicit_actions():
 
 
 def test_same_facet_still_has_explicit_refresh_path():
-    source = _method(MAIN, "MainWindow", "_search_facet")
+    source = _method(MAIN.with_name("facet_value_controller.py"), None, "search_facet")
     # No early return on updated == state: clicking an already-selected facet
     # still refreshes the current list/search as an explicit user action.
     assert "updated == state" not in source
-    assert "controls.set_state(updated, notify=False)" in source
+    assert "target_controls.set_state(updated, notify=False)" in source

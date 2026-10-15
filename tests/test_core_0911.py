@@ -63,11 +63,10 @@ class Core0911(unittest.TestCase):
         from dataclasses import dataclass
         @dataclass
         class State:text:str='';field:str='all'
-        source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/main_window.py'
-        fn=next(n for n in ast.walk(ast.parse(source.read_text())) if isinstance(n,ast.FunctionDef) and n.name=='_search_facet')
+        source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/facet_value_controller.py'
+        from cifereca.gui.facet_value_controller import search_facet
         window=NS(search_controls=NS(set_state=Mock()),navigate=Mock(),run_search=Mock())
-        ns={'__package__':'cifereca.gui'};exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),str(source),'exec'),ns)
-        ns['_search_facet'](window,'author','Auteur : Harari, Yuval Noah',NS(state=lambda:State()))
+        search_facet(window,'author','Auteur : Harari, Yuval Noah',NS(state=lambda:State()))
         state=window.search_controls.set_state.call_args.args[0]
         self.assertEqual((state.text,state.field),('Harari Yuval Noah','author'))
         window.run_search.assert_called_once_with(False)

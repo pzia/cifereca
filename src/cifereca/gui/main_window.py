@@ -45,6 +45,7 @@ from . import history_language_projection
 from . import known_languages_controller
 from . import adept_loan_choice_controller
 from . import sync_issues_dialog_controller
+from . import facet_value_controller
 from . import shell_shortcut_controller
 from . import identity_activation_controller
 from . import identity_view_controller
@@ -1295,21 +1296,7 @@ class MainWindow(Adw.ApplicationWindow):
         return acsm_import_chooser_controller.choose_acsm(self, Gtk=Gtk)
 
     def _search_facet(self, field, text, controls):
-        from .query_model import apply_facet
-        state = controls.state()
-        updated = apply_facet(state, field, text)
-        # Detail facets are an explicit action: update controls silently, then
-        # refresh the owning context exactly once. This also re-runs the action
-        # when the selected facet already matches the current filter.
-        library_controls = getattr(self, 'library_controls', None)
-        target_controls = library_controls if controls is library_controls else self.search_controls
-        target_controls.set_state(updated, notify=False)
-        if target_controls is library_controls:
-            self.navigate('library')
-            self._render_library()
-            return
-        self.navigate("search")
-        self.run_search(False)
+        return facet_value_controller.search_facet(self, field, text, controls)
 
     def _facet_values(self, item):
         from .book_facets import facets_for_book
@@ -1317,46 +1304,14 @@ class MainWindow(Adw.ApplicationWindow):
 
 
     def _facet_value_button(self, label, field, value, controls):
-        caption = str(label or value or "").strip()
-        button = Gtk.Button()
-        button.add_css_class("flat")
-        button.add_css_class("facet-value")
-        text = Gtk.Label(label=caption, xalign=0)
-        text.set_ellipsize(Pango.EllipsizeMode.END)
-        text.set_max_width_chars(28)
-        button.set_child(text)
-        tooltip = f"Filtrer par {caption}"
-        button.set_tooltip_text(tooltip)
-        try:
-            button.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
-        except (AttributeError, TypeError):
-            pass
-        button._cifereca_facet_field = str(field)
-        button._cifereca_facet_value = value
-        button.connect(
-            "clicked",
-            lambda _button, f=field, v=value: self._search_facet(f, v, controls),
+        return facet_value_controller.facet_value_button(
+            self, label, field, value, controls, Gtk=Gtk, Pango=Pango,
         )
-        return button
-
 
     def _facet_value_group(self, choices, field, controls):
-        group = Gtk.FlowBox()
-        group.set_selection_mode(Gtk.SelectionMode.NONE)
-        group.set_halign(Gtk.Align.START)
-        group.set_valign(Gtk.Align.CENTER)
-        group.set_min_children_per_line(1)
-        group.set_max_children_per_line(4)
-        group.set_column_spacing(4)
-        group.set_row_spacing(4)
-        seen = set()
-        for label, value in choices:
-            key = (str(label or "").strip().casefold(), str(value or ""))
-            if not key[0] or key in seen:
-                continue
-            seen.add(key)
-            group.insert(self._facet_value_button(label, field, value, controls), -1)
-        return group
+        return facet_value_controller.facet_value_group(
+            self, choices, field, controls, Gtk=Gtk,
+        )
 
     def _attach_row_facets(self, rows, objects, controls):
         from .book_facets import facets_for_book, project_list_facets
