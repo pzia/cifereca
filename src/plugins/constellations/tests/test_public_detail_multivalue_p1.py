@@ -87,3 +87,40 @@ def test_whitespace_and_missing_values_are_not_exported_as_fake_authors():
         "Alice", "Bob", "paris",
     ]
     assert detail.subtitle == "Alice, Bob"
+
+
+def test_merged_constellation_deduplicates_identical_provenance_in_order():
+    """A graph can attest one provider through multiple edges, not two sources."""
+    node = NS(
+        book=BookRef("edition-a", "Title", ("Alice", "Alice", "Bob")),
+        sources=("BnF", "Paris", "BnF", "Kobo", "Paris", "Bearer SECRET\u202e"),
+        availability=("externe",),
+        url="",
+    )
+    detail = constellation_detail_presentation(node)
+    sections = {section.id: section for section in detail.sections}
+    assert [(f.id, f.value, f.kind) for f in sections["provenance"].fields] == [
+        ("source-0", "BnF", "copy"),
+        ("source-1", "Paris", "copy"),
+        ("source-2", "Kobo", "copy"),
+    ]
+    # Distinct author entries can denote distinct credits; this patch does
+    # not change their meaning or graph/book identity.
+    assert [f.value for f in sections["bibliography"].fields] == [
+        "Alice", "Alice", "Bob",
+    ]
+    assert detail.actions == () and detail.links == ()
+    assert "SECRET" not in str(detail)
+
+
+def test_repeated_only_source_keeps_single_provenance_section_field():
+    detail = constellation_detail_presentation(NS(
+        book=BookRef("edition-b", "Title", ()),
+        sources=("Paris", "Paris", "Paris"),
+        availability=(), url="",
+    ))
+    assert len(detail.sections) == 1
+    assert detail.sections[0].id == "provenance"
+    assert [(f.id, f.value) for f in detail.sections[0].fields] == [
+        ("source-0", "Paris"),
+    ]

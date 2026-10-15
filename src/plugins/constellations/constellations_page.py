@@ -145,7 +145,10 @@ def constellation_detail_presentation(node) -> UiBookDetailPresentation:
     contributes neither an acquisition action nor proof of entitlement.
     """
     authors = _public_detail_values(node.book.authors)
-    sources = _public_detail_values(node.sources)
+    # A merged constellation may repeat the same attested provider. Keep
+    # provenance values independent, but show each public source only once,
+    # in its original order (as already done in Recommendations).
+    sources = tuple(dict.fromkeys(_public_detail_values(node.sources)))
     sections = []
     if authors:
         sections.append(DetailSection(

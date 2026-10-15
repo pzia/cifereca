@@ -84,5 +84,7 @@ def test_extremely_long_source_list_is_bounded_not_exhausted():
         authors=(), sources=Endless(), availability=(),
     ))
     source_section = next(s for s in detail.sections if s.id == "provenance")
-    assert len(source_section.fields) == 32
-    assert all(field.value == "Source" for field in source_section.fields)
+    # The bounded sample contains repeated evidence from one provider:
+    # do not turn identical provenance into 32 separate copyable sources.
+    assert len(source_section.fields) == 1
+    assert source_section.fields[0].value == "Source"
