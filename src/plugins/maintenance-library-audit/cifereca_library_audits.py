@@ -1081,6 +1081,11 @@ class NamingRepairTool(_ReadOnlyTool):
             or plan.tool_id != self.info.id
             or type(facts) is not dict
         )
+        # A wrong-shaped facts object may not implement get(). Keep the
+        # invalid_plan marker, but inspect a harmless empty dictionary while
+        # building the same expurgated failure result.
+        if type(facts) is not dict:
+            facts = {}
         raw_ids = facts.get("placement_ids", ()) if type(facts) is dict else ()
         invalid_plan = invalid_plan or type(raw_ids) not in (tuple, list)
         if not invalid_plan and len(raw_ids) > 100_000:
