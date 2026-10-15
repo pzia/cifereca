@@ -353,24 +353,44 @@ class NumilogSession(ProviderSession):
                 if mime == 'text/html':
                     html = self._small(r).decode('utf-8-sig',errors='replace')
                     kind = html_response_kind(html)
+                    # Only the endpoint *category*, never signed query/HTML,
+                    # belongs in the report. This distinguishes readBook from
+                    # other intermediates without disclosing a customer's URL.
+                    page_path = urlsplit(str(r.url)).path.lower()
+                    page_kind = (
+                        'readbook' if page_path == '/pages/compte/readbook.ashx'
+                        else 'meslivres' if page_path == '/pages/compte/meslivres.aspx'
+                        else 'delivery_intermediate'
+                    )
                     if kind == 'login':
-                        self._diag('livraison HTML',phase='download',kind='login',result='session_expired')
+                        self._diag('livraison HTML',phase='download',
+                                   page_kind=page_kind,kind='login',result='session_expired')
                         self.connected = False
                         raise ProviderError('Numilog : session de connexion expirée ; reconnecter le compte')
                     if kind == 'error':
-                        self._diag('livraison HTML',phase='download',kind='error',result='html_error')
+                        self._diag('livraison HTML',phase='download',
+                                   page_kind=page_kind,kind='error',result='html_error')
                         raise ProviderError('Numilog : page d’erreur reçue au lieu du fichier attendu')
+                    evidence = {}
                     try:
-                        url = delivery_url(html,str(r.url),allowed_origins=self.allowed_origins)
+                        url = delivery_url(
+                            html,str(r.url),allowed_origins=self.allowed_origins,
+                            evidence=evidence,
+                        )
                     except DeliverySelectionError as exc:
-                        self._diag('livraison HTML',phase='download',kind='intermediate',result=exc.code)
+                        self._diag('livraison HTML',phase='download',
+                                   page_kind=page_kind,kind='intermediate',
+                                   result=exc.code,**evidence)
                         if exc.code == 'ambiguous':
                             raise ProviderError('Numilog : plusieurs liens de livraison ; téléchargement arrêté') from None
                         raise ProviderError('Numilog : lien de livraison absent ; reconnecter le compte ou signaler la page modifiée') from None
                     except ParseError:
-                        self._diag('livraison HTML',phase='download',kind='invalid',result='invalid_structure')
+                        self._diag('livraison HTML',phase='download',
+                                   page_kind=page_kind,kind='invalid',result='invalid_structure')
                         raise ProviderError('Numilog : structure HTML de livraison inattendue') from None
-                    self._diag('livraison HTML',phase='download',kind='intermediate',result='single_allowed_candidate')
+                    self._diag('livraison HTML',phase='download',
+                               page_kind=page_kind,kind='intermediate',
+                               result='single_allowed_candidate',**evidence)
                     continue
                 if mime not in {'application/epub+zip','application/octet-stream','application/zip',
                         'application/vnd.adobe.adept+xml','application/xml','text/xml'}:
