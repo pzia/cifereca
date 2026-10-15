@@ -6,6 +6,15 @@ from pathlib import Path
 
 LLM = ("llm-settings-1366", "llm-settings-1600")
 MAINT = ("maintenance-tools-1366", "maintenance-tools-1600")
+# P0 source operations affect the real Synchronisation page even when no
+# GTK module changes. Baselines cover source rows, exact account targeting,
+# preview/audit gating and independent inventory/acquisition feedback.
+SYNC_CORE = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
+SYNC_PRODUCERS = frozenset((
+    "src/cifereca/brokers.py",
+    "src/cifereca/core/source_materialization.py",
+    "src/cifereca/core/sync_coordination.py",
+))
 BOOK_DETAIL = ("book-detail-1366", "book-detail-1600")
 CORE = ("search-filter-p0",) + BOOK_DETAIL + ("mainwindow-baseline-1366",
         "mainwindow-baseline-1600", "startup", "core-navigation") + LLM + MAINT
@@ -105,6 +114,8 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
         elif path.startswith(("src/plugins/youth-catalog/", "src/plugins/youth-source-",
                               "simulation/youth_sources/", "simulation/milan/")):
             selected.update(YOUTH)
+        elif path in SYNC_PRODUCERS:
+            selected.update(SYNC_CORE)
         elif path.startswith("src/cifereca/builtin_ui/"):
             selected.update(SHELL)
         elif path == "src/cifereca/gui/main_window.py":

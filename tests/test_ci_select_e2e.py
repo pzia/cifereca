@@ -25,6 +25,21 @@ class SelectionTests(unittest.TestCase):
             self.assertEqual(mod.select([path]), mod.LLM, path)
         self.assertTrue(set(mod.LLM).issubset(set(mod.MAINWINDOW)))
 
+    def test_p0_sync_core_changes_select_both_real_source_gtk_baselines(self):
+        for path in (
+            "src/cifereca/brokers.py",
+            "src/cifereca/core/source_materialization.py",
+            "src/cifereca/core/sync_coordination.py",
+        ):
+            self.assertEqual(mod.select([path]), mod.SYNC_CORE, path)
+        self.assertEqual(
+            set(mod.select([
+                "src/cifereca/brokers.py",
+                "src/cifereca/gui/sync_controller.py",
+            ])),
+            set(mod.ALL),
+        )  # Unknown direct GUI owner remains fail-closed to full E2E.
+
     def test_1358_maintenance_safety_selected_at_both_widths(self):
         for path in ("src/cifereca/gui/maintenance_tools.py", "e2e/maintenance_tools_probe.py"):
             self.assertEqual(mod.select([path]), mod.MAINT)
