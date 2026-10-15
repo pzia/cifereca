@@ -32,6 +32,11 @@ def _host(*, current="bob", known=("bob",), route="library"):
         _render_library=lambda: calls.append(("render", None)),
         _update_navigation_buttons=lambda: calls.append(("buttons", None)),
     )
+    def show(route):
+        calls.append(("route", route))
+        if route == "library":
+            host._render_library()
+    host._show_route = show
     def activate(identity_id):
         calls.append(("identity", identity_id))
         service.current_identity = identities[identity_id]
