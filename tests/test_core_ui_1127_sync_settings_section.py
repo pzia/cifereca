@@ -59,7 +59,7 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert group.title == "Kobo — acquisition locale des fichiers"
     assert len(group.children) == 6
     assert [row.title for row in group.children] == [
-        "Autoriser les téléchargements Kobo au démarrage",
+        "Ancienne préférence globale Kobo · lecture seule",
         "Synchronisation Kobo — comptes et aperçus",
         "Option risquée : acquisitions avec fichiers locaux non rapprochés",
         "Sous-répertoire/override Kobo (vide = bibliothèque locale)",
@@ -69,6 +69,8 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert len(downloads.children) == 1
     assert downloads.children[0].title == "Bibliothèque locale possédée par cifereca"
     assert controls.backup_switch.active is False
+    assert controls.backup_switch.sensitive is False
+    assert "sans effet" in group.children[0].subtitle
     assert controls.run_backup_now.label == "Examiner les comptes Kobo…"
     assert controls.run_backup_now.sensitive is True
     assert "Acquisition au démarrage désactivée" in controls.backup_status.subtitle
@@ -91,6 +93,8 @@ def test_saved_values_match_old_view_and_unknown_vault_profile_falls_back():
     }
     controls, _, _ = _build(values)
     assert controls.backup_switch.active is True
+    assert controls.backup_switch.sensitive is False
+    assert "sans effet" in controls.backup_status.subtitle or "inactive" in controls.backup_status.subtitle
     assert controls.run_backup_now.sensitive is True
     assert "au démarrage" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is True
