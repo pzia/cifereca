@@ -29,7 +29,7 @@ def test_homonymous_public_catalogues_are_visibly_distinct():
     assert sync_source_identity_label(gallica) == "Catalogue public · gallica"
     for source in (gutenberg, gallica):
         detail = sync_source_presentation(source)
-        assert detail.action_label.endswith(sync_source_identity_label(source))
+        assert detail.action_label == "Synchroniser Catalogue public"
         assert "Synchronisation : Jamais synchronisée" in detail.summary
 
 
@@ -44,7 +44,8 @@ def test_provider_is_strict_public_slug_not_arbitrary_sensitive_data(invalid):
     title = sync_source_identity_label(source)
     assert title == "Catalogue public · fournisseur inconnu"
     assert "PRIVATE_ACCOUNT" not in title
-    assert str(invalid) not in title if invalid else True
+    if invalid:
+        assert str(invalid) not in title
 
 
 def test_private_account_and_source_ids_are_never_displayed():
@@ -67,7 +68,7 @@ def test_disabled_public_catalogue_has_clear_reason_and_provider():
     assert presentation.action_enabled is False
     assert presentation.sync_label == "Non prise en charge"
     assert "ne fournit pas de synchronisation" in presentation.summary
-    assert "gallica" in presentation.action_label
+    assert "gallica" in sync_source_identity_label(source)
 
 
 def test_gtk_sync_row_and_worker_use_same_safe_identity_projection():
