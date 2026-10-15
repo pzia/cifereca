@@ -342,3 +342,46 @@ def test_old_kobo_preview_button_after_refresh_is_inert():
     window._refresh_sync_page()
     old.click()
     assert window.runner.tasks == []
+
+
+def test_identity_a_b_a_generation_cycle_revokes_prior_scope():
+    token = object()
+    window = NS(
+        _closed=False, _sync_page_token=token,
+        _identity_context_generation=4,
+        service=NS(current_identity=NS(identity_id="alice")),
+    )
+    old = capture_sync_action_scope(window, page_token=token)
+    assert sync_action_scope_current(window, old)
+    window._identity_context_generation += 1
+    window.service.current_identity = NS(identity_id="bob")
+    window._identity_context_generation += 1
+    window.service.current_identity = NS(identity_id="alice")
+    assert not sync_action_scope_current(window, old)
+    fresh = capture_sync_action_scope(window, page_token=token)
+    assert fresh.identity_id == old.identity_id
+    assert sync_action_scope_current(window, fresh)
+
+
+def test_queued_source_work_rejects_identity_a_b_a_even_when_id_repeats():
+    window, broker, calls, build, page = _fixture()
+    window._identity_context_generation = 11
+    # Captured after generation is added, just like MainWindow.
+    window._refresh_sync_page()
+    _source_row(window).suffixes[1].click()
+    task = window.runner.tasks[0]
+    window._identity_context_generation = 13
+    assert task.work() is None
+    task.done(None)
+    assert not any(name == "sync-source" for name, *rest in calls)
+    assert not any(name == "refresh-library" for name, *rest in calls)
+
+
+def test_queued_global_sync_rejects_aba_before_broker_execution():
+    window, broker, calls, build, page = _fixture()
+    window._identity_context_generation = 11
+    window._sync_all_button.click()
+    task = window.runner.tasks[0]
+    window._identity_context_generation = 13
+    assert task.work() is None
+    assert not any(name == "sync-all" for name, *rest in calls)
