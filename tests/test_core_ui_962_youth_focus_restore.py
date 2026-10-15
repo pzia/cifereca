@@ -50,9 +50,11 @@ class Stack:
         return self.visible
 
     def set_visible_child_name(self, name):
+        if name != self.visible:
+            # A different visible page may reset GTK focus; selecting the
+            # already visible page is a no-op for keyboard focus.
+            self.window.focus = object()
         self.visible = name
-        # GTK may relocate keyboard focus after changing the visible child.
-        self.window.focus = object()
 
 
 class Header:
@@ -142,3 +144,16 @@ def test_switching_away_from_youth_without_a_focused_button_is_inert():
     host._restoring_navigation = True
     show_route(host, "youth", Gtk=Gtk)
     assert host.get_focus() is not host.button
+
+
+def test_duplicate_show_route_during_back_does_not_replace_restored_action():
+    host = Host()
+    _outbound(host)
+    host._restoring_navigation = True
+    # NavigationState.restore() can call show_route via ListBox.select_row,
+    # then once more explicitly with the same route.
+    show_route(host, "youth", Gtk=Gtk)
+    assert host.get_focus() is host.button
+    show_route(host, "youth", Gtk=Gtk)
+    assert host.get_focus() is host.button
+    assert host.youth.default_focus_calls == 1
