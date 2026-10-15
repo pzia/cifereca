@@ -30,9 +30,11 @@ Ce correctif ne constitue donc pas une preuve de résolution réelle.
    Pendant une acquisition, seuls les champs de livraison correspondant au
    **record_id exact sélectionné** sont décodés ; les autres livres de la même
    page ou des pages suivantes restent un inventaire **sans liens signés
-   en mémoire**. Une fiche avec plusieurs titres ou des répétitions du même
-   `lid`/format, dans une page ou entre pages, est refusée avant tout GET
-   signé. Le mode inventaire conserve sa déduplication historique.
+   en mémoire**. Une fiche avec plusieurs titres ou une répétition du même
+   `lid`/format **pour le livre ciblé**, dans une page ou entre pages, est
+   refusée avant tout GET signé. Les répétitions d'autres livres ne bloquent
+   pas l'acquisition de la fiche choisie ; le mode inventaire conserve sa
+   déduplication historique.
 4. En présence d'une unique preuve scoped à fraîcheur de l'action : seul un
    lien `HTTPS entrepot2r.numilog.com:443` de chemin exact
    `/fulfillment/URLLink.acsm` est accepté. Aucun paramètre de signature
