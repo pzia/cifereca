@@ -1309,6 +1309,19 @@ def main() -> int:
                                if row.get_title() == "Téléchargement local · confirmation obligatoire")
         assert "Non préparé" in acquisition_row.get_subtitle()
         assert "aucun fichier téléchargé" in acquisition_row.get_subtitle().lower()
+        # A prior layout put six action buttons on the source ActionRow,
+        # leaving its title one character wide and its height >3700px.
+        # Assert the real allocated height in both GTK viewport widths.
+        kobo_source = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
+        assert 0 < kobo_source.get_height() <= 420, (
+            "Kobo source row vertically collapsed by crowded actions",
+            kobo_source.get_height(),
+        )
+        assert 0 < acquisition_row.get_height() <= 420, (
+            "Kobo confirmation row vertically collapsed by crowded actions",
+            acquisition_row.get_height(),
+        )
+        report["checks"]["P0_kobo_acquisition_controls_keep_source_row_compact"] = True
         report["checks"]["P0_kobo_acquisition_off_by_default_on_sync_page"] = True
         for provider in ("gutenberg", "gallica"):
             row = next(row for row in rows if row.get_title() == f"Catalogue public · {provider}")
