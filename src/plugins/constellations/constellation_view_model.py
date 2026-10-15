@@ -3,6 +3,7 @@ from dataclasses import dataclass, asdict, is_dataclass, replace
 from collections.abc import Mapping
 from ipaddress import ip_address
 import re
+from unicodedata import category
 from urllib.parse import unquote, urlsplit
 from cifereca.plugin_api import BookRef, book_ref_from_row
 from constellations import ConstellationGraph, normalize_book
@@ -18,6 +19,18 @@ def reason_text(reason):
     return REASONS.get(kind, kind) + ' : ' + value
 
 
+def _hidden_url_controls(text: str) -> bool:
+    """Reject invisible format/bidi controls before a URL reaches public GTK.
+
+    Percent-encoded URL paths can decode once or multiple times in a browser;
+    validate each decoded layer without rewriting the original URL.
+    """
+    return any(
+        category(char) in {"Cc", "Cf", "Cs"} or char.isspace()
+        for char in text
+    )
+
+
 def public_url(value):
     """Only non-sensitive, externally reachable bibliographic notice URLs.
 
@@ -26,7 +39,7 @@ def public_url(value):
     """
     if type(value) is not str or not value or len(value) > 2048:
         return ''
-    if any(ord(char) < 33 or ord(char) == 127 for char in value):
+    if _hidden_url_controls(value):
         return ''
     if any(char in value for char in '<>\\'):
         return ''
@@ -78,7 +91,7 @@ def public_url(value):
     }
     path = parsed.path
     for _ in range(4):
-        if any(ord(char) < 32 or ord(char) == 127 for char in path):
+        if _hidden_url_controls(path):
             return ''
         segments = (part.casefold() for part in path.split('/') if part)
         if any(
