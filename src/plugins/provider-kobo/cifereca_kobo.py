@@ -133,6 +133,26 @@ def _public_kobo_rejections(rows: Any) -> list[dict[str, str]]:
     return published
 
 
+def _safe_cover_count(items: Any, cover_url: Any) -> int:
+    """Advisory thumbnail statistics cannot invalidate a rights inventory.
+
+    Each Vault row is independent. Malformed nested cover fields or a custom
+    adapter raising from its extractor must not abort all other account rows.
+    Only the integer count is logged; never the private provider payload.
+    """
+    counted = 0
+    for row in items:
+        if type(row) is not dict:
+            continue
+        try:
+            cover = cover_url(row)
+        except Exception:
+            continue
+        if type(cover) is str and cover:
+            counted += 1
+    return counted
+
+
 DESCRIPTOR = ProviderDescriptor(
     id="kobo",
     display_name="Kobo",
@@ -462,7 +482,7 @@ class KoboSession(ProviderSession):
         duplicated_products = tainted_products | {
             product for product, count in product_counts.items() if count > 1
         }
-        _cover_count = sum(1 for x in items if isinstance(x, dict) and self.cover_url(x))
+        _cover_count = _safe_cover_count(items, self.cover_url)
         # Never emit a credential/account, product, URL, or arbitrary Vault JSON
         # key in a trace: the list of keys itself may contain private data.
         _TRACE_LOG.debug(
@@ -499,7 +519,10 @@ class KoboSession(ProviderSession):
                 continue
             try:
                 rows.append(self.normalize_item(raw, default_collection="library"))
-            except ProviderError:
+            except Exception:
+                # Normalization also touches provider-controlled scalar fields
+                # and cover containers: one corrupt row must not erase the
+                # remaining authenticated inventory or reveal exception text.
                 self.last_library_rejections.append({
                     "type": "ProviderError", "reason": "normalization_error",
                 })
@@ -629,7 +652,7 @@ class KoboSession(ProviderSession):
                 getattr(self, "_cifereca_delegation_forbidden", False) is True
             ),
         )
-        _cover_count = sum(1 for x in items if isinstance(x, dict) and self.cover_url(x))
+        _cover_count = _safe_cover_count(items, self.cover_url)
         _TRACE_LOG.debug(
             "TRACE kobo covers source=backup items=%s with_cover=%s missing=%s",
             len(items), _cover_count, len(items) - _cover_count,
