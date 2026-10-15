@@ -1325,16 +1325,24 @@ class NamingRepairTool(_ReadOnlyTool):
             )
             control.report(current=total, total=total, message=status)
         else:
-            message = (
-                "Renormalisation terminée : aucun placement"
-                if not incomplete
-                else (
+            if plan_counts["skipped"]:
+                message = (
                     f"Renormalisation incomplète : "
                     f"{preview_failures} proposition(s) indisponible(s), "
                     f"{plan_counts['read_failures']} artefact(s) non inspecté(s), "
                     f"{plan_counts['skipped']} entrée(s) ignorée(s)"
                 )
-            )
+            else:
+                # Preserve established feedback for plans containing only
+                # preview policy failures or library.read failures.
+                message = (
+                    f"Renormalisation : {preview_failures} placement(s) sans proposition"
+                    if preview_failures else (
+                        f"Renormalisation incomplète : {plan_counts['read_failures']} artefact(s) non inspecté(s)"
+                        if plan_counts["read_failures"] else
+                        "Renormalisation terminée : aucun placement"
+                    )
+                )
             control.report(message=message)
         facts = {"planned": len(ids), "failures": failures}
         if preview_failures:
