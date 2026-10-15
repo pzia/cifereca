@@ -17,7 +17,7 @@ from .action_widgets import AdaptiveActionBar, add_css, clear_box
 from .sync_view import (
     sync_identity_action_label, sync_source_presentation,
     sync_source_row_labels,
-    sync_local_preflight_presentation,
+    sync_local_preflight_presentation, sync_local_reconciliation_presentation,
 )
 from .task_runner import TaskPriority
 from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
@@ -261,6 +261,69 @@ def _refresh_sync_page(self) -> None:
             preflight.connect("clicked", preview_one)
             group.add(row)
             group.add(preview_row)
+
+            # #1345/#1347: explicit, offline, identity-scoped SHA audit.
+            # Unlike a backup or source refresh, it does not require a live
+            # Kobo session, online access or enabled acquisition settings.
+            # The Core broker resolves the credential, never GTK.
+            audit_supported = callable(
+                getattr(broker, "audit_local_reconciliation", None)
+            )
+            audit_button = self.action_button(
+                "Vérifier les fichiers…", "document-properties-symbolic",
+            )
+            audit_button.set_sensitive(audit_supported)
+            audit_button.set_tooltip_text(
+                "Audit SHA local de ce compte (lecture seule, peut être long)"
+                if audit_supported else "Audit local non pris en charge"
+            )
+            row.add_suffix(audit_button)
+            audit_row = Adw.ActionRow()
+            audit_row.set_title("Vérification des fichiers et rapprochements")
+            audit_row.set_subtitle(
+                "Non consulté · aucun téléchargement, déplacement ou suppression"
+            )
+            audit_row.set_subtitle_lines(0)
+
+            def audit_one(
+                button, sid=source.source_id, identity_id=source.identity_id,
+                version=preview_generation, output=audit_row,
+            ):
+                if (
+                    not sync_action_scope_current(self, scope)
+                    or getattr(self.service.current_identity, "identity_id", None)
+                       != identity_id
+                ):
+                    return
+                output.set_subtitle("Inspection locale en cours (lecture seule)…")
+                def still_current():
+                    return (
+                        not getattr(self, "_closed", False)
+                        and getattr(self, "_sync_preview_generation", None) == version
+                        and getattr(self.service.current_identity, "identity_id", None)
+                            == identity_id
+                        and sync_action_scope_current(self, scope)
+                    )
+                def completed(result):
+                    if still_current():
+                        output.set_subtitle(
+                            sync_local_reconciliation_presentation(result)
+                        )
+                def failed(_error):
+                    if still_current():
+                        # Errors may carry absolute paths, rights and secrets.
+                        output.set_subtitle(
+                            "Audit local indisponible. Aucun fichier modifié."
+                        )
+                self.runner.submit(
+                    "Audit local Kobo…",
+                    lambda: broker.audit_local_reconciliation(sid)
+                    if sync_action_scope_current(self, scope) else None,
+                    completed, failed, control=button,
+                    priority=TaskPriority.USER_ACTION, kind="sync-audit",
+                )
+            audit_button.connect("clicked", audit_one)
+            group.add(audit_row)
         else:
             group.add(row)
 

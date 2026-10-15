@@ -1132,6 +1132,11 @@ def main() -> int:
         override(w.service, "adept_return_status_for_loan", lambda loan: {"status": "no_acquisition"})
         override(w.service, "local_placement_for_source", lambda **kw: None)
         sources = [
+            # Read-only local SHA audit remains available for a disconnected,
+            # disabled Kobo account; no remote provider is installed here.
+            SyncSourceRef("p0-kobo-audit", "camille", "kobo", "fictitious-credential",
+                          "Kobo audit hors ligne", enabled=False,
+                          connected=False, status="failed"),
             SyncSourceRef("p0-partial", "camille", "paris", "fictif-a", "Source partielle fictive",
                           status="partial", last_attempt="2026-10-11T12:00:00+00:00",
                           last_success="2026-10-10T12:00:00+00:00"),
@@ -1143,8 +1148,38 @@ def main() -> int:
             assert identity_id == "camille"
             f["source_queries"].append(identity_id)
             return sources
-        sync_broker = NS(sources=read_sources, synchronize=forbidden,
-                         synchronize_source=forbidden, set_enabled=forbidden)
+        f["audit_calls"] = []
+
+        def audit_local_reconciliation(source_id):
+            assert source_id == "p0-kobo-audit"
+            f["audit_calls"].append(source_id)
+            return NS(
+                ok=True, changed=0,
+                facts={
+                    "phase": "reconcile", "status": "audit_only",
+                    "read_only": True, "offline": True,
+                    "acquisition_authorized": False, "truncated": True,
+                    "counts": {
+                        "backup_rows": 4,
+                        "linked_files_verified": 3,
+                        "unverified_placements": 1,
+                        "missing_or_unlinked": 0,
+                        "stored_hash_mismatch": 1,
+                        "unproven_catalogue_links": 0,
+                        "same_product_different_bytes": 0,
+                        "binary_match_groups": 1,
+                        "active_entitlements_unmaterialized": 2,
+                        "unindexed_regular_file_candidates": 1,
+                        "identity_flat_file_candidates": 0,
+                    },
+                },
+            )
+
+        sync_broker = NS(
+            sources=read_sources, synchronize=forbidden,
+            synchronize_source=forbidden, set_enabled=forbidden,
+            audit_local_reconciliation=audit_local_reconciliation,
+        )
         class FixtureManager:
             active = True
             def broker(self, name):
@@ -1245,6 +1280,48 @@ def main() -> int:
         report["checks"]["P0_sync_real_gtk_partial_preserves_last_success_and_identity"] = True
         report["checks"]["P0_sync_real_gtk_disconnected_source_action_disabled"] = True
         capture("03i-sync-partial-last-success-and-offline-source")
+        kobo = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
+        assert "Connexion : Déconnectée" in kobo.get_subtitle()
+        audit = next(
+            button for button in walk(kobo)
+            if isinstance(button, Gtk.Button)
+            and button.get_tooltip_text() == (
+                "Audit SHA local de ce compte (lecture seule, peut être long)"
+            )
+        )
+        assert audit.get_sensitive() and audit.get_mapped()
+        assert not f["audit_calls"] and not f["mutations"]
+        report["checks"]["P0_kobo_audit_offline_button_no_implicit_scan"] = True
+        # A physical XTEST action is the sole trigger; rendering the row does
+        # not authorize or start any inspection.
+        report["pointer_actions"].append(device[0].click_widget(audit))
+        f["audit_deadline"] = monotonic() + 6
+        later(100, loan_sync_audit_result)
+
+    def loan_sync_audit_result():
+        w = window[0]
+        f = loan_sync_fixture
+        audit_row = next(
+            row for row in walk(w._sync_sources_box)
+            if isinstance(row, Adw.ActionRow)
+            and row.get_title() == "Vérification des fichiers et rapprochements"
+        )
+        subtitle = audit_row.get_subtitle()
+        if "Fichiers locaux vérifiés par SHA : 3" not in subtitle:
+            assert monotonic() < f["audit_deadline"], (
+                "Le résultat GTK de l'audit Kobo n'est pas apparu"
+            )
+            later(100, loan_sync_audit_result)
+            return
+        assert f["audit_calls"] == ["p0-kobo-audit"]
+        assert "groupes de doublons binaires : 1" in subtitle
+        assert "Audit partiel" in subtitle
+        assert "Aucune réconciliation, acquisition ni suppression autorisée" in subtitle
+        assert "fictitious-credential" not in subtitle
+        assert not f["mutations"] and w.service.current_identity.identity_id == "camille"
+        report["checks"]["P0_kobo_audit_real_gtk_explicit_offline_read_only"] = True
+        report["checks"]["P0_kobo_audit_real_gtk_bounded_redacted_partial_result"] = True
+        capture("03j-kobo-offline-explicit-audit")
         cleanup_loan_sync()
         later(100, continue_baseline_settings)
 

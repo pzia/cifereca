@@ -97,6 +97,60 @@ def sync_local_preflight_presentation(result: object) -> str:
         "aucun téléchargement autorisé depuis cet aperçu."
     )
 
+def sync_local_reconciliation_presentation(result: object) -> str:
+    """Safe UI text derived only from fixed, bounded audit counters.
+
+    Never echo a provider failure, persisted path, case payload or SHA. An
+    audit is proof of local bytes only: it grants no acquisition/repair rights.
+    """
+    facts = getattr(result, "facts", None)
+    if not isinstance(facts, Mapping):
+        return "Audit local indisponible. Aucun fichier modifié."
+    status = facts.get("status")
+    if getattr(result, "ok", False) is not True or status != "audit_only":
+        reasons = {
+            "unknown_source": "Source introuvable.",
+            "not_supported": "Audit réservé aux sources Kobo.",
+            "invalid_source": "Liaison identité-compte incohérente.",
+            "ambiguous_source": "Plusieurs identités revendiquent ce compte : audit bloqué.",
+            "audit_unavailable": "Audit local indisponible.",
+        }
+        return (
+            reasons.get(status, "Audit local indisponible.")
+            if type(status) is str else "Audit local indisponible."
+        ) + " Aucun fichier modifié."
+    if (facts.get("read_only") is not True
+            or facts.get("offline") is not True
+            or facts.get("acquisition_authorized") is not False
+            or type(facts.get("truncated")) is not bool):
+        return "Audit local indisponible. Aucun fichier modifié."
+    allowed = (
+        "backup_rows", "linked_files_verified", "unverified_placements",
+        "missing_or_unlinked", "stored_hash_mismatch",
+        "unproven_catalogue_links", "same_product_different_bytes",
+        "binary_match_groups", "active_entitlements_unmaterialized",
+        "unindexed_regular_file_candidates", "identity_flat_file_candidates",
+    )
+    counts = facts.get("counts")
+    if (not isinstance(counts, Mapping)
+            or any(type(counts.get(key)) is not int or
+                   not 0 <= counts[key] <= 1_000_000 for key in allowed)):
+        return "Audit local indisponible. Aucun fichier modifié."
+    completeness = (
+        "Audit partiel : limites d’inspection atteintes."
+        if facts["truncated"] else "Audit terminé dans les limites prévues."
+    )
+    return (
+        f"Fichiers locaux vérifiés par SHA : {counts['linked_files_verified']} · "
+        f"groupes de doublons binaires : {counts['binary_match_groups']} · "
+        f"empreintes divergentes : {counts['stored_hash_mismatch']}.\n"
+        f"Fichiers non indexés candidats : {counts['unindexed_regular_file_candidates']} · "
+        f"placements incertains : {counts['unverified_placements']} · "
+        f"droits sans artefact confirmé : {counts['active_entitlements_unmaterialized']}.\n"
+        f"{completeness} Aucune réconciliation, acquisition ni suppression autorisée."
+    )
+
+
 def _public_sync_provider_slug(source: object) -> str:
     """Bound public plugin ID; never render private connection coordinates."""
     provider = getattr(source, "provider_id", "")
