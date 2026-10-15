@@ -119,3 +119,29 @@ def test_another_identity_remains_outside_its_scoped_cleanup_plan():
     )
     assert plan.facts["pairs"] == (("b-1-duplicate", "b-0-keep"),)
     assert plan.changes == ("Supprimer le doublon n°1",)
+
+
+def test_poisoned_placement_id_does_not_discard_healthy_sibling_pair():
+    class PoisonedPlacement:
+        kind = "library"
+        identity_id = "current"
+        artifact_id = A
+
+        @property
+        def placement_id(self):
+            raise RuntimeError("Bearer PRIVATE_ACCOUNT /home/PRIVATE_BOOK")
+
+    snapshot = view(A, prefix="a")
+    snapshot.placements = (
+        snapshot.placements[0], PoisonedPlacement(), snapshot.placements[1],
+    )
+    context = Context({A: snapshot})
+    plan = DuplicateCleanupTool().activate(context).plan(
+        MaintenanceContext(scope="library", identity_id="current")
+    )
+    assert plan.facts["pairs"] == (("a-1-duplicate", "a-0-keep"),)
+    assert plan.facts["read_failures"] == 1
+    assert len(plan.changes) == 1
+    exposed = plan.summary + " ".join(plan.warnings + plan.changes)
+    for secret in ("PRIVATE", "Bearer", "/home/"):
+        assert secret not in exposed
