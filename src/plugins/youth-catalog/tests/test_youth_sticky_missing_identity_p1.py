@@ -59,6 +59,7 @@ def test_new_explicit_profile_choice_clears_missing_requirement():
 def test_initially_empty_youth_view_may_use_first_added_profile():
     new = []
     view, calls = make_view([], new, selected=0xFFFFFFFF)
+    view._profile_selection_required = False  # Headless __new__ omits __init__.
     new[:] = [{"identity_id": "bob"}]
     view.reload_identities()
     assert view.identity_id() == "bob"
