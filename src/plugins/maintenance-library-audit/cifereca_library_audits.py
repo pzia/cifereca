@@ -808,11 +808,49 @@ class IntegrityAuditTool(_ReadOnlyTool):
         )
 
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
-        candidates=tuple(plan.facts.get("candidates",()))
-        total=len(candidates)
-        warnings=list(plan.warnings)
-        read_failures=int(plan.facts.get("read_failures") or 0)
-        reference_failures=int(plan.facts.get("reference_failures") or 0)
+        # Cached or caller-supplied maintenance plans are untrusted at the
+        # execution boundary. In particular, never echo plan.warnings into
+        # the operation row: they may contain local paths or credentials.
+        facts = plan.facts
+        valid = plan.tool_id == self.info.id and type(facts) is dict
+        if valid:
+            raw_candidates = facts.get("candidates", ())
+            valid = type(raw_candidates) in (tuple, list) and len(raw_candidates) <= 100_000
+        counts = {}
+        if valid:
+            for name in ("missing_path", "read_failures", "reference_failures"):
+                value = facts.get(name, 0)
+                if type(value) is not int or not 0 <= value <= 1_000_000:
+                    valid = False
+                    break
+                counts[name] = value
+        if not valid:
+            control.check_cancelled()
+            control.report(message="Audit d’intégrité impossible : plan invalide")
+            control.check_cancelled()
+            return MaintenanceResult(
+                ok=False, changed=0,
+                summary="Audit d’intégrité non vérifiable : plan invalide.",
+                warnings=("Plan d’intégrité invalide : relancez l’analyse.",),
+                facts={"invalid_plan": 1},
+            )
+        candidates = tuple(raw_candidates)
+        total = len(candidates)
+        read_failures = counts["read_failures"]
+        reference_failures = counts["reference_failures"]
+        warnings = []
+        if counts["missing_path"]:
+            warnings.append(
+                f'{counts["missing_path"]} entrée(s) locale(s) sans chemin observable.'
+            )
+        if read_failures:
+            warnings.append(
+                f"{read_failures} artefact(s) sans métadonnées de référence : broker library.read en erreur."
+            )
+        if reference_failures:
+            warnings.append(
+                f"{reference_failures} référence(s) d’intégrité invalide(s) : certains contrôles indisponibles."
+            )
         invalid=0
         missing=0
         by_issue={}
@@ -832,38 +870,40 @@ class IntegrityAuditTool(_ReadOnlyTool):
             if not isinstance(row, Mapping):
                 issues = ("reference_invalid",)
             else:
-                raw_size = row.get("expected_size")
-                if type(raw_size) is int and raw_size >= 0:
-                    size = raw_size
-                elif raw_size is None:
-                    size = 0
-                elif (
-                    type(raw_size) is str and 1 <= len(raw_size) <= 20
-                    and raw_size.isascii() and raw_size.isdecimal()
-                ):
-                    size = int(raw_size)
-                else:
-                    size = None
-                path = row.get("path")
-                fmt = row.get("format")
-                digest = row.get("expected_sha256")
-                if (
-                    size is None or not isinstance(path, (str, Path))
-                    or not str(path).strip()
-                    or not isinstance(fmt, str)
-                    or not isinstance(digest, str)
-                ):
-                    issues = ("reference_invalid",)
-                else:
-                    try:
+                try:
+                    # Mapping.get(), str() and path objects are not trusted:
+                    # a poisoned restored row must fail only its own entry.
+                    raw_size = row.get("expected_size")
+                    if type(raw_size) is int and raw_size >= 0:
+                        size = raw_size
+                    elif raw_size is None:
+                        size = 0
+                    elif (
+                        type(raw_size) is str and 1 <= len(raw_size) <= 20
+                        and raw_size.isascii() and raw_size.isdecimal()
+                    ):
+                        size = int(raw_size)
+                    else:
+                        size = None
+                    path = row.get("path")
+                    fmt = row.get("format")
+                    digest = row.get("expected_sha256")
+                    if (
+                        size is None or not isinstance(path, (str, Path))
+                        or not str(path).strip()
+                        or not isinstance(fmt, str)
+                        or not isinstance(digest, str)
+                    ):
+                        issues = ("reference_invalid",)
+                    else:
                         issues = _file_integrity_issues(
                             path, fmt, expected_size=size,
                             expected_sha256=digest,
                         )
-                    except (OSError, ValueError, TypeError, OverflowError):
-                        # Treat a single corrupted candidate as an invalid
-                        # reference; never surface its private exception text.
-                        issues = ("reference_invalid",)
+                except Exception:
+                    # No provider exception text/class crosses the diagnostic
+                    # boundary, nor can it abort the rest of this audit batch.
+                    issues = ("reference_invalid",)
             if issues:
                 invalid += 1
                 if "missing" in issues: missing += 1
