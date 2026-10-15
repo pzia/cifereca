@@ -89,20 +89,19 @@ def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None=None, *
 
 
 def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
-    """Passive, safe reason for a Kobo auto-backup decision.
+    """Passive decision: only explicit *source* opt-ins permit acquisition.
 
-    No provider calls: inspect only persisted flag, cached session capabilities,
-    configured account switches, and the existing cache freshness marker.
-    Never expose identity, credential, account, product, title, URL or path.
+    Historical global kobo_backup.enabled remains diagnostic/rollback data,
+    never an authorization to download. Deep inventory scanning cannot
+    silently change an acquisition policy. No provider calls here.
     """
-    enabled = bool(self.kobo_backup_enabled())
+    from .source_materialization_schedule import (
+        kobo_on_start_sessions, on_start_due,
+    )
+    legacy_enabled = self.kobo_backup_enabled() is True
     kobo = [s for s in self._sessions.values() if s.provider_id == "kobo"]
     connected = [s for s in kobo if s.connected]
     capable = [s for s in connected if getattr(s.capabilities, "backup", False)]
-    # Credentials can be shared by several distinct accounts/identities.
-    # A session is eligible only when a configured account is enabled and
-    # belongs to that exact provider/credential pair. Count each account
-    # once, not every cached session or an unrelated provider's switch.
     eligible_accounts = [
         a for a in self.accounts
         if a.provider_id == "kobo"
@@ -113,7 +112,12 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         s for s in capable
         if any(a.credential_id == s.credential_id for a in eligible_accounts)
     ]
-    if not enabled:
+    scheduled = kobo_on_start_sessions(self)
+    scheduled_credentials = {s.credential_id for s in scheduled}
+    scheduled_accounts = [
+        a for a in eligible_accounts if a.credential_id in scheduled_credentials
+    ]
+    if not legacy_enabled and not scheduled:
         reason = "disabled"
     elif not connected:
         reason = "no_session"
@@ -121,12 +125,13 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         reason = "capability_unavailable"
     elif not eligible:
         reason = "source_disabled"
-    elif deep or self._kobo_backup_due():
+    elif not scheduled:
+        reason = "manual_only"
+    elif any(on_start_due(self, account) for account in scheduled_accounts):
         reason = "started"
     else:
         reason = "fresh_cache"
-    # Age alone communicates freshness; avoid exposing a user-specific
-    # account identifier, timestamp string or private storage metadata.
+    # Only age/counts, never user/account identifiers, file paths or tokens.
     raw_last = self.storage.metadata_get("kobo_backup_last_success_at")
     try:
         last = int(raw_last)
@@ -135,10 +140,11 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     except (TypeError, ValueError, OverflowError):
         last_success_age_minutes = None
     return {
-        "status": reason, "persisted_enabled": enabled,
+        "status": reason, "persisted_enabled": legacy_enabled,
         "configured_kobo": len(kobo), "connected_kobo": len(connected),
         "eligible_kobo": len(eligible),
         "eligible_kobo_bindings": len(eligible_accounts),
+        "scheduled_kobo": len(scheduled),
         "interval_minutes": self.kobo_backup_interval_minutes(),
         "last_success_age_minutes": last_success_age_minutes,
         "deep": bool(deep),
@@ -301,40 +307,35 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     except Exception as exc:
         logger.warning("TRACE catalog mirror opening error=%s", exc)
 
-    # Kobo owned sync is one global batch because the existing engine already
-    # serializes and reconciles all connected Vault sessions.
-    # Record exactly one sanitized decision per opening, even when skipped.
+    # Inventory/rights above always remain independent of local acquisition.
+    # No legacy global fallback: startup materializes only an explicitly
+    # enabled, unambiguous account under the existing global acquisition lock.
+    from .source_materialization_schedule import (
+        kobo_on_start_sessions, on_start_due, mark_on_start_attempt,
+    )
+    from .kobo_backup import _kobo_checkpoint_key
     kobo_summary: dict[str, Any] | None = None
     kobo_decision = _kobo_opening_decision(self, deep=deep)
-    # Once a v1 per-account checkpoint exists, freshness is isolated per
-    # source. Do not create a competing checkpoint store.
-    eligible_kobo = [
-        session for session in self._sessions.values()
-        if session.connected and session.provider_id == "kobo"
-        and getattr(session.capabilities, "backup", False)
-        and any(account.provider_id == "kobo"
-                and account.credential_id == session.credential_id
-                and self.sync_source_enabled(account)
-                for account in self.accounts)
-    ]
-    from .kobo_backup import _kobo_checkpoint_for, _kobo_checkpoint_key
-    have_per_account_checkpoint = any(
-        _kobo_checkpoint_for(
-            self, self.identity_for_connection("kobo", session.credential_id).identity_id,
-            session.credential_id,
-        ) is not None
-        for session in eligible_kobo
-    )
-    if (not deep and have_per_account_checkpoint and
-            kobo_decision["status"] in {"started", "fresh_cache"}):
-        # Opening-sync already holds the global acquisition lock. Calling the
-        # internal scoped helper must NOT attempt to acquire it a second time.
+    eligible_kobo = kobo_on_start_sessions(self)
+    scheduled_credentials = {session.credential_id for session in eligible_kobo}
+    scheduled_accounts = {
+        account.credential_id: account for account in self.accounts
+        if account.provider_id == "kobo"
+        and account.credential_id in scheduled_credentials
+    }
+    if kobo_decision["status"] in {"started", "fresh_cache"}:
+        # The outer opening-sync already owns the cross-process lock.
+        # The scoped helper is the ONLY automatic materialization path.
         due = [
             session for session in eligible_kobo
-            if self._kobo_backup_account_due(session.credential_id)
+            if on_start_due(self, scheduled_accounts[session.credential_id])
         ]
         executed: list[dict[str, Any]] = []
         for session in due:
+            account = scheduled_accounts[session.credential_id]
+            if not mark_on_start_attempt(self, account):
+                executed.append({"status": "failed", "errors": 1, "sources": []})
+                continue
             try:
                 executed.append(
                     self._sync_kobo_backup_account_locked(
@@ -343,7 +344,8 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 )
             except Exception as exc:
                 logger.warning(
-                    "TRACE kobo account sync error kind=%s", type(exc).__name__,
+                    "TRACE kobo scheduled account sync error kind=%s",
+                    type(exc).__name__,
                 )
                 executed.append({"status": "failed", "errors": 1, "sources": []})
         metric_keys = (
@@ -355,15 +357,14 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             for key in metric_keys
         }
         due_credentials = {session.credential_id for session in due}
-        cached_keys = set()
-        for session in eligible_kobo:
-            if session.credential_id not in due_credentials:
-                identity_id = self.identity_for_connection(
-                    "kobo", session.credential_id,
-                ).identity_id
-                cached_keys.add(
-                    _kobo_checkpoint_key(identity_id, session.credential_id).rsplit(".", 1)[-1]
-                )
+        cached_keys = {
+            _kobo_checkpoint_key(
+                scheduled_accounts[session.credential_id].identity_id,
+                session.credential_id,
+            ).rsplit(".", 1)[-1]
+            for session in eligible_kobo
+            if session.credential_id not in due_credentials
+        }
         cached_sources = [
             row for row in self.kobo_backup_diagnostic().get("sources", ())
             if row.get("source_id") in cached_keys
@@ -394,33 +395,13 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             "sources": sources, "skipped_fresh": not bool(due),
         }
         kobo_decision["status"] = (
-            "partial" if batch_status in {"partial", "attention_required", "fresh_cache_partial", "cancelled"}
-            else "fresh_cache" if batch_status == "fresh_cache" else "started"
+            "partial" if batch_status in {
+                "partial", "attention_required", "fresh_cache_partial", "cancelled",
+            } else "fresh_cache" if batch_status == "fresh_cache" else "started"
         )
-    elif kobo_decision["status"] == "started":
-        try:
-            kobo_summary = self._sync_kobo_backup_locked(progress=progress)
-            if (kobo_summary or {}).get("status") == "error":
-                kobo_decision["status"] = "error"
-            elif (kobo_summary or {}).get("status") in {
-                "partial", "attention_required", "aborted", "failed", "cancelled"
-            } or int((kobo_summary or {}).get("errors", 0) or 0) > 0:
-                kobo_decision["status"] = "partial"
-        except Exception:
-            kobo_summary = {"errors": 1, "status": "error"}
-            kobo_decision["status"] = "error"
-    elif kobo_decision["status"] == "fresh_cache":
-        previous_batch = str(
-            self.storage.metadata_get("kobo_backup_last_batch_status") or ""
-        )
-        kobo_summary = {
-            "errors": 0, "status": "fresh_cache", "skipped_fresh": True
-        }
-        if previous_batch and previous_batch != "complete":
-            kobo_summary.update(
-                status="fresh_cache_partial", last_batch_status=previous_batch
-            )
-            kobo_decision["status"] = "partial"
+    elif kobo_decision["status"] == "manual_only":
+        # A formerly enabled global toggle never licenses new downloads.
+        kobo_summary = {"status": "manual_only", "skipped": True}
     for field in ("manifest_items", "owned", "archived", "downloadable",
                   "candidate_count", "attempted", "downloaded", "pending",
                   "attention_required", "reconcile_required", "errors"):
