@@ -142,6 +142,7 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         "status": reason, "persisted_enabled": enabled,
         "configured_kobo": len(kobo), "connected_kobo": len(connected),
         "eligible_kobo": len(eligible),
+        "eligible_kobo_accounts": len(eligible_accounts),
         "interval_minutes": self.kobo_backup_interval_minutes(),
         "last_success_age_minutes": last_success_age_minutes,
         "deep": bool(deep),
