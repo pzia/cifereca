@@ -81,6 +81,58 @@ def _vault_account_label(account: dict[str, Any]) -> str:
     return "Compte Kobo"
 
 
+
+# Provider diagnostics are exported through Core and may appear in support
+# bundles. Even a substitute Vault/catalogue adapter is not trusted to supply
+# safe rejection texts, keys, or account-scoped reason values.
+_PUBLIC_REJECTION_TYPES = frozenset({"invalid_shape", "invalid_scope", "ProviderError"})
+_PUBLIC_REJECTION_REASONS = frozenset({
+    "unbound_account", "different_account", "ambiguous_account_binding",
+    "duplicate_product_id", "missing_product_id", "unverifiable_product_id",
+    "tainted_product_id", "item_not_object", "items_not_list",
+    "normalization_error", "personal_search_denied",
+})
+_PUBLIC_REJECTION_SOURCES = frozenset({"catalog", "library"})
+_MAX_PUBLIC_REJECTIONS = 256
+
+
+def _public_kobo_rejections(rows: Any) -> list[dict[str, str]]:
+    """Only publish fixed diagnostic codes, never arbitrary upstream fields."""
+    if rows is None:
+        return []
+    if type(rows) not in (tuple, list):
+        return [{"type": "invalid_shape", "reason": "unverified_rejection_list"}]
+    published: list[dict[str, str]] = []
+    for row in rows[:_MAX_PUBLIC_REJECTIONS]:
+        if type(row) is not dict:
+            published.append({
+                "type": "invalid_shape", "reason": "unverified_provider_rejection",
+            })
+            continue
+        category = row.get("type")
+        reason = row.get("reason")
+        source = row.get("source")
+        published_row = {
+            "type": (
+                category if type(category) is str
+                and category in _PUBLIC_REJECTION_TYPES else "invalid_shape"
+            ),
+            "reason": (
+                reason if type(reason) is str
+                and reason in _PUBLIC_REJECTION_REASONS
+                else "unverified_provider_rejection"
+            ),
+        }
+        if type(source) is str and source in _PUBLIC_REJECTION_SOURCES:
+            published_row["source"] = source
+        published.append(published_row)
+    if len(rows) > _MAX_PUBLIC_REJECTIONS:
+        published.append({
+            "type": "invalid_shape", "reason": "truncated_rejections",
+        })
+    return published
+
+
 DESCRIPTOR = ProviderDescriptor(
     id="kobo",
     display_name="Kobo",
@@ -349,9 +401,9 @@ class KoboSession(ProviderSession):
         account_id = self._accounts[0].unique_id
         items = self.client.library_manifest()
         self.last_library_rejections.extend(
-            dict(row)
-            for row in getattr(self.client, "last_manifest_rejections", ())
-            if isinstance(row, dict)
+            _public_kobo_rejections(
+                getattr(self.client, "last_manifest_rejections", ())
+            )
         )
 
         def foreign_account(raw: Any) -> bool:
@@ -687,16 +739,12 @@ class KoboSession(ProviderSession):
                 "manifest_authoritative": self.backup_manifest_policy["manifest_authoritative"],
                 "acquisition_authorized": False,
             },
-            "catalog_search_rejections": [
-                dict(row)
-                for row in getattr(self.catalog, "last_search_rejections", ())
-                if isinstance(row, dict)
-            ],
-            "library_rejections": [
-                dict(row)
-                for row in self.last_library_rejections
-                if isinstance(row, dict)
-            ],
+            "catalog_search_rejections": _public_kobo_rejections(
+                getattr(self.catalog, "last_search_rejections", ())
+            ),
+            "library_rejections": _public_kobo_rejections(
+                self.last_library_rejections
+            ),
         })
         return data
 
