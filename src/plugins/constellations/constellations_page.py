@@ -37,23 +37,35 @@ def _attested_cover_url(node) -> str | None:
     """
     try:
         record = getattr(node, "raw", None)
-        if not isinstance(record, Mapping):
-            return None
-        layers = [record]
-        metadata = record.get("metadata")
-        if isinstance(metadata, Mapping):
-            layers.append(metadata)
-            search = metadata.get("search_result")
-            if isinstance(search, Mapping):
-                layers.append(search)
-        for layer in layers:
-            for field in ("cover_url", "thumbnail_url"):
-                if safe := public_url(layer.get(field)):
-                    return safe
     except Exception:
-        # A malformed provider field may carry credentials in the exception.
-        # Keep the detail valid, but omit the untrusted thumbnail.
         return None
+    if not isinstance(record, Mapping):
+        return None
+    layers = [record]
+    try:
+        metadata = record.get("metadata")
+    except Exception:
+        metadata = None
+    if isinstance(metadata, Mapping):
+        layers.append(metadata)
+        try:
+            search = metadata.get("search_result")
+        except Exception:
+            search = None
+        if isinstance(search, Mapping):
+            layers.append(search)
+    for layer in layers:
+        for field in ("cover_url", "thumbnail_url"):
+            try:
+                candidate = layer.get(field)
+                safe = public_url(candidate)
+            except Exception:
+                # A corrupt accessor or hostile value must not mask an
+                # independently attested public thumbnail on another field
+                # or layer, nor leak private provider exception text.
+                continue
+            if safe:
+                return safe
     return None
 
 
