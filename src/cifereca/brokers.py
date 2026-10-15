@@ -440,6 +440,88 @@ class SynchronizationBrokerImpl:
             },
         )
 
+    def audit_local_reconciliation(self, source_id: str) -> SyncResult:
+        """Run the bounded offline Kobo SHA audit for exactly one source (#1345).
+
+        Unlike a refresh/materialization request, this read-only operation is
+        available even while the source is disabled or disconnected. No
+        provider, session, manifest, network or acquisition API is called.
+        Return only allowlisted totals: original audit cases/paths/identifiers
+        must never become a public plugin or GTK payload.
+        """
+        def rejected(reason: str) -> SyncResult:
+            return SyncResult(
+                ok=False, changed=0, warnings=(reason,),
+                facts={"phase": "reconcile", "status": reason,
+                       "read_only": True, "acquisition_authorized": False},
+            )
+
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            return rejected("unknown_source")
+        if getattr(account, "provider_id", None) != "kobo":
+            return rejected("not_supported")
+        credential = getattr(account, "credential_id", None)
+        identity = getattr(account, "identity_id", None)
+        if type(credential) is not str or not credential or type(identity) is not str or not identity:
+            return rejected("invalid_source")
+        try:
+            if self.service.storage.identity_for_connection("kobo", credential) != identity:
+                return rejected("invalid_source")
+        except (AttributeError, KeyError, ValueError, TypeError):
+            return rejected("invalid_source")
+
+        try:
+            from .core.kobo_local_audit import kobo_local_reconciliation_audit
+            raw = kobo_local_reconciliation_audit(
+                self.service, credential_id=credential,
+            )
+        except ValueError as exc:
+            # Ambiguous/stale account ownership must be a public fixed code,
+            # never a credential or path echoed from a provider or database.
+            if str(exc) == "ambiguous_kobo_audit_scope":
+                return rejected("ambiguous_source")
+            return rejected("audit_unavailable")
+        except Exception:
+            return rejected("audit_unavailable")
+
+        allowed = (
+            "backup_rows", "linked_files_verified", "unverified_placements",
+            "missing_or_unlinked", "stored_hash_mismatch",
+            "unproven_catalogue_links", "same_product_different_bytes",
+            "binary_match_groups", "active_entitlements_unmaterialized",
+            "unindexed_regular_file_candidates", "identity_flat_file_candidates",
+        )
+        counts = raw.get("counts") if isinstance(raw, dict) else None
+        accounts = raw.get("accounts") if isinstance(raw, dict) else None
+        if (
+            not isinstance(raw, dict)
+            or raw.get("schema") != "kobo.local.reconciliation.audit/1"
+            or raw.get("scope") != "single_account"
+            or raw.get("offline") is not True
+            or raw.get("read_only") is not True
+            or raw.get("dry_run") is not True
+            or raw.get("downloads_authorized") is not False
+            or raw.get("mutations_authorized") is not False
+            or type(raw.get("truncated")) is not bool
+            or not isinstance(accounts, list) or len(accounts) != 1
+            or not isinstance(accounts[0], dict) or accounts[0].get("account") != "account-1"
+            or not isinstance(counts, dict) or set(counts) != set(allowed)
+            or any(type(counts[name]) is not int or not 0 <= counts[name] <= 1_000_000
+                   for name in allowed)
+        ):
+            return rejected("audit_unavailable")
+        return SyncResult(
+            ok=True, changed=0,
+            facts={
+                "phase": "reconcile", "status": "audit_only",
+                "read_only": True, "acquisition_authorized": False,
+                "offline": True, "truncated": raw["truncated"],
+                "counts": {name: counts[name] for name in allowed},
+            },
+        )
+
     def synchronize_source(self, source_id: str, request: SyncRequest | None = None, control: Any = None) -> SyncResult:
         try:
             account = self._find_account(source_id)
