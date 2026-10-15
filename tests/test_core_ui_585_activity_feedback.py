@@ -183,6 +183,8 @@ def test_taskrunner_delivery_stops_when_success_callback_closes_window():
     deliver = next(n for n in ast.walk(done) if isinstance(n, ast.FunctionDef) and n.name == "deliver")
     namespace = {}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[deliver], type_ignores=[])), "<deliver>", "exec"), namespace)
+    # Isolated AST harness: the real TaskRunner supplies this local metric seam.
+    namespace["observe"] = lambda *_args, **_kwargs: None
 
     events = []
     window = SimpleNamespace(_closed=False)
@@ -214,6 +216,8 @@ def test_taskrunner_error_delivery_skips_callbacks_after_teardown():
     deliver = next(n for n in ast.walk(done) if isinstance(n, ast.FunctionDef) and n.name == "deliver")
     namespace = {}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[deliver], type_ignores=[])), "<deliver>", "exec"), namespace)
+    # Isolated AST harness: the real TaskRunner supplies this local metric seam.
+    namespace["observe"] = lambda *_args, **_kwargs: None
 
     events = []
     window = SimpleNamespace(_closed=True)
