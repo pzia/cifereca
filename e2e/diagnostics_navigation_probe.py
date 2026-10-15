@@ -1402,21 +1402,39 @@ def main() -> int:
             )
         )
         assert audit.get_sensitive() and audit.get_mapped()
-        # The extra explicit acquisition line makes this real Kobo card
-        # taller. GTK mapped != physically inside the XTEST viewport; scroll
-        # to the exact audit button before dispatching any pointer event.
-        scroll = f["sync_scroll"]
-        ok, bounds = audit.compute_bounds(scroll)
-        assert ok
-        if bounds.get_y() < 0 or bounds.get_y() + bounds.get_height() > scroll.get_height():
-            adjustment = scroll.get_vadjustment()
-            target = adjustment.get_value() + bounds.get_y() - 80
-            adjustment.set_value(max(
-                0, min(target, adjustment.get_upper() - adjustment.get_page_size())
-            ))
-            later(200, loan_sync_audit_click)
-            return
         assert not f["audit_calls"] and not f["mutations"]
+        # GTK mapping is NOT on-screen visibility. An extra confirmation row
+        # (P0 #1347) pushed this button to y=2036 on a 900px Xvfb screen;
+        # click_widget then clicked outside the display without invoking the
+        # audit. Scroll the *real* Gtk.ScrolledWindow until the action can be
+        # physically reached. Do not weaken the audit-result assertions.
+        scroll = f["sync_scroll"]
+        assert isinstance(scroll, Gtk.ScrolledWindow)
+        ok, bounds = audit.compute_bounds(scroll)
+        assert ok, "Kobo audit action has no scroll-viewport bounds"
+        top, bottom = bounds.get_y(), bounds.get_y() + bounds.get_height()
+        height = scroll.get_height()
+        assert height > 100 and bottom > top, (top, bottom, height)
+        if top < 4 or bottom > height - 4:
+            attempt = f.get("audit_scroll_attempts", 0) + 1
+            assert attempt <= 5, (
+                "Kobo audit button remained outside visible viewport",
+                top, bottom, height,
+            )
+            f["audit_scroll_attempts"] = attempt
+            adjustment = scroll.get_vadjustment()
+            target = adjustment.get_value() + top - min(80, height / 4)
+            maximum = max(adjustment.get_lower(),
+                          adjustment.get_upper() - adjustment.get_page_size())
+            adjustment.set_value(max(adjustment.get_lower(), min(target, maximum)))
+            later(180, loan_sync_audit_click)
+            return
+        ok, window_bounds = audit.compute_bounds(w)
+        assert ok, "Kobo audit action has no MainWindow bounds"
+        assert 0 <= window_bounds.get_y() and (
+            window_bounds.get_y() + window_bounds.get_height() <= w.get_height()
+        ), "Kobo audit action is outside the displayed window"
+        report["checks"]["P0_kobo_audit_XTEST_target_inside_viewport"] = True
         report["checks"]["P0_kobo_audit_offline_button_no_implicit_scan"] = True
         # A physical XTEST action is the sole trigger; rendering the row does
         # not authorize or start any inspection.
