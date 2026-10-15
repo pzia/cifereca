@@ -77,7 +77,8 @@ class UiPerfMonitor:
     ) -> bool:
         """Store observed elapsed time only; reject raw private metadata."""
         try:
-            elapsed = float(duration_ms)
+            # bool is an int subclass but never a measured duration.
+            elapsed = float(duration_ms) if type(duration_ms) is not bool else float("nan")
         except (TypeError, ValueError, OverflowError):
             elapsed = float("nan")
         if not math.isfinite(elapsed) or not 0 <= elapsed <= 86_400_000:
