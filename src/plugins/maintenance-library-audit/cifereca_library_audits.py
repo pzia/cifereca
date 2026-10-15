@@ -719,15 +719,28 @@ class IntegrityAuditTool(_ReadOnlyTool):
             try:
                 if not row.get("local"):
                     continue
-                path = str(row.get("local_path") or "").strip()
-                artifact_id = str(row.get("artifact_id") or "").strip()
+                raw_path = row.get("local_path")
+                if raw_path is None or (type(raw_path) is str and not raw_path.strip()):
+                    missing_path += 1
+                    continue
+                if type(raw_path) is not str:
+                    reference_failures += 1
+                    continue
+                path = raw_path.strip()
+                # An explicit poisoned artifact reference cannot be silently
+                # downgraded into an unverified filesystem candidate. Never
+                # stringify it or pass it to the library.read broker.
+                raw_id = row.get("artifact_id")
+                if raw_id is not None and (
+                    type(raw_id) is not str or
+                    (raw_id and _artifact_id(row) != raw_id)
+                ):
+                    reference_failures += 1
+                    continue
+                artifact_id = _artifact_id(row)
             except Exception:
-                # Malformed mapping or custom str/bool must not abort the
-                # remaining integrity candidates or expose private metadata.
+                # Provider metadata is not a source of public diagnostics.
                 reference_failures += 1
-                continue
-            if not path:
-                missing_path += 1
                 continue
             artifact = None
             if artifact_id:
