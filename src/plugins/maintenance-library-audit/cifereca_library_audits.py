@@ -359,6 +359,8 @@ class CoverAuditTool(_ReadOnlyTool):
             valid = type(plan.warnings) in (tuple, list) and len(plan.warnings) <= 12
             if valid:
                 import re
+                sample_counts = {"Sans couverture": 0, "Couverture non reconnue": 0}
+                last_ordinal = 0
                 for warning in plan.warnings:
                     if type(warning) is not str:
                         valid = False
@@ -367,10 +369,33 @@ class CoverAuditTool(_ReadOnlyTool):
                         r"(Sans couverture|Couverture non reconnue) : notice n°([1-9][0-9]{0,6})",
                         warning,
                     )
-                    if match is None or int(match.group(2)) > counts["entries"]:
+                    if match is None:
                         valid = False
                         break
+                    ordinal = int(match.group(2))
+                    # A source row has exactly one cover classification. The
+                    # original plan samples at most 12 anomalies in scan
+                    # order, never duplicating or reordering their ordinals.
+                    if not last_ordinal < ordinal <= counts["entries"]:
+                        valid = False
+                        break
+                    last_ordinal = ordinal
+                    sample_counts[match.group(1)] += 1
                     safe_warnings.append(warning)
+                if valid:
+                    defects = counts["missing"] + counts["invalid"]
+                    valid = (
+                        len(safe_warnings) == min(12, defects)
+                        and sample_counts["Sans couverture"] <= counts["missing"]
+                        and sample_counts["Couverture non reconnue"] <= counts["invalid"]
+                    )
+                    # All anomalies fit in the preview: every one must be
+                    # represented. More than 12: only the first 12 are known.
+                    if valid and defects <= 12:
+                        valid = (
+                            sample_counts["Sans couverture"] == counts["missing"]
+                            and sample_counts["Couverture non reconnue"] == counts["invalid"]
+                        )
         control.check_cancelled()
         if not valid:
             control.report(message="Audit des couvertures impossible : plan invalide")
