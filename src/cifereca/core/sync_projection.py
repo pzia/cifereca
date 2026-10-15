@@ -50,10 +50,16 @@ def identity_statistics(self, identity_id, *, window_seconds: int=2592000):
         if isinstance(observations.get(key),dict):selected.append(observations[key])
     loan_keys={key for row in selected for key in row.get('loan_keys',[])}
     owned={r['entitlement_id'] for r in self.storage.entitlements(state='active') if r.get('identity_id')==identity_id and r.get('entitlement_type')=='owned'}
+    # Explicit, persisted *store* possession: neither a loan nor an EPUB on
+    # disk. Numilog is currently catalog-backed, Kobo entitlement-backed.
+    from .store_ownership_projection import owned_store_inventory_counts
+    store_owned = owned_store_inventory_counts(
+        self.storage, identity_id, self.accounts_for_identity(identity_id),
+    )
     return {'identity_id':identity_id,'local_books':len(ids),'local_placements':len(placements),'local_files':sum((r.get('metadata') or {}).get('artifact_kind')!='bundle' for r in placements),
             'known_loans':len(loan_keys) if selected else None,'loan_sources_observed':len(selected),
             'loans_observed_at':min((r.get('observed_at') for r in selected),default=None) if all(isinstance(r.get('observed_at'),int) for r in selected) else None,
-            'remote_owned_rights':len(owned),'formats':dict(formats),'sources':dict(sources),'epub_covers':dict(covers),
+            'remote_owned_rights':len(owned), **store_owned, 'formats':dict(formats),'sources':dict(sources),'epub_covers':dict(covers),
             'actions':asdict(self.action_statistics(identity_id, window_seconds=window_seconds)),
             'scope':'persisted_inventory_last_observed_provider_loans_and_action_window'}
 
