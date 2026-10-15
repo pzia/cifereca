@@ -12,15 +12,24 @@ from typing import Any
 
 
 def kobo_backup_action_state(*, persisted_enabled: bool, draft_enabled: bool, dirty: bool) -> tuple[str, bool]:
-    """Truthful, side-effect-free status: automation runs on opening, not a timer."""
-    if dirty or type(draft_enabled) is not bool or draft_enabled is not persisted_enabled:
-        return ("Modifications à enregistrer : aucune acquisition Kobo lancée.", False)
-    if persisted_enabled is not True:
-        return ("Acquisition Kobo désactivée : actualiser les notices en ligne reste indépendant.", False)
+    """Describe safe source navigation, not permission for local acquisition.
+
+    The existing settings widget is a compatibility alias: its button now
+    navigates to the identity-scoped Synchronisation page and never starts a
+    global Kobo download batch (#1347).
+    """
+    if (dirty or type(persisted_enabled) is not bool
+            or type(draft_enabled) is not bool or draft_enabled is not persisted_enabled):
+        return ("Modifications à enregistrer avant de consulter la synchronisation.", False)
+    if persisted_enabled is False:
+        return (
+            "Acquisition au démarrage désactivée. La page Synchronisation permet "
+            "de consulter les sources et droits en ligne sans télécharger de livres.", True,
+        )
     return (
-        "Acquisition locale activée au démarrage si intervalle écoulé. "
-        "La commande manuelle déclenche un lot global des comptes Kobo éligibles, "
-        "pas une simple actualisation des notices.", True,
+        "Acquisition locale configurée au démarrage si l’intervalle est écoulé. "
+        "Consultez chaque compte sur la page Synchronisation et son aperçu local "
+        "sans lancement de lot global depuis Paramètres.", True,
     )
 
 
@@ -52,14 +61,16 @@ def build_kobo_sync_section(
     # The source sync page only refreshes online metadata. Downloading books
     # is a separate, explicit operation with the persisted safety settings.
     manual_row = Adw.ActionRow()
-    manual_row.set_title("Acquisition manuelle Kobo — portée globale")
+    manual_row.set_title("Synchronisation Kobo — comptes et aperçus")
     status, allowed = kobo_backup_action_state(
         persisted_enabled=(config.get("kobo_backup.enabled", False) is True),
         draft_enabled=(config.get("kobo_backup.enabled", False) is True), dirty=False,
     )
     manual_row.set_subtitle(status)
     backup_status = manual_row
-    run_backup_now = Gtk.Button(label="Lancer le lot Kobo…")
+    # Internal field name remains stable for existing Settings composition ports.
+    # The button is now navigation-only: no global acquisition without review.
+    run_backup_now = Gtk.Button(label="Examiner les comptes Kobo…")
     run_backup_now.set_sensitive(allowed)
     run_backup_now.set_valign(Gtk.Align.CENTER)
     manual_row.add_suffix(run_backup_now)
