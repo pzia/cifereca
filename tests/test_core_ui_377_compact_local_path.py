@@ -60,4 +60,13 @@ def test_search_and_library_keep_using_same_fichier_local_label():
             method = next(node for node in cls.body if isinstance(node, ast.FunctionDef)
                           and node.name == method_name)
         source = ast.unparse(method)
-        assert "'Fichier local'" in source
+        assert "local_book_detail_sections(" in source
+    helper = ast.parse(MAIN.with_name(
+        "local_book_detail_sections.py"
+    ).read_text(encoding="utf-8"))
+    section_owner = ast.unparse(next(
+        node for node in helper.body if isinstance(node, ast.FunctionDef)
+        and node.name == "local_book_detail_sections"
+    ))
+    assert "'Fichier local'" in section_owner
+    assert "item.get('local_path')" in section_owner
