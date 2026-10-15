@@ -76,7 +76,7 @@ def test_valid_to_no_profile_invalidates_selected_book_and_stops_catalogue_read(
     assert view._last_cache_identity == ""
     assert view._detail_selection_generation == 6
     assert catalogue.calls == []
-    assert events.count("empty") == 2  # revoke, then empty-list placeholder
+    assert events.count("empty") == 1  # the empty-profile branch performs the single revocation
 
 
 def test_return_to_original_profile_never_resurrects_previously_selected_book():
