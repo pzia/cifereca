@@ -72,6 +72,9 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         self._add_book_notice(self.search_page.detail,item, include_description=False)
         self._add_local_book_actions(self.search_page.detail,item)
         self._add_facets(self.search_page.detail, item, self.search_controls)
+        # Local dictionary presentations do not run DetailPanel._decorate.
+        # Remote SearchResult presentations already own that decoration.
+        self._add_plugin_book_actions(self.search_page.detail, item)
         self._request_cached_book_details("search", row.key, item)
         return
     item = self.search_objects.get(row.key)

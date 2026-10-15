@@ -254,3 +254,43 @@ def test_empty_selection_preserves_existing_empty_detail_in_both_adapters():
                      detail_language=detail_language,
                      document_links=lambda row: ())
     assert sr == lr == [] and remote == []
+
+
+def test_local_search_exposes_public_plugin_action_through_bounded_port():
+    from cifereca.gui.search_host_port import SearchDetailPort
+    from cifereca.gui.book_action_context_controller import book_action_context
+    from cifereca.gui.plugin_book_action_controller import add_plugin_book_actions
+    from cifereca.gui.shell_model import contextual_actions
+    from cifereca.plugin_api import (UiActionContribution, UiPageContribution,
+        UiActionContext, ArtifactRef, ArtifactFormat, book_ref_from_row)
+    from tests.test_core_ui_1129_library_detail_controller import Button as ActionButton
+    item = _item(item_id="source-a")
+    select, sw, _, _, _, remote_calls = _adapters(item, "Disponible")
+    sw.service.current_identity = NS(identity_id="alice")
+    sw.view_stack = NS(get_visible_child_name=lambda: "search")
+    sw._book_action_context = lambda row: book_action_context(
+        sw, row, Path=Path, UiActionContext=UiActionContext, ArtifactRef=ArtifactRef,
+        ArtifactFormat=ArtifactFormat, book_ref_from_row=book_ref_from_row)
+    activations = []
+    action = UiActionContribution("test.explore", "Explorer ce livre",
+        lambda host: activations.append(host.action_context()), target="book.detail",
+        visible_when=lambda context: context.book is not None)
+    sw._pages = {"explore": UiPageContribution("explore", "Explorer", "", 30,
+                                              lambda host: None, actions=(action,))}
+    sw.action_button = lambda label, icon: ActionButton(label=label)
+    sw._UiHost = lambda owner, context: NS(action_context=lambda: context)
+    sw._invoke_ui_action = lambda contribution, host: contribution.callback(host)
+    sw._add_plugin_book_actions = lambda detail, row: add_plugin_book_actions(
+        sw, detail, row, contextual_actions=contextual_actions)
+    ActionButton.instances.clear()
+    select(SearchDetailPort(sw), NS(key=item["key"]))
+    buttons = [button for button in ActionButton.instances if button.label == "Explorer ce livre"]
+    assert len(buttons) == 1 and activations == [] and remote_calls == []
+    buttons[0].click()
+    assert len(activations) == 1
+    assert activations[0].book.book_id == "source-a"
+    assert activations[0].route == "search"
+    assert activations[0].identity_id == "alice"
+    sw._pages.clear()
+    buttons[0].click()
+    assert len(activations) == 1 and remote_calls == []
