@@ -415,7 +415,7 @@ class NumilogSession(ProviderSession):
                             )
                         except DeliverySelectionError as exc:
                             trace.fail('html_delivery_ambiguous' if exc.code == 'ambiguous' else 'html_delivery_link_missing')
-                            trace.event('html_selection','html_delivery_ambiguous' if exc.code == 'ambiguous' else 'html_delivery_link_missing',html_kind='intermediate',hops=hop+1)
+                            trace.event('html_selection','html_delivery_ambiguous' if exc.code == 'ambiguous' else 'html_delivery_link_missing',html_kind='intermediate',hops=hop+1,candidates=evidence.get('allowed_candidates'))
                             self._diag('livraison HTML',phase='download',
                                        page_kind=page_kind,kind='intermediate',
                                        result=exc.code,**evidence)
@@ -428,7 +428,7 @@ class NumilogSession(ProviderSession):
                             self._diag('livraison HTML',phase='download',
                                        page_kind=page_kind,kind='invalid',result='invalid_structure')
                             raise ProviderError('Numilog : structure HTML de livraison inattendue') from None
-                        trace.event('html_selection','single_allowed_candidate',html_kind='intermediate',hops=hop+1)
+                        trace.event('html_selection','single_allowed_candidate',html_kind='intermediate',hops=hop+1,candidates=evidence.get('allowed_candidates'))
                         self._diag('livraison HTML',phase='download',
                                    page_kind=page_kind,kind='intermediate',
                                    result='single_allowed_candidate',**evidence)
