@@ -149,15 +149,9 @@ class SynchronizationBrokerImpl:
         return "sync.source.enabled." + source_id
 
     def _enabled(self, source_id: str) -> bool:
+        from .core.source_enablement import source_enabled
         raw = self.service.storage.metadata_get(self._preference_key(source_id))
-        if raw is None:
-            # Existing, never-configured sources remain enabled for inventory.
-            return True
-        # A corrupted or manually edited preference is NOT consent to
-        # reconnect or refresh a source. Never echo its possibly private value.
-        if type(raw) is not str:
-            return False
-        return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return source_enabled(raw)
 
     def _state(self, source_id: str) -> dict[str, Any]:
         key = "sync.source.state." + source_id
