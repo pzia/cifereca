@@ -65,7 +65,7 @@ def test_capture_timeline_has_only_ephemeral_numeric_task_ids():
     assert [row["operation_id"] for row in mon.performance_report()["events"]] == [2, 3]
 
 
-@pytest.mark.parametrize("value", [-1, float("nan"), float("inf"), "SECRET", None, 86_400_001])
+@pytest.mark.parametrize("value", [-1, float("nan"), float("inf"), "SECRET", None, True, 86_400_001])
 def test_invalid_durations_are_rejected_not_exported(value):
     mon = UiPerfMonitor()
     assert mon.record_phase("task", "worker", value) is False
@@ -211,4 +211,50 @@ def test_actual_task_runner_keeps_failed_worker_outcome_without_payload_in_repor
     ]
     assert "PRIVATE_TOKEN" not in json.dumps(report)
     assert report["stats"]["kobo-acquisition.worker"]["count"] == 1
+    runner.close()
+
+
+def test_duplicate_automatic_task_does_not_create_phantom_timing_samples():
+    TaskRunner, flush = _headless_runner()
+    mon = UiPerfMonitor(measurement_origin="simulated")
+    mon.enable_detailed_capture(True)
+    window = NS(
+        _closed=False, ui_perf=mon,
+        _task_started=Mock(), _task_finished=Mock(),
+        _task_progress_for_task=Mock(),
+    )
+    runner = TaskRunner(window)
+    work = Mock(return_value={"status": "ok"})
+    runner.submit(
+        "Ouverture", work, kind="opening-sync",
+        coalesce_key="identical-passive-request", origin="automatic",
+    )
+    # The worker Future has completed but the GTK delivery is still queued.
+    # The second automatic submit must observe the same in-flight work.
+    runner.submit(
+        "Ouverture identique", work, kind="opening-sync",
+        coalesce_key="identical-passive-request", origin="automatic",
+    )
+    assert work.call_count == 1
+    flush()
+    events = mon.performance_report()["events"]
+    assert [event["phase"] for event in events] == [
+        "queue_wait", "worker", "gtk_delivery_wait",
+    ]
+    assert {event["operation_id"] for event in events} == {1}
+    assert mon.performance_report()["stats"]["opening-sync.worker"]["count"] == 1
+    runner.close()
+
+
+def test_closed_runner_never_generates_task_samples():
+    TaskRunner, flush = _headless_runner()
+    mon = UiPerfMonitor(measurement_origin="simulated")
+    window = NS(_closed=True, ui_perf=mon,
+                _task_started=Mock(), _task_finished=Mock())
+    runner = TaskRunner(window)
+    worker = Mock()
+    runner.submit("No work", worker, kind="source-sync")
+    assert mon.performance_report()["no_samples"] is True
+    worker.assert_not_called()
+    flush()
     runner.close()
