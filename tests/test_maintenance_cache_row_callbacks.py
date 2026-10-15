@@ -24,13 +24,13 @@ class Widget(harness.Container):
     def stop(self): self.running = False
 
 
-def mounted():
+def mounted(tool_id="core.cache.cleanup"):
     harness.Dialog.shown.clear()
     tool = harness.Tool()
     original = tool.describe
     def describe():
         info = original()
-        info.id = 'core.cache.cleanup'
+        info.id = tool_id
         info.danger_level = 'readonly'
         return info
     tool.describe = describe
