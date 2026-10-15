@@ -42,7 +42,7 @@ def show_route(window, route: str, *, Gtk) -> None:
             and old_widget is not None and old_widget.is_ancestor(current_focus)
             and current_focus.get_mapped() and current_focus.get_sensitive()
         ):
-            identity = getattr(getattr(window.service, "current_identity", None), "identity_id", None)
+            identity = getattr(getattr(getattr(window, "service", None), "current_identity", None), "identity_id", None)
             window._youth_return_focus = (current_focus, identity)
         else:
             window._youth_return_focus = None
@@ -102,7 +102,7 @@ def show_route(window, route: str, *, Gtk) -> None:
         window._youth_return_focus = None
         if saved is not None:
             focus_widget, identity_id = saved
-            current_identity = getattr(getattr(window.service, "current_identity", None), "identity_id", None)
+            current_identity = getattr(getattr(getattr(window, "service", None), "current_identity", None), "identity_id", None)
             youth_widget = window._plugin_page_widgets.get("youth")
             if (
                 identity_id == current_identity and youth_widget is not None
