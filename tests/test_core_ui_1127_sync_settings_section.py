@@ -171,3 +171,42 @@ def test_manual_kobo_callback_requires_exact_saved_boolean_opt_in():
         source = ast.unparse(fn)
         assert "self.config.get('kobo_backup.enabled', False) is True" in source
         assert "bool(self.config.get(" not in source
+
+
+def test_sync_settings_never_mislabel_local_acquisition_as_remote_inventory_refresh():
+    _, section, _ = _build({"kobo_backup.enabled": True})
+    group = section.children[0]
+    automatic, manual = group.children[:2]
+    assert "téléchargements Kobo" in automatic.title
+    assert "notices et droits" in automatic.subtitle
+    assert "ne télécharge aucun livre" in automatic.subtitle
+    assert "portée globale" in manual.title
+    assert "lot global" in manual.subtitle
+    assert "simple actualisation" in manual.subtitle
+
+
+def test_opening_interval_is_not_described_as_periodic_timer():
+    _, section, _ = _build()
+    group = section.children[0]
+    interval = group.children[4]
+    assert "au démarrage" in interval.title
+    assert "minuterie périodique" in group.children[0].subtitle
+
+
+def test_unlinked_option_explicitly_warns_about_duplicate_downloads():
+    _, section, _ = _build()
+    risky = section.children[0].children[2]
+    assert "Option risquée" in risky.title
+    assert "risque de copies supplémentaires" in risky.subtitle
+    assert "idempotence" in risky.subtitle
+
+
+def test_sync_setting_builder_has_no_implicit_acquisition_or_config_mutation():
+    values = {"kobo_backup.enabled": True, "kobo_backup.allow_unlinked_acquisition": False}
+    before = dict(values)
+    controls, section, _ = _build(values)
+    assert values == before
+    assert controls.backup_switch.active is True
+    assert controls.unlinked_switch.active is False
+    assert controls.run_backup_now.sensitive is True
+    assert controls.run_backup_now.label == "Lancer le lot Kobo…"
