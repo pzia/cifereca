@@ -119,3 +119,59 @@ def test_gtk_controller_action_and_task_preserve_single_non_kobo_source_name():
     button.click()
     assert window.runner.tasks[0].label == "Synchronisation Paris · Camille…"
     assert not any(name == "sync-source" for name, *_ in calls)
+
+
+def test_same_provider_same_title_uses_only_ephemeral_connection_ordinals():
+    sources = [
+        _source("paris", "Catalogue des prêts", source_id="PRIVATE_FIRST",
+                account_id="PRIVATE_ACCOUNT_1"),
+        _source("paris", "Catalogue des prêts", source_id="PRIVATE_SECOND",
+                account_id="PRIVATE_ACCOUNT_2"),
+        _source("gallica", "Autres livres"),
+    ]
+    assert sync_source_row_labels(sources) == (
+        "Catalogue des prêts · paris · connexion 1/2",
+        "Catalogue des prêts · paris · connexion 2/2",
+        "Autres livres",
+    )
+    assert all("PRIVATE_" not in label for label in sync_source_row_labels(sources))
+    assert sync_source_row_labels(sources[:1]) == ("Catalogue des prêts",)
+
+
+def test_mixed_case_homonyms_are_disambiguated_without_mutating_sources():
+    sources = [
+        _source("gutenberg", "Catalogue public", source_id="private-a"),
+        _source("gallica", "catalogue PUBLIC", source_id="private-b"),
+    ]
+    assert sync_source_row_labels(sources) == (
+        "Catalogue public · gutenberg", "catalogue PUBLIC · gallica",
+    )
+    assert sources[0].label == "Catalogue public"
+
+
+def test_same_provider_and_label_can_keep_per_source_routing():
+    from tests.test_core_ui_1347_sync_action_scope import _fixture, _source
+    sources = [
+        _source(provider_id="paris", source_id="card-first",
+                label="Paris · Mon compte"),
+        _source(provider_id="paris", source_id="card-second",
+                label="Paris · Mon compte"),
+    ]
+    window, broker, calls, _build, _page = _fixture(sources=sources)
+    groups = window._sync_sources_box.children
+    rows = [group.children[0] for group in groups]
+    assert [row.title for row in rows] == [
+        "Paris · Mon compte · paris · connexion 1/2",
+        "Paris · Mon compte · paris · connexion 2/2",
+    ]
+    assert [row.suffixes[1].label for row in rows] == [
+        "Synchroniser Paris · Mon compte",
+        "Synchroniser Paris · Mon compte",
+    ]
+    rows[1].suffixes[1].click()
+    assert window.runner.tasks[0].label == (
+        "Synchronisation Paris · Mon compte · paris · connexion 2/2…"
+    )
+    assert window.runner.tasks[0].work() == "ok"
+    assert ("sync-source", "card-second") in calls
+    assert ("sync-source", "card-first") not in calls
