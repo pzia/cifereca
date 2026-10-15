@@ -127,10 +127,27 @@ def kobo_local_reconciliation_audit(
     selected = [row for row in connections if credential_id is None or row["credential_id"] == credential_id]
     if credential_id is not None and not selected:
         raise ValueError("unknown_kobo_audit_scope")
+    # A credential may appear in stale/migrated connection rows for several
+    # identities. The backup ledger is keyed by credential, so choosing its
+    # "last" identity would wrongly ascribe the same SHA or entitlement to
+    # another reader. Reject this *before* scanning files or backup records.
+    # Exact duplicate connection rows are one logical scope, not two cases.
+    owners: dict[str, str] = {}
+    unique_scopes: list[dict[str, Any]] = []
+    for row in selected:
+        credential, identity = row["credential_id"], row["identity_id"]
+        if not credential or not identity:
+            raise ValueError("invalid_kobo_audit_scope")
+        previous = owners.get(credential)
+        if previous is not None and previous != identity:
+            raise ValueError("ambiguous_kobo_audit_scope")
+        if previous is None:
+            owners[credential] = identity
+            unique_scopes.append(row)
     # Scoped output has only ephemeral ordinal labels, NEVER credential/identity.
-    selected.sort(key=lambda row: (row["identity_id"], row["credential_id"]))
-    valid_owner = {row["credential_id"]: row["identity_id"] for row in selected}
-    selected_identities = {row["identity_id"] for row in selected}
+    selected = sorted(unique_scopes, key=lambda row: (row["identity_id"], row["credential_id"]))
+    valid_owner = owners
+    selected_identities = set(owners.values())
     # Scope the local evidence before budget accounting: a --credential audit
     # must neither enumerate nor expose other identities' report totals.
     records = [
