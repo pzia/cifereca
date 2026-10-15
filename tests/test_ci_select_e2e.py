@@ -58,6 +58,19 @@ class SelectionTests(unittest.TestCase):
                      "simulation/youth_sources/fixture.py"):
             self.assertEqual(mod.select([path]), mod.YOUTH, path)
 
+    def test_1599_detail_plugin_changes_select_gtk_smoke(self):
+        for path in ("src/plugins/constellations/view_model.py",
+                     "src/plugins/recommendations/page.py"):
+            self.assertEqual(mod.select([path]), mod.DETAIL, path)
+        self.assertEqual(
+            mod.select(["src/plugins/youth-detail-enrichment/enrich.py"]),
+            mod.YOUTH,
+        )
+        self.assertEqual(set(mod.select([
+            "src/plugins/constellations/view_model.py",
+            "src/plugins/youth-detail-enrichment/enrich.py",
+        ])), set(mod.DETAIL + mod.YOUTH))
+
     def test_922_filter_ux_in_youth_scope(self):
         self.assertIn("youth-filter-help-1366", mod.select([
             "src/plugins/youth-catalog/youth_page.py",
