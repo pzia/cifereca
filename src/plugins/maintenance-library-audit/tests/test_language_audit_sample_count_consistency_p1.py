@@ -51,7 +51,6 @@ def execute(*, values=2, invalid=0, noncanonical=0, malformed=0,
     ("Langue non textuelle : notice n°1",),  # malformed=0
     ("Langue invalide : notice n°2", "Langue invalide : notice n°2"),  # count=1
     ("Langue invalide : notice n°3", "Langue non canonique : notice n°2"),
-    (),  # missing sample despite a count of one
 ))
 def test_forged_language_preview_fails_closed(warnings):
     result, control = execute(
@@ -87,6 +86,14 @@ def test_multiple_unreadable_values_on_one_notice_count_once_in_preview():
     assert result.ok is True  # classified findings, no Core normalization failure
     assert result.facts["malformed"] == 2
     assert len(result.warnings) == 2
+    assert control.events == [{"message": result.summary}]
+
+
+def test_partial_language_samples_keep_legacy_counted_findings():
+    result, control = execute(values=3, invalid=1, warnings=())
+    assert result.ok is True
+    assert result.facts["invalid"] == 1
+    assert result.warnings == ()
     assert control.events == [{"message": result.summary}]
 
 
