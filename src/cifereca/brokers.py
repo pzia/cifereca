@@ -2,7 +2,7 @@ from __future__ import annotations
 import ast
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -13,6 +13,7 @@ from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, 
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
 from .task_runtime import TaskBrokerImpl
+from .core.source_materialization import MaterializationPlans
 
 _SYNC_LOG = logging.getLogger("cifereca.sync")
 # The synchronization broker is a public plugin/UI boundary: no exception,
@@ -128,6 +129,7 @@ class AcquisitionBrokerImpl:
 class SynchronizationBrokerImpl:
     service: Any
     _subscribers: list[Callable[[], None]] | None = None
+    _materialization_plans: MaterializationPlans = field(default_factory=MaterializationPlans, repr=False)
 
     def __post_init__(self) -> None:
         if self._subscribers is None:
@@ -293,7 +295,50 @@ class SynchronizationBrokerImpl:
                         # never substitute an inventory clock or fabricate it.
                         last_success=when if status == "success" else "",
                     )
+        explicit = self._materialization_state(self._source_id(account))
+        if explicit and "local_materialization" in sync_caps:
+            status = explicit.get("status")
+            if status == "running":
+                from .core.source_materialization import process_owner
+                if explicit.get("owner") != process_owner():
+                    status = "interrupted"
+            if status in {"running", "success", "partial", "blocked", "failed", "cancelled", "interrupted",
+                          "materialization_failed", "source_changed", "source_disabled", "source_disconnected"}:
+                materialization = SyncPhaseState(
+                    "materialize", status, self._safe_phase_timestamp(explicit.get("last_attempt")),
+                    self._safe_phase_timestamp(explicit.get("last_success")),
+                )
         return (inventory, materialization, SyncPhaseState("reconcile", "not_supported"))
+
+    def _materialization_state(self, source_id: str) -> dict:
+        raw = self.service.storage.metadata_get("sync.source.materialization." + source_id)
+        if type(raw) is not str or len(raw) > 2048:
+            return {}
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, dict) else {}
+        except (ValueError, RecursionError):
+            return {}
+
+    def _set_materialization_state(self, source_id: str, status: str, attempted_at: str) -> None:
+        previous = self._materialization_state(source_id)
+        state = {"status": status, "last_attempt": attempted_at,
+                 "last_success": attempted_at if status == "success" else
+                 self._safe_phase_timestamp(previous.get("last_success"))}
+        if status == "running":
+            from .core.source_materialization import process_owner
+            state["owner"] = process_owner()
+        self.service.storage.metadata_set("sync.source.materialization." + source_id, json.dumps(state))
+
+    def prepare_local_materialization(self, source_id: str) -> SyncResult:
+        """Explicit fresh rights read and bounded one-use confirmation plan."""
+        from .core.source_materialization import prepare
+        return prepare(self, source_id)
+
+    def materialize_source(self, source_id: str, confirmation_token: str, control: Any = None) -> SyncResult:
+        """Confirm one previously prepared source; never falls back to a batch."""
+        from .core.source_materialization import execute
+        return execute(self, source_id, confirmation_token, control)
 
     def _ref(self, account: Any) -> SyncSourceRef:
         source_id = self._source_id(account)
