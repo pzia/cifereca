@@ -1,5 +1,6 @@
 """Constellations page and contextual action, using public Plugin API only."""
 from collections.abc import Mapping
+from unicodedata import category
 from cifereca.plugin_api import (UiPageContribution, UiActionContribution,
     UiBookDetailPresentation, DetailSection, DetailField, DocumentLink)
 from constellation_view_model import (node_from_row, merge_nodes, neighbours,
@@ -69,6 +70,45 @@ def _attested_cover_url(node) -> str | None:
     return None
 
 
+def _attested_bibliography_fields(node) -> tuple[DetailField, ...]:
+    """Project only bibliographic facts of this exact source record.
+
+    Never use merged graph provenance to infer ownership, an edition or a
+    right; inferred period/mood/length and acquisition metadata stay out of
+    the public detail. This is a supplementary projection of the already
+    validated local graph normalizer, not a new resolver or CoreUI renderer.
+    """
+    try:
+        raw = getattr(node, 'raw', None)
+        if not isinstance(raw, Mapping):
+            return ()
+        from constellations import normalize_book
+        model = normalize_book(raw)
+    except Exception:
+        return ()
+
+    fields = []
+
+    def add(key, label, value, kind='copy'):
+        if (
+            type(value) is str and 0 < len(value.strip()) <= 180
+            and not any(category(char) in {'Cc', 'Cf', 'Cs'} for char in value)
+        ):
+            fields.append(DetailField(key, label, value.strip(), kind=kind))
+
+    identifiers = model.identifiers
+    add('isbn', 'ISBN', identifiers.get('isbn'), kind='isbn')
+    add('language', 'Langue', model.language, kind='language')
+    add('publisher', 'Éditeur', model.publisher, kind='all')
+    for index, value in enumerate(model.series[:4]):
+        add(f'series-{index}', 'Série', value, kind='all')
+    for index, value in enumerate(model.formats[:4]):
+        add(f'format-{index}', 'Format', value, kind='all')
+    for index, value in enumerate(model.subjects[:8]):
+        add(f'subject-{index}', 'Sujet', value, kind='subject')
+    return tuple(fields)
+
+
 def constellation_detail_presentation(node) -> UiBookDetailPresentation:
     """Public book-detail projection with individual bibliographic values.
 
@@ -91,6 +131,12 @@ def constellation_detail_presentation(node) -> UiBookDetailPresentation:
                 DetailField(f'author-{index}', 'Auteur', value, kind='author')
                 for index, value in enumerate(authors)
             ), order=10,
+        ))
+    metadata_fields = _attested_bibliography_fields(node)
+    if metadata_fields:
+        sections.append(DetailSection(
+            'attested-metadata', 'Métadonnées bibliographiques attestées',
+            metadata_fields, order=15,
         ))
     if sources:
         sections.append(DetailSection(
