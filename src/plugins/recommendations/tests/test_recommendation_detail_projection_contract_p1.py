@@ -259,8 +259,8 @@ def test_malformed_provider_scalar_values_never_escape_to_public_detail():
         "title": {"PRIVATE_PROVIDER_ACCOUNT": "not a book title"},
         "authors": ["Alice"],
         "format": PoisonPublicMetadata(),
-        "published_at": "2026\\nPRIVATE_SESSION",
-        "description": "Summary\\u202ePRIVATE_BIDI",
+        "published_at": "2026\nPRIVATE_SESSION",
+        "description": "Summary\u202ePRIVATE_BIDI",
         "summary": "Résumé éditeur attesté",
     }
     view, rows, details, _ = _make_view(item)
