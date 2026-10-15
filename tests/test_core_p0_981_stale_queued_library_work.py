@@ -148,3 +148,41 @@ def test_current_manual_scan_keeps_existing_explicit_disk_policy():
     host.service.library_entries.assert_called_once_with(
         identity_id="alice", scan=False,
     )
+
+
+@pytest.mark.parametrize("method,shown,marker", [
+    ("refresh_library", "library_shown", "_library_loaded_generation"),
+    ("refresh_recent", "recent_shown", "_recent_loaded_generation"),
+])
+def test_successful_empty_response_records_current_generation_only(
+    method, shown, marker,
+):
+    host = _harness()
+    getattr(host, method)()
+    old = host.runner.requests[-1]
+    _change_identity(host, "bob")
+    assert old.work() == []
+    old.ok([])
+    assert getattr(host, marker, None) is None
+    fresh = host.runner.requests[-1]
+    assert fresh.work() == [{"identity_id": "bob"}]
+    fresh.ok([])
+    assert getattr(host, marker) == host._identity_context_generation
+    assert getattr(host, shown) == [[]]
+    _change_identity(host, "alice")
+    assert getattr(host, marker) != host._identity_context_generation
+
+
+@pytest.mark.parametrize("method,marker", [
+    ("refresh_library", "_library_loaded_generation"),
+    ("refresh_recent", "_recent_loaded_generation"),
+])
+def test_failed_refresh_never_marks_an_empty_snapshot_successful(method, marker):
+    host = _harness()
+    host.diagnostics.add = Mock()
+    getattr(host, method)()
+    request = host.runner.requests[-1]
+    request.err(RuntimeError("PRIVATE_FAILURE"))
+    assert getattr(host, marker, None) is None
+    host.diagnostics.add.assert_called_once()
+    assert len(host.runner.requests) == 1
