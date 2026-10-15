@@ -110,8 +110,12 @@ class ConstellationsPlugin:
         action = host.action_context()
         self.pending = action.book
         self.pending_identity = str(getattr(action, 'identity_id', '') or '')
-        if self.view:
-            self.view.seed(self.pending, identity_id=self.pending_identity)
+        if self.view and self.view.seed(
+            self.pending, identity_id=self.pending_identity,
+        ) is False:
+            # A rejected source book cannot become a delayed contextual seed.
+            self.pending = None
+            self.pending_identity = ''
         host.navigate('constellations')
 
     def build(self, host):
@@ -342,7 +346,17 @@ class View:
 
     def seed(self, book, *, identity_id=''):
         if book is None or self.disposed:
-            return
+            return False
+        # Contextual actions can carry a malformed provider item. Validate
+        # before changing the selected profile, origin or graph; the normal
+        # catalogue loader already quarantines individual malformed rows.
+        projected, rejected = _usable_nodes((book,), origin='sélection')
+        if rejected:
+            self.status.set_label(
+                'Livre d’origine non exploitable ; le voisinage actuel est conservé.'
+            )
+            return False
+        node = projected[0]
         if identity_id and identity_id != self.identity_id():
             selected = next((i for i, row in enumerate(self.identities)
                              if str(row.get('identity_id') or '') == identity_id), None)
@@ -355,29 +369,29 @@ class View:
                 self.status.set_label(
                     'Profil du livre absent de cette liste ; le voisinage actuel est conservé.'
                 )
-                return
+                return True
             self.origin_book = book
             self.origin_identity = identity_id
             self.identity.set_selected(selected)
-            return
+            return True
         self.origin_book = book
         self.origin_identity = identity_id or self.identity_id()
         if not self.nodes:
             self.plugin.pending = book
             self.load()
-            return
+            return True
         self.plugin.pending = None
-        node = node_from_row(book, origin='sélection')
         current = next((n for n in self.nodes if n.key == node.key), None)
         if current:
             self.visit(current)
-            return
+            return True
         snapshot = self.nodes
         def apply(nodes):
             self.nodes = nodes
             self.visit(next(n for n in nodes if n.key == node.key))
         self.status.set_label('Ajout du livre central…')
         self.run_calculation(lambda control: merge_nodes(snapshot + (node,)), apply, 'Calcul du voisinage')
+        return True
 
     def cancel_calculation(self):
         self.generation += 1
