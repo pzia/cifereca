@@ -47,6 +47,9 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
             self.refresh_library(False)
             return
         self._show_library_entries(entries)
+        # A successful *empty* response is still a loaded snapshot for the
+        # selected identity. Do not resubmit work on every return to Library.
+        self._library_loaded_generation = generation
     def err(exc: BaseException) -> None:
         if (getattr(self, "_closed", False) or
                 request_generation != self._library_refresh_generation):
@@ -93,6 +96,7 @@ def refresh_recent(self, control: Gtk.Widget | None = None) -> None:
             self.refresh_recent()
             return
         self._show_recent_entries(items)
+        self._recent_loaded_generation = generation
     def err(exc: BaseException) -> None:
         if (getattr(self, "_closed", False) or
                 request_generation != self._recent_refresh_generation):
