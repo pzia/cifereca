@@ -171,13 +171,21 @@ def book_key(book: object) -> str:
 
 
 def book_ref(book: object) -> BookRef:
+    # Stored youth notices can have malformed identifier envelopes. The
+    # public navigation contract must never interpret a string as a sequence
+    # of (key, value) pairs, nor serialize arbitrary provider objects.
+    raw_identifiers = getattr(book, "identifiers", None)
+    try:
+        identifiers = dict(raw_identifiers) if isinstance(raw_identifiers, Mapping) else {}
+    except Exception:
+        identifiers = {}
     return BookRef(
         book_id=_text(getattr(book, "record_id", "")),
         title=_text(getattr(book, "title", "")),
         # BookRef is handed to the host for navigation: apply the same public
         # author projection as the list and detail before crossing that API.
         authors=_public_authors(book),
-        identifiers=dict(getattr(book, "identifiers", {}) or {}),
+        identifiers=identifiers,
         metadata={
             "youth_age_ranges": tuple(
                 {
