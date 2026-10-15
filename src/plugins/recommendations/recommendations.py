@@ -6,6 +6,7 @@ import time
 from ipaddress import ip_address
 from itertools import islice
 from typing import Any, Mapping
+from unicodedata import category
 from urllib.parse import unquote, urlsplit
 
 from cifereca.plugin_api import (
@@ -37,6 +38,40 @@ _DIVERSITY_TOOLTIP = (
     "une valeur élevée varie davantage auteurs, sujets et sources."
 )
 
+def _public_candidate_text(value: Any, *, limit: int = 180) -> str:
+    """Project provider scalars without serializing private cached objects.
+
+    Recommendation candidates can outlive their provider. Object reprs,
+    mapping internals and control/bidi characters are not public metadata.
+    """
+    if type(value) is not str:
+        return ""
+    cleaned = value.strip()
+    if (
+        not cleaned or len(cleaned) > limit
+        or any(category(char) in {"Cc", "Cf", "Cs"} for char in cleaned)
+    ):
+        return ""
+    return cleaned
+
+
+def _candidate_public_field(item: Any, name: str, *, limit: int = 180) -> str:
+    try:
+        raw = get_field(item, name, None)
+    except Exception:
+        return ""
+    return _public_candidate_text(raw, limit=limit)
+
+
+def _public_candidate_description(item: Any) -> str:
+    # Invalid primary provider description must not hide an independently
+    # safe summary, nor stringify malformed metadata into the public detail.
+    return (
+        _candidate_public_field(item, "description", limit=8000)
+        or _candidate_public_field(item, "summary", limit=8000)
+    )
+
+
 def _reference_isbn(book: Any) -> str:
     """One checksum-validated edition ISBN, not an inferred title match."""
     identifiers = identifier_values(book)
@@ -44,7 +79,7 @@ def _reference_isbn(book: Any) -> str:
 
 
 def _reference_label(book: Any) -> str:
-    title = str(get_field(book, "title", "") or "").strip() or "Sans titre"
+    title = _candidate_public_field(book, "title", limit=2048) or "Sans titre"
     authors = author_values(book)
     author = authors[0] if authors else ""
     label = f"{title} — {author}" if author else title
@@ -861,7 +896,7 @@ class UxRecommendationsView:
             # participate in local filtering; the scalar "author" field may
             # be empty even when "authors" contains several names.
             haystack = normalize(" ".join((
-                str(get_field(item, "title", "") or ""),
+                _candidate_public_field(item, "title", limit=2048),
                 " ".join(author_values(item)),
             )))
             if needle not in haystack:
@@ -1314,7 +1349,7 @@ class UxRecommendationsView:
             rows.append(
                 UiBookListEntry(
                     key=key,
-                    title=str(get_field(item, "title", "") or "Sans titre"),
+                    title=_candidate_public_field(item, "title", limit=2048) or "Sans titre",
                     subtitle=author,
                     meta=" · ".join(meta_parts),
                     badge=f"Affinité {ranked.score}/100",
@@ -1362,11 +1397,11 @@ class UxRecommendationsView:
             self._llm_button.set_sensitive(not self._busy and self._llm_handle is None)
 
         item = ranked.item
-        title = str(get_field(item, "title", "") or "Sans titre")
+        title = _candidate_public_field(item, "title", limit=2048) or "Sans titre"
         authors = tuple(author_values(item))
         author = ", ".join(authors)
-        fmt = str(get_field(item, "format", "") or "").strip()
-        published = str(get_field(item, "published_at", "") or "").strip()
+        fmt = _candidate_public_field(item, "format")
+        published = _candidate_public_field(item, "published_at")
         reasons = " · ".join(ranked.reasons)
         source_labels = tuple(
             dict.fromkeys(
@@ -1375,11 +1410,7 @@ class UxRecommendationsView:
                 if str(source or "")
             )
         )
-        description = str(
-            get_field(item, "description", "")
-            or get_field(item, "summary", "")
-            or ""
-        ).strip()
+        description = _public_candidate_description(item)
 
         recommendation_fields = [
             DetailField("affinity", "Affinité", f"{ranked.score}/100"),
