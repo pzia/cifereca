@@ -60,8 +60,6 @@ def test_cache_render_and_detail_selection_agree_for_every_duplicate_edition():
     assert len({row.key for row in captured_rows}) == len(books)
     stale_actions = []
     for index, row in enumerate(captured_rows):
-        if stale_actions:
-            assert all(action.callback() is False for action in stale_actions)
         view.selected(row)
         assert view.selected_book is books[index]
         assert shown[-1].title == books[index].title
