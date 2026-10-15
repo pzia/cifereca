@@ -718,31 +718,62 @@ class NamingAuditTool(_ReadOnlyTool):
             valid = type(plan.warnings) in (tuple, list) and len(plan.warnings) <= 15
         if valid:
             import re
+            # Each sampled notice has exactly one classified outcome. For
+            # restored plans, counts alone are not enough: the warning list
+            # must reflect the actual bounded, ordered preview policy.
+            samples = []
+            observed = {"mismatch": 0, "policy_failures": 0}
+            last_ordinal = 0
             for warning in plan.warnings:
                 if type(warning) is not str:
                     valid = False
                     break
-                if (
-                    re.fullmatch(
-                        r"(?:Politique de nommage indisponible|Nom non conforme) : notice n°[1-9][0-9]{0,6}",
-                        warning,
+                match = re.fullmatch(
+                    r"(Politique de nommage indisponible|Nom non conforme) : notice n°([1-9][0-9]{0,6})",
+                    warning,
+                )
+                if match:
+                    ordinal = int(match.group(2))
+                    if len(samples) >= 12 or ordinal <= last_ordinal:
+                        valid = False
+                        break
+                    last_ordinal = ordinal
+                    kind = (
+                        "mismatch" if match.group(1) == "Nom non conforme"
+                        else "policy_failures"
                     )
-                    or warning == (
-                        f'{counts["unavailable"]} entrée(s) sans nom/titre public vérifiable.'
-                    ) and counts["unavailable"] > 0
-                    or warning == (
-                        f'{counts["policy_failures"]} entrée(s) sans proposition valide de la politique Core.'
-                    ) and counts["policy_failures"] > 0
-                    or warning == "Audit uniquement : aucune mutation de placement n'est effectuée."
-                ):
-                    safe_warnings.append(warning)
+                    observed[kind] += 1
+                    if observed[kind] > counts[kind]:
+                        valid = False
+                        break
+                    samples.append(warning)
                 else:
-                    valid = False
+                    # Aggregate warnings cannot be interspersed with samples.
                     break
             if valid:
-                valid = bool(safe_warnings) and safe_warnings[-1] == (
-                    "Audit uniquement : aucune mutation de placement n'est effectuée."
+                expected_samples = min(
+                    12, counts["mismatch"] + counts["policy_failures"]
                 )
+                valid = len(samples) == expected_samples
+                if valid and expected_samples < 12:
+                    valid = (
+                        observed["mismatch"] == counts["mismatch"]
+                        and observed["policy_failures"] == counts["policy_failures"]
+                    )
+            if valid:
+                tail = []
+                if counts["unavailable"]:
+                    tail.append(
+                        f'{counts["unavailable"]} entrée(s) sans nom/titre public vérifiable.'
+                    )
+                if counts["policy_failures"]:
+                    tail.append(
+                        f'{counts["policy_failures"]} entrée(s) sans proposition valide de la politique Core.'
+                    )
+                tail.append("Audit uniquement : aucune mutation de placement n'est effectuée.")
+                valid = list(plan.warnings[len(samples):]) == tail
+            if valid:
+                safe_warnings = list(plan.warnings)
         control.check_cancelled()
         if not valid:
             control.report(message="Audit des noms impossible : plan invalide")
