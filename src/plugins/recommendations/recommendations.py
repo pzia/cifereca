@@ -22,7 +22,7 @@ from cifereca.plugin_api import (
 )
 from recommendation_llm import explain_reasons
 
-from recommendation_engine import RankedCandidate, author_values, candidate_key, get_field, identifier_values, normalize
+from recommendation_engine import RankedCandidate, candidate_key, get_field, identifier_values, normalize
 from recommendation_service import LibrarySnapshotCache, RecommendationPartial, RecommendationResult, compute_recommendations
 from reference_recommendation import compute_reference_recommendations
 
