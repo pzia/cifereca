@@ -151,8 +151,13 @@ class SynchronizationBrokerImpl:
     def _enabled(self, source_id: str) -> bool:
         raw = self.service.storage.metadata_get(self._preference_key(source_id))
         if raw is None:
+            # Existing, never-configured sources remain enabled for inventory.
             return True
-        return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+        # A corrupted or manually edited preference is NOT consent to
+        # reconnect or refresh a source. Never echo its possibly private value.
+        if type(raw) is not str:
+            return False
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
 
     def _state(self, source_id: str) -> dict[str, Any]:
         key = "sync.source.state." + source_id
@@ -220,10 +225,16 @@ class SynchronizationBrokerImpl:
         self._notify()
 
     def _find_account(self, source_id: str) -> Any:
-        for account in getattr(self.service, "accounts", ()) or ():
-            if self._source_id(account) == source_id:
-                return account
-        raise ValueError(f"unknown sync source: {source_id}")
+        # This is a routing key, not an instruction to pick the first
+        # matching session. Duplicate account bindings must fail closed
+        # before network access or local mutations.
+        matches = [
+            account for account in (getattr(self.service, "accounts", ()) or ())
+            if self._source_id(account) == source_id
+        ]
+        if len(matches) != 1:
+            raise ValueError("ambiguous sync source" if matches else "unknown sync source")
+        return matches[0]
 
     @staticmethod
     def _safe_phase_timestamp(value: Any) -> str:
@@ -389,6 +400,8 @@ class SynchronizationBrokerImpl:
         return tuple(rows)
 
     def set_enabled(self, source_id: str, enabled: bool) -> SyncSourceRef:
+        if type(enabled) is not bool:
+            raise ValueError("invalid source enabled preference")
         account = self._find_account(source_id)
         self.service.storage.metadata_set(self._preference_key(source_id), "1" if enabled else "0")
         self._notify()
@@ -696,7 +709,7 @@ class SynchronizationBrokerImpl:
             if control is not None and callable(getattr(control, "check_cancelled", None)):
                 control.check_cancelled()
             if control is not None and callable(getattr(control, "report", None)):
-                control.report(current=index - 1, total=len(sources), message=f"Synchronisation {source.label}")
+                control.report(current=index - 1, total=len(sources), message="Synchronisation d’une source")
             result = self.synchronize_source(source.source_id, request, control)
             total += result.changed
             warnings.extend(result.warnings)
