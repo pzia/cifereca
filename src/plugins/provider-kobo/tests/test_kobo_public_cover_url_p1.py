@@ -205,3 +205,69 @@ def test_configured_local_vault_origin_still_allows_its_explicit_cover():
     assert catalog.cover_url({
         "cover_url": "http://127.1:9854/covers/private.jpg",
     }) is None
+
+
+@pytest.mark.parametrize("unsafe", (
+    "../api/v2/library/PRIVATE_BOOK/acquisition",
+    "covers/../../token/PRIVATE_ACCESS",
+    "covers/%2e%2e/api/v2/library/PRIVATE_BOOK/acquisition",
+    "covers/%252e%252e%252flicense/PRIVATE_FILE.lcpl",
+    "covers/%25252Fdownload%25252fPRIVATE_BOOK.epub",
+    "/api/v2/library/PRIVATE_BOOK/acquisition",
+    "https://cdn.example/download/PRIVATE_BOOK.jpg",
+    "https://cdn.example/covers/book%252fdrm%252ftoken.jpg",
+    "https://cdn.example/covers/PRIVATE_BOOK.acsm",
+    "https://cdn.example/covers/PRIVATE_BOOK.pdf",
+    "https://cdn.example/license/PRIVATE_COVER",
+))
+def test_cover_route_never_exposes_acquisition_or_parent_traversal(unsafe):
+    catalog = _catalog()
+    assert catalog.cover_url({"cover_url": unsafe}) is None
+    for collection in ("catalog", "library"):
+        result = catalog.normalize_item({
+            "product_id": "edition", "title": "Public",
+            "cover_url": unsafe,
+            "collection": collection,
+            "owned": collection == "library",
+        })
+        assert result.thumbnail_url is None
+        assert "cover_url" not in result.metadata
+        assert "catalog_cover" not in result.metadata
+        assert "PRIVATE_" not in json.dumps(result.metadata)
+
+
+def test_malicious_primary_cover_can_fall_back_to_independent_public_image():
+    catalog = _catalog()
+    result = catalog.normalize_item({
+        "product_id": "edition", "title": "Public",
+        "cover_url": "covers/%252e%252e%252fdownload/PRIVATE_BOOK",
+        "thumbnail_url": "https://cdn.example/covers/verified.jpg",
+        "collection": "catalog",
+    })
+    assert result.thumbnail_url == "https://cdn.example/covers/verified.jpg"
+    assert result.metadata["cover_url"] == result.thumbnail_url
+    assert "PRIVATE" not in json.dumps(result.metadata)
+
+
+@pytest.mark.parametrize("safe", (
+    "covers/edition/cover.jpg",
+    "/covers/edition/cover.webp",
+    "https://cdn.example/book/cover%20image.jpg",
+    "https://cdn.example/covers/cover%2520image.jpg",
+    "https://cdn.example/covers/book%25variant.jpg",
+))
+def test_safe_nested_images_remain_usable_after_route_guard(safe):
+    assert _catalog().cover_url({"cover_url": safe}) is not None
+
+
+def test_same_origin_local_vault_does_not_bypass_cover_route_policy():
+    catalog = KoboCatalogService(
+        SimpleNamespace(base_url="http://127.0.0.1:9854/api"),
+        credential_id="fixture",
+    )
+    assert catalog.cover_url({
+        "cover_url": "http://127.0.0.1:9854/api/v2/library/PRIVATE_BOOK/acquisition",
+    }) is None
+    assert catalog.cover_url({
+        "cover_url": "/covers/book.jpg",
+    }) == "http://127.0.0.1:9854/covers/book.jpg"
