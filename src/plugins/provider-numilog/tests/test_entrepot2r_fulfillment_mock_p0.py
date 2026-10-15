@@ -271,7 +271,11 @@ def test_oversized_acsm_response_fails_without_broker_or_staging(
         headers = {"content-type": "application/vnd.adobe.adept+xml"}
         if header_present:
             headers["content-length"] = str(len(oversized))
-        return httpx.Response(200, headers=headers, content=oversized)
+        # Passing content= automatically adds Content-Length in httpx;
+        # a real streaming response without it must exercise the byte loop.
+        return httpx.Response(
+            200, headers=headers, stream=httpx.ByteStream(oversized)
+        )
     session, broker = make_session(handler, tmp_path)
     session.maximum = 1024
     try:
