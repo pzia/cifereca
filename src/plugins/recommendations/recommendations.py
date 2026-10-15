@@ -55,6 +55,25 @@ def _public_candidate_text(value: Any, *, limit: int = 180) -> str:
     return cleaned
 
 
+def _public_ranked_values(raw: Any, *, limit: int = 32) -> tuple[str, ...]:
+    """Bound public rank explanations and provider provenance.
+
+    A restored/partial ranking can contain malformed list members or a
+    mapping where a tuple of reasons/sources is expected. Never iterate
+    field names as bibliographic facts or coerce objects into GTK labels.
+    """
+    if type(raw) is str:
+        rows = (raw,)
+    elif type(raw) in (list, tuple):
+        rows = raw[:limit]
+    else:
+        return ()
+    return tuple(
+        cleaned for value in rows
+        if (cleaned := _public_candidate_text(value, limit=240))
+    )
+
+
 def _candidate_public_field(item: Any, name: str, *, limit: int = 180) -> str:
     try:
         raw = get_field(item, name, None)
@@ -1021,8 +1040,14 @@ class UxRecommendationsView:
         )
 
     def _display_source(self, provider_id: str) -> str:
-        provider_id = str(provider_id or "")
-        return self._provider_labels.get(provider_id, provider_id)
+        # The source name is copied into both the list and the public
+        # detail; never stringify provider objects or expose bad cache labels.
+        source = _public_candidate_text(provider_id, limit=120)
+        if not source:
+            return ""
+        return _public_candidate_text(
+            self._provider_labels.get(source, source), limit=240,
+        )
 
     def _provider_label(self) -> str:
         provider_id = self.selected_provider_id()
@@ -1385,12 +1410,11 @@ class UxRecommendationsView:
 
             author = ", ".join(_public_candidate_authors(item))
             source_labels = [
-                self._display_source(source)
-                for source in ranked.sources
-                if str(source or "")
+                label for source in _public_ranked_values(ranked.sources)
+                if (label := self._display_source(source))
             ]
             sources = " · ".join(dict.fromkeys(source_labels))
-            reasons = " · ".join(ranked.reasons)
+            reasons = " · ".join(_public_ranked_values(ranked.reasons))
             meta_parts = []
             if sources:
                 meta_parts.append(sources)
@@ -1453,14 +1477,11 @@ class UxRecommendationsView:
         author = ", ".join(authors)
         fmt = _candidate_public_field(item, "format")
         published = _candidate_public_field(item, "published_at")
-        reasons = " · ".join(ranked.reasons)
-        source_labels = tuple(
-            dict.fromkeys(
-                self._display_source(source)
-                for source in ranked.sources
-                if str(source or "")
-            )
-        )
+        reasons = " · ".join(_public_ranked_values(ranked.reasons))
+        source_labels = tuple(dict.fromkeys(
+            label for source in _public_ranked_values(ranked.sources)
+            if (label := self._display_source(source))
+        ))
         description = _public_candidate_description(item)
 
         recommendation_fields = [
