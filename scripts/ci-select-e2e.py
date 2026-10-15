@@ -12,7 +12,8 @@ DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-structured-1366", "diagnostics-volume-1366",
         "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
 YOUTH = ("youth-1366", "youth-filter-help-1366", "youth-milan-1366",
-         "youth-editions-1366", "youth-library-search-1366")
+         "youth-editions-1366", "youth-library-search-1366",
+         "youth-focus-return-1366")
 ALL = CORE + DIAG + YOUTH
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          "startup", "core-navigation", "diagnostics-navigation-1366",
