@@ -42,6 +42,7 @@ après succès est sans effet (`already_linked`).
 - SHA et taille du candidat conformes au backup et à l'artefact générique existant.
 - EPUB/PDF régulier sous le dossier Kobo de cette identité ou son ancien dossier
   plat **propre à l'identité**. Aucun parcours du dossier global ambigu.
+  Un KEPUB déjà attesté, stocké en `.epub`, conserve son format et ses octets.
 - Aucun lien symbolique sur le chemin ou ses ancêtres. Pas de rapprochement par
   titre, nom de fichier ou ISBN ; conflit d'identité, produit, artefact ou index
   ambigu refusé. Preuve/cache manquants : refus, jamais de reconstitution supposée.

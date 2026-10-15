@@ -124,6 +124,21 @@ def test_distinct_identity_and_connection_do_not_share_evidence_or_open_files(ca
     assert _dump(case) == before
 
 
+@pytest.mark.parametrize("native", [False, True])
+def test_two_identities_must_not_claim_the_same_directory(case, monkeypatch, native):
+    case.service.identities.append(Identity("other", "Other", directory_name="hugues"))
+    case.service.config.set("identities", [
+        {"id": "default", "label": "Hugues", "directory_name": "hugues"},
+        {"id": "other", "label": "Other", "directory_name": "hugues"},
+    ])
+    case.service.config.save()
+    monkeypatch.setattr(repair, "_read_hash_within", lambda *args: pytest.fail("No hash for ambiguous folder ownership"))
+    before = _dump(case)
+    with pytest.raises(repair.ReconciliationRejected, match="ambiguous_identity_directory"):
+        _native(case) if native else _run(case)
+    assert _dump(case) == before
+
+
 @pytest.mark.parametrize("edit", ["right_revoked", "right_revision", "right_account", "missing_sha", "wrong_size", "running"])
 def test_active_matching_owned_right_and_prior_hash_are_independent_requirements(case, edit):
     with case.storage._lock, case.storage._connect() as db:
@@ -253,6 +268,16 @@ def test_legacy_uppercase_sha_is_verified_without_rewriting_the_attestation(case
         db.execute("UPDATE backup_items SET sha256=?", (case.sha.upper(),))
     assert _apply(case)["status"] == "applied"
     assert case.storage.backup_get("kobo", "vault-1", "PRIVATE-product")["sha256"] == case.sha.upper()
+
+
+def test_attested_kepub_stored_as_epub_is_linked_without_format_conversion(case):
+    with case.storage._lock, case.storage._connect() as db:
+        db.execute("UPDATE backup_items SET format='KEPUB'")
+        db.execute("UPDATE artifacts SET media_format='kepub'")
+    before = case.target.read_bytes()
+    assert _apply(case)["status"] == "applied"
+    assert case.target.read_bytes() == before
+    assert case.storage.artifact_get("sha256:" + case.sha)["media_format"] == "kepub"
 
 
 def _native(case, **options):
@@ -391,6 +416,39 @@ def test_sql_failure_in_middle_rolls_back_every_projection_and_journal(case):
     with pytest.raises(repair.ReconciliationRejected, match="local_storage_unavailable"):
         _run(case, confirmation=plan["plan_token"])
     assert _dump(case) == before
+
+
+def test_cleanup_failure_after_commit_does_not_falsely_report_no_changes(case, monkeypatch):
+    plan = _run(case)
+    class CleanupFailure(InterProcessLock):
+        def release(self):
+            super().release()
+            raise OSError("PRIVATE cleanup failure")
+    monkeypatch.setattr(repair, "InterProcessLock", CleanupFailure)
+    done = _run(case, confirmation=plan["plan_token"])
+    assert done["status"] == "applied" and done["changed"] == 1
+    assert case.storage.backup_get("kobo", "vault-1", "PRIVATE-product")["local_path"] == str(case.target)
+
+
+def test_connection_setting_cleanup_failure_preserves_durable_receipt(case, monkeypatch):
+    plan = _run(case)
+    db = case.storage._connect()
+    class Connection:
+        committed = False
+        def __getattr__(self, name):
+            return getattr(db, name)
+        def execute(self, sql, *args):
+            if self.committed and sql.startswith("PRAGMA synchronous="):
+                raise sqlite3.OperationalError("PRIVATE connection cleanup")
+            return db.execute(sql, *args)
+        def commit(self):
+            db.commit()
+            self.committed = True
+    proxy = Connection()
+    with monkeypatch.context() as patch:
+        patch.setattr(case.storage, "_connect", lambda: proxy)
+        assert _run(case, confirmation=plan["plan_token"])["status"] == "applied"
+    assert case.storage.backup_get("kobo", "vault-1", "PRIVATE-product")["local_path"] == str(case.target)
 
 
 def test_changed_file_during_transaction_rolls_back_database(case, monkeypatch):

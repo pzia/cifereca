@@ -75,7 +75,7 @@ def _rows(db, table, where="1", args=()):
 
 
 @contextmanager
-def _transaction(storage, write):
+def _transaction(storage, write, completion):
     with storage._lock:
         db = storage._connect()
         _require(not db.in_transaction, "storage_busy")
@@ -90,19 +90,30 @@ def _transaction(storage, write):
                 _require(not pending or not pending[0], "directory_migration_pending")
                 yield db
                 db.commit()
+                completion["committed"] = True
             except BaseException:
                 db.rollback()
                 raise
         finally:
             if write:
-                db.execute(f"PRAGMA synchronous={int(previous)}")
+                try:
+                    db.execute(f"PRAGMA synchronous={int(previous)}")
+                except sqlite3.Error:
+                    # Connection cleanup must never turn a durable commit
+                    # into a false "no changes" error receipt.
+                    pass
 
 
 def _roots(service, identity):
+    _require(type(identity) is str and 0 < len(identity) <= 1024
+             and not any(char in identity for char in ("\0", "\n", "\r")), "unknown_identity")
     profile = service.identity_by_id(identity)
     _require(profile is not None, "unknown_identity")
     library, target = _kobo_preview_paths(service, identity)
     folder = safe_library_component(profile.directory_name or identity, "default")
+    _require(not any(other.identity_id != identity
+                     and safe_library_component(other.directory_name or other.identity_id, "default") == folder
+                     for other in getattr(service, "identities", ())), "ambiguous_identity_directory")
     return (target, library / folder)
 
 
@@ -207,8 +218,9 @@ def _validate(service, snapshot, intent):
     artifact = watch["artifact"]
     _require(artifact.get("sha256") == intent["sha"] and artifact.get("size") == backup["size"]
              and type(artifact.get("media_format")) is str
-             and artifact["media_format"].lower() in {"epub", "pdf"}, "artifact_evidence_mismatch")
-    _require(Path(intent["path"]).suffix.lower().lstrip(".") == artifact["media_format"].lower(), "format_mismatch")
+             and artifact["media_format"].lower() in {"epub", "kepub", "pdf"}, "artifact_evidence_mismatch")
+    extension = "epub" if artifact["media_format"].lower() == "kepub" else artifact["media_format"].lower()
+    _require(Path(intent["path"]).suffix.lower().lstrip(".") == extension, "format_mismatch")
     roots = _roots(service, intent["identity"])
     _require(list(map(str, roots)) == intent["roots"], "source_configuration_changed")
     _require(not backup.get("local_path") or _within(backup["local_path"], roots), "old_path_unproven")
@@ -353,9 +365,11 @@ def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expecte
     _require(confirmation is None or (type(confirmation) is str and re.fullmatch("[0-9a-f]{64}", confirmation)), "invalid_confirmation")
     _require(undo_operation is None or (type(undo_operation) is str and re.fullmatch("[0-9a-f]{64}", undo_operation)), "invalid_operation")
     write = confirmation is not None
+    completion = {}
+    committed_receipt = None
     try:
         lock = InterProcessLock(acquisition_lock_file()) if write else nullcontext()
-        with lock, _transaction(service.storage, write) as db:
+        with lock, _transaction(service.storage, write, completion) as db:
             record = _journal(db, undo_operation) if undo_operation else None
             if record:
                 stored = record.get("intent")
@@ -417,10 +431,13 @@ def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expecte
             _require(intent["roots"] == list(map(str, _roots(service, owner))), "source_configuration_changed")
             _require(evidence == _file(path, _roots(service, owner), expected_sha256,
                                       snapshot["rows"]["backup_items"]["size"]), "file_changed")
-            return _receipt("undone" if record else "applied", operation=operation, changed=1)
+            committed_receipt = _receipt("undone" if record else "applied", operation=operation, changed=1)
+            return committed_receipt
     except LockBusyError:
         raise ReconciliationRejected("acquisition_busy") from None
     except (OSError, sqlite3.Error):
+        if completion.get("committed") and committed_receipt is not None:
+            return committed_receipt
         raise ReconciliationRejected("local_storage_unavailable") from None
     except (TypeError, KeyError, json.JSONDecodeError, RecursionError, UnicodeError):
         raise ReconciliationRejected("invalid_local_evidence") from None
@@ -461,6 +478,11 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
         folder = matching[0].get("directory_name")
         _require(type(folder) is str and bool(folder) and folder not in {".", ".."}
                  and safe_library_component(folder, "default") == folder, "identity_directory_unproven")
+        _require(all(isinstance(row, dict) and type(row.get("directory_name")) is str
+                     and bool(row["directory_name"]) and row["directory_name"] not in {".", ".."}
+                     and safe_library_component(row["directory_name"], "default") == row["directory_name"]
+                     for row in values), "identity_directory_unproven")
+        _require(sum(row["directory_name"] == folder for row in values) == 1, "ambiguous_identity_directory")
         return Identity(identity_id, str(matching[0].get("label") or identity_id), directory_name=folder)
 
     connection = None
@@ -477,4 +499,7 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
         raise ReconciliationRejected("local_profile_unavailable") from None
     finally:
         if connection is not None:
-            connection.close()
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass  # Preserve the already decided transaction receipt.
