@@ -57,7 +57,7 @@ def assert_private_data_absent(diagnostics):
         detail = kwargs["detail"]
         assert set(detail) <= {
             "action", "source", "phase", "code", "hops",
-            "http_status", "mime", "html_kind", "origin_kind", "path_kind",
+            "http_status", "mime", "html_kind", "origin_kind", "path_kind", "candidates",
         }
         assert set(detail) >= {"action", "source", "phase", "code"}
         assert len(detail["action"]) == 12
@@ -169,6 +169,17 @@ def test_html_selection_cause_and_page_shape_are_public(tmp_path, html, expected
             and x[1]["detail"]["code"] == expected
             for x in diag.acquisition()
         )
+        candidate_values = [
+            x[1]["detail"]["candidates"] for x in diag.acquisition()
+            if x[1]["detail"]["phase"] == "html_selection"
+            and "candidates" in x[1]["detail"]
+        ]
+        if expected == "html_delivery_link_missing":
+            assert candidate_values == [0]
+        elif expected == "html_delivery_ambiguous":
+            assert candidate_values == [2]
+        else:
+            assert candidate_values == []
         assert_private_data_absent(diag)
     finally:
         session.close()
