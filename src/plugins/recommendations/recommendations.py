@@ -4,6 +4,7 @@ import logging
 import re
 import time
 from ipaddress import ip_address
+from itertools import islice
 from typing import Any, Mapping
 from urllib.parse import unquote, urlsplit
 
@@ -240,7 +241,7 @@ def _candidate_languages(item: Any) -> tuple[str, ...]:
         if type(raw) in (list, tuple, set):
             # Bound untrusted provider arrays; never stringify nested values
             # or accept a str subclass with overridable text methods.
-            for tag in tuple(raw)[:128]:
+            for tag in islice(raw, 128):
                 if type(tag) is str and tag.strip():
                     values.append(tag)
         elif type(raw) is str and raw.strip():
