@@ -162,13 +162,9 @@ class TaskRunner:
                 outcome: tuple[str, Any] = ("ok", value)
             except BaseException as exc:  # noqa: BLE001 - thread/UI boundary
                 outcome = ("error", exc)
-            # The worker has finished; allow a fresh automatic request.
-            # Release on either success, error or cancellation, independently
-            # of GTK delivery, which may never run after closing the window.
-            if admission is not None:
-                with self._lock:
-                    if self._coalesced.get(admission) == task_id:
-                        del self._coalesced[admission]
+            # A completed worker may still be awaiting GTK delivery. Keep
+            # its original result as the authoritative pending operation
+            # until the UI consumes it; close() clears detached reservations.
             _TRACE_LOG.info(
                 "TRACE task outcome id=%s kind=%s origin=%s status=%s",
                 task_id, kind, origin,
@@ -179,6 +175,12 @@ class TaskRunner:
                 with self._lock:
                     self._count = max(0, self._count - 1)
                     remaining = self._count
+                    # Only after GTK delivery can another identical
+                    # automatic request be admitted. This avoids resubmitting
+                    # a finished job while its UI result is still queued.
+                    for key, owner_id in tuple(getattr(self, "_coalesced", {}).items()):
+                        if owner_id == task_id:
+                            del self._coalesced[key]
                 if getattr(self.window, '_closed', False):
                     return False
                 if control is not None and control.get_root() is not None:
