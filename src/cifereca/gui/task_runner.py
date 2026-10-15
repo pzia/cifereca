@@ -203,19 +203,8 @@ class TaskRunner:
             gtk_pending_since = time.monotonic()
 
             def deliver() -> bool:
-                # The historical teardown contract also executes this exact
-                # callback in isolation, without the enclosing submit scope.
-                # Observability must be an optional closure dependency.
-                try:
-                    phase_observer = observe
-                except NameError:
-                    phase_observer = None
-                if phase_observer is not None:
-                    phase_observer(
-                        "gtk_delivery_wait",
-                        max(0, time.monotonic() - gtk_pending_since),
-                        "success" if outcome[0] == "ok" else "failed",
-                    )
+                # Keep the historical callback self-contained: tests and
+                # UI teardown adapters may exercise it in isolation.
                 with self._lock:
                     self._count = max(0, self._count - 1)
                     remaining = self._count
@@ -259,7 +248,17 @@ class TaskRunner:
                         self.present_error(payload)
                 return False
 
-            GLib.idle_add(deliver)
+            def measured_deliver() -> bool:
+                # A wrapper observes GLib queue delay without modifying the
+                # independently usable legacy GTK delivery callback.
+                observe(
+                    "gtk_delivery_wait",
+                    max(0, time.monotonic() - gtk_pending_since),
+                    "success" if outcome[0] == "ok" else "failed",
+                )
+                return deliver()
+
+            GLib.idle_add(measured_deliver)
 
         future.add_done_callback(done)
 
