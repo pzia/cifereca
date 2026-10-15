@@ -1654,10 +1654,17 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                 # A changed counter is evidence of completed mutations, not
                 # an arbitrary provider value to coerce with int(). Refuse
                 # negative, boolean, non-numeric or unbounded claims.
-                raw_changed = getattr(result, "changed", 0)
-                if type(raw_changed) is not int or raw_changed not in (0, 1):
-                    raise ValueError("unverifiable Core mutation count")
-                if getattr(result, "ok", True) is False:
+                raw_changed = getattr(result, "changed", None)
+                raw_ok = getattr(result, "ok", None)
+                if (
+                    type(raw_changed) is not int or raw_changed not in (0, 1)
+                    or type(raw_ok) is not bool
+                ):
+                    # A missing/non-boolean outcome must not default to
+                    # success for a destructive operation. Core could have
+                    # partially changed files: only attested counts are shown.
+                    raise ValueError("unverifiable Core mutation outcome")
+                if raw_ok is False:
                     failures += 1
                 changed += raw_changed
                 # The Core mutation may return a private filesystem path,
