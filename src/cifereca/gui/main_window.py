@@ -707,6 +707,15 @@ class MainWindow(Adw.ApplicationWindow):
                 row.add_suffix(status_widget)
                 self._maintenance_line_rows.append((line_feedback, active_cancel))
 
+            line_preview_error = (
+                "Analyse des couvertures impossible." if line_mode == "covers"
+                else "Analyse des caches impossible."
+            )
+            line_run_error = (
+                "Vérification des couvertures impossible." if line_mode == "covers"
+                else "Nettoyage des caches impossible."
+            )
+
             def request_cancel(_cancel_button, cancellation_state=active_cancel,
                                feedback=line_feedback):
                 active = cancellation_state["control"]
@@ -722,6 +731,7 @@ class MainWindow(Adw.ApplicationWindow):
                 _button, service=tool, meta=info,
                 cancel_button=cancel, cancellation_state=active_cancel,
                 feedback=line_feedback, progress_scope=line_scope,
+                preview_error=line_preview_error, run_error=line_run_error,
             ):
                 if self._closed or _button.get_root() is None:
                     return
@@ -937,7 +947,7 @@ class MainWindow(Adw.ApplicationWindow):
                                 self.show_error(
                                     BUSY_MESSAGE if feedback is not None and isinstance(exc, MaintenanceBusyError)
                                     else CHANGED_MESSAGE if feedback is not None and isinstance(exc, MaintenancePlanChangedError)
-                                    else ("Nettoyage des caches impossible." if feedback is not None else str(exc)),
+                                    else (run_error if feedback is not None else str(exc)),
                                     meta.title,
                                 )
 
@@ -950,7 +960,7 @@ class MainWindow(Adw.ApplicationWindow):
                                 lambda: execute_maintenance_tool(
                                     service, context, plan, worker_control, destructive=destructive,
                                 ),
-                                "Nettoyage des caches impossible.", worker_control,
+                                run_error, worker_control,
                             ),
                             completed,
                             failed,
@@ -972,7 +982,7 @@ class MainWindow(Adw.ApplicationWindow):
                     self.show_error(
                         BUSY_MESSAGE if feedback is not None and isinstance(exc, MaintenanceBusyError)
                         else CHANGED_MESSAGE if feedback is not None and isinstance(exc, MaintenancePlanChangedError)
-                        else ("Analyse des caches impossible." if feedback is not None else str(exc)),
+                        else (preview_error if feedback is not None else str(exc)),
                         meta.title,
                     )
 
@@ -984,7 +994,7 @@ class MainWindow(Adw.ApplicationWindow):
                         lambda: preview_maintenance_tool(
                             service, context, destructive=destructive, control=planning_control,
                         ),
-                        "Analyse des caches impossible.", planning_control,
+                        preview_error, planning_control,
                     ),
                     present_preview,
                     preview_failed,
