@@ -31,7 +31,7 @@ def test_two_identities_same_credential_count_as_two_accounts_one_session():
     host = _host([_account("a", "c"), _account("b", "c")], [_session("c")], due=True)
     result = _kobo_opening_decision(host)
     assert result["eligible_kobo"] == 1
-    assert result["eligible_kobo_accounts"] == 2
+    assert result["eligible_kobo_bindings"] == 2
     assert result["status"] == "started"
 
 
@@ -39,7 +39,7 @@ def test_disabled_account_and_other_provider_do_not_count():
     host = _host([_account("a", "c", False), _account("b", "c", True, "paris")],
                  [_session("c")], due=True)
     result = _kobo_opening_decision(host)
-    assert result["eligible_kobo_accounts"] == 0
+    assert result["eligible_kobo_bindings"] == 0
     assert result["status"] == "source_disabled"
 
 
@@ -51,7 +51,7 @@ def test_unmatched_credential_is_not_eligible():
 def test_disconnected_or_uncapable_session_never_qualifies():
     for session in (_session("c", connected=False), _session("c", backup=False)):
         result = _kobo_opening_decision(_host([_account("a", "c")], [session]))
-        assert result["eligible_kobo_accounts"] == 0
+        assert result["eligible_kobo_bindings"] == 0
         assert result["status"] in {"no_session", "capability_unavailable"}
 
 
@@ -75,4 +75,4 @@ def test_report_does_not_expose_private_account_or_credential_identifiers():
     result = _kobo_opening_decision(host)
     assert "private-profile" not in str(result)
     assert "private-credential" not in str(result)
-    assert result["eligible_kobo_accounts"] == 1
+    assert result["eligible_kobo_bindings"] == 1
