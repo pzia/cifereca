@@ -32,7 +32,8 @@ def show_route(window, route: str, *, Gtk) -> None:
     # tab stop, only for a deliberate Jeunesse -> Recherche navigation.
     # This is scoped to the currently mounted plugin widget and is never a
     # request to refetch provider data or change the selected book.
-    outgoing = window.view_stack.get_visible_child_name()
+    route_name = getattr(window.view_stack, "get_visible_child_name", None)
+    outgoing = route_name() if callable(route_name) else None
     if outgoing == "youth" and route == "search":
         current_focus = getattr(window, "get_focus", lambda: None)()
         old_widget = window._plugin_page_widgets.get("youth")
