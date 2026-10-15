@@ -241,7 +241,16 @@ class CoverAuditTool(_ReadOnlyTool):
         invalid = 0
         samples: list[str] = []
         for notice_index, row in enumerate(entries, start=1):
-            cover = _cover_value(row)
+            try:
+                cover = _cover_value(row)
+            except Exception:
+                # Row mappings and string subclasses may throw while reading
+                # or normalizing a cover. Classify that one reference as
+                # invalid rather than stopping all subsequent catalogue rows.
+                invalid += 1
+                if len(samples) < 12:
+                    samples.append(f"Couverture non reconnue : notice n°{notice_index}")
+                continue
             # Preview warnings cross the UI/diagnostic boundary. Never embed
             # free-form titles, local paths or untrusted cover URLs there.
             if not cover:
@@ -296,9 +305,10 @@ class CoverAuditTool(_ReadOnlyTool):
                     )
                 elif not scheme:
                     suspicious = suspicious or bool(parsed.netloc)
-            except ValueError:
-                # Malformed IPv6 hosts, ports and other invalid URL shapes
-                # are rejected per row instead of aborting the entire scan.
+            except Exception:
+                # Even a malicious str subclass can fail outside urlsplit's
+                # documented ValueError cases. One bad reference must never
+                # erase all other cover results or reveal exception details.
                 suspicious = True
             if suspicious:
                 invalid += 1
