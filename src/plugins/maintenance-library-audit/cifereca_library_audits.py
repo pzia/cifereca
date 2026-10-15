@@ -1361,6 +1361,11 @@ class DuplicateCleanupTool(_ReadOnlyTool):
             or plan.tool_id != self.info.id
             or type(facts) is not dict
         )
+        # A wrong-shaped facts object may not implement get(). Keep the
+        # invalid_plan marker, but inspect a harmless empty dictionary while
+        # building the same expurgated failure result.
+        if type(facts) is not dict:
+            facts = {}
         raw_pairs = facts.get("pairs", ()) if type(facts) is dict else ()
         invalid_plan = invalid_plan or type(raw_pairs) not in (list, tuple)
         if not invalid_plan and len(raw_pairs) > 100_000:
