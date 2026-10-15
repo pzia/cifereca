@@ -306,6 +306,7 @@ def main() -> int:
         if report["status"] != "RUNNING":
             return
         cleanup_constellations()
+        cleanup_loan_sync()
         report["status"] = "FAIL"
         report["error"] = str(exc)
         gate = sync_progress_check.get("gate")
@@ -969,7 +970,180 @@ def main() -> int:
         w._render_recent(recent_volume["items"])
         if recent_volume["selected"] is not None:
             assert w.recent_page.select_key(recent_volume["selected"])
+        later(100, begin_loan_sync_acceptance)
+
+    loan_sync_fixture = {}
+
+    def begin_loan_sync_acceptance():
+        from types import SimpleNamespace as NS
+        from cifereca.models import Loan
+        from cifereca.core.loan_source_identity import loan_source_key
+        from cifereca.plugin_api import SyncSourceRef
+        w = window[0]
+        f = loan_sync_fixture
+        f["manager"] = w.plugin_manager
+        f["loans"] = list(w.service.last_loans)
+        selected = w.loan_page.selection.get_selected_item()
+        f["selected"] = selected.key if selected else None
+        f["displayed"] = getattr(w, "_displayed_loan", None)
+        f["search_state"] = w.search_controls.state()
+        f["library_state"] = w.library_controls.state()
+        f["mutations"] = []
+        f["overrides"] = []
+        def override(owner, name, value):
+            f["overrides"].append((owner, name, name in vars(owner), vars(owner).get(name)))
+            setattr(owner, name, value)
+        def forbidden(*args, **kwargs):
+            f["mutations"].append("unexpected operation")
+            raise AssertionError("Opération de restitution/synchronisation implicite")
+        override(w, "_return_loan", forbidden)
+        override(w, "_return_loan_pnb", forbidden)
+        # Only read-side capabilities are isolated; real renderers, window
+        # facades, row keys, actions and confirmation dialog remain in use.
+        override(w.service, "can_download_loan", lambda loan: False)
+        override(w.service, "adept_return_status_for_loan", lambda loan: {"status": "no_acquisition"})
+        override(w.service, "local_placement_for_source", lambda **kw: None)
+        sources = [
+            SyncSourceRef("p0-partial", "camille", "paris", "fictif-a", "Source partielle fictive",
+                          status="partial", last_attempt="2026-10-11T12:00:00+00:00",
+                          last_success="2026-10-10T12:00:00+00:00"),
+            SyncSourceRef("p0-offline", "camille", "paris", "fictif-b", "Source déconnectée fictive",
+                          connected=False, status="failed"),
+        ]
+        f["source_queries"] = []
+        def read_sources(identity_id):
+            assert identity_id == "camille"
+            f["source_queries"].append(identity_id)
+            return sources
+        sync_broker = NS(sources=read_sources, synchronize=forbidden,
+                         synchronize_source=forbidden, set_enabled=forbidden)
+        class FixtureManager:
+            active = True
+            def broker(self, name):
+                if self.active and name == "sync":
+                    return sync_broker
+                original = getattr(f["manager"], "broker", None)
+                return original(name) if callable(original) else None
+            def __getattr__(self, name):
+                return getattr(f["manager"], name)
+        f["proxy"] = FixtureManager()
+        w.plugin_manager = f["proxy"]
+        loans = [Loan(
+            id="p0-same-upstream-loan", provider="SYRACUSE", medium="digital",
+            record_id=f"p0-record-{index}", title=f"Prêt fictif compte {index}",
+            source_provider="paris", source_credential=f"p0-credential-{index}",
+            source_account_id=f"p0-account-{index}", identity_id="camille",
+            author="Auteur fictif", media_format="epub", can_return=True,
+            due_at="2026-11-10", raw={"language": "fr"},
+        ) for index in (1, 2)]
+        f["rows"] = loans
+        f["keys"] = [loan_source_key(loan) for loan in loans]
+        assert f["keys"][0] != f["keys"][1]
+        assert w.loan_filter == "digital" and not w.loan_languages.values()
+        w.loan_page.clear_rows()
+        w._populate_loans(loans)
+        w.navigate("loans")
+        await_route("loans", loan_sync_rows_rendered)
+
+    def loan_sync_rows_rendered():
+        w = window[0]
+        f = loan_sync_fixture
+        assert w.loan_page.store.get_n_items() == 2
+        assert set(w.loan_objects) == set(f["keys"])
+        assert w.loan_page.selection.get_selected_item() is None
+        assert w.loan_page.select_key(f["keys"][1])
+        later(200, loan_sync_detail_rendered)
+
+    def loan_sync_detail_rendered():
+        w = window[0]
+        f = loan_sync_fixture
+        title = next(node for node in walk(w.loan_page.detail)
+                     if isinstance(node, Gtk.Label) and node.get_text() == "Prêt fictif compte 2")
+        assert title.get_mapped() and title.get_width() > 0
+        assert w._displayed_loan is f["rows"][1]
+        assert w.loan_page.selection.get_selected_item().key == f["keys"][1]
+        assert not f["mutations"] and w.service.current_identity.identity_id == "camille"
+        report["checks"]["P0_loans_real_gtk_source_qualified_rows_and_detail"] = True
+        capture("03g-loans-two-source-rows-selected-detail")
+        w.confirm_return(f["rows"][1], Gtk.Button())
+        later(250, loan_sync_return_dialog)
+
+    def loan_sync_return_dialog():
+        w = window[0]
+        dialogs = [node for node in Gtk.Window.list_toplevels()
+                   if isinstance(node, Adw.MessageDialog) and node.get_visible()
+                   and node.get_heading() == "Restituer ce prêt numérique ?"]
+        assert len(dialogs) == 1 and dialogs[0].get_mapped()
+        dialog = dialogs[0]
+        assert dialog.has_response("adept") and dialog.has_response("pnb")
+        assert not loan_sync_fixture["mutations"]
+        report["checks"]["P0_loan_return_real_gtk_separates_ADEPT_and_PNB"] = True
+        capture("03h-loan-return-confirmation")
+        cancel = next(node for node in walk(dialog)
+                      if isinstance(node, Gtk.Button)
+                      and str(node.get_label()).replace("_", "") == "Annuler")
+        loan_sync_fixture["dialog"] = dialog
+        report["pointer_actions"].append(device[0].click_widget(cancel))
+        later(250, loan_sync_return_cancelled)
+
+    def loan_sync_return_cancelled():
+        w = window[0]
+        f = loan_sync_fixture
+        assert not f["dialog"].get_visible()
+        assert not f["mutations"] and w.service.last_loans == f["rows"]
+        assert w.loan_page.selection.get_selected_item().key == f["keys"][1]
+        report["checks"]["P0_loan_return_XTEST_cancel_keeps_loan_without_mutation"] = True
+        w.navigate("sync")
+        await_route("sync", loan_sync_sources_rendered)
+
+    def loan_sync_sources_rendered():
+        w = window[0]
+        f = loan_sync_fixture
+        rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
+        partial = next(row for row in rows if row.get_title() == "Source partielle fictive")
+        offline = next(row for row in rows if row.get_title() == "Source déconnectée fictive")
+        assert partial.get_mapped() and partial.get_width() > 0
+        assert "Synchronisation : Partielle" in partial.get_subtitle()
+        assert "Dernier succès confirmé : 10/10/2026 12:00" in partial.get_subtitle()
+        assert "Connexion : Déconnectée" in offline.get_subtitle()
+        assert any(isinstance(node, Gtk.Button) and not node.get_sensitive()
+                   and node.get_tooltip_text() == "Reconnectez ce compte avant de synchroniser."
+                   for node in walk(offline))
+        assert w._sync_all_button.get_sensitive()
+        assert f["source_queries"] and not f["mutations"]
+        assert w.service.current_identity.identity_id == "camille"
+        assert w.search_controls.state() == f["search_state"]
+        assert w.library_controls.state() == f["library_state"]
+        report["checks"]["P0_sync_real_gtk_partial_preserves_last_success_and_identity"] = True
+        report["checks"]["P0_sync_real_gtk_disconnected_source_action_disabled"] = True
+        capture("03i-sync-partial-last-success-and-offline-source")
+        cleanup_loan_sync()
         later(100, continue_baseline_settings)
+
+    def cleanup_loan_sync():
+        f = loan_sync_fixture
+        if not f.get("overrides"):
+            return
+        w = window[0]
+        dialog = f.get("dialog")
+        if dialog is not None and dialog.get_visible():
+            dialog.close()
+        for owner, name, existed, original in reversed(f["overrides"]):
+            if existed:
+                setattr(owner, name, original)
+            else:
+                delattr(owner, name)
+        f["overrides"] = []
+        # Revoke fixture callbacks by rebuilding with the original broker (or
+        # None for isolated shell contributions), then restore its exact owner.
+        if f.get("proxy") is not None:
+            f["proxy"].active = False
+            w._refresh_sync_page()
+        w.plugin_manager = f["manager"]
+        w._populate_loans(f["loans"])
+        w._displayed_loan = f["displayed"]
+        if f["selected"] is not None:
+            assert w.loan_page.select_key(f["selected"])
 
     def continue_baseline_settings():
         w = window[0]
@@ -1573,6 +1747,7 @@ def main() -> int:
 
         def do_shutdown(self):
             cleanup_constellations()
+            cleanup_loan_sync()
             if device[0] is not None:
                 device[0].close()
             page_plugin.deactivate()
