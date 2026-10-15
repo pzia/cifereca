@@ -569,7 +569,7 @@ def test_readbook_diagnostic_reveals_only_http_structure(tmp_path):
     ) == SIGNED
     assert evidence == {
         'js_delivery_shapes': 1, 'absolute_html_hrefs': 0,
-        'absolute_script_literals': 2,  # DrmTechnlology and link
+        'absolute_script_literals': 1,  # only the absolute URL is counted
         'allowed_candidates': 1,
     }
     assert 'SIGNATURE' not in repr(evidence)
