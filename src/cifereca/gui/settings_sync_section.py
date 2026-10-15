@@ -56,11 +56,18 @@ def build_kobo_sync_section(
         "Ancien réglage global Kobo (compatibilité)"
     )
     backup_auto_row.set_subtitle(
-        "Ce réglage historique ne lance plus de téléchargements. Les acquisitions "
-        "au démarrage se configurent et se révoquent par compte dans Synchronisation. "
-        "Il n’existe pas de minuterie périodique de téléchargement."
+        "Ancien réglage en lecture seule : il ne lance plus de téléchargements. "
+        "Les acquisitions au démarrage se configurent et se révoquent par compte "
+        "dans Synchronisation. Il n’existe pas de minuterie périodique de téléchargement."
     )
-    backup_switch = Gtk.Switch(); backup_switch.set_active((config.get("kobo_backup.enabled", False) is True)); backup_switch.set_valign(Gtk.Align.CENTER); backup_auto_row.add_suffix(backup_switch); backup_group.add(backup_auto_row)
+    backup_switch = Gtk.Switch()
+    backup_switch.set_active(config.get("kobo_backup.enabled", False) is True)
+    # Keep the persisted legacy bit visible for migration/rollback, but it is
+    # not a source-specific consent and must never be editable as one.
+    backup_switch.set_sensitive(False)
+    backup_switch.set_valign(Gtk.Align.CENTER)
+    backup_auto_row.add_suffix(backup_switch)
+    backup_group.add(backup_auto_row)
     # The source sync page only refreshes online metadata. Downloading books
     # is a separate, explicit operation with the persisted safety settings.
     manual_row = Adw.ActionRow()
@@ -82,11 +89,18 @@ def build_kobo_sync_section(
         "Ancienne dérogation Kobo (compatibilité)"
     )
     unlinked_row.set_subtitle(
-        "Ce réglage hérité ne contourne ni la vérification des droits, "
-        "ni l’anti-doublons : tout fichier local candidat ambigu exige "
+        "Ancien réglage en lecture seule : il ne contourne ni la vérification "
+        "des droits ni l’anti-doublons. Tout fichier local candidat ambigu exige "
         "un rapprochement sûr avant une nouvelle acquisition."
     )
-    unlinked_switch = Gtk.Switch(); unlinked_switch.set_active(config.get("kobo_backup.allow_unlinked_acquisition", False) is True); unlinked_switch.set_valign(Gtk.Align.CENTER); unlinked_row.add_suffix(unlinked_switch); backup_group.add(unlinked_row)
+    unlinked_switch = Gtk.Switch()
+    unlinked_switch.set_active(config.get("kobo_backup.allow_unlinked_acquisition", False) is True)
+    # The old permissive bypass is inert under the P0 anti-duplicate policy.
+    # Never suggest that toggling it can override a blocked reconciliation.
+    unlinked_switch.set_sensitive(False)
+    unlinked_switch.set_valign(Gtk.Align.CENTER)
+    unlinked_row.add_suffix(unlinked_switch)
+    backup_group.add(unlinked_row)
     library_dir_row = Adw.EntryRow(); library_dir_row.set_title("Bibliothèque locale possédée par cifereca")
     library_dir_row.set_text(str(config.get("library.directory", "~/EBooks") or "~/EBooks")); download_group.add(library_dir_row)
     backup_dir_row = Adw.EntryRow(); backup_dir_row.set_title("Sous-répertoire/override Kobo (vide = bibliothèque locale)")
