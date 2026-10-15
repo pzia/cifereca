@@ -73,6 +73,16 @@ def test_search_library_and_loan_use_shared_essential_projection():
         ("MainWindow", "_library_selected"),
     ]:
         source = ast.unparse(_method(class_name, method_name))
+        if method_name == "_library_selected":
+            assert "section_rows=local_book_detail_sections(" in source
+            helper = ast.parse(MAIN.with_name(
+                "local_book_detail_sections.py"
+            ).read_text(encoding="utf-8"))
+            source = ast.unparse(next(
+                node for node in helper.body
+                if isinstance(node, ast.FunctionDef)
+                and node.name == "local_book_detail_sections"
+            ))
         assert "'Essentiel'" in source
         positions = [source.index(repr(label)) for label in expected]
         assert positions == sorted(positions), (class_name, method_name)
@@ -117,7 +127,16 @@ def test_multivalue_facets_render_individual_filter_buttons_not_display_concaten
 
 def test_library_nominal_acquisition_state_and_single_presence_are_hidden():
     source = ast.unparse(_method("MainWindow", "_library_selected"))
-    assert "sync_label == 'À jour'" in source
+    assert "section_rows=local_book_detail_sections(" in source
+    helper = ast.parse(MAIN.with_name(
+        "local_book_detail_sections.py"
+    ).read_text(encoding="utf-8"))
+    projection = ast.unparse(next(
+        node for node in helper.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "local_book_detail_sections"
+    ))
+    assert "sync_label == 'À jour'" in projection
     assert "len(unique_presence) > 1" in source
 
 
