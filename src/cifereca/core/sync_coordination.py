@@ -103,10 +103,20 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     kobo = [s for s in self._sessions.values() if s.provider_id == "kobo"]
     connected = [s for s in kobo if s.connected]
     capable = [s for s in connected if getattr(s.capabilities, "backup", False)]
-    eligible = [s for s in capable if any(
-        a.provider_id == "kobo" and a.credential_id == s.credential_id
-        and self.sync_source_enabled(a) for a in self.accounts
-    )]
+    # Credentials can be shared by several distinct accounts/identities.
+    # A session is eligible only when a configured account is enabled and
+    # belongs to that exact provider/credential pair. Count each account
+    # once, not every cached session or an unrelated provider's switch.
+    eligible_accounts = [
+        a for a in self.accounts
+        if a.provider_id == "kobo"
+        and any(s.credential_id == a.credential_id for s in capable)
+        and self.sync_source_enabled(a)
+    ]
+    eligible = [
+        s for s in capable
+        if any(a.credential_id == s.credential_id for a in eligible_accounts)
+    ]
     if not enabled:
         reason = "disabled"
     elif not connected:
@@ -132,6 +142,7 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         "status": reason, "persisted_enabled": enabled,
         "configured_kobo": len(kobo), "connected_kobo": len(connected),
         "eligible_kobo": len(eligible),
+        "eligible_kobo_bindings": len(eligible_accounts),
         "interval_minutes": self.kobo_backup_interval_minutes(),
         "last_success_age_minutes": last_success_age_minutes,
         "deep": bool(deep),
