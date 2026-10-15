@@ -318,6 +318,8 @@ class KoboSession(ProviderSession):
                 meta = raw_metadata if raw_metadata is not None else {}
                 owned = getattr(item, "owned", None)
                 collection = getattr(item, "source_collection", None)
+                if (owned is not None and type(owned) is not bool):
+                    continue
                 if type(collection) is not str and collection is not None:
                     continue
                 private = owned is True or collection in ("library", "archived")
