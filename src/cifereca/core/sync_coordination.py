@@ -301,6 +301,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     # bulk-backup path is intentionally disabled until a separate scoped policy.
     catalog_mirror = {
         "status": "not_run", "notices_mirrored": 0, "sources_reported": 0,
+        "sources_failed": 0, "sources_blocked": 0,
         "materialization": {
             "status": "not_requested", "complete": 0, "unchanged": 0,
             "skipped": 0, "blocked": 0, "failed": 0, "attention_required": 0,
@@ -309,18 +310,32 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     try:
         mirror = self.mirror_personal_libraries()
         counts = (
-            list(mirror.values()) if type(mirror) is dict
+            list(mirror.values()) if isinstance(mirror, dict)
             and all(type(count) is int and 0 <= count <= 1_000_000
                     for count in mirror.values())
             and len(mirror) <= 1_000_000
             else None
         )
-        if counts is None:
+        failures = getattr(mirror, "failed_sources", 0)
+        blocked = getattr(mirror, "blocked_sources", 0)
+        if (
+            counts is None or type(failures) is not int
+            or type(blocked) is not int
+            or not 0 <= failures <= 1_000_000
+            or not 0 <= blocked <= 1_000_000
+        ):
             catalog_mirror["status"] = "unknown"
         else:
-            catalog_mirror["status"] = "inventory_only"
             catalog_mirror["notices_mirrored"] = min(1_000_000, sum(counts))
             catalog_mirror["sources_reported"] = len(counts)
+            catalog_mirror["sources_failed"] = failures
+            catalog_mirror["sources_blocked"] = blocked
+            catalog_mirror["status"] = (
+                "partial" if counts and (failures or blocked)
+                else "failed" if failures
+                else "blocked" if blocked
+                else "inventory_only"
+            )
     except Exception as exc:
         # A provider exception may contain a signed ACSM URL or bearer cookie.
         # The error type and phase are sufficient to explain the failure.
