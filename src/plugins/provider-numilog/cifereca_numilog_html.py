@@ -174,8 +174,10 @@ def _js_delivery_shape_count(script):
     if len(raw) > 64 * 1024:
         return 0
     return min(10000, sum(
-        all(re.search(r'(?<![A-Za-z0-9_$])' + field + r'\s*:', block)
-            for field in ('ProductId', 'IndexExemplaire', 'DrmTechnlology', 'link'))
+        all(re.search(
+            r"""(?<![A-Za-z0-9_$])(?:["']?)""" + re.escape(field)
+            + r"""(?:["']?)\s*:""", block,
+        ) for field in ('ProductId', 'IndexExemplaire', 'DrmTechnlology', 'link'))
         for block in (m.group(0) for m in _JS_OBJECT.finditer(raw))
     ))
 
