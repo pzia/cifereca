@@ -585,7 +585,7 @@ class IntegrityAuditTool(_ReadOnlyTool):
             )
         if reference_failures:
             warnings.append(
-                f"{reference_failures} taille(s) de référence invalide(s) : contrôle de taille indisponible."
+                f"{reference_failures} référence(s) d’intégrité invalide(s) : certains contrôles indisponibles."
             )
         return MaintenancePlan(
             tool_id=self.info.id,
