@@ -618,6 +618,14 @@ class UxRecommendationsView:
                     snapshot_cache.invalidate(identity_id)
         if self._active_identity_id is None or not self._identity_ids:
             return
+        if previous_identity is not None and previous_identity != current_identity:
+            # An in-flight task belongs to the previous profile. Do not wait
+            # for its completion to schedule the new refresh: a queued result
+            # could repaint the old account's recommendations under the new
+            # GTK selection. refresh() immediately revokes its generation,
+            # cancels its handle and clears the old visible list/detail.
+            self.refresh()
+            return
         self._overview_refresh_pending = True
         if not self._busy:
             self._schedule_overview_refresh()
