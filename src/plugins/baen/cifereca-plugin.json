@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.baen",
-    "version": "0.1.9",
+    "version": "0.1.10",
     "name": "Baen",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -30,8 +30,8 @@
           }
         }
       },
-      "help_text": "Fonds public Baen Free Library : recherche et pagination serveur qualifiées (q/page/pageSize). À l’ouverture d’une fiche publique, le plugin conserve auteur, date de publication et ISBN explicitement exposés par la page produit, avec provenance, sans extrapoler genre ni données de compte. Le flux EPUB final est téléchargé par transport.http avec limite de taille, validation EPUB et publication atomique. Achats et My Books restent hors périmètre.",
-      "version": "0.1.9",
+      "help_text": "Catalogue public Baen Free Library : pages officielles /catalog/category/view/s/free-library/id/2012 (pagination p, product_list_limit <=36), liens de fiches *.html même domaine attestés, filtrage du titre UNIQUEMENT dans la page chargée ; pas de recherche textuelle serveur exhaustive. Les cartes sont sélectionnées via classes produit, sans confondre menu, panier, FAQ ou My Books. Une page de login, un HTML imprévu et les redirections hors catalogue échouent explicitement, sans retourner un faux catalogue vide. L'ouverture d'une fiche conserve auteur, date et ISBN explicitement exposés. Le téléchargement EPUB reste une action explicite via transport.http avec validation ; achats, compte My Books et restauration ne sont PAS gérés.",
+      "version": "0.1.10",
       "capabilities": [
         "catalog.search",
         "catalog.detail",

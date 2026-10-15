@@ -36,7 +36,7 @@ class FakeTransport:
 
 class BaenImprovements(unittest.TestCase):
     def test_server_pagination_params(self):
-        self.assertEqual(BaenSession._search_params(' free  stories ',2,50), {'page':3,'pageSize':50,'hideBundles':0,'hideEarcs':0,'q':'free stories'})
+        self.assertEqual(BaenSession._search_params(' free  stories ',2,50), {'p':3,'product_list_limit':36})
 
     def test_public_detail_metadata_is_attested_and_conservative(self):
         metadata = BaenSession._detail_metadata(FakeResponse.text)
