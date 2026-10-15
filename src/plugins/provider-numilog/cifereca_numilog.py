@@ -250,7 +250,7 @@ class NumilogSession(ProviderSession):
                         # purchase into the same lid/format. On an explicit
                         # signed delivery, duplicate identity is ambiguous,
                         # even if the display title appears to match.
-                        if include_delivery:
+                        if include_delivery and self._id(row) == delivery_record_id:
                             raise ProviderError(
                                 'Numilog : livre dupliqué entre pages ; livraison non autorisée'
                             )
