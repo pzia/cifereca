@@ -62,6 +62,12 @@ def checked_url(value, allowed_origins=None):
     try:
         p = urlsplit(value)
         if p.scheme in {'http','https'} and url_origin(value) in allowed and not p.username and not p.password and not p.fragment:
+            # A wildcard path under the ACSM fulfillment host is NOT an
+            # authorization to query arbitrary private Numilog endpoints.
+            if url_origin(value) in ALLOWED_ACSM_ORIGINS and (
+                p.path != '/fulfillment/URLLink.acsm' or not p.query
+            ):
+                raise ProviderError('Numilog : destination réseau inattendue ; téléchargement arrêté')
             return value
     except ValueError:
         pass
@@ -340,6 +346,15 @@ class NumilogSession(ProviderSession):
         seen = set()
         for _ in range(12):
             checked_url(url,self.allowed_origins)
+            if url_origin(url) in ALLOWED_ACSM_ORIGINS:
+                # A signed link may be single-use. Validate ownership and
+                # the importer BEFORE consuming it, even after an ordinary
+                # readBook 302 or an HTML intermediary (#1883).
+                self._identity_id()
+                if self.acquisition_broker is None:
+                    raise ProviderCapabilityError(
+                        'Numilog : broker acquisition requis pour traiter un ACSM'
+                    )
             if url in seen:
                 raise ProviderError('Numilog : boucle de téléchargement')
             seen.add(url)
