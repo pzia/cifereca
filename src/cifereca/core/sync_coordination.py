@@ -44,16 +44,12 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
                 credential_id=account.credential_id,
                 account_id=account.unique_id or None,
             )
+        # A source-level sync is an inventory/rights refresh, not a request
+        # to materialize local files. In particular, Numilog may advertise
+        # direct_download but that capability must not implicitly acquire
+        # every returned EPUB from the generic Sync broker (#1346).
+        # The separate legacy opening/acquisition workflow remains unchanged.
         result["library"] = self._mirror_remote_results(rows, identity_id=account.identity_id)
-        if account.provider_id == "numilog" and session.capabilities.direct_download:
-            acquired = 0
-            for row in rows:
-                if control is not None and callable(getattr(control, "check_cancelled", None)):
-                    control.check_cancelled()
-                outcome = self._acquire_personal_library_item(session, row, account.identity_id)
-                if outcome.get("status") == "complete":
-                    acquired += 1
-            result["acquired"] = acquired
     if deep:
         result["catalog_scan"] = self.catalog_scan()
     return result
