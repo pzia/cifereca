@@ -69,6 +69,7 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert len(downloads.children) == 1
     assert downloads.children[0].title == "Bibliothèque locale possédée par cifereca"
     assert controls.backup_switch.active is False
+    assert controls.backup_switch.sensitive is False  # historic preference is read-only
     assert controls.run_backup_now.label == "Examiner les comptes Kobo…"
     assert controls.run_backup_now.sensitive is True
     assert "Ancien réglage global désactivé" in controls.backup_status.subtitle
@@ -91,6 +92,7 @@ def test_saved_values_match_old_view_and_unknown_vault_profile_falls_back():
     }
     controls, _, _ = _build(values)
     assert controls.backup_switch.active is True
+    assert controls.backup_switch.sensitive is False  # old True is visible, never an opt-in
     assert controls.run_backup_now.sensitive is True
     assert "sans effet sur l’acquisition" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is True
