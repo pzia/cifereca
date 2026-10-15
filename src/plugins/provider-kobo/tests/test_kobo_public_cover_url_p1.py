@@ -133,3 +133,41 @@ def test_explicit_same_origin_local_vault_keeps_covers_without_trusting_other_ho
         "http://127.0.0.1:9854/covers/book%0aPRIVATE.jpg",
     ):
         assert catalog.cover_url({"cover_url": value}) is None
+
+
+@pytest.mark.parametrize("unsafe", (
+    "https://cdn.example/cover%250APRIVATE_BEARER.jpg",
+    "https://cdn.example/cover%25250dPRIVATE_SECRET.jpg",
+    "https://cdn.example/cover%25252500PRIVATE_TOKEN.jpg",
+    "https://cdn.example/cover%257FPRIVATE_TOKEN.jpg",
+    "/covers/PRIVATE%250aCOVER.jpg",
+    "covers/PRIVATE%25250dBOOK.jpg",
+))
+def test_nested_percent_encoded_controls_never_become_public_cover_urls(unsafe):
+    catalog = _catalog()
+    assert catalog.cover_url({"cover_url": unsafe}) is None
+    projected = catalog.normalize_item({
+        "product_id": "edition", "title": "Public",
+        "cover_url": unsafe, "collection": "catalog",
+    })
+    assert projected.thumbnail_url is None
+    assert "cover_url" not in projected.metadata
+    assert "catalog_cover" not in projected.metadata
+    public = json.dumps(projected.metadata, ensure_ascii=False)
+    for private in ("PRIVATE_", "Bearer", "SECRET", "TOKEN"):
+        assert private not in public
+
+
+@pytest.mark.parametrize("cover", (
+    "https://cdn.example/cover%20name.jpg",
+    "https://cdn.example/cover%2520name.jpg",
+    "https://cdn.example/cover%25name.jpg",
+    "https://cdn.example/cover%GG.jpg",
+    "/covers/book%20name.jpg",
+))
+def test_benign_percent_encoded_cover_paths_remain_valid(cover):
+    catalog = _catalog()
+    expected = catalog.cover_url({"cover_url": cover})
+    assert expected is not None
+    projected = catalog.normalize_item({"product_id": "edition", "cover_url": cover})
+    assert projected.thumbnail_url == expected
