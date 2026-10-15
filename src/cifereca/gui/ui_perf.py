@@ -19,7 +19,7 @@ _PERF_CATEGORIES = frozenset({
 _PERF_PHASES = frozenset({
     "queue_wait", "worker", "gtk_delivery_wait", "lock_wait", "provider",
     "storage", "projection", "row_projection", "facets", "model_update",
-    "selection", "render", "frame_wait",
+    "selection", "render", "frame_wait", "gc_gen0", "gc_gen1", "gc_gen2",
 })
 _PERF_TRIGGERS = frozenset({
     "automatic", "user", "navigation", "maintenance", "unspecified",
@@ -63,6 +63,8 @@ class UiPerfMonitor:
         self._detailed_capture = False
         self._events_dropped = 0
         self._invalid_samples = 0
+        self._gc_samples_dropped = 0
+        self._active_gc_probes: set[tuple[int, str]] = set()
         self._clock = clock or time.monotonic
         self._started_at = self._clock()
         self._measurement_origin = (
@@ -78,6 +80,7 @@ class UiPerfMonitor:
             if enabled and not self._detailed_capture:
                 self._phase_events.clear()
                 self._events_dropped = 0
+                self._gc_samples_dropped = 0
                 self._started_at = self._clock()
             self._detailed_capture = enabled
 
@@ -91,6 +94,7 @@ class UiPerfMonitor:
         self, category: str, phase: str, duration_ms: float, *,
         operation_id: int | None = None,
         trigger: str = "unspecified", outcome: str = "unknown",
+        observed_at_ms: float | None = None,
     ) -> bool:
         """Store observed elapsed time only; reject raw private metadata."""
         try:
@@ -113,6 +117,18 @@ class UiPerfMonitor:
             operation_id if type(operation_id) is int
             and 0 < operation_id <= 1_000_000_000 else None
         )
+        # An opt-in probe may deliver a bounded sample after GTK finishes;
+        # preserve when it was observed rather than misdating it at flush.
+        if observed_at_ms is not None:
+            try:
+                observed_at_ms = float(observed_at_ms)
+            except (TypeError, ValueError, OverflowError):
+                observed_at_ms = None
+            if observed_at_ms is not None and (
+                not math.isfinite(observed_at_ms)
+                or not 0 <= observed_at_ms <= 86_400_000
+            ):
+                observed_at_ms = None
         key = f"{category}.{phase}"
         with self._lock:
             self._phase_samples[key].append(elapsed)
@@ -124,11 +140,101 @@ class UiPerfMonitor:
                     "category": category,
                     "phase": phase,
                     "elapsed_ms": round(elapsed, 2),
-                    "at_ms": round(max(0.0, (self._clock() - self._started_at) * 1000), 2),
+                    "at_ms": round(
+                        observed_at_ms if observed_at_ms is not None
+                        else max(0.0, (self._clock() - self._started_at) * 1000),
+                        2,
+                    ),
                     "trigger": trigger,
                     "outcome": outcome,
                 })
         return True
+
+    @contextmanager
+    def observe_gc(self, category: str) -> Iterator[None]:
+        """Measure Python GC pauses during *one* explicit opt-in UI operation.
+
+        The hook is local to a GTK model update, not a process-wide profiler:
+        it registers only while detailed capture is active, ignores collections
+        on other threads and removes itself on success or failure. Samples are
+        bounded before reaching the monitor and carry no GC object metadata.
+        The phase names identify generation, not a causal performance verdict.
+        """
+        if not self.detailed_capture_enabled:
+            yield
+            return
+        import gc
+
+        category = (
+            category if type(category) is str and category in _PERF_CATEGORIES
+            else "other"
+        )
+        owner = threading.get_ident()
+        key = (owner, category)
+        with self._lock:
+            if key in self._active_gc_probes:
+                # A re-entrant GTK update is already covered by the outer
+                # interval; recording both would double count its GC pause.
+                nested = True
+            else:
+                self._active_gc_probes.add(key)
+                nested = False
+        if nested:
+            yield
+            return
+
+        started: dict[int, float] = {}
+        samples: list[tuple[int, float, float]] = []
+        dropped = 0
+        capacity = self.max_samples
+
+        def callback(stage: str, info: dict[str, object]) -> None:
+            nonlocal dropped
+            # Keep the global GC callback allocation-free on unrelated
+            # threads and avoid acquiring the monitor lock inside GC.
+            if threading.get_ident() != owner or not self._detailed_capture:
+                return
+            generation = info.get("generation") if isinstance(info, dict) else None
+            if type(generation) is not int or generation not in (0, 1, 2):
+                return
+            if stage == "start":
+                started[generation] = time.perf_counter()
+            elif stage == "stop":
+                initial = started.pop(generation, None)
+                if initial is None:
+                    return
+                elapsed_ms = (time.perf_counter() - initial) * 1000
+                observed_at_ms = (self._clock() - self._started_at) * 1000
+                if len(samples) < capacity:
+                    samples.append((generation, elapsed_ms, observed_at_ms))
+                else:
+                    dropped += 1
+
+        installed = False
+        try:
+            try:
+                gc.callbacks.append(callback)
+                installed = True
+            except Exception:
+                # Instrumentation must not block a real GTK operation.
+                pass
+            yield
+        finally:
+            if installed:
+                try:
+                    gc.callbacks.remove(callback)
+                except ValueError:
+                    pass
+            with self._lock:
+                self._active_gc_probes.discard(key)
+                self._gc_samples_dropped += dropped
+            # No record_phase/lock/JSON allocation inside a GC callback.
+            # Flush after the GTK operation to avoid callback re-entrancy.
+            for generation, elapsed_ms, observed_at_ms in samples:
+                self.record_phase(
+                    category, f"gc_gen{generation}", elapsed_ms,
+                    trigger="navigation", observed_at_ms=observed_at_ms,
+                )
 
     def performance_report(self) -> dict[str, object]:
         """Versioned, bounded, offline export; no raw operation labels."""
@@ -141,6 +247,7 @@ class UiPerfMonitor:
             enabled = self._detailed_capture
             dropped = self._events_dropped
             invalid = self._invalid_samples
+            gc_dropped = self._gc_samples_dropped
         stats = {}
         for key, values in sorted(samples.items()):
             ordered = sorted(values)
@@ -160,6 +267,7 @@ class UiPerfMonitor:
             "events": events,
             "events_dropped": dropped,
             "invalid_samples": invalid,
+            "gc_samples_dropped": gc_dropped,
             "limits": {
                 "max_samples_per_phase": self.max_samples,
                 "max_events": self._max_events,

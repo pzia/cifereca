@@ -59,7 +59,15 @@ def render_library(window, entries: list[dict[str, Any]] | None = None, *, perf_
     window._attach_row_facets(rows, window._library_objects, window.library_controls)
     if phase is not None:
         phase("facets")
-    window.library_page.show_rows(rows, total_count=len(entries))
+    # GC observation is opt-in and only surrounds native GTK model updates.
+    # No hook is installed for headless adapters or ordinary rendering.
+    monitor = getattr(window, "ui_perf", None)
+    gc_probe = getattr(monitor, "observe_gc", None) if phase is not None else None
+    if callable(gc_probe) and callable(getattr(window.library_page, "get_root", None)):
+        with gc_probe("library"):
+            window.library_page.show_rows(rows, total_count=len(entries))
+    else:
+        window.library_page.show_rows(rows, total_count=len(entries))
     if phase is not None:
         phase("model_update")  # includes synchronous GTK ListStore signals
     restored_pending = window._select_pending_library_item()
@@ -86,7 +94,13 @@ def render_recent(window, items: list[dict[str, Any]] | None = None, *, perf_cou
     window._attach_row_facets(rows, window._recent_objects, window.search_controls)
     if phase is not None:
         phase("facets")
-    window.recent_page.show_rows(rows)
+    monitor = getattr(window, "ui_perf", None)
+    gc_probe = getattr(monitor, "observe_gc", None) if phase is not None else None
+    if callable(gc_probe) and callable(getattr(window.recent_page, "get_root", None)):
+        with gc_probe("recent"):
+            window.recent_page.show_rows(rows)
+    else:
+        window.recent_page.show_rows(rows)
     if phase is not None:
         phase("model_update")
     window.ui_perf.record("render_recent", (perf_counter() - _perf_started) * 1000.0)
