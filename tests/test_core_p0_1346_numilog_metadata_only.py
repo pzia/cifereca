@@ -168,4 +168,4 @@ def test_source_sync_and_opening_mirror_never_call_legacy_numilog_backup():
     mirror = code.split("def mirror_personal_libraries(", 1)[1]
     mirror = mirror.split("\n    def _acquire_personal_library_item(", 1)[0]
     assert "_acquire_personal_library_item" not in mirror
-    assert "download_library_item" not in mirror.split("result: dict[str, int] = {}", 1)[1]
+    assert "session.download_library_item(" not in mirror
