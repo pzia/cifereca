@@ -429,3 +429,147 @@ def test_missing_acsm_broker_blocks_direct_signed_get(tmp_path):
         _assert_no_stage(tmp_path)
     finally:
         session.close()
+
+
+def test_tbody_table_rows_keep_purchases_and_nested_markers_separate():
+    """Real HTML tbody/tr wrappers never alias the first title or signed link."""
+    first = _card(12, 9001, SIGNED)
+    second = _card(34, 9002, SECOND).replace(
+        'data-index-exemplaire="1"', 'data-index-exemplaire="1"',
+    )
+    html = (
+        '<html><table id="myTable"><tbody>'
+        '<tr data-product-id="9001"><td>' + first + '</td></tr>'
+        '<tr data-product-id="9002"><td>' + second + '</td></tr>'
+        '</tbody></table></html>'
+    )
+    diag = {}
+    rows, _ = parse_library_page(
+        html, delivery_evidence=True, delivery_diagnostics=diag,
+    )
+    assert [(r['lid'], r['title']) for r in rows] == [
+        ('12', 'Achat fictif 12'), ('34', 'Achat fictif 34'),
+    ]
+    assert [r['delivery'].url for r in rows] == [SIGNED, SECOND]
+    assert diag == {
+        'cards': 2, 'js_shapes_in_cards': 2,
+        'js_shapes_outside_cards': 0, 'bound_links': 2,
+    }
+
+
+def test_two_books_in_one_table_row_can_be_separated_by_independent_cards():
+    html = (
+        '<table id="myTable"><tbody><tr><td>'
+        + _card(12, 9001, SIGNED)
+        + _card(34, 9002, SECOND)
+        + '</td></tr></tbody></table>'
+    )
+    result, _ = parse_library_page(html, delivery_evidence=True)
+    assert len(result) == 2
+    assert [row['title'] for row in result] == [
+        'Achat fictif 12', 'Achat fictif 34',
+    ]
+    assert [row['delivery'].url for row in result] == [SIGNED, SECOND]
+
+
+def test_unpartitioned_multi_title_row_rejected_instead_of_misattribution():
+    html = (
+        '<table id="myTable"><tbody><tr>'
+        '<span class="pTitle">First book</span>'
+        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=12">Download</a>'
+        '<span class="pTitle">Second book</span>'
+        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=34">Download</a>'
+        '</tr></tbody></table>'
+    )
+    from cifereca_numilog_html import ParseError
+    with pytest.raises(ParseError, match='ambiguës'):
+        parse_library_page(html, delivery_evidence=True)
+    with pytest.raises(ParseError, match='ambiguës'):
+        parse_library_page(html)  # inventory must also reject mixed records
+
+
+def test_same_title_multiple_format_actions_still_projects_both_variants():
+    html = (
+        '<table id="myTable"><tbody><tr>'
+        '<span class="pTitle">The same book</span>'
+        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=12&amp;format=epub">EPUB</a>'
+        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=12&amp;format=pdf">PDF</a>'
+        f'<script>window.book={_object(9001, SIGNED)};</script>'
+        '</tr></tbody></table>'
+    )
+    rows, _ = parse_library_page(html, delivery_evidence=True)
+    assert len(rows) == 2
+    assert [r['title'] for r in rows] == ['The same book'] * 2
+    assert all('delivery' not in r for r in rows)  # variant unknown
+
+
+def test_structural_diagnostic_locates_unbound_global_script_without_private_data():
+    raw_html = _page(
+        '<div><span class="pTitle">Achat</span>'
+        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=12">Download</a></div>',
+        outside_script=f'<script>window.b={_object(9001, SIGNED)};</script>',
+    )
+    structure = {}
+    rows, _ = parse_library_page(
+        raw_html, delivery_evidence=True, delivery_diagnostics=structure,
+    )
+    assert rows and 'delivery' not in rows[0]
+    assert structure == {
+        'cards': 1, 'js_shapes_in_cards': 0,
+        'js_shapes_outside_cards': 1, 'bound_links': 0,
+    }
+    assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(structure)
+    inventory, _ = parse_library_page(raw_html)
+    assert inventory == [{k: v for k, v in rows[0].items() if k != 'delivery'}]
+
+
+def test_structural_diagnostics_do_not_contain_purchase_identifiers_or_tokens(tmp_path):
+    html = _page(
+        _card(12, 9001, SIGNED),
+        _card(34, 9002, SECOND),
+        outside_script=f'<script>window.global={_object(9999, SIGNED)};</script>',
+    )
+    session, diagnostic, broker, requested = _session(tmp_path, html)
+    try:
+        item = session.library()[0]
+        result, _ = session.download_direct(item, tmp_path)
+        assert result.is_file()
+        rows = [value for value in diagnostic.events
+                if value[0][1] == 'bibliothèque livraison']
+        assert len(rows) == 1
+        details = rows[0][1]['detail']
+        assert details['page_kind'] == 'meslivres'
+        assert details['js_shapes_in_cards'] == 2
+        assert details['js_shapes_outside_cards'] == 1
+        assert details['bound_links'] == 2
+        assert all(type(v) in {str, int} for v in details.values())
+        text = repr(diagnostic.events)
+        for sensitive in (
+            'SYNTHETIC_NOT_A_CREDENTIAL',
+            'SECOND_NOT_A_CREDENTIAL', '9001', '9002', '9999',
+            'orderid=', 'auth=', 'readBook.ashx?lid=',
+        ):
+            assert sensitive not in text
+        assert requested == [LIBRARY, LIBRARY, SIGNED]
+        assert len(broker.calls) == 1
+    finally:
+        session.close()
+
+
+def test_readbook_diagnostic_reveals_only_http_structure(tmp_path):
+    from cifereca_numilog_html import delivery_url
+    evidence = {}
+    html = (
+        f'<script>window.delivery={_object(8001, SIGNED, index=2)};</script>'
+    )
+    assert delivery_url(
+        html, READ_12,
+        allowed_origins={('https', 'entrepot2r.numilog.com', 443)},
+        evidence=evidence,
+    ) == SIGNED
+    assert evidence == {
+        'js_delivery_shapes': 1, 'absolute_html_hrefs': 0,
+        'absolute_script_literals': 2,  # DrmTechnlology and link
+        'allowed_candidates': 1,
+    }
+    assert 'SIGNATURE' not in repr(evidence)
