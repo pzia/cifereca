@@ -768,3 +768,34 @@ def test_duplicate_book_identity_across_pagination_blocks_even_own_signed_get(
         _assert_no_stage(tmp_path)
     finally:
         session.close()
+
+
+def test_quoted_json_js_keys_produce_same_scoped_acsm_evidence(tmp_path):
+    """Numilog can serialize the object as JSON rather than unquoted JS."""
+    import json
+    from cifereca_numilog_html import _js_delivery_shape_count, Parser
+    obj = json.dumps({
+        'ProductId': 9001, 'IndexExemplaire': 1,
+        'DrmTechnlology': 'ADOBE', 'link': SIGNED,
+    })
+    html = _page(_card(12, 9001, SIGNED).replace(_object(9001, SIGNED), obj))
+    scripts = [n for n in Parser(html).root.walk() if n.tag == 'script']
+    assert sum(_js_delivery_shape_count(n) for n in scripts) == 1
+    diag = {}
+    rows, _ = parse_library_page(
+        html, delivery_evidence=True, delivery_diagnostics=diag,
+    )
+    assert len(rows) == 1 and rows[0]['delivery'].url == SIGNED
+    assert diag['js_shapes_in_cards'] == diag['bound_links'] == 1
+    assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(rows)
+
+    session, _, broker, requested = _session(tmp_path, html)
+    try:
+        book = session.library()[0]
+        result, _ = session.download_direct(book, tmp_path)
+        assert result.is_file()
+        assert requested == [LIBRARY, LIBRARY, SIGNED]
+        assert len(broker.calls) == 1
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
