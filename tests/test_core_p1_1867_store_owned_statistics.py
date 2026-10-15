@@ -196,7 +196,7 @@ def test_public_projection_tolerates_missing_bindings_without_network():
         identity_for_connection=lambda provider, credential:
             (_ for _ in ()).throw(RuntimeError("database-unavailable")),
         entitlements=lambda **_kwargs: [],
-        catalog_entries=lambda: [],
+        catalog_entries=lambda **_kwargs: [],
     )
     result = owned_store_inventory_counts(storage, "one", rows)
     assert result == {"owned_store_books": 0, "owned_store_sources": 0}
