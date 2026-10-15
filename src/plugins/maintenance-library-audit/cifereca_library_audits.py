@@ -1326,17 +1326,29 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                 # alone then conflates independently fetched placement sets,
                 # suppressing real duplicate candidates from later views.
                 # Keep a fingerprint of actual, native placement references.
-                placement_key = tuple(sorted({
-                    identifier for placement in placements
-                    if type(identifier := getattr(placement, "placement_id", None)) is str
-                }))
+                fingerprint_ids: set[str] = set()
+                for placement in placements:
+                    try:
+                        identifier = getattr(placement, "placement_id", None)
+                    except Exception:
+                        # A single poisoned placement must not discard valid
+                        # sibling placements or their duplicate candidates.
+                        continue
+                    if (
+                        type(identifier) is str and 0 < len(identifier) <= 1024
+                        and identifier.strip() == identifier
+                        and not any(ord(ch) < 32 or ord(ch) == 127 for ch in identifier)
+                    ):
+                        fingerprint_ids.add(identifier)
+                placement_key = tuple(sorted(fingerprint_ids))
                 key = (book_key, artifact_key, placement_key)
             except Exception:
                 read_failures.append("unavailable")
                 continue
-            if key in seen_views:
+            if placement_key and key in seen_views:
                 continue
-            seen_views.add(key)
+            if placement_key:
+                seen_views.add(key)
             groups: dict[tuple[str, str | None], list[Any]] = {}
             seen_placements: set[str] = set()
             for placement in placements:
