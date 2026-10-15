@@ -1,6 +1,6 @@
 # Matrice de conformité des détails bibliographiques — Plugins P1 #1599
 
-État de référence au 14 octobre 2026 ; vérifier les PR fusionnées depuis cette date. Cette matrice
+État de référence actualisé le 15 octobre 2026 sur `main`. Cette matrice
 complète #1596 / #1598 : elle **ne définit pas de contrat CoreUI parallèle**.
 Les seuls ports de rendu autorisés sont `host.build_book_master_detail`,
 `UiBookListEntry`, `UiBookDetailPresentation`, `DetailField`,
@@ -13,8 +13,8 @@ Les seuls ports de rendu autorisés sont `host.build_book_master_detail`,
 | Liste / panneau public | `build_book_master_detail` → `show_rows` / `show_detail` | `build_book_master_detail` → `show_detail`, voisins dans `FlowBox` métier | `build_book_master_detail` → `show_rows` / `show_detail` |
 | Titre et auteurs | Titre, sous-titre, chaque auteur en `DetailField(kind='author')` | Titre/sous-titre ; auteurs individuels depuis #1611 (fusionnée) | Titre/sous-titre ; auteurs individuels et dédoublonnés depuis #1680 (fusionnée) |
 | Couverture | URL de liste et détail filtrée par `public_url` ; repli natif du renderer | URL `cover_url`/`thumbnail_url` **présente dans la notice exacte** (ou ses métadonnées publiques), filtrée par `public_url` ; aucune URL fabriquée, locale, signée ni d'acquisition | URL de liste et détail issue de la même validation conservatrice depuis #1680 |
-| Sections métier | **Âges attestés**, puis **Détail** (ISBN, source, langue, format, type, thèmes, éditeurs, année, collection, résumé, sources bibliographiques) | **Provenance** ; voisinage et raisons attestées/inférées dans les cartes dédiées | **Recommandation** (affinité, classement, raisons), **Catalogue**, **Notice**, **Éditions et sources distinctes**, option **Reformulation générée — à vérifier** |
-| Multivalués | Âges, auteurs, sources, formats, thèmes, éditeurs : une ligne par valeur attestée | Auteurs/sources agrégés sur `main`, lignes typées après #1611 ; raisons par voisin préservées | Sources agrégées, variantes de source séparées et bornées ; auteurs en lignes séparées depuis #1680 |
+| Sections métier | **Âges attestés**, puis **Détail** (ISBN, source, langue, format, type, thèmes, éditeurs, année, collection, résumé, sources bibliographiques) | **Bibliographie**, **Métadonnées bibliographiques attestées** (ISBN validé, langue, éditeur, séries, formats, sujets), **Provenance** ; voisinage et raisons attestées/inférées dans les cartes dédiées | **Recommandation** (affinité, classement, raisons), **Catalogue**, **Notice**, **Éditions et sources distinctes**, option **Reformulation générée — à vérifier** |
+| Multivalués | Âges, auteurs, sources, formats, thèmes, éditeurs : une ligne par valeur attestée | Auteurs, sources, séries, formats et sujets en lignes typées distinctes, bornées ; raisons par voisin préservées | Sources agrégées, variantes de source séparées et bornées ; auteurs en lignes séparées depuis #1680 |
 | Badges | Jusqu'à 3 âges, avec type conservé ; âge inconnu sur liste si non attesté | Disponibilité issue du graphe ; possession publique non attestée corrigée par #1613 ; aucun droit d'acquisition inféré | Affinité, source, « Provisoire » tant que calcul incomplet |
 | Liens publics | Notice `friendly_url` ou `notice_url` expurgée ; jamais signé/local | Lien `friendly_url` ; filtrage réseau/paramètres et repli public renforcés par #1606 | « Voir en ligne » uniquement via `_external_book_url` ; couverture expurgée par #1608 |
 | Auteur inconnu / âge inconnu | Jamais de date/âge inventé ; message « Aucune tranche d’âge attestée » | Ne pas fabriquer d’auteur ou de provenance | Sous-titre vide autorisé ; ne pas fabriquer de possession ou de droits |
@@ -31,7 +31,7 @@ Les seuls ports de rendu autorisés sont `host.build_book_master_detail`,
 | Actions périmées / async | Génération + livre + clé + identité capturés pour les actions de détail après #1609 ; tâches rejetées si contexte différent | `generation`, identité et `disposed` filtrent les callbacks tardifs ; chargements annulables | `_generation` et `_llm_generation` invalident les callbacks ; reset au changement de sélection |
 | Désactivation / fermeture | `disposed` et génération ; annulation des tâches et désabonnement | `disposed`, génération, annulation de tâche, désabonnement | `dispose()` invalide générations/LLM, annule tâches et sources GLib |
 | Interface compacte | Master/detail natif ; champs d'âge distincts, sans moteur de rendu | Master/detail natif + voisinage séparé dans `FlowBox` | Master/detail natif ; liste de résultats virtualisée |
-| URLs hostiles | Rejet schéma, IP privée, token, fragment, userinfo, host local | Rejet supplémentaire des URLs signées/locales avec #1606 | Rejet des liens externes dangereux ; couvertures alignées depuis #1680 |
+| URLs hostiles | Rejet schéma, IP privée, token, fragment, userinfo, host local | Filtrage des URL signées/locales et des caractères Unicode invisibles (dont séquences percent-encodées) ; repli sur URL de couverture attestée si un autre champ est malformé | Rejet des liens externes dangereux ; couvertures alignées depuis #1680 |
 
 ## Divergences prouvées, correctifs, validations
 
@@ -40,9 +40,11 @@ Les seuls ports de rendu autorisés sont `host.build_book_master_detail`,
 - **Jeunesse / actions obsolètes après sélection ou changement de profil** : PR [#1609](https://github.com/pzia/cifereca/pull/1609) — vérification à l'exécution des actions locales ; tests `tests/test_youth_detail_stale_actions_p1.py` et `test_youth_page.py`.
 - **Constellations / auteurs et sources multivalués** : PR [#1611](https://github.com/pzia/cifereca/pull/1611) — auteurs/sources en champs typés séparés, raisons spécialisées du graphe préservées ; ordre final à valider avec les conventions publiques de #1598.
 - **Constellations / possession par provenance** : PR [#1613](https://github.com/pzia/cifereca/pull/1613) — un `owned=True`, `local_path` ou état local issu d'un catalogue public ne devient plus un badge « possédé » ; seule la ligne du broker bibliothèque identité-scopé l'atteste.
-- **Couverture Constellations** : projection conservatrice d'une URL `cover_url` / `thumbnail_url` provenant de la **même notice** et validée par `public_url` avant transmission à `UiBookDetailPresentation.thumbnail_url` ; tests `tests/test_constellations_detail_attested_covers_p1.py` couvrant liens privés, acquisitions, repli vers une URL sûre, absence de preuve, éditions homonymes et métadonnées malformées.
+- **Couverture Constellations** : PR fusionnées [#1745](https://github.com/pzia/cifereca/pull/1745) et [#1758](https://github.com/pzia/cifereca/pull/1758) — couverture de **la notice exacte**, filtrée par `public_url` ; un accesseur malformé n'empêche pas le repli sur un autre champ public. Tests `test_constellations_detail_attested_covers_p1.py` et `test_constellations_cover_field_isolation_p1.py`.
+- **URLs Unicode Constellations** : PR fusionnée [#1757](https://github.com/pzia/cifereca/pull/1757) — caractères Cc/Cf/Cs, bidi/invisibles rejetés à chaque couche de décodage ; les espaces ordinaires percent-encodés restent admis. Tests `test_public_links_invisible_controls_p1.py`.
+- **Facettes Constellations** : PR fusionnée [#1760](https://github.com/pzia/cifereca/pull/1760) — section publique `attested-metadata`, champs ISBN canonique, langue, éditeur, séries, formats, sujets (sans année/humeur inférée ni droit d'acquisition). Tests `test_constellations_attested_bibliography_p1.py`.
 
-Les PR ci-dessus sont des **correctifs livrés en branches** : ne pas confondre « CI de branche verte » et « fusionné dans `main` ». La qualification réelle des adaptations n'est complète qu'après intégration du contrat commun CoreUI #1598.
+**Statut des anciens liens** : #1606, #1608 et #1613 ont été **fermées sans fusion** ; la matrice décrit la conformité observée sur `main` après les PR ultérieures fusionnées, et non l'intégration de ces anciens HEAD. #1609 et #1611 sont fusionnées. Les PR #1745, #1757, #1758 et #1760 sont également fusionnées, avec leur PR CI réussie. La qualification finale attend encore la comparaison avec le contrat partagé CoreUI #1598 et la recette GTK réelle.
 
 ## Gates de sortie à exécuter par CI/CD / UX
 
