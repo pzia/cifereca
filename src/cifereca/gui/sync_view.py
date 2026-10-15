@@ -120,6 +120,45 @@ def sync_source_identity_label(source: object, *, disambiguate: bool = True) -> 
     )
 
 
+def sync_source_row_labels(sources: object) -> tuple[str, ...]:
+    """Give same-name connections distinct *ephemeral* visible titles.
+
+    A source or credential hash must never become a pseudonymous UI identifier.
+    Numbering follows the already scoped broker order; it is presentation only
+    and does not grant or change synchronization permissions (#980).
+    """
+    rows = tuple(sources)
+    names = [
+        str(getattr(source, "label", "") or getattr(source, "provider_id", "") or "").strip()
+        for source in rows
+    ]
+    name_counts: dict[str, int] = {}
+    for name in names:
+        key = name.casefold()
+        name_counts[key] = name_counts.get(key, 0) + 1
+    qualified = [
+        sync_source_identity_label(
+            source, disambiguate=name_counts[name.casefold()] > 1
+        )
+        for source, name in zip(rows, names)
+    ]
+    qualified_counts: dict[str, int] = {}
+    for name in qualified:
+        key = name.casefold()
+        qualified_counts[key] = qualified_counts.get(key, 0) + 1
+    ordinal: dict[str, int] = {}
+    display: list[str] = []
+    for name in qualified:
+        key = name.casefold()
+        count = qualified_counts[key]
+        if count > 1:
+            ordinal[key] = ordinal.get(key, 0) + 1
+            display.append(f"{name} · connexion {ordinal[key]}/{count}")
+        else:
+            display.append(name)
+    return tuple(display)
+
+
 def sync_source_presentation(source: object) -> SyncSourcePresentation:
     enabled = bool(getattr(source, "enabled", False))
     connected = bool(getattr(source, "connected", False))
