@@ -22,8 +22,9 @@ def _timestamp_label(value: object) -> str:
         return ""
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return text
+    except (ValueError, OverflowError):
+        # Provider timestamps can contain private URLs or credential data.
+        return ""
     return parsed.strftime("%d/%m/%Y %H:%M")
 
 
@@ -170,7 +171,9 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
     activation = "Activée" if enabled else "Désactivée"
     connection = "Connectée" if connected else "Déconnectée"
 
-    error = str(getattr(source, "error", "") or "").strip()
+    # A provider error is an opaque diagnostic, not safe UI text: it may
+    # contain bearer URLs, filesystem paths, or private account identifiers.
+    error = bool(getattr(source, "error", ""))
     status = str(getattr(source, "status", "") or "idle").strip().casefold()
     last_success = _timestamp_label(getattr(source, "last_success", ""))
     last_attempt = _timestamp_label(getattr(source, "last_attempt", ""))
@@ -182,7 +185,7 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
     elif status == "partial":
         sync_label = "Partielle" + (f" · {last_attempt}" if last_attempt else "")
     elif error or status in {"error", "failed"}:
-        sync_label = "Échec" + (f" · {error}" if error else "")
+        sync_label = "Échec"
     elif last_success:
         sync_label = f"Dernier succès {last_success}"
     elif last_attempt:
