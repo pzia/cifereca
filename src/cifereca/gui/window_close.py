@@ -8,6 +8,14 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
     if window._closed:
         return False
     window._closed = True
+    frame_probe = getattr(window, "_ui_perf_frame_probe", None)
+    window._ui_perf_frame_probe = None
+    if frame_probe is not None:
+        try:
+            frame_probe.dispose()
+        except Exception:
+            # No asynchronous GDK callback may survive window teardown.
+            pass
     for name in ("_settings_main_lifetime", "_settings_standalone_lifetime"):
         lifetime = getattr(window, name, None)
         if lifetime is None:

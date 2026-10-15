@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .gtk_frame_paint_probe import GtkFramePaintProbe
+
 
 def _render_phase_probe(window, clock, category: str, started: float):
     """Opt-in, side-effect-free timing; no GTK imports or book identifiers.
@@ -35,6 +37,36 @@ def _render_phase_probe(window, clock, category: str, started: float):
         prior = clock()
 
     return mark
+
+
+
+def _observe_after_paint(window, category: str, widget, clock) -> None:
+    """Only for mapped GTK widgets during explicit detailed capture.
+
+    GDK after-paint is the end of frame-clock processing, NOT a guarantee
+    that pixels were presented to the display. Missing frames stay absent.
+    """
+    if getattr(window, "_closed", False):
+        return
+    monitor = getattr(window, "ui_perf", None)
+    if getattr(monitor, "detailed_capture_enabled", False) is not True:
+        return
+    if not callable(getattr(widget, "get_mapped", None)):
+        return
+    try:
+        probe = getattr(window, "_ui_perf_frame_probe", None)
+        if probe is None:
+            # GTK and GLib are only imported on opt-in user capture.
+            from gi.repository import GLib
+            probe = GtkFramePaintProbe(
+                timeout_add=GLib.timeout_add,
+                source_remove=GLib.source_remove,
+            )
+            window._ui_perf_frame_probe = probe
+        probe.observe(category, widget, monitor, clock=clock)
+    except Exception:
+        # Observability must never change the business render outcome.
+        pass
 
 
 def render_library(window, entries: list[dict[str, Any]] | None = None, *, perf_counter, project_library_rows, BookListItem, fr_date) -> None:
@@ -76,6 +108,8 @@ def render_library(window, entries: list[dict[str, Any]] | None = None, *, perf_
     if phase is not None:
         phase("selection")
     window.ui_perf.record("render_library", (perf_counter() - _perf_started) * 1000.0)
+    if phase is not None:
+        _observe_after_paint(window, "library", window.library_page, perf_counter)
 
 
 def render_recent(window, items: list[dict[str, Any]] | None = None, *, perf_counter, project_recent_rows, BookListItem) -> None:
@@ -104,3 +138,5 @@ def render_recent(window, items: list[dict[str, Any]] | None = None, *, perf_cou
     if phase is not None:
         phase("model_update")
     window.ui_perf.record("render_recent", (perf_counter() - _perf_started) * 1000.0)
+    if phase is not None:
+        _observe_after_paint(window, "recent", window.recent_page, perf_counter)
