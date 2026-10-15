@@ -127,6 +127,11 @@ def _refresh_sync_page(self) -> None:
     rows = broker.sources(scope.identity_id)
     if not sync_action_scope_current(self, scope):
         return
+    # Never render or enable another identity's broker row.
+    rows = [
+        source for source in rows
+        if getattr(source, "identity_id", None) == scope.identity_id
+    ]
     presentations = [sync_source_presentation(source) for source in rows]
     actionable = any(item.action_enabled for item in presentations)
     if all_now is not None:
@@ -177,7 +182,10 @@ def _refresh_sync_page(self) -> None:
                 if not sync_action_scope_current(self, scope):
                     return
                 self._refresh_sync_page()
-                if sync_action_scope_current(self, scope):
+                # Refresh replaces preview_generation by design. Preserve
+                # Library refresh only if identity and page owner are intact.
+                refreshed = capture_sync_action_scope(self, page_token=page_token)
+                if refreshed is not None and refreshed.identity_id == scope.identity_id:
                     self.refresh_library(False)
             self.runner.submit(
                 f"Synchronisation {label}…",
