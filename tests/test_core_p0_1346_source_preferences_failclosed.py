@@ -104,3 +104,38 @@ def test_ambiguous_same_source_bindings_reject_single_source_sync_and_toggle(tmp
         assert storage.metadata_get("sync.source.state." + sid) is None
     finally:
         storage.close()
+
+
+def test_multi_source_progress_never_exposes_provider_account_label(tmp_path):
+    from cifereca.plugin_api import SyncRequest, SyncResult
+    storage = Storage(tmp_path / "progress-redacted.sqlite3")
+    try:
+        broker = fake_broker(storage)
+        sid = broker.sources()[0].source_id
+        private = "https://private.invalid/?token=SECRET_LOCAL"
+        broker.sources = lambda _identity=None: [
+            NS(source_id=sid, label=private, enabled=True,
+               connected=True, sync_capable=True),
+        ]
+        broker.synchronize_source = lambda *a, **kw: SyncResult(ok=True)
+        messages = []
+
+        class Control:
+            def check_cancelled(self):
+                pass
+
+            def report(self, *, current, total, message):
+                messages.append(message)
+
+        receipt = broker.synchronize(
+            SyncRequest(identity_id="default"), control=Control(),
+        )
+        assert receipt.ok
+        assert messages == [
+            "Synchronisation d’une source",
+            "Synchronisation terminée",
+        ]
+        assert private not in repr(messages)
+        assert "SECRET_LOCAL" not in repr(receipt)
+    finally:
+        storage.close()
