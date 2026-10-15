@@ -86,3 +86,20 @@ def test_ambiguous_delivery_is_rejected():
             )
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("bad", (
+    SIGNED.replace("https://", "http://", 1),
+    SIGNED.replace("entrepot2r.numilog.com", "entrepot2r.numilog.com:8443"),
+    SIGNED.replace("entrepot2r.numilog.com", "entrepot2r.numilog.com.evil.example"),
+    SIGNED + "#signed-fragment",
+    SIGNED.replace("https://", "https://user:pass@", 1),
+))
+def test_html_delivery_does_not_select_untrusted_acsm_links(bad):
+    s = session()
+    try:
+        with pytest.raises(ParseError):
+            delivery_url(f'<a href="{bad}">Delivery</a>', s.library_url,
+                         allowed_origins=s.allowed_origins)
+    finally:
+        s.close()
