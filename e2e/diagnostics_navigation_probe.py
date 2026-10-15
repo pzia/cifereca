@@ -1304,7 +1304,13 @@ def main() -> int:
         capture("03i-sync-partial-last-success-and-offline-source")
         # #980 acceptance uses the real MainWindow/controller/widgets and
         # XTEST, with seven synthetic broker rows; no provider/network/DRM.
-        assert len(rows) == 10  # Seven sources plus Kobo preview/audit/confirmation outputs.
+        assert len(rows) == 11  # Seven sources + Kobo preview/audit/confirmation/schedule outputs.
+        schedule_row = next(row for row in rows
+                            if row.get_title() == "Acquisition Kobo · au démarrage")
+        assert "Planification indisponible" in schedule_row.get_subtitle()
+        assert all(not button.get_sensitive() for button in walk(schedule_row)
+                   if isinstance(button, Gtk.Button))
+        report["checks"]["P0_1346_startup_schedule_requires_supported_broker"] = True
         acquisition_row = next(row for row in rows
                                if row.get_title() == "Téléchargement local · confirmation obligatoire")
         assert "Non préparé" in acquisition_row.get_subtitle()
