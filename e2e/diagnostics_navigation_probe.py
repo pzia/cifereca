@@ -1984,7 +1984,7 @@ def main() -> int:
 
     def coordination_manual_done(index):
         w = window[0]
-        if w._library_refresh_pending:
+        if w._library_refresh_pending or w.view_stack.get_transition_running():
             assert monotonic() < coordination["deadline"], "#981 manual refresh timeout"
             later(60, lambda: coordination_manual_done(index))
             return
