@@ -138,6 +138,7 @@ class View:
         self.origin_book = plugin.pending
         self.origin_identity = plugin.pending_identity
         self.generation, self.task, self.disposed = 0, None, False
+        self._reloading_identities = False
         config = getattr(plugin.context, 'config', {}) or {}
         self._semantic_enabled = config.get('llm_semantic_hypotheses') is True if isinstance(config, Mapping) else False
         self._semantic_generation, self._semantic_task = 0, None
@@ -155,7 +156,12 @@ class View:
             if wanted is not None:
                 self.identity.set_selected(wanted)
         self.widget.append(self.identity)
-        self.identity.connect('notify::selected', lambda *_: self.load())
+        # Rebuilding the model emits transient selections. Never load a
+        # different profile until the final selection has been validated.
+        self.identity.connect(
+            'notify::selected',
+            lambda *_: None if self._reloading_identities else self.load(),
+        )
         # MVP: a known book -> explained neighbours -> previous/next book.
         # No free search, no manual start/end, no mood/exploration controls.
         self.controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -212,7 +218,12 @@ class View:
 
     def identity_id(self):
         i = self.identity.get_selected()
-        return str(self.identities[i].get('identity_id') or '') if i < len(self.identities) else ''
+        if type(i) is not int or not 0 <= i < len(self.identities):
+            # GTK INVALID_LIST_POSITION and synthetic -1 must never index
+            # the last profile (nor choose a fallback account).
+            return ''
+        row = self.identities[i]
+        return str(row.get('identity_id') or '') if isinstance(row, Mapping) else ''
 
     def invalidate(self):
         if self.disposed:
@@ -221,10 +232,27 @@ class View:
         current = self.identity_id()
         rows = list(self.plugin.context.broker('identities').identities())
         if rows != self.identities:
-            self.identities = rows
-            self.identity.set_model(self.Gtk.StringList.new([str(r.get('label') or r.get('name') or r.get('identity_id')) for r in rows]))
-            selected = next((i for i,r in enumerate(rows) if str(r.get('identity_id')) == current), 0)
-            self.identity.set_selected(selected)
+            self._reloading_identities = True
+            try:
+                self.identities = rows
+                self.identity.set_model(self.Gtk.StringList.new([
+                    str(r.get('label') or r.get('name') or r.get('identity_id'))
+                    for r in rows
+                ]))
+                selected = next((
+                    i for i, row in enumerate(rows)
+                    if str(row.get('identity_id') or '') == current
+                ), None)
+                # Initial activation may select the first profile. If a
+                # previously selected identity disappeared, require a new
+                # explicit choice instead of exposing another account.
+                self.identity.set_selected(
+                    selected if selected is not None else (
+                        0xFFFFFFFF if current or not rows else 0
+                    )
+                )
+            finally:
+                self._reloading_identities = False
         self.load(refresh=True)
         return False
 
