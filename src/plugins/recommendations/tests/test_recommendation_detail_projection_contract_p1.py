@@ -81,6 +81,7 @@ def test_list_and_detail_share_safe_cover_and_preserve_multiple_authors():
     view._render(preserve_summary=True)
     assert len(rows) == 1
     assert rows[0].thumbnail_url == "https://example.org/safe-cover.jpg"
+    assert rows[0].subtitle == "Alice, Bob"
     view._selected_row(rows[0])
     assert len(details) == 1
     shown = details[0]
