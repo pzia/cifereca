@@ -14,11 +14,12 @@ _LOG = logging.getLogger("cifereca")
 # Only enumerated public operation labels may enter a performance export.
 _PERF_CATEGORIES = frozenset({
     "task", "opening-sync", "deep-sync", "source-sync", "sync-preflight",
-    "kobo-acquisition", "maintenance", "library", "search", "plugin", "other",
+    "kobo-acquisition", "maintenance", "library", "recent", "search", "plugin", "other",
 })
 _PERF_PHASES = frozenset({
     "queue_wait", "worker", "gtk_delivery_wait", "lock_wait", "provider",
-    "storage", "projection", "render", "frame_wait",
+    "storage", "projection", "row_projection", "facets", "model_update",
+    "selection", "render", "frame_wait",
 })
 _PERF_TRIGGERS = frozenset({
     "automatic", "user", "navigation", "maintenance", "unspecified",
@@ -69,6 +70,12 @@ class UiPerfMonitor:
                 self._events_dropped = 0
                 self._started_at = self._clock()
             self._detailed_capture = enabled
+
+    @property
+    def detailed_capture_enabled(self) -> bool:
+        """Read-only opt-in flag for low-overhead GTK phase probes."""
+        with self._lock:
+            return self._detailed_capture
 
     def record_phase(
         self, category: str, phase: str, duration_ms: float, *,
