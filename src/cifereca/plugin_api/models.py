@@ -708,6 +708,19 @@ class AccountRef:
 
 
 @dataclass(frozen=True, slots=True)
+class SyncPhaseState:
+    """Non-authorizing public snapshot of an independent source sync phase.
+
+    Empty last_success means no *attested* success, not that no previous
+    attempt ever succeeded. The snapshot never grants acquisition rights.
+    """
+    phase: str
+    status: str = "idle"
+    last_attempt: str = ""
+    last_success: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class SyncSourceRef:
     source_id: str
     identity_id: str
@@ -724,6 +737,7 @@ class SyncSourceRef:
     # Source-level declarations, separate from the default metadata/rights
     # synchronization operation. Never imply an acquisition is automatic.
     sync_capabilities: tuple[str, ...] = ()
+    phase_states: tuple[SyncPhaseState, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
