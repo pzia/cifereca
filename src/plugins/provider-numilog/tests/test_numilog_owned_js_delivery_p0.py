@@ -541,7 +541,7 @@ def test_structural_diagnostics_do_not_contain_purchase_identifiers_or_tokens(tm
         assert details['page_kind'] == 'meslivres'
         assert details['js_shapes_in_cards'] == 2
         assert details['js_shapes_outside_cards'] == 1
-        assert details['bound_links'] == 2
+        assert details['bound_links'] == 1  # selected record only, not every purchase
         assert all(type(v) in {str, int} for v in details.values())
         text = repr(diagnostic.events)
         for sensitive in (
@@ -642,3 +642,67 @@ def test_signed_origin_is_not_a_wildcard_path(tmp_path, path):
         assert 'SYNTHETIC' not in repr(diag.events)
     finally:
         session.close()
+
+
+def test_private_signed_link_is_decoded_only_for_explicit_selected_record(
+    tmp_path, monkeypatch,
+):
+    """No signed URL from another bought book is even parsed into a row."""
+    import cifereca_numilog_html as html_parser
+
+    current = _page(
+        _card(12, 9001, SIGNED),
+        _card(34, 9002, SECOND),
+    )
+    session, _, broker, seen = _session(tmp_path, current)
+    called = []
+    original = html_parser._card_delivery
+
+    def spy(card, links, origins):
+        called.append(tuple(str(n.attrs.get('href') or '') for n in links))
+        return original(card, links, origins)
+
+    monkeypatch.setattr(html_parser, '_card_delivery', spy)
+    try:
+        from cifereca.plugin_api import ProviderError
+        with pytest.raises(ProviderError, match='livre ciblé'):
+            session._rows(include_delivery=True)
+        assert seen == []
+        items = session.library()
+        assert seen == [LIBRARY]
+        assert len(items) == 2
+        assert called == []
+        selected = next(row for row in items if row.title.endswith('34'))
+        fresh = session._rows(
+            include_delivery=True, delivery_record_id=selected.record_id,
+        )
+        assert seen == [LIBRARY, LIBRARY]
+        assert len(fresh) == 2
+        assert 'delivery' not in fresh[0]
+        assert fresh[1]['delivery'].url == SECOND
+        assert len(called) == 1 and 'lid=34' in called[0][0]
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(fresh)
+        assert 'SECOND_NOT_A_CREDENTIAL' not in repr(fresh)
+        assert not broker.calls
+    finally:
+        session.close()
+
+
+def test_parser_selector_does_not_decode_other_books_and_preserves_inventory():
+    from cifereca_numilog_html import parse_library_page
+    page = _page(_card(12, 9001, SIGNED), _card(34, 9002, SECOND))
+    inventory, _ = parse_library_page(page)
+    matched, _ = parse_library_page(
+        page,
+        delivery_evidence=True,
+        delivery_selector=lambda row: row['lid'] == '34',
+    )
+    assert len(matched) == len(inventory) == 2
+    assert [
+        {key: value for key, value in row.items() if key != 'delivery'}
+        for row in matched
+    ] == inventory
+    assert 'delivery' not in matched[0]
+    assert matched[1]['delivery'].url == SECOND
+    assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(matched)
+    assert 'SECOND_NOT_A_CREDENTIAL' not in repr(matched)
