@@ -709,7 +709,7 @@ class SynchronizationBrokerImpl:
             if control is not None and callable(getattr(control, "check_cancelled", None)):
                 control.check_cancelled()
             if control is not None and callable(getattr(control, "report", None)):
-                control.report(current=index - 1, total=len(sources), message=f"Synchronisation {source.label}")
+                control.report(current=index - 1, total=len(sources), message="Synchronisation d’une source")
             result = self.synchronize_source(source.source_id, request, control)
             total += result.changed
             warnings.extend(result.warnings)
