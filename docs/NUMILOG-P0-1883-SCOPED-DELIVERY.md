@@ -19,14 +19,20 @@ Ce correctif ne constitue donc pas une preuve de résolution réelle.
    retrouve le `record_id` scoped du compte via une nouvelle lecture des
    pages privées ; elle active alors `delivery_evidence=True`.
 3. Une URL de livraison n'est utilisable que lorsque l'objet JavaScript est
-   un descendant structurel de **la même fiche DOM**, qu'une seule action
-   `readBook.ashx` est présente dans cette fiche, qu'un **unique** objet
+   un descendant structurel de **la même fiche DOM**, avec **un seul titre
+   identifié** et une seule action `readBook.ashx`, et qu'un **unique** objet
    `ProductId / IndexExemplaire / DrmTechnlology: ADOBE / link` existe, et
    que ses identifiants concordent avec `data-product-id` /
    `data-index-exemplaire` lorsque ces attributs sont attestés. Le contrat
    **n'assimile jamais** `ProductId` ou `IndexExemplaire` au `lid` HTTP.
    Un script hors fiche, une association contradictoire ou ambiguë n'autorise
    aucune livraison directe.
+   Pendant une acquisition, seuls les champs de livraison correspondant au
+   **record_id exact sélectionné** sont décodés ; les autres livres de la même
+   page ou des pages suivantes restent un inventaire **sans liens signés
+   en mémoire**. Une fiche avec plusieurs titres ou des répétitions du même
+   `lid`/format, dans une page ou entre pages, est refusée avant tout GET
+   signé. Le mode inventaire conserve sa déduplication historique.
 4. En présence d'une unique preuve scoped à fraîcheur de l'action : seul un
    lien `HTTPS entrepot2r.numilog.com:443` de chemin exact
    `/fulfillment/URLLink.acsm` est accepté. Aucun paramètre de signature
@@ -128,6 +134,9 @@ issue, fixture, CI, capture et dépôt Git ; supprimer la copie privée lorsque
 son diagnostic n'est plus nécessaire.
 
 ## Validation et limites
+
+Les fixtures valident aussi les objets JS à clés non citées et la forme
+JSON à propriétés entre guillemets, sans exécution de script.
 
 Les fixtures utilisent des comptes, numéros, signatures et réponses
 **entièrement fictifs** avec `httpx.MockTransport`. Elles testent deux livres
