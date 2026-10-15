@@ -14,7 +14,7 @@ def statistics_button_label(stats: Mapping[str, Any]) -> str:
     loans = stats["known_loans"]
     return (
         f"{stats['local_books']} livres · "
-        f"{loans if loans is not None else '—'} prêts"
+        f"{loans if loans is not None else '—'} prêts de bibliothèque"
     )
 
 
@@ -24,7 +24,7 @@ def statistics_lines(stats: Mapping[str, Any]) -> list[str]:
     rows = [
         f"Livres locaux distincts : {stats['local_books']}",
         f"Emplacements locaux indexés présents : {stats['local_placements']}",
-        f"Emprunts connus : {loans if loans is not None else 'non actualisés'}",
+        f"Prêts de bibliothèque connus : {loans if loans is not None else 'non actualisés'}",
         f"Sources de prêts observées : {stats['loan_sources_observed']}",
         f"Droits d’achat distants actifs : {stats['remote_owned_rights']}",
     ]
@@ -69,8 +69,9 @@ def statistics_lines(stats: Mapping[str, Any]) -> list[str]:
         observed = datetime.fromtimestamp(stats["loans_observed_at"]).strftime("%d/%m/%Y %H:%M")
         rows.append("Prêts observés au plus tôt : " + observed)
     rows.append(
-        "Inventaire issu du dernier scan ; prêts issus des dernières réponses disponibles, "
-        "éventuellement partielles. Les statistiques d'actions utilisent la fenêtre indiquée."
+        "Inventaire des fichiers issu du dernier scan ; prêts de bibliothèque issus des dernières réponses, "
+        "éventuellement partielles. Les livres achetés en ligne ne sont pas des emprunts ni des fichiers locaux. "
+        "Les statistiques d'actions utilisent la fenêtre indiquée."
     )
     return rows
 

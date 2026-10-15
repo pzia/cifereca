@@ -103,9 +103,9 @@ def test_owner_remains_headless_with_stable_mainwindow_methods():
 
 
 def test_button_preserves_zero_loans_distinct_from_unknown():
-    assert statistics_button_label(_stats(known_loans=None)) == "12 livres · — prêts"
-    assert statistics_button_label(_stats(known_loans=0)) == "12 livres · 0 prêts"
-    assert statistics_button_label(_stats(known_loans=8)) == "12 livres · 8 prêts"
+    assert statistics_button_label(_stats(known_loans=None)) == "12 livres · — prêts de bibliothèque"
+    assert statistics_button_label(_stats(known_loans=0)) == "12 livres · 0 prêts de bibliothèque"
+    assert statistics_button_label(_stats(known_loans=8)) == "12 livres · 8 prêts de bibliothèque"
 
 
 def test_detail_preserves_order_french_labels_and_sorted_group_values():
@@ -113,21 +113,22 @@ def test_detail_preserves_order_french_labels_and_sorted_group_values():
     assert lines == [
         "Livres locaux distincts : 12",
         "Emplacements locaux indexés présents : 15",
-        "Emprunts connus : non actualisés",
+        "Prêts de bibliothèque connus : non actualisés",
         "Sources de prêts observées : 2",
         "Droits d’achat distants actifs : 3",
         "Formats : epub 9, pdf 3",
         "Sources locales : A 7, Z 5",
         "Couvertures EPUB : embedded 8, none 4",
-        "Inventaire issu du dernier scan ; prêts issus des dernières réponses disponibles, "
-        "éventuellement partielles. Les statistiques d'actions utilisent la fenêtre indiquée.",
+        "Inventaire des fichiers issu du dernier scan ; prêts de bibliothèque issus des dernières réponses, "
+        "éventuellement partielles. Les livres achetés en ligne ne sont pas des emprunts ni des fichiers locaux. "
+        "Les statistiques d'actions utilisent la fenêtre indiquée.",
     ]
 
 
 def test_zero_loans_are_known_in_detailed_dialog_not_unknown():
     lines = statistics_lines(_stats(known_loans=0))
-    assert "Emprunts connus : 0" in lines
-    assert "Emprunts connus : non actualisés" not in lines
+    assert "Prêts de bibliothèque connus : 0" in lines
+    assert "Prêts de bibliothèque connus : non actualisés" not in lines
 
 
 def test_empty_format_source_and_cover_buckets_are_explicit():
@@ -178,7 +179,7 @@ def test_refresh_uses_only_current_identity_and_existing_button():
     refresh_statistics(window)
     assert events == [
         ("snapshot", "id-alice"),
-        ("label", "12 livres · — prêts"),
+        ("label", "12 livres · — prêts de bibliothèque"),
     ]
     assert dialogs == []
 

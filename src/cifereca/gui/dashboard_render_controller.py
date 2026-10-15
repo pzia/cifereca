@@ -75,7 +75,7 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
         stats=card.get('statistics') or {}
         if stats:
             loans=stats.get('known_loans')
-            count=Gtk.Label(label=f"{stats.get('local_books',0)} livres locaux · {loans if loans is not None else '—'} emprunts connus",xalign=0)
+            count=Gtk.Label(label=f"{stats.get('local_books',0)} livres locaux · {loans if loans is not None else '—'} prêts de bibliothèque connus",xalign=0)
             count.set_wrap(True);box.append(count)
             actions=stats.get('actions') or {}
             if actions:

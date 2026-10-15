@@ -71,7 +71,7 @@ def dashboard_state(self) -> list[dict[str, Any]]:
             deep_last_at = None
         labels = {"search": "Recherche", "loans": "Emprunts", "history": "Historique",
                   "bookings": "Réservations", "borrow": "Emprunter", "digital_download": "Récupérer les prêts",
-                  "direct_download": "Téléchargement direct", "personal_library": "Bibliothèque du compte",
+                  "direct_download": "Téléchargement direct", "personal_library": "Livres de mon compte fournisseur",
                   "return_loan": "Restituer un prêt", "renew_loan": "Prolonger un prêt"}
         capabilities = set(); sources = []
         credentials = {(account.provider_id, account.credential_id) for account in self.accounts_for_identity(identity.identity_id)}

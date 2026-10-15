@@ -25,7 +25,7 @@ def test_kobo_scope_remains_notices_only_and_no_acquisition():
         provider_id="kobo", label="Kobo",
         sync_capabilities=("remote_inventory", "entitlements", "local_materialization"),
     ))
-    assert "inventaire distant, droits et emprunts" in result.summary
+    assert "inventaire des livres achetés, droits sur les livres possédés" in result.summary
     assert "ne télécharge aucun ebook" in result.summary
     assert "Acquisition locale Kobo disponible sur commande dédiée" in result.summary
     assert result.action_label == "Mettre à jour les notices Kobo en ligne"
