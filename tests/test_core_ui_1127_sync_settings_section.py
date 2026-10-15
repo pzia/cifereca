@@ -60,7 +60,7 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert len(group.children) == 6
     assert [row.title for row in group.children] == [
         "Autoriser les téléchargements Kobo au démarrage",
-        "Acquisition manuelle Kobo — portée globale",
+        "Synchronisation Kobo — comptes et aperçus",
         "Option risquée : acquisitions avec fichiers locaux non rapprochés",
         "Sous-répertoire/override Kobo (vide = bibliothèque locale)",
         "Délai entre tentatives au démarrage (minutes, minimum 15)",
@@ -69,9 +69,9 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert len(downloads.children) == 1
     assert downloads.children[0].title == "Bibliothèque locale possédée par cifereca"
     assert controls.backup_switch.active is False
-    assert controls.run_backup_now.label == "Lancer le lot Kobo…"
-    assert controls.run_backup_now.sensitive is False
-    assert "Acquisition Kobo désactivée" in controls.backup_status.subtitle
+    assert controls.run_backup_now.label == "Examiner les comptes Kobo…"
+    assert controls.run_backup_now.sensitive is True
+    assert "Acquisition au démarrage désactivée" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is False
     assert controls.library_dir_row.text == "~/EBooks"
     assert controls.backup_interval_row.text == "60"
@@ -112,39 +112,40 @@ def test_build_does_not_persist_change_connect_signals_or_call_network():
     assert controls.backup_switch.active is False
 
 
-def test_manual_kobo_backup_requires_saved_enabled_state():
+def test_kobo_account_navigation_requires_saved_settings_not_acquisition_opt_in():
     assert kobo_backup_action_state(persisted_enabled=False, draft_enabled=True, dirty=True)[1] is False
-    assert kobo_backup_action_state(persisted_enabled=False, draft_enabled=False, dirty=False)[1] is False
+    assert kobo_backup_action_state(persisted_enabled=False, draft_enabled=False, dirty=False)[1] is True
     assert kobo_backup_action_state(persisted_enabled=True, draft_enabled=False, dirty=True)[1] is False
     message, allowed = kobo_backup_action_state(persisted_enabled=True, draft_enabled=True, dirty=False)
     assert allowed is True
     assert "au démarrage" in message
 
 
-def test_mainwindow_explicit_kobo_action_is_saved_and_lifetime_gated():
+def test_mainwindow_kobo_action_is_navigation_only_saved_and_lifetime_gated():
     import ast
     from pathlib import Path
     source = (Path(__file__).resolve().parents[1] /
               "src/cifereca/gui/settings_sync_actions.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     builder = next(f for f in tree.body if isinstance(f, ast.FunctionDef) and f.name == "bind_settings_sync_actions")
-    manual = next(f for f in builder.body if isinstance(f, ast.FunctionDef) and f.name == "manual_kobo_backup")
+    manual = next(f for f in builder.body if isinstance(f, ast.FunctionDef) and f.name == "open_kobo_sync_page")
     rendered = ast.unparse(manual)
     assert 'page_lifetime.alive' in rendered
     assert "kobo_backup.enabled" in rendered
     assert "settings_state.dirty('sync')" in rendered
-    assert 'if ready:' in rendered
-    assert 'self.run_kobo_backup(manual=True, control=_button)' in rendered
-    assert "kobo_run_now.connect('clicked', manual_kobo_backup)" in ast.unparse(builder)
+    assert 'if ready and page_lifetime.alive' in rendered
+    assert "self.navigate('sync')" in rendered
+    assert "run_kobo_backup" not in rendered
+    assert "kobo_run_now.connect('clicked', open_kobo_sync_page)" in ast.unparse(builder)
 
 
-def test_bad_saved_kobo_opt_in_never_looks_enabled_or_unlocks_manual_action():
+def test_malformed_backup_opt_in_does_not_activate_automatic_acquisition():
     """#1338: Core and Settings must agree on literal Boolean opt-in."""
     for invalid in ("false", "true", 1, 0, None, [], {}):
         controls, _, _ = _build({"kobo_backup.enabled": invalid})
         assert controls.backup_switch.active is False
-        assert controls.run_backup_now.sensitive is False
-        assert "Acquisition Kobo désactivée" in controls.backup_status.subtitle
+        assert controls.run_backup_now.sensitive is True
+        assert "Acquisition au démarrage désactivée" in controls.backup_status.subtitle
         assert kobo_backup_action_state(
             persisted_enabled=invalid,
             draft_enabled=invalid,
@@ -155,7 +156,7 @@ def test_bad_saved_kobo_opt_in_never_looks_enabled_or_unlocks_manual_action():
     assert enabled.run_backup_now.sensitive is True
 
 
-def test_manual_kobo_callback_requires_exact_saved_boolean_opt_in():
+def test_kobo_navigation_callback_reads_saved_boolean_without_implicit_opt_in():
     import ast
     from pathlib import Path
 
@@ -164,7 +165,7 @@ def test_manual_kobo_callback_requires_exact_saved_boolean_opt_in():
     tree = ast.parse(source)
     builder = next(f for f in tree.body if isinstance(f, ast.FunctionDef) and f.name == "bind_settings_sync_actions")
     manual = next(f for f in builder.body
-                  if isinstance(f, ast.FunctionDef) and f.name == "manual_kobo_backup")
+                  if isinstance(f, ast.FunctionDef) and f.name == "open_kobo_sync_page")
     refresh = next(f for f in builder.body
                    if isinstance(f, ast.FunctionDef) and f.name == "refresh_kobo_backup_status")
     for fn in (manual, refresh):
@@ -180,9 +181,9 @@ def test_sync_settings_never_mislabel_local_acquisition_as_remote_inventory_refr
     assert "téléchargements Kobo" in automatic.title
     assert "notices et droits" in automatic.subtitle
     assert "ne télécharge aucun livre" in automatic.subtitle
-    assert "portée globale" in manual.title
+    assert "comptes et aperçus" in manual.title
+    assert "depuis Paramètres" in manual.subtitle
     assert "lot global" in manual.subtitle
-    assert "simple actualisation" in manual.subtitle
 
 
 def test_opening_interval_is_not_described_as_periodic_timer():
@@ -209,7 +210,7 @@ def test_sync_setting_builder_has_no_implicit_acquisition_or_config_mutation():
     assert controls.backup_switch.active is True
     assert controls.unlinked_switch.active is False
     assert controls.run_backup_now.sensitive is True
-    assert controls.run_backup_now.label == "Lancer le lot Kobo…"
+    assert controls.run_backup_now.label == "Examiner les comptes Kobo…"
 
 
 def test_malformed_unlinked_bypass_config_is_disabled_like_core_policy():

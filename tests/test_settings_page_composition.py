@@ -175,21 +175,24 @@ def test_diagnostic_factory_binds_controls_and_keeps_late_refresh_inert(monkeypa
     assert refresh.call_count == 3
 
 
-def test_sync_factory_never_acquires_from_dirty_or_disposed_page():
+def test_sync_factory_routes_to_scoped_page_without_global_acquisition():
     ui = NS(**{name: Widget() for name in ('backup_switch', 'unlinked_switch', 'backup_dir_row', 'backup_interval_row', 'vault_profile_drop', 'run_backup_now', 'backup_status')})
     ui.backup_switch.active = True
-    host = NS(config={'kobo_backup.enabled': True}, run_kobo_backup=Mock())
+    host = NS(config={'kobo_backup.enabled': True},
+              run_kobo_backup=Mock(), navigate=Mock())
     lifetime, state = SettingsPageLifetime(), SettingsRevisionState(['sync'])
     refresh = bind_settings_sync_actions(host, page_lifetime=lifetime, settings_state=state, kobo_settings=ui)
     host.run_kobo_backup.assert_not_called()
     ui.run_backup_now.emit('clicked')
-    host.run_kobo_backup.assert_called_once_with(manual=True, control=ui.run_backup_now)
+    host.navigate.assert_called_once_with('sync')
+    host.run_kobo_backup.assert_not_called()
     state.mark_dirty('sync'); ui.backup_switch.emit('notify::active')
     assert not ui.run_backup_now.sensitive
     ui.run_backup_now.emit('clicked')
-    assert host.run_kobo_backup.call_count == 1
+    host.navigate.assert_called_once_with('sync')
     lifetime.dispose(); refresh(); ui.run_backup_now.emit('clicked')
-    assert host.run_kobo_backup.call_count == 1
+    host.navigate.assert_called_once_with('sync')
+    host.run_kobo_backup.assert_not_called()
 
 
 def test_facade_is_compact_and_importing_composition_does_not_load_gtk():
