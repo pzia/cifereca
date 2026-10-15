@@ -61,6 +61,20 @@ def _neutralize_unrelated_sync_work(service: LibraryService, monkeypatch) -> Non
     monkeypatch.setattr(service, "_reconcile_identity_adept_inventory", lambda identity_id: {"status": "skipped"})
 
 
+def _enable_on_start(service: LibraryService, credential_id: str = "vault") -> None:
+    """Model a real source binding and an explicit, separate startup opt-in."""
+    from cifereca.brokers import SynchronizationBrokerImpl
+    account = next(a for a in service.accounts if a.credential_id == credential_id)
+    service.storage.provider_connection_put({
+        "identity_id": account.identity_id, "provider_id": "kobo",
+        "credential_id": credential_id, "enabled": True,
+    })
+    broker = SynchronizationBrokerImpl(service)
+    assert broker.set_local_materialization_schedule(
+        broker._source_id(account), "on_start",
+    ) == "on_start"
+
+
 def test_fast_sync_uses_fresh_kobo_cache_and_skips_filesystem_scan(tmp_path: Path, monkeypatch):
     service = _service(tmp_path)
     try:
@@ -83,11 +97,7 @@ def test_fast_sync_uses_fresh_kobo_cache_and_skips_filesystem_scan(tmp_path: Pat
 
         assert result["sync_mode"] == "fast"
         assert result["catalog"]["filesystem_scan"] == "skipped"
-        assert result["kobo"] == {
-            "errors": 0,
-            "status": "fresh_cache",
-            "skipped_fresh": True,
-        }
+        assert result["kobo"] == {"status": "manual_only", "skipped": True}
     finally:
         service.close()
 
@@ -116,9 +126,10 @@ def test_deep_sync_forces_kobo_backup_and_deep_catalog_scan(tmp_path: Path, monk
         result = service._opening_sync_locked(deep=True)
 
         assert result["sync_mode"] == "deep"
-        assert result["kobo"] == {"status": "complete", "errors": 0}
+        # Deep scans the local catalog, never overrides manual acquisition.
+        assert result["kobo"] == {"status": "manual_only", "skipped": True}
         assert result["catalog"] == {"scanned": 4, "invalid": 0}
-        assert calls == {"kobo": 1, "catalog": [True]}
+        assert calls == {"kobo": 0, "catalog": [True]}
         assert int(service.storage.metadata_get("catalog_deep_last_at")) == 100_000
     finally:
         service.close()
@@ -136,14 +147,13 @@ def test_fast_sync_shows_throttled_incomplete_kobo_batch(tmp_path: Path, monkeyp
             lambda progress=None: (_ for _ in ()).throw(AssertionError("pending cache should throttle")),
         )
         result = service._opening_sync_locked(deep=False)
-        assert result["kobo"]["status"] == "fresh_cache_partial"
-        assert result["kobo"]["last_batch_status"] == "attention_required"
-        assert result["kobo"]["skipped_fresh"] is True
+        # An incomplete legacy batch must not silently start a new download.
+        assert result["kobo"] == {"status": "manual_only", "skipped": True}
     finally:
         service.close()
 
 
-def test_opening_runs_only_stale_kobo_source_when_others_have_fresh_checkpoints(tmp_path: Path, monkeypatch):
+def test_opening_only_materializes_source_with_explicit_on_start_consent(tmp_path: Path, monkeypatch):
     service = _service(tmp_path)
     try:
         _neutralize_unrelated_sync_work(service, monkeypatch)
@@ -154,37 +164,43 @@ def test_opening_runs_only_stale_kobo_source_when_others_have_fresh_checkpoints(
             connected=True, provider_id="kobo", credential_id="vault-2",
             capabilities=SimpleNamespace(backup=True),
         )
+        _enable_on_start(service, "vault")
         now = int(time.time())
         source1 = _kobo_checkpoint_key("default", "vault")
         source2 = _kobo_checkpoint_key("default", "vault-2")
         service.storage.metadata_set(source1, json.dumps({
-            "schema_version": 1, "status": "attention_required",
-            "total": 1, "processed": 1, "updated_at": now,
-            "counts": {"pending": 1},
-        }))
-        service.storage.metadata_set(source2, json.dumps({
             "schema_version": 1, "status": "complete",
             "total": 1, "processed": 1, "updated_at": now - 7200,
             "counts": {"unchanged": 1},
         }))
+        service.storage.metadata_set(source2, json.dumps({
+            "schema_version": 1, "status": "interrupted",
+            "total": 1, "processed": 0, "updated_at": now,
+            "counts": {},
+        }))
         service.storage.metadata_set("kobo_backup_last_success_at", now)
         monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
         calls = []
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_locked",
+            lambda **_kwargs: (_ for _ in ()).throw(AssertionError("global batch")),
+        )
 
         def scoped(credential_id, progress=None):
             calls.append(credential_id)
             return {"status": "complete", "errors": 0, "unchanged": 1,
-                    "sources": [{"source_id": source2.rsplit(".", 1)[-1],
+                    "sources": [{"source_id": source1.rsplit(".", 1)[-1],
                                  "status": "complete"}]}
 
         monkeypatch.setattr(service, "_sync_kobo_backup_account_locked", scoped)
         result = service._opening_sync_locked(deep=False)
-        assert calls == ["vault-2"]
+        assert calls == ["vault"]
         assert result["kobo"]["scope"] == "accounts"
         assert result["kobo"]["synced_accounts"] == 1
-        assert result["kobo"]["cached_accounts"] == 1
-        assert result["kobo"]["status"] == "attention_required"
-        assert len(result["kobo"]["sources"]) == 2
+        assert result["kobo"]["cached_accounts"] == 0
+        assert result["kobo"]["status"] == "complete"
+        assert len(result["kobo"]["sources"]) == 1
+        assert result["kobo"]["sources"][0]["source_id"] == source1.rsplit(".", 1)[-1]
     finally:
         service.close()
 
@@ -193,6 +209,7 @@ def test_opening_all_cached_partial_sources_remain_visible(tmp_path: Path, monke
     service = _service(tmp_path)
     try:
         _neutralize_unrelated_sync_work(service, monkeypatch)
+        _enable_on_start(service)
         now = int(time.time())
         key = _kobo_checkpoint_key("default", "vault")
         service.storage.metadata_set(key, json.dumps({
@@ -221,6 +238,7 @@ def test_opening_rechecks_recently_interrupted_kobo_checkpoint_without_global_re
     service = _service(tmp_path)
     try:
         _neutralize_unrelated_sync_work(service, monkeypatch)
+        _enable_on_start(service)
         now = int(time.time())
         key = _kobo_checkpoint_key("default", "vault")
         service.storage.metadata_set("kobo_backup_last_attempt_at", now)
