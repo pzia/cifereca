@@ -47,7 +47,7 @@ def execute(*, values=2, invalid=0, noncanonical=0, malformed=0,
 
 
 @pytest.mark.parametrize("warnings", (
-    ("Langue invalide : notice n°1",),  # invalid=0
+    ("Langue non canonique : notice n°1",),  # noncanonical=0
     ("Langue non textuelle : notice n°1",),  # malformed=0
     ("Langue invalide : notice n°2", "Langue invalide : notice n°2"),  # count=1
     ("Langue invalide : notice n°3", "Langue non canonique : notice n°2"),
