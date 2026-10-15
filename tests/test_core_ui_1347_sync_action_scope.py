@@ -14,6 +14,7 @@ from cifereca.gui.sync_action_scope import (
 )
 from cifereca.gui.sync_view import (
     sync_identity_action_label, sync_source_presentation,
+    sync_source_identity_label,
     sync_local_preflight_presentation,
 )
 
@@ -96,6 +97,7 @@ def _methods():
         clear_box=lambda widget: widget.children.clear(),
         sync_identity_action_label=sync_identity_action_label,
         sync_source_presentation=sync_source_presentation,
+        sync_source_identity_label=sync_source_identity_label,
         sync_local_preflight_presentation=sync_local_preflight_presentation,
         capture_sync_action_scope=capture_sync_action_scope,
         sync_action_scope_current=sync_action_scope_current,
