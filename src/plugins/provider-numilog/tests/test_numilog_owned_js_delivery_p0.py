@@ -369,6 +369,7 @@ def test_unowned_reference_is_rejected_without_any_network_request(tmp_path):
             docbase="NUMILOG", medium="digital", title="Not owned",
             author=None, type="ebook", format=None, publisher=None,
             published_at=None, description=None, thumbnail_url=None,
+            friendly_url=None, scenario="NUMILOG_LIBRARY",
             source_provider="numilog", source_credential="other",
         )
         with pytest.raises(ProviderError, match="autre connexion"):
@@ -389,6 +390,7 @@ def test_parser_invents_no_product_lid_equivalence_and_links_are_ephemeral():
     assert fresh[0]["delivery"].product_id == "8001"
     assert fresh[0]["delivery"].copy_index == "6"
     assert fresh[0]["delivery"].url == SIGNED
+    assert "SYNTHETIC_NOT_A_CREDENTIAL" not in repr(fresh[0])
     assert delivery_url(
         f'<script>window.deliver={_object(8001, SIGNED, index=6)};</script>',
         READ_12, allowed_origins={("https", "entrepot2r.numilog.com", 443)},
