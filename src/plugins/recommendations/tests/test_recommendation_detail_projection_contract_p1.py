@@ -130,3 +130,29 @@ def test_no_results_and_clear_selection_display_explicit_empty_detail():
     view._selected_row(None)
     assert empties[-1][0] == "Aucune recommandation sélectionnée"
     assert not details
+
+
+def test_independent_provenance_sources_and_format_use_public_field_kinds():
+    item = {
+        "title": "Un même ouvrage", "authors": ["Alice", "Bob"],
+        "format": "EPUB", "cover_url": "https://example.org/cover.jpg",
+    }
+    view, rows, details, _ = _make_view(item)
+    view._provider_labels = {"kobo": "Kobo", "bnf": "BnF"}
+    view._ranked = [RankedCandidate(
+        item=item, score=92, reasons=("Auteur commun",),
+        sources=("kobo", "bnf", "kobo"),
+    )]
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+    presentation = details[0]
+    catalogue = next(section for section in presentation.sections if section.id == "catalogue")
+    sources = [field for field in catalogue.fields if field.label == "Source"]
+    assert [(field.id, field.value, field.kind) for field in sources] == [
+        ("source-0", "Kobo", "copy"),
+        ("source-1", "BnF", "copy"),
+    ]
+    formats = [field for field in catalogue.fields if field.id == "format"]
+    assert len(formats) == 1
+    assert (formats[0].value, formats[0].kind) == ("EPUB", "all")
+    assert presentation.actions == ()  # source labels never confer rights
