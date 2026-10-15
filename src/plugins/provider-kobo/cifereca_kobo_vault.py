@@ -58,7 +58,11 @@ class KoboVaultClient:
                 "User-Agent": "cifereca-kobo/1.2.1",
             },
             timeout=httpx.Timeout(timeout, connect=min(timeout, 15.0)),
-            follow_redirects=True,
+            # Provider API requests must never follow redirect targets,
+            # especially POST /library/{id}/acquisition: the revision and
+            # private account request body could otherwise be sent to a
+            # third-party origin following a 307/308 response.
+            follow_redirects=False,
             transport=transport,
         )
 
@@ -140,10 +144,26 @@ class KoboVaultClient:
             if not self.token:
                 raise KoboVaultError("Kobo-Vault : token API manquant", code="missing_token", status_code=401)
             headers["Authorization"] = f"Bearer {self.token}"
+        # Do not let callers of the private helper re-enable redirects. An
+        # unexpected Location header, even to this same host, cannot attest
+        # that the destination has the same authentication and rights policy.
+        kwargs.pop("follow_redirects", None)
         try:
-            response = self.client.request(method, self._url(path), headers=headers, **kwargs)
+            response = self.client.request(
+                method, self._url(path), headers=headers,
+                follow_redirects=False, **kwargs,
+            )
         except httpx.HTTPError as exc:
             raise KoboVaultError("Kobo-Vault : erreur de transport", code="network_error") from exc
+        if 300 <= response.status_code < 400:
+            # Never reflect Location, including its query/user-info. A 3xx is
+            # not an authoritative JSON provider response or an authorization
+            # to retry the private request elsewhere.
+            raise KoboVaultError(
+                "Kobo-Vault : redirection HTTP refusée",
+                code="redirect_denied",
+                status_code=response.status_code,
+            )
         if response.is_error:
             status = response.status_code
             # A fixed, minimal vocabulary replaces untrusted provider
@@ -465,6 +485,10 @@ class KoboVaultClient:
         # row on another page. Remember both *individually valid* candidates
         # until pagination completes, then quarantine all their occurrences.
         tainted_products: set[str] = set()
+        # Multiple individually valid rows for an edition are still ambiguous:
+        # revisions (or the same page replayed across cursors) must never be
+        # resolved by first/last-wins, especially for Core's legacy backup.
+        product_counts: dict[str, int] = {}
         cursor: str | None = None
         seen: set[str] = set()
         for _ in range(100):
@@ -488,6 +512,8 @@ class KoboVaultClient:
                                 "reason": "unverifiable_product_id",
                             })
                             continue
+                        product = _strict_product_id(raw)
+                        product_counts[product] = product_counts.get(product, 0) + 1
                         rows.append(dict(raw))
                     else:
                         self.last_manifest_rejections.append({
@@ -526,16 +552,25 @@ class KoboVaultClient:
             seen.add(cursor)
         else:
             raise KoboVaultError("Kobo-Vault : manifest trop volumineux ou pagination invalide", code="invalid_pagination")
-        if not tainted_products:
+        duplicate_products = {
+            product for product, count in product_counts.items() if count > 1
+        }
+        if not tainted_products and not duplicate_products:
             return rows
         safe_rows: list[dict[str, Any]] = []
         for row in rows:
-            if _strict_product_id(row) in tainted_products:
-                # Only a constant reason reaches public diagnostics. Never
-                # include an edition key, raw row or signed download URL.
+            product = _strict_product_id(row)
+            if product in tainted_products:
+                # Only constant reasons reach public diagnostics; no product,
+                # account, revision or signed acquisition URL may escape.
                 self.last_manifest_rejections.append({
                     "type": "invalid_shape",
                     "reason": "tainted_product_id",
+                })
+            elif product in duplicate_products:
+                self.last_manifest_rejections.append({
+                    "type": "invalid_scope",
+                    "reason": "duplicate_product_id",
                 })
             else:
                 safe_rows.append(row)
@@ -567,19 +602,26 @@ class KoboVaultClient:
         include_acsm: bool | None = None,
     ) -> dict[str, Any]:
         product = self._checked_product_id(product_id)
-        mode = str(mode or "descriptor").lower()
-        if mode not in {"descriptor", "delegated"}:
-            # Untrusted parameter values may contain URLs, bearer tokens or
-            # private titles; only a constant diagnostic crosses this boundary.
+        if type(mode) is not str or mode.lower() not in {"descriptor", "delegated"}:
+            # Never echo caller-supplied control fields in an exception: they
+            # can contain bearer tokens, signed URLs and account identifiers.
             raise ProviderError("Kobo-Vault : mode d'acquisition invalide")
+        mode = mode.lower()
         body: dict[str, Any] = {"mode": mode}
-        if revision_id:
+        if revision_id is not None and revision_id != "":
+            # A revision selector is a private acquisition authority. Never
+            # stringify booleans/numbers or forward untrusted control chars.
+            if _strict_product_id({"product_id": revision_id}) is None:
+                raise ProviderError("Kobo-Vault : identifiant de révision invalide")
             body["revision_id"] = revision_id
         if display_profile is not None:
-            profile = str(display_profile or "").strip()
-            if profile not in {"Android", "Desktop"}:
+            if type(display_profile) is not str or display_profile.strip() not in {"Android", "Desktop"}:
                 raise ProviderError("Kobo-Vault : DisplayProfile invalide")
-            body["display_profile"] = profile
+            body["display_profile"] = display_profile.strip()
         if include_acsm is not None:
-            body["include_acsm"] = bool(include_acsm)
+            # bool("false") is True. A malformed flag must not unexpectedly
+            # enable an ACSM export; JSON boolean is the only accepted type.
+            if type(include_acsm) is not bool:
+                raise ProviderError("Kobo-Vault : option ACSM invalide")
+            body["include_acsm"] = include_acsm
         return self._json("POST", f"/library/{quote(product, safe='')}/acquisition", json=body)
