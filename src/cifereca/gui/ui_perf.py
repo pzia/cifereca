@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
 import math
 import statistics
 import threading
@@ -10,6 +12,28 @@ from contextlib import contextmanager
 from typing import Callable, Iterator
 
 _LOG = logging.getLogger("cifereca")
+
+def _process_resource_sample() -> dict[str, float | int | None]:
+    """One explicit, local sample: process CPU and Linux resident pages.
+
+    /proc/self/statm exposes *current* RSS, not a high-water mark. Unsupported
+    platforms or unavailable procfs return None, never a fabricated zero.
+    This function is only called on capture state transitions, not per render.
+    """
+    cpu_ms = time.process_time() * 1000.0
+    rss_bytes = None
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/self/statm", encoding="ascii") as handle:
+                fields = handle.read(128).split()
+            resident_pages = int(fields[1])
+            page_bytes = os.sysconf("SC_PAGE_SIZE")
+            if 0 <= resident_pages and 0 < page_bytes:
+                rss_bytes = resident_pages * page_bytes
+        except (OSError, ValueError, IndexError, OverflowError):
+            pass
+    return {"cpu_ms": cpu_ms, "rss_bytes": rss_bytes}
+
 
 # Only enumerated public operation labels may enter a performance export.
 _PERF_CATEGORIES = frozenset({
@@ -50,6 +74,7 @@ class UiPerfMonitor:
         self, *, max_samples: int = 200, slow_ms: float = 50.0,
         max_events: int = 240, measurement_origin: str = "observed",
         clock: Callable[[], float] | None = None,
+        resource_reader: Callable[[], dict[str, object]] | None = None,
     ):
         self.max_samples = min(1000, max(20, int(max_samples)))
         self.slow_ms = float(slow_ms)
@@ -67,10 +92,33 @@ class UiPerfMonitor:
         self._active_gc_probes: set[tuple[int, str]] = set()
         self._clock = clock or time.monotonic
         self._started_at = self._clock()
+        self._resource_reader = resource_reader or _process_resource_sample
+        self._resource_start: dict[str, float | int | None] | None = None
+        self._resource_end: dict[str, float | int | None] | None = None
+        self._resource_stopped_at: float | None = None
         self._measurement_origin = (
             measurement_origin if measurement_origin in {"observed", "simulated"}
             else "unknown"
         )
+
+    def _sample_resources(self) -> dict[str, float | int | None] | None:
+        """Validate at ingress; never retain raw reader payloads or errors."""
+        try:
+            raw = self._resource_reader()
+            if not isinstance(raw, dict):
+                return None
+            cpu = raw.get("cpu_ms")
+            if type(cpu) not in (float, int) or not math.isfinite(cpu):
+                return None
+            if not 0 <= cpu <= 1_000_000_000_000:
+                return None
+            resident = raw.get("rss_bytes")
+            if type(resident) is not int or not 0 <= resident <= 1_000_000_000_000_000:
+                resident = None
+            return {"cpu_ms": round(cpu, 2), "rss_bytes": resident}
+        except Exception:
+            # Never expose procfs/reader exception strings to Diagnostics.
+            return None
 
     def enable_detailed_capture(self, enabled: bool) -> None:
         """Explicit opt-in timeline: aggregate measurements stay passive."""
@@ -82,6 +130,12 @@ class UiPerfMonitor:
                 self._events_dropped = 0
                 self._gc_samples_dropped = 0
                 self._started_at = self._clock()
+                self._resource_start = self._sample_resources()
+                self._resource_end = None
+                self._resource_stopped_at = None
+            elif not enabled and self._detailed_capture:
+                self._resource_end = self._sample_resources()
+                self._resource_stopped_at = self._clock()
             self._detailed_capture = enabled
 
     @property
@@ -248,6 +302,39 @@ class UiPerfMonitor:
             dropped = self._events_dropped
             invalid = self._invalid_samples
             gc_dropped = self._gc_samples_dropped
+            resource_start = dict(self._resource_start) if self._resource_start else None
+            resource_end = dict(self._resource_end) if self._resource_end else None
+            resource_stopped_at = self._resource_stopped_at
+            resource_started_at = self._started_at
+        # CPU is process-wide (all threads), not a task or GTK phase metric.
+        # A stopped interval has two samples; active captures show only their
+        # baseline, without a misleading partial utilization estimate.
+        wall_ms = None
+        cpu_ms = None
+        cpu_percent = None
+        rss_start = resource_start.get("rss_bytes") if resource_start else None
+        rss_end = resource_end.get("rss_bytes") if resource_end else None
+        if resource_end is not None and resource_start is not None and resource_stopped_at is not None:
+            wall_ms = round(max(0.0, (resource_stopped_at - resource_started_at) * 1000), 2)
+            cpu_ms = round(max(0.0, resource_end["cpu_ms"] - resource_start["cpu_ms"]), 2)
+            if wall_ms > 0:
+                # Can legitimately exceed 100% when several threads use CPU.
+                cpu_percent = round(cpu_ms * 100 / wall_ms, 2)
+        resources = {
+            "state": "active" if enabled else (
+                "stopped" if resource_stopped_at is not None else "not_started"
+            ),
+            "sample_count": int(resource_start is not None) + int(resource_end is not None),
+            "wall_ms": wall_ms,
+            "process_cpu_ms": cpu_ms,
+            "process_cpu_percent_one_core": cpu_percent,
+            "rss_start_bytes": rss_start,
+            "rss_end_bytes": rss_end,
+            "rss_source": "linux_proc_statm_current" if (
+                rss_start is not None or rss_end is not None
+            ) else "unavailable",
+            "peak_rss_measured": False,
+        }
         stats = {}
         for key, values in sorted(samples.items()):
             ordered = sorted(values)
@@ -268,6 +355,7 @@ class UiPerfMonitor:
             "events_dropped": dropped,
             "invalid_samples": invalid,
             "gc_samples_dropped": gc_dropped,
+            "resource_window": resources,
             "limits": {
                 "max_samples_per_phase": self.max_samples,
                 "max_events": self._max_events,
