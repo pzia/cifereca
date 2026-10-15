@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from cifereca.plugin_api import ProviderCapabilityError, ProviderError
+from cifereca_numilog import NumilogSession
 from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category, mime_group, public_http_code
 from tests.test_entrepot2r_acsm_origin_p0 import SIGNED
 from tests.test_entrepot2r_fulfillment_mock_p0 import ACSM, START, make_session
@@ -283,3 +284,48 @@ def test_unknown_provider_values_never_escape_trace_schema():
     assert public_http_code("403") == "http_error"
     assert destination_category(SIGNED) == ("acsm_fulfillment", "acsm_fulfillment")
     assert destination_category("https://unknown.invalid/a?auth=PRIVATE_ACCOUNT") == ("other", "other")
+
+
+def test_legacy_http_diagnostics_never_export_user_configured_base_hostname(tmp_path):
+    diag = Capture()
+    host = "private-account.example.invalid"
+    base = "https://" + host + "/"
+    session = NumilogSession(
+        credential_id="synthetic", label="Synthetic",
+        credentials={"email": "reader@example.invalid", "password": "fictional"},
+        options={"base_url": base}, config={}, diagnostics=diag,
+    )
+    seen = []
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(
+            403, headers={"content-type": "text/html"},
+            text="PRIVATE_HTML orderid=FAKE-ORDER",
+        )
+    session.client.close()
+    session.client = httpx.Client(
+        transport=httpx.MockTransport(handler), follow_redirects=False,
+        trust_env=False,
+    )
+    try:
+        with pytest.raises(ProviderError):
+            session._page(base)
+        with pytest.raises(ProviderError):
+            session._download(
+                base + "delivery?auth=FAKE-SIGNATURE",
+                tmp_path / "out.epub",
+            )
+        assert seen == [base, base + "delivery?auth=FAKE-SIGNATURE"]
+        assert host not in repr(diag.events)
+        assert "FAKE-SIGNATURE" not in repr(diag.events)
+        assert "FAKE-ORDER" not in repr(diag.events)
+        http = [
+            kwargs["detail"] for args, kwargs in diag.events
+            if args[:2] == ("NUMILOG", "HTTP")
+        ]
+        assert len(http) == 2
+        assert all(row["origin_kind"] == "other" and "host" not in row for row in http)
+        assert diag.completed()[0][1]["detail"]["code"] == "http_forbidden"
+        assert_private_data_absent(diag)
+    finally:
+        session.close()
