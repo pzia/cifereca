@@ -14,6 +14,7 @@ class SyncActionScope:
     identity_id: str
     page_token: object
     preview_generation: int | None = None
+    identity_generation: int | None = None
 
 
 def capture_sync_action_scope(
@@ -39,6 +40,7 @@ def capture_sync_action_scope(
         identity_id=identity_id,
         page_token=page_token,
         preview_generation=preview_generation,
+        identity_generation=getattr(window, "_identity_context_generation", None),
     )
 
 
@@ -50,6 +52,14 @@ def sync_action_scope_current(window, scope: SyncActionScope | None) -> bool:
         return False
     identity = getattr(getattr(window, "service", None), "current_identity", None)
     if getattr(identity, "identity_id", None) != scope.identity_id:
+        return False
+    # A -> B -> A may reuse the visible identity ID, but not the owner's
+    # generation; never deliver an old source operation into the new session.
+    if (
+        scope.identity_generation is not None
+        and getattr(window, "_identity_context_generation", None)
+        != scope.identity_generation
+    ):
         return False
     if (
         scope.preview_generation is not None
