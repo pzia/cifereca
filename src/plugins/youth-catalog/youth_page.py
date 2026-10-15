@@ -174,7 +174,9 @@ def book_ref(book: object) -> BookRef:
     return BookRef(
         book_id=_text(getattr(book, "record_id", "")),
         title=_text(getattr(book, "title", "")),
-        authors=tuple(getattr(book, "authors", ()) or ()),
+        # BookRef is handed to the host for navigation: apply the same public
+        # author projection as the list and detail before crossing that API.
+        authors=_public_authors(book),
         identifiers=dict(getattr(book, "identifiers", {}) or {}),
         metadata={
             "youth_age_ranges": tuple(
