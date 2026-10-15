@@ -1207,9 +1207,15 @@ class NamingRepairTool(_ReadOnlyTool):
             try:
                 mutation = broker.plan(LibraryMutationRequest("normalize_filename", placement_id=placement_id))
                 result = broker.run(mutation, control)
+                # A changed counter is evidence of completed mutations, not
+                # an arbitrary provider value to coerce with int(). Refuse
+                # negative, boolean, non-numeric or unbounded claims.
+                raw_changed = getattr(result, "changed", 0)
+                if type(raw_changed) is not int or not 0 <= raw_changed <= 1_000_000:
+                    raise ValueError("unverifiable Core mutation count")
                 if getattr(result, "ok", True) is False:
                     failures += 1
-                changed += int(getattr(result, "changed", 0) or 0)
+                changed += raw_changed
                 # Broker warnings may include private local paths or provider
                 # responses. Public results expose only a bounded count.
                 core_warnings = getattr(result, "warnings", ())
@@ -1460,9 +1466,15 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                     keep_placement_id=keep_id,
                 ))
                 result = broker.run(mutation, control)
+                # A changed counter is evidence of completed mutations, not
+                # an arbitrary provider value to coerce with int(). Refuse
+                # negative, boolean, non-numeric or unbounded claims.
+                raw_changed = getattr(result, "changed", 0)
+                if type(raw_changed) is not int or not 0 <= raw_changed <= 1_000_000:
+                    raise ValueError("unverifiable Core mutation count")
                 if getattr(result, "ok", True) is False:
                     failures += 1
-                changed += int(getattr(result, "changed", 0) or 0)
+                changed += raw_changed
                 # The Core mutation may return a private filesystem path,
                 # bearer token or provider response in warning text. The
                 # maintenance line and result must export counts only.
