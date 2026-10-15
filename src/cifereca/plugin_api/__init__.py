@@ -37,7 +37,7 @@ from .models import (
     TransformCapability, TransformRequest, TransformPlan, TransformResult, ArtifactInputLease, ArtifactOutputLease, TaskControl, TaskHandle, TransportService, CatalogServiceFactory, HealthCheckResult, DiagnosticsCheckProvider, DocumentTransformer,
     UiActionContext, UiBookListHost, UiBookDetailHost, UiFacetHost, UiActionHost, UiBookNavigationHost, UiPluginManagementHost,
 )
-from .brokers import (CatalogBroker, AcquisitionBroker, SynchronizationBroker, MetadataBroker, ReconciliationBroker, IdentityBroker, DiagnosticsBroker, LibraryNamingBroker, RuntimeCapabilitiesBroker, AdeptProfileBroker, AdeptLoanBroker,
+from .brokers import (CatalogBroker, AcquisitionBroker, SynchronizationBroker, SourceMaterializationScheduleBroker, MetadataBroker, ReconciliationBroker, IdentityBroker, DiagnosticsBroker, LibraryNamingBroker, RuntimeCapabilitiesBroker, AdeptProfileBroker, AdeptLoanBroker,
     ArtifactExecutionBroker, LibraryReadBroker, LibraryMaintenanceBroker, ArtifactRoutingBroker, CacheBroker, TaskBroker)
 from .acquisition import (
     normalize_acquisition_offers,
