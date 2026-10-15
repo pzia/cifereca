@@ -55,14 +55,14 @@ def test_syntactically_valid_duplicate_editions_never_reach_core_handoff(duplica
         session.close()
 
 
-@pytest.mark.parametrize("poisoned_alias", (
-    {"product_id": "PRIVATE_A", "id": "PRIVATE_B"},
-    {"product_id": False, "id": "PRIVATE_B"},
-    {"product_id": "PRIVATE_A", "id": []},
-    {"product_id": "PRIVATE_A", "id": "PRIVATE_A\nBearer PRIVATE"},
-    {"product_id": [], "id": "PRIVATE_B"},
+@pytest.mark.parametrize("poisoned_alias,expected", (
+    ({"product_id": "PRIVATE_A", "id": "PRIVATE_B"}, ["safe"]),
+    ({"product_id": False, "id": "PRIVATE_B"}, ["PRIVATE_A", "safe"]),
+    ({"product_id": "PRIVATE_A", "id": []}, ["PRIVATE_B", "safe"]),
+    ({"product_id": "PRIVATE_A", "id": "PRIVATE_A\\nBearer PRIVATE"}, ["PRIVATE_B", "safe"]),
+    ({"product_id": [], "id": "PRIVATE_B"}, ["PRIVATE_A", "safe"]),
 ))
-def test_conflicting_or_corrupt_legacy_aliases_poison_valid_siblings(poisoned_alias):
+def test_conflicting_or_corrupt_legacy_aliases_poison_valid_siblings(poisoned_alias, expected):
     vault = FakeVault([
         {"product_id": "PRIVATE_A", "owned": True, "downloadable": True},
         {"product_id": "PRIVATE_B", "owned": True, "downloadable": True},
@@ -72,12 +72,6 @@ def test_conflicting_or_corrupt_legacy_aliases_poison_valid_siblings(poisoned_al
     session = session_with_vault(vault)
     try:
         rows = session.backup_manifest()
-        expected = (
-            ["PRIVATE_B", "safe"] if poisoned_alias["product_id"] in (False, []) and
-            isinstance(poisoned_alias.get("id"), str) and
-            not poisoned_alias.get("id", "").endswith("PRIVATE")
-            else ["safe"]
-        )
         assert [row["product_id"] for row in rows] == expected
         assert session.backup_manifest_rejection_count == 4 - len(expected)
         assert not session.backup_manifest_policy["manifest_authoritative"]
