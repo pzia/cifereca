@@ -360,26 +360,44 @@ class KoboSession(ProviderSession):
         rows = self.catalog.search(query, **options)
         accepted: list[SearchResult] = []
         for item in rows:
-            # SearchResult is the normal catalogue contract. Some legacy
-            # providers/test doubles omit optional attributes: do not crash
-            # while deciding whether a returned result is account-scoped.
-            raw_metadata = getattr(item, "metadata", None)
-            meta = raw_metadata if isinstance(raw_metadata, dict) else {}
-            private = (
-                getattr(item, "owned", None) is True
-                or getattr(item, "source_collection", None) in {"library", "archived"}
-            )
-            if private and account_id is None:
-                continue
-            if "account_id" in meta and (
-                account_id is None or type(meta["account_id"]) is not str
-                or meta["account_id"] != account_id
-            ):
+            # A single broken normalized hit (including a hostile property or
+            # unhashable source_collection) must not abort other safe results
+            # or cause a private row to bypass the account-scope check.
+            try:
+                raw_metadata = getattr(item, "metadata", None)
+                if raw_metadata is not None and type(raw_metadata) is not dict:
+                    continue
+                meta = raw_metadata if raw_metadata is not None else {}
+                owned = getattr(item, "owned", None)
+                collection = getattr(item, "source_collection", None)
+                if (owned is not None and type(owned) is not bool):
+                    continue
+                if type(collection) is not str and collection is not None:
+                    continue
+                private = owned is True or collection in ("library", "archived")
+                if private and account_id is None:
+                    continue
+                if "account_id" in meta and (
+                    account_id is None or type(meta["account_id"]) is not str
+                    or meta["account_id"] != account_id
+                ):
+                    continue
+            except Exception:
+                # Never expose the provider's exception text or class name.
                 continue
             accepted.append(item)
+        cover_count = 0
+        for item in accepted:
+            try:
+                cover = getattr(item, "thumbnail_url", None)
+                if type(cover) is str and cover:
+                    cover_count += 1
+            except Exception:
+                # Traces are advisory; a bad cover must not hide good books.
+                pass
         _TRACE_LOG.debug(
             "TRACE kobo catalog plugin source=search items=%s with_cover=%s",
-            len(accepted), sum(1 for row in accepted if row.thumbnail_url),
+            len(accepted), cover_count,
         )
         return accepted
 
