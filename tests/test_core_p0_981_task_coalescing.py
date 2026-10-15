@@ -250,11 +250,14 @@ def test_invalid_keys_are_rejected_before_any_queue_or_worker(session, key):
     assert s.queue.empty()
 
 
-def test_unknown_untrusted_origin_is_not_reflected_in_trace(session, caplog):
+@pytest.mark.parametrize("origin", [
+    "PRIVATE_TOKEN_FROM_PLUGIN", ["PRIVATE_TOKEN_FROM_PLUGIN"],
+    {"PRIVATE_TOKEN_FROM_PLUGIN": 1}, None, 1,
+])
+def test_unknown_untrusted_origin_is_not_reflected_in_trace(session, caplog, origin):
     s = session
     with caplog.at_level(logging.INFO, logger="test-core-981-task"):
-        s.runner.submit("Public", lambda: 1, origin="PRIVATE_TOKEN_FROM_PLUGIN",
-                        kind="opening-sync")
+        s.runner.submit("Public", lambda: 1, origin=origin, kind="opening-sync")
         s.drain_until(lambda: len([e for e in s.events if e[0] == "finished"]) == 1)
     assert "origin=unspecified" in caplog.text
     assert "PRIVATE_TOKEN_FROM_PLUGIN" not in caplog.text
@@ -276,3 +279,21 @@ def test_legacy_submission_without_key_still_runs_every_request(session):
     assert s.runner._count == 2 and not s.runner._coalesced
     gate.set()
     s.drain_until(lambda: len([e for e in s.events if e[0] == "finished"]) == 2)
+
+
+
+def test_destroyed_gtk_control_cannot_strand_task_reservation(session):
+    """#981/#1132: control liveness check precedes the new coalescing slot."""
+    s = session
+    class DestroyedControl:
+        def get_root(self):
+            raise RuntimeError("Gtk widget was disposed")
+    with pytest.raises(RuntimeError, match="disposed"):
+        s.runner.submit(
+            "Manual", lambda: pytest.fail("must not enqueue"),
+            control=DestroyedControl(), kind="opening-sync",
+            coalesce_key="global:shallow", origin="user",
+        )
+    assert s.runner._count == 0
+    assert not s.runner._coalesced
+    assert s.queue.empty()
