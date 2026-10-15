@@ -16,6 +16,7 @@ from ..plugin_api import SyncRequest
 from .action_widgets import AdaptiveActionBar, add_css, clear_box
 from .sync_view import (
     sync_identity_action_label, sync_source_presentation,
+    sync_source_identity_label,
     sync_local_preflight_presentation,
 )
 from .task_runner import TaskPriority
@@ -150,7 +151,7 @@ def _refresh_sync_page(self) -> None:
         if getattr(source, "identity_id", None) != scope.identity_id:
             continue
         group = Adw.PreferencesGroup(); box.append(group)
-        row = Adw.ActionRow(); row.set_title(source.label or source.provider_id)
+        row = Adw.ActionRow(); row.set_title(sync_source_identity_label(source))
         row.set_subtitle(presentation.summary)
         row.set_subtitle_lines(0)
         toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
@@ -175,7 +176,7 @@ def _refresh_sync_page(self) -> None:
         now.set_tooltip_text(
             presentation.action_label if presentation.action_enabled else presentation.disabled_reason
         )
-        def one(_button, sid=source.source_id, label=source.label or source.provider_id):
+        def one(_button, sid=source.source_id, label=sync_source_identity_label(source)):
             if not sync_action_scope_current(self, scope):
                 return
             def completed(_result):
