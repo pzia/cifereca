@@ -196,6 +196,7 @@ def test_offline_cli_does_not_connect_or_modify_local_backup(tmp_path, monkeypat
         exported = capsys.readouterr().out
         report = json.loads(exported)
         assert report["offline"] is True
+        assert report["evidence_status"] == "no_verified_local_evidence"
         assert report["counts"]["backup_rows"] == 1
         assert "vault-1" not in exported
         assert "PRIVATE_CLI_ITEM" not in exported

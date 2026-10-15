@@ -425,6 +425,8 @@ def kobo_local_reconciliation_audit(
         "offline": True, "read_only": True, "dry_run": True,
         "mutations_authorized": False, "downloads_authorized": False,
         "classification": "local_hash_evidence_not_entitlement_authority",
+        "evidence_status": ("verified_local_bytes" if totals["linked_files_verified"]
+                            else "no_verified_local_evidence"),
         "cases": cases,
         "limitations": [
             "Only persisted Kobo backup, active rights and explicit catalogue paths were considered.",
