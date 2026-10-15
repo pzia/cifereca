@@ -1437,7 +1437,13 @@ class UxRecommendationsView:
                     f"Chercher l’édition ISBN {isbn} dans Recherche",
                     "system-search-symbolic", callback=open_isbn,
                 ))
-        url = _external_book_url(get_field(item, "friendly_url", ""))
+        # An unsafe/missing friendly link must not mask an independently
+        # attested public notice. Both candidates pass the same strict
+        # validation; no download, token or private URL reaches CoreUI.
+        url = (
+            _external_book_url(get_field(item, "friendly_url", ""))
+            or _external_book_url(get_field(item, "notice_url", ""))
+        )
         if url:
             actions.append(
                 UiBookDetailAction(
