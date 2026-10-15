@@ -950,22 +950,42 @@ class IntegrityAuditTool(_ReadOnlyTool):
                     # diagnostics. Never disclose a library title, filename,
                     # path, or upstream string while reporting a file failure.
                     warnings.append(f"Fichier {index}/{total} : {', '.join(issues)}")
-        # A cancellation received while the last file was being inspected
-        # must not publish a misleading completed/100% state.
+        # Files without a usable path were excluded by plan(), but still
+        # prevent the scan from proving that the local library is healthy.
+        # Distinguish inspected anomalies from unavailable checks; neither
+        # case is a completed successful audit.
+        unavailable = counts["missing_path"] + read_failures + reference_failures
+        incomplete = bool(invalid or unavailable)
+        # Cancellation during the final inspection must not publish 100%.
         control.check_cancelled()
         if total:
-            control.report(current=total,total=total,message="Audit d’intégrité terminé")
+            status = (
+                f"Audit d’intégrité incomplet : {invalid} anomalie(s), "
+                f"{unavailable} contrôle(s) indisponible(s)"
+                if incomplete else "Audit d’intégrité terminé"
+            )
+            control.report(current=total, total=total, message=status)
         else:
-            control.report(message="Audit d’intégrité terminé : aucun fichier")
+            control.report(message=(
+                f"Audit d’intégrité incomplet : {unavailable} contrôle(s) indisponible(s)"
+                if incomplete else "Audit d’intégrité terminé : aucun fichier"
+            ))
+        summary = (
+            f"{invalid} fichier(s) en anomalie sur {len(candidates)} vérifié(s), "
+            f"dont {missing} manquant(s)."
+        )
+        if unavailable:
+            summary += f" {unavailable} contrôle(s) indisponible(s)."
         return MaintenanceResult(
-            ok=invalid==0 and read_failures==0 and reference_failures==0,
+            ok=not incomplete,
             changed=0,
-            summary=f"{invalid} fichier(s) en anomalie sur {len(candidates)} vérifié(s), dont {missing} manquant(s).",
+            summary=summary,
             warnings=tuple(warnings),
             facts={
                 "checked":len(candidates),
                 "invalid":invalid,
                 "missing":missing,
+                "missing_path":counts["missing_path"],
                 "read_failures":read_failures,
                 "reference_failures":reference_failures,
                 "issues":by_issue,

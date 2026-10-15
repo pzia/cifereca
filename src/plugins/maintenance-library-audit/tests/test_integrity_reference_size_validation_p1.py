@@ -58,7 +58,7 @@ def test_bad_size_reference_is_quarantined_without_aborting_other_files(
     assert not result.ok
     assert result.changed == 0
     assert result.facts == {
-        "checked": 2, "invalid": 0, "missing": 0,
+        "checked": 2, "invalid": 0, "missing": 0, "missing_path": 0,
         "read_failures": 0, "reference_failures": 1, "issues": {},
     }
     assert [(event.get("current"), event.get("total"))

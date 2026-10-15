@@ -44,7 +44,7 @@ def test_restored_plan_rebuilds_diagnostic_warnings_from_bounded_counts():
     }, ("Bearer PRIVATE_ACCESS_TOKEN", "/home/PRIVATE_USER/book.epub"))
     assert result.ok is False and result.changed == 0
     assert result.facts == {
-        "checked": 0, "invalid": 0, "missing": 0,
+        "checked": 0, "invalid": 0, "missing": 0, "missing_path": 3,
         "read_failures": 2, "reference_failures": 1, "issues": {},
     }
     assert result.warnings == (
@@ -54,7 +54,7 @@ def test_restored_plan_rebuilds_diagnostic_warnings_from_bounded_counts():
     )
     assert control.events == [
         {"message": "Aucun fichier local à vérifier"},
-        {"message": "Audit d’intégrité terminé : aucun fichier"},
+        {"message": "Audit d’intégrité incomplet : 6 contrôle(s) indisponible(s)"},
     ]
     exposed = json.dumps({
         "summary": result.summary, "warnings": result.warnings,
