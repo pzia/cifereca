@@ -127,7 +127,60 @@ def public_book_url(value, base_url=LIBRARY):
         return None
 
 
-def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False):
+def _scoped_library_cards(table):
+    """Separate book cards through normal HTML table/tbody/tr wrappers.
+
+    Do not combine the first title and cover of one owned book with the
+    readBook link of another in a row containing multiple independent cards.
+    Different formats under ONE title remain a single card as before.
+    """
+    def present(node):
+        return any(n.tag == 'a' and 'LnkDownloadBook' in classes(n)
+                   for n in node.walk())
+
+    def title_count(node):
+        return sum('pTitle' in classes(n) and bool(n.text()) for n in node.walk())
+
+    def split(node):
+        if node.attrs.get('id') == 'ModelItemMesLivres' or not present(node):
+            return []
+        if node.tag in {'table', 'thead', 'tbody', 'tfoot'}:
+            return [card for child in node.children for card in split(child)]
+        link_children = [child for child in node.children if present(child)]
+        links = [n for n in node.walk()
+                 if n.tag == 'a' and 'LnkDownloadBook' in classes(n)]
+        titles = title_count(node)
+        if len(links) > 1 and titles > 1:
+            # Common wrapper (tr/td/div) may contain independently titled
+            # book cards. Descend only when every resulting link is scoped
+            # to its own title; otherwise reject the whole ambiguous page.
+            if len(link_children) == 1:
+                return split(link_children[0])
+            if len(link_children) > 1 and all(title_count(c) == 1 for c in link_children):
+                return [card for child in link_children for card in split(child)]
+            raise ParseError('Fiches de livres ambiguës dans la bibliothèque')
+        if len(links) == 1 and node.tag in {'tr', 'td'} and titles == 0 and len(link_children) == 1:
+            return split(link_children[0])
+        return [node]
+
+    return split(table)
+
+
+def _js_delivery_shape_count(script):
+    """Count object *shape* without decoding a private identifier or link."""
+    if script.tag != 'script':
+        return 0
+    raw = ''.join(script.pieces)
+    if len(raw) > 64 * 1024:
+        return 0
+    return min(10000, sum(
+        all(re.search(r'(?<![A-Za-z0-9_$])' + field + r'\s*:', block)
+            for field in ('ProductId', 'IndexExemplaire', 'DrmTechnlology', 'link'))
+        for block in (m.group(0) for m in _JS_OBJECT.finditer(raw))
+    ))
+
+
+def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None):
     root = Parser(text).root
     tables = [n for n in root.walk() if n.attrs.get('id') == 'myTable']
     if len(tables) != 1:
@@ -140,9 +193,25 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
     allowed_covers.update(cover_origins or ())
 
     items, keys = [], set()
-    for card in tables[0].children:
-        if card.attrs.get('id') == 'ModelItemMesLivres':
-            continue
+    cards = _scoped_library_cards(tables[0])
+    if delivery_evidence and delivery_diagnostics is not None:
+        scoped_scripts = {
+            id(n) for card in cards for n in card.walk() if n.tag == 'script'
+        }
+        all_scripts = [n for n in root.walk() if n.tag == 'script']
+        inside = sum(_js_delivery_shape_count(n) for n in all_scripts
+                     if id(n) in scoped_scripts)
+        outside = sum(_js_delivery_shape_count(n) for n in all_scripts
+                      if id(n) not in scoped_scripts)
+        # Numeric/categorical structure only, bounded: no page, title,
+        # ProductId, lid, signed URL or provider error string is exposed.
+        delivery_diagnostics.update({
+            'cards': min(len(cards), 10000),
+            'js_shapes_in_cards': min(inside, 10000),
+            'js_shapes_outside_cards': min(outside, 10000),
+            'bound_links': 0,
+        })
+    for card in cards:
         nodes = list(card.walk())
         links = [n for n in nodes if n.tag == 'a' and 'LnkDownloadBook' in classes(n)]
         if not links:
@@ -167,6 +236,10 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
             card, links,
             {('https', 'entrepot2r.numilog.com', 443)},
         ) if delivery_evidence else None)
+        if delivery is not None and delivery_diagnostics is not None:
+            delivery_diagnostics['bound_links'] = min(
+                10000, delivery_diagnostics.get('bound_links', 0) + 1,
+            )
         for link in links:
             href = urljoin(base_url, link.attrs.get('href') or '')
             url = urlsplit(href)
@@ -327,9 +400,12 @@ def _card_delivery(card, links, allowed_origins):
         ('data-index-exemplaire', item.copy_index),
     )
     for key, expected in attributes:
-        supplied = card.attrs.get(key)
-        if supplied is not None and str(supplied).strip() != expected:
-            return None
+        # Product/copy identity markers may live on the nested book element
+        # rather than on the enclosing <tr> in real HTML table layouts.
+        for node in card.walk():
+            supplied = node.attrs.get(key)
+            if supplied is not None and str(supplied).strip() != expected:
+                return None
     return item
 
 
