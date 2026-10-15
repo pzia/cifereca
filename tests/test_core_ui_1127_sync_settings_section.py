@@ -71,7 +71,7 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert controls.backup_switch.active is False
     assert controls.run_backup_now.label == "Lancer le lot Kobo…"
     assert controls.run_backup_now.sensitive is False
-    assert "Désactivée" in controls.backup_status.subtitle
+    assert "Acquisition Kobo désactivée" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is False
     assert controls.library_dir_row.text == "~/EBooks"
     assert controls.backup_interval_row.text == "60"
@@ -144,7 +144,7 @@ def test_bad_saved_kobo_opt_in_never_looks_enabled_or_unlocks_manual_action():
         controls, _, _ = _build({"kobo_backup.enabled": invalid})
         assert controls.backup_switch.active is False
         assert controls.run_backup_now.sensitive is False
-        assert "Désactivée" in controls.backup_status.subtitle
+        assert "Acquisition Kobo désactivée" in controls.backup_status.subtitle
         assert kobo_backup_action_state(
             persisted_enabled=invalid,
             draft_enabled=invalid,
