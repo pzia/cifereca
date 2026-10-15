@@ -90,6 +90,40 @@ def test_unverified_ledger_without_case_yields_explicit_manual_blockers():
     assert plan["review_status"] == "manual_review_required"
 
 
+def test_unindexed_candidate_is_manual_only_and_never_executable():
+    audit = _report(
+        counts={
+            "unindexed_regular_file_candidates": 3,
+            "identity_flat_file_candidates": 1,
+        },
+        cases=[("unindexed_identity_file_candidate", 3)],
+    )
+    plan = kobo_manual_reconciliation_plan(audit)
+    assert plan["case_count"] == 1
+    assert plan["cases"][0]["category"] == "unindexed_identity_file_candidate"
+    assert "verify_rights_and_product_identity_manually" in plan["cases"][0]["checks"]
+    assert "unindexed_regular_file_candidates" in plan["unresolved_evidence_codes"]
+    assert plan["review_status"] == "manual_review_required"
+    assert plan["execution_steps"] == []
+    assert plan["delete_authorized"] is False
+    assert plan["write_authorized"] is False
+    assert plan["download_authorized"] is False
+    for invalid in (True, -1, "3", 1_000_001):
+        bad = _report(counts={"unindexed_regular_file_candidates": invalid})
+        with pytest.raises(ValueError, match="invalid_kobo_audit_report"):
+            kobo_manual_reconciliation_plan(bad)
+
+
+def test_unindexed_without_individual_case_is_not_declared_clean():
+    plan = kobo_manual_reconciliation_plan(_report(counts={
+        "unindexed_regular_file_candidates": 1,
+    }))
+    assert plan["case_count"] == 0
+    assert plan["review_status"] == "manual_review_required"
+    assert "unindexed_regular_file_candidates" in plan["unresolved_evidence_codes"]
+    assert plan["automatic_reconciliation_authorized"] is False
+
+
 def test_truncated_audit_is_never_promoted_to_complete_plan():
     plan = kobo_manual_reconciliation_plan(_report(truncated=True))
     assert plan["evidence_complete"] is False
