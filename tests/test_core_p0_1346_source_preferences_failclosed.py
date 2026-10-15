@@ -106,18 +106,24 @@ def test_ambiguous_same_source_bindings_reject_single_source_sync_and_toggle(tmp
         storage.close()
 
 
-def test_multi_source_progress_never_exposes_provider_account_label(tmp_path):
+def test_multi_source_progress_never_exposes_provider_account_label(tmp_path, monkeypatch):
     from cifereca.plugin_api import SyncRequest, SyncResult
     storage = Storage(tmp_path / "progress-redacted.sqlite3")
     try:
         broker = fake_broker(storage)
         sid = broker.sources()[0].source_id
         private = "https://private.invalid/?token=SECRET_LOCAL"
-        broker.sources = lambda _identity=None: [
-            NS(source_id=sid, label=private, enabled=True,
-               connected=True, sync_capable=True),
-        ]
-        broker.synchronize_source = lambda *a, **kw: SyncResult(ok=True)
+        monkeypatch.setattr(
+            SynchronizationBrokerImpl, "sources",
+            lambda self, _identity=None: [
+                NS(source_id=sid, label=private, enabled=True,
+                   connected=True, sync_capable=True),
+            ],
+        )
+        monkeypatch.setattr(
+            SynchronizationBrokerImpl, "synchronize_source",
+            lambda self, *a, **kw: SyncResult(ok=True),
+        )
         messages = []
 
         class Control:
