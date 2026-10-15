@@ -195,15 +195,20 @@ def constellation_detail_presentation(node) -> UiBookDetailPresentation:
 
 
 def neighbour_card_fields(edge):
-    """Read-only presentation, with inferred reasons kept distinguishable."""
+    """Public, bounded neighbour projection; never stringify provider objects.
+
+    The neighbour FlowBox is an alternate path into the same bibliographic
+    content as DetailPanel. It must apply the same text trust boundary and
+    keep deterministic vs inferred reasons distinct without leaking raw data.
+    """
     book = edge.target.book
-    reasons = tuple(str(item) for item in edge.reasons if str(item))
+    reasons = _public_detail_values(edge.reasons)
     certain = tuple(value for value in reasons if not value.startswith('Inféré :'))
     inferred = tuple(value for value in reasons if value.startswith('Inféré :'))
     return {
-        'title': str(book.title or ''),
-        'authors': ', '.join(str(value) for value in book.authors if str(value)),
-        'access': ', '.join(str(value) for value in edge.target.availability if str(value)),
+        'title': _public_detail_text(book.title, limit=2048),
+        'authors': ', '.join(_public_detail_values(book.authors)),
+        'access': ', '.join(_public_detail_values(edge.target.availability)),
         'reason': certain[0] if certain else (inferred[0] if inferred else 'Raison inconnue'),
         'other_reasons': max(0, len(reasons) - 1),
         'inferred': bool(inferred),
@@ -212,7 +217,10 @@ def neighbour_card_fields(edge):
 
 def neighbour_count_label(edges):
     number = len(edges)
-    inferred = sum(any(str(item).startswith('Inféré :') for item in e.reasons) for e in edges)
+    inferred = sum(
+        any(reason.startswith('Inféré :') for reason in _public_detail_values(edge.reasons))
+        for edge in edges
+    )
     return (f"{number} voisin(s) proposé(s) · {inferred} avec un indice inféré"
             if number else "Aucun voisin proposé avec les paramètres actuels")
 
