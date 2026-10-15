@@ -16,6 +16,7 @@ from ..plugin_api import SyncRequest
 from .action_widgets import AdaptiveActionBar, add_css, clear_box
 from .sync_view import (
     sync_identity_action_label, sync_source_presentation,
+    sync_source_row_labels,
     sync_local_preflight_presentation,
 )
 from .task_runner import TaskPriority
@@ -133,6 +134,10 @@ def _refresh_sync_page(self) -> None:
         if getattr(source, "identity_id", None) == scope.identity_id
     ]
     presentations = [sync_source_presentation(source) for source in rows]
+    # Number genuinely indistinguishable same-provider connections without
+    # exposing any private credential/account/source ID. Unique titles stay
+    # unchanged to preserve existing keyboard navigation and accessible names.
+    row_titles = sync_source_row_labels(rows)
     actionable = any(item.action_enabled for item in presentations)
     if all_now is not None:
         all_now.set_sensitive(actionable)
@@ -142,15 +147,17 @@ def _refresh_sync_page(self) -> None:
         )
     if not rows:
         box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0)); return
-    for source, presentation in zip(rows, presentations):
+    for source, presentation, display_label in zip(rows, presentations, row_titles):
         if not sync_action_scope_current(self, scope):
             return
         # Refuse a broker row whose ownership does not match the explicitly
         # selected profile. No toggle/preview may be wired to that row.
         if getattr(source, "identity_id", None) != scope.identity_id:
             continue
+        # The scoped broker order determines ephemeral labels only; sid remains
+        # the opaque, separate source route for each row.
         group = Adw.PreferencesGroup(); box.append(group)
-        row = Adw.ActionRow(); row.set_title(source.label or source.provider_id)
+        row = Adw.ActionRow(); row.set_title(display_label)
         row.set_subtitle(presentation.summary)
         row.set_subtitle_lines(0)
         toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
@@ -175,7 +182,7 @@ def _refresh_sync_page(self) -> None:
         now.set_tooltip_text(
             presentation.action_label if presentation.action_enabled else presentation.disabled_reason
         )
-        def one(_button, sid=source.source_id, label=source.label or source.provider_id):
+        def one(_button, sid=source.source_id, label=display_label):
             if not sync_action_scope_current(self, scope):
                 return
             def completed(_result):

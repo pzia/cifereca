@@ -96,10 +96,75 @@ def sync_local_preflight_presentation(result: object) -> str:
         "aucun téléchargement autorisé depuis cet aperçu."
     )
 
+def _public_sync_provider_slug(source: object) -> str:
+    """Bound public plugin ID; never render private connection coordinates."""
+    provider = getattr(source, "provider_id", "")
+    provider = provider.strip() if type(provider) is str else ""
+    if provider and len(provider) <= 64 and all(
+        char.isascii() and (char.isalnum() or char in "._-") for char in provider
+    ):
+        return provider
+    return "fournisseur inconnu"
+
+
+def sync_source_identity_label(source: object, *, disambiguate: bool = True) -> str:
+    """Qualify homonymous row titles, preserving unique legacy row titles."""
+    provider = _public_sync_provider_slug(source)
+    label = getattr(source, "label", "")
+    label = label.strip() if type(label) is str else ""
+    if not label:
+        return provider
+    return (
+        label if not disambiguate or label.casefold() == provider.casefold()
+        else f"{label} · {provider}"
+    )
+
+
+def sync_source_row_labels(sources: object) -> tuple[str, ...]:
+    """Give same-name connections distinct *ephemeral* visible titles.
+
+    A source or credential hash must never become a pseudonymous UI identifier.
+    Numbering follows the already scoped broker order; it is presentation only
+    and does not grant or change synchronization permissions (#980).
+    """
+    rows = tuple(sources)
+    names = [
+        str(getattr(source, "label", "") or getattr(source, "provider_id", "") or "").strip()
+        for source in rows
+    ]
+    name_counts: dict[str, int] = {}
+    for name in names:
+        key = name.casefold()
+        name_counts[key] = name_counts.get(key, 0) + 1
+    qualified = [
+        sync_source_identity_label(
+            source, disambiguate=name_counts[name.casefold()] > 1
+        )
+        for source, name in zip(rows, names)
+    ]
+    qualified_counts: dict[str, int] = {}
+    for name in qualified:
+        key = name.casefold()
+        qualified_counts[key] = qualified_counts.get(key, 0) + 1
+    ordinal: dict[str, int] = {}
+    display: list[str] = []
+    for name in qualified:
+        key = name.casefold()
+        count = qualified_counts[key]
+        if count > 1:
+            ordinal[key] = ordinal.get(key, 0) + 1
+            display.append(f"{name} · connexion {ordinal[key]}/{count}")
+        else:
+            display.append(name)
+    return tuple(display)
+
+
 def sync_source_presentation(source: object) -> SyncSourcePresentation:
     enabled = bool(getattr(source, "enabled", False))
     connected = bool(getattr(source, "connected", False))
     capable = bool(getattr(source, "sync_capable", False))
+    # Preserve stable action labels for non-Kobo sources; the GTK row and
+    # task label provide the disambiguated provider presentation (#980).
     label = str(getattr(source, "label", "") or getattr(source, "provider_id", "") or "cette source")
 
     activation = "Activée" if enabled else "Désactivée"
@@ -136,6 +201,7 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         disabled_reason = ""
 
     summary = (
+        f"Fournisseur : {_public_sync_provider_slug(source)}\n"
         f"Activation : {activation} · Connexion : {connection}\n"
         f"Synchronisation : {sync_label}"
     )
