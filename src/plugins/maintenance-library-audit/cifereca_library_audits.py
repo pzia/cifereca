@@ -951,20 +951,53 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         seen_views: set[str] = set()
 
         for _row, view in _iter_views(metadata, library_read, context.identity_id, read_failures):
-            key = str(getattr(view.book, "book_id", "") or "") + ":" + ",".join(
-                sorted(str(a.artifact_id) for a in getattr(view, "artifacts", ()))
-            )
+            try:
+                # These values come from a third-party Core-backed view.
+                # Invalid fields must not abort other artifacts in the plan.
+                key = str(getattr(view.book, "book_id", "") or "") + ":" + ",".join(
+                    sorted(str(a.artifact_id) for a in getattr(view, "artifacts", ()))
+                )
+                placements = tuple(getattr(view, "placements", ()) or ())
+            except Exception:
+                read_failures.append("unavailable")
+                continue
             if key in seen_views:
                 continue
             seen_views.add(key)
             groups: dict[tuple[str, str | None], list[Any]] = {}
-            for placement in getattr(view, "placements", ()):
-                if placement.kind != "library":
+            seen_placements: set[str] = set()
+            for placement in placements:
+                try:
+                    if placement.kind != "library":
+                        continue
+                    identity = placement.identity_id
+                    if context.identity_id is not None and identity != context.identity_id:
+                        continue
+                    placement_id = placement.placement_id
+                    artifact_id = placement.artifact_id
+                    if (
+                        type(placement_id) is not str
+                        or not 0 < len(placement_id) <= 1024
+                        or placement_id.strip() != placement_id
+                        or any(ord(char) < 32 or ord(char) == 127 for char in placement_id)
+                        or type(artifact_id) is not str
+                        or not 0 < len(artifact_id) <= 1024
+                        or artifact_id.strip() != artifact_id
+                        or any(ord(char) < 32 or ord(char) == 127 for char in artifact_id)
+                        or (identity is not None and type(identity) is not str)
+                    ):
+                        read_failures.append("unavailable")
+                        continue
+                    if placement_id in seen_placements:
+                        # Repeated views of the same physical placement are
+                        # not evidence of two independent duplicate files.
+                        continue
+                    seen_placements.add(placement_id)
+                    groups.setdefault((artifact_id, identity), []).append(placement)
+                except Exception:
+                    read_failures.append("unavailable")
                     continue
-                if context.identity_id is not None and placement.identity_id != context.identity_id:
-                    continue
-                groups.setdefault((placement.artifact_id, placement.identity_id), []).append(placement)
-            for (artifact_id, _identity), placements in groups.items():
+            for (_artifact_id, _identity), placements in groups.items():
                 ordered = sorted(placements, key=lambda p: p.placement_id)
                 if len(ordered) < 2:
                     continue
@@ -972,11 +1005,6 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                 for duplicate in ordered[1:]:
                     pairs.append((duplicate.placement_id, keep.placement_id))
                     if len(changes) < 100:
-                        # Preview surfaces travel through GTK and diagnostics:
-                        # filename, placement ID and artifact hash are private
-                        # operational data, not suitable as public labels.
-                        # Keep the exact identifiers only in facts["pairs"]
-                        # for Core to revalidate before a deletion.
                         changes.append(f"Supprimer le doublon n°{len(pairs)}")
 
         warnings: list[str] = []
