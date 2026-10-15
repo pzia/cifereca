@@ -75,5 +75,6 @@ def test_shared_detail_renderer_uses_external_link_buttons_and_dedupes_catalogue
     assert 'for link in presentation.links:' in source
     assert 'Gtk.LinkButton(uri=uri, label=str(link.label))' in source
     assert 'self._rendered_document_urls.add(uri)' in source
-    assert 'url in getattr(detail, "_rendered_document_urls", set())' in source
+    action_source = gui_source_text(MAIN.with_name("public_catalogue_action_controller.py"))
+    assert 'url in getattr(detail, "_rendered_document_urls", set())' in action_source
     assert 'links=document_links(result_row(item))' in source
