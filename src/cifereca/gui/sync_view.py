@@ -320,10 +320,19 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         if not isinstance(capabilities, (tuple, list, frozenset)):
             capabilities = ()
         phases = []
+        # Stores expose a customer's purchased/owned collection. This is
+        # neither a public-library loan nor a physically downloaded EPUB.
+        store_owned = getattr(source, "provider_id", "") in {"kobo", "numilog"}
         if "remote_inventory" in capabilities:
-            phases.append("inventaire distant")
+            phases.append(
+                "inventaire des livres achetés"
+                if store_owned else "inventaire distant"
+            )
         if "entitlements" in capabilities:
-            phases.append("droits et emprunts")
+            phases.append(
+                "droits sur les livres possédés"
+                if store_owned else "droits et emprunts"
+            )
         if phases:
             summary += "\nPortée de cette source : " + ", ".join(phases) + "."
         else:
@@ -343,6 +352,11 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
             )
         else:
             summary += "\nAcquisition locale Kobo : non prise en charge par ce compte."
+    if getattr(source, "provider_id", "") == "numilog":
+        summary += (
+            "\nActualise les livres achetés chez Numilog : aucun emprunt "
+            "de bibliothèque créé et aucun fichier EPUB/ACSM téléchargé."
+        )
     if status in {"partial", "error", "failed"} and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:
@@ -354,6 +368,8 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         sync_label=sync_label,
         summary=summary,
         action_label=("Mettre à jour les notices Kobo en ligne" if kobo_notices_only
+                      else "Actualiser les livres achetés Numilog"
+                      if getattr(source, "provider_id", "") == "numilog"
                       else f"Synchroniser {label}"),
         action_enabled=action_enabled,
         disabled_reason=disabled_reason,
