@@ -487,17 +487,76 @@ class NamingAuditTool(_ReadOnlyTool):
         )
 
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
-        # The audit itself is read-only, but a failed Core naming policy
-        # means the comparison is incomplete. Do not report a false success.
-        result = super().run(plan, control)
-        if int(plan.facts.get("policy_failures") or 0) <= 0:
-            return result
+        """Defend the live UI boundary against forged cached naming previews."""
+        facts = plan.facts
+        keys = {"checked", "mismatch", "unavailable", "policy_failures"}
+        valid = (
+            plan.tool_id == self.info.id
+            and type(facts) is dict
+            and set(facts) == keys
+        )
+        counts = {}
+        if valid:
+            for key in keys:
+                value = facts.get(key)
+                if type(value) is not int or not 0 <= value <= 1_000_000:
+                    valid = False
+                    break
+                counts[key] = value
+        if valid and counts["mismatch"] > counts["checked"]:
+            valid = False
+        expected = (
+            f'{counts["mismatch"]} nom(s) différent(s) de la politique Core '
+            f'sur {counts["checked"]} fichier(s) vérifiable(s).'
+        ) if valid else ""
+        if valid:
+            valid = type(plan.summary) is str and plan.summary == expected
+        safe_warnings = []
+        if valid:
+            valid = type(plan.warnings) in (tuple, list) and len(plan.warnings) <= 15
+        if valid:
+            import re
+            for warning in plan.warnings:
+                if type(warning) is not str:
+                    valid = False
+                    break
+                if (
+                    re.fullmatch(
+                        r"(?:Politique de nommage indisponible|Nom non conforme) : notice n°[1-9][0-9]{0,6}",
+                        warning,
+                    )
+                    or warning == (
+                        f'{counts["unavailable"]} entrée(s) sans nom/titre public vérifiable.'
+                    ) and counts["unavailable"] > 0
+                    or warning == (
+                        f'{counts["policy_failures"]} entrée(s) sans proposition valide de la politique Core.'
+                    ) and counts["policy_failures"] > 0
+                    or warning == "Audit uniquement : aucune mutation de placement n'est effectuée."
+                ):
+                    safe_warnings.append(warning)
+                else:
+                    valid = False
+                    break
+            if valid:
+                valid = bool(safe_warnings) and safe_warnings[-1] == (
+                    "Audit uniquement : aucune mutation de placement n'est effectuée."
+                )
+        control.check_cancelled()
+        if not valid:
+            control.report(message="Audit des noms impossible : plan invalide")
+            control.check_cancelled()
+            return MaintenanceResult(
+                ok=False, changed=0,
+                summary="Audit des noms non vérifiable : plan invalide.",
+                warnings=("Plan d’audit des noms invalide : relancez l’analyse.",),
+                facts={"invalid_plan": 1},
+            )
+        control.report(message=expected)
+        control.check_cancelled()
         return MaintenanceResult(
-            ok=False,
-            changed=0,
-            summary=result.summary,
-            warnings=result.warnings,
-            facts=result.facts,
+            ok=counts["policy_failures"] == 0,
+            changed=0, summary=expected,
+            warnings=tuple(safe_warnings), facts=counts,
         )
 
 
