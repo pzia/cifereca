@@ -302,7 +302,7 @@ class SynchronizationBrokerImpl:
                 from .core.source_materialization import process_owner
                 if explicit.get("owner") != process_owner():
                     status = "interrupted"
-            if status in {"running", "success", "partial", "blocked", "failed", "cancelled", "interrupted",
+            if type(status) is str and status in {"running", "success", "partial", "blocked", "failed", "cancelled", "interrupted",
                           "materialization_failed", "source_changed", "source_disabled", "source_disconnected"}:
                 materialization = SyncPhaseState(
                     "materialize", status, self._safe_phase_timestamp(explicit.get("last_attempt")),

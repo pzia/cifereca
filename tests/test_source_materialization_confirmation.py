@@ -384,3 +384,12 @@ def test_final_phase_write_failure_does_not_hide_completed_files(case, monkeypat
     result = case.broker.materialize_source(case.source, token)
     assert result.ok and result.changed == 2 and result.facts["state_persistence_failed"]
     assert all(path.is_file() for path in case.downloaded) and "PRIVATE" not in repr(result)
+
+
+@pytest.mark.parametrize("status", [[], {}, 42, "PRIVATE status"])
+def test_untrusted_phase_projection_does_not_crash_or_echo_persisted_data(case, status):
+    case.service.storage.metadata_set("sync.source.materialization." + case.source, json.dumps({
+        "status": status, "last_attempt": "PRIVATE token", "last_success": ["PRIVATE path"]}))
+    phases = case.broker._ref(case.target.accounts[0]).phase_states
+    assert "PRIVATE" not in repr(phases)
+    assert next(p for p in phases if p.phase == "materialize").last_success == ""
