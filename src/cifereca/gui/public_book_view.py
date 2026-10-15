@@ -30,18 +30,37 @@ class PublicBookMasterDetailView:
         self._page.toolbar.append(widget)
 
     def show_rows(self, rows, total_count: int | None = None) -> None:
-        self._rows = {str(row.key): row for row in rows}
-        ui_rows = [
-            BookListItem(
-                str(row.key),
+        # Materialize exactly once: public plugins may supply a generator.
+        # The prior dict/list double iteration consumed it before GTK saw it.
+        source_rows = tuple(rows)
+        original_keys = [str(row.key) for row in source_rows]
+        reserved = set(original_keys)
+        mapped = {}
+        ui_rows = []
+        for index, (row, key) in enumerate(zip(source_rows, original_keys)):
+            presented_key = key
+            if presented_key in mapped:
+                # A source may return two distinct books with the same key.
+                # Do not let the final one silently hijack both detail rows.
+                # Ephemeral keys are internal to this render and never alter
+                # the plugin's original row or its public action context.
+                suffix = index + 1
+                presented_key = f"{key}::row-{suffix}"
+                while presented_key in reserved or presented_key in mapped:
+                    suffix += 1
+                    presented_key = f"{key}::row-{suffix}"
+                reserved.add(presented_key)
+            mapped[presented_key] = row
+            ui_rows.append(BookListItem(
+                presented_key,
                 str(row.title or "Sans titre"),
                 str(row.subtitle or ""),
                 str(row.meta or ""),
                 str(row.badge or ""),
                 getattr(row, "thumbnail_url", None),
-            )
-            for row in rows
-        ]
+            ))
+        # Publish mapping before GTK selection notifications during show_rows.
+        self._rows = mapped
         self._page.show_rows(ui_rows, total_count=total_count)
 
     def set_list_state(self, title: str, description: str = "", icon_name: str = "system-search-symbolic") -> None:
