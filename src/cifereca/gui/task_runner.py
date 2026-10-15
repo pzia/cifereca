@@ -26,8 +26,13 @@ class TaskRunner:
         self._count = 0
         self._lock = threading.Lock()
         self._task_ids = itertools.count(1)
+        # Only explicitly marked, identical *automatic* work is coalesced.
+        # Every key is scoped by task kind; user controls always bypass it.
+        self._coalesced: dict[tuple[str, str], int] = {}
 
     def close(self) -> None:
+        with self._lock:
+            self._coalesced.clear()
         self.pool.shutdown(wait=False, cancel_futures=True)
 
     def submit(
@@ -42,31 +47,54 @@ class TaskRunner:
         priority: TaskPriority = TaskPriority.NORMAL,
         kind: str = "task",
         with_progress: bool = False,
+        coalesce_key: str | None = None,
+        origin: str = "unspecified",
     ) -> None:
-        """Enqueue work; opt-in work receives a task-scoped progress callback.
+        """Enqueue work, optionally suppressing an identical automatic request.
 
-        The callback accepts text and posts it to GTK. Existing zero-argument
-        work, priorities, completion delivery and cancellation are unchanged.
+        `coalesce_key` is strictly opt-in; a user-triggered request (control
+        provided) is *never* coalesced. The first task retains its normal
+        progress/completion callbacks, and all duplicate automatic requests
+        observe that same running operation rather than opening new workers.
+        No result cache is retained after the worker finishes.
         """
         # A late plugin/action must not disable a detached GTK control or
         # enqueue a worker after the window owner has been torn down.
         if getattr(self.window, "_closed", False):
             return
-        # A navigation/rebuild may have detached the caller's widget even
-        # though the window is still open. Do not touch orphan GTK controls;
-        # the work itself remains valid and callbacks are handled separately.
-        if control is not None and control.get_root() is not None:
-            control.set_sensitive(False)
-        task_id = next(self._task_ids)
+        if coalesce_key is not None and (
+            type(coalesce_key) is not str or not coalesce_key or len(coalesce_key) > 128
+        ):
+            raise ValueError("invalid task coalescing key")
+        # The origin is an enumerated diagnostic, never an echoed plugin field.
+        if origin not in {"automatic", "navigation", "user", "maintenance", "unspecified"}:
+            origin = "unspecified"
+        # A physical user action must *always* be admitted, even if its caller
+        # accidentally supplied the same automatic key.
+        admission = (kind, coalesce_key) if coalesce_key is not None and control is None else None
         with self._lock:
+            active = getattr(self, "_coalesced", {})
+            if admission is not None and admission in active:
+                _TRACE_LOG.info(
+                    "TRACE task coalesced active_id=%s kind=%s origin=%s",
+                    active[admission], kind, origin,
+                )
+                return
+            task_id = next(self._task_ids)
             self._count += 1
             count = self._count
+            if admission is not None:
+                self._coalesced[admission] = task_id
+        # A navigation/rebuild may have detached the caller's widget even
+        # though the window is still open. Do not touch orphan GTK controls.
+        if control is not None and control.get_root() is not None:
+            control.set_sensitive(False)
         GLib.idle_add(self.window._task_started, task_id, count, label, int(priority), kind)
 
         queued_at = time.monotonic()
         _TRACE_LOG.info(
-            "TRACE task submit id=%s priority=%s kind=%s label=%s",
-            task_id, int(priority), kind, label,
+            "TRACE task submit id=%s priority=%s kind=%s origin=%s label=%s",
+            task_id, int(priority), kind, origin, label,
         )
 
         def report(progress_label: str) -> None:
@@ -101,6 +129,12 @@ class TaskRunner:
             with self._lock:
                 self._count = max(0, self._count - 1)
                 remaining = self._count
+                if admission is not None and self._coalesced.get(admission) == task_id:
+                    del self._coalesced[admission]
+            _TRACE_LOG.info(
+                "TRACE task outcome id=%s kind=%s origin=%s status=rejected",
+                task_id, kind, origin,
+            )
 
             def rejected() -> bool:
                 if getattr(self.window, "_closed", False):
@@ -128,6 +162,18 @@ class TaskRunner:
                 outcome: tuple[str, Any] = ("ok", value)
             except BaseException as exc:  # noqa: BLE001 - thread/UI boundary
                 outcome = ("error", exc)
+            # The worker has finished; allow a fresh automatic request.
+            # Release on either success, error or cancellation, independently
+            # of GTK delivery, which may never run after closing the window.
+            if admission is not None:
+                with self._lock:
+                    if self._coalesced.get(admission) == task_id:
+                        del self._coalesced[admission]
+            _TRACE_LOG.info(
+                "TRACE task outcome id=%s kind=%s origin=%s status=%s",
+                task_id, kind, origin,
+                "success" if outcome[0] == "ok" else "failed",
+            )
 
             def deliver() -> bool:
                 with self._lock:
