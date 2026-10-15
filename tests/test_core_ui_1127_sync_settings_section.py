@@ -133,7 +133,7 @@ def test_mainwindow_kobo_action_is_navigation_only_saved_and_lifetime_gated():
     assert 'page_lifetime.alive' in rendered
     assert "kobo_backup.enabled" in rendered
     assert "settings_state.dirty('sync')" in rendered
-    assert 'if ready:' in rendered
+    assert 'if ready and page_lifetime.alive' in rendered
     assert "self.navigate('sync')" in rendered
     assert "run_kobo_backup" not in rendered
     assert "kobo_run_now.connect('clicked', open_kobo_sync_page)" in ast.unparse(builder)
