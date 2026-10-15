@@ -824,8 +824,8 @@ class IntegrityAuditTool(_ReadOnlyTool):
                     valid = False
                     break
                 counts[name] = value
-        control.check_cancelled()
         if not valid:
+            control.check_cancelled()
             control.report(message="Audit d’intégrité impossible : plan invalide")
             control.check_cancelled()
             return MaintenanceResult(
