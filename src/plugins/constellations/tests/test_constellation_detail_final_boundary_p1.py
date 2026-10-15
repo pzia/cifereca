@@ -88,3 +88,54 @@ def test_extremely_long_source_list_is_bounded_not_exhausted():
     # do not turn identical provenance into 32 separate copyable sources.
     assert len(source_section.fields) == 1
     assert source_section.fields[0].value == "Source"
+
+
+def test_mapping_keys_never_become_attested_authors_sources_or_badges():
+    """#1599: a malformed restored card has no iterable bibliography."""
+    detail = constellation_detail_presentation(NS(
+        book=NS(title="Livre public", authors={
+            "Bearer_PRIVATE_AUTHOR_FIELD": "Alice",
+        }),
+        sources={"PRIVATE_ACCOUNT": "Paris"},
+        availability={"PRIVATE_RIGHT": "possédé"},
+        url="",
+    ))
+    assert detail.title == "Livre public"
+    assert detail.subtitle == ""
+    assert detail.sections == ()
+    assert detail.badges == ()
+    assert detail.links == () and detail.actions == ()
+    assert "PRIVATE" not in str(detail)
+
+
+def test_string_subclass_is_not_split_into_one_letter_sources_or_authors():
+    class ForgedSource(str):
+        pass
+
+    detail = constellation_detail_presentation(NS(
+        book=NS(title="Titre", authors=ForgedSource("PRIVATE_AUTHOR")),
+        sources=ForgedSource("PRIVATE_SOURCE"),
+        availability=(),
+        url="",
+    ))
+    assert detail.subtitle == ""
+    assert detail.sections == ()
+    assert "PRIVATE" not in str(detail)
+
+
+def test_plain_scalar_source_remains_a_single_public_source():
+    detail = constellation_detail_presentation(NS(
+        book=NS(title="Titre", authors="Alice"),
+        sources="Bibliothèque de Paris",
+        availability="externe",
+        url="",
+    ))
+    assert detail.subtitle == "Alice"
+    assert detail.badges == ("externe",)
+    sections = {section.id: section for section in detail.sections}
+    assert [(x.value, x.kind) for x in sections["bibliography"].fields] == [
+        ("Alice", "author"),
+    ]
+    assert [(x.value, x.kind) for x in sections["provenance"].fields] == [
+        ("Bibliothèque de Paris", "copy"),
+    ]
