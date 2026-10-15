@@ -96,23 +96,28 @@ def sync_local_preflight_presentation(result: object) -> str:
         "aucun téléchargement autorisé depuis cet aperçu."
     )
 
-def sync_source_identity_label(source: object) -> str:
-    """Disambiguate identical public labels without exposing account IDs.
-
-    Provider identifiers are public plugin metadata, unlike opaque source,
-    account, identity and credential IDs. Never interpolate those identifiers
-    into the title or into the sync action's accessible name.
-    """
+def _public_sync_provider_slug(source: object) -> str:
+    """Bound public plugin ID; never render private connection coordinates."""
     provider = getattr(source, "provider_id", "")
     provider = provider.strip() if type(provider) is str else ""
-    provider = provider if provider and len(provider) <= 64 and all(
+    if provider and len(provider) <= 64 and all(
         char.isascii() and (char.isalnum() or char in "._-") for char in provider
-    ) else "fournisseur inconnu"
+    ):
+        return provider
+    return "fournisseur inconnu"
+
+
+def sync_source_identity_label(source: object, *, disambiguate: bool = True) -> str:
+    """Qualify homonymous row titles, preserving unique legacy row titles."""
+    provider = _public_sync_provider_slug(source)
     label = getattr(source, "label", "")
     label = label.strip() if type(label) is str else ""
     if not label:
         return provider
-    return label if label.casefold() == provider.casefold() else f"{label} · {provider}"
+    return (
+        label if not disambiguate or label.casefold() == provider.casefold()
+        else f"{label} · {provider}"
+    )
 
 
 def sync_source_presentation(source: object) -> SyncSourcePresentation:
@@ -157,6 +162,7 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         disabled_reason = ""
 
     summary = (
+        f"Fournisseur : {_public_sync_provider_slug(source)}\n"
         f"Activation : {activation} · Connexion : {connection}\n"
         f"Synchronisation : {sync_label}"
     )
