@@ -30,7 +30,11 @@ def test_malformed_persisted_source_preference_blocks_network(tmp_path, stored):
         result = broker.synchronize_source(sid)
         assert result.changed == 0 and result.facts.get("skipped") is True
         assert not called
-        assert stored not in repr(result)
+        # The empty string is a valid malformed preference but is present
+        # in every representation; only non-empty private payloads can be
+        # asserted absent from the public result.
+        if stored:
+            assert stored not in repr(result)
         assert storage.metadata_get("sync.source.state." + sid) is None
     finally:
         storage.close()
