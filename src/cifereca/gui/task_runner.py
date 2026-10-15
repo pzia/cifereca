@@ -17,8 +17,10 @@ from gi.repository import GLib, Gtk
 _TRACE_LOG = logging.getLogger("cifereca")
 
 
+
 class TaskRunner:
     """Run non-UI operations outside GTK with priority and global feedback."""
+
 
     def __init__(self, window: Any, *, max_workers: int = 3):
         self.window = window
@@ -94,6 +96,23 @@ class TaskRunner:
                 self._coalesced[admission] = task_id
         GLib.idle_add(self.window._task_started, task_id, count, label, int(priority), kind)
 
+        def observe(
+            phase: str, elapsed_seconds: float, outcome: str = "unknown",
+        ) -> None:
+            # Local closure also supports the historical isolated submit()
+            # adapters that execute against a lightweight window host.
+            observer = getattr(getattr(self.window, "ui_perf", None), "record_phase", None)
+            if not callable(observer):
+                return
+            try:
+                observer(
+                    kind, phase, elapsed_seconds * 1000,
+                    operation_id=task_id, trigger=origin, outcome=outcome,
+                )
+            except Exception:
+                # Instrumentation must never affect a real task or GTK.
+                pass
+
         queued_at = time.monotonic()
         _TRACE_LOG.info(
             "TRACE task submit id=%s priority=%s kind=%s origin=%s label=%s",
@@ -111,16 +130,23 @@ class TaskRunner:
 
         def traced_fn() -> Any:
             started = time.monotonic()
+            observe("queue_wait", max(0, started - queued_at))
             _TRACE_LOG.info(
                 "TRACE task begin id=%s priority=%s kind=%s queue_wait=%.3fs label=%s",
                 task_id, int(priority), kind, started - queued_at, label,
             )
+            outcome_status = "success"
             try:
                 return fn(report) if with_progress else fn()
+            except BaseException:
+                outcome_status = "failed"
+                raise
             finally:
+                elapsed = max(0, time.monotonic() - started)
+                observe("worker", elapsed, outcome_status)
                 _TRACE_LOG.info(
                     "TRACE task end id=%s kind=%s dt=%.3fs label=%s",
-                    task_id, kind, time.monotonic() - started, label,
+                    task_id, kind, elapsed, label,
                 )
 
         try:
@@ -174,7 +200,11 @@ class TaskRunner:
                 "success" if outcome[0] == "ok" else "failed",
             )
 
+            gtk_pending_since = time.monotonic()
+
             def deliver() -> bool:
+                # Keep the historical callback self-contained: tests and
+                # UI teardown adapters may exercise it in isolation.
                 with self._lock:
                     self._count = max(0, self._count - 1)
                     remaining = self._count
@@ -218,7 +248,17 @@ class TaskRunner:
                         self.present_error(payload)
                 return False
 
-            GLib.idle_add(deliver)
+            def measured_deliver() -> bool:
+                # A wrapper observes GLib queue delay without modifying the
+                # independently usable legacy GTK delivery callback.
+                observe(
+                    "gtk_delivery_wait",
+                    max(0, time.monotonic() - gtk_pending_since),
+                    "success" if outcome[0] == "ok" else "failed",
+                )
+                return deliver()
+
+            GLib.idle_add(measured_deliver)
 
         future.add_done_callback(done)
 
