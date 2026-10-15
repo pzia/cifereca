@@ -182,8 +182,9 @@ def test_sync_settings_never_mislabel_local_acquisition_as_remote_inventory_refr
     assert "ne lance plus de téléchargements" in automatic.subtitle
     assert "par compte dans Synchronisation" in automatic.subtitle
     assert "comptes et aperçus" in manual.title
-    assert "depuis Paramètres" in manual.subtitle
-    assert "lot global" in manual.subtitle
+    assert "sans effet sur l’acquisition" in manual.subtitle
+    assert "Seule l’autorisation explicite" in manual.subtitle
+    assert "dans Synchronisation" in manual.subtitle
 
 
 def test_opening_interval_is_not_described_as_periodic_timer():
