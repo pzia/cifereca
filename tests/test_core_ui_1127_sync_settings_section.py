@@ -69,6 +69,8 @@ def test_default_widgets_keep_original_settings_and_visual_parentage():
     assert len(downloads.children) == 1
     assert downloads.children[0].title == "Bibliothèque locale possédée par cifereca"
     assert controls.backup_switch.active is False
+    assert controls.backup_switch.sensitive is False
+    assert controls.unlinked_switch.sensitive is False
     assert controls.run_backup_now.label == "Examiner les comptes Kobo…"
     assert controls.run_backup_now.sensitive is True
     assert "Ancien réglage global désactivé" in controls.backup_status.subtitle
@@ -91,6 +93,8 @@ def test_saved_values_match_old_view_and_unknown_vault_profile_falls_back():
     }
     controls, _, _ = _build(values)
     assert controls.backup_switch.active is True
+    assert controls.backup_switch.sensitive is False
+    assert controls.unlinked_switch.sensitive is False
     assert controls.run_backup_now.sensitive is True
     assert "sans effet sur l’acquisition" in controls.backup_status.subtitle
     assert controls.unlinked_switch.active is True
@@ -236,3 +240,21 @@ def test_legacy_kobo_switch_cannot_claim_authorization_by_itself():
     assert "sans effet sur l’acquisition" in controls.backup_status.subtitle
     assert "anti-doublons" in group.children[2].subtitle
     assert "contourne" in group.children[2].subtitle
+
+
+def test_obsolete_global_kobo_switches_remain_inert_read_only_with_saved_values():
+    values = {
+        "kobo_backup.enabled": True,
+        "kobo_backup.allow_unlinked_acquisition": True,
+    }
+    before = dict(values)
+    controls, section, _ = _build(values)
+    assert values == before
+    assert controls.backup_switch.active is True
+    assert controls.unlinked_switch.active is True
+    assert controls.backup_switch.sensitive is False
+    assert controls.unlinked_switch.sensitive is False
+    assert "lecture seule" in section.children[0].children[0].subtitle
+    assert "lecture seule" in section.children[0].children[2].subtitle
+    # Navigation to per-source consent remains a real, independent action.
+    assert controls.run_backup_now.sensitive is True
