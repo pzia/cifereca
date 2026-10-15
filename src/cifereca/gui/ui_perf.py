@@ -30,7 +30,7 @@ _PERF_OUTCOMES = frozenset({"success", "failed", "cancelled", "unknown"})
 # Their free-form operation names must not become new series or log values:
 # list titles can be populated by the selected identity or a plugin.
 _LEGACY_OPERATIONS = frozenset({
-    "render_library", "render_recent",
+    "render", "render_library", "render_recent",
     "startup.window_presented", "startup.plugins_activation",
     "startup.shell_interactive",
 })
