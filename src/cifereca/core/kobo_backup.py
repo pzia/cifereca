@@ -507,7 +507,7 @@ def _safe_kobo_opening_decision(raw: Any) -> dict[str, Any] | None:
         "status": status if type(status) is str and status in allowed else "unknown",
         "persisted_enabled": raw.get("persisted_enabled") is True,
     }
-    for key in ("connected_kobo", "eligible_kobo"):
+    for key in ("connected_kobo", "eligible_kobo", "scheduled_kobo"):
         value = raw.get(key)
         if type(value) is int and 0 <= value <= 1_000_000:
             result[key] = value
