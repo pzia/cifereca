@@ -95,7 +95,7 @@ def test_long_unbounded_reason_iterable_is_never_exhausted():
 
 def test_center_heading_uses_same_trust_boundary_as_detail_panel(monkeypatch):
     """Malformed catalogue titles never enter the GTK heading unfiltered."""
-    from constellations_page import View, constellation_detail_presentation
+    from constellations_page import View
 
     class PoisonTitle:
         def __str__(self):
@@ -126,4 +126,5 @@ def test_center_heading_uses_same_trust_boundary_as_detail_panel(monkeypatch):
         assert headings == ["Centre : " + expected]
         assert len(details) == 1
         assert details[0].title == expected
-        assert "PRIVATE" not in str(headings + details) if expected == "" else True
+        if not expected:
+            assert "PRIVATE" not in str(headings + details)
