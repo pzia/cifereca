@@ -639,6 +639,7 @@ def source_diagnostic_presentation(rows):
 class YouthPagePlugin:
     def activate(self, context):
         self.context, self.view, self.pending = context, None, None
+        self.pending_identity = ""
         return self
 
     def pages(self):
@@ -658,9 +659,16 @@ class YouthPagePlugin:
         )]
 
     def from_book(self, host):
-        self.pending = host.action_context().book
-        if self.view:
-            self.view.seed(self.pending)
+        action = host.action_context()
+        self.pending = action.book
+        # The origin identity is an attested action-context coordinate, not
+        # a title/ISBN match with the currently visible Youth profile.
+        self.pending_identity = str(getattr(action, "identity_id", "") or "")
+        if self.view and self.view.seed(
+            self.pending, identity_id=self.pending_identity,
+        ):
+            self.pending = None
+            self.pending_identity = ""
         host.navigate("youth")
 
     def build(self, host):
@@ -672,6 +680,7 @@ class YouthPagePlugin:
         if self.view:
             self.view.dispose()
         self.view = self.pending = None
+        self.pending_identity = ""
 
 
 def youth_action_states(*, identity, source, page, book, isbn, bibliography, local_detail, busy):
@@ -729,6 +738,8 @@ class YouthView:
             for row in self.identities
         ])
         self.identity.set_tooltip_text("Choisit le profil dont le cache Jeunesse est affiché. Aucun changement d’identité implicite.")
+        # Remember which profile owns the currently rendered cache and actions.
+        self._last_cache_identity = self.identity_id()
         # GTK emits transient selections while the identity model changes.
         # No cache query or task may run under a temporary other profile.
         self.identity.connect(
@@ -845,8 +856,13 @@ class YouthView:
         self.unsubscribe_identity = host.subscribe_identity_overview(lambda: GLib.idle_add(self.reload_identities)) if hasattr(host, "subscribe_identity_overview") else lambda: None
         self.reload_sources()
         if plugin.pending:
-            self.seed(plugin.pending)
-            plugin.pending = None
+            if self.seed(plugin.pending, identity_id=plugin.pending_identity):
+                plugin.pending = None
+                plugin.pending_identity = ""
+            else:
+                # An unavailable origin must never leak a different user's
+                # selected book title into the active profile's query.
+                self.render_cached()
         else:
             self.render_cached()
 
@@ -1099,13 +1115,28 @@ class YouthView:
         else:
             self.status.set_label("Collecte déjà demandée pour cette recherche. Modifiez un filtre pour recommencer.")
 
-    def seed(self, book):
-        if book is None:
-            return
+    def seed(self, book, *, identity_id=""):
+        if book is None or getattr(self, "disposed", False):
+            return False
+        if identity_id and identity_id != self.identity_id():
+            selected = next((
+                index for index, row in enumerate(self.identities)
+                if str(row.get("identity_id") or "") == identity_id
+            ), None)
+            if selected is None:
+                self.status.set_label(
+                    "Le profil de la fiche d’origine n’est plus disponible. "
+                    "Le cache Jeunesse actuel est conservé."
+                )
+                return False
+            self.identity.set_selected(selected)
+            if self.identity_id() != identity_id:
+                return False
         title = _text(getattr(book, "title", ""))
         if title:
             self.query.set_text(title)
         self.render_cached()
+        return True
 
     def render_cached(self):
         if not self.catalog:
@@ -1119,6 +1150,14 @@ class YouthView:
             self.update_action_availability()
             return
         identity = self.identity_id()
+        if getattr(self, "_last_cache_identity", identity) != identity:
+            # Equal record keys in different accounts do not attest ownership.
+            self.selected_book = None
+            self._detail_selection_generation = (
+                getattr(self, "_detail_selection_generation", 0) + 1
+            )
+            self.master.empty_detail()
+        self._last_cache_identity = identity
         if not identity:
             self.rows = {}
             self.selected_book = None
