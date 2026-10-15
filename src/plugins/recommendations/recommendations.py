@@ -1356,12 +1356,15 @@ class UxRecommendationsView:
             DetailField(f"author-{index}", "Auteur", value, kind="author")
             for index, value in enumerate(authors)
         ]
-        if source_labels:
-            catalogue_fields.append(
-                DetailField("source", "Source", " · ".join(source_labels))
-            )
+        # Each attested provider remains an independent, copyable value,
+        # like provenance in Youth and Constellations. Flattening sources
+        # into a single string loses their individual bibliographic meaning.
+        for index, source in enumerate(source_labels):
+            catalogue_fields.append(DetailField(
+                f"source-{index}", "Source", source, kind="copy",
+            ))
         if fmt:
-            catalogue_fields.append(DetailField("format", "Format", fmt))
+            catalogue_fields.append(DetailField("format", "Format", fmt, kind="all"))
         if published:
             catalogue_fields.append(
                 DetailField("published", "Publication", published)
