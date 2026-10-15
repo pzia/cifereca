@@ -101,3 +101,78 @@ def test_one_accounts_delegated_denial_never_blocks_other_accounts():
     finally:
         for session in sessions:
             session.close()
+
+
+def test_first_direct_delegated_403_is_remembered_and_next_request_is_offline():
+    from cifereca_kobo_vault import KoboVaultError
+
+    vault = FakeVault([])
+    calls = []
+
+    def denied(product_id, **kwargs):
+        calls.append((product_id, kwargs["mode"]))
+        raise KoboVaultError(
+            "Kobo-Vault : autorisation de délégation requise",
+            code="forbidden", status_code=403,
+        )
+
+    vault.acquisition = denied
+    session = session_with_vault(vault)
+    try:
+        with pytest.raises(ProviderError):
+            session.resolve_acquisition("edition-a", mode="delegated")
+        assert session._cifereca_delegation_forbidden is True
+        assert calls == [("edition-a", "delegated")]
+
+        with pytest.raises(ProviderError, match="délégation indisponible"):
+            session.resolve_acquisition("edition-b", mode="delegated")
+        assert calls == [("edition-a", "delegated")]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("status", (401, 409, 429, 503))
+def test_non_403_direct_error_does_not_poison_delegated_capability(status):
+    from cifereca_kobo_vault import KoboVaultError
+
+    vault = FakeVault([])
+    attempts = []
+
+    def fail(product_id, **kwargs):
+        attempts.append((product_id, kwargs["mode"]))
+        raise KoboVaultError("Kobo-Vault : service refusé", code="http_error", status_code=status)
+
+    vault.acquisition = fail
+    session = session_with_vault(vault)
+    try:
+        for _ in range(2):
+            with pytest.raises(KoboVaultError):
+                session.resolve_acquisition("edition-a", mode="delegated")
+        assert not getattr(session, "_cifereca_delegation_forbidden", False)
+        assert attempts == [("edition-a", "delegated")] * 2
+    finally:
+        session.close()
+
+
+def test_descriptor_403_does_not_poison_delegated_scope():
+    from cifereca_kobo_vault import KoboVaultError
+
+    vault = FakeVault([])
+    calls = []
+
+    def respond(product_id, **kwargs):
+        calls.append(kwargs["mode"])
+        if kwargs["mode"] == "descriptor":
+            raise KoboVaultError("scope denied", code="forbidden", status_code=403)
+        return {"ok": True}
+
+    vault.acquisition = respond
+    session = session_with_vault(vault)
+    try:
+        with pytest.raises(KoboVaultError):
+            session.resolve_acquisition("edition", mode="descriptor")
+        assert not getattr(session, "_cifereca_delegation_forbidden", False)
+        assert session.resolve_acquisition("edition", mode="delegated") == {"ok": True}
+        assert calls == ["descriptor", "delegated"]
+    finally:
+        session.close()
