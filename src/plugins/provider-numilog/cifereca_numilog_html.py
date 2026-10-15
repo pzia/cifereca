@@ -229,8 +229,8 @@ class OwnedDelivery:
 
 # Strictly bounded, non-evaluating extraction of simple JS object literals.
 # Nested/dynamic JS is deliberately unsupported; no ProductId=lid assumption.
-_JS_OBJECT = re.compile(r'\\{[^{}]{1,4096}\\}', re.S)
-_JS_VALUE = r'''(?P<value>"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|[0-9]{1,16})'''
+_JS_OBJECT = re.compile(r'\{[^{}]{1,4096}\}', re.S)
+_JS_VALUE = r'''(?P<value>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[0-9]{1,16})'''
 
 
 def _js_literal(value):
@@ -248,10 +248,10 @@ def _js_literal(value):
     else:
         decoded = value[1:-1]
         for escaped, plain in (
-            ('\\\\/', '/'), ('\\\\u0026', '&'), ("\\\\'", "'"), ('\\\\\\\\', '\\\\'),
+            ('\\/', '/'), ('\\u0026', '&'), ("\\'", "'"), ('\\\\', '\\'),
         ):
             decoded = decoded.replace(escaped, plain)
-        if '\\\\' in decoded:
+        if '\\' in decoded:
             return None
     if not isinstance(decoded, str) or not 0 < len(decoded) <= 4096:
         return None
@@ -262,8 +262,8 @@ def _js_literal(value):
 
 def _field(block, name):
     pattern = re.compile(
-        r'''(?<![\\w$])(?:["']?)''' + re.escape(name)
-        + r'''(?:["']?)\\s*:\\s*''' + _JS_VALUE + r'''\\s*(?=,|}|$)''', re.S,
+        r'''(?<![\w$])(?:["']?)''' + re.escape(name)
+        + r'''(?:["']?)\s*:\s*''' + _JS_VALUE + r'''\s*(?=,|}|$)''', re.S,
     )
     values = [_js_literal(m.group('value')) for m in pattern.finditer(block)]
     return values[0] if len(values) == 1 else None
@@ -298,7 +298,7 @@ def _owned_delivery_candidates(node, *, allowed_origins):
                     or parsed.username or parsed.password or parsed.fragment
                     or parsed.path != '/fulfillment/URLLink.acsm'
                     or not parsed.query or any(c.isspace() for c in url)
-                    or '\\\\' in url or any(ord(c) < 32 for c in url)
+                    or '\\' in url or any(ord(c) < 32 for c in url)
                 ):
                     continue
             except (TypeError, ValueError, AttributeError):
