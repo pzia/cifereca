@@ -33,6 +33,7 @@ from PIL import ImageGrab
 
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow, BookListItem, fr_date
+from cifereca.gui.recent_time import format_recent_timestamp
 from cifereca.builtin_ui.cifereca_builtin_ui import Pages
 from diagnostics_page_probe import Broker, Context, Host, Tasks
 from diagnostics_states_probe import StateTasks
@@ -172,6 +173,74 @@ def compare_library_render(window):
     return {
         "reference_blob": "6ec09453f1495ac0415ef27e0f4fa31535af282d",
         "rows": len(entries), "mode": "synchronous_full_rebuild_same_current_widgets",
+        "samples_ms": samples, "median_ms": medians,
+        "extracted_over_u0": round(medians["extracted"] / max(medians["baseline_u0"], 0.001), 3),
+        "row_projection_equal": True,
+        "limits": "Same runtime/widgets; excludes frame latency and live providers; no absolute timing gate.",
+    }
+
+
+# Same frozen U0 blob as baseline_render_library; product never calls this.
+def baseline_render_recent(self, items: list[dict[str, Any]] | None = None) -> None:
+    if not hasattr(self, "recent_page"):
+        return
+    _perf_started = time.perf_counter()
+    if items is None:
+        items = list(self._recent_entries_cache)
+    self._recent_entries_cache = list(items)
+    self._recent_objects = {}
+    rows: list[BookListItem] = []
+    for item in items:
+        key = str(item.get("placement_id") or f"recent:{len(rows)}")
+        self._recent_objects[key] = item
+        provider = str(item.get("provider_id") or "local")
+        temporal = format_recent_timestamp(item.get("acquired_at"))
+        rows.append(BookListItem(
+            key,
+            str(item.get("title") or "Sans titre"),
+            str(item.get("author") or ""),
+            temporal,
+            "Kobo" if provider == "kobo" else provider.capitalize(),
+            item.get("thumbnail_url"),
+        ))
+    self._attach_row_facets(rows,self._recent_objects,self.search_controls)
+    self.recent_page.show_rows(rows)
+    self.ui_perf.record("render_recent", (time.perf_counter() - _perf_started) * 1000.0)
+
+def compare_recent_render(window):
+    """Same full-rebuild protocol as Library, without a timing success gate."""
+    items = list(window._recent_entries_cache)
+    assert len(items) == 563
+    samples = {"baseline_u0": [], "extracted": []}
+    renderers = {
+        "baseline_u0": lambda: baseline_render_recent(window, items),
+        "extracted": lambda: window._render_recent(items),
+    }
+    reference = None
+    for iteration in range(4):
+        order = ("baseline_u0", "extracted") if iteration % 2 == 0 else ("extracted", "baseline_u0")
+        for name in order:
+            window.recent_page.clear_rows()
+            started = time.perf_counter()
+            renderers[name]()
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            store = window.recent_page.store
+            rows = tuple(
+                tuple(getattr(store.get_item(i), attr)
+                      for attr in ("key", "title", "subtitle", "meta", "badge", "thumbnail_url"))
+                for i in range(store.get_n_items())
+            )
+            if reference is None:
+                reference = rows
+            assert rows == reference, "La projection Récents extraite diffère du rendu U0"
+            assert len(rows) == 563 and window.recent_page.selection.get_selected_item() is None
+            assert list(window._recent_objects) == [row[0] for row in reference]
+            if iteration:
+                samples[name].append(round(elapsed_ms, 3))
+    medians = {name: round(statistics.median(values), 3) for name, values in samples.items()}
+    return {
+        "reference_blob": "6ec09453f1495ac0415ef27e0f4fa31535af282d",
+        "rows": len(items), "mode": "synchronous_full_rebuild_same_current_widgets",
         "samples_ms": samples, "median_ms": medians,
         "extracted_over_u0": round(medians["extracted"] / max(medians["baseline_u0"], 0.001), 3),
         "row_projection_equal": True,
@@ -841,6 +910,65 @@ def main() -> int:
         w = window[0]
         w.library_controls.set_state(library_volume["state"], notify=False)
         w._render_library(library_volume["entries"])
+        later(100, begin_recent_volume)
+
+    recent_volume = {}
+
+    def begin_recent_volume():
+        w = window[0]
+        recent_volume["items"] = list(w._recent_entries_cache)
+        selected = w.recent_page.selection.get_selected_item()
+        recent_volume["selected"] = selected.key if selected is not None else None
+        recent_volume["search_state"] = w.search_controls.state()
+        # Acquisitions fictives déjà chargées, sans chemin ni couverture :
+        # aucune ouverture de fichier ou action d'acquisition dans ce test.
+        items = [dict(
+            placement_id=f"p0-recent-{index:03d}", title=f"Acquisition fictive {index:03d}",
+            author="Auteur fictif", provider_id="kobo" if index % 2 else "local",
+            acquired_at=1791633600, thumbnail_url=None,
+            metadata={"language": "fr"},
+        ) for index in range(563)]
+        w.recent_page.clear_rows()
+        w._render_recent(items)
+        w.navigate("recent")
+        await_route("recent", recent_volume_rendered)
+
+    def recent_volume_rendered():
+        w = window[0]
+        page = w.recent_page
+        assert page.get_mapped() and page.listview.get_mapped()
+        assert page.store.get_n_items() == 563 and len(w._recent_objects) == 563
+        assert page.selection.get_selected_item() is None
+        assert all(page.store.get_item(i).thumbnail_url is None for i in range(563))
+        report["checks"]["P0_recent_563_real_rows_no_cover_or_autoselection"] = True
+        report["recent_563_u0_comparison"] = compare_recent_render(w)
+        report["checks"]["P0_recent_563_u0_projection_equivalent"] = True
+        assert page.select_key("p0-recent-562")
+        later(100, recent_volume_selected)
+
+    def recent_volume_selected():
+        w = window[0]
+        assert w.recent_page.selection.get_selected_item().key == "p0-recent-562"
+        assert any(isinstance(node, Gtk.Label) and node.get_text() == "Acquisition fictive 562"
+                   for node in walk(w.recent_page.detail))
+        assert w.recent_page.detail.get_mapped()
+        assert w.search_controls.state() == recent_volume["search_state"]
+        assert w.service.current_identity.identity_id == "camille"
+        assert all(w.recent_page.store.get_item(i).meta != "Date inconnue" for i in range(563))
+        report["checks"]["P0_recent_real_detail_preserves_identity_and_search_filter"] = True
+        # The benchmark blocks the main loop; allow layout/repaint to catch up
+        # before capturing and restoring the snapshot.
+        later(250, recent_volume_capture)
+
+    def recent_volume_capture():
+        w = window[0]
+        title = next(node for node in walk(w.recent_page.detail)
+                     if isinstance(node, Gtk.Label) and node.get_text() == "Acquisition fictive 562")
+        assert title.get_mapped() and title.get_width() > 0
+        capture("03f-recent-563-selected-detail")
+        w._render_recent(recent_volume["items"])
+        if recent_volume["selected"] is not None:
+            assert w.recent_page.select_key(recent_volume["selected"])
         later(100, continue_baseline_settings)
 
     def continue_baseline_settings():
