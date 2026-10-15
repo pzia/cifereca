@@ -182,12 +182,12 @@ def test_sync_settings_never_mislabel_local_acquisition_as_remote_inventory_refr
     _, section, _ = _build({"kobo_backup.enabled": True})
     group = section.children[0]
     automatic, manual = group.children[:2]
-    assert "téléchargements Kobo" in automatic.title
-    assert "notices et droits" in automatic.subtitle
-    assert "ne télécharge aucun livre" in automatic.subtitle
+    assert "Ancienne préférence globale Kobo" in automatic.title
+    assert "sans effet" in automatic.subtitle
+    assert "consentement explicite par compte" in automatic.subtitle
     assert "comptes et aperçus" in manual.title
-    assert "depuis Paramètres" in manual.subtitle
-    assert "lot global" in manual.subtitle
+    assert "n’autorise aucun téléchargement" in manual.subtitle
+    assert "dans Synchronisation" in manual.subtitle
 
 
 def test_opening_interval_is_not_described_as_periodic_timer():
