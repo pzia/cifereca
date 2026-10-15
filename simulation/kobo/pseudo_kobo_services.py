@@ -949,7 +949,12 @@ class KoboFakeApp:
         if m:
             return self.acsm(handler, m.group(1))
 
-        if path.startswith("/api/v2/") and not self.authenticated(handler):
+        # The delegated ContentAccess fixture advertises an Authorization
+        # header to the consumer. Keep it private like the Vault API; a
+        # synthetic endpoint must not teach clients that delegation is public.
+        if (
+            path.startswith("/api/v2/") or path.startswith("/delegated/")
+        ) and not self.authenticated(handler):
             return
 
         if path == "/api/v2/account":
