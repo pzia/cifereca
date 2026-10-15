@@ -29,6 +29,8 @@ DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
         'EPUB direct et Adobe ACSM via le broker public d’acquisition ; LCP, PDF et audio non qualifiés.'))
 
 ALLOWED = {'www.numilog.com','services.numilog.com','www.edenlivres.fr','storage.googleapis.com'}
+# Fulfillment ACSM observé : origine HTTPS exacte, jamais un wildcard Numilog.
+ALLOWED_ACSM_ORIGINS = {('https', 'entrepot2r.numilog.com', 443)}
 REDIRECTS = {301,302,303,307,308}
 MAX_HTML = 4*1024*1024
 
@@ -53,7 +55,7 @@ def normalized_base_url(value):
     raise ProviderConfigurationError('Numilog : base_url invalide ; HTTPS requis, sauf loopback HTTP pour les tests locaux')
 
 def checked_url(value, allowed_origins=None):
-    allowed=set(allowed_origins or {url_origin('https://'+host+'/') for host in ALLOWED})
+    allowed=set(allowed_origins if allowed_origins is not None else ({url_origin('https://'+host+'/') for host in ALLOWED} | ALLOWED_ACSM_ORIGINS))
     try:
         p = urlsplit(value)
         if p.scheme in {'http','https'} and url_origin(value) in allowed and not p.username and not p.password and not p.fragment:
@@ -91,7 +93,7 @@ class NumilogSession(ProviderSession):
         self.scope = hashlib.sha256(self.credential_id.encode()).hexdigest()[:20]
         self.base_url = normalized_base_url(self.options.get('base_url') or BASE)
         self.library_url = urljoin(self.base_url,'Pages/Compte/MesLivres.aspx')
-        self.allowed_origins = {url_origin('https://'+host+'/') for host in ALLOWED}
+        self.allowed_origins = {url_origin('https://'+host+'/') for host in ALLOWED} | ALLOWED_ACSM_ORIGINS
         self.allowed_origins.add(url_origin(self.base_url))
         timeout = float(self.options.get('timeout_seconds',30))
         self.maximum = int(self.options.get('max_download_bytes',100*1024*1024))
