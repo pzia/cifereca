@@ -1,0 +1,144 @@
+"""#962: targeted keyboard-focus restoration without importing GTK or making I/O."""
+from __future__ import annotations
+
+from types import SimpleNamespace as NS
+
+from cifereca.gui.route_display_controller import show_route
+
+
+class Button:
+    def __init__(self, window):
+        self.window = window
+        self.mapped = True
+        self.sensitive = True
+
+    def get_mapped(self):
+        return self.mapped
+
+    def get_sensitive(self):
+        return self.sensitive
+
+    def grab_focus(self):
+        self.window.focus = self
+        return True
+
+
+class YouthWidget:
+    def __init__(self, window, button):
+        self.window = window
+        self.button = button
+        self.default_focus_calls = 0
+
+    def is_ancestor(self, candidate):
+        return candidate is self.button
+
+    def get_root(self):
+        return self.window
+
+    def child_focus(self, _direction):
+        self.default_focus_calls += 1
+        self.window.focus = object()
+        return True
+
+
+class Stack:
+    def __init__(self, window):
+        self.window = window
+        self.visible = "youth"
+
+    def get_visible_child_name(self):
+        return self.visible
+
+    def set_visible_child_name(self, name):
+        self.visible = name
+        # GTK may relocate keyboard focus after changing the visible child.
+        self.window.focus = object()
+
+
+class Header:
+    def set_label(self, value):
+        self.value = value
+
+
+class Host:
+    def __init__(self):
+        self._closed = False
+        self._restoring_navigation = False
+        self.focus = None
+        self.view_stack = Stack(self)
+        self.header_subtitle = Header()
+        self._pages = {"youth": NS(title="Jeunesse"), "search": NS(title="Recherche")}
+        self.service = NS(current_identity=NS(identity_id="camille"))
+        self.button = Button(self)
+        self.youth = YouthWidget(self, self.button)
+        self._plugin_page_widgets = {"youth": self.youth}
+        self._youth_return_focus = None
+        self.header_calls = []
+
+    def get_focus(self):
+        return self.focus
+
+    def _refresh_header_actions(self, route):
+        self.header_calls.append(route)
+
+    def _dispose_maintenance_lines(self):
+        pass
+
+
+Gtk = NS(Window=Host, Button=Button, DirectionType=NS(TAB_FORWARD=1))
+
+
+def _outbound(host):
+    host.focus = host.button
+    show_route(host, "search", Gtk=Gtk)
+    assert host.view_stack.visible == "search"
+
+
+def test_back_restores_exact_click_origin_not_generic_first_filter():
+    host = Host()
+    _outbound(host)
+    assert host._youth_return_focus == (host.button, "camille")
+    host._restoring_navigation = True
+    show_route(host, "youth", Gtk=Gtk)
+    assert host.view_stack.visible == "youth"
+    assert host.youth.default_focus_calls == 1
+    assert host.get_focus() is host.button
+    assert host._youth_return_focus is None
+
+
+def test_other_identity_cannot_restore_old_accounts_action():
+    host = Host()
+    _outbound(host)
+    host.service.current_identity.identity_id = "alex"
+    host._restoring_navigation = True
+    show_route(host, "youth", Gtk=Gtk)
+    assert host.get_focus() is not host.button
+    assert host._youth_return_focus is None
+
+
+def test_disposed_or_detached_action_cannot_receive_restored_focus():
+    for attr in ("mapped", "sensitive"):
+        host = Host()
+        _outbound(host)
+        setattr(host.button, attr, False)
+        host._restoring_navigation = True
+        show_route(host, "youth", Gtk=Gtk)
+        assert host.get_focus() is not host.button
+
+
+def test_regular_navigation_back_to_youth_never_steals_focus():
+    host = Host()
+    _outbound(host)
+    host._restoring_navigation = False
+    show_route(host, "youth", Gtk=Gtk)
+    assert host.get_focus() is not host.button
+
+
+def test_switching_away_from_youth_without_a_focused_button_is_inert():
+    host = Host()
+    host.focus = object()
+    show_route(host, "search", Gtk=Gtk)
+    assert host._youth_return_focus is None
+    host._restoring_navigation = True
+    show_route(host, "youth", Gtk=Gtk)
+    assert host.get_focus() is not host.button
