@@ -117,10 +117,17 @@ def on_start_due(service: Any, account: Any) -> bool:
         return bool(service._kobo_backup_account_due(credential))
     try:
         raw = service.storage.metadata_get("sync.source.materialization.last_attempt." + _account_id(account))
-        last = int(raw) if type(raw) is str and raw.isdecimal() else 0
+        if raw is None:
+            last = 0  # first explicit on_start consent: no prior attempt
+        elif type(raw) is str and raw.isdecimal() and len(raw) <= 16:
+            last = int(raw)
+        else:
+            return False  # corrupt clock is not permission to retry
         interval = max(15, int(service.kobo_backup_interval_minutes()))
         now = int(time.time())
-        return last <= 0 or last > now + 300 or now - last >= interval * 60
+        if last > now + 300:
+            return False  # clock rollback/future metadata: require manual action
+        return last <= 0 or now - last >= interval * 60
     except Exception:
         # Inability to read the attempt clock is not permission to retry.
         return False
