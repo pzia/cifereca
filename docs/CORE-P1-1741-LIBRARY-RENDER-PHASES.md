@@ -46,6 +46,37 @@ lectures d'horloge sans capture, puis les phases exactes avec une horloge
 injectée. Les tests E2E GTK d'intégration vérifient l'absence de régression
 fonctionnelle, **pas** la latence jusqu'à la prochaine frame.
 
+## Lot complémentaire : pauses de collecte Python pendant ListStore
+
+Quand **et seulement quand** la capture détaillée est activée et que le
+contrôleur utilise une page GTK native, `show_rows` est encadré par
+`UiPerfMonitor.observe_gc("library"|"recent")`. Ce contexte installe
+temporairement un callback `gc.callbacks`, relève les pauses Python
+`gc_gen0`, `gc_gen1`, `gc_gen2` sur **le thread de la page uniquement**,
+puis désinstalle le callback même en cas d'exception.
+
+La durée correspond à `GC start → stop` mesurée par `perf_counter`,
+à l'intérieur de **la seule phase `model_update`**. Ces pauses peuvent
+être incluses dans `library.model_update` : **ne pas additionner** les
+deux valeurs ni déduire automatiquement la causalité d'un ralentissement.
+Une collection en dehors de l'intervalle, sur un autre thread, ou lorsque la
+capture détaillée est inactive ne produit aucun échantillon de cette sonde.
+Les tests de contrôleur simulent les données et la page GTK ; leurs résultats
+ne sont pas des mesures utilisateur.
+
+Les échantillons sont tamponnés **au plus `max_samples` fois** pendant
+l'intervalle et transférés seulement après retrait du callback, pour ne
+jamais prendre le verrou du moniteur ou formater du JSON depuis le GC.
+L'export peut indiquer `gc_samples_dropped` si la borne locale a écrêté
+une séquence. Les noms d'opération et de génération sont fixes, l'origine
+est explicite, les timestamps relatifs correspondent à la collecte plutôt
+qu'à sa publication ; aucun livre, chemin, compte, trace Python ni nom
+d'objet collecté n'est enregistré. Le mode normal n'installe aucun hook GC.
+
+Le protocole de terrain doit garder une comparaison capture OFF/ON et des
+comptes d'échantillons suffisants ; cette sonde ne mesure toujours ni
+le CPU entier, ni les frames affichées, ni un fournisseur distant.
+
 Restent pour fermer #1741 : capture réellement GTK de fin de frame, analyse
 de l'impact de sonde et du GC, décomposition GObject/GTK et CPU/RSS sur
 installation réelle, ingestion dans le plugin Diagnostics, comparaison avec
