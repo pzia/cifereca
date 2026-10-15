@@ -328,8 +328,14 @@ class LibraryService:
         return "sync:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
     def sync_source_enabled(self, account: Account) -> bool:
+        """Same fail-closed toggle as the public Sync broker.
+
+        Missing metadata retains the legacy inventory default; malformed
+        values cannot opt a source back into startup refresh (#1346).
+        """
+        from .core.source_enablement import source_enabled
         raw = self.storage.metadata_get("sync.source.enabled." + self.sync_source_id(account))
-        return raw is None or str(raw).strip().lower() not in {"0", "false", "no", "off"}
+        return source_enabled(raw)
 
     def select_identity(self, identity_id: str) -> Identity:
         identity = self.identity_by_id(identity_id)
