@@ -181,7 +181,8 @@ def test_manifest_rejections_make_even_the_valid_rows_non_authoritative():
 def test_no_connected_account_never_publishes_an_authoritative_phase():
     session = session_with_vault(FakeVault([{"product_id": "x"}]), connected=False)
     try:
-        assert len(session.backup_manifest()) == 1
+        assert session.backup_manifest() == []
+        assert session.client.manifest_calls == 0
         data = session.backup_manifest_policy
         assert data["status"] == "invalid_scope"
         assert data["manifest_authoritative"] is False
