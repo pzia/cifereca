@@ -451,6 +451,78 @@ def main() -> int:
         assert w.service.current_identity.identity_id == "camille"
         assert w.identity_dropdown.get_model().get_n_items() == 2
         report["window_size"] = [w.get_width(), w.get_height()]
+        begin_library_volume()
+
+    library_volume = {}
+
+    def begin_library_volume():
+        # Acceptance #1129: use the real projection, Gio.ListStore, filtering,
+        # selection signals and DetailPanel. These are fictional loaded notices,
+        # not a provider fixture or evidence of a successful remote sync.
+        from dataclasses import replace
+        w = window[0]
+        library_volume["entries"] = list(w._library_entries_cache)
+        library_volume["state"] = w.library_controls.state()
+        state = replace(w.library_controls.state(), text="", field="all",
+                        scope="all", providers=(), types=(), languages=())
+        w.library_controls.set_state(state, notify=False)
+        entries = [dict(
+            key=f"p0-volume-{index:03d}", title=f"Notice volume {index:03d}",
+            author="Auteur fictif", identity_id="camille", provider_id="local",
+            medium="digital", media_format="epub", thumbnail_url=None,
+            metadata={"language": "fr"},
+        ) for index in range(563)]
+        w._render_library(entries)
+        later(150, library_volume_rendered)
+
+    def library_volume_rendered():
+        from dataclasses import replace
+        w = window[0]
+        page = w.library_page
+        assert page.get_mapped() and page.listview.get_mapped()
+        assert page.listview.get_width() > 0
+        assert page.store.get_n_items() == 563
+        assert len(w._library_objects) == 563
+        assert "563" in page.count_label.get_text()
+        assert page.selection.get_selected_item() is None
+        assert all(page.store.get_item(i).thumbnail_url is None for i in range(563))
+        report["checks"]["P0_library_563_real_rows_no_autoselection"] = True
+        report["library_563_render_perf"] = w.ui_perf.snapshot()["render_library"]
+        capture("03b-library-563-real-gtk")
+        state = replace(w.library_controls.state(), text="Notice volume 562", field="title")
+        library_volume["filtered"] = state
+        w.library_controls.set_state(state, notify=False)
+        w._render_library()
+        assert page.store.get_n_items() == 1
+        assert page.store.get_item(0).key == "p0-volume-562"
+        assert "563" in page.count_label.get_text()
+        assert page.selection.get_selected_item() is None
+        w._open_library_item("p0-volume-562")
+        later(150, library_volume_selected)
+
+    def library_volume_selected():
+        w = window[0]
+        assert w.library_controls.state() == library_volume["filtered"]
+        assert w.library_page.selection.get_selected_item().key == "p0-volume-562"
+        assert labels_have("Notice volume 562")
+        assert w.library_page.detail.get_mapped()
+        assert w._pending_library_selection_key is None
+        report["checks"]["P0_library_563_filtered_selection_detail"] = True
+        capture("03c-library-filtered-detail")
+        # A book hidden by filters must not clear them or select another book.
+        w._open_library_item("p0-volume-000")
+        assert w.library_controls.state() == library_volume["filtered"]
+        assert w.library_page.store.get_n_items() == 1
+        assert w.library_page.selection.get_selected_item().key == "p0-volume-562"
+        assert w._pending_library_selection_key is None
+        report["checks"]["P0_library_hidden_book_keeps_real_gtk_filter_and_selection"] = True
+        w.library_controls.set_state(library_volume["state"], notify=False)
+        w._render_library(library_volume["entries"])
+        later(100, continue_baseline_settings)
+
+    def continue_baseline_settings():
+        w = window[0]
+        assert w.service.current_identity.identity_id == "camille"
         # Reuse both existing 1366/1600 MainWindow/XTEST baselines.
         # No extra workflow/scenario, provider activation or HTTP request.
         report["pointer_actions"].append(
