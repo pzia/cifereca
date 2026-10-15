@@ -3,6 +3,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
+from tests import test_core_ui_1358_maintenance_preview_cancellation as harness
 from tests.test_maintenance_cache_row_callbacks import execute, flush, mounted
 
 
@@ -22,7 +23,9 @@ def test_language_audit_preview_is_indeterminate_and_reports_only_valid_run_coun
     args[2](args[1]())
     flush(m)
     assert label.text == "Confirmation attendue"
-    args = execute(m)
+    dialog = harness.Dialog.shown[-1]
+    dialog.handlers["response"](dialog, "run")
+    args, _kwargs = m.jobs[-1]
     flush(m)
     assert label.text == "Vérification des langues en cours…"
     assert spinner.visible and not bar.visible
