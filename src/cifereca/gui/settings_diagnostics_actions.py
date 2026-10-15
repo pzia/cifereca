@@ -4,6 +4,7 @@ from __future__ import annotations
 from .. import __version__
 from .diagnostic_presentation import diagnostic_plugin_rows
 from .settings_diagnostic_actions import build_settings_diagnostic_callbacks
+from .settings_performance_actions import bind_settings_performance_actions
 from . import settings_diagnostics_refresh_controller
 
 
@@ -22,6 +23,16 @@ def bind_settings_diagnostics(self, *, page_lifetime, diagnostic_ui,
     copy = diagnostic_ui.copy
     export = diagnostic_ui.export
     clear = diagnostic_ui.clear
+
+    # Reuse MainWindow.ui_perf: no profiler, periodic collector or automatic
+    # detailed capture is started by building the Settings page.
+    refresh_performance_status = bind_settings_performance_actions(
+        self, page_lifetime=page_lifetime,
+        capture_button=diagnostic_ui.performance_capture,
+        export_button=diagnostic_ui.performance_export,
+        status_label=diagnostic_ui.performance_status,
+        Gtk=Gtk,
+    )
 
     def toggle_diagnostic_details(button):
         visible = bool(button.get_active())
@@ -43,6 +54,7 @@ def bind_settings_diagnostics(self, *, page_lifetime, diagnostic_ui,
     def refresh_text() -> None:
         if not page_lifetime.alive or getattr(self, "_closed", False):
             return
+        refresh_performance_status()
         from ..system_status import system_status
         return settings_diagnostics_refresh_controller.refresh_settings_diagnostics(
             self, page_lifetime=page_lifetime,
