@@ -110,7 +110,7 @@ def test_live_kobo_progress_and_summary_preserve_existing_path():
     assert effects == ["render", "activity"]
 
 
-def test_automatic_kobo_timer_queued_before_close_cannot_start_backup():
+def test_legacy_kobo_timer_never_enqueues_duplicate_automatic_backup():
     configure, queued = _method("_configure_kobo_backup_timer")
     calls = []
     host = NS(
@@ -120,24 +120,28 @@ def test_automatic_kobo_timer_queued_before_close_cannot_start_backup():
         run_kobo_backup=lambda *args: calls.append(args),
     )
     configure(host, run_now=True)
-    assert len(queued) == 1
-    host._closed = True
-    assert queued[0]() is False
+    configure(host, run_now=False)
+    assert queued == []
     assert calls == []
+    assert host._kobo_backup_timer_id is None
 
 
-def test_automatic_kobo_timer_live_dispatches_once_and_closed_configure_is_inert():
+def test_legacy_kobo_timer_clears_old_source_and_respects_closed_window():
     configure, queued = _method("_configure_kobo_backup_timer")
     calls = []
     host = NS(
         _closed=False,
-        _kobo_backup_timer_id=None,
+        _kobo_backup_timer_id=47,
         service=NS(kobo_backup_enabled=lambda: True),
         run_kobo_backup=lambda *args: calls.append(args),
     )
     configure(host, run_now=True)
-    assert queued[0]() is False
-    assert calls == [(False,)]
+    assert host._kobo_backup_timer_id is None
+    assert queued == []
+    assert calls == []
     host._closed = True
+    host._kobo_backup_timer_id = 48
     configure(host, run_now=True)
-    assert len(queued) == 1
+    assert host._kobo_backup_timer_id == 48
+    assert queued == []
+    assert calls == []
