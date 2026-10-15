@@ -839,7 +839,13 @@ class UxRecommendationsView:
         needle = normalize(self._text.get_text())
         if needle:
             item = ranked.item
-            haystack = normalize(" ".join((str(get_field(item, "title", "") or ""), str(get_field(item, "author", "") or ""))))
+            # The same attested author variants as the public detail must
+            # participate in local filtering; the scalar "author" field may
+            # be empty even when "authors" contains several names.
+            haystack = normalize(" ".join((
+                str(get_field(item, "title", "") or ""),
+                " ".join(author_values(item)),
+            )))
             if needle not in haystack:
                 return False
         return True
@@ -1260,7 +1266,7 @@ class UxRecommendationsView:
                 key = f"{key}:{index}"
             mapping[key] = ranked
 
-            author = str(get_field(item, "author", "") or "").strip()
+            author = ", ".join(author_values(item))
             source_labels = [
                 self._display_source(source)
                 for source in ranked.sources
