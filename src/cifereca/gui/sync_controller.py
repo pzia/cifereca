@@ -18,6 +18,7 @@ from .sync_view import (
     sync_identity_action_label, sync_source_presentation,
     sync_source_row_labels,
     sync_local_preflight_presentation, sync_local_reconciliation_presentation,
+    sync_materialization_schedule_presentation,
 )
 from .task_runner import TaskPriority
 from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
@@ -359,6 +360,96 @@ def _refresh_sync_page(self) -> None:
             acquisition_row.add_suffix(download_button)
             acquisition_row.add_suffix(stop_download)
             group.add(acquisition_row)
+
+            # #1346: the Core now exposes per-source startup consent, but
+            # viewing/syncing notices never grants it. This separate control
+            # is NOT the old global Kobo backup switch or a periodic timer.
+            get_schedule = getattr(broker, "local_materialization_schedule", None)
+            set_schedule = getattr(broker, "set_local_materialization_schedule", None)
+            schedule_supported = callable(get_schedule) and callable(set_schedule)
+            schedule_mode = "unavailable"
+            if schedule_supported:
+                try:
+                    schedule_mode = get_schedule(source.source_id)
+                except Exception:
+                    # Never forward provider/storage exception content to GTK.
+                    schedule_mode = "unavailable"
+            schedule_ui = sync_materialization_schedule_presentation(
+                schedule_mode,
+                source_enabled=source.enabled, connected=source.connected,
+                capable=capability, broker_supported=schedule_supported,
+            )
+            schedule_row = Adw.ActionRow()
+            schedule_row.set_title("Acquisition Kobo · au démarrage")
+            schedule_row.set_subtitle(schedule_ui.subtitle)
+            schedule_row.set_subtitle_lines(0)
+            schedule_button = self.action_button(
+                schedule_ui.action_label, "emblem-synchronizing-symbolic",
+            )
+            schedule_button.set_sensitive(schedule_ui.action_enabled)
+            schedule_button.set_tooltip_text(schedule_ui.tooltip)
+            schedule_row.add_suffix(schedule_button)
+            group.add(schedule_row)
+
+            def configure_schedule(
+                _button, sid=source.source_id, owner=source.identity_id,
+                mode=schedule_ui.mode, setter=set_schedule,
+            ):
+                if (
+                    not sync_action_scope_current(self, scope)
+                    or getattr(self.service.current_identity, "identity_id", None)
+                        != owner
+                    or not callable(setter)
+                ):
+                    return
+
+                def apply(next_mode):
+                    if not sync_action_scope_current(self, scope):
+                        return
+                    try:
+                        # Core broker revalidates source identity/capabilities
+                        # and never makes a provider request in this call.
+                        updated = setter(sid, next_mode)
+                        if updated not in {"manual", "on_start"} or updated != next_mode:
+                            raise ValueError("invalid schedule response")
+                    except Exception:
+                        if sync_action_scope_current(self, scope):
+                            self.show_error(
+                                "Planification Kobo indisponible pour ce compte.",
+                                "Synchronisation",
+                            )
+                        return
+                    if sync_action_scope_current(self, scope):
+                        self._refresh_sync_page()
+
+                if mode == "on_start":
+                    # Revocation stays available even when disconnected.
+                    apply("manual")
+                elif mode == "manual":
+                    dialog = Adw.MessageDialog.new(
+                        self, "Autoriser les acquisitions Kobo au démarrage ?",
+                        "Cette autorisation concerne uniquement le compte Kobo "
+                        "sélectionné. À chaque démarrage admissible, le Core "
+                        "pourra récupérer les fichiers manquants de ce compte "
+                        "après contrôle des droits et anti-doublons.\n\n"
+                        "Elle ne télécharge rien maintenant, ne planifie aucun "
+                        "cycle périodique et peut être révoquée ici. "
+                        "L’actualisation des notices reste indépendante.",
+                    )
+                    dialog.add_response("cancel", "Rester en mode manuel")
+                    dialog.add_response("allow", "Autoriser ce compte")
+                    dialog.set_response_appearance(
+                        "allow", Adw.ResponseAppearance.SUGGESTED,
+                    )
+
+                    def respond(_dialog, choice):
+                        if choice == "allow" and sync_action_scope_current(self, scope):
+                            apply("on_start")
+
+                    dialog.connect("response", respond)
+                    dialog.present()
+
+            schedule_button.connect("clicked", configure_schedule)
             acquisition_state = {"serial": 0, "cancel": None}
 
             def download_current(expected_identity=source.identity_id, captured_scope=scope):
