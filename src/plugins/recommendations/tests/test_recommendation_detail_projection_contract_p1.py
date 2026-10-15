@@ -11,7 +11,7 @@ import pytest
 
 from cifereca.plugin_api import UiBookListEntry
 from recommendation_engine import RankedCandidate
-from recommendations import UxRecommendationsView, _public_cover_url
+from recommendations import UxRecommendationsView, _public_cover_url, _reference_label, _public_candidate_description
 
 
 @pytest.mark.parametrize("unsafe", (
@@ -247,3 +247,58 @@ def test_same_candidate_key_collision_keeps_original_key_stable():
     for row in rows:
         view._selected_row(row)
     assert [detail.title for detail in details] == ["First", "Second", "Third"]
+
+
+class PoisonPublicMetadata:
+    def __str__(self):
+        raise AssertionError("PRIVATE_PROVIDER_TOKEN /home/PRIVATE_PROFILE")
+
+
+def test_malformed_provider_scalar_values_never_escape_to_public_detail():
+    item = {
+        "title": {"PRIVATE_PROVIDER_ACCOUNT": "not a book title"},
+        "authors": ["Alice"],
+        "format": PoisonPublicMetadata(),
+        "published_at": "2026\\nPRIVATE_SESSION",
+        "description": "Summary\\u202ePRIVATE_BIDI",
+        "summary": "Résumé éditeur attesté",
+    }
+    view, rows, details, _ = _make_view(item)
+    view._render(preserve_summary=True)
+    assert len(rows) == 1
+    assert rows[0].title == "Sans titre"
+    view._selected_row(rows[0])
+    presentation = details[0]
+    assert presentation.title == rows[0].title
+    fields = [field for section in presentation.sections for field in section.fields]
+    assert not any(field.id in {"format", "published"} for field in fields)
+    assert [(field.id, field.value) for field in fields if field.id == "description"] == [
+        ("description", "Résumé éditeur attesté"),
+    ]
+    assert "PRIVATE" not in repr((rows, presentation.title, fields))
+    assert _public_candidate_description(item) == "Résumé éditeur attesté"
+
+
+def test_recommendation_title_and_reference_selector_share_safe_public_fallback():
+    item = {"title": PoisonPublicMetadata(), "authors": [], "identifiers": {}}
+    view, rows, details, _ = _make_view(item)
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+    assert rows[0].title == details[0].title == _reference_label(item) == "Sans titre"
+
+
+def test_recommendation_scalar_text_rejects_untrusted_string_subclasses():
+    class SyntheticSecret(str):
+        pass
+
+    item = {
+        "title": SyntheticSecret("PRIVATE_ACCOUNT"),
+        "description": SyntheticSecret("PRIVATE_TOKEN"),
+        "summary": "Notice publique",
+    }
+    view, rows, details, _ = _make_view(item)
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+    assert rows[0].title == details[0].title == "Sans titre"
+    fields = [field for section in details[0].sections for field in section.fields]
+    assert next(field.value for field in fields if field.id == "description") == "Notice publique"
