@@ -905,24 +905,31 @@ class NamingRepairTool(_ReadOnlyTool):
         if total:
             status = (
                 "Renormalisation terminée"
-                if not failures and not preview_failures
+                if not failures and not preview_failures and not plan_counts["read_failures"]
                 else (
                     f"Renormalisation : {failures} échec(s), "
-                    f"{preview_failures} proposition(s) indisponible(s)"
+                    f"{preview_failures} proposition(s) indisponible(s), "
+                    f"{plan_counts['read_failures']} artefact(s) non inspecté(s)"
                 )
             )
             control.report(current=total, total=total, message=status)
         else:
             message = (
                 f"Renormalisation : {preview_failures} placement(s) sans proposition"
-                if preview_failures else "Renormalisation terminée : aucun placement"
+                if preview_failures else (
+                    f"Renormalisation incomplète : {plan_counts['read_failures']} artefact(s) non inspecté(s)"
+                    if plan_counts["read_failures"] else
+                    "Renormalisation terminée : aucun placement"
+                )
             )
             control.report(message=message)
         facts = {"planned": len(ids), "failures": failures}
         if preview_failures:
             facts["policy_failures"] = preview_failures
+        if plan_counts["read_failures"]:
+            facts["read_failures"] = plan_counts["read_failures"]
         return MaintenanceResult(
-            ok=failures == 0 and preview_failures == 0,
+            ok=failures == 0 and preview_failures == 0 and plan_counts["read_failures"] == 0,
             changed=changed,
             summary=f"{changed} placement(s) renormalisé(s).",
             warnings=tuple(warnings),
@@ -1034,6 +1041,10 @@ class DuplicateCleanupTool(_ReadOnlyTool):
             if duplicates.intersection(keepers):
                 invalid_plan = True
 
+        read_failures = plan.facts.get("read_failures", 0)
+        if type(read_failures) is not int or not 0 <= read_failures <= 1_000_000:
+            invalid_plan = True
+
         if invalid_plan:
             control.check_cancelled()
             control.report(message="Nettoyage impossible : plan de doublons invalide")
@@ -1060,8 +1071,7 @@ class DuplicateCleanupTool(_ReadOnlyTool):
             for value in plan.warnings[:100]
         ):
             warnings.append(safety_notice)
-        read_failures = plan.facts.get("read_failures", 0)
-        if type(read_failures) is int and 0 < read_failures <= 1_000_000:
+        if read_failures:
             warnings.append(
                 f"{read_failures} artefact(s) non inspecté(s) : broker library.read en erreur."
             )
@@ -1104,16 +1114,25 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         # Cancellation during the final mutation must not report completion.
         control.check_cancelled()
         if total:
-            status = "Nettoyage terminé" if not failures else f"Nettoyage : {failures} échec(s)"
+            status = (
+                "Nettoyage terminé" if not failures and not read_failures
+                else f"Nettoyage partiel : {failures} échec(s), {read_failures} artefact(s) non inspecté(s)"
+            )
             control.report(current=total, total=total, message=status)
         else:
-            control.report(message="Nettoyage terminé : aucun doublon")
+            control.report(message=(
+                f"Nettoyage incomplet : {read_failures} artefact(s) non inspecté(s)"
+                if read_failures else "Nettoyage terminé : aucun doublon"
+            ))
+        facts = {"planned": len(pairs), "failures": failures}
+        if read_failures:
+            facts["read_failures"] = read_failures
         return MaintenanceResult(
-            ok=failures == 0,
+            ok=failures == 0 and read_failures == 0,
             changed=changed,
             summary=f"{changed} placement(s) redondant(s) supprimé(s).",
             warnings=tuple(warnings),
-            facts={"planned": len(pairs), "failures": failures},
+            facts=facts,
         )
 
 
