@@ -283,6 +283,33 @@ def list_entry(book: object) -> UiBookListEntry:
     )
 
 
+def _mapped_youth_entries(books) -> tuple[dict[str, object], tuple[UiBookListEntry, ...]]:
+    """Keep every cached notice selectable even when source-local IDs collide.
+
+    A provider may expose two different editions with the same source ID and
+    record ID. The list and detail lookup must agree on one unique *UI* key;
+    synthetic suffixes are never fed back to the provider or book reference.
+    Reserve future raw keys first so an earlier generated suffix cannot
+    overwrite a genuine later record ID.
+    """
+    snapshot = tuple(books)
+    original_keys = tuple(book_key(book) for book in snapshot)
+    reserved = set(original_keys)
+    indexed: dict[str, object] = {}
+    entries = []
+    for index, (book, raw_key) in enumerate(zip(snapshot, original_keys)):
+        key = raw_key
+        if key in indexed:
+            suffix = index
+            key = f"{raw_key}:{suffix}"
+            while key in indexed or key in reserved:
+                suffix += 1
+                key = f"{raw_key}:{suffix}"
+        indexed[key] = book
+        entries.append(replace(list_entry(book), key=key))
+    return indexed, tuple(entries)
+
+
 def detail_presentation(book: object) -> UiBookDetailPresentation:
     ranges = tuple(getattr(book, "age_ranges", ()) or ())
     age_fields = tuple(
@@ -1220,8 +1247,7 @@ class YouthView:
             themes=state.themes,
             include_inferred=state.include_inferred,
         )
-        self.rows = {book_key(book): book for book in books}
-        entries = tuple(list_entry(book) for book in books)
+        self.rows, entries = _mapped_youth_entries(books)
         self.master.show_rows(entries, total_count=len(entries))
         if not entries:
             self.master.set_list_state(
