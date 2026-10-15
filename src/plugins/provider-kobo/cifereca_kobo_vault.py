@@ -265,17 +265,44 @@ class KoboVaultClient:
             "rights", "ownership", "localpath", "downloadurl", "licenseurl",
             "signedurl", "authorization", "accesstoken", "refreshtoken",
             "apitoken", "authtoken", "bearertoken", "sessiontoken",
+            "password", "passwd", "secret", "clientsecret", "clientid",
+            "apikey", "secretkey", "privatekey", "accesskey", "session",
+            "sessionid", "sessionkey", "cookie", "cookies", "csrftoken",
+            "csrf", "auth", "authentication", "bearer", "oauth",
+            "drmlicense", "licensekey", "licencekey", "acsmurl",
             "library",
         }
         if depth >= 16:
             return None
         if type(value) is dict:
-            return {
-                key: KoboVaultClient._strip_public_private_fields(child, depth + 1)
-                for key, child in value.items()
-                if type(key) is str
-                and "".join(ch for ch in key.casefold() if ch.isalnum()) not in private_keys
-            }
+            public: dict[str, Any] = {}
+            for key, child in value.items():
+                if type(key) is not str:
+                    continue
+                normalized = "".join(char for char in key.casefold() if char.isalnum())
+                # Public descriptions can contain novel nested JSON field
+                # names. Unknown credential suffixes/transport-key variants
+                # must not survive simply because they weren't in the fixed
+                # original denylist (e.g. partner_refresh_token, apiKey).
+                if (
+                    normalized in private_keys
+                    or normalized.endswith((
+                        "token", "secret", "password", "apikey",
+                        "privatekey", "accesskey", "sessionid",
+                        "sessionkey", "cookie", "credential",
+                    ))
+                    or normalized.startswith((
+                        "signeddownload", "signedlicense", "signedlicence",
+                        "acquisitionurl", "acquisitionlink",
+                        "downloadurl", "downloadlink", "downloadtoken",
+                        "localpath", "localfile",
+                    ))
+                ):
+                    continue
+                public[key] = KoboVaultClient._strip_public_private_fields(
+                    child, depth + 1
+                )
+            return public
         if type(value) is list:
             return [
                 KoboVaultClient._strip_public_private_fields(child, depth + 1)
