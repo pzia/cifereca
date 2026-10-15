@@ -146,6 +146,40 @@ def test_recent_uses_cache_without_source_call_and_empty_recent_refreshes():
     assert events[-2:] == [("recent", []), ("recent-refresh",)]
 
 
+def test_successfully_empty_library_is_not_refetched_on_each_navigation():
+    host, events = _context(library=[])
+    host._identity_context_generation = 4
+    show_route(host, "library", Gtk=GTK)
+    assert events[-1] == ("library-refresh", False)
+    # The real refresh callback sets this only after successful display.
+    host._library_loaded_generation = 4
+    events.clear()
+    for _ in range(3):
+        show_route(host, "library", Gtk=GTK)
+    assert len([event for event in events if event[0] == "library"]) == 3
+    assert not any(event[0] == "library-refresh" for event in events)
+    # Even when selecting the original identity again, the new generation
+    # forces exactly the normal lazy refresh instead of using stale emptiness.
+    host._identity_context_generation = 5
+    show_route(host, "library", Gtk=GTK)
+    assert events[-1] == ("library-refresh", False)
+
+
+def test_successfully_empty_recent_is_not_refetched_until_identity_changes():
+    host, events = _context(recent=[])
+    host._identity_context_generation = 2
+    show_route(host, "recent", Gtk=GTK)
+    assert events[-1] == ("recent-refresh",)
+    host._recent_loaded_generation = 2
+    events.clear()
+    show_route(host, "recent", Gtk=GTK)
+    show_route(host, "recent", Gtk=GTK)
+    assert not any(event[0] == "recent-refresh" for event in events)
+    host._identity_context_generation = 3
+    show_route(host, "recent", Gtk=GTK)
+    assert events[-1] == ("recent-refresh",)
+
+
 def test_history_and_booking_refresh_only_when_cached_service_data_is_empty():
     host, events = _context(history=[], bookings=[])
     show_route(host, "history", Gtk=GTK)
