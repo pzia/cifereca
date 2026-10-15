@@ -3,7 +3,7 @@
 Synthetic cached YouthBook values, no provider, network, GTK or file access.
 """
 from youth_catalog import YouthBook
-from youth_page import detail_presentation, list_entry
+from youth_page import book_ref, detail_presentation, list_entry
 
 
 class Poison:
@@ -71,3 +71,31 @@ def test_non_string_author_or_absent_author_never_becomes_a_public_label():
         assert not any(
             field.kind == "author" for sec in detail.sections for field in sec.fields
         )
+
+
+def test_bookref_navigation_preserves_exactly_the_public_author_projection():
+    source = book((" Alice  Martin ", Poison(), "PRIVATE\nSESSION", "Bob", "Alice Martin"))
+    reference = book_ref(source)
+    entry = list_entry(source)
+    detail = detail_presentation(source)
+    assert reference.authors == ("Alice Martin", "Bob", "Alice Martin")
+    assert entry.subtitle == detail.subtitle == ", ".join(reference.authors)
+    assert "PRIVATE" not in repr(reference.authors)
+
+
+def test_bookref_rejects_mapping_keys_and_string_subclasses_as_authors():
+    class Untrusted(str):
+        pass
+
+    for authors in ({"PRIVATE_ACCOUNT": "Alice"}, Untrusted("PRIVATE_TOKEN")):
+        source = book(authors)
+        reference = book_ref(source)
+        assert reference.authors == ()
+        assert list_entry(source).subtitle == ""
+        assert detail_presentation(source).subtitle == ""
+
+
+def test_bookref_authors_are_bounded_like_visible_detail():
+    source = book(tuple(f"Author {i}" for i in range(100)))
+    assert len(book_ref(source).authors) == 32
+    assert book_ref(source).authors == tuple(f"Author {i}" for i in range(32))
