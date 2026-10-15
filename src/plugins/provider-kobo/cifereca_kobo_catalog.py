@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any
 from ipaddress import ip_address
 import re
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 from cifereca.plugin_api import ProviderError, SearchResult, normalize_language_tag, description_text, description_element
 from cifereca_kobo_policy import _strict_product_id
@@ -158,22 +158,49 @@ class KoboCatalogService:
             or hostname.endswith(
                 ('.localhost', '.local', '.internal', '.lan', '.home.arpa')
             )
-            or re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I)
+            or len(hostname) > 253
+            or any(
+                not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label)
+                for label in hostname.split('.')
+            )
         ):
             return None
         try:
             address = ip_address(hostname)
         except ValueError:
-            pass
-        else:
+            address = None
+        if address is not None:
             if not address.is_global:
                 return None
-        # Download/license/acquisition endpoints are not bibliographic
-        # product notices even if hosted on an otherwise public domain.
-        segments = [segment.casefold() for segment in parsed.path.split('/')]
-        if any(segment in {'download', 'downloads', 'license', 'licence', 'acquisition', 'authorize', 'oauth', 'token'} for segment in segments):
+        elif not re.fullmatch(r'[a-z][a-z0-9-]{1,62}', hostname.rsplit('.', 1)[-1]):
+            # Noncanonical numeric hosts such as 127.1 and 0177.0.0.1
+            # are not harmless public DNS hostnames.
             return None
-        return value
+        # Decode solely to reject acquisition/license endpoints concealed
+        # as percent-encoded URL paths. The returned URL is never rewritten.
+        path = parsed.path
+        private_segments = {
+            'download', 'downloads', 'license', 'licence', 'licenses',
+            'licences', 'acquisition', 'acquire', 'authorize',
+            'authorization', 'oauth', 'token', 'tokens', 'login',
+            'signin', 'drm', 'adept',
+        }
+        for _ in range(4):
+            if any(ord(char) < 32 or ord(char) == 127 for char in path):
+                return None
+            segments = [part.casefold() for part in path.split('/') if part]
+            if any(
+                part in private_segments
+                or part.endswith(('.acsm', '.lcpl', '.epub', '.kepub'))
+                for part in segments
+            ):
+                return None
+            decoded = unquote(path)
+            if decoded == path:
+                return value
+            path = decoded
+        # Deeply encoded routes have not been fully inspected: fail closed.
+        return None
 
     @staticmethod
     def _price(item: dict[str, Any]) -> tuple[str | None, str | None]:
