@@ -589,9 +589,25 @@ class View:
     def move(self, offset):
         if getattr(self, 'disposed', False):
             return
-        self.cancel_calculation()
+        graph_identity = getattr(self, '_nodes_identity', '')
+        if graph_identity and graph_identity != self.identity_id():
+            # A retained back/forward GTK callback cannot revive an old
+            # graph after a profile switch, even before load() runs.
+            return
+        nodes = getattr(self, 'nodes', ())
+        center = getattr(self, 'center', None)
+        if not any(node is center for node in nodes):
+            return
+        previous = self.nav.position
         key = self.nav.move(offset)
-        self.center = next((n for n in self.nodes if n.key == key), self.center)
+        target = next((node for node in nodes if node.key == key), None)
+        if target is None:
+            # A stale history key must not preserve another edition as if it
+            # were a valid neighbour in the current identity's graph.
+            self.nav.position = previous
+            return
+        self.cancel_calculation()
+        self.center = target
         self.render()
 
     def open_book(self):
