@@ -521,12 +521,23 @@ class IntegrityAuditTool(_ReadOnlyTool):
         read_failures=0
         reference_failures=0
         for row in _rows(metadata.library_entries(identity_id=context.identity_id)):
-            if not row.get("local"):
-                continue
-            path=str(row.get("local_path") or "").strip()
-            artifact_id=str(row.get("artifact_id") or "").strip()
-            if not path:
-                missing_path += 1
+            try:
+                if not row.get("local"):
+                    continue
+                raw_path = row.get("local_path")
+                if type(raw_path) is not str:
+                    missing_path += 1
+                    continue
+                path = raw_path.strip()
+                if not path:
+                    missing_path += 1
+                    continue
+                # Only opaque, validated identifiers may cross the Core
+                # library.read boundary. A malformed optional reference
+                # must not prevent a direct filesystem integrity check.
+                artifact_id = _artifact_id(row)
+            except Exception:
+                reference_failures += 1
                 continue
             artifact=None
             if artifact_id:
