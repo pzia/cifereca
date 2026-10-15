@@ -4,10 +4,8 @@ No real order ID, auth value, account or live HTTP request.
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
 from urllib.parse import urlsplit
 
-import httpx
 import pytest
 
 from cifereca.plugin_api import ProviderError
