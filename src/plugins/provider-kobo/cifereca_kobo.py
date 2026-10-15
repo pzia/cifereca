@@ -494,15 +494,32 @@ class KoboSession(ProviderSession):
                     )
                 )
 
-            # A rejected permission/foreign row may share its product with
-            # another otherwise plausible row. Quarantine the *whole* group
-            # rather than letting Core treat the duplicate as a sole item.
-            blocked_products = {
-                product for row in items
-                if type(row) is dict
-                and (foreign_account(row) or invalid_permission_flags(row))
-                if (product := _strict_product_id(row)) is not None
-            }
+            # Do not rely solely on Vault-client pagination hygiene. Direct
+            # session callers, legacy adapters or incomplete provider snapshots
+            # may still supply duplicate editions. Never hand either row to
+            # the legacy Core materialization path, even when both rows look
+            # individually entitled; no first/last revision may win.
+            product_counts: dict[str, int] = {}
+            blocked_products: set[str] = set()
+            for row in items:
+                if type(row) is not dict:
+                    continue
+                product = _strict_product_id(row)
+                if product is not None:
+                    product_counts[product] = product_counts.get(product, 0) + 1
+                    if foreign_account(row) or invalid_permission_flags(row):
+                        blocked_products.add(product)
+                else:
+                    # If the two legacy aliases disagree, quarantine any
+                    # sibling bearing either individually valid key.
+                    for alias in ("product_id", "id"):
+                        candidate = _strict_product_id({alias: row.get(alias)})
+                        if candidate is not None:
+                            blocked_products.add(candidate)
+            blocked_products.update(
+                product for product, count in product_counts.items()
+                if count > 1
+            )
             accepted = []
             rejected_count = 0
             for item in items:
