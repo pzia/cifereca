@@ -26,6 +26,30 @@ _PERF_TRIGGERS = frozenset({
 })
 _PERF_OUTCOMES = frozenset({"success", "failed", "cancelled", "unknown"})
 
+# Legacy render/startup timings predate the structured phase collector.
+# Their free-form operation names must not become new series or log values:
+# list titles can be populated by the selected identity or a plugin.
+_LEGACY_OPERATIONS = frozenset({
+    "render_library", "render_recent",
+    "startup.window_presented", "startup.plugins_activation",
+    "startup.shell_interactive",
+})
+_LEGACY_LIST_ACTIONS = frozenset({"append", "append-fast", "replace"})
+
+
+def _safe_legacy_operation(operation: object) -> str:
+    if type(operation) is not str:
+        return "other"
+    if operation in _LEGACY_OPERATIONS:
+        return operation
+    # A MasterDetailPage emits e.g. list:{free-form page title}:replace.
+    # Collapse page titles rather than keeping arbitrary account/book text.
+    if operation.startswith("list:"):
+        category, separator, action = operation.rpartition(":")
+        if separator and category != "list:" and action in _LEGACY_LIST_ACTIONS:
+            return "list." + action
+    return "other"
+
 
 
 class UiPerfMonitor:
@@ -158,11 +182,26 @@ class UiPerfMonitor:
         }
 
     def record(self, operation: str, duration_ms: float) -> None:
-        value = float(duration_ms)
+        """Bound pre-phase UI timings and log only fixed public operation codes.
+
+        The legacy snapshot is used by Settings Diagnostics; accepting
+        arbitrary MasterDetailPage titles would allow unbounded key growth and
+        leak private book/account labels into TRACE logs and support reports.
+        """
+        try:
+            value = float(duration_ms) if type(duration_ms) is not bool else float("nan")
+        except (TypeError, ValueError, OverflowError):
+            return
+        if not math.isfinite(value) or not 0 <= value <= 86_400_000:
+            return
+        safe_operation = _safe_legacy_operation(operation)
         with self._lock:
-            self._samples[str(operation)].append(value)
+            self._samples[safe_operation].append(value)
         if value >= self.slow_ms:
-            _LOG.info("TRACE ui-perf slow operation=%s duration_ms=%.1f", operation, value)
+            _LOG.info(
+                "TRACE ui-perf slow operation=%s duration_ms=%.1f",
+                safe_operation, value,
+            )
 
     @contextmanager
     def measure(self, operation: str) -> Iterator[None]:
