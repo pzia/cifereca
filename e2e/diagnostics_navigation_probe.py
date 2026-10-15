@@ -504,7 +504,10 @@ def main() -> int:
         w = window[0]
         assert w.library_controls.state() == library_volume["filtered"]
         assert w.library_page.selection.get_selected_item().key == "p0-volume-562"
-        assert labels_have("Notice volume 562")
+        assert any(
+            isinstance(node, Gtk.Label) and node.get_text() == "Notice volume 562"
+            for node in walk(w.library_page.detail)
+        ), "Titre absent du vrai panneau de détail Bibliothèque"
         assert w.library_page.detail.get_mapped()
         assert w._pending_library_selection_key is None
         report["checks"]["P0_library_563_filtered_selection_detail"] = True
