@@ -58,6 +58,7 @@ class Control:
 @pytest.mark.parametrize("proposal", (
     None, False, True, 0, 1, 3.14, [], {},
     Poison(), "", "  ", ".", "..",
+    " safe.epub", "safe.epub ", "  safe.epub  ", "\u00a0safe.epub",
     "/tmp/PRIVATE_FILE.epub", "folder/safe.epub", "folder\\safe.epub",
     "safe.epub\nBearer PRIVATE_TOKEN", "x" * 513,
 ))
@@ -92,7 +93,6 @@ def test_invalid_filename_proposal_fails_one_row_without_comparison(proposal):
     ("safe.epub", 1),
     ("candidate.epub", 1),
     ("third.epub", 2),
-    ("  safe.epub  ", 1),
     ("édition.epub", 2),
 ))
 def test_real_filename_proposals_preserve_nonmutating_comparison(
