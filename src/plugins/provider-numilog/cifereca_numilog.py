@@ -245,8 +245,18 @@ class NumilogSession(ProviderSession):
                         **structural)
                 for row in page_rows:
                     key=(row['lid'],row['variant'])
-                    if key not in seen_items:
-                        seen_items.add(key);rows.append(row)
+                    if key in seen_items:
+                        # Pagination may repeat a book or splice another
+                        # purchase into the same lid/format. On an explicit
+                        # signed delivery, duplicate identity is ambiguous,
+                        # even if the display title appears to match.
+                        if include_delivery:
+                            raise ProviderError(
+                                'Numilog : livre dupliqué entre pages ; livraison non autorisée'
+                            )
+                        continue
+                    seen_items.add(key)
+                    rows.append(row)
                 if not next_url:
                     self._diag('pagination bibliothèque',pages=page_index+1,items=len(rows))
                     return rows
