@@ -536,7 +536,11 @@ class LanguageAuditTool(_ReadOnlyTool):
         control.report(message=expected)
         control.check_cancelled()
         return MaintenanceResult(
-            ok=True, changed=0, summary=expected,
+            # Invalid/noncanonical *tags* are audit findings. A failed Core
+            # normalizer is different: some language values were not checked,
+            # so the scan cannot be reported as an entirely successful audit.
+            ok=counts["normalization_failures"] == 0,
+            changed=0, summary=expected,
             warnings=tuple(safe_warnings), facts=counts,
         )
 
