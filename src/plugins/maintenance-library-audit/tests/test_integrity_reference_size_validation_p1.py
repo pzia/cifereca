@@ -50,7 +50,7 @@ def test_bad_size_reference_is_quarantined_without_aborting_other_files(
     assert plan.facts["candidates"][1]["expected_size"] == good.stat().st_size
     assert all("title" not in candidate for candidate in plan.facts["candidates"])
     assert plan.warnings == (
-        "1 taille(s) de référence invalide(s) : contrôle de taille indisponible.",
+        "1 référence(s) d’intégrité invalide(s) : certains contrôles indisponibles.",
     )
 
     control = Control()
