@@ -1304,7 +1304,12 @@ def main() -> int:
         capture("03i-sync-partial-last-success-and-offline-source")
         # #980 acceptance uses the real MainWindow/controller/widgets and
         # XTEST, with seven synthetic broker rows; no provider/network/DRM.
-        assert len(rows) == 9  # Seven sources plus Kobo preview/audit outputs.
+        assert len(rows) == 10  # Seven sources plus Kobo preview/audit/confirmation outputs.
+        acquisition_row = next(row for row in rows
+                               if row.get_title() == "Téléchargement local · confirmation obligatoire")
+        assert "Non préparé" in acquisition_row.get_subtitle()
+        assert "aucun fichier téléchargé" in acquisition_row.get_subtitle().lower()
+        report["checks"]["P0_kobo_acquisition_off_by_default_on_sync_page"] = True
         for provider in ("gutenberg", "gallica"):
             row = next(row for row in rows if row.get_title() == f"Catalogue public · {provider}")
             assert f"Fournisseur : {provider}" in row.get_subtitle()
