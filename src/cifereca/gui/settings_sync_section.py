@@ -58,7 +58,7 @@ def build_kobo_sync_section(
     backup_auto_row.set_subtitle(
         "Conservée pour compatibilité mais sans effet sur les acquisitions. "
         "Seul le consentement explicite par compte dans Synchronisation "
-        "autorise un téléchargement au démarrage. Aucun timer périodique."
+        "autorise un téléchargement au démarrage. Aucune minuterie périodique."
     )
     backup_switch = Gtk.Switch()
     backup_switch.set_active(config.get("kobo_backup.enabled", False) is True)
