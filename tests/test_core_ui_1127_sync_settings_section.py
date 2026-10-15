@@ -210,3 +210,17 @@ def test_sync_setting_builder_has_no_implicit_acquisition_or_config_mutation():
     assert controls.unlinked_switch.active is False
     assert controls.run_backup_now.sensitive is True
     assert controls.run_backup_now.label == "Lancer le lot Kobo…"
+
+
+def test_malformed_unlinked_bypass_config_is_disabled_like_core_policy():
+    """Core checks `is True`, not bool(value); GTK must use the same gate."""
+    for invalid in ("false", "true", 1, 0, [], {}, None):
+        controls, _, _ = _build({
+            "kobo_backup.enabled": True,
+            "kobo_backup.allow_unlinked_acquisition": invalid,
+        })
+        assert controls.unlinked_switch.active is False
+    valid, _, _ = _build({
+        "kobo_backup.allow_unlinked_acquisition": True,
+    })
+    assert valid.unlinked_switch.active is True
