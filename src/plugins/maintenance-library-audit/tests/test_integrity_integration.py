@@ -154,7 +154,7 @@ def test_integrity_audit_through_public_brokers_is_read_only():
         assert result.facts["issues"]["size_mismatch"] == 1
         assert result.facts["issues"]["sha256_mismatch"] == 1
         assert result.facts["issues"]["missing"] == 1
-        assert control.events[-1]["message"] == "Audit d’intégrité terminé"
+        assert control.events[-1]["message"] == "Audit d’intégrité incomplet : 3 anomalie(s), 0 contrôle(s) indisponible(s)"
         # Result warnings are also displayed/exportable diagnostics: use
         # positions and issue codes, never private filenames or titles.
         assert all(name not in "\\n".join(result.warnings)
