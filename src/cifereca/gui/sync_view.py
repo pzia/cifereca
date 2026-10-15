@@ -222,12 +222,12 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         if "entitlements" in capabilities:
             phases.append("droits et emprunts")
         if phases:
-            summary += "\\nPortée de cette source : " + ", ".join(phases) + "."
+            summary += "\nPortée de cette source : " + ", ".join(phases) + "."
         else:
-            summary += "\\nPortée de cette source : données en ligne prises en charge."
-        summary += "\\nOpération ciblée : ne lance pas la synchronisation globale au démarrage."
+            summary += "\nPortée de cette source : données en ligne prises en charge."
+        summary += "\nOpération ciblée : ne lance pas la synchronisation globale au démarrage."
     else:
-        summary += "\\nCatalogue public consultable indépendamment de la synchronisation."
+        summary += "\nCatalogue public consultable indépendamment de la synchronisation."
     # A Kobo source refresh only updates online metadata. It is deliberately
     # NOT equivalent to the separate opt-in Kobo backup/acquisition operation.
     kobo_notices_only = getattr(source, "provider_id", "") == "kobo"
