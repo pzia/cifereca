@@ -799,3 +799,48 @@ def test_quoted_json_js_keys_produce_same_scoped_acsm_evidence(tmp_path):
         _assert_no_stage(tmp_path)
     finally:
         session.close()
+
+
+def test_one_action_with_two_titles_refuses_acquisition_instead_of_wrong_book(
+    tmp_path,
+):
+    from cifereca_numilog_html import ParseError
+    ambiguous = _page(
+        '<div><span class="pTitle">Bought book A</span>'
+        '<span class="pTitle">Bought book B</span>'
+        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=12&m=download">Download</a>'
+        f'<script>window.book={_object(9001, SIGNED)};</script></div>',
+    )
+    legacy, _ = parse_library_page(ambiguous)
+    assert len(legacy) == 1  # inventory backward-compatible
+    with pytest.raises(ParseError, match='Titres ambigus'):
+        parse_library_page(ambiguous, delivery_evidence=True)
+    session, _, broker, requested = _session(tmp_path, ambiguous)
+    try:
+        with pytest.raises(ProviderError, match='Titres ambigus'):
+            session.download_direct(session.library()[0], tmp_path)
+        assert requested == [LIBRARY, LIBRARY]
+        assert broker.calls == []
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+def test_orphan_card_without_title_does_not_license_js_signed_get(tmp_path):
+    page = _page(
+        '<div><a class="LnkDownloadBook" '
+        'href="/Pages/Compte/readBook.ashx?lid=12&m=download">Download</a>'
+        f'<script>window.book={_object(9001, SIGNED)};</script></div>',
+    )
+    rows, _ = parse_library_page(page, delivery_evidence=True)
+    assert len(rows) == 1
+    assert 'delivery' not in rows[0]  # title/copy provenance not attested
+    session, _, broker, seen = _session(tmp_path, page)
+    try:
+        with pytest.raises(ProviderError, match='lien de livraison absent'):
+            session.download_direct(session.library()[0], tmp_path)
+        assert seen == [LIBRARY, LIBRARY, READ_12]
+        assert broker.calls == []
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
