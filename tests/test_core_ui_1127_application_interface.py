@@ -55,7 +55,7 @@ def test_default_controls_preserve_hierarchy_and_labels():
     group = diagnostic.children[0]
     assert group.title == "Application"
     assert [child.title for child in group.children] == [
-        "Logs de diagnostic", "Niveau de diagnostic",
+        "Collecte des événements de diagnostic", "Niveau de diagnostic",
     ]
     assert len(interface.children) == 2
     assert interface.children[0].title == "Interface et actions"
@@ -91,3 +91,14 @@ def test_builder_does_not_connect_widgets_or_persist_configuration():
     view, _, _ = _build(values)
     assert values == {"diagnostics.enabled": True}
     assert view.diagnostics_switch.active is True
+
+
+def test_diagnostic_switch_explains_passive_metrics_and_essential_logs():
+    view, diagnostic, _interface = _build({"diagnostics.enabled": False})
+    row = diagnostic.children[0].children[0]
+    assert row.title == "Collecte des événements de diagnostic"
+    assert "collecteur Core" in row.subtitle
+    assert "logs essentiels" in row.subtitle
+    assert "mesures UI passives restent actifs" in row.subtitle
+    assert "désactivée par défaut" in row.subtitle
+    assert view.diagnostics_switch.active is False
