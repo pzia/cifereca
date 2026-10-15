@@ -706,3 +706,65 @@ def test_parser_selector_does_not_decode_other_books_and_preserves_inventory():
     assert matched[1]['delivery'].url == SECOND
     assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(matched)
     assert 'SECOND_NOT_A_CREDENTIAL' not in repr(matched)
+
+
+def test_duplicate_same_lid_and_format_on_one_page_never_consumes_signed_link(
+    tmp_path,
+):
+    """Conflicting ProductId links with same readBook identity are ambiguous."""
+    from cifereca_numilog_html import ParseError
+    ambiguous = _page(_card(12, 9001, SIGNED), _card(12, 9002, SECOND))
+    visible, _ = parse_library_page(ambiguous)
+    assert len(visible) == 1  # legacy inventory still deduplicates
+    with pytest.raises(ParseError, match='dupliquées'):
+        parse_library_page(ambiguous, delivery_evidence=True)
+
+    session, diag, broker, requested = _session(tmp_path, ambiguous)
+    try:
+        owned = session.library()[0]
+        with pytest.raises(ProviderError, match='dupliquées'):
+            session.download_direct(owned, tmp_path)
+        assert requested == [LIBRARY, LIBRARY]
+        assert broker.calls == []
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diag.events)
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+def test_duplicate_book_identity_across_pagination_blocks_even_own_signed_get(
+    tmp_path,
+):
+    """Two purchases with one stable lid/format never authorize first-wins."""
+    second_page = LIBRARY + '?page=2'
+    first = _page(_card(12, 9001, SIGNED)).replace(
+        '</body></html>',
+        '<a rel="next" href="/Pages/Compte/MesLivres.aspx?page=2">Next</a></body></html>',
+    )
+    other = _page(_card(12, 9002, SECOND))
+    requested = []
+
+    def handler(request):
+        url = str(request.url)
+        requested.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=first,
+                                  headers={'content-type': 'text/html'})
+        if url == second_page:
+            return httpx.Response(200, text=other,
+                                  headers={'content-type': 'text/html'})
+        pytest.fail('Duplicate product must not reach either signed ACSM GET')
+
+    session, diag, broker = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        inventory = session.library()
+        assert len(inventory) == 1
+        with pytest.raises(ProviderError, match='dupliqué entre pages'):
+            session.download_direct(inventory[0], tmp_path)
+        assert requested == [LIBRARY, second_page, LIBRARY, second_page]
+        assert broker.calls == []
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diag.events)
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
