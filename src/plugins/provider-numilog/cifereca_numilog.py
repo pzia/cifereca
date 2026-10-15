@@ -20,7 +20,7 @@ from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionE
     OwnedDelivery, parse_library, parse_library_page, delivery_url, public_book_url,
     html_response_kind)
 from cifereca_numilog_filename import publish
-from cifereca_numilog_delivery_trace import DeliveryTrace, public_http_code
+from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category, public_http_code
 
 VERSION = '0.1.17'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
@@ -152,7 +152,7 @@ class NumilogSession(ProviderSession):
             if payload is not None:
                 headers.update({'Origin':self.base_url.rstrip('/'),'X-Requested-With':'XMLHttpRequest','Accept':'application/json'})
             with self.client.stream(method,url,json=payload,headers=headers) as r:
-                self._diag('HTTP',method=method,host=urlsplit(url).hostname,status=r.status_code)
+                self._diag('HTTP',method=method,origin_kind=destination_category(url)[0],status=r.status_code)
                 if r.status_code in REDIRECTS:
                     if payload is not None:
                         raise ProviderError('Numilog : redirection inattendue pendant la connexion')
@@ -368,7 +368,7 @@ class NumilogSession(ProviderSession):
                 seen.add(url)
                 trace.fail('unclassified_error')
                 with self.client.stream('GET',url,headers={'Referer':self.base_url}) as r:
-                    self._diag('HTTP',method='GET',host=urlsplit(url).hostname,status=r.status_code)
+                    self._diag('HTTP',method='GET',origin_kind=destination_category(url)[0],status=r.status_code)
                     trace.event('delivery_http', 'redirect' if r.status_code in REDIRECTS else 'http_ok',
                         status=r.status_code, mime=r.headers.get('content-type'), hops=hop+1,
                         destination=url)
