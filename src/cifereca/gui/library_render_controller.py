@@ -23,24 +23,35 @@ def _render_phase_probe(window, clock, category: str, started: float):
     record = getattr(monitor, "record_phase", None)
     if not callable(record):
         return None
+    try:
+        allocator = getattr(monitor, "new_operation_id", None)
+        operation_id = allocator() if callable(allocator) else None
+    except Exception:
+        operation_id = None
     prior = started
 
     def mark(phase: str) -> None:
         nonlocal prior
         now = clock()
         try:
-            record(category, phase, max(0.0, (now - prior) * 1000))
+            record(
+                category, phase, max(0.0, (now - prior) * 1000),
+                operation_id=operation_id, trigger="navigation",
+            )
         except Exception:
             # A disabled/misbehaving monitor cannot break a GTK render.
             pass
         # Do not charge observer overhead to the next business phase.
         prior = clock()
 
+    mark.operation_id = operation_id
     return mark
 
 
 
-def _observe_after_paint(window, category: str, widget, clock) -> None:
+def _observe_after_paint(
+    window, category: str, widget, clock, operation_id: int | None = None,
+) -> None:
     """Only for mapped GTK widgets during explicit detailed capture.
 
     GDK after-paint is the end of frame-clock processing, NOT a guarantee
@@ -63,7 +74,7 @@ def _observe_after_paint(window, category: str, widget, clock) -> None:
                 source_remove=GLib.source_remove,
             )
             window._ui_perf_frame_probe = probe
-        probe.observe(category, widget, monitor, clock=clock)
+        probe.observe(category, widget, monitor, clock=clock, operation_id=operation_id)
     except Exception:
         # Observability must never change the business render outcome.
         pass
@@ -109,7 +120,10 @@ def render_library(window, entries: list[dict[str, Any]] | None = None, *, perf_
         phase("selection")
     window.ui_perf.record("render_library", (perf_counter() - _perf_started) * 1000.0)
     if phase is not None:
-        _observe_after_paint(window, "library", window.library_page, perf_counter)
+        _observe_after_paint(
+            window, "library", window.library_page, perf_counter,
+            operation_id=getattr(phase, "operation_id", None),
+        )
 
 
 def render_recent(window, items: list[dict[str, Any]] | None = None, *, perf_counter, project_recent_rows, BookListItem) -> None:
@@ -139,4 +153,7 @@ def render_recent(window, items: list[dict[str, Any]] | None = None, *, perf_cou
         phase("model_update")
     window.ui_perf.record("render_recent", (perf_counter() - _perf_started) * 1000.0)
     if phase is not None:
-        _observe_after_paint(window, "recent", window.recent_page, perf_counter)
+        _observe_after_paint(
+            window, "recent", window.recent_page, perf_counter,
+            operation_id=getattr(phase, "operation_id", None),
+        )
