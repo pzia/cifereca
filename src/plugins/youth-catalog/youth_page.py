@@ -722,6 +722,7 @@ class YouthView:
         self.rows, self.selected_book = {}, None
         self.generation, self.task, self.disposed = 0, None, False
         self._reloading_identities = False
+        self._profile_selection_required = False
         self.enter_sequence = YouthEnterSequence()
         self._remote_running_token = None
         self.next_cursor, self.next_source_plugin = "", ""
@@ -1009,6 +1010,10 @@ class YouthView:
         if self.disposed:
             return False
         current = self.identity_id()
+        if current:
+            # The user explicitly selected a valid profile after any prior
+            # disappearance. Reordering must preserve this identity.
+            self._profile_selection_required = False
         rows = self._identity_rows()
         self._reloading_identities = True
         try:
@@ -1022,10 +1027,16 @@ class YouthView:
                 if str(row.get("identity_id") or "") == current
             ), None)
             # Only initial activation selects a first profile implicitly.
-            # A deleted profile must never switch to another user's cache.
+            # Persist an invalid selection across *later* overview updates
+            # after the selected account disappears. Otherwise current == ""
+            # on the second update, silently choosing another user's cache.
+            if current and selected is None:
+                self._profile_selection_required = True
             self.identity.set_selected(
                 selected if selected is not None else (
-                    0xFFFFFFFF if current or not rows else 0
+                    0xFFFFFFFF
+                    if getattr(self, "_profile_selection_required", False) or not rows
+                    else 0
                 )
             )
         finally:
