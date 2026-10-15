@@ -194,7 +194,7 @@ def sync_source_phase_summary(source: object) -> str:
         if success:
             detail += " · dernier succès confirmé " + success
         parts.append(detail)
-    return "\\n".join(parts)
+    return "\n".join(parts)
 
 
 def _public_sync_provider_slug(source: object) -> str:
@@ -312,7 +312,7 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
     )
     phase_summary = sync_source_phase_summary(source)
     if phase_summary:
-        summary += "\\n" + phase_summary
+        summary += "\n" + phase_summary
     # Explicit scope, independent of provider-supplied free-form metadata.
     # A manual source sync is not the global opening/acquisition workflow.
     if capable:
