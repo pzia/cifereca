@@ -142,10 +142,10 @@ def sync_local_reconciliation_presentation(result: object) -> str:
     return (
         f"Fichiers locaux vérifiés par SHA : {counts['linked_files_verified']} · "
         f"groupes de doublons binaires : {counts['binary_match_groups']} · "
-        f"empreintes divergentes : {counts['stored_hash_mismatch']}.\\n"
+        f"empreintes divergentes : {counts['stored_hash_mismatch']}.\n"
         f"Fichiers non indexés candidats : {counts['unindexed_regular_file_candidates']} · "
         f"placements incertains : {counts['unverified_placements']} · "
-        f"droits sans artefact confirmé : {counts['active_entitlements_unmaterialized']}.\\n"
+        f"droits sans artefact confirmé : {counts['active_entitlements_unmaterialized']}.\n"
         f"{completeness} Aucune réconciliation, acquisition ni suppression autorisée."
     )
 
