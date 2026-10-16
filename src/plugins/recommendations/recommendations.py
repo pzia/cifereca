@@ -1685,7 +1685,16 @@ class UxRecommendationsView:
         if service is None or task_broker is None:
             self._llm_hint.set_label("Service IA non configuré. Les raisons originales restent disponibles.")
             return
-        reasons = tuple(ranked.reasons)
+        # The public detail already rejects poisoned cache reasons. Reuse
+        # that exact projection before sending anything to a potentially
+        # remote LLM. tuple(mapping) would otherwise turn private field keys
+        # into prompt content, even though the detail never displayed them.
+        reasons = _public_ranked_values(getattr(ranked, "reasons", ()), limit=3)
+        if not reasons:
+            self._llm_hint.set_label(
+                "Aucune raison publique exploitable pour une reformulation."
+            )
+            return
         self._llm_generation += 1
         token, main_generation = self._llm_generation, self._generation
         self._llm_button.set_sensitive(False)
