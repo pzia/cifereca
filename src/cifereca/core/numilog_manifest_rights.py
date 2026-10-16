@@ -53,6 +53,16 @@ def numilog_inventory_binding_valid(service: Any, account: Any, *, session: Any)
         ]
         if len(connections) != 1:
             return False
+        # A login/reconnect can replace a session while library() is
+        # retrieving pages. Never accept an old in-flight session as the
+        # current authority, even if its credential and connected flag match.
+        current_sessions = [
+            active for active in getattr(service, "_sessions", {}).values()
+            if getattr(active, "provider_id", None) == "numilog"
+            and getattr(active, "credential_id", None) == credential
+        ]
+        if len(current_sessions) != 1 or current_sessions[0] is not session:
+            return False
         return (
             getattr(session, "provider_id", None) == "numilog"
             and getattr(session, "credential_id", None) == credential
