@@ -1639,7 +1639,16 @@ def main() -> int:
 
     def kobo_download_dialog_cancelled():
         f = loan_sync_fixture
-        assert not f["dialog"].get_visible() and not f["materialize_calls"]
+        # Cancellation must never reach materialization, including while GTK
+        # animates the modal closure. Do not mistake a delayed redraw for a
+        # failed cancellation; retain a bounded hard failure if it stays open.
+        assert not f["materialize_calls"], "Kobo cancellation triggered acquisition"
+        if f["dialog"].get_visible():
+            assert monotonic() < f["download_deadline"], (
+                "Kobo confirmation still visible after cancel deadline"
+            )
+            later(80, kobo_download_dialog_cancelled)
+            return
         report["checks"]["P0_1347_Kobo_XTEST_prepare_cancel_zero_acquisition"] = True
         f["download_phase"] = "cancel-running"
         kobo_download_prepare_click()
