@@ -466,6 +466,16 @@ class SynchronizationBrokerImpl:
         )
         if type(identity_id) is not str or not identity_id:
             return SyncResult(False, facts={"reason": "identity_required"})
+        # A syntactically nonempty input is not proof of a configured
+        # identity. Do not report a false-success empty scheduled batch for
+        # an unknown profile or arbitrary credential-bearing string.
+        known = getattr(self.service, "identities", None)
+        if known is None:
+            known = getattr(self.service, "accounts", ())
+        if not any(
+            getattr(row, "identity_id", None) == identity_id for row in known
+        ):
+            return SyncResult(False, facts={"reason": "unknown_identity"})
         if type(trigger) is not str or trigger not in {"startup", "periodic"}:
             return SyncResult(False, facts={"reason": "invalid_trigger"})
         instant = datetime.now(timezone.utc) if now is None else now
