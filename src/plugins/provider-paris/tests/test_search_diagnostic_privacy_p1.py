@@ -47,7 +47,7 @@ def test_recovered_syracuse_retry_does_not_export_exception_message():
         for forbidden in ("PRIVATE_", "token=", "SIGNED_URL"):
             assert forbidden not in exported
         failure = diagnostic.rows[0]["args"][-1]
-        assert failure == {"error": "ParisError", "code": "service_unavailable"}
+        assert failure == {"error": "ParisError"}
         retry = next(
             row for row in diagnostic.rows
             if row["args"][:3] == ("CATALOG", "search EBOOKS fallback", "retry")
@@ -55,7 +55,6 @@ def test_recovered_syracuse_retry_does_not_export_exception_message():
         assert retry["kwargs"]["detail"] == {
             "result_size": 20,
             "error": "ParisError",
-            "code": "service_unavailable",
         }
     finally:
         client.close()
@@ -107,6 +106,6 @@ def test_history_cover_search_diagnostic_is_redacted_too():
         with pytest.raises(ParisError):
             client.search_catalog("titre")
         assert "PRIVATE_" not in repr(diagnostic.rows)
-        assert diagnostic.rows[0]["args"][-1]["code"] == "service_unavailable"
+        assert diagnostic.rows[0]["args"][-1] == {"error": "ParisError"}
     finally:
         client.close()
