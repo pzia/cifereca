@@ -118,3 +118,57 @@ def test_successful_personal_search_has_no_false_partial_warning():
         assert session.last_search_warnings == []
     finally:
         session.close()
+
+
+
+@pytest.mark.parametrize("status", (401, 403))
+def test_denied_private_search_discloses_public_only_partial_results(status):
+    session, paths = _case(library_status=status)
+    try:
+        results = session.search("book", scope="all", field="all")
+        assert paths == [
+            "/api/v2/catalog/search", "/api/v2/library/search",
+            "/api/v2/catalog/search",
+        ]
+        assert [row.record_id for row in results] == ["public-edition"]
+        assert results[0].owned is False
+        assert session.last_search_warnings == [
+            "partial_results : recherche personnelle refusée ; "
+            "catalogue public seulement",
+        ]
+
+        # A subsequent explicitly public query cannot retain the private
+        # denial of an unrelated search or misrepresent catalogue coverage.
+        paths.clear()
+        session.search("book", scope="catalog", field="all")
+        assert paths == ["/api/v2/catalog/search"]
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+def test_public_only_unbound_search_does_not_claim_personal_denial():
+    session, paths = _case(library_status=403)
+    try:
+        session.connected = False
+        results = session.search("book", scope="all", field="all")
+        assert [row.record_id for row in results] == ["public-edition"]
+        assert paths == ["/api/v2/catalog/search"]
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("status", (429, 503))
+def test_private_service_failures_are_not_downgraded_to_partial_success(status):
+    from cifereca_kobo_vault import KoboVaultError
+
+    session, paths = _case(library_status=status)
+    try:
+        with pytest.raises(KoboVaultError) as caught:
+            session.search("book", scope="all", field="all")
+        assert caught.value.status_code == status
+        assert paths == ["/api/v2/catalog/search", "/api/v2/library/search"]
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
