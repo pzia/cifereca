@@ -176,6 +176,14 @@ class EbooksSession(ProviderSession):
                 r=self.client.get(self.base_url+'ebooks.php',params=params); r.raise_for_status()
             except httpx.HTTPError as e: raise ProviderError('Ebooks libres et gratuits : recherche indisponible') from e
         elif field in {'all','title','titre'}:
+            if field == 'all' and str(query or '').strip():
+                # The upstream form sends the term as a titre selector. It
+                # does not attest a catalogue-wide author/subject search.
+                # Publish this limitation even when that title search has
+                # legitimately returned no rows.
+                self.last_search_warnings.append(
+                    'partial_results : recherche générale limitée au titre'
+                )
             if query or page:
                 try:
                     r=self.client.post(self.base_url+'ebooks.php',data=self._search_payload(query,page,self.page_size)); r.raise_for_status()
