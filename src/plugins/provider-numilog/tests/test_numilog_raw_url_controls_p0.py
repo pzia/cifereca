@@ -46,7 +46,7 @@ def test_raw_control_in_redirect_is_rejected_before_urljoin(unsafe):
     # A protocol-valid relative Location from the same trusted origin remains
     # allowed and does not gain permission to call a different host.
     assert checked_redirect(
-        READBOOK, "../readBook.ashx?lid=12", ALLOWED,
+        READBOOK, "./readBook.ashx?lid=12", ALLOWED,
     ) == READBOOK
 
 
