@@ -163,11 +163,17 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
                     and _item_id(row.get("item_id"), credential)):
                 acquired[str(row["item_id"])].append(row)
 
-        linked: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        # A content-addressed artifact may legitimately have placements
+        # for several identities, accounts or purchases. Only placements
+        # attested for this exact purchase can resolve its local copy.
+        linked: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
         for row in placements:
-            artifact_id = row.get("artifact_id")
-            if type(artifact_id) is str and artifact_id:
-                linked[artifact_id].append(row)
+            values = (
+                row.get("artifact_id"), row.get("identity_id"),
+                row.get("provider_id"), row.get("source_item_id"),
+            )
+            if all(type(value) is str and value for value in values):
+                linked[values].append(row)
         artifact_by_id = {
             row.get("artifact_id"): row for row in artifacts
             if type(row.get("artifact_id")) is str
@@ -207,7 +213,7 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
                 continue
 
             artifact_id = acquisition.get("artifact_id")
-            matched = linked.get(artifact_id, [])
+            matched = linked.get((artifact_id, identity, "numilog", item_id), [])
             artifact = artifact_by_id.get(artifact_id)
             if (type(artifact_id) is not str or len(matched) != 1
                     or not isinstance(artifact, dict)):
