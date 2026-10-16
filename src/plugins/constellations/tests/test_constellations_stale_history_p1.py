@@ -80,3 +80,40 @@ def test_disposed_history_callback_does_not_touch_identity_or_graph():
     View.move(view, -1)
     assert view.center is nodes[-1]
     assert events == []
+
+
+
+def test_graph_invalidated_before_reload_blocks_all_current_book_actions():
+    view, nodes, _, events = fixture()
+    view._nodes_identity = ""  # load() invalidated the graph authority
+    opens = []
+    view.host = NS(
+        open_book_detail=lambda *args, **kwargs: opens.append((args, kwargs)) or True,
+        toast=lambda msg: opens.append(("toast", msg)),
+    )
+    View.visit(view, nodes[0])
+    View.move(view, -1)
+    View.open_book(view)
+    assert view.center is nodes[-1]
+    assert view.nav.position == 2
+    assert opens == [] and events == []
+
+
+def test_book_open_rejects_stale_center_with_same_key_after_graph_reload():
+    view, nodes, _, events = fixture()
+    opens = []
+    view.host = NS(
+        open_book_detail=lambda *args, **kwargs: opens.append((args, kwargs)) or True,
+        toast=lambda msg: opens.append(("toast", msg)),
+    )
+    # A delayed button callback holds on to a replaced object. A key is
+    # insufficient to establish the library identity of an edition.
+    view.nodes = tuple(NS(key=node.key, book=node.book) for node in nodes)
+    assert view.nodes[-1].key == view.center.key
+    assert view.nodes[-1] is not view.center
+    View.open_book(view)
+    assert opens == [] and events == []
+    view.center = view.nodes[-1]
+    View.open_book(view)
+    assert len(opens) == 1
+    assert opens[0][1] == {"identity_id": "alice"}
