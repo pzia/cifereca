@@ -44,6 +44,7 @@ class DummyTool:
     def __init__(self):
         self.plan_calls = 0
         self.run_calls = 0
+        self.tool_id = "core.cache.cleanup"
         self.plan_started = threading.Event()
         self.version = 0
         self.delay = 0.65
@@ -53,10 +54,16 @@ class DummyTool:
         self.worker_threads = []
 
     def describe(self):
+        titles = {
+            "core.cache.cleanup": "Nettoyage test sans suppression",
+            "library.naming.repair": "Renormaliser les noms de fichiers",
+            "library.duplicates.cleanup": "Nettoyer les doublons physiques",
+        }
         return SimpleNamespace(
-            id="core.cache.cleanup",
-            title="Nettoyage test sans suppression", description="Simulation locale",
-            supports_dry_run=True, cancellable=True, scope="identity", danger_level="destructive",
+            id=self.tool_id,
+            title=titles[self.tool_id], description="Simulation locale",
+            supports_dry_run=True, cancellable=True, scope="identity",
+            danger_level="repair" if self.tool_id == "library.naming.repair" else "destructive",
             icon_name="edit-delete-symbolic",
         )
 
@@ -65,7 +72,7 @@ class DummyTool:
         self.plan_started.set()
         time.sleep(self.delay)  # an intentionally slow scan, never on GTK
         return SimpleNamespace(
-            tool_id="core.cache.cleanup",
+            tool_id=self.tool_id,
             summary="Aucune suppression réelle",
             changes=tuple(
                 f"fichier témoin simulé {i:02d} /chemin/long/vers/la/bibliothèque/romans/doublons/exemple.epub"
@@ -482,8 +489,45 @@ def main():
             assert tool.run_calls == 2
             report["checks"]["refresh_cancels_worker_and_discards_late_progress"] = True
             capture("04-refresh-discards-late-worker")
-            finish()
+            verify_p1_tool_rows()
         later(verify, 250)
+
+    # #1497/#1498: exercise the real GTK allocation and initial progress row
+    # with a fake service. All destructive operations remain completely inert.
+    p1_variants = [
+        ("library.naming.repair", "Renormaliser les noms de fichiers", "1497-naming"),
+        ("library.duplicates.cleanup", "Nettoyer les doublons physiques", "1498-duplicates"),
+    ]
+    p1_index = [0]
+
+    def verify_p1_tool_rows():
+        if p1_index[0] >= len(p1_variants):
+            finish()
+            return
+        tool_id, title, label = p1_variants[p1_index[0]]
+        tool.tool_id = tool_id
+        window[0]._refresh_tools_page()
+        later(verify_p1_allocation, 220)
+
+    def verify_p1_allocation():
+        tool_id, title, label = p1_variants[p1_index[0]]
+        row, status, spinner, bar = line_widgets()
+        assert row.get_title() == title, (tool_id, row.get_title())
+        assert row.get_mapped() and status.get_mapped()
+        assert row.get_width() > 0 and row.get_height() > 0
+        assert status.get_text() == "Au repos"
+        assert not spinner.get_visible() and not bar.get_visible()
+        assert tool.run_calls == 2, "P1 inspection must never execute a new tool"
+        report["checks"][f"P1_{label}_real_gtk_idle_line"] = True
+        report.setdefault("p1_tool_allocations", []).append({
+            "tool": tool_id, "row_width": row.get_width(),
+            "row_height": row.get_height(),
+            "status_width": status.get_width(),
+            "status_height": status.get_height(),
+        })
+        capture(f"05-p1-{label}-idle")
+        p1_index[0] += 1
+        verify_p1_tool_rows()
 
     def finish():
         report["status"] = "PASS"
