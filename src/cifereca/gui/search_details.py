@@ -80,7 +80,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
     item = self.search_objects.get(row.key)
     if not item: return
     self._selected_search_id = item.id
-    if (item.metadata or {}).get("search_provenance") == "known_catalog_stale":
+    if (getattr(item, "metadata", None) or {}).get("search_provenance") == "known_catalog_stale":
         # The stale catalogue is read-only evidence. Merely selecting it must
         # not start a holdings/authentication request to a provider in outage.
         self.search_page.detail.show_search(item, loading=False)
