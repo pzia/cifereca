@@ -115,9 +115,9 @@ def test_poisoned_values_are_filtered_and_just_visible_reasons_are_sent():
     reasons = (
         "Auteur commun",
         Poison(),
-        "PRIVATE\\nACCOUNT",
+        "PRIVATE" + chr(10) + "ACCOUNT",
         "Thème proche",
-        "PRIVATE\\u202eSECRET",
+        "PRIVATE" + chr(0x202e) + "SECRET",
         "Troisième motif",
         "Quatrième motif hors budget",
     )
