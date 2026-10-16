@@ -187,6 +187,18 @@ class SynchronizationBrokerImpl:
         # those values via the public SyncSourceRef or the GTK page.
         if state.get("error", "") not in _SYNC_PUBLIC_ERRORS:
             state["error"] = _SYNC_PUBLIC_FAILURE
+        # The legacy database also held free-form *status* and timestamps.
+        # Never relay a signed provider URL or private path under another
+        # public field merely because the error field was redacted.
+        if state.get("status", "") not in (
+            _SYNC_PUBLIC_STATUSES | {"", "idle", "running", "cancelled", "interrupted"}
+        ):
+            state["status"] = "unknown"
+        for name in ("last_attempt", "last_success"):
+            if name in state:
+                state[name] = self._safe_phase_timestamp(state[name])
+        if state.get("scope", "") not in {"", "manual", "opening", "scheduled"}:
+            state["scope"] = ""
         if legacy:
             self._set_state(source_id, state)
         return state
