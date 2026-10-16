@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderCapabilities,
-    ProviderCapabilityError, ProviderConfigurationError, ProviderDescriptor, ProviderError,
+    ProviderCapabilityError, ProviderConfigurationError, ProviderDescriptor, ProviderSearchCapabilities, ProviderError,
     ProviderPlugin, ProviderSession, SearchResult, inspect_artifact, publish_artifact_file)
 from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionError,
     OwnedDelivery, parse_library, parse_library_page, delivery_url, public_book_url,
@@ -25,13 +25,22 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.20'
+VERSION = '0.1.21'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
         search=True,holdings=True,personal_library=True,direct_download=True),
+    search_capabilities=ProviderSearchCapabilities(
+        fields=('all','title'), scopes=('all','digital','catalog'),
+        pagination='page', page_size=50,
+        notes=(
+            'scope=catalog : recherche anonyme brSimple, champ all seulement, pages de 20 observées dans la fixture ; aucun droit de possession.',
+            'scopes all/digital : recherche historique limitée aux titres achetés ; title est un post-filtre local, pas un filtre serveur public.',
+            'La recherche publique HTTP reste à qualifier en conditions réelles ; la fédération par défaut ne la déclenche pas encore.',
+        ),
+    ),
     credential_fields=(CredentialField('email','Adresse email Numilog'),CredentialField('password','Mot de passe Numilog',secret=True)),
-    homepage=BASE,notes=('Recherche limitée aux titres possédés. Achats sur numilog.com.',
+    homepage=BASE,notes=('Recherche habituelle dans Mes achats ; scope=catalog active la recherche publique anonyme brSimple, sans acquisition.',
         'EPUB direct et Adobe ACSM via le broker public d’acquisition ; LCP, PDF et audio non qualifiés.'))
 
 ALLOWED = {'www.numilog.com','services.numilog.com','www.edenlivres.fr','storage.googleapis.com'}
@@ -345,7 +354,20 @@ class NumilogSession(ProviderSession):
             self._diag('bibliothèque',items=len(rows))
             return [self._normalize(row) for row in rows]
 
+    def search_public(self, query, *, page=0, field='all'):
+        """Explicit public-catalogue lookup with no private-session I/O.
+
+        The brSimple HTML fixture only proves general text search; no native
+        author/ISBN field mode is claimed. Public rows never prove ownership.
+        """
+        from cifereca_numilog_public_client import fetch_public_search
+        return list(fetch_public_search(query, page=page, field=field).items)
+
     def search(self,query,scope='all',page=0,field='all'):
+        if scope == 'catalog':
+            # Strictly separate public commercial results from purchased books.
+            # No _rows(), authentication cookies, or ACSM acquisition here.
+            return self.search_public(query, page=page, field=field)
         if field not in {'all','title','titre'}:
             raise ProviderCapabilityError('Numilog : recherche par titre uniquement dans cette version')
         if scope not in {'all','digital'}:
