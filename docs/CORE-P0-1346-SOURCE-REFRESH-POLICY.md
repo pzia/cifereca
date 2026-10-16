@@ -37,3 +37,33 @@ autorisée par le broker, ordonnanceur effectif + anti-concurrence,
 adaptation des réglages CoreUI, migration/dépréciation des anciens réglages
 globaux **sans autoriser de nouvelles acquisitions implicites**.
 Les tests ici n'établissent ni exécution d'un timer, ni recette utilisateur.
+
+
+## Tranche broker CORE (#1963)
+
+Le protocole public optionnel `SourceInventoryRefreshScheduleBroker` rend
+désormais configurables les modes `manual`, `on_start` et `periodic` pour
+la **découverte/droits Kobo** uniquement, indépendamment de
+`SourceMaterializationScheduleBroker` (acquisition). Les méthodes sont :
+
+- `inventory_refresh_schedule(source_id)` : lecture passive, mode manuel implicite.
+- `set_inventory_refresh_schedule(source_id, mode, interval_minutes=60)` :
+  opt-in explicite et rattachement strict `identité/Kobo/credential`.
+- `synchronize_scheduled_inventory(identity_id, trigger)` : dispatch borné
+  uniquement pour un déclencheur externe `startup` ou `periodic`, en passant
+  par `synchronize_source` avec `SyncRequest` strictement ciblé.
+
+Une source désactivée, déconnectée, dupliquée ou rebindée n'est pas éligible ;
+le mode `manual` reste réversible même si la source a été déconnectée.
+La dernière tentative est utilisée pour le backoff, y compris après échec.
+Un contrôle singleflight bloque les demandes simultanées sur **un broker**
+et le stockage persistant limite les demandes rapprochées après recréation
+du broker. **Aucun verrou distribué inter-processus n'est revendiqué.**
+
+**Non livré par cette tranche** : installation d'un timer GTK, appel automatique
+au démarrage de l'application, coordination avec les cycles historiques d'ouverture,
+et acquisition programmée. Un mode persisté `periodic` ne signifie pas qu'un
+timer est effectivement actif tant que l'ordonnanceur n'est pas raccordé.
+L'implémentation `synchronize_source` conserve provisoirement sa valeur
+historique `scope=manual`, même lors d'un dispatch explicite planifié ;
+le résumé de dispatch porte `trigger` et `phase=discover_rights`.
