@@ -460,3 +460,43 @@ def test_artifact_identifier_must_match_verified_digest(tmp_path):
         assert calls == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("media_format,kind,expected_verified", [
+    ("acsm", "file", False),
+    ("html", "file", False),
+    ("unknown", "file", False),
+    ("epub", "bundle", False),
+    ("epub", "file", True),
+    ("pdf", "file", True),
+    ("EPUB", "file", True),
+])
+def test_non_book_artifacts_are_not_proven_numilog_backup(
+    tmp_path, media_format, kind, expected_verified,
+):
+    """A signed ACSM or a bundle with a good hash is not a local ebook."""
+    service = _service(tmp_path)
+    try:
+        account, session, calls = _connect(service, number=0)
+        item, entitlement_id = _owned(service, account)
+        path = _ledger(service, account, item, entitlement_id)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        service.storage.artifact_put({
+            "artifact_id": "sha256:" + digest,
+            "sha256": digest, "size": path.stat().st_size,
+            "media_format": media_format, "kind": kind,
+        })
+        session.library = lambda: pytest.fail("offline preview must not fetch")
+        session.download_direct = lambda *_a: pytest.fail("preview must not acquire")
+        broker, sid = _broker(service, account)
+        result = _preview(broker, sid, verify=True)
+        assert result.ok and result.changed == 0
+        counts = result.facts["counts"]
+        assert counts["owned_purchases"] == 1
+        assert counts["already_local_verified"] == int(expected_verified)
+        assert counts["needs_reconciliation"] == int(not expected_verified)
+        assert counts["potentially_missing"] == 0
+        assert result.facts["acquisition_authorized"] is False
+        assert calls == []
+    finally:
+        service.close()
