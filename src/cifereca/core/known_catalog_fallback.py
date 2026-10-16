@@ -50,7 +50,12 @@ def known_public_fallback(
         return ()
     current = int(time.time()) if now is None else int(now)
     try:
-        entries = storage.catalog_entries()
+        # Apply exact identity/provider scope in SQLite before the read budget.
+        # Other users' catalogues cannot starve a small source's local fallback.
+        entries = storage.catalog_entries(
+            identity_id=identity_id, provider_id=provider_id,
+            limit=_MAX_CATALOG_ROWS + 1,
+        )
         if len(entries) > _MAX_CATALOG_ROWS:
             return ()
     except Exception:
