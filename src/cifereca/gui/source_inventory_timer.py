@@ -89,10 +89,38 @@ def periodic_identities_due(
                 policy = _policy(broker.inventory_refresh_schedule(sid))
                 if policy is None:
                     continue
+                # The source-level clock is shared with opening/loan sync.
+                # Only discover_rights phase evidence may throttle a Kobo
+                # inventory refresh. Legacy test/dummy brokers without phase
+                # states keep their original passive source projection.
+                phase_rows = getattr(source, "phase_states", ())
+                if phase_rows:
+                    if not isinstance(phase_rows, (tuple, list)) or len(phase_rows) > 8:
+                        continue
+                    matches = [
+                        phase for phase in phase_rows
+                        if getattr(phase, "phase", None) == "discover_rights"
+                    ]
+                    if len(matches) != 1:
+                        continue
+                    last_inventory_attempt = getattr(matches[0], "last_attempt", None)
+                    inventory_status = getattr(matches[0], "status", None)
+                    if (
+                        type(last_inventory_attempt) is not str
+                        or inventory_status not in {
+                            "idle", "running", "success", "partial", "failed",
+                        }
+                    ):
+                        continue
+                else:
+                    last_inventory_attempt = getattr(source, "last_attempt", "")
+                    inventory_status = getattr(source, "status", "idle")
+                if getattr(source, "status", None) == "running":
+                    inventory_status = "running"
                 if source_refresh_due(
                     policy, trigger="periodic", now=instant,
-                    last_attempt=getattr(source, "last_attempt", ""),
-                    phase_status=getattr(source, "status", "idle"),
+                    last_attempt=last_inventory_attempt,
+                    phase_status=inventory_status,
                     enabled=getattr(source, "enabled", None),
                     connected=getattr(source, "connected", None),
                     capable=True,
