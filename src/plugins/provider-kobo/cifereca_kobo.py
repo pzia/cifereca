@@ -395,7 +395,10 @@ class KoboSession(ProviderSession):
             and _strict_account_scope(self._accounts[0].unique_id)
             else None
         )
-        options = {"field": field, "limit": 50, "page": page}
+        # Only the canonical all-field is advertised. A caller may use a
+        # case-insensitive spelling; never forward its unnormalized variant
+        # to Vault where it could be interpreted as a different field.
+        options = {"field": "all", "limit": 50, "page": page}
         if account_id is None or scope == "catalog":
             options["scope"] = "catalog"
         # Core reads this stable warning channel to distinguish a public-only
