@@ -1211,6 +1211,9 @@ def main() -> int:
         f["materialize_calls"] = []
         f["download_release"] = Event()
         f["download_started"] = Event()
+        f["cancel_worker_entered"] = Event()
+        f["cancel_worker_woke"] = Event()
+        f["cancel_worker_returning"] = Event()
         def prepare_materialization(source_id):
             assert source_id == "p0-kobo-target-2", "Préparation sur un autre compte"
             f["prepare_calls"].append(source_id)
@@ -1232,9 +1235,15 @@ def main() -> int:
             assert token == f"{len(f['prepare_calls']):064x}"
             f["materialize_calls"].append(source_id)
             if len(f["materialize_calls"]) == 1:
+                # Cross-thread milestones are intentionally enumerated and
+                # contain no account names, paths, tokens or provider data.
+                f["cancel_worker_entered"].set()
                 f["download_started"].set()
-                assert f["download_release"].wait(10), "Annulation GTK absente"
+                was_released = f["download_release"].wait(10)
+                f["cancel_worker_woke"].set()
+                assert was_released, "Annulation GTK absente"
                 assert control.cancelled(), "Le contrôle n'a pas reçu l'annulation"
+                f["cancel_worker_returning"].set()
                 return NS(ok=False, changed=1, facts={"status": "cancelled"})
             assert not control.cancelled()
             return NS(ok=True, changed=1, facts={"status": "success"})
@@ -1686,14 +1695,29 @@ def main() -> int:
         # Otherwise a slow 1600px layout can time out before GTK processes
         # the worker's terminal result, without actually failing acquisition.
         f["download_release"].set()
-        f["download_deadline"] = monotonic() + 6
+        # A worker has its own strict 10-second wait for the cancellation
+        # event. Allow that bound plus GTK delivery on loaded CI runners;
+        # never declare cancellation without the actual terminal receipt.
+        f["download_deadline"] = monotonic() + 12
         later(120, kobo_download_cancelled)
 
     def kobo_download_cancelled():
         f = loan_sync_fixture
         subtitle = f["download_row"].get_subtitle()
         if not subtitle.startswith("Annulé ·"):
-            assert monotonic() < f["download_deadline"], "Résultat annulé absent"
+            # Explain whether the release event failed, the fake worker did
+            # not return, or TaskRunner/GTK has not rendered completion.
+            # The assertion is intentionally retained and remains fatal.
+            evidence = {
+                "release_set": f["download_release"].is_set(),
+                "worker_entered": f["cancel_worker_entered"].is_set(),
+                "worker_woke": f["cancel_worker_woke"].is_set(),
+                "worker_returning": f["cancel_worker_returning"].is_set(),
+                "task_active": bool(getattr(window[0].runner, "_count", 0)),
+            }
+            assert monotonic() < f["download_deadline"], (
+                f"Résultat annulé absent · {evidence}"
+            )
             later(100, kobo_download_cancelled)
             return
         assert "1 fichier(s) acquis durablement" in subtitle
