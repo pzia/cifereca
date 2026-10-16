@@ -94,9 +94,11 @@ def _identity_root(service: Any, identity_id: str) -> tuple[Path, ...] | None:
         configured = service.config.get("library.directory", "~/EBooks")
         if type(configured) is not str or not configured.strip():
             return None
-        root = Path(os.path.abspath(os.path.expandvars(os.path.expanduser(configured))))
-        if not root.is_absolute():
-            return None
+        configured_path = Path(os.path.expandvars(os.path.expanduser(configured)))
+        if not configured_path.is_absolute():
+            # Match LibraryService.library_dir() without creating directories.
+            configured_path = Path.home() / configured_path
+        root = Path(os.path.abspath(configured_path))
         return (root / dirname,)
     except Exception:
         return None
