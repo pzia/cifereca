@@ -288,7 +288,13 @@ def main():
         errors.clear()
         tool.plan_started.clear()
         physical(preview_button[0])
-        until(lambda: tool.plan_started.is_set(), preview_pending)
+        # The worker event is raised off-thread before GLib has necessarily
+        # delivered the row's queued "Analyse…" state. Wait for both
+        # independent observations, without weakening the busy/spinner check.
+        until(
+            lambda: tool.plan_started.is_set() and line_is("Analyse…"),
+            preview_pending,
+        )
 
     def heartbeat_tick():
         heartbeat[0] += 1
