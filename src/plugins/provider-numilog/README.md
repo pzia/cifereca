@@ -138,3 +138,35 @@ repli à une recherche publique indisponible.
 **Limite de preuve** : aucune réponse HTTP anonyme réussie ni qualification
 robots/CGU n'a été établie à ce stade. La mise en service réelle reste
 conditionnée à cette vérification ; les tests sont déterministes et hors réseau.
+
+## Enrichissement explicite des achats par carte publique (#1072, 0.1.23)
+
+`NumilogSession.enrich_owned_public_listing(owned_item)` est une opération
+**opt-in** : elle vérifie l'identité du compte et retrouve une ligne
+`MesLivres` **fraîche** sans charger les preuves signées de livraison. Une
+unique recherche anonyme `brSimple` sur le titre de la ligne sert à **trouver
+des candidats seulement** ; l'édition n'est confirmée que si l'URL canonique
+du produit figure explicitement dans la carte possédée **et correspond
+exactement** à l'URL d'un résultat public dont l'ID produit, le namespace,
+le statut non possédé et la provenance HTML concordent. Un titre identique,
+un ID `lid`, une couverture ou un ISBN papier ne suffisent jamais.
+
+La méthode retourne une nouvelle notice `SearchResult` reconstruite
+depuis la ligne achetée ; elle ne modifie pas le résultat fourni par l'appelant.
+Elle peut compléter auteur, éditeur, date, résumé-extrait, couverture et
+collection commerciale s'ils sont attestés par la carte publique ; le prix
+courant reste exclusivement `metadata.public_offer_price` avec preuve.
+**Ce prix n'est jamais déclaré prix d'achat historique.** Ni format possédé,
+ni ISBN numérique, ni DRM, ni âge n'est déduit de cette carte multi-formats.
+La provenance est consignée sous `metadata.public_enrichment`.
+
+L'opération n'est **pas** appelée automatiquement par `search()`,
+`library()`, `holdings()`, la synchronisation ou le rendu des listes :
+aucun N+1, aucune acquisition ni récupération ACSM. Elle se limite à
+**une page** publique : absence de correspondance ≠ absence du livre au
+catalogue complet. 403/429, erreur réseau et structure changée sont
+des erreurs publiques typées, sans repli sur le client authentifié.
+
+Reste à livrer : action UI explicite, fiche produit HTML réellement
+qualifiée, ISBN numérique/PDF distingué, cache et politique TTL vérifiés,
+puis recette réelle autorisée. Ce jalon ne clôture pas #1072.
