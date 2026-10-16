@@ -1,0 +1,1501 @@
+{
+  "schema": "numilog.public_search.fixture/1",
+  "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+  "qualified_on": "2026-10-16",
+  "capture_timestamp": null,
+  "live_response_verified": false,
+  "anonymous_access_verified": false,
+  "total_results_label": "242",
+  "current_page_label": "1",
+  "pagination_links": [
+    {
+      "label": "2",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&GRID_PAGE=1",
+      "GRID_PAGE": "1"
+    },
+    {
+      "label": "3",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&GRID_PAGE=2",
+      "GRID_PAGE": "2"
+    },
+    {
+      "label": ">",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&GRID_PAGE=1",
+      "GRID_PAGE": "1"
+    }
+  ],
+  "facets": [
+    {
+      "label": "Bandes dessinées (4)",
+      "parameter": "fltrTheme",
+      "value": "500124",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500124"
+    },
+    {
+      "label": "Humour (1)",
+      "parameter": "fltrTheme",
+      "value": "507627",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=507627"
+    },
+    {
+      "label": "Classiques (2)",
+      "parameter": "fltrTheme",
+      "value": "500156",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500156"
+    },
+    {
+      "label": "Erotisme (1)",
+      "parameter": "fltrTheme",
+      "value": "500018",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500018"
+    },
+    {
+      "label": "Jeunesse (4)",
+      "parameter": "fltrTheme",
+      "value": "500128",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500128"
+    },
+    {
+      "label": "Romans Young Adult (2)",
+      "parameter": "fltrTheme",
+      "value": "508244",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=508244"
+    },
+    {
+      "label": "Littérature sentimentale (4)",
+      "parameter": "fltrTheme",
+      "value": "503698",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=503698"
+    },
+    {
+      "label": "Comédie romantique (1)",
+      "parameter": "fltrTheme",
+      "value": "508243",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=508243"
+    },
+    {
+      "label": "Romance historique (1)",
+      "parameter": "fltrTheme",
+      "value": "508241",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=508241"
+    },
+    {
+      "label": "Mémoires et Biographies (5)",
+      "parameter": "fltrTheme",
+      "value": "500129",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500129"
+    },
+    {
+      "label": "Policier et Thriller (2)",
+      "parameter": "fltrTheme",
+      "value": "500131",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500131"
+    },
+    {
+      "label": "Romans et Nouvelles (5)",
+      "parameter": "fltrTheme",
+      "value": "500132",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500132"
+    },
+    {
+      "label": "Littérature étrangère (1)",
+      "parameter": "fltrTheme",
+      "value": "500154",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500154"
+    },
+    {
+      "label": "Littérature francophone (3)",
+      "parameter": "fltrTheme",
+      "value": "500155",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500155"
+    },
+    {
+      "label": "Bien-être et développement personnel (2)",
+      "parameter": "fltrTheme",
+      "value": "500135",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500135"
+    },
+    {
+      "label": "Histoire (1)",
+      "parameter": "fltrTheme",
+      "value": "500194",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500194"
+    },
+    {
+      "label": "Histoire du Monde (1)",
+      "parameter": "fltrTheme",
+      "value": "500198",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500198"
+    },
+    {
+      "label": "Lettres (2)",
+      "parameter": "fltrTheme",
+      "value": "500150",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500150"
+    },
+    {
+      "label": "Philosophie (4)",
+      "parameter": "fltrTheme",
+      "value": "500268",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500268"
+    },
+    {
+      "label": "Science politique (1)",
+      "parameter": "fltrTheme",
+      "value": "500267",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrTheme=500267"
+    },
+    {
+      "label": "Moins de 5,00 € (114)",
+      "parameter": "fltrPrice",
+      "value": "0",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPrice=0"
+    },
+    {
+      "label": "De 5,00 € à 10,00 € (18)",
+      "parameter": "fltrPrice",
+      "value": "5",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPrice=5"
+    },
+    {
+      "label": "De 10,00 € à 15,00 € (15)",
+      "parameter": "fltrPrice",
+      "value": "10",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPrice=10"
+    },
+    {
+      "label": "De 15,00 € à 20,00 € (9)",
+      "parameter": "fltrPrice",
+      "value": "15",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPrice=15"
+    },
+    {
+      "label": "De 20,00 € à 25,00 € (7)",
+      "parameter": "fltrPrice",
+      "value": "20",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPrice=20"
+    },
+    {
+      "label": "De 25,00 € à 30,00 € (7)",
+      "parameter": "fltrPrice",
+      "value": "25",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPrice=25"
+    },
+    {
+      "label": "De 30,00 € à 35,00 € (6)",
+      "parameter": "fltrPrice",
+      "value": "30",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPrice=30"
+    },
+    {
+      "label": "De 35,00 € à 40,00 € (9)",
+      "parameter": "fltrPrice",
+      "value": "35",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPrice=35"
+    },
+    {
+      "label": "Plus de 40,00 € (57)",
+      "parameter": "fltrPrice",
+      "value": "40",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPrice=40"
+    },
+    {
+      "label": "Français (46)",
+      "parameter": "fltrLang",
+      "value": "fr",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrLang=fr"
+    },
+    {
+      "label": "Anglais (195)",
+      "parameter": "fltrLang",
+      "value": "english",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrLang=english"
+    },
+    {
+      "label": "Espagnol (1)",
+      "parameter": "fltrLang",
+      "value": "es",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrLang=es"
+    },
+    {
+      "label": "12-21 (1)",
+      "parameter": "fltrPub",
+      "value": "12-21",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPub=12-21"
+    },
+    {
+      "label": "50Minutes.com (1)",
+      "parameter": "fltrPub",
+      "value": "50Minutes.com",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPub=50Minutes.com"
+    },
+    {
+      "label": "50Minutes.fr (1)",
+      "parameter": "fltrPub",
+      "value": "50Minutes.fr",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPub=50Minutes.fr"
+    },
+    {
+      "label": "50Minutos.es (1)",
+      "parameter": "fltrPub",
+      "value": "50Minutos.es",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPub=50Minutos.es"
+    },
+    {
+      "label": "Academic Press (8)",
+      "parameter": "fltrPub",
+      "value": "Academic+Press",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPub=Academic%2bPress"
+    },
+    {
+      "label": "Aeneas Press (1)",
+      "parameter": "fltrPub",
+      "value": "Aeneas+Press",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPub=Aeneas%2bPress"
+    },
+    {
+      "label": "anboco (3)",
+      "parameter": "fltrPub",
+      "value": "anboco",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPub=anboco"
+    },
+    {
+      "label": "Ancient Chapters (2)",
+      "parameter": "fltrPub",
+      "value": "Ancient+Chapters",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPub=Ancient%2bChapters"
+    },
+    {
+      "label": "Anderson (1)",
+      "parameter": "fltrPub",
+      "value": "Anderson",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPub=Anderson"
+    },
+    {
+      "label": "Andrii Ponomarenko (12)",
+      "parameter": "fltrPub",
+      "value": "Andrii+Ponomarenko",
+      "url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson&fltrPub=Andrii%2bPonomarenko"
+    }
+  ],
+  "sort_options": [
+    {
+      "value": "RANK",
+      "label": "Trier par pertinence"
+    },
+    {
+      "value": "Date Parution desc",
+      "label": "Les plus récents"
+    },
+    {
+      "value": "Price asc",
+      "label": "Prix : Croissant"
+    },
+    {
+      "value": "TITRE asc",
+      "label": "Titre de A à Z"
+    },
+    {
+      "value": "AUTEUR asc",
+      "label": "Auteur de A à Z"
+    }
+  ],
+  "items": [
+    {
+      "rank": 1,
+      "source_item_id": "1958476",
+      "title": "Jefferson prend des risques",
+      "authors": [
+        "Jean-Claude Mourlevat"
+      ],
+      "publisher": "Gallimard Jeunesse",
+      "collection": "Romans Junior",
+      "published_at": "2026-10-08",
+      "summary": "On frissonne, on s’émeut, on rit, dans les irrésistibles polars animaliers de Jean-Claude Mourlevat, lauréat du prix Astrid Lindgren. Le hérisson n’a pas froid aux yeux ! Une nuit, au pays des animaux, Jefferson est réveillé par la sonnerie de son téléphone. « Au...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1958476/jefferson-prend-des-risques.ebook",
+      "cover_url": "https://couverture.numilog.com/9782075241939_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "9.99",
+          "minor_units": 999,
+          "currency": "EUR",
+          "display_reconstructed": "9,99 €",
+          "raw_parts": [
+            "9",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF",
+          "ePub"
+        ],
+        "selected_format_label": null,
+        "format_options": [
+          {
+            "label": "PDF",
+            "formatid_raw": "3",
+            "availablelcp_raw": "1"
+          },
+          {
+            "label": "ePub",
+            "formatid_raw": "14",
+            "availablelcp_raw": "1"
+          }
+        ],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Jefferson prend des risques",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 2,
+      "source_item_id": "1890322",
+      "title": "Jefferson (Tome 2) - Jefferson fait de son mieux",
+      "authors": [
+        "Jean-Claude Mourlevat",
+        "Antoine Ronzon"
+      ],
+      "publisher": "Éditions Gallimard BD",
+      "collection": "Fétiche",
+      "published_at": "2026-05-27",
+      "summary": "Nouvelle enquête au pays des animaux ! Quatre ans après leur mémorable expédition au pays des humains, le hérisson Jefferson et le cochon Gilbert découvrent que Simone, la lapine dépressive, s'est mystérieusement volatilisée. Les deux amis décident de mener l'enquête...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1890322/jefferson-tome-2--jefferson-fait-de-son-mieux.ebook",
+      "cover_url": "https://couverture.numilog.com/9782075242028_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "13.99",
+          "minor_units": 1399,
+          "currency": "EUR",
+          "display_reconstructed": "13,99 €",
+          "raw_parts": [
+            "13",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF"
+        ],
+        "selected_format_label": "PDF",
+        "format_options": [],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Jefferson (Tome 2) - Jefferson fait de son mieux",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 3,
+      "source_item_id": "1864213",
+      "title": "Jefferson (Tome 2) - Jefferson fait de son mieux",
+      "authors": [
+        "Jean-Claude Mourlevat",
+        "Antoine Ronzon"
+      ],
+      "publisher": "Éditions Gallimard BD",
+      "collection": "Fétiche",
+      "published_at": "2026-05-27",
+      "summary": "Nouvelle enquête au pays des animaux ! Quatre ans après leur mémorable expédition au pays des humains, le hérisson Jefferson et le cochon Gilbert découvrent que Simone, la lapine dépressive, s'est mystérieusement volatilisée. Les deux amis décident de mener l'enquête...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1864213/jefferson-tome-2--jefferson-fait-de-son-mieux.ebook",
+      "cover_url": "https://couverture.numilog.com/9782075242028_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "13.99",
+          "minor_units": 1399,
+          "currency": "EUR",
+          "display_reconstructed": "13,99 €",
+          "raw_parts": [
+            "13",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "ePub"
+        ],
+        "selected_format_label": "ePub",
+        "format_options": [],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Jefferson (Tome 2) - Jefferson fait de son mieux",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 4,
+      "source_item_id": "1875232",
+      "title": "Thomas Jefferson, la Nature, l'individu et la liberté",
+      "authors": [
+        "David Bergeron"
+      ],
+      "publisher": "Hermann",
+      "collection": "HORS COLLECTION",
+      "published_at": "2026-06-24",
+      "summary": "Thomas Jefferson (1743-1826) est un acteur politique de premier plan. Principal auteur de la Déclaration d’Indépendance des États-Unis d’Amérique (1776) et troisième président de l’Union (1801-1809), il est une figure incontournable de l’histoire américaine. Bien que...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1875232/thomas-jefferson-la-nature-l-individu-et-la-liberte.ebook",
+      "cover_url": "https://couverture.numilog.com/9791037047786_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "23.99",
+          "minor_units": 2399,
+          "currency": "EUR",
+          "display_reconstructed": "23,99 €",
+          "raw_parts": [
+            "23",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF"
+        ],
+        "selected_format_label": "PDF",
+        "format_options": [],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Thomas Jefferson, la Nature, l'individu et la liberté",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 5,
+      "source_item_id": "1293183",
+      "title": "Jefferson",
+      "authors": [
+        "Lisa D'andrea",
+        "Jean-Claude Mourlevat",
+        "Antoine Ronzon"
+      ],
+      "publisher": "Gallimard Jeunesse",
+      "collection": null,
+      "published_at": "2021-03-18",
+      "summary": "Venu se faire rafraîchir la houppette au salon Défini-Tif, le hérisson Jefferson découvre l'horreur: M. Edgard, son coiffeur, gît sur le sol, assassiné. Aussitôt accusé du crime, Jefferson est contraint de se cacher, avec l'aide de son meilleur ami, le cochon Gilbert....",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1293183/jefferson.ebook",
+      "cover_url": "https://couverture.numilog.com/9782075155441_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "6.49",
+          "minor_units": 649,
+          "currency": "EUR",
+          "display_reconstructed": "6,49 €",
+          "raw_parts": [
+            "6",
+            "49",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF",
+          "ePub"
+        ],
+        "selected_format_label": null,
+        "format_options": [
+          {
+            "label": "PDF",
+            "formatid_raw": "3",
+            "availablelcp_raw": "1"
+          },
+          {
+            "label": "ePub",
+            "formatid_raw": "14",
+            "availablelcp_raw": "1"
+          }
+        ],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Jefferson",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 6,
+      "source_item_id": "771088",
+      "title": "Jefferson",
+      "authors": [
+        "John B. Boles"
+      ],
+      "publisher": "Basic Books",
+      "collection": null,
+      "published_at": "2017-04-25",
+      "summary": "From an eminent scholar of the American South, the first full-scale biography of Thomas Jefferson since 1970 Not since Merrill Peterson's Thomas Jefferson and the New Nation has a scholar attempted to write a comprehensive biography of the most complex Founding Father....",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/771088/jefferson.ebook",
+      "cover_url": "https://couverture.numilog.com/9780465094684_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "16.99",
+          "minor_units": 1699,
+          "currency": "EUR",
+          "display_reconstructed": "16,99 €",
+          "raw_parts": [
+            "16",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "ePub"
+        ],
+        "selected_format_label": "ePub",
+        "format_options": [],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Jefferson",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 7,
+      "source_item_id": "1683489",
+      "title": "Jefferson se fâche",
+      "authors": [
+        "Jean-Claude Mourlevat"
+      ],
+      "publisher": "Gallimard Jeunesse",
+      "collection": "Folio Junior",
+      "published_at": "2024-10-10",
+      "summary": "Une nouvelle aventure de Jefferson, qui mêle humour, amitié, et une bonne dose de courage. Le lauréat du prix Astrid Lindgren 2021 signe ici une merveille d’intelligence et de tendresse. Ce matin-là, le pays des animaux est sous la neige. Alors qu’il aide le cochon...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1683489/jefferson-se-fache.ebook",
+      "cover_url": "https://couverture.numilog.com/9782075214261_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "7.49",
+          "minor_units": 749,
+          "currency": "EUR",
+          "display_reconstructed": "7,49 €",
+          "raw_parts": [
+            "7",
+            "49",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF",
+          "ePub"
+        ],
+        "selected_format_label": null,
+        "format_options": [
+          {
+            "label": "PDF",
+            "formatid_raw": "3",
+            "availablelcp_raw": "1"
+          },
+          {
+            "label": "ePub",
+            "formatid_raw": "14",
+            "availablelcp_raw": "1"
+          }
+        ],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Jefferson se fâche",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 8,
+      "source_item_id": "140636",
+      "title": "Le Code Jefferson",
+      "authors": [
+        "Steve Berry",
+        "Danièle Mazingarbe"
+      ],
+      "publisher": "Cherche Midi",
+      "collection": "Thriller",
+      "published_at": "2012-10-04",
+      "summary": "Complot américain pour Cotton Malone.Complot américain pour Cotton Malone. Lincoln (1865), Garfield (1881), McKinley (1901), et Kennedy (1963) : quatre présidents américains, quatre assassinats a priori sans rapport aucun, et pourtant... Afin de venir en aide à une de...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/140636/le-code-jefferson.ebook",
+      "cover_url": "https://couverture.numilog.com/9782749124766_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "13.99",
+          "minor_units": 1399,
+          "currency": "EUR",
+          "display_reconstructed": "13,99 €",
+          "raw_parts": [
+            "13",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "epub sans DRM"
+        ],
+        "selected_format_label": "epub sans DRM",
+        "format_options": [],
+        "drm_label": "sans DRM",
+        "title_attribute": "\nTélécharger le livre : Le Code Jefferson",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 9,
+      "source_item_id": "1007533",
+      "title": "Jefferson Blythe",
+      "authors": [
+        "Dale Cooper",
+        "Josh Lanyon"
+      ],
+      "publisher": "MxM Bookmark",
+      "collection": "Suspense",
+      "published_at": "2019-01-14",
+      "summary": "Après une rupture particulièrement désastreuse, Jeff Blythe se sert de ses économies pour faire le tour de l’Europe, à l’ancienne. Armé d’un guide touristique illustré et satirique édité en 1960 ayant appartenu à son grand-père, lui qui partait en quête d’aventure se...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1007533/jefferson-blythe.ebook",
+      "cover_url": "https://couverture.numilog.com/9782375746196_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "6.99",
+          "minor_units": 699,
+          "currency": "EUR",
+          "display_reconstructed": "6,99 €",
+          "raw_parts": [
+            "6",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "epub sans DRM"
+        ],
+        "selected_format_label": "epub sans DRM",
+        "format_options": [],
+        "drm_label": "sans DRM",
+        "title_attribute": "\nTélécharger le livre : Jefferson Blythe",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 10,
+      "source_item_id": "1708575",
+      "title": "Thomas Jefferson",
+      "authors": [
+        "Laurent Zecchini"
+      ],
+      "publisher": "Perrin",
+      "collection": "Perrin biographie",
+      "published_at": "2025-01-23",
+      "summary": "Le troisième président des États-Unis, l'un des plus grands de leur histoire. Peu de présidents américains ont marqué aussi profondément l'histoire des États-Unis que Thomas Jefferson (1743-1826). Peu méritent, par leur hauteur de vues, le qualificatif d'homme d'État...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1708575/thomas-jefferson.ebook",
+      "cover_url": "https://couverture.numilog.com/9782262097677_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "15.99",
+          "minor_units": 1599,
+          "currency": "EUR",
+          "display_reconstructed": "15,99 €",
+          "raw_parts": [
+            "15",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "epub sans DRM"
+        ],
+        "selected_format_label": "epub sans DRM",
+        "format_options": [],
+        "drm_label": "sans DRM",
+        "title_attribute": "\nTélécharger le livre : Thomas Jefferson",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 11,
+      "source_item_id": "1659403",
+      "title": "Thomas Jefferson",
+      "authors": [
+        "Mark Andrew Holowchak"
+      ],
+      "publisher": "Peter Lang Inc., International Academic Publishers",
+      "collection": null,
+      "published_at": "2024-06-28",
+      "summary": "Described by Thomas Jefferson as \"the most sublime of nature’s works,\" the Natural Bridge is a 215-foot limestone arch in Rockbridge County, Virginia, carved out over millennia by Cedar Creek. Jefferson acquired the bridge in 1774 and, for the rest of his long life,...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1659403/thomas-jefferson.ebook",
+      "cover_url": "https://couverture.numilog.com/9781636671147_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "40.41",
+          "minor_units": 4041,
+          "currency": "EUR",
+          "display_reconstructed": "40,41 €",
+          "raw_parts": [
+            "40",
+            "41",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF",
+          "ePub"
+        ],
+        "selected_format_label": null,
+        "format_options": [
+          {
+            "label": "PDF",
+            "formatid_raw": "3",
+            "availablelcp_raw": "1"
+          },
+          {
+            "label": "ePub",
+            "formatid_raw": "14",
+            "availablelcp_raw": "1"
+          }
+        ],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Thomas Jefferson",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 12,
+      "source_item_id": "1620010",
+      "title": "Thomas Jefferson",
+      "authors": [
+        "R. B. Bernstein"
+      ],
+      "publisher": "Oxford University Press",
+      "collection": null,
+      "published_at": "2003-09-04",
+      "summary": "Thomas Jefferson designed his own tombstone, describing himself simply as \"Author of the Declaration of Independence and of the Virginia Statute for Religious Freedom, and Father of the University of Virginia.\" It is in this simple epitaph that R.B. Bernstein finds the...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1620010/thomas-jefferson.ebook",
+      "cover_url": "https://couverture.numilog.com/9780195181302_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "17.27",
+          "minor_units": 1727,
+          "currency": "EUR",
+          "display_reconstructed": "17,27 €",
+          "raw_parts": [
+            "17",
+            "27",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF",
+          "ePub"
+        ],
+        "selected_format_label": null,
+        "format_options": [
+          {
+            "label": "PDF",
+            "formatid_raw": "3",
+            "availablelcp_raw": "1"
+          },
+          {
+            "label": "ePub",
+            "formatid_raw": "14",
+            "availablelcp_raw": "1"
+          }
+        ],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Thomas Jefferson",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 13,
+      "source_item_id": "1766583",
+      "title": "Thomas Jefferson",
+      "authors": [
+        "Wilson Jeremiah Moses"
+      ],
+      "publisher": "Cambridge University Press",
+      "collection": null,
+      "published_at": "2019-03-28",
+      "summary": "In Thomas Jefferson: A Modern Prometheus, Wilson Jeremiah Moses provides a critical assessment of Thomas Jefferson and the Jeffersonian influence. Scholars of American history have long debated the legacy of Thomas Jefferson. However, Moses deviates from other...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1766583/thomas-jefferson.ebook",
+      "cover_url": "https://couverture.numilog.com/9781108470964_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "30.78",
+          "minor_units": 3078,
+          "currency": "EUR",
+          "display_reconstructed": "30,78 €",
+          "raw_parts": [
+            "30",
+            "78",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF",
+          "ePub"
+        ],
+        "selected_format_label": null,
+        "format_options": [
+          {
+            "label": "PDF",
+            "formatid_raw": "3",
+            "availablelcp_raw": "1"
+          },
+          {
+            "label": "ePub",
+            "formatid_raw": "14",
+            "availablelcp_raw": "1"
+          }
+        ],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Thomas Jefferson",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 14,
+      "source_item_id": "1730842",
+      "title": "Jefferson (Tome 1)",
+      "authors": [
+        "Jean-Claude Mourlevat",
+        "Antoine Ronzon"
+      ],
+      "publisher": "Éditions Gallimard BD",
+      "collection": "Fétiche",
+      "published_at": "2025-03-26",
+      "summary": "Venu se faire rafraîchir la houppette au salon Défini-Tif, le hérisson Jefferson découvre l'horreur : M. Edgard, son coiffeur, gît sur le sol, assassiné. Aussitôt accusé du crime, Jefferson est contraint de se cacher, avec l'aide de son meilleur ami, le cochon Gilbert....",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1730842/jefferson-tome-1-.ebook",
+      "cover_url": "https://couverture.numilog.com/9782075216074_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "14.99",
+          "minor_units": 1499,
+          "currency": "EUR",
+          "display_reconstructed": "14,99 €",
+          "raw_parts": [
+            "14",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF"
+        ],
+        "selected_format_label": "PDF",
+        "format_options": [],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Jefferson (Tome 1)",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 15,
+      "source_item_id": "1890327",
+      "title": "Jefferson (Tome 1)",
+      "authors": [
+        "Jean-Claude Mourlevat",
+        "Antoine Ronzon"
+      ],
+      "publisher": "Éditions Gallimard BD",
+      "collection": "Fétiche",
+      "published_at": "2025-03-26",
+      "summary": "Venu se faire rafraîchir la houppette au salon Défini-Tif, le hérisson Jefferson découvre l'horreur : M. Edgard, son coiffeur, gît sur le sol, assassiné. Aussitôt accusé du crime, Jefferson est contraint de se cacher, avec l'aide de son meilleur ami, le cochon Gilbert....",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1890327/jefferson-tome-1-.ebook",
+      "cover_url": "https://couverture.numilog.com/9782075216074_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "14.99",
+          "minor_units": 1499,
+          "currency": "EUR",
+          "display_reconstructed": "14,99 €",
+          "raw_parts": [
+            "14",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "ePub"
+        ],
+        "selected_format_label": "ePub",
+        "format_options": [],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Jefferson (Tome 1)",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 16,
+      "source_item_id": "658364",
+      "title": "The Jefferson Key",
+      "authors": [
+        "Steve Berry"
+      ],
+      "publisher": "Hodder & Stoughton",
+      "collection": "Cotton Malone",
+      "published_at": "2011-06-23",
+      "summary": "'Non-stop action' Reader review????? 'Exceptional!' Reader review????? 'Captivating' Reader review?????Four United States presidents have been assassinated, each murder seemingly unrelated and separated by time. But what if those presidents were all killed for the same...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/658364/the-jefferson-key.ebook",
+      "cover_url": "https://couverture.numilog.com/9781444709407_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "3.99",
+          "minor_units": 399,
+          "currency": "EUR",
+          "display_reconstructed": "3,99 €",
+          "raw_parts": [
+            "3",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "ePub"
+        ],
+        "selected_format_label": "ePub",
+        "format_options": [],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : The Jefferson Key",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 17,
+      "source_item_id": "1629169",
+      "title": "Jefferson Davis's Generals",
+      "authors": [
+        "Gabor S. Boritt"
+      ],
+      "publisher": "Oxford University Press",
+      "collection": null,
+      "published_at": "2000-10-12",
+      "summary": "Confederate General P.G.T.Beauregard once wrote that \"no people ever warred for independence with more relative advantages than the Confederates.\" If there was any doubt as to what Beauregard sought to imply, he later to chose to spell it out: the failure of the...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1629169/jefferson-davis-s-generals.ebook",
+      "cover_url": "https://couverture.numilog.com/9780195139211_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "12.33",
+          "minor_units": 1233,
+          "currency": "EUR",
+          "display_reconstructed": "12,33 €",
+          "raw_parts": [
+            "12",
+            "33",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF",
+          "ePub"
+        ],
+        "selected_format_label": null,
+        "format_options": [
+          {
+            "label": "PDF",
+            "formatid_raw": "3",
+            "availablelcp_raw": "1"
+          },
+          {
+            "label": "ePub",
+            "formatid_raw": "14",
+            "availablelcp_raw": "1"
+          }
+        ],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Jefferson Davis's Generals",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 18,
+      "source_item_id": "1628842",
+      "title": "Adams vs. Jefferson",
+      "authors": [
+        "John Ferling"
+      ],
+      "publisher": "Oxford University Press",
+      "collection": null,
+      "published_at": "2004-09-03",
+      "summary": "It was a contest of titans: John Adams and Thomas Jefferson, two heroes of the Revolutionary era, once intimate friends, now icy antagonists locked in a fierce battle for the future of the United States. The election of 1800 was a thunderous clash of a campaign that...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1628842/adams-vs-jefferson.ebook",
+      "cover_url": "https://couverture.numilog.com/9780195167719_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "17.27",
+          "minor_units": 1727,
+          "currency": "EUR",
+          "display_reconstructed": "17,27 €",
+          "raw_parts": [
+            "17",
+            "27",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF",
+          "ePub"
+        ],
+        "selected_format_label": null,
+        "format_options": [
+          {
+            "label": "PDF",
+            "formatid_raw": "3",
+            "availablelcp_raw": "1"
+          },
+          {
+            "label": "ePub",
+            "formatid_raw": "14",
+            "availablelcp_raw": "1"
+          }
+        ],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Adams vs. Jefferson",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 19,
+      "source_item_id": "1836757",
+      "title": "Jefferson-Madison : Un débat sur la République",
+      "authors": [
+        "Annie Léchenet"
+      ],
+      "publisher": "PUF",
+      "collection": "Philosophies",
+      "published_at": "2014-07-17",
+      "summary": "Jefferson est connu pour avoir rédigé en 1776 la « Déclaration d'indépendance » des Etats-Unis d'Amérique, tout en assumant diverses responsabilités politiques dans sa Virginie natale et au niveau fédéral. Il discute avec son ami James Madison éminent législateur,...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1836757/jefferson-madison--un-debat-sur-la-republique.ebook",
+      "cover_url": "https://couverture.numilog.com/9782130506652_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "9.99",
+          "minor_units": 999,
+          "currency": "EUR",
+          "display_reconstructed": "9,99 €",
+          "raw_parts": [
+            "9",
+            "99",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "epub sans DRM"
+        ],
+        "selected_format_label": "epub sans DRM",
+        "format_options": [],
+        "drm_label": "sans DRM",
+        "title_attribute": "\nTélécharger le livre : Jefferson-Madison : Un débat sur la République",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    },
+    {
+      "rank": 20,
+      "source_item_id": "1420696",
+      "title": "Jefferson fait de son mieux",
+      "authors": [
+        "Jean-Claude Mourlevat"
+      ],
+      "publisher": "Gallimard Jeunesse",
+      "collection": "Romans Junior",
+      "published_at": "2022-08-18",
+      "summary": "Quatre ans après la mémorable expédition Ballardeau, la vie a repris tranquillement son court pour Jefferson, le hérisson et Gilbert, le cochon. Mais voilà que Simone, leur ancienne compagne de voyage, disparaît mystérieusement. Inquiets, Gilbert et Jefferson filent sur...",
+      "summary_kind": "listing_excerpt",
+      "public_url": "https://www.numilog.com/1420696/jefferson-fait-de-son-mieux.ebook",
+      "cover_url": "https://couverture.numilog.com/9782075169776_GRANDE.jpg",
+      "source_collection": "public_catalog",
+      "owned": false,
+      "downloadable": false,
+      "download_url": null,
+      "metadata": {
+        "price": {
+          "amount": "7.49",
+          "minor_units": 749,
+          "currency": "EUR",
+          "display_reconstructed": "7,49 €",
+          "raw_parts": [
+            "7",
+            "49",
+            "€"
+          ],
+          "applies_to": "displayed_card_offer",
+          "tax_included": null,
+          "source_selectors": {
+            "major": ".ColPrice .LblPrice",
+            "fraction": ".ColPrice .LblDecimal",
+            "currency": ".ColPrice .LblSeparatorPrice"
+          }
+        },
+        "format_labels": [
+          "PDF",
+          "ePub"
+        ],
+        "selected_format_label": null,
+        "format_options": [
+          {
+            "label": "PDF",
+            "formatid_raw": "3",
+            "availablelcp_raw": "1"
+          },
+          {
+            "label": "ePub",
+            "formatid_raw": "14",
+            "availablelcp_raw": "1"
+          }
+        ],
+        "drm_label": null,
+        "title_attribute": "\nTélécharger le livre : Jefferson fait de son mieux",
+        "isbn_digital": null,
+        "isbn_print": null,
+        "language": null,
+        "author_roles": null,
+        "age_range": null,
+        "source_url": "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson",
+        "price_observation_kind": "user_supplied_snapshot",
+        "price_capture_timestamp": null
+      }
+    }
+  ]
+}
