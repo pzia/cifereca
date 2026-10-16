@@ -102,6 +102,17 @@ def _identity_root(service: Any, identity_id: str) -> tuple[Path, ...] | None:
         return None
 
 
+def _path_in_identity(value: Any, roots: tuple[Path, ...]) -> bool:
+    """Reject an obviously foreign path even without requesting SHA scans."""
+    if type(value) is not str or not value or "\0" in value:
+        return False
+    candidate = Path(value)
+    if not candidate.is_absolute() or ".." in candidate.parts:
+        return False
+    absolute = Path(os.path.abspath(candidate))
+    return any(absolute != root and absolute.is_relative_to(root) for root in roots)
+
+
 def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bool) -> SyncResult:
     """Only examine SQLite and (if explicitly asked) hash known local files."""
     if type(verify_local_files) is not bool:
@@ -112,8 +123,8 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
     identity = account.identity_id
     credential = account.credential_id
     account_id = account.unique_id
-    roots = _identity_root(broker.service, identity) if verify_local_files else None
-    if verify_local_files and not roots:
+    roots = _identity_root(broker.service, identity)
+    if not roots:
         return _refused("invalid_directory")
 
     try:
@@ -136,6 +147,7 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
                 continue
             metadata = row.get("metadata")
             if (not isinstance(metadata, dict)
+                    or row.get("expires_at") or row.get("loan_id")
                     or metadata.get("source") != "numilog.authenticated_library"
                     or not _item_id(row.get("item_id"), credential)):
                 counts["ignored_unattested_rights"] += 1
@@ -206,6 +218,7 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
                     or placement.get("provider_id") != "numilog"
                     or placement.get("source_item_id") != item_id
                     or placement.get("state") != "present"
+                    or not _path_in_identity(placement.get("path"), roots)
                     or type(sha) is not str or _SHA.fullmatch(sha) is None
                     or type(size) is not int or size <= 0):
                 counts["needs_reconciliation"] += 1
