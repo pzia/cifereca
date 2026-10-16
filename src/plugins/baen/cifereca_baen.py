@@ -55,8 +55,24 @@ class BaenSession(ProviderSession):
         if type(scope) is not str or scope.strip().casefold() not in ('all','digital'):
             raise ProviderCapabilityError('Baen : unsupported_scope')
         if not self.connected: raise ProviderError('Baen : connecter le catalogue')
-        try:r=self.client.get(FREE,params=self._search_params(query,page,self.page_size));r.raise_for_status()
-        except httpx.HTTPError as e: raise ProviderError('Baen : catalogue inaccessible') from e
+        try:
+            r=self.client.get(FREE,params=self._search_params(query,page,self.page_size))
+            r.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Expose a stable public code, never upstream response bodies or
+            # bearer-like query parameters which httpx formats in exceptions.
+            status=exc.response.status_code
+            if status == 401:
+                code='auth_required'
+            elif status == 403:
+                code='access_denied'
+            elif status == 429:
+                code='rate_limited'
+            else:
+                code='service_unavailable'
+            raise ProviderError(f'Baen : {code}') from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError('Baen : service_unavailable') from exc
         out=[]; seen=set()
         for href,body in re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',r.text,re.I|re.S):
             plain=' '.join(re.sub('<[^>]+>',' ',html.unescape(body)).split())
