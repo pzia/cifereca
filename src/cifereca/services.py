@@ -981,6 +981,18 @@ class LibraryService:
                 # One-shot iterators feed the owned-rights projection and
                 # remote catalog exactly once. Neither phase downloads files.
                 rows = list(session.library())
+                if provider_id == "numilog" and not numilog_inventory_binding_valid(
+                    self, account, session=session,
+                ):
+                    # A connection can be rebound while private pages are
+                    # fetched. Discard the entire stale response, not just its
+                    # rights: otherwise another identity may see its metadata.
+                    result.blocked_sources += 1
+                    _TRACE_LOG.warning(
+                        "TRACE catalog personal-library inventory skipped "
+                        "provider=numilog reason=source_binding_changed"
+                    )
+                    continue
                 if provider_id == "kobo" and account is not None:
                     from .core.kobo_manifest_rights import mirror_kobo_manifest_rights
                     mirror_kobo_manifest_rights(
