@@ -217,8 +217,28 @@ def _public_age_ranges(book: object) -> tuple[YouthAgeRange, ...]:
     return tuple(attested)
 
 
+def _public_youth_record_id(value: object) -> str:
+    """Never make arbitrary cached objects or signed URLs public book IDs.
+
+    Real source-local opaque IDs can contain Unicode or punctuation. A URL,
+    query, fragment, bidi control or non-text value is not a safe item identity
+    for a GTK row or BookRef. Missing IDs remain explicitly unverified.
+    """
+    if type(value) is not str or not 1 <= len(value) <= 512:
+        return ""
+    if any(category(char) in {"Cc", "Cf", "Cs"} for char in value):
+        return ""
+    if "://" in value or value.lower().startswith(("http:", "https:")):
+        return ""
+    if any(char in value for char in "?#&\\"):
+        return ""
+    return _text(value)
+
+
 def book_key(book: object) -> str:
-    return f"{_text(getattr(book, 'source_id', 'source'))}:{_text(getattr(book, 'record_id', 'record'))}"
+    source = public_source_id(getattr(book, "source_id", "")) or "source"
+    record = _public_youth_record_id(getattr(book, "record_id", "")) or "record"
+    return f"{source}:{record}"
 
 
 _PUBLIC_YOUTH_IDENTIFIER_KEYS = frozenset({
@@ -272,7 +292,7 @@ def _safe_book_identifiers(book: object) -> dict[str, str]:
 def book_ref(book: object) -> BookRef:
     identifiers = _safe_book_identifiers(book)
     return BookRef(
-        book_id=_text(getattr(book, "record_id", "")),
+        book_id=_public_youth_record_id(getattr(book, "record_id", "")),
         title=_public_youth_display_title(book),
         # BookRef is handed to the host for navigation: apply the same public
         # author projection as the list and detail before crossing that API.
@@ -336,7 +356,7 @@ def edition_reference(book: object) -> tuple[str, str, str]:
         return "isbn", "ISBN", isbn
     source = public_source_id(getattr(book, "source_id", ""))
     # A signed URL or account token is not a source-local edition reference.
-    local_id = identifiers.get("source_item_id") or _public_identifier_value(
+    local_id = identifiers.get("source_item_id") or _public_youth_record_id(
         getattr(book, "record_id", "")
     )
     if source and local_id:
