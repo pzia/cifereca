@@ -571,6 +571,7 @@ def test_readbook_diagnostic_reveals_only_http_structure(tmp_path):
         'js_delivery_shapes': 1, 'absolute_html_hrefs': 0,
         'absolute_script_literals': 1,  # only the absolute URL is counted
         'allowed_candidates': 1,
+        'attested_acsm_candidates': 1,
     }
     assert 'SIGNATURE' not in repr(evidence)
 
@@ -896,3 +897,112 @@ def test_unrelated_duplicate_does_not_prevent_unique_selected_book(
         _assert_no_stage(tmp_path)
     finally:
         session.close()
+
+
+def test_single_signed_acsm_wins_over_allowed_site_navigation_in_html():
+    """A page may include links to the storefront AND one real ACSM token."""
+    navigation = 'https://www.numilog.com/Pages/Compte/MesLivres.aspx'
+    another = 'https://services.numilog.com/common.css'
+    html = (
+        f'<a href="{navigation}">Mes achats</a>'
+        f'<script>const appRoot = "{another}";'
+        f'window.delivery = {_object(9001, SIGNED)};</script>'
+    )
+    allowed = {
+        ('https', 'entrepot2r.numilog.com', 443),
+        ('https', 'www.numilog.com', 443),
+        ('https', 'services.numilog.com', 443),
+    }
+    diagnosis = {}
+    selected = delivery_url(
+        html, READ_12, allowed_origins=allowed, evidence=diagnosis,
+    )
+    assert selected == SIGNED
+    assert diagnosis == {
+        'js_delivery_shapes': 1,
+        'absolute_html_hrefs': 1,
+        'absolute_script_literals': 2,
+        'allowed_candidates': 3,
+        'attested_acsm_candidates': 1,
+    }
+    assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnosis)
+    assert '9001' not in repr(diagnosis)
+
+
+def test_two_distinct_signed_acsm_tokens_still_block_even_with_navigation():
+    """Do not silently prefer the first signed order token for a purchase."""
+    allowed = {
+        ('https', 'entrepot2r.numilog.com', 443),
+        ('https', 'www.numilog.com', 443),
+    }
+    html = (
+        '<a href="https://www.numilog.com/">Accueil</a>'
+        f'<script>const a = "{SIGNED}"; const b = "{SECOND}";</script>'
+    )
+    summary = {}
+    with pytest.raises(DeliverySelectionError) as error:
+        delivery_url(html, READ_12, allowed_origins=allowed, evidence=summary)
+    assert error.value.code == 'ambiguous'
+    assert summary['attested_acsm_candidates'] == 2
+    assert summary['allowed_candidates'] == 3
+    assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(summary)
+    assert 'SECOND_NOT_A_CREDENTIAL' not in repr(summary)
+
+
+def test_one_signed_acsm_among_html_links_is_fetched_once_via_real_broker(tmp_path):
+    """READBook HTML with incidental allowed links must not cause a false P0 error."""
+    visited = []
+    nav = 'https://www.numilog.com/Pages/Compte/MesLivres.aspx'
+
+    def handler(request):
+        url = str(request.url)
+        visited.append(url)
+        if url == READ_12:
+            html = (
+                f'<a href="{nav}">Ma bibliothèque</a>'
+                f'<script>window.purchase={_object(9001, SIGNED)};</script>'
+            )
+            return httpx.Response(
+                200, text=html,
+                headers={'content-type': 'text/html; charset=utf-8'},
+            )
+        if url == SIGNED:
+            return httpx.Response(
+                200, content=ACSM,
+                headers={'content-type': 'application/vnd.adobe.adept+xml'},
+            )
+        pytest.fail('Incidental navigation URL must not be requested')
+
+    session, diagnostic, broker = setup(tmp_path, handler)
+    try:
+        published, stable_origin = session._download(
+            READ_12, tmp_path / 'book.epub', title='Livre acheté',
+        )
+        assert published.is_file()
+        assert stable_origin == LIBRARY
+        assert visited == [READ_12, SIGNED]
+        assert len(broker.calls) == 1
+        assert broker.calls[0][1]['identity_id'] == 'fictional-reader'
+        entries = [e for e in diagnostic.events if e[0][1] == 'livraison HTML']
+        assert len(entries) == 1
+        assert entries[0][1]['detail']['attested_acsm_candidates'] == 1
+        assert entries[0][1]['detail']['allowed_candidates'] == 2
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostic.events)
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+def test_html_without_any_signed_acsm_keeps_unambiguous_generic_delivery_path():
+    """Non-ACSM direct EPUB delivery on loopback retains historical behavior."""
+    from cifereca_numilog_html import origin
+    endpoint = 'http://127.0.0.1:8094/Services/Delivery.ashx?lid=12'
+    evidence = {}
+    assert delivery_url(
+        f'<a href="{endpoint}">EPUB</a>',
+        'http://127.0.0.1:8094/Pages/Compte/readBook.ashx?lid=12',
+        allowed_origins={origin('http://127.0.0.1:8094/')},
+        evidence=evidence,
+    ) == endpoint
+    assert evidence['allowed_candidates'] == 1
+    assert evidence['attested_acsm_candidates'] == 0
