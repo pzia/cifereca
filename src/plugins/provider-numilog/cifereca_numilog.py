@@ -1,8 +1,9 @@
-"""Provider externe Numilog 0.1.18, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.19, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 from pathlib import Path
 import tempfile
@@ -22,7 +23,9 @@ from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionE
 from cifereca_numilog_filename import publish
 from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category, public_http_code
 
-VERSION = '0.1.18'
+_LOG = logging.getLogger(__name__)
+
+VERSION = '0.1.19'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -148,6 +151,26 @@ class NumilogSession(ProviderSession):
             # provider/network/download semantics.
             return
 
+    def _session_event(self, reason):
+        # These literal codes are the complete support payload. Never log
+        # provider exceptions, URLs, credentials, account IDs or HTML here.
+        allowed = {
+            'connect_started', 'connect_succeeded', 'credentials_missing',
+            'connect_failed', 'session_closed', 'not_connected',
+            'library_redirect', 'library_invalid', 'library_http_error',
+        }
+        reason = reason if type(reason) is str and reason in allowed else 'unknown'
+        connected = bool(self.connected)
+        self._diag('session_state', reason=reason, connected=connected)
+        try:
+            level = logging.INFO if reason in {
+                'connect_started', 'connect_succeeded', 'session_closed',
+            } else logging.WARNING
+            _LOG.log(level, 'TRACE numilog session connected=%s reason=%s', connected, reason)
+        except Exception:
+            # An optional log handler cannot change authentication semantics.
+            pass
+
     @staticmethod
     def _status(response):
         if response.status_code in {401,403}:
@@ -190,11 +213,13 @@ class NumilogSession(ProviderSession):
     def connect(self):
         with self.lock:
             self.connected = False
+            self._session_event('connect_started')
             self._accounts = []
             self.client.cookies.clear()
             email = str(self.credentials.get('email') or '').strip()
             password = str(self.credentials.get('password') or '')
             if not email or not password:
+                self._session_event('credentials_missing')
                 raise ProviderConfigurationError('Numilog : email et mot de passe requis')
             try:
                 self._page(self.base_url)
@@ -210,13 +235,16 @@ class NumilogSession(ProviderSession):
                 parse_library(text,url,cover_origins=self.allowed_origins)
             except (httpx.HTTPError,ValueError,TypeError,AttributeError):
                 self.client.cookies.clear()
+                self._session_event('connect_failed')
                 raise ProviderError('Numilog : connexion impossible ou réponse inattendue') from None
             except ProviderError:
                 self.client.cookies.clear()
+                self._session_event('connect_failed')
                 raise
             self.connected = True
             self._accounts = [Account(display_name=self.label or 'Compte Numilog',unique_id='numilog:'+self.scope,
                 provider_id='numilog',credential_id=self.credential_id,provider_label='Numilog')]
+            self._session_event('connect_succeeded')
             self._diag('connexion')
             return self.accounts
 
@@ -227,6 +255,7 @@ class NumilogSession(ProviderSession):
             self.connected = False
             self._accounts = []
             self.credentials.clear()
+            self._session_event('session_closed')
 
     def _rows(self, *, include_delivery=False, delivery_record_id=None):
         # A signed library URL is only ever decoded for a single selected
@@ -238,6 +267,7 @@ class NumilogSession(ProviderSession):
         ):
             raise ProviderError('Numilog : livre ciblé du compte requis pour la livraison')
         if not self.connected:
+            self._session_event('not_connected')
             raise ProviderError('Numilog : connecter le compte avant cette opération')
         try:
             url = self.library_url
@@ -251,6 +281,7 @@ class NumilogSession(ProviderSession):
                 final_url,text = self._page(url)
                 if urlsplit(final_url).path.lower() != '/pages/compte/meslivres.aspx':
                     self.connected = False
+                    self._session_event('library_redirect')
                     raise ProviderError('Numilog : session expirée ; reconnecter le compte')
                 structural = {} if include_delivery else None
                 page_rows,next_url = parse_library_page(
@@ -289,8 +320,10 @@ class NumilogSession(ProviderSession):
                 url=next_url
             raise ProviderError('Numilog : bibliothèque trop paginée (>100 pages)')
         except ParseError as exc:
+            self._session_event('library_invalid')
             raise ProviderError('Numilog : '+str(exc)) from None
         except httpx.HTTPError:
+            self._session_event('library_http_error')
             raise ProviderError('Numilog : bibliothèque inaccessible ou structure modifiée') from None
 
     def _id(self,row):

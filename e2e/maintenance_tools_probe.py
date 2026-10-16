@@ -220,15 +220,30 @@ def main():
         else:
             report["pointer_actions"].append(device[0].click_widget(button))
 
-    def respond(dialog, label):
+    def respond(dialog, label, on_clicked):
         response = next(
             (b for b in walk(dialog) if isinstance(b, Gtk.Button)
              and label in str(b.get_label() or "").replace("_", "")),
             None,
         )
         assert response is not None, f"Missing modal response: {label}"
-        assert response.get_mapped(), f"Modal response not mapped: {label}"
-        physical(response)
+
+        def allocated():
+            # A GTK transient can be 'mapped' while its X11 origin is still
+            # (-5, -5). Do not send XTEST until the real button is on-screen.
+            if not dialog.get_visible() or not response.get_mapped() or not response.get_sensitive():
+                return False
+            try:
+                x, y = device[0].widget_point(response)
+            except RuntimeError:
+                return False
+            return x >= 0 and y >= 0
+
+        def click_then_continue():
+            physical(response)
+            on_clicked()
+
+        until(allocated, click_then_continue, timeout=6.0)
 
     def ready():
         w = window[0]
@@ -357,8 +372,7 @@ def main():
         report["checks"]["real_multiline_confirmation_after_async_scan"] = True
         report["checks"]["gtk_heartbeat_during_slow_scan"] = heartbeat[0] > 5
         capture("01-async-preview")
-        respond(dialog, "Annuler")
-        later(after_cancel, 190)
+        respond(dialog, "Annuler", lambda: later(after_cancel, 190))
 
     def after_cancel():
         assert tool.run_calls == 0
@@ -396,8 +410,9 @@ def main():
     def stale_dialog():
         tool.version += 1
         assert tool.run_calls == 0
-        respond(modal(), "Exécuter")
-        until(lambda: any("bibliothèque a changé" in e for e in errors), stale_refused)
+        respond(modal(), "Exécuter", lambda: until(
+            lambda: any("bibliothèque a changé" in e for e in errors), stale_refused
+        ))
 
     def stale_refused():
         assert tool.run_calls == 0
@@ -410,8 +425,10 @@ def main():
 
     def final_dialog():
         assert tool.run_calls == 0
-        respond(modal(), "Exécuter")
-        until(lambda: tool.progress_sent.is_set() and line_is("Purge en cours · 99 %"), progress_before_completion)
+        respond(modal(), "Exécuter", lambda: until(
+            lambda: tool.progress_sent.is_set() and line_is("Purge en cours · 99 %"),
+            progress_before_completion,
+        ))
 
     def progress_before_completion():
         assert tool.run_calls == 1 and not tool.run_finished.is_set()
@@ -436,8 +453,10 @@ def main():
         until(lambda: modal() is not None and preview_button[0].get_sensitive(), refresh_dialog)
 
     def refresh_dialog():
-        respond(modal(), "Exécuter")
-        until(lambda: tool.progress_sent.is_set() and line_is("Purge en cours · 99 %"), refresh_running)
+        respond(modal(), "Exécuter", lambda: until(
+            lambda: tool.progress_sent.is_set() and line_is("Purge en cours · 99 %"),
+            refresh_running,
+        ))
 
     def refresh_running():
         detached_label[0] = line_widgets()[1]

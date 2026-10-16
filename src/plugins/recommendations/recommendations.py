@@ -1449,6 +1449,12 @@ class UxRecommendationsView:
         self._master.show_rows(tuple(rows), total_count=len(self._ranked))
 
         if not rows:
+            # Empty filters invalidate prior detail and pending LLM callbacks,
+            # even if the host emits no selection-changed signal.
+            self._detail_selection_generation = (
+                getattr(self, "_detail_selection_generation", 0) + 1
+            )
+            self._reset_llm_selection(None)
             self._master.empty_detail(
                 "Aucune recommandation sélectionnée",
                 "Modifiez les filtres ou relancez le calcul.",
