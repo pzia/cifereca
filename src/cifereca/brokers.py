@@ -427,7 +427,7 @@ class SynchronizationBrokerImpl:
             account = self._find_account(source_id)
         except (ValueError, TypeError):
             raise ValueError("unknown sync source") from None
-        if getattr(account, "provider_id", None) != "kobo":
+        if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
             raise ValueError("inventory refresh schedule not supported")
         policy = load_source_refresh_schedule(self.service.storage, source_id)
         return {"mode": policy.mode, "interval_minutes": policy.interval_minutes}
@@ -438,11 +438,11 @@ class SynchronizationBrokerImpl:
         """Explicit per-source metadata/rights consent; no provider call.
 
         Neither this method nor its stored policy authorizes acquisition.
-        Only the exact, enabled, connected Kobo source can be opted in.
+        Only an exact, enabled, connected Kobo/Numilog source can be opted in.
         An ineligible source may still have its schedule disabled manually.
         """
         from .core.source_refresh_policy import (
-            SourceRefreshSchedule, kobo_inventory_source_eligible,
+            SourceRefreshSchedule, inventory_source_eligible,
             save_source_refresh_schedule,
         )
         policy = SourceRefreshSchedule(mode=mode, interval_minutes=interval_minutes)
@@ -450,9 +450,9 @@ class SynchronizationBrokerImpl:
             account = self._find_account(source_id)
         except (ValueError, TypeError):
             raise ValueError("unknown sync source") from None
-        if getattr(account, "provider_id", None) != "kobo":
+        if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
             raise ValueError("inventory refresh schedule not supported")
-        if policy.mode != "manual" and not kobo_inventory_source_eligible(
+        if policy.mode != "manual" and not inventory_source_eligible(
             self.service, account,
         ):
             raise ValueError("source not eligible for scheduled inventory")
@@ -466,7 +466,7 @@ class SynchronizationBrokerImpl:
     def synchronize_scheduled_inventory(
         self, identity_id: str, trigger: str, *, control: Any = None,
     ) -> SyncResult:
-        """Dispatch due Kobo *inventory* refreshes for one explicit identity.
+        """Dispatch due Kobo/Numilog *inventory* refreshes for one explicit identity.
 
         A scheduler may call this at startup or on its periodic tick; this
         method does not install timers or silently enroll any accounts.
@@ -475,7 +475,7 @@ class SynchronizationBrokerImpl:
         executed by this broker path.
         """
         from .core.source_refresh_policy import (
-            kobo_inventory_source_eligible, load_source_refresh_schedule,
+            inventory_source_eligible, load_source_refresh_schedule,
             source_refresh_due,
         )
         if type(identity_id) is not str or not identity_id:
@@ -502,7 +502,7 @@ class SynchronizationBrokerImpl:
             self.service.accounts_for_identity(identity_id),
             key=self._source_id,
         ):
-            if getattr(account, "provider_id", None) != "kobo":
+            if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
                 continue
             source_id = self._source_id(account)
             # Unknown/duplicate source references and invalid source state
@@ -524,7 +524,7 @@ class SynchronizationBrokerImpl:
                 policy = load_source_refresh_schedule(
                     self.service.storage, source_id,
                 )
-                eligible = kobo_inventory_source_eligible(self.service, account)
+                eligible = inventory_source_eligible(self.service, account)
                 if not source_refresh_due(
                     policy, trigger=trigger, now=instant,
                     last_attempt=state.get("last_attempt", ""),
@@ -537,7 +537,7 @@ class SynchronizationBrokerImpl:
                     continue
                 # Revalidation is intentional: no cached account choice,
                 # cross-identity batch or stale opt-in can authorize a call.
-                if not kobo_inventory_source_eligible(self.service, account):
+                if not inventory_source_eligible(self.service, account):
                     continue
             except Exception:
                 continue

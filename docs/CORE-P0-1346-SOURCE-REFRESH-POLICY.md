@@ -67,3 +67,35 @@ timer est effectivement actif tant que l'ordonnanceur n'est pas raccordé.
 L'implémentation `synchronize_source` conserve provisoirement sa valeur
 historique `scope=manual`, même lors d'un dispatch explicite planifié ;
 le résumé de dispatch porte `trigger` et `phase=discover_rights`.
+
+
+
+## Extension Numilog : actualisation des achats/droits (#1905)
+
+Le même broker **`SourceInventoryRefreshScheduleBroker`** accepte désormais,
+en plus de Kobo, une source **Numilog personnelle** dont l'identité,
+le credential, le compte enregistré et **l'unique session privée courante**
+sont tous vérifiés par `numilog_inventory_binding_valid`. Un état de source
+malformé, une session remplacée ou dupliquée, une révocation, une source
+désactivée ou un compte réattribué interdisent l'exécution distante.
+
+`manual` reste le défaut. Les appels `set_inventory_refresh_schedule`
+n'effectuent aucun accès réseau. Sur appel explicite d'un déclencheur
+`synchronize_scheduled_inventory(identity_id, "startup"|"periodic")`, seul
+le compte et l'identité consentis et dus sont rafraîchis ; le broker réutilise
+`synchronize_source` qui lit l'inventaire authentifié et les droits sans
+demander de lien de livraison ni télécharger d'EPUB/ACSM.
+
+**Frontière impérative : le consentement d'actualisation des achats n'est
+jamais un consentement de sauvegarde des fichiers.** Pour Numilog,
+`local_materialization_schedule` continue à répondre `not_supported`
+et aucun broker d'acquisition automatique n'est ajouté dans ce lot.
+Les tests utilisent deux comptes et deux identités fictifs, refusent la
+revocation et les paramètres corrompus, et vérifient les deux horloges
+`on_start`/`periodic` sans mélanger la source ni déclencher de DRM.
+
+**Non livré :** raccordement effectif des déclencheurs à une tâche au
+démarrage et au timer, configuration GTK, acquisition ciblée opt-in,
+réconciliation ADEPT/DRM et succès de téléchargement sur compte réel.
+Il ne faut pas présenter une politique `on_start` ou `periodic` stockée
+comme une synchronisation automatiquement active dans l'application.
