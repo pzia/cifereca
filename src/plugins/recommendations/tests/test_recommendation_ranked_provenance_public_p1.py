@@ -65,7 +65,7 @@ def test_mapping_and_string_subclass_are_not_iterated_as_explanation_fields():
     assert rows[0].meta == ""
     view._selected_row(rows[0])
     assert _sections(details[-1])["recommendation"].fields[-1].value == (
-        "Plusieurs signaux concordants"
+        "Aucun motif attesté disponible"
     )
     assert "catalogue" not in _sections(details[-1])
 

@@ -1,0 +1,78 @@
+{
+  "schema": "numilog.public_product.observation/1",
+  "source_url": "https://www.numilog.com/1958476/jefferson-prend-des-risques.ebook",
+  "qualified_on": "2026-10-16",
+  "capture_timestamp": null,
+  "evidence_kind": "public_page_text_retrieved_via_web_tool",
+  "raw_dom_available": false,
+  "anonymous_http_client_verified": false,
+  "source_item_id": "1958476",
+  "title": "Jefferson prend des risques",
+  "authors": [
+    "Jean-Claude Mourlevat"
+  ],
+  "publisher": "Gallimard Jeunesse",
+  "collection": "Romans Junior",
+  "published_at": "2026-10-08",
+  "page_count": 288,
+  "isbn_print": "9782075241939",
+  "language_label": "Français",
+  "drm_labels": [
+    "DRM LCP",
+    "DRM Adobe"
+  ],
+  "source_collection": "public_catalog",
+  "owned": false,
+  "downloadable": false,
+  "download_url": null,
+  "formats": [
+    {
+      "format": "PDF",
+      "isbn_digital": "9782075241946",
+      "price": {
+        "amount": "9.99",
+        "minor_units": 999,
+        "currency": "EUR",
+        "tax_included": null,
+        "scope": "format_offer"
+      },
+      "copyable_pages": 0,
+      "printable_pages": 0,
+      "file_size": {
+        "value": 19231,
+        "unit_raw": "Ko"
+      }
+    },
+    {
+      "format": "EPUB",
+      "isbn_digital": "9782075241953",
+      "price": {
+        "amount": "9.99",
+        "minor_units": 999,
+        "currency": "EUR",
+        "tax_included": null,
+        "scope": "format_offer"
+      },
+      "copyable_pages": 0,
+      "printable_pages": 0,
+      "file_size": {
+        "value": 37980,
+        "unit_raw": "Ko"
+      }
+    }
+  ],
+  "evidence_labels": {
+    "isbn_print": "EAN papier",
+    "isbn_pdf": "EAN PDF",
+    "isbn_epub": "EAN EPUB",
+    "page_count": "Pages",
+    "language": "Langue",
+    "file_size": "Taille du fichier",
+    "price": "Prix"
+  },
+  "notes": [
+    "Semantic observation, not an HTML parser fixture. DOM selectors are unqualified.",
+    "No format-specific DRM association inferred from page-level DRM labels.",
+    "Ko retained verbatim; no byte conversion assumed."
+  ]
+}

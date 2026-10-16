@@ -94,3 +94,17 @@ def test_unknown_or_empty_selection_keeps_no_action_or_implicit_query():
     YouthView.selected(view, None)
     assert emptied == [True, True]
     assert calls == []
+
+
+def test_open_selected_rejects_evicted_book_and_disposed_page():
+    view, _, calls, shown, _, toasts = _fixture()
+    YouthView.selected(view, NS(key="first"))
+    # The backing catalogue changed without a new GTK selection callback.
+    view.rows = {"first": youth_book(record_id="first", title="Other edition")}
+    YouthView.open_selected(view)
+    assert toasts == ["Sélection périmée : choisissez à nouveau un livre Jeunesse."]
+    assert calls == []
+
+    view.disposed = True
+    YouthView.open_selected(view)
+    assert len(toasts) == 1
