@@ -46,7 +46,7 @@ def install_inventory(session, rows):
 
     def query_rows(**kw):
         calls.append(kw)
-        assert kw == {}  # In particular include_delivery=True is prohibited.
+        assert set(kw) <= {"enrichment_record_id"}  # Never include_delivery=True.
         return list(rows)
 
     session._rows = query_rows
@@ -70,7 +70,7 @@ def test_one_explicit_call_enriches_exact_owned_edition_without_entitlement_chan
         request.metadata["public_enrichment"] = {"pretend": "owned"}
         result = session.enrich_owned_public_listing(request)
         assert visits == [("Jefferson prend des risques", 0, "all")]
-        assert inventory == [{}]
+        assert inventory == [{"enrichment_record_id": session._id(row)}]
         assert result.record_id == request.record_id
         assert result.source_provider == "numilog"
         assert result.source_credential == "alice"
@@ -109,7 +109,7 @@ def test_no_public_url_means_no_anonymous_request(monkeypatch):
         result = session.enrich_owned_public_listing(session._normalize(row))
         assert result.friendly_url is None
         assert result.author is None and result.price is None
-        assert inventory == [{}]
+        assert inventory == [{"enrichment_record_id": session._id(row)}]
     finally:
         session.close()
 
@@ -238,6 +238,6 @@ def test_public_error_propagates_without_silent_private_fallback(monkeypatch):
     try:
         with pytest.raises(ProviderError, match="public_catalog_forbidden"):
             session.enrich_owned_public_listing(session._normalize(row))
-        assert inventory == [{}]
+        assert inventory == [{"enrichment_record_id": session._id(row)}]
     finally:
         session.close()
