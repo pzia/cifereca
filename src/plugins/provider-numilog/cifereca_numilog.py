@@ -379,6 +379,38 @@ class NumilogSession(ProviderSession):
         start = max(0,int(page))*50
         return matches[start:start+50]
 
+    def enrich_owned_public_listing(self, item):
+        """Explicit one-page public enrichment of an attested, fresh owned book.
+
+        Not called by library(), search(), sync or holdings() automatically:
+        querying the commercial site for a private purchase requires an
+        explicit user-initiated enrichment action. No signed delivery URL is
+        read, resolved, saved or sent. A failed lookup is not a false match.
+        """
+        with self.lock:
+            self._canonical_item(item)
+            rows = self._rows()  # Current account inventory, no delivery evidence.
+            matches = [row for row in rows if self._id(row) == item.record_id]
+            if len(matches) != 1:
+                raise ProviderError(
+                    'Numilog : édition achetée non attestée dans le compte courant'
+                )
+            # Use a fresh owned projection, never the caller's potentially
+            # stale rights, metadata or public link.
+            owned = self._normalize(matches[0])
+            if owned.friendly_url is None:
+                return owned
+            from cifereca_numilog_public_client import fetch_public_search
+            from cifereca_numilog_enrichment import merge_attested_public_listing
+            # One bounded anonymous public query, no second-page scan, no
+            # private cookie or automatic re-try. The title is search text
+            # only: the edition match must be the explicit identical URL.
+            public_page = fetch_public_search(matches[0]['title'], page=0, field='all')
+            enriched, _status = merge_attested_public_listing(
+                owned, public_page.items,
+            )
+            return enriched
+
     def holdings(self,item,search_terms=''):
         self._canonical_item(item)
         return ItemDetail(record_id=item.record_id,docbase='NUMILOG',title=item.title,author=item.author,
