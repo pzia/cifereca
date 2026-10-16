@@ -46,7 +46,8 @@ signature opérationnelle `TRACE` à vocabulaire borné, éventuellement enrichi
 de champs non secrets sur liste blanche (`phase`, `status`, `outcome`…).
 Un message libre est remplacé par « contenu libre masqué ». Pour les
 Diagnostics structurés, seuls les mots opérationnels autorisés sont diffusés,
-pas les détails ni les valeurs potentiellement personnelles. Les empreintes
+pas les détails ni les valeurs potentiellement personnelles, sauf la projection
+fermée Numilog décrite ci-dessous. Les empreintes
 d'événements ne réintroduisent aucune valeur brute. Pour les journaux
 applicatifs, `event_id` est une empreinte de la date, du niveau,
 du module expurgé, du résumé publié et de l'identité interne du fichier
@@ -93,3 +94,29 @@ consultables ; aucune donnée brute ni détail de l'enregistrement rejeté
 n'est renvoyé. Un snapshot vide et valide reste `empty` avec
 `no_recorded_events`. L'UI et l'aperçu IA utilisent la même liste autorisée
 de codes de couverture.
+
+## Projection Numilog (#1884)
+
+Le module structuré `NUMILOG` reconnaît uniquement `acquisition_delivery` et
+`session_state`. Son `detail` facultatif est reconstruit par le Core : aucune
+copie du détail du collecteur. Pour la livraison, seules passent les valeurs
+énumérées de `source`, `phase`, `code`, `mime`, `html_kind`, `origin_kind` et
+`path_kind`, l'`action` aléatoire du producteur (12 hex minuscules),
+`http_status` (100–599), `candidates` (0–10000), `hops` (0–12) et la durée
+entière `duration_ms` (0–600000). Pour la session : raison fixe du producteur
+et booléen exact `connected`. Les champs/valeurs/types inconnus sont omis,
+sans conversion de texte libre. Une opération Numilog inconnue reste masquée.
+
+Le `message` reprend ces seuls champs validés (500 caractères maximum), afin
+que phase, cause et corrélation restent accessibles à l'explorateur et à son
+export de sélection existants. `action` relie les étapes d'une tentative ; ce
+n'est ni une identité de compte/livre ni une preuve de droit. Le statut et le
+niveau du producteur sont conservés : `connected=False` n'est pas transformé
+en refus d'identifiants, ni un manque de candidat en expiration de session.
+
+Le journal reconnaît aussi le **logger exact** `cifereca_numilog`, uniquement
+pour la ligne complète `TRACE numilog session connected=True|False reason=…`
+avec une raison autorisée. Tout autre contenu de ce logger est masqué ; ses
+sous-loggers et les autres loggers externes restent exclus. Cette source
+locale demeure consultable si le collecteur structuré est désactivé, avec la
+couverture partielle habituelle. Aucun HTTP ni appel fournisseur supplémentaire.
