@@ -120,3 +120,29 @@ avec une raison autorisée. Tout autre contenu de ce logger est masqué ; ses
 sous-loggers et les autres loggers externes restent exclus. Cette source
 locale demeure consultable si le collecteur structuré est désactivé, avec la
 couverture partielle habituelle. Aucun HTTP ni appel fournisseur supplémentaire.
+
+### Corrélation avec la tâche exécutante
+
+Les événements `NUMILOG` enregistrés dans le `PriorityExecutor` partagé par
+GTK `TaskRunner` et le broker de tâches portent un `task_ref` aléatoire de
+12 hex minuscules, indépendant du compte, du livre, du label et de l'ID
+numérique de tâche. Le producteur n'a aucune valeur à fournir. Le Core
+reprend cette référence validée dans la projection publique et son message ;
+`action` conserve son sens de tentative de livraison, plusieurs actions
+pouvant appartenir au même worker.
+
+Lors de la sortie de ce worker, le logger exact `cifereca` émet une ligne
+fixe `TRACE task correlation task_ref=… status=success|failed|cancelled`,
+également consultable dans `app_log`. Ce statut décrit le résultat du worker,
+pas la validité de ses droits ni le succès de chaque phase fournisseur.
+La projection refuse les références malformées et les suffixes libres.
+
+La référence est allouée à la demande après les filtres du collecteur, sans
+trace additionnelle pour les tâches sans diagnostic Numilog enregistré.
+Le contexte est réinitialisé avant les callbacks de Future et la prochaine
+tâche ; les workers concurrents ont des références différentes. Une panne
+du générateur ou d'un handler de log facultatif ne change pas le résultat.
+Les événements hors worker restent sans `task_ref` : aucune corrélation
+n'est déduite du seul horodatage, thread, texte ou identité. Un collecteur
+Numilog désactivé/filtré ne produit donc pas cette corrélation ; les raisons
+fixes de session du journal restent consultables selon le contrat précédent.
