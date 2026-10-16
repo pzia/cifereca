@@ -94,3 +94,46 @@ def test_close_before_page_disposal_does_not_access_deleted_fields():
         NS(_closed=True), NS(key="gone"), Path=Path,
         format_recent_timestamp=lambda *_a, **_kw: None,
     ) is None
+
+
+def test_recent_provenance_uses_same_provider_label_as_search_and_library():
+    item = {
+        "key": "a", "provider_id": "paris", "title": "Livre",
+        "path": "/books/existing.epub",
+    }
+    window, events, stamp = _fake({"a": item})
+    calls = []
+    window.service = NS(provider_display_name=lambda key: (
+        calls.append(key) or "Bibliothèques de Paris"
+    ))
+    recent_selected(window, NS(key="a"), Path=Path, format_recent_timestamp=stamp)
+    details = events[1][1]
+    assert details["badges"] == ["Bibliothèques de Paris", "Local"]
+    assert ("Provenance", "Bibliothèques de Paris") in details["rows"]
+    assert calls == ["paris"]
+    assert details["group_title"] == "Récupération"
+    assert details["rows"][-1] == ("Chemin", "/books/existing.epub")
+    assert [event[0] for event in events[2:]] == ["notice", "local", "facets"]
+
+
+def test_recent_provider_label_failure_does_not_expose_private_exception():
+    item = {"key": "a", "provider_id": "numilog"}
+    window, events, stamp = _fake({"a": item})
+
+    def broken(_provider):
+        raise RuntimeError("https://private.example/?token=SECRET")
+
+    window.service = NS(provider_display_name=broken)
+    recent_selected(window, NS(key="a"), Path=Path, format_recent_timestamp=stamp)
+    details = events[1][1]
+    assert details["badges"] == ["Numilog", "Local"]
+    assert ("Provenance", "Numilog") in details["rows"]
+    assert "SECRET" not in repr(details)
+
+
+def test_recent_provider_label_missing_or_empty_keeps_original_ui_contract():
+    item = {"key": "a", "provider_id": "kobo"}
+    window, events, stamp = _fake({"a": item})
+    window.service = NS(provider_display_name=lambda _: "  ")
+    recent_selected(window, NS(key="a"), Path=Path, format_recent_timestamp=stamp)
+    assert events[1][1]["badges"] == ["Kobo", "Local"]
