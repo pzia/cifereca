@@ -127,6 +127,29 @@ charge du signal `startup` dans le nouvel ordonnanceur et la migration
 progressive de `opening_sync` restent ouvertes dans #1346.
 
 
+## Horloge de découverte/droits Kobo distincte de l'ouverture (#1346)
+
+Un statut `sync.source.state.scope=opening` représente la synchronisation
+générale (notamment les prêts) et **n'atteste pas** que `session.library()`
+a réellement lu les livres et droits du compte Kobo. Il ne peut donc ni
+prolonger un succès `discover_rights` ni repousser un `periodic` opt-in.
+
+La phase Kobo conserve désormais dans le même état JSON source trois champs
+bornés : `inventory_last_attempt`, `inventory_last_success` et
+`inventory_status`. Ils sont mis à jour **seulement** par un
+`synchronize_source` Kobo disposant de `personal_library`. En cas d'échec
+ou de synchronisation partielle, la tentative throttle la reprise mais ne
+devient jamais un succès. La projection `SyncPhaseState(discover_rights)` et
+l'admission du timer périodique lisent exclusivement cette preuve de phase ;
+l'état générique `running` continue d'interdire une concurrence avec une
+synchronisation d'ouverture active.
+
+Une base historique sans horloge de découverte Kobo est projetée `idle`,
+jamais comme un succès inventé ; un horodatage inventé ou corrompu la bloque
+en `unknown`. L'horloge `materialize` et les autorisations d'acquisition
+ne sont pas modifiées. Aucune migration implicite d'un opt-in global.
+
+
 ## Déclenchement `on_start` Kobo après l'ouverture (#1346)
 
 Le mode `on_start` n'est **pas** une seconde synchronisation globale
