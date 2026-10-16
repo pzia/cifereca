@@ -241,3 +241,93 @@ def test_public_error_propagates_without_silent_private_fallback(monkeypatch):
         assert inventory == [{"enrichment_record_id": session._id(row)}]
     finally:
         session.close()
+
+
+
+def _owned_card_for_duplicate(*, lid="42", product_url=PROOF):
+    return (
+        '<div><a href="' + product_url + '"><span class="pTitle">'
+        'Jefferson prend des risques</span></a>'
+        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid='
+        + lid + '&amp;m=download">Télécharger</a></div>'
+    )
+
+
+def _owned_page(*cards, next_page=False):
+    next_anchor = (
+        '<a rel="next" href="/Pages/Compte/MesLivres.aspx?page=2">suite</a>'
+        if next_page else ""
+    )
+    return (
+        '<html><table id="myTable">' + "".join(cards) +
+        '</table>' + next_anchor + '</html>'
+    )
+
+
+def test_duplicate_owned_public_links_in_same_page_block_enrichment_without_acsm(monkeypatch):
+    from cifereca_numilog_html import parse_library_page, ParseError
+    a = _owned_card_for_duplicate(product_url=PROOF)
+    b = _owned_card_for_duplicate(
+        product_url="https://www.numilog.com/123123/other-edition.ebook"
+    )
+    html = _owned_page(a, b)
+    with pytest.raises(ParseError, match="enrichissement arrêté"):
+        parse_library_page(
+            html, strict_public_enrichment_selector=lambda row: row["lid"] == "42",
+        )
+    # The legacy inventory path still deduplicates ordinary rows.
+    parsed, _ = parse_library_page(html)
+    assert len(parsed) == 1
+    session = make_session("alice")
+    session._page = lambda url: (url, html)
+    monkeypatch.setattr(
+        public_client, "fetch_public_search",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("public GET")),
+    )
+    try:
+        with pytest.raises(ProviderError, match="enrichissement arrêté"):
+            session.enrich_owned_public_listing(session._normalize(owned_row()))
+    finally:
+        session.close()
+
+
+def test_duplicate_owned_product_across_pages_blocks_enrichment(monkeypatch):
+    session = make_session("alice")
+    first = _owned_page(_owned_card_for_duplicate(), next_page=True)
+    second = _owned_page(_owned_card_for_duplicate(
+        product_url="https://www.numilog.com/123123/other-edition.ebook",
+    ))
+    accessed = []
+
+    def private_page(url):
+        accessed.append(url)
+        return (url, second if "page=2" in url else first)
+
+    session._page = private_page
+    monkeypatch.setattr(
+        public_client, "fetch_public_search",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("public GET")),
+    )
+    try:
+        with pytest.raises(ProviderError, match="édition dupliquée entre pages"):
+            session.enrich_owned_public_listing(session._normalize(owned_row()))
+        assert len(accessed) == 2
+    finally:
+        session.close()
+
+
+def test_enrichment_rejects_cross_account_target_even_before_http_or_library(monkeypatch):
+    alice, bob = make_session("alice"), make_session("bob")
+    seen = []
+    bob._page = lambda *_: seen.append("private") or (_ for _ in ()).throw(AssertionError)
+    monkeypatch.setattr(
+        public_client, "fetch_public_search",
+        lambda *args, **kwargs: seen.append("public") or (_ for _ in ()).throw(AssertionError),
+    )
+    try:
+        with pytest.raises(ProviderError, match="autre connexion"):
+            bob.enrich_owned_public_listing(alice._normalize(owned_row()))
+        assert not seen
+    finally:
+        alice.close()
+        bob.close()
