@@ -108,12 +108,12 @@ class BnfCatalogueSession(ProviderSession):
 
     def search(self, query: str, scope="all", page=0, field="all"):
         query = str(query or "").strip()
-        if len(query) < 2:
-            return []
         if type(field) is not str or field not in FIELDS:
             raise ProviderCapabilityError("BnF : unsupported_field")
         if type(scope) is not str or scope not in {"all", "physical", "digital"}:
             raise ProviderCapabilityError("BnF : unsupported_scope")
+        if len(query) < 2:
+            return []
         if field == "isbn":
             query = re.sub(r"[\s-]", "", query)
             if not re.fullmatch(r"(?:\d{9}[\dXx]|\d{13})", query):
