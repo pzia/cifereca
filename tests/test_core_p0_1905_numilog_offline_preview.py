@@ -421,3 +421,42 @@ def test_preview_never_creates_configured_library_or_identity_directories(tmp_pa
         assert not absent.exists()
     finally:
         service.close()
+
+
+def test_artifact_identifier_must_match_verified_digest(tmp_path):
+    """A substituted artifact ID must not become a proven local copy."""
+    service = _service(tmp_path)
+    try:
+        account, session, calls = _connect(service, number=0)
+        item, entitlement_id = _owned(service, account)
+        path = _ledger(service, account, item, entitlement_id)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        # The ledger and placement agree on this alien ID, but its digest
+        # claim is inconsistent with the artifact content.
+        bogus_id = "sha256:" + ("f" if digest[0] != "f" else "e") + digest[1:]
+        service.storage.artifact_put({
+            "artifact_id": bogus_id, "sha256": digest,
+            "size": path.stat().st_size, "media_format": "epub", "kind": "file",
+        })
+        service.storage.placement_put({
+            "artifact_id": bogus_id, "path": str(path), "state": "present",
+            "identity_id": account.identity_id, "provider_id": "numilog",
+            "source_item_id": item,
+        })
+        service.storage.acquisition_put({
+            "acquisition_id": "fictional-acquisition-" + item[-16:],
+            "entitlement_id": entitlement_id, "provider_id": "numilog",
+            "credential_id": account.credential_id,
+            "identity_id": account.identity_id, "account_id": account.unique_id,
+            "item_id": item, "artifact_id": bogus_id, "status": "complete",
+        })
+        session.library = lambda: pytest.fail("preview must stay offline")
+        broker, sid = _broker(service, account)
+        result = _preview(broker, sid, verify=True)
+        assert result.ok
+        assert result.facts["counts"]["already_local_verified"] == 0
+        assert result.facts["counts"]["needs_reconciliation"] == 1
+        assert result.facts["acquisition_authorized"] is False
+        assert calls == []
+    finally:
+        service.close()
