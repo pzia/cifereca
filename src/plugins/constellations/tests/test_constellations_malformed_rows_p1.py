@@ -93,5 +93,18 @@ def test_legacy_load_result_without_count_still_works():
     view.center, view.nodes, view.local = None, (), ()
     view.nav = Navigation()
     view.render = lambda: None
+    view.identity_id = lambda: "alice"
     assert view.loaded(3, "alice", ((), (), (), None), "") is False
     assert "non exploitables" not in messages[-1]
+
+
+def test_loaded_rejects_same_generation_result_after_identity_switch():
+    view = object.__new__(View)
+    view.disposed, view.generation = False, 5
+    view.cache = {"bob": ("keep",)}
+    view.nodes, view.local, view.center = ("existing",), (), None
+    view.identity_id = lambda: "bob"
+    # No status, plugin, renderer or graph mutation may be reached.
+    assert view.loaded(5, "alice", ((), (), (), None), "") is False
+    assert view.cache == {"bob": ("keep",)}
+    assert view.nodes == ("existing",)
