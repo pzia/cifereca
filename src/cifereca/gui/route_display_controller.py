@@ -7,7 +7,7 @@ MainWindow route was already responsible for a lazy refresh.
 from __future__ import annotations
 
 
-def show_route(window, route: str, *, Gtk) -> None:
+def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
     if getattr(window, "_closed", False) or route not in window._pages:
         return
     # GTK signals can synchronously redirect to another route or close the
@@ -147,3 +147,24 @@ def show_route(window, route: str, *, Gtk) -> None:
                 and focus_widget.get_mapped() and focus_widget.get_sensitive()
             ):
                 focus_widget.grab_focus()
+                # The history coordinator can call show_route twice and GTK
+                # may apply final focus during the same event dispatch. Restore
+                # after that dispatch, without reviving stale widgets/profiles.
+                if callable(idle_add):
+                    def finish_return_focus():
+                        active_identity = getattr(
+                            getattr(getattr(window, "service", None), "current_identity", None),
+                            "identity_id", None,
+                        )
+                        current_youth = window._plugin_page_widgets.get("youth")
+                        visible = getattr(window.view_stack, "get_visible_child_name", lambda: None)()
+                        if (
+                            not getattr(window, "_closed", False)
+                            and visible == "youth" and active_identity == identity_id
+                            and current_youth is not None
+                            and current_youth.is_ancestor(focus_widget)
+                            and focus_widget.get_mapped() and focus_widget.get_sensitive()
+                        ):
+                            focus_widget.grab_focus()
+                        return False
+                    idle_add(finish_return_focus)
