@@ -123,11 +123,11 @@ def test_manual_source_inventory_sync_does_not_use_backup_or_direct_download(
             lambda *_args: pytest.fail("legacy backup"),
         )
         result = broker.synchronize_source(source.source_id)
-        assert result.ok and result.changed == 2
+        assert result.ok and result.changed == 4  # two notices and two attested ownership rights
         assert result.facts["library"] == 2
         assert "acquired" not in result.facts
         batch = broker.synchronize(SyncRequest(identity_id="default"))
-        assert batch.ok and batch.changed == 2
+        assert batch.ok and batch.changed == 4  # two notices and two attested ownership rights
         assert calls == ["library", "library"]
     finally:
         service.close()
