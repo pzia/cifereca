@@ -230,7 +230,7 @@ def _public_youth_record_id(value: object) -> str:
         return ""
     if "://" in value or value.lower().startswith(("http:", "https:")):
         return ""
-    if any(char in value for char in "?#&\\"):
+    if any(char in value for char in "?#&@%\\<>"):
         return ""
     return _text(value)
 
