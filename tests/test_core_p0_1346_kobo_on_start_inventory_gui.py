@@ -288,3 +288,31 @@ def test_reconnect_even_after_prior_noop_is_not_another_application_start():
     opening.done({"identities": []})
     assert r.jobs == []
     assert not any(c[0] == "dispatch" for c in r.records["calls"])
+
+
+def test_failed_first_account_is_redacted_and_second_account_still_runs():
+    sources = [
+        NS(identity_id="alice", source_id=SOURCE_ID, provider_id="kobo",
+           connected=True, enabled=True, sync_capable=True,
+           status="idle", last_attempt="", phase_states=(_phase(),)),
+        NS(identity_id="bob", source_id="sync:" + "b" * 24, provider_id="kobo",
+           connected=True, enabled=True, sync_capable=True,
+           status="idle", last_attempt="", phase_states=(_phase(),)),
+    ]
+    r = _rig(accounts=sources)
+    def dispatch(iid, trigger):
+        r.records["calls"].append(("attempt", iid, trigger))
+        if iid == "alice":
+            return NS(ok=False, facts={"private": "SECRET"})
+        return NS(ok=True)
+    r.broker.synchronize_scheduled_inventory = dispatch
+    assert startup.dispatch_after_opening(r.window)
+    with pytest.raises(RuntimeError, match="Actualisation initiale des notices Kobo indisponible") as exc:
+        r.jobs[0].work()
+    assert "SECRET" not in str(exc.value)
+    assert [
+        c for c in r.records["calls"] if c[0] == "attempt"
+    ] == [
+        ("attempt", "alice", "startup"),
+        ("attempt", "bob", "startup"),
+    ]
