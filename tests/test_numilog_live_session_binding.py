@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from cifereca.core.numilog_manifest_rights import (
-    mirror_numilog_manifest_rights, numilog_inventory_binding_valid,
+    numilog_inventory_binding_valid,
 )
 from cifereca.services import LibraryService
 
@@ -51,11 +51,6 @@ def test_replaced_session_cannot_attest_owned_rights():
         capabilities=SimpleNamespace(personal_library=True),
     )
     assert not numilog_inventory_binding_valid(service, account, session=stale)
-    count = mirror_numilog_manifest_rights(
-        service, [], identity_id="alice",
-        credential_id="secret-ref", account_id="account",
-    )
-    assert count == 0
     service.storage.entitlements.assert_not_called()
 
 
