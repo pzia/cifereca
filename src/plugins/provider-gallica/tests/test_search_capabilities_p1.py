@@ -86,3 +86,40 @@ def test_unrequested_audio_branch_is_not_called():
     session._search_audio = lambda *args: (_ for _ in ()).throw(AssertionError("should not run"))
     assert session.search("Doyle", field="title", content_types=("epub",)) == []
     assert session.last_search_warnings == []
+
+
+
+def test_partial_search_diagnostics_redact_untrusted_exception_text():
+    import httpx
+
+    session = fake_session()
+    events = []
+    session._diagnostic = lambda *args, **kwargs: events.append((args, kwargs))
+    row = NS(id="public-book", content_type="ebook")
+    session._search_ebooks = lambda *args: [row]
+
+    def fail_audio(*args):
+        request = httpx.Request(
+            "GET", "https://gallica.example/search?token=PRIVATE_SIGNED"
+        )
+        response = httpx.Response(429, request=request, text="Bearer PRIVATE_TOKEN")
+        raise httpx.HTTPStatusError(
+            "PRIVATE_SIGNED_URL Bearer PRIVATE_TOKEN",
+            request=request, response=response,
+        )
+
+    session._search_audio = fail_audio
+    assert session.search("public query") == [row]
+    assert session.last_search_warnings == [
+        "partial_results : Gallica : recherche audio temporairement indisponible"
+    ]
+    diagnostic = next(
+        kwargs["detail"]
+        for args, kwargs in events
+        if args[:3] == ("GALLICA", "audio search branch", "error")
+    )
+    assert diagnostic["http_status"] == 429
+    assert diagnostic["error"] == "HTTPStatusError"
+    assert "message" not in diagnostic
+    assert "PRIVATE" not in str(diagnostic)
+    assert "token=" not in str(diagnostic)
