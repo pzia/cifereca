@@ -24,7 +24,7 @@ sur la page fournie. **Aucun téléchargement réel ni fulfillment ADEPT n'a
 renvoyée à l'installation de l'utilisateur ni le succès de sa session.
 
 Le complément 0.1.18 lie ce tableau global à **une seule carte** portant
-le `readBook` exact (lid et variante) choisi dans l'inventaire frais. Le
+le `readBook` exact (lid, variante et autres paramètres de query) choisi dans l'inventaire frais. Le
 couple du bouton `ModalDownload` doit être celui de l'unique ACSM ADOBE.
 Un autre produit/exemplaire, une variante différente, une carte dupliquée,
 un tableau dynamique ou plusieurs déclarations sont refusés avant GET signé.
@@ -38,8 +38,8 @@ HTML privé. Le test de transport utilise un HTTP 302 fictif depuis un
 `readBook` sélectionné dans un inventaire frais, cette page intermédiaire,
 un ACSM fictif et un seul import pour le propriétaire. Il vérifie aussi
 zéro acquisition à l'inventaire, aucun GET LCP/navigation/autre livre,
-l'absence de secrets dans les diagnostics, le refus de deux ACSM et huit
-cas de rattachement incorrect (produit, exemplaire, readBook, variante,
+l'absence de secrets dans les diagnostics, le refus de deux ACSM et neuf
+cas de rattachement incorrect (produit, exemplaire, readBook, variante, query,
 carte absente/dupliquée, tableau dynamique/dupliqué).
 
 ## Nouveau parcours sûr

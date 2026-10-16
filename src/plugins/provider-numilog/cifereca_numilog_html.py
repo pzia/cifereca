@@ -491,8 +491,10 @@ def _readbook_coordinates(value, base_url):
         lid = query.get('lid', [])
         if len(lid) != 1 or not re.fullmatch(r'[0-9]{1,20}', lid[0]):
             return None
-        return (lid[0], tuple((key, tuple(query[key]))
-                             for key in ('m', 'format', 'FormatId', 'FORMAT_ID') if key in query))
+        # Do not silently discard an unknown upstream copy/edition parameter.
+        # The card must repeat the whole fresh readBook query, order of keys
+        # aside; values and repeated-value ordering remain exact.
+        return (lid[0], tuple((key, tuple(query[key])) for key in sorted(query)))
     except (ValueError, TypeError, AttributeError):
         return None
 
