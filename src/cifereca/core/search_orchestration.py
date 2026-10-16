@@ -466,18 +466,25 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
         except Exception as exc:
             from .known_catalog_fallback import public_service_unavailable
             outage = public_service_unavailable(exc)
+            # Provider exceptions can include signed URLs, account IDs and
+            # personal search terms. Neither the result batch nor diagnostics
+            # may carry their raw message.
+            failure_code = "SearchTemporarilyUnavailable" if outage else type(exc).__name__
+            if not outage:
+                import httpx
+                if isinstance(exc, httpx.HTTPStatusError):
+                    if exc.response.status_code == 401:
+                        failure_code = "SearchAuthenticationRequired"
+                    elif exc.response.status_code == 403:
+                        failure_code = "SearchAccessDenied"
             if attempt == 0 or len(variants) == 1:
-                terminal_error_code = "SearchTemporarilyUnavailable" if outage else type(exc).__name__
-                terminal_error_message = "Recherche en ligne indisponible" if outage else str(exc)
-                warnings.append(
-                    f"{session.descriptor.display_name}: recherche en ligne indisponible"
-                    if outage else f"{session.descriptor.display_name}: {exc}"
-                )
+                terminal_error_code = failure_code
+                terminal_error_message = "Recherche en ligne indisponible"
+                warnings.append(f"{session.descriptor.display_name}: recherche en ligne indisponible")
             self.diagnostics.add(
                 "PLUGIN", "search", "error",
                 detail={"provider": session.provider_id, "attempt": attempt + 1, "q_len": len(variant),
-                        "error": type(exc).__name__,
-                        "message": "public_search_unavailable" if outage else str(exc)},
+                        "error": failure_code, "message": "search_provider_failure"},
             )
             from ..search_failures import is_technical_search_error
             if is_technical_search_error(exc):
