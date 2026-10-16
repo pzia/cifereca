@@ -158,13 +158,13 @@ class EbooksSession(ProviderSession):
     def _search_payload(query,page,page_size=50):
         return {'titre':str(query or '').strip(),'offset':str(max(0,int(page))*int(page_size)),'Submit':'Rechercher'}
     def search(self,query,scope='all',page=0,field='all'):
+        self.last_search_warnings = []
         # Unimplemented fields/scopes must never masquerade as zero matches.
         if type(field) is not str or field.strip().casefold() not in DESCRIPTOR.search_capabilities.fields:
             raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_field')
         if type(scope) is not str or scope.strip().casefold() not in DESCRIPTOR.search_capabilities.scopes:
             raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_scope')
         if not self.connected: raise ProviderError('Ebooks libres et gratuits : connecter le catalogue')
-        self.last_search_warnings = []
         page=max(0,int(page)); field=field.strip().casefold(); attested_metadata={}
         if field in {'author','subject','category','genre'}:
             if not str(query or '').strip():
@@ -190,6 +190,14 @@ class EbooksSession(ProviderSession):
                 r=self.client.get(self.base_url+'ebooks.php',params=params); r.raise_for_status()
             except httpx.HTTPError as e: raise _public_search_error(e) from e
         elif field in {'all','title','titre'}:
+            if field == 'all' and str(query or '').strip():
+                # The upstream form sends the term as a titre selector. It
+                # does not attest a catalogue-wide author/subject search.
+                # Publish this limitation even when that title search has
+                # legitimately returned no rows.
+                self.last_search_warnings.append(
+                    'partial_results : recherche générale limitée au titre'
+                )
             if query or page:
                 try:
                     r=self.client.post(self.base_url+'ebooks.php',data=self._search_payload(query,page,self.page_size)); r.raise_for_status()
