@@ -336,3 +336,73 @@ def test_directory_collision_fails_closed_before_reading_bytes(tmp_path):
         assert guarded.facts["acquisition_authorized"] is False
     finally:
         service.close()
+
+
+def test_foreign_placement_never_counts_as_linked_without_sha_opt_in(tmp_path):
+    service = _service(tmp_path)
+    try:
+        account, _session, _calls = _connect(service, number=0)
+        item, eid = _owned(service, account)
+        path = _ledger(service, account, item, eid, wrong_scope=True)
+        broker, sid = _broker(service, account)
+        result = _preview(broker, sid, verify=False)
+        assert result.ok
+        assert result.facts["counts"]["already_local_linked"] == 0
+        assert result.facts["counts"]["needs_reconciliation"] == 1
+        assert result.facts["counts"]["potentially_missing"] == 0
+        assert str(path) not in json.dumps(result.facts)
+    finally:
+        service.close()
+
+
+def test_duplicate_completed_acquisitions_require_reconciliation_not_download(tmp_path):
+    service = _service(tmp_path)
+    try:
+        account, _session, _calls = _connect(service, number=0)
+        item, eid = _owned(service, account)
+        _ledger(service, account, item, eid)
+        service.storage.acquisition_put({
+            "acquisition_id": "another-fictional-acquisition",
+            "entitlement_id": eid,
+            "provider_id": "numilog", "identity_id": account.identity_id,
+            "credential_id": account.credential_id, "account_id": account.unique_id,
+            "item_id": item, "status": "complete",
+        })
+        broker, sid = _broker(service, account)
+        result = _preview(broker, sid, verify=True)
+        assert result.ok
+        counts = result.facts["counts"]
+        assert counts["already_local_linked"] == 0
+        assert counts["already_local_verified"] == 0
+        assert counts["needs_reconciliation"] == 1
+        assert counts["potentially_missing"] == 0
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("fake_right", ["expired", "loan"])
+def test_unattested_loan_or_expired_entitlement_is_not_a_purchase(
+    tmp_path, fake_right,
+):
+    service = _service(tmp_path)
+    try:
+        account, _session, _calls = _connect(service, number=0)
+        item, eid = _owned(service, account)
+        service.storage.entitlement_put({
+            "entitlement_id": eid, "provider_id": "numilog",
+            "credential_id": account.credential_id,
+            "account_id": account.unique_id,
+            "identity_id": account.identity_id,
+            "item_id": item, "entitlement_type": "owned", "state": "active",
+            "expires_at": "2099-01-01T00:00:00Z" if fake_right == "expired" else None,
+            "loan_id": "borrower-loan" if fake_right == "loan" else None,
+            "metadata": {"source": "numilog.authenticated_library"},
+        })
+        broker, sid = _broker(service, account)
+        result = _preview(broker, sid)
+        assert result.ok
+        assert result.facts["known_item_count"] == 0
+        assert result.facts["counts"]["ignored_unattested_rights"] == 1
+        assert result.facts["counts"]["potentially_missing"] == 0
+    finally:
+        service.close()
