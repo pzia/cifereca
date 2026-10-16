@@ -228,3 +228,38 @@ def test_failed_or_closed_opening_never_queues_inventory_without_lock_release():
     r.window._closed = True
     opening.done({"identities": []})
     assert r.jobs == []
+
+
+def test_opt_in_revoked_while_startup_task_queued_never_reaches_broker():
+    r = _rig()
+    assert startup.dispatch_after_opening(r.window)
+    r.policies[SOURCE_ID] = {"mode": "manual", "interval_minutes": 60}
+    r.jobs[0].work()
+    assert not any(c[0] == "dispatch" for c in r.records["calls"])
+
+
+def test_queued_startup_rechecks_phase_clock_before_each_provider_attempt():
+    r = _rig()
+    assert startup.dispatch_after_opening(r.window)
+    row = r.broker.sources("alice")[0]
+    row.phase_states = (_phase(status="running"),)
+    r.jobs[0].work()
+    assert not any(c[0] == "dispatch" for c in r.records["calls"])
+
+
+def test_startup_worker_redacts_provider_exception_without_leaking_secret():
+    r = _rig()
+    assert startup.dispatch_after_opening(r.window)
+    r.broker.synchronize_scheduled_inventory = lambda *args: (
+        _ for _ in ()
+    ).throw(RuntimeError("https://private.invalid/?token=TOP_SECRET"))
+    with pytest.raises(RuntimeError, match="Actualisation initiale des notices Kobo indisponible") as caught:
+        r.jobs[0].work()
+    assert "TOP_SECRET" not in str(caught.value)
+
+
+def test_duplicate_configured_identity_blocks_all_startup_dispatch():
+    r = _rig()
+    r.window.service.identities.append(NS(identity_id="alice"))
+    assert not startup.dispatch_after_opening(r.window)
+    assert r.jobs == []
