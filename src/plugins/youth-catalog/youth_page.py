@@ -1501,7 +1501,17 @@ class YouthView:
             self.host.toast("Recherche impossible : vérifiez le profil sélectionné.")
 
     def open_selected(self):
-        if not self.selected_book:
+        if getattr(self, "disposed", False):
+            return
+        selected = getattr(self, "selected_book", None)
+        # A rapid profile/filter refresh may retain an old object even after
+        # the selected row disappeared. Never route it to a new identity.
+        if selected is not None and not any(
+            candidate is selected for candidate in getattr(self, "rows", {}).values()
+        ):
+            self.host.toast("Sélection périmée : choisissez à nouveau un livre Jeunesse.")
+            return
+        if not selected:
             self.host.toast("Sélectionnez un livre Jeunesse.")
             return
         method = getattr(self.host, "open_book_detail", None)
