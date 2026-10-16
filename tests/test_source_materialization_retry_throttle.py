@@ -26,31 +26,31 @@ ACCOUNT = SimpleNamespace(identity_id="identity", credential_id="credential")
 
 
 def test_checkpoint_does_not_bypass_recent_attempt():
-    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=object()), \\
-         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \\
+    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=object()), \
+         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \
          patch("cifereca.core.source_materialization_schedule.time.time", return_value=10_000):
         assert on_start_due(service("9900"), ACCOUNT) is False
 
 
 def test_checkpoint_is_due_after_attempt_interval():
-    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=object()), \\
-         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \\
+    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=object()), \
+         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \
          patch("cifereca.core.source_materialization_schedule.time.time", return_value=10_000):
         assert on_start_due(service("8000"), ACCOUNT) is True
         assert on_start_due(service("8000", checkpoint_due=False), ACCOUNT) is False
 
 
 def test_no_checkpoint_first_attempt_remains_due():
-    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=None), \\
-         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \\
+    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=None), \
+         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \
          patch("cifereca.core.source_materialization_schedule.time.time", return_value=10_000):
         assert on_start_due(service(None), ACCOUNT) is True
         assert on_start_due(service("9900"), ACCOUNT) is False
 
 
 def test_corrupt_or_future_clock_fails_closed_with_checkpoint():
-    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=object()), \\
-         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \\
+    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=object()), \
+         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \
          patch("cifereca.core.source_materialization_schedule.time.time", return_value=10_000):
         assert on_start_due(service("invalid"), ACCOUNT) is False
         assert on_start_due(service("20000"), ACCOUNT) is False
