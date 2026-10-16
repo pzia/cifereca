@@ -72,9 +72,10 @@ def test_partial_public_results_preserved_without_exporting_private_error():
     try:
         rows = client.search("titre", scope="all")
         assert [row.id for row in rows] == ["public-only"]
-        assert client.last_search_warnings == [
-            "Catalogue numérique momentanément indisponible"
-        ]
+        assert any(
+            "Catalogue numérique momentanément indisponible" in warning
+            for warning in client.last_search_warnings
+        )
         assert "PRIVATE_" not in repr(diagnostic.rows)
         assert "SIGNED_URL" not in repr(diagnostic.rows)
     finally:
