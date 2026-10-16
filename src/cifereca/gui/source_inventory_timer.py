@@ -1,0 +1,259 @@
+"""GTK-owned, opt-in Kobo inventory timer (#1346).
+
+A heartbeat only exists when a *per-source* periodic inventory policy is
+present. All due decisions are passive broker reads; workers revalidate the
+exact identity/account inside SynchronizationBrokerImpl before network I/O.
+No acquisition, ADEPT, file operation, legacy backup flag or implicit consent.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Callable
+
+from ..core.source_refresh_policy import (
+    SourceRefreshSchedule, source_refresh_due,
+)
+from ..task_queue import TaskPriority
+
+_HEARTBEAT_SECONDS = 60
+_MAX_IDENTITIES = 64
+_MAX_SOURCES = 256
+
+
+def _broker(window: Any) -> Any:
+    manager = getattr(window, "plugin_manager", None)
+    try:
+        result = manager.broker("sync") if manager is not None else None
+    except Exception:
+        return None
+    if not all(callable(getattr(result, method, None)) for method in (
+        "sources", "inventory_refresh_schedule",
+        "synchronize_scheduled_inventory",
+    )):
+        return None
+    return result
+
+
+def _policy(value: Any) -> SourceRefreshSchedule | None:
+    """Treat provider/broker-returned data as untrusted and never echo it."""
+    if (
+        type(value) is not dict
+        or set(value) != {"mode", "interval_minutes"}
+    ):
+        return None
+    try:
+        return SourceRefreshSchedule(
+            mode=value["mode"], interval_minutes=value["interval_minutes"],
+        )
+    except (ValueError, TypeError):
+        return None
+
+
+def _configured_identity_ids(window: Any) -> tuple[str, ...]:
+    identities = getattr(getattr(window, "service", None), "identities", ())
+    if not isinstance(identities, (list, tuple)) or len(identities) > _MAX_IDENTITIES:
+        return ()
+    values = tuple(getattr(identity, "identity_id", None) for identity in identities)
+    if any(type(value) is not str or not value for value in values):
+        return ()
+    if len(values) != len(set(values)):
+        return ()  # ambiguous identity configuration cannot dispatch a batch
+    return values
+
+
+def periodic_identities_due(
+    window: Any, broker: Any, *, now: datetime | None = None,
+) -> tuple[str, ...]:
+    """Passive bounded eligibility probe; *never* a network/provider call."""
+    if getattr(window, "_closed", False):
+        return ()
+    instant = datetime.now(timezone.utc) if now is None else now
+    if not isinstance(instant, datetime) or instant.tzinfo is None:
+        return ()
+    due: list[str] = []
+    for identity_id in _configured_identity_ids(window):
+        try:
+            rows = broker.sources(identity_id)
+            if not isinstance(rows, (tuple, list)) or len(rows) > _MAX_SOURCES:
+                continue
+            for source in rows:
+                if (
+                    getattr(source, "identity_id", None) != identity_id
+                    or getattr(source, "provider_id", None) != "kobo"
+                    or getattr(source, "sync_capable", None) is not True
+                ):
+                    continue
+                sid = getattr(source, "source_id", None)
+                if type(sid) is not str or not sid.startswith("sync:"):
+                    continue
+                policy = _policy(broker.inventory_refresh_schedule(sid))
+                if policy is None:
+                    continue
+                if source_refresh_due(
+                    policy, trigger="periodic", now=instant,
+                    last_attempt=getattr(source, "last_attempt", ""),
+                    phase_status=getattr(source, "status", "idle"),
+                    enabled=getattr(source, "enabled", None),
+                    connected=getattr(source, "connected", None),
+                    capable=True,
+                ):
+                    due.append(identity_id)
+                    break
+        except Exception:
+            # Missing/broken identity state never authorizes scheduled I/O.
+            continue
+    return tuple(due)
+
+
+def stop(window: Any, *, source_remove: Callable[[int], Any]) -> None:
+    """Idempotent lifecycle release, including a callback queued at teardown."""
+    timer_id = getattr(window, "_source_inventory_timer_id", None)
+    window._source_inventory_timer_id = None
+    if timer_id is not None:
+        try:
+            source_remove(timer_id)
+        except Exception:
+            pass
+    unsubscribe = getattr(window, "_source_inventory_unsubscribe", None)
+    window._source_inventory_unsubscribe = None
+    window._source_inventory_subscription_broker = None
+    if callable(unsubscribe):
+        try:
+            unsubscribe()
+        except Exception:
+            pass
+
+
+def configure(
+    window: Any, *,
+    timeout_add_seconds: Callable[[int, Callable[[], bool]], int],
+    source_remove: Callable[[int], Any],
+    idle_add: Callable[[Callable[[], bool]], Any],
+) -> bool:
+    """Install/remove one periodic timer; changes are observed via broker subscribe.
+
+    This method runs on GTK main thread only. A worker-side broker event may
+    only post a callback through idle_add, never touch GTK widget state.
+    """
+    if getattr(window, "_closed", False):
+        stop(window, source_remove=source_remove)
+        return False
+
+    broker = _broker(window)
+    old_broker = getattr(window, "_source_inventory_subscription_broker", None)
+    if old_broker is not broker:
+        old_unsubscribe = getattr(window, "_source_inventory_unsubscribe", None)
+        window._source_inventory_unsubscribe = None
+        window._source_inventory_subscription_broker = broker
+        if callable(old_unsubscribe):
+            try:
+                old_unsubscribe()
+            except Exception:
+                pass
+        if broker is not None and callable(getattr(broker, "subscribe", None)):
+            def changed():
+                if not getattr(window, "_closed", False):
+                    def recompute() -> bool:
+                        if not getattr(window, "_closed", False):
+                            configure(
+                                window,
+                                timeout_add_seconds=timeout_add_seconds,
+                                source_remove=source_remove,
+                                idle_add=idle_add,
+                            )
+                        return False
+                    idle_add(recompute)
+            try:
+                window._source_inventory_unsubscribe = broker.subscribe(changed)
+            except Exception:
+                window._source_inventory_unsubscribe = None
+
+    # Reconfigure without stacking timers, including after identity/profile
+    # changes or when a source is revoked while its worker is running.
+    old_id = getattr(window, "_source_inventory_timer_id", None)
+    window._source_inventory_timer_id = None
+    if old_id is not None:
+        try:
+            source_remove(old_id)
+        except Exception:
+            pass
+    if broker is None:
+        return False
+
+    # Only opt-in *periodic* policies install a heartbeat. Startup/manual
+    # preferences do not authorize any timer. No private credentials are read.
+    periodic = False
+    for identity_id in _configured_identity_ids(window):
+        try:
+            rows = broker.sources(identity_id)
+            if not isinstance(rows, (list, tuple)) or len(rows) > _MAX_SOURCES:
+                continue
+            for source in rows:
+                if (
+                    getattr(source, "identity_id", None) == identity_id
+                    and getattr(source, "provider_id", None) == "kobo"
+                    and getattr(source, "enabled", None) is True
+                    and getattr(source, "connected", None) is True
+                    and getattr(source, "sync_capable", None) is True
+                ):
+                    sid = getattr(source, "source_id", None)
+                    if type(sid) is str and sid.startswith("sync:"):
+                        policy = _policy(broker.inventory_refresh_schedule(sid))
+                        if policy is not None and policy.mode == "periodic":
+                            periodic = True
+                            break
+        except Exception:
+            continue
+        if periodic:
+            break
+    if not periodic:
+        return False
+
+    def tick() -> bool:
+        if getattr(window, "_closed", False):
+            window._source_inventory_timer_id = None
+            return False
+        current = _broker(window)
+        if current is not broker:
+            # Replacement/revocation is never a reason to reuse old
+            # subscriptions or dispatch with stale broker authority.
+            configure(window, timeout_add_seconds=timeout_add_seconds,
+                      source_remove=source_remove, idle_add=idle_add)
+            return False
+        ids = periodic_identities_due(window, broker)
+        if not ids:
+            return True
+
+        def work():
+            # No unbounded refresh batch and no user-selected-account fallback.
+            for identity_id in ids:
+                if (
+                    getattr(window, "_closed", False)
+                    or _broker(window) is not broker
+                ):
+                    # A queued task must not reanimate a replaced plugin
+                    # manager/broker after the GTK tick checked its scope.
+                    return
+                try:
+                    broker.synchronize_scheduled_inventory(identity_id, "periodic")
+                except Exception:
+                    # Keep worker exceptions (signed URLs, account IDs, paths)
+                    # out of TaskRunner global UI feedback.
+                    raise RuntimeError("Actualisation des notices Kobo indisponible") from None
+
+        try:
+            window.runner.submit(
+                "Actualisation périodique des notices Kobo…",
+                work, priority=TaskPriority.PROVIDER_SYNC,
+                kind="source-sync", origin="automatic",
+                coalesce_key="kobo:inventory:periodic",
+            )
+        except Exception:
+            # A torn-down runner or plugin replacement cannot crash GTK tick.
+            pass
+        return True
+
+    window._source_inventory_timer_id = timeout_add_seconds(
+        _HEARTBEAT_SECONDS, tick,
+    )
+    return False
