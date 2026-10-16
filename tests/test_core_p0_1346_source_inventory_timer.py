@@ -237,3 +237,57 @@ def test_ambiguous_identities_never_install_timer_or_enqueue_work():
     r.window.service.identities.append(NS(identity_id="alice"))
     r.configure()
     assert not r.records["timers"] and not r.jobs
+
+
+def test_startup_connection_registers_timer_only_after_successful_broker_connect():
+    from cifereca.gui.startup_coordinator import connect_configured_sources
+
+    r = rig(modes={SOURCE_ID: {"mode": "periodic", "interval_minutes": 30}})
+    posted, events = [], []
+    r.window.service.connect_configured = lambda: {"connected": [], "errors": {}}
+    r.window.service.last_loans = []
+    r.window._populate_accounts = lambda: events.append("accounts")
+    r.window._populate_loans = lambda rows: events.append("loans")
+    r.window._activity_result = lambda *args, **kwargs: events.append("activity")
+    r.window._render_dashboard = lambda: events.append("dashboard")
+    r.window.run_opening_sync = lambda: events.append("opening-sync")
+    assert connect_configured_sources(
+        r.window, idle_add=posted.append,
+        timeout_add_seconds=lambda seconds, tick: (
+            r.records["timers"].update({99: tick}) or 99
+        ),
+        source_remove=r.source_remove,
+    ) is False
+    assert len(r.jobs) == 1 and posted == []
+    r.jobs.pop().done({"connected": [], "errors": {}})
+    assert len(posted) == 2
+    assert r.records["timers"] == {}
+    assert posted.pop(0)() is False
+    assert events[-1] == "opening-sync"
+    assert posted.pop(0)() is False
+    assert list(r.records["timers"]) == [99]
+    assert not any(c[0] == "dispatch" for c in r.records["calls"])
+
+
+def test_window_close_always_releases_periodic_inventory_subscription():
+    from cifereca.gui.window_close import close_window_resources
+
+    r = rig(modes={SOURCE_ID: {"mode": "periodic", "interval_minutes": 15}})
+    r.configure()
+    first_timer_id = next(iter(r.records["timers"]))
+    events = []
+    r.window.config = NS(set=lambda *a: None, save=lambda: None)
+    r.window.get_width = lambda: 1366
+    r.window.get_height = lambda: 900
+    r.window._cancel_notification_hide = lambda: None
+    r.window._cancel_activity_hide = lambda: None
+    r.window._cached_book_unsubscribe = lambda: None
+    r.window.runner.close = lambda: events.append("runner")
+    r.window.history_cover_resolver = NS(close=lambda: events.append("history"))
+    r.window.covers = NS(close=lambda: events.append("covers"))
+    r.window.service.close = lambda: events.append("service")
+    assert close_window_resources(r.window, source_remove=r.source_remove) is False
+    assert r.window._closed
+    assert r.records["timers"] == {} and not r.listeners
+    assert first_timer_id in r.records["cancelled"]
+    assert events[-4:] == ["runner", "history", "covers", "service"]
