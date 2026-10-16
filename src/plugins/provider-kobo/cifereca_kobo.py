@@ -408,8 +408,10 @@ class KoboSession(ProviderSession):
             rejections = getattr(self.catalog, "last_search_rejections", ())
             if type(rejections) in (tuple, list) and any(
                 type(row) is dict
-                and row.get("source") == "library"
-                and row.get("reason") == "personal_search_denied"
+                and type(row.get("source")) is str
+                and type(row.get("reason")) is str
+                and row["source"] == "library"
+                and row["reason"] == "personal_search_denied"
                 for row in rejections[:64]
             ):
                 # Never pass Vault exception/body, credentials or account IDs
