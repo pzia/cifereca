@@ -449,8 +449,7 @@ class SynchronizationBrokerImpl:
         return {"mode": saved.mode, "interval_minutes": saved.interval_minutes}
 
     def synchronize_scheduled_inventory(
-        self, identity_id: str, trigger: str, *, now: datetime | None = None,
-        control: Any = None,
+        self, identity_id: str, trigger: str, *, control: Any = None,
     ) -> SyncResult:
         """Dispatch due Kobo *inventory* refreshes for one explicit identity.
 
@@ -478,9 +477,9 @@ class SynchronizationBrokerImpl:
             return SyncResult(False, facts={"reason": "unknown_identity"})
         if type(trigger) is not str or trigger not in {"startup", "periodic"}:
             return SyncResult(False, facts={"reason": "invalid_trigger"})
-        instant = datetime.now(timezone.utc) if now is None else now
-        if not isinstance(instant, datetime) or instant.tzinfo is None:
-            return SyncResult(False, facts={"reason": "invalid_clock"})
+        # The broker clock is authoritative: plugins must not force a
+        # future timestamp to bypass the persisted retry interval.
+        instant = datetime.now(timezone.utc)
         total = 0
         attempted = 0
         failed = 0
