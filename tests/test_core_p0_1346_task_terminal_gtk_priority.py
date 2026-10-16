@@ -62,3 +62,30 @@ def test_legacy_headless_gtk_seam_still_delivers_without_priority_constant(sessi
     session.drain_until(lambda: len(outcomes) == 1)
     assert outcomes == ["result"]
     assert session.runner._count == 0
+
+
+def test_unrelated_providers_keep_existing_idle_callback_order(session):
+    """A Kobo cancellation workaround cannot reorder Numilog/Paris events."""
+    runner = session.runner
+    glib = runner.submit.__globals__["GLib"]
+    events = []
+    glib.PRIORITY_DEFAULT = 0
+    glib.idle_add = lambda fn, *args, priority=200: events.append(
+        (fn.__name__, priority, fn, args)
+    )
+    worker, entered, release, calls = session.work()
+    runner.submit("Catalogue distant", worker, kind="source-sync")
+    assert entered.wait(3)
+    release.set()
+
+    from time import monotonic, sleep
+    deadline = monotonic() + 3
+    while not any(event[0] == "deliver" for event in events):
+        assert monotonic() < deadline
+        sleep(0.005)
+
+    assert events[-1][0] == "deliver"
+    assert events[-1][1] == 200
+    assert all(priority == 200 for _name, priority, _fn, _args in events)
+    events[-1][2](*events[-1][3])
+    assert runner._count == 0
