@@ -110,3 +110,31 @@ n'attestent pas un succès HTTP chez Numilog. Le déploiement en recherche
 fédérée par défaut et ses capacités publiques restent à coordonner côté Core.
 Les cas dérivés de tests ne sont pas des captures amont réelles.
 La documentation de référence demeure `docs/NUMILOG-PUBLIC-SEARCH-FIXTURE.md`.
+
+## Fournisseur public séparé pour la recherche fédérée (#1886, 0.1.22)
+
+Le même package propose deux providers indépendants :
+
+- `provider.numilog` / ID `numilog` : **Mes achats**, configuration avec
+  identifiants privés, récupération des droits attestés et acquisition ciblée.
+  Sa méthode `search()` historique demeure inchangée.
+- `provider.numilog.catalog` / ID `numilog-catalog` : **Catalogue public**,
+  `singleton_public` sans identifiants ni compte fictif, uniquement
+  `catalog.search`. Il retourne les notices du parseur public en préservant
+  le prix, la provenance et `owned=False`, `downloadable=False`,
+  `download_url=None`. Aucune méthode d'acquisition n'est exposée.
+
+**Activation explicite** : le plugin public a `enabled_by_default=false`.
+Après qualification des règles d'accès et activation dans le gestionnaire de
+plugins, le Core peut connecter cette source anonyme sans créer de compte
+Numilog ; elle devient alors une source distincte de la recherche fédérée.
+Seul un clic de recherche provoque un GET HTTPS public, jamais la connexion
+ou l'affichage du catalogue. Les champs serveur auteur/ISBN restent
+non qualifiés : ce fournisseur annonce seulement `field=all` et les scopes
+`all/digital` ; il ne prétend pas être exhaustif sur les pages suivantes.
+La source privée et ses éventuelles données en cache ne servent **jamais** de
+repli à une recherche publique indisponible.
+
+**Limite de preuve** : aucune réponse HTTP anonyme réussie ni qualification
+robots/CGU n'a été établie à ce stade. La mise en service réelle reste
+conditionnée à cette vérification ; les tests sont déterministes et hors réseau.
