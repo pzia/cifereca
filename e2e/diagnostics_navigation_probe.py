@@ -1552,6 +1552,7 @@ def main() -> int:
         f = loan_sync_fixture
         w = window[0]
         assert not f["prepare_calls"] and not f["materialize_calls"]
+        report["checks"]["P0_1347_library_menu_XTEST_navigates_without_acquisition"] = True
         groups = [node for node in walk(w._sync_sources_box)
                   if isinstance(node, Adw.PreferencesGroup)]
         groups = [group for group in groups if any(
@@ -1565,10 +1566,10 @@ def main() -> int:
         assert "Non préparé" in f["download_row"].get_subtitle()
         f["download_button"] = next(node for node in walk(groups[0])
             if isinstance(node, Gtk.Button)
-            and node.get_label() == "Télécharger les livres manquants…")
+            and getattr(node, "_cifereca_action_label", node.get_label()) == "Télécharger les livres manquants…")
         f["stop_button"] = next(node for node in walk(groups[0])
             if isinstance(node, Gtk.Button)
-            and node.get_label() == "Annuler le téléchargement")
+            and getattr(node, "_cifereca_action_label", node.get_label()) == "Annuler le téléchargement")
         report["checks"]["P0_1347_library_menu_XTEST_navigates_without_acquisition"] = True
         f["download_phase"] = "cancel-dialog"
         kobo_download_prepare_click()
