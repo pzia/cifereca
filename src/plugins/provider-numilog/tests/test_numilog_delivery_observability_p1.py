@@ -138,6 +138,14 @@ def test_http_denials_have_stable_public_codes(tmp_path, status, expected):
         assert summary[0][0][2] == "error"
         assert summary[0][1]["detail"]["code"] == expected
         assert summary[0][1]["detail"]["source"] == "owned_card"
+        http_events = [
+            item[1]["detail"] for item in diag.acquisition()
+            if item[1]["detail"]["phase"] == "delivery_http"
+        ]
+        assert len(http_events) == 1
+        assert http_events[0]["http_status"] == status
+        # An HTTP refusal cannot be labelled "http_ok" even temporarily.
+        assert http_events[0]["code"] == expected
         assert_private_data_absent(diag)
     finally:
         session.close()

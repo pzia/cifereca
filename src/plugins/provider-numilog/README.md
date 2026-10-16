@@ -61,3 +61,115 @@ mais sa tâche de téléchargement n'expose pas la cause de l'échec. Les notice
 en cache ne prouvent pas une connexion active. Cette instrumentation ne
 prétend pas corriger une cause amont non observée : aucune reconnexion,
 requête supplémentaire ou modification des gardes d'acquisition.
+
+
+## Parseur de recherche publique hors réseau (#1886, 0.1.20)
+
+`cifereca_numilog_public.parse_public_search(html, source_url)` lit une page
+publique du DOM attesté par la capture Jefferson du 16 octobre. Il retourne
+`PublicSearchPage` : notices `SearchResult`, total annoncé, index de page,
+prochain lien GET, facettes et options de tri observées. Le booléen `complete`
+ne vaut vrai que si la première page couvre à elle seule le total annoncé,
+sans lien suivant. Aucun résultat vide n'est fabriqué à partir d'une page
+inconnue, d'une grille absente ou d'un total contradictoire.
+
+Les notices portent `numilog:public:ID`, `source_credential=__public__`,
+`source_collection=public_catalog`, `owned=False`, `downloadable=False` et
+aucune URL de téléchargement. Ce namespace est refusé par le chemin privé
+d'acquisition. Les cartes homonymes PDF et EPUB conservent leurs IDs distincts.
+Le prix alimente `SearchResult.price` (chaîne décimale) et `.currency`, ainsi
+que `metadata.price` (centimes, parties brutes, portée offre de carte,
+sélecteurs). Un prix complètement absent reste inconnu ; un prix fragmentaire,
+ambigu ou de devise non qualifiée provoque une erreur publique fixe.
+Les champs présents ont leur preuve HTML et leur URL source dans
+`metadata.field_evidence`. Aucun ISBN n'est déduit des couvertures.
+
+Le parseur borne HTML, structure, cartes, textes et navigation. Les liens de
+pagination doivent garder la même requête et les mêmes filtres ; la résolution
+des liens produit relatifs est précédée d'une validation de leur forme brute.
+Aucune URL privée/signée, origine externe ou traversée arbitraire ne passe
+comme URL produit/navigation. Les couvertures non qualifiées sont omises avec
+un avertissement fixe. Les champs optionnels absents restent inconnus.
+
+**Étape transport public explicite** : `NumilogSession.search(query, scope='catalog',
+field='all', page=n)` utilise désormais un **nouveau client HTTP anonyme** à
+chaque appel, sans cookies du compte, sur le chemin HTTPS public `brSimple`
+attesté par la fixture. Il refuse les redirections, MIME inattendus, réponses
+supérieures à 4 MiB, 403/429 et HTML dont la structure diffère ; jamais de
+repli sur un endpoint privé. `search_public()` est aussi exposée comme
+méthode explicite de session. Tout autre `field` public est refusé : les modes
+auteur/ISBN filtrés ne sont pas encore prouvés. Le scope normal `all/digital`
+continue temporairement de chercher dans **Mes achats** pour ne pas changer
+silencieusement les workflows privés avant intégration du moteur fédéré ; le
+scope `catalog` ne donne pas de droit d'achat ou de téléchargement.
+
+**Limite de preuve** : transport live anonyme, conditions d'accès, robots/CGU,
+réponses filtrées, vrais zéros, deuxième page et DOM fiche produit restent à
+qualifier sur des observations publiques autorisées. Les tests hors réseau
+n'attestent pas un succès HTTP chez Numilog. Le déploiement en recherche
+fédérée par défaut et ses capacités publiques restent à coordonner côté Core.
+Les cas dérivés de tests ne sont pas des captures amont réelles.
+La documentation de référence demeure `docs/NUMILOG-PUBLIC-SEARCH-FIXTURE.md`.
+
+## Fournisseur public séparé pour la recherche fédérée (#1886, 0.1.22)
+
+Le même package propose deux providers indépendants :
+
+- `provider.numilog` / ID `numilog` : **Mes achats**, configuration avec
+  identifiants privés, récupération des droits attestés et acquisition ciblée.
+  Sa méthode `search()` historique demeure inchangée.
+- `provider.numilog.catalog` / ID `numilog-catalog` : **Catalogue public**,
+  `singleton_public` sans identifiants ni compte fictif, uniquement
+  `catalog.search`. Il retourne les notices du parseur public en préservant
+  le prix, la provenance et `owned=False`, `downloadable=False`,
+  `download_url=None`. Aucune méthode d'acquisition n'est exposée.
+
+**Activation explicite** : le plugin public a `enabled_by_default=false`.
+Après qualification des règles d'accès et activation dans le gestionnaire de
+plugins, le Core peut connecter cette source anonyme sans créer de compte
+Numilog ; elle devient alors une source distincte de la recherche fédérée.
+Seul un clic de recherche provoque un GET HTTPS public, jamais la connexion
+ou l'affichage du catalogue. Les champs serveur auteur/ISBN restent
+non qualifiés : ce fournisseur annonce seulement `field=all` et les scopes
+`all/digital` ; il ne prétend pas être exhaustif sur les pages suivantes.
+La source privée et ses éventuelles données en cache ne servent **jamais** de
+repli à une recherche publique indisponible.
+
+**Limite de preuve** : aucune réponse HTTP anonyme réussie ni qualification
+robots/CGU n'a été établie à ce stade. La mise en service réelle reste
+conditionnée à cette vérification ; les tests sont déterministes et hors réseau.
+
+## Enrichissement explicite des achats par carte publique (#1072, 0.1.23)
+
+`NumilogSession.enrich_owned_public_listing(owned_item)` est une opération
+**opt-in** : elle vérifie l'identité du compte et retrouve une ligne
+`MesLivres` **fraîche** sans charger les preuves signées de livraison. Une
+unique recherche anonyme `brSimple` sur le titre de la ligne sert à **trouver
+des candidats seulement** ; l'édition n'est confirmée que si l'URL canonique
+du produit figure explicitement dans la carte possédée **et correspond
+exactement** à l'URL d'un résultat public dont l'ID produit, le namespace,
+le statut non possédé et la provenance HTML concordent. Un titre identique,
+un ID `lid`, une couverture ou un ISBN papier ne suffisent jamais.
+
+La méthode retourne une nouvelle notice `SearchResult` reconstruite
+depuis la ligne achetée ; elle ne modifie pas le résultat fourni par l'appelant.
+Elle peut compléter auteur, éditeur, date, résumé-extrait, couverture et
+collection commerciale s'ils sont attestés par la carte publique ; le prix
+courant reste exclusivement `metadata.public_offer_price` avec preuve.
+**Ce prix n'est jamais déclaré prix d'achat historique.** Ni format possédé,
+ni ISBN numérique, ni DRM, ni âge n'est déduit de cette carte multi-formats.
+La provenance est consignée sous `metadata.public_enrichment`.
+
+L'opération n'est **pas** appelée automatiquement par `search()`,
+`library()`, `holdings()`, la synchronisation ou le rendu des listes :
+aucun N+1, aucune acquisition ni récupération ACSM. Elle se limite à
+**une page** publique : absence de correspondance ≠ absence du livre au
+catalogue complet. Lorsque deux cartes du même achat/variante se répètent
+sur une page ou entre pages, le rapprochement est refusé **avant tout GET
+public**, même si l'inventaire ordinaire déduplique ces cartes. La preuve
+\`lid\` reste distincte de l'ID du produit commercial. 403/429, erreur réseau et structure changée sont
+des erreurs publiques typées, sans repli sur le client authentifié.
+
+Reste à livrer : action UI explicite, fiche produit HTML réellement
+qualifiée, ISBN numérique/PDF distingué, cache et politique TTL vérifiés,
+puis recette réelle autorisée. Ce jalon ne clôture pas #1072.

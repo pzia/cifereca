@@ -5,7 +5,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, quote_plus, urlsplit
 import httpx
-from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
+from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
 BASE='https://www.ebooksgratuits.com/'
 _RELEASE_RE = re.compile(r'\bParution\s+le\s+([0-3][0-9]/[01][0-9]/[0-9]{4})\b', re.I)
@@ -28,7 +28,7 @@ def _rights_warning_attested(value):
     return bool(_RESTRICTION_RE.search(value[:_MAX_CARD_PLAINTEXT]))
 
 
-DESCRIPTOR=ProviderDescriptor(id='ebooksgratuits',display_name='Ebooks libres et gratuits',description='Catalogue public francophone et téléchargement EPUB.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),homepage=BASE,notes=('Source publique sans authentification.','Recherche par titre, auteur, catégorie et genre.'))
+DESCRIPTOR=ProviderDescriptor(id='ebooksgratuits',display_name='Ebooks libres et gratuits',description='Catalogue public francophone et téléchargement EPUB.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all','title','author','subject','category','genre'),scopes=('all','digital'),pagination='page',page_size=50,notes=('all/title : formulaire public de recherche par texte titre ; pas une recherche serveur exacte multi-attributs.','author/category/genre : choix dans les sélecteurs HTML publics ; subject : catégorie ou genre disponible, pas un index de sujets exhaustif.','Une valeur sans option correspondante donne zéro parmi les sélecteurs publiés, pas une preuve d’absence dans tout le catalogue.',)),homepage=BASE,notes=('Source publique sans authentification.','Recherche par titre, auteur, catégorie et genre.'))
 class Parser(HTMLParser):
     """Small structured parser for catalog <li> cards; no regex-based DOM slicing."""
     def __init__(self, base_url=BASE):
@@ -133,6 +133,18 @@ def _attested_filter_metadata(selected,label):
         return {'categories':[label],'category_evidence':'ebooksgratuits.search_filter'}
     return {}
 
+def _public_search_error(exc):
+    """Return a bounded, stable error; never expose an upstream URL or body."""
+    status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+    code = (
+        'auth_required' if status == 401 else
+        'access_denied' if status == 403 else
+        'rate_limited' if status == 429 else
+        'service_unavailable'
+    )
+    return ProviderError(f'Ebooks libres et gratuits : {code}')
+
+
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
         super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.12','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
@@ -141,18 +153,33 @@ class EbooksSession(ProviderSession):
     def close(self): self.client.close(); self.connected=False; self._accounts=[]
     def _fetch(self,url):
         try:r=self.client.get(url); r.raise_for_status(); return r
-        except httpx.HTTPError as e: raise ProviderError('Ebooks libres et gratuits : réseau indisponible') from e
+        except httpx.HTTPError as e: raise _public_search_error(e) from e
     @staticmethod
     def _search_payload(query,page,page_size=50):
         return {'titre':str(query or '').strip(),'offset':str(max(0,int(page))*int(page_size)),'Submit':'Rechercher'}
     def search(self,query,scope='all',page=0,field='all'):
+        self.last_search_warnings = []
+        # Unimplemented fields/scopes must never masquerade as zero matches.
+        if type(field) is not str or field.strip().casefold() not in DESCRIPTOR.search_capabilities.fields:
+            raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_field')
+        if type(scope) is not str or scope.strip().casefold() not in DESCRIPTOR.search_capabilities.scopes:
+            raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_scope')
         if not self.connected: raise ProviderError('Ebooks libres et gratuits : connecter le catalogue')
-        if scope == 'physical': return []
-        page=max(0,int(page)); field=str(field or 'all').casefold(); attested_metadata={}
-        if field in {'author','subject','category','genre'} and str(query or '').strip():
+        page=max(0,int(page)); field=field.strip().casefold(); attested_metadata={}
+        if field in {'author','subject','category','genre'}:
+            if not str(query or '').strip():
+                return []
             try:
                 form=self._fetch(self.base_url+'ebooks.php')
                 names=('id_auteur',) if field=='author' else (('id_categorie',) if field=='category' else (('id_genre',) if field=='genre' else ('id_categorie','id_genre')))
+                selector=FilterParser(); selector.feed(form.text); selector.close()
+                available=tuple(name for name in names if selector.options.get(name))
+                if not available:
+                    # HTML changed or filter route unavailable: this is not
+                    # evidence that the catalogue contains no matching books.
+                    raise ProviderCapabilityError('Ebooks libres et gratuits : field_route_unavailable')
+                if field == 'subject' and len(available) < len(names):
+                    self.last_search_warnings.append('partial_results : un sélecteur catégorie/genre est indisponible')
                 choice=_filter_choice(form.text,names,query)
                 if choice is None: return []
                 selected,value,label=choice
@@ -161,16 +188,24 @@ class EbooksSession(ProviderSession):
                         'id_auteur':'0','id_categorie':'1','id_genre':'1'}
                 params[selected]=value
                 r=self.client.get(self.base_url+'ebooks.php',params=params); r.raise_for_status()
-            except httpx.HTTPError as e: raise ProviderError('Ebooks libres et gratuits : recherche indisponible') from e
+            except httpx.HTTPError as e: raise _public_search_error(e) from e
         elif field in {'all','title','titre'}:
+            if field == 'all' and str(query or '').strip():
+                # The upstream form sends the term as a titre selector. It
+                # does not attest a catalogue-wide author/subject search.
+                # Publish this limitation even when that title search has
+                # legitimately returned no rows.
+                self.last_search_warnings.append(
+                    'partial_results : recherche générale limitée au titre'
+                )
             if query or page:
                 try:
                     r=self.client.post(self.base_url+'ebooks.php',data=self._search_payload(query,page,self.page_size)); r.raise_for_status()
-                except httpx.HTTPError as e: raise ProviderError('Ebooks libres et gratuits : recherche indisponible') from e
+                except httpx.HTTPError as e: raise _public_search_error(e) from e
             else:
                 r=self._fetch(self.base_url+'ebooks.php')
         else:
-            return []
+            raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_field')
         out=[]
         for card in Parser(self.base_url).rows(r.text):
             detail=card['detail']; epub=card['epub']; rid=hashlib.sha256(detail.encode()).hexdigest()[:24]

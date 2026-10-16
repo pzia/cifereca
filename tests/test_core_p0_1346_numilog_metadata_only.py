@@ -14,6 +14,7 @@ from cifereca.core import sync_coordination
 from cifereca.models import Account
 from cifereca.plugin_api import SyncRequest
 from tests.test_sync_state_contract import _service
+from tests.test_core_p0_1862_numilog_store_mirror import _row
 
 
 def _account(identity, credential):
@@ -23,11 +24,12 @@ def _account(identity, credential):
     )
 
 
-def _session(credential, record, calls):
+def _session(credential, calls):
     def library():
         calls.append(("manifest", credential))
-        # Deliberately one-shot to catch double fetching during sync.
-        yield record
+        # Authenticated, credential-scoped private purchase (not a public
+        # catalogue row). Deliberately one-shot to catch double fetches.
+        yield _row(credential, 0)
 
     return NS(
         provider_id="numilog", credential_id=credential, connected=True,
@@ -42,16 +44,19 @@ def _install(service, monkeypatch, tmp_path, identities=("default",)):
         lambda: tmp_path / "source-metadata-only.lock",
     )
     calls = []
-    book = NS(record_id="PRIVATE_NUMILOG_BOOK", title="Titre privé")
     accounts = [_account(identity, f"private-{identity}") for identity in identities]
     service.accounts = accounts
     for account in accounts:
+        service.storage.provider_connection_put({
+            "provider_id": "numilog", "credential_id": account.credential_id,
+            "identity_id": account.identity_id, "enabled": True,
+        })
         service._sessions[service._session_key(account.provider_id, account.credential_id)] = (
-            _session(account.credential_id, book, calls)
+            _session(account.credential_id, calls)
         )
     def mirror(rows, *, identity_id):
         calls.append(("mirror", identity_id, len(rows)))
-        assert rows == [book]
+        assert rows == [_row(f"private-{identity_id}", 0)]
         return len(rows)
 
     def forbidden_acquire(*args, **kwargs):
@@ -105,7 +110,7 @@ def test_public_broker_sync_and_repeat_do_not_download_numilog(
         for _ in range(2):
             result = broker.synchronize_source(target.source_id)
             assert result.ok, repr(result)
-            assert result.changed == 1
+            assert result.changed == 2
             assert result.facts["library"] == 1
             assert "acquired" not in result.facts
         assert calls == [
@@ -129,7 +134,7 @@ def test_generic_batch_is_scoped_to_identity_and_mirrors_without_acquisition(
         broker = SynchronizationBrokerImpl(service)
         result = broker.synchronize(SyncRequest(identity_id="alex"))
         assert result.ok, repr(result)
-        assert result.changed == 1
+        assert result.changed == 2
         assert calls == [
             ("manifest", "private-alex"), ("mirror", "alex", 1),
         ]

@@ -199,6 +199,21 @@ def _search_contract_warning(session: ProviderSession, field: str, scope: str, *
     return ""
 
 
+def _effective_search_field(session: ProviderSession, field: str, scope: str, *, facade_type) -> tuple[str | None, str]:
+    """Conservatively degrade unsupported title/author fields to global search."""
+    contract = facade_type._session_search_capabilities(session)
+    name = session.descriptor.display_name
+    if not contract.supports_scope(scope):
+        return None, f"{name}: périmètre de recherche non pris en charge ({scope})"
+    if contract.supports_field(field):
+        return field, ""
+    # Only these fields can be verified against normalized search results.
+    # ISBN/subject must never be silently presented as exact matches.
+    if field in {"title", "author"} and contract.supports_field("all"):
+        return "all", f"{name}: recherche {field} approchée via recherche globale"
+    return None, f"{name}: champ de recherche non pris en charge ({field})"
+
+
 def _field_match(cls, field: str, query: str, row: SearchResult) -> bool:
     field = str(field or "all").lower()
     if field == "all" or field in {"isbn", "subject"}:
@@ -294,9 +309,12 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     for session in searchable:
         provider_rows: list[SearchResult] = []
         provider_seen: set[tuple[str, str, str]] = set()
-        contract_warning = facade_type._search_contract_warning(session, field, provider_scope)
+        effective_field, contract_warning = _effective_search_field(
+            session, field, provider_scope, facade_type=facade_type,
+        )
         if contract_warning:
             warnings.append(contract_warning)
+        if effective_field is None:
             continue
         primary_ok = False
         for attempt, variant in enumerate(variants):
@@ -308,7 +326,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 try:
                     import inspect
                     parameters = inspect.signature(session.search).parameters
-                    kwargs = {"field": field}
+                    kwargs = {"field": effective_field}
                     if "content_types" in parameters:
                         kwargs["content_types"] = tuple(content_types or ())
                     session_rows = session.search(variant, provider_scope, **kwargs)
@@ -406,9 +424,13 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
     provider_rows: list[SearchResult] = []
     provider_seen: set[tuple[str, str, str]] = set()
     warnings: list[str] = []
-    contract_warning = facade_type._search_contract_warning(session, field, provider_scope)
+    effective_field, contract_warning = _effective_search_field(
+        session, field, provider_scope, facade_type=facade_type,
+    )
     if contract_warning:
-        return [], [contract_warning], "", ""
+        warnings.append(contract_warning)
+    if effective_field is None:
+        return [], warnings, "", ""
     variants = self._search_query_variants(query)
     primary_ok = False
     terminal_error_code = terminal_error_message = ""
@@ -419,7 +441,7 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
             try:
                 import inspect
                 parameters = inspect.signature(session.search).parameters
-                kwargs = {"field": field}
+                kwargs = {"field": effective_field}
                 if "content_types" in parameters:
                     kwargs["content_types"] = tuple(content_types or ())
                 session_rows = session.search(variant, provider_scope, **kwargs)
@@ -615,6 +637,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 entry is not None
                 and "catalog.search.stream" in entry.capabilities
                 and isinstance(session, ProviderSearchStream)
+                and self._session_search_capabilities(session).supports_field(field)
             ):
                 streamed[session.provider_id] = entry.catalog_generation
                 future = executor.submit(
@@ -753,31 +776,83 @@ def filter_loaded_search_results(rows: list[dict[str, Any]], query: str='', *, f
     )
 
 
+def _numilog_public_catalog_url(value: Any, *, cover: bool = False) -> str | None:
+    """Never persist a store delivery, signed query, or private account URL.
+
+    This is defense in depth after the provider's own public-book validation:
+    no remote request is made, and unknown notices/covers are omitted rather
+    than converting private account pages into persisted public links.
+    """
+    from urllib.parse import urlsplit
+    if type(value) is not str or not 0 < len(value) <= 512:
+        return None
+    if value != value.strip() or any(c.isspace() or ord(c) < 32 for c in value):
+        return None
+    if "\\" in value:
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or parsed.username or parsed.password
+                or parsed.fragment or parsed.port not in (None, 443)
+                or any(x in {".", ".."} for x in parsed.path.split("/"))):
+            return None
+        if cover:
+            if parsed.hostname not in {
+                "www.numilog.com", "services.numilog.com",
+                "www.edenlivres.fr", "storage.googleapis.com",
+            } or parsed.query:
+                return None
+        else:
+            if parsed.hostname != "www.numilog.com":
+                return None
+            official = re.fullmatch(
+                r"/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\\.ebook",
+                parsed.path, flags=re.I,
+            )
+            legacy = re.fullmatch(
+                r"/(?:livres|ebooks)/[A-Za-z0-9][A-Za-z0-9._-]{0,100}",
+                parsed.path, flags=re.I,
+            )
+            if not (official or legacy) or parsed.query not in ("", "ref=library"):
+                return None
+        return value
+    except (ValueError, AttributeError):
+        return None
+
+
 def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None=None) -> int:
     """Persist progressively discovered remote catalog metadata (0.8.3)."""
     identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
     if not identity_id:
         return 0
     now = int(time.time())
-    # A search/catalog item advertising owned=True is not proof of purchase.
-    # Kobo needs an active right attested by a connected personal manifest,
-    # for this identity AND credential, before Search displays remote_owned.
-    verified_kobo = set()
-    if any(row.source_provider == "kobo" and row.owned is True for row in rows):
-        verified_kobo = {
-            (str(right.get("identity_id") or ""),
+    # Neither Kobo nor Numilog public search flags are purchase evidence.
+    # A positive right from an authenticated personal library must already
+    # exist for this identity, credential and exact edition/variant (#1905).
+    verified_owned: set[tuple[str, str, str, str]] = set()
+    for provider_id in ("kobo", "numilog"):
+        if not any(row.source_provider == provider_id and row.owned is True for row in rows):
+            continue
+        verified_owned.update({
+            (provider_id, str(right.get("identity_id") or ""),
              str(right.get("credential_id") or ""),
              str(right.get("item_id") or ""))
-            for right in self.storage.entitlements(provider_id="kobo", state="active")
+            for right in self.storage.entitlements(provider_id=provider_id, state="active")
             if right.get("entitlement_type") == "owned"
-        }
+        })
     keyed: list[tuple[str, SearchResult, str]] = []
     for row in rows:
         owned = row.owned is True and (
-            row.source_provider != "kobo" or
-            (identity_id, row.source_credential, row.record_id) in verified_kobo
+            row.source_provider not in {"kobo", "numilog"} or
+            (row.source_provider, identity_id, row.source_credential, row.record_id)
+            in verified_owned
         )
-        state = "remote_owned" if owned else ("available_to_buy" if row.source_provider == "kobo" and row.price else ("available_to_borrow" if row.source_provider == "paris" and row.medium == "digital" else "remote_catalog"))
+        state = (
+            "remote_owned" if owned else
+            "available_to_buy" if row.source_provider in {"kobo", "numilog"} and row.price else
+            "available_to_borrow" if row.source_provider == "paris" and row.medium == "digital" else
+            "remote_catalog"
+        )
         key = hashlib.sha256(f"mirror\0{identity_id}\0{row.source_provider}\0{row.record_id}".encode()).hexdigest()
         keyed.append((key, row, state))
     existing_by_id = self.storage.catalog_entries_by_ids([key for key, _row, _state in keyed])
@@ -787,16 +862,28 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
         if existing and existing.get("local_state") == "local":
             continue
         raw_meta = dict(row.metadata or {})
+        if row.source_provider == "numilog":
+            # Signed ACSM "rights" must never be copied into the public
+            # catalogue. Ownership is the separate attested entitlement.
+            raw_meta.pop("rights", None)
         allowed_meta = {
             name: raw_meta.get(name)
             for name in ("subjects", "subject", "series", "collection", "publisher", "languages", "isbn", "isbns", "original_language", "authors", "contributors", "identifiers", "edition", "edition_statement", "series_index", "collection_index", "genre", "genres", "categories", "audience", "target_age", "rights", "dates")
             if raw_meta.get(name) not in (None, "", [], {})
         }
+        cover_url = (
+            _numilog_public_catalog_url(row.thumbnail_url, cover=True)
+            if row.source_provider == "numilog" else row.thumbnail_url
+        )
+        product_url = (
+            _numilog_public_catalog_url(row.friendly_url)
+            if row.source_provider == "numilog" else row.friendly_url
+        )
         upserts.append({
             "catalog_entry_id": key, "title": row.title, "author": row.author, "media_format": row.format,
             "identity_id": identity_id, "provider_id": row.source_provider, "item_id": row.record_id, "local_state": state,
             "metadata": {
-                **allowed_meta, "docbase": row.docbase, "scenario": row.scenario, "cover_url": row.thumbnail_url, "product_url": row.friendly_url,
+                **allowed_meta, "docbase": row.docbase, "scenario": row.scenario, "cover_url": cover_url, "product_url": product_url,
                 "price": row.price, "currency": row.currency, "source_credential": row.source_credential,
                 "source_collection": row.source_collection, "publisher": row.publisher or allowed_meta.get("publisher"),
                 "published_at": row.published_at, "type": row.type, "medium": row.medium,

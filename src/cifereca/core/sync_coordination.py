@@ -30,6 +30,13 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
     if not self.sync_source_enabled(account):
         return {**result, "status": "skipped", "reason": "source_disabled"}
     session = self._session_for_account(account)
+    if account.provider_id == "numilog":
+        from .numilog_manifest_rights import numilog_inventory_binding_valid
+        if not numilog_inventory_binding_valid(self, account, session=session):
+            # No provider call or inventory authorization on a stale account,
+            # detached identity or disabled connection. Never select the
+            # current GTK account as a fallback owner.
+            raise ProviderConfigurationError("Source Numilog non liée au compte demandé")
     if not session.connected:
         raise ProviderConfigurationError(f"Provider non connecté: {account.provider_id}")
     if control is not None and callable(getattr(control, "check_cancelled", None)):
@@ -41,10 +48,28 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         # A provider can implement a one-shot iterable: both the entitlement
         # mirror and remote catalog must see the exact same authenticated rows.
         rows = list(session.library())
+        if account.provider_id == "numilog" and not numilog_inventory_binding_valid(
+            self, account, session=session,
+        ):
+            raise ProviderConfigurationError("Source Numilog non liée au compte demandé")
+        if account.provider_id == "numilog":
+            from .numilog_private_rows import private_library_rows_valid
+            if not private_library_rows_valid(rows, account.credential_id):
+                raise ProviderConfigurationError("Inventaire privé Numilog non conforme")
         if account.provider_id == "kobo":
             # Persist attested personal rights, but never start Kobo acquisition.
             from .kobo_manifest_rights import mirror_kobo_manifest_rights
             result["owned_rights"] = mirror_kobo_manifest_rights(
+                self, rows, identity_id=account.identity_id,
+                credential_id=account.credential_id,
+                account_id=account.unique_id or None,
+            )
+        elif account.provider_id == "numilog":
+            # The private connected library is the only positive evidence of
+            # purchases. Public search, even with owned=True, cannot grant
+            # ownership. No signed ACSM resolution or download happens here.
+            from .numilog_manifest_rights import mirror_numilog_manifest_rights
+            result["owned_rights"] = mirror_numilog_manifest_rights(
                 self, rows, identity_id=account.identity_id,
                 credential_id=account.credential_id,
                 account_id=account.unique_id or None,
@@ -54,6 +79,11 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         # direct_download but that capability must not implicitly acquire
         # every returned EPUB from the generic Sync broker (#1346).
         # The separate legacy opening/acquisition workflow remains unchanged.
+        if account.provider_id == "numilog" and not numilog_inventory_binding_valid(
+            self, account, session=session,
+        ):
+            # Revoke a stale source even if the ownership projection completed.
+            raise ProviderConfigurationError("Source Numilog non liée au compte demandé")
         result["library"] = self._mirror_remote_results(rows, identity_id=account.identity_id)
     if deep:
         result["catalog_scan"] = self.catalog_scan()
