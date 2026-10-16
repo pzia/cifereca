@@ -1128,6 +1128,15 @@ def main() -> int:
         def forbidden(*args, **kwargs):
             f["mutations"].append("unexpected operation")
             raise AssertionError("Opération de restitution/synchronisation implicite")
+        # Capture the actual concurrent.futures.Future without changing
+        # the worker or TaskRunner implementation. This distinguishes a
+        # worker still resolving from a GTK idle callback not yet delivered.
+        original_submit = w.runner.pool.submit
+        def trace_submit(priority, operation):
+            future = original_submit(priority, operation)
+            f["latest_task_future"] = future
+            return future
+        override(w.runner.pool, "submit", trace_submit)
         override(w, "_return_loan", forbidden)
         override(w, "_return_loan_pnb", forbidden)
         # Only read-side capabilities are isolated; real renderers, window
@@ -1684,6 +1693,8 @@ def main() -> int:
             later(100, kobo_download_running)
             return
         assert f["materialize_calls"] == ["p0-kobo-target-2"]
+        f["cancel_future"] = f.get("latest_task_future")
+        assert f["cancel_future"] is not None
         kobo_click_visible(f["stop_button"], kobo_download_release)
 
     def kobo_download_release():
@@ -1708,7 +1719,10 @@ def main() -> int:
             # Explain whether the release event failed, the fake worker did
             # not return, or TaskRunner/GTK has not rendered completion.
             # The assertion is intentionally retained and remains fatal.
+            future = f.get("cancel_future")
             evidence = {
+                "future_running": bool(future is not None and future.running()),
+                "future_done": bool(future is not None and future.done()),
                 "release_set": f["download_release"].is_set(),
                 "worker_entered": f["cancel_worker_entered"].is_set(),
                 "worker_woke": f["cancel_worker_woke"].is_set(),
