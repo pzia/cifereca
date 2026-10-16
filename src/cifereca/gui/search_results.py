@@ -6,7 +6,6 @@ changes a generation, or introduces an additional subscription.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 from ..models import SearchResult
 from ..core.search import file_format
@@ -22,6 +21,8 @@ def _stale_catalog_provenance(metadata: Any) -> tuple[str, ...]:
     """
     if not isinstance(metadata, dict) or metadata.get("search_provenance") != "known_catalog_stale":
         return ()
+    from datetime import datetime, timezone
+
     labels = ["Résultat connu · hors ligne"]
     observed = metadata.get("mirrored_at")
     if type(observed) is int and observed > 0:
