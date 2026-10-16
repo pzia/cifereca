@@ -344,6 +344,29 @@ def edition_reference(book: object) -> tuple[str, str, str]:
     return "", "", ""
 
 
+def _public_youth_scalar(raw: object, *, limit: int = 180) -> str:
+    """Project a single source-attested string without coercing cache objects.
+
+    Scalar display fields are public: never call an upstream __str__ method,
+    accept a str subclass, or propagate Unicode controls or signed metadata.
+    """
+    if type(raw) is not str or not 1 <= len(raw) <= limit:
+        return ""
+    if any(category(char) in {"Cc", "Cf", "Cs"} for char in raw):
+        return ""
+    return _text(raw)
+
+
+def _public_published_year(raw: object) -> str:
+    """Only plausible calendar years, not bools, floats or arbitrary strings."""
+    if type(raw) is int:
+        return str(raw) if 1000 <= raw <= 2199 else ""
+    if type(raw) is str and len(raw) == 4 and raw.isascii() and raw.isdecimal():
+        year = int(raw)
+        return raw if 1000 <= year <= 2199 else ""
+    return ""
+
+
 def _public_youth_values(raw: object, *, limit: int = 32) -> tuple[str, ...]:
     """Only bounded, visible bibliographic values, never mapping field keys.
 
@@ -380,7 +403,7 @@ def _public_authors(book: object) -> tuple[str, ...]:
 def list_entry(book: object) -> UiBookListEntry:
     ranges = _public_age_ranges(book)
     age_summary = " · ".join(age_text(row) for row in ranges[:2])
-    language = _text(getattr(book, "language", ""))
+    language = _public_youth_scalar(getattr(book, "language", ""), limit=32)
     formats = _public_youth_values(getattr(book, "formats", ()))
     source = ", ".join(_public_youth_values(getattr(book, "provenance", ()), limit=3))
     _, reference_label, reference_value = edition_reference(book)
@@ -446,13 +469,13 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
         metadata_fields.append(DetailField(reference_id, reference_label, reference_value, kind="isbn" if reference_id == "isbn" else "copy"))
     for index, source in enumerate(_public_youth_values(getattr(book, "provenance", ()))):
         metadata_fields.append(DetailField(f"source-{index}", "Source", source, kind="copy"))
-    language = _text(getattr(book, "language", ""))
+    language = _public_youth_scalar(getattr(book, "language", ""), limit=32)
     if language:
         metadata_fields.append(DetailField("language", "Langue", language, kind="language"))
     formats = _public_youth_values(getattr(book, "formats", ()))
     for index, cleaned in enumerate(formats):
         metadata_fields.append(DetailField(f"format-{index}", "Format", cleaned, kind="all"))
-    book_type = _text(getattr(book, "book_type", ""))
+    book_type = _public_youth_scalar(getattr(book, "book_type", ""))
     if book_type:
         metadata_fields.append(DetailField("type", "Type", book_type, kind="all"))
     themes = _public_youth_values(getattr(book, "themes", ()))
@@ -461,13 +484,13 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     publishers = _public_youth_values(getattr(book, "publishers", ()))
     for index, cleaned in enumerate(publishers):
         metadata_fields.append(DetailField(f"publisher-{index}", "Éditeur", cleaned, kind="all"))
-    published_year = getattr(book, "published_year", None)
+    published_year = _public_published_year(getattr(book, "published_year", None))
     if published_year:
-        metadata_fields.append(DetailField("published-year", "Première publication", str(published_year), kind="copy"))
-    collection = _text(getattr(book, "collection", ""))
+        metadata_fields.append(DetailField("published-year", "Première publication", published_year, kind="copy"))
+    collection = _public_youth_scalar(getattr(book, "collection", ""), limit=240)
     if collection:
         metadata_fields.append(DetailField("collection", "Collection", collection, kind="all"))
-    description = _text(getattr(book, "description", ""))
+    description = _public_youth_scalar(getattr(book, "description", ""), limit=4000)
     if description:
         metadata_fields.append(DetailField("summary", "Résumé éditeur", description, kind="copy"))
     bibliography_sources = _public_youth_values(getattr(book, "bibliography_sources", ()))
