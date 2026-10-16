@@ -214,3 +214,34 @@ def test_explicit_inventory_policy_never_mutates_materialization_permission(tmp_
         assert calls == []
     finally:
         service.storage.close()
+
+
+def test_concurrent_due_triggers_are_singleflight_for_exact_source(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    service, account, _session, calls = _rig(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        broker.set_inventory_refresh_schedule(sid, "on_start", interval_minutes=15)
+        entered, release = Event(), Event()
+        initial = service.synchronize_account_source
+
+        def slow(*args, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return initial(*args, **kwargs)
+
+        service.synchronize_account_source = slow
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(broker.synchronize_scheduled_inventory, "alice", "startup")
+            assert entered.wait(timeout=5)
+            second = executor.submit(broker.synchronize_scheduled_inventory, "alice", "startup")
+            result = second.result(timeout=5)
+            assert result.facts["attempted"] == 0
+            release.set()
+            assert first.result(timeout=5).facts["attempted"] == 1
+        assert len(calls) == 1
+    finally:
+        service.storage.close()
