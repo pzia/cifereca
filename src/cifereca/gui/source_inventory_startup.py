@@ -101,9 +101,12 @@ def dispatch_after_opening(window: Any) -> bool:
         for identity_id in identities:
             if getattr(window, "_closed", False) or _broker(window) is not broker:
                 return
+            # The user may have revoked a source policy while this worker
+            # was queued. Re-probe the read-only opt-in before delegating;
+            # the broker then revalidates exact rights/bindings at I/O.
+            if identity_id not in due_startup_identities(window, broker):
+                continue
             try:
-                # Consent, binding, last attempt, status and identity are
-                # rechecked by the Core broker immediately before each I/O.
                 broker.synchronize_scheduled_inventory(identity_id, "startup")
             except Exception:
                 raise RuntimeError(
