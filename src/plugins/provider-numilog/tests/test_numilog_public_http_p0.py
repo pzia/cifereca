@@ -3,15 +3,14 @@
 The response is the sanitized user-provided Jefferson fixture; no live requests.
 """
 from contextlib import contextmanager
-import json
 from pathlib import Path
 
-import httpx
 import pytest
+import json
 
 from cifereca.plugin_api import ProviderError, ProviderCapabilityError
 import cifereca_numilog_public_client as public_client
-from cifereca_numilog import NumilogSession
+from cifereca_numilog import NumilogSession, DESCRIPTOR, VERSION
 
 HTML = (Path(__file__).parent / "fixtures" /
         "public_search_jefferson_20261016.html").read_bytes()
@@ -143,3 +142,17 @@ def test_second_page_uses_observed_grid_page_parameter_not_postback():
     url = public_client.public_search_url("jefferson", page=2)
     assert url.endswith("mode=brSimple&query=jefferson&GRID_PAGE=2")
     assert "__VIEWSTATE" not in url and "auth=" not in url
+
+
+def test_public_catalogue_is_declared_separately_and_release_version_matches():
+    cap = DESCRIPTOR.search_capabilities
+    assert cap.declared
+    assert cap.fields == ("all", "title")
+    assert cap.scopes == ("all", "digital", "catalog")
+    assert cap.supports_scope("catalog")
+    assert not cap.supports_field("isbn")
+    assert VERSION == "0.1.21"
+    manifest = json.loads((Path(__file__).parents[1] / "cifereca-plugin.json").read_text())
+    assert manifest["package"]["version"] == VERSION
+    assert manifest["plugins"][0]["version"] == VERSION
+    assert "catalog.search" in manifest["plugins"][0]["capabilities"]
