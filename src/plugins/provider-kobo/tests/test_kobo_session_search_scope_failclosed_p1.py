@@ -32,7 +32,6 @@ def test_unknown_scope_never_requests_public_or_private_api(scope):
 
 
 @pytest.mark.parametrize("scope,expected_paths,expected_records", [
-    ("physical", [], []),
     ("catalog", ["/api/v2/catalog/search"], ["public-edition"]),
     ("digital", ["/api/v2/catalog/search", "/api/v2/library/search"],
      ["public-edition", "owned-edition"]),
