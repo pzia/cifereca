@@ -549,9 +549,18 @@ class GallicaSession(ProviderSession):
                 except Exception as exc:
                     errors.append(message)
                     causes.append(exc)
+                    # Provider errors may embed signed request URLs or HTML
+                    # fragments in __str__; diagnostics are user-exportable.
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
                     self._diagnostic("GALLICA", label + " search branch", "error",
-                        detail={"error": type(exc).__name__, "message": str(exc)[:240]})
-        self.last_search_warnings = ["Gallica : " + message for message in errors]
+                        detail={
+                            "error": type(exc).__name__,
+                            "http_status": status if type(status) is int and 100 <= status <= 599 else None,
+                        })
+        self.last_search_warnings = [
+            ("partial_results : " if rows else "") + "Gallica : " + message
+            for message in errors
+        ]
         rows = list({item.id: item for item in rows}.values())
         if not rows and errors:
             error = ProviderError("Gallica : " + " ; ".join(errors))
