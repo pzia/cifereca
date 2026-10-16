@@ -217,6 +217,6 @@ def test_duplicate_search_route_keeps_clicked_action_until_history_return():
 def test_unrelated_route_after_search_invalidates_saved_youth_action():
     host = Host()
     _outbound(host)
-    host._pages["library"] = NS(title="Bibliothèque")
-    show_route(host, "library", Gtk=Gtk)
+    host._pages["unrelated"] = NS(title="Autre page")
+    show_route(host, "unrelated", Gtk=Gtk)
     assert host._youth_return_focus is None
