@@ -474,7 +474,9 @@ class NumilogSession(ProviderSession):
                 trace.fail('unclassified_error')
                 with self.client.stream('GET',url,headers={'Referer':self.base_url}) as r:
                     self._diag('HTTP',method='GET',origin_kind=destination_category(url)[0],status=r.status_code)
-                    trace.event('delivery_http', 'redirect' if r.status_code in REDIRECTS else 'http_ok',
+                    trace.event('delivery_http',
+                        'redirect' if r.status_code in REDIRECTS else
+                        'http_ok' if r.status_code == 200 else public_http_code(r.status_code),
                         status=r.status_code, mime=r.headers.get('content-type'), hops=hop+1,
                         destination=url)
                     trace.fail(public_http_code(r.status_code))
