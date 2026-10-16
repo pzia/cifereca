@@ -98,7 +98,7 @@ class ActivityFeedback:
 
     def result(self, task_id: int, message: str, *, success: bool = True) -> ActivityEntry:
         current = self.get(task_id)
-        label = current.label if current is not None else str(message)
+        label = current.label if current is not None else (str(message) if success else "Opération")
         kind = current.kind if current is not None else "task"
         state = "success" if success else "error"
         return self._upsert(ActivityEntry(

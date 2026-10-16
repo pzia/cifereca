@@ -105,3 +105,10 @@ def test_inventory_failure_has_an_explicit_scope_distinct_from_search_and_downlo
     entry = feedback.finished(1, 'Actualiser mes achats Numilog…', 'source-sync', success=False, error='Bibliothèque inaccessible')
     assert entry.operation_label == 'Actualiser mes achats Numilog'
     assert entry.display_text.startswith('Erreur · Actualiser mes achats Numilog')
+
+
+def test_unbound_error_result_does_not_retain_raw_message_as_its_fallback_label():
+    feedback = ActivityFeedback()
+    entry = feedback.result(42, 'https://example.test/?auth=PRIVATE_SENTINEL', success=False)
+    assert entry.label == 'Opération'
+    assert 'PRIVATE_SENTINEL' not in repr(feedback.rows())
