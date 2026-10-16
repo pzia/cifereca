@@ -1,0 +1,254 @@
+"""Offline, read-only preview of Numilog purchases before any local backup (#1905).
+
+This is NOT an acquisition plan, confirmation token or proof that an ACSM is
+downloadable. Only durable, private-manifest attested rights are counted.
+Everything returned to the broker consists of bounded counters and fixed codes.
+"""
+from __future__ import annotations
+
+from collections import defaultdict
+from pathlib import Path
+import hashlib
+import os
+import re
+from typing import Any
+
+from ..library_files import safe_library_component
+from ..plugin_api import SyncResult
+from .kobo_local_audit import _read_hash_within
+
+_MAX_ROWS = 100_000
+_ID = re.compile(r"numilog:([0-9a-f]{20}):([A-Za-z0-9_.-]{1,160}):([0-9a-f]{16})\Z")
+_SHA = re.compile(r"[0-9a-f]{64}\Z")
+_COUNT_NAMES = (
+    "owned_purchases", "already_local_linked", "already_local_verified",
+    "needs_file_verification", "potentially_missing", "candidate_unverified",
+    "needs_reconciliation", "attention_required", "not_downloadable",
+    "ignored_unattested_rights",
+)
+
+
+def _refused(code: str) -> SyncResult:
+    return SyncResult(ok=False, changed=0, warnings=(code,), facts={
+        "phase": "local_materialization", "status": code, "read_only": True,
+        "acquisition_authorized": False,
+    })
+
+
+def _valid_binding(broker: Any, account: Any, source_id: str) -> bool:
+    """One enabled durable account; no reliance on current GUI identity."""
+    try:
+        identity = getattr(account, "identity_id", None)
+        credential = getattr(account, "credential_id", None)
+        account_id = getattr(account, "unique_id", None)
+        if (getattr(account, "provider_id", None) != "numilog"
+                or not all(type(value) is str and 0 < len(value) <= 1024
+                           and not any(c in value for c in "\0\r\n")
+                           for value in (identity, credential, account_id))
+                or not broker._enabled(source_id)
+                or broker.service.identity_by_id(identity) is None):
+            return False
+        matches = [
+            row for row in broker.service.accounts
+            if getattr(row, "provider_id", None) == "numilog"
+            and getattr(row, "credential_id", None) == credential
+        ]
+        if len(matches) != 1 or broker._source_id(matches[0]) != source_id:
+            return False
+        storage = broker.service.storage
+        if storage.identity_for_connection("numilog", credential) != identity:
+            return False
+        persisted = [
+            row for row in storage.provider_connections(identity_id=identity)
+            if row.get("provider_id") == "numilog"
+            and row.get("credential_id") == credential
+            and row.get("enabled") is True
+        ]
+        return len(persisted) == 1
+    except Exception:
+        return False
+
+
+def _item_id(item_id: Any, credential: str) -> bool:
+    if type(item_id) is not str or len(item_id) > 512:
+        return False
+    match = _ID.fullmatch(item_id)
+    return match is not None and match.group(1) == hashlib.sha256(
+        credential.encode("utf-8"),
+    ).hexdigest()[:20]
+
+
+def _identity_root(service: Any, identity_id: str) -> tuple[Path, ...] | None:
+    """Compute an identity-owned root WITHOUT mkdir(), resolve(), or scans."""
+    try:
+        current = service.identity_by_id(identity_id)
+        if current is None:
+            return None
+        dirname = safe_library_component(current.directory_name or identity_id, "default")
+        if any(
+            other.identity_id != identity_id
+            and safe_library_component(other.directory_name or other.identity_id, "default") == dirname
+            for other in service.identities
+        ):
+            return None
+        configured = service.config.get("library.directory", "~/EBooks")
+        if type(configured) is not str or not configured.strip():
+            return None
+        configured_path = Path(os.path.expandvars(os.path.expanduser(configured)))
+        if not configured_path.is_absolute():
+            # Match LibraryService.library_dir() without creating directories.
+            configured_path = Path.home() / configured_path
+        root = Path(os.path.abspath(configured_path))
+        return (root / dirname,)
+    except Exception:
+        return None
+
+
+def _path_in_identity(value: Any, roots: tuple[Path, ...]) -> bool:
+    """Reject an obviously foreign path even without requesting SHA scans."""
+    if type(value) is not str or not value or "\0" in value:
+        return False
+    candidate = Path(value)
+    if not candidate.is_absolute() or ".." in candidate.parts:
+        return False
+    absolute = Path(os.path.abspath(candidate))
+    return any(absolute != root and absolute.is_relative_to(root) for root in roots)
+
+
+def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bool) -> SyncResult:
+    """Only examine SQLite and (if explicitly asked) hash known local files."""
+    if type(verify_local_files) is not bool:
+        return _refused("invalid_options")
+    if not _valid_binding(broker, account, source_id):
+        return _refused("invalid_source")
+
+    identity = account.identity_id
+    credential = account.credential_id
+    account_id = account.unique_id
+    roots = _identity_root(broker.service, identity)
+    if not roots:
+        return _refused("invalid_directory")
+
+    try:
+        storage = broker.service.storage
+        rights = storage.entitlements(provider_id="numilog")
+        ledger = storage.acquisitions(provider_id="numilog")
+        placements = storage.placements()
+        artifacts = storage.artifacts()
+        if any(len(rows) > _MAX_ROWS for rows in (rights, ledger, placements, artifacts)):
+            return _refused("evidence_budget_exhausted")
+
+        counts = dict.fromkeys(_COUNT_NAMES, 0)
+        scoped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rights:
+            if (row.get("identity_id") != identity
+                    or row.get("credential_id") != credential
+                    or row.get("account_id") != account_id
+                    or row.get("entitlement_type") != "owned"
+                    or row.get("state") != "active"):
+                continue
+            metadata = row.get("metadata")
+            if (not isinstance(metadata, dict)
+                    or row.get("expires_at") or row.get("loan_id")
+                    or metadata.get("source") != "numilog.authenticated_library"
+                    or not _item_id(row.get("item_id"), credential)):
+                counts["ignored_unattested_rights"] += 1
+                continue
+            scoped[row["item_id"]].append(row)
+        counts["owned_purchases"] = len(scoped)
+
+        acquired: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in ledger:
+            if (row.get("credential_id") == credential
+                    and _item_id(row.get("item_id"), credential)):
+                acquired[str(row["item_id"])].append(row)
+
+        linked: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in placements:
+            artifact_id = row.get("artifact_id")
+            if type(artifact_id) is str and artifact_id:
+                linked[artifact_id].append(row)
+        artifact_by_id = {
+            row.get("artifact_id"): row for row in artifacts
+            if type(row.get("artifact_id")) is str
+        }
+
+        for item_id, item_rights in scoped.items():
+            if len(item_rights) != 1:
+                counts["needs_reconciliation"] += 1
+                continue
+            right = item_rights[0]
+            metadata = right["metadata"]
+            acquisitions = acquired.get(item_id, [])
+            if not acquisitions:
+                if metadata.get("downloadable") is False:
+                    counts["not_downloadable"] += 1
+                else:
+                    counts["potentially_missing"] += 1
+                    # A missing ledger is NOT proof that a signed fulfillment
+                    # link, ADEPT or format is currently available.
+                    counts["candidate_unverified"] += 1
+                continue
+
+            if len(acquisitions) != 1:
+                counts["needs_reconciliation"] += 1
+                continue
+            acquisition = acquisitions[0]
+            if (acquisition.get("identity_id") != identity
+                    or acquisition.get("account_id") != account_id
+                    or acquisition.get("entitlement_id") != right.get("entitlement_id")):
+                counts["needs_reconciliation"] += 1
+                continue
+            if acquisition.get("status") in {"attention_required", "blocked"}:
+                counts["attention_required"] += 1
+                continue
+            if acquisition.get("status") != "complete":
+                counts["needs_reconciliation"] += 1
+                continue
+
+            artifact_id = acquisition.get("artifact_id")
+            matched = linked.get(artifact_id, [])
+            artifact = artifact_by_id.get(artifact_id)
+            if (type(artifact_id) is not str or len(matched) != 1
+                    or not isinstance(artifact, dict)):
+                counts["needs_reconciliation"] += 1
+                continue
+            placement = matched[0]
+            sha = artifact.get("sha256")
+            size = artifact.get("size")
+            if (placement.get("identity_id") != identity
+                    or placement.get("provider_id") != "numilog"
+                    or placement.get("source_item_id") != item_id
+                    or placement.get("state") != "present"
+                    or not _path_in_identity(placement.get("path"), roots)
+                    or type(sha) is not str or _SHA.fullmatch(sha) is None
+                    or type(size) is not int or size <= 0):
+                counts["needs_reconciliation"] += 1
+                continue
+
+            counts["already_local_linked"] += 1
+            if not verify_local_files:
+                counts["needs_file_verification"] += 1
+                continue
+            observed = _read_hash_within(placement.get("path"), roots)
+            if observed is None or observed[:2] != (sha, size):
+                counts["already_local_linked"] -= 1
+                counts["needs_reconciliation"] += 1
+            else:
+                counts["already_local_verified"] += 1
+
+        # If a source was disabled/reassigned during DB reads, no preview can
+        # be considered scoped, even though nothing was downloaded or stored.
+        if not _valid_binding(broker, account, source_id):
+            return _refused("source_changed")
+        return SyncResult(ok=True, changed=0, facts={
+            "phase": "local_materialization", "status": "preview_only",
+            "read_only": True, "offline": True, "acquisition_authorized": False,
+            "schedule_available": False, "confirmation_available": False,
+            "manifest_refreshed": False, "requires_manifest_validation": True,
+            "files_verified": verify_local_files,
+            "known_item_count": counts["owned_purchases"],
+            "counts": counts,
+        })
+    except Exception:
+        return _refused("preview_unavailable")
