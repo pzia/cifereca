@@ -173,3 +173,15 @@ priorité fournisseur et une clé de déduplication spécifique, distincte du
 timer périodique. Il ne télécharge pas d'ebook. La coordination initiale
 d'inventaire utilise les horloges de phase corrigées dans **#1987** :
 cette tranche doit être intégrée **après #1987**.
+
+## Capacité déclarative après raccordement des déclencheurs
+
+Les sources Kobo et Numilog dont la session atteste `personal_library`
+exposent `scheduled_refresh` dans `SyncSourceRef.sync_capabilities` : le Core
+dispose de vrais déclencheurs d'inventaire `on_start` et `periodic`.
+Cette capacité décrit une disponibilité, jamais une autorisation. La politique
+reste `manual` par défaut pour chaque source, sans héritage des réglages
+d'acquisition ; la lecture du contrat ne crée aucun timer ni appel réseau.
+Le broker revalide le compte, la session, l'identité, la connexion et la
+politique juste avant chaque actualisation. Les autres fournisseurs et les
+sessions sans inventaire personnel n'annoncent pas cette capacité.
