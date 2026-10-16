@@ -726,7 +726,20 @@ def _refresh_sync_page(self) -> None:
 
             schedule_button.connect("clicked", schedule_change)
 
-            # #1346: a SECOND, independent Kobo policy for refreshing remote
+        else:
+            group.add(row)
+
+        if source.provider_id in {"kobo", "numilog"}:
+            # Inventory consent is separate from local materialization.
+            def inventory_current(expected_identity=source.identity_id, captured_scope=scope):
+                return (
+                    sync_action_scope_current(self, captured_scope)
+                    and getattr(self.service.current_identity, "identity_id", None)
+                        == expected_identity
+                )
+
+            inventory_provider = "Numilog" if source.provider_id == "numilog" else "Kobo"
+            # #1346/#1905: an independent private-store policy for refreshing remote
             # inventory and rights. Never re-use the local acquisition toggle:
             # reading this policy makes no network request or download.
             inventory_reader = getattr(broker, "inventory_refresh_schedule", None)
@@ -750,7 +763,7 @@ def _refresh_sync_page(self) -> None:
                     pass
 
             inventory_row = Adw.ActionRow()
-            inventory_row.set_title("Actualisation automatique des notices Kobo")
+            inventory_row.set_title(f"Actualisation automatique des notices {inventory_provider}")
             inventory_row.set_subtitle_lines(0)
             if inventory_mode == "manual":
                 inventory_row.set_subtitle(
@@ -798,7 +811,7 @@ def _refresh_sync_page(self) -> None:
             def change_inventory_schedule(
                 button, sid=source.source_id, account_label=display_label,
                 prior_mode=inventory_mode, prior_minutes=inventory_minutes,
-                current=download_current,
+                current=inventory_current, provider_label=inventory_provider,
             ):
                 if not current() or prior_mode not in {"manual", "on_start", "periodic"}:
                     return
@@ -828,7 +841,7 @@ def _refresh_sync_page(self) -> None:
                     except Exception:
                         if current():
                             self.show_error(
-                                "Planification des notices Kobo indisponible.",
+                                f"Planification des notices {provider_label} indisponible.",
                                 "Synchronisation",
                             )
                         return
@@ -841,7 +854,7 @@ def _refresh_sync_page(self) -> None:
                     apply_mode("manual")
                     return
                 dialog = Adw.MessageDialog.new(
-                    self, "Planifier les notices Kobo ?",
+                    self, f"Planifier les notices {provider_label} ?",
                     f"Compte : {account_label}.\n\n"
                     "Ce réglage autorise seulement la consultation du catalogue "
                     "personnel et des droits du compte, sans téléchargement, "
@@ -865,8 +878,7 @@ def _refresh_sync_page(self) -> None:
                 dialog.present()
 
             inventory_button.connect("clicked", change_inventory_schedule)
-        else:
-            group.add(row)
+
 
 
 def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:

@@ -1,4 +1,4 @@
-"""One-shot, opt-in Kobo *inventory* refresh after opening sync (#1346).
+"""One-shot, opt-in private-store *inventory* refresh after opening sync (#1346).
 
 This deliberately runs only after opening_sync completed and released its
 library writer lock. It cannot authorize local materialization, ADEPT or
@@ -32,7 +32,7 @@ def due_startup_identities(window: Any, broker: Any) -> tuple[str, ...]:
             for source in sources:
                 if (
                     getattr(source, "identity_id", None) != identity
-                    or getattr(source, "provider_id", None) != "kobo"
+                    or getattr(source, "provider_id", None) not in {"kobo", "numilog"}
                     or getattr(source, "enabled", None) is not True
                     or getattr(source, "connected", None) is not True
                     or getattr(source, "sync_capable", None) is not True
@@ -119,15 +119,15 @@ def dispatch_after_opening(window: Any) -> bool:
                 failures += 1
         if failures:
             raise RuntimeError(
-                "Actualisation initiale des notices Kobo indisponible"
+                "Actualisation initiale des notices des comptes indisponible"
             ) from None
 
     try:
         window.runner.submit(
-            "Actualisation initiale des notices Kobo…", work,
+            "Actualisation initiale des notices des comptes…", work,
             priority=TaskPriority.PROVIDER_SYNC,
             kind="source-sync", origin="automatic",
-            coalesce_key="kobo:inventory:startup",
+            coalesce_key="source:inventory:startup",
         )
     except Exception:
         window._source_inventory_startup_dispatched = False

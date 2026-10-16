@@ -99,7 +99,7 @@ def test_periodic_opt_in_creates_single_minute_heartbeat_then_due_dispatch():
     job = r.jobs[0]
     assert job.options["kind"] == "source-sync"
     assert job.options["origin"] == "automatic"
-    assert job.options["coalesce_key"] == "kobo:inventory:periodic"
+    assert job.options["coalesce_key"] == "source:inventory:periodic"
     assert not any(c[0] == "dispatch" for c in r.records["calls"])
     job.work()
     assert ("dispatch", "alice", "periodic") in r.records["calls"]
@@ -227,7 +227,7 @@ def test_provider_error_cannot_escape_automatic_worker():
         _ for _ in ()
     ).throw(ValueError("https://secret.invalid/?token=PRIVATE"))
     next(iter(r.records["timers"].values()))()
-    with pytest.raises(RuntimeError, match="Actualisation des notices Kobo indisponible") as exc:
+    with pytest.raises(RuntimeError, match="Actualisation des notices des comptes indisponible") as exc:
         r.jobs[0].work()
     assert "PRIVATE" not in str(exc.value)
 

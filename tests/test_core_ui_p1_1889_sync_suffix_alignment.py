@@ -66,7 +66,7 @@ def test_non_kobo_sources_and_disabled_actions_remain_centered(monkeypatch):
     ]
     window, _broker, _calls, _build, _page = harness._fixture(sources=sources)
     assert [len(g.children[0].suffixes) for g in window._sync_sources_box.children] == [2, 2, 2]
-    assert len(_check_all_suffixes(window)) == 6
+    assert len(_check_all_suffixes(window)) == 7
 
 
 def test_refresh_recreates_centered_controls_without_changing_actions(monkeypatch):
