@@ -67,3 +67,29 @@ timer est effectivement actif tant que l'ordonnanceur n'est pas raccordé.
 L'implémentation `synchronize_source` conserve provisoirement sa valeur
 historique `scope=manual`, même lors d'un dispatch explicite planifié ;
 le résumé de dispatch porte `trigger` et `phase=discover_rights`.
+
+
+## Tranche CoreUI — ordonnanceur périodique opt-in (#1346)
+
+Le module `gui/source_inventory_timer.py` installe un heartbeat GTK de 60 s
+**uniquement si** une identité configurée possède une source Kobo connectée,
+activée, `sync_capable`, avec politique `periodic` explicitement persistée.
+
+- Le déclencheur fait uniquement des lectures passives du broker pour
+  décider si un compte est dû (`source_refresh_due` et `last_attempt`).
+- Une tâche `source-sync` en arrière-plan transmet explicitement les
+  identités dues à `synchronize_scheduled_inventory(identity_id, "periodic")`.
+  Le broker réévalue la liaison durable et la source avant tout I/O distant.
+- La souscription au broker reconfigure ou retire le timer lorsque la
+  préférence, l'état du compte ou la connexion changent. Les notifications
+  asynchrones sont transmises via `GLib.idle_add`, sans accès GTK depuis le
+  worker. La fermeture annule le timer et se désabonne.
+- Aucun `materialize_source`, `kobo_backup`, URL ACSM ou flux ADEPT n'est
+  invoqué ou autorisé. Aucune préférence de téléchargement n'est lue.
+
+**Limites :** la politique `on_start` n'ajoute pas encore de seconde
+synchronisation au démarrage (le cycle historique `opening_sync` existe déjà)
+et l'ordonnanceur ne remplace pas ce cycle. Ce sous-lot n'assure pas un
+verrou distribué au-delà du verrou Core utilisé à l'exécution. La prise en
+charge du signal `startup` dans le nouvel ordonnanceur et la migration
+progressive de `opening_sync` restent ouvertes dans #1346.
