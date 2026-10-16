@@ -2533,6 +2533,15 @@ class LibraryService:
         return kobo_backup._execute_kobo_acquisition(self, item, target_dir)
 
     def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None) -> Acquisition:
+        # An admission callback is part of the security contract: silently
+        # ignoring it would turn an attested per-account Numilog Library action
+        # into an unrestricted direct download. Only Kobo currently rechecks
+        # that callback INSIDE its acquisition lock. Fail closed for every
+        # other provider until an equally scoped, locked executor is ready.
+        if _admission is not None and item.source_provider != "kobo":
+            raise ProviderConfigurationError(
+                "Acquisition ciblée indisponible : autorisation du compte non vérifiable"
+            )
         session = self._session_for_source(item.source_provider, item.source_credential)
         content_type = self.acquisition.content_type_for(item)
 
