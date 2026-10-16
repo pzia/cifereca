@@ -163,6 +163,13 @@ def _startup_window():
     r.window.refresh_recent = lambda: events.append("recent")
     r.window._activity_result = lambda *a, **kw: events.append("activity")
     r.window.diagnostics = NS(add=lambda *a, **kw: events.append("diagnostic"))
+    # The generic timer fixture only records successful callbacks. Opening
+    # error handling needs the actual failure callback as well.
+    def submit(label, work, done=None, error=None, **options):
+        r.jobs.append(NS(
+            label=label, work=work, done=done, error=error, options=options,
+        ))
+    r.window.runner.submit = submit
     run_opening = _opening_controller()
     r.window.run_opening_sync = lambda: run_opening(r.window)
     return r, events, run_opening
