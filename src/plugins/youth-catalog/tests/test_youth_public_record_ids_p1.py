@@ -28,6 +28,8 @@ class SecretText(str):
     "urn:book?session=PRIVATE_TOKEN",
     "book#PRIVATE_FRAG",
     "book&auth=PRIVATE_TOKEN",
+    "auth=PRIVATE_TOKEN",
+    "book;session=PRIVATE_SESSION",
     "book%3Fauth%3DPRIVATE_TOKEN",
     "reader@PRIVATE_ACCOUNT",
     "book\\PRIVATE_SECRET",
