@@ -178,7 +178,12 @@ def test_explicit_kobo_account_sync_materializes_right_without_download(tmp_path
                                          direct_download=False),
             library=lambda: (calls.append("library") or [_row()]),
         )
-        monkeypatch.setattr(service, "_session_for_account", lambda _account: session)
+        service.accounts = [account]
+        service.storage.provider_connection_put({
+            "identity_id": account.identity_id, "provider_id": "kobo",
+            "credential_id": account.credential_id, "enabled": True,
+        })
+        service._sessions[service._session_key("kobo", account.credential_id)] = session
         monkeypatch.setattr(service, "_acquire_personal_library_item",
                             lambda *_args, **_kw: (_ for _ in ()).throw(
                                 AssertionError("No acquisition from account sync")
@@ -243,7 +248,12 @@ def test_explicit_sync_reuses_one_shot_kobo_personal_manifest(tmp_path, monkeypa
                                      direct_download=False),
         library=lambda: (calls.append("library") or one_shot),
     )
-    monkeypatch.setattr(service, "_session_for_account", lambda _account: session)
+    service.accounts = [account]
+    service.storage.provider_connection_put({
+        "identity_id": account.identity_id, "provider_id": "kobo",
+        "credential_id": account.credential_id, "enabled": True,
+    })
+    service._sessions[service._session_key("kobo", account.credential_id)] = session
     try:
         result = service._synchronize_account_source_impl(account)
         assert result["owned_rights"] == 1
