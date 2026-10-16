@@ -421,6 +421,9 @@ class NumilogSession(ProviderSession):
                         destination=url)
                     trace.fail(public_http_code(r.status_code))
                     if r.status_code in REDIRECTS:
+                        # The P0 pre-normalization guard can reject this hop
+                        # before another GET. Attribute that failure safely.
+                        trace.fail('origin_rejected')
                         url = checked_redirect(str(r.url),r.headers.get('location',''),self.allowed_origins)
                         trace.fail('redirect_limit')
                         continue
