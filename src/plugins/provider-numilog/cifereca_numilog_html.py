@@ -459,6 +459,27 @@ class DeliverySelectionError(ParseError):
 QUOTED = re.compile(r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*' ''',re.X)
 
 
+def _is_fulfillment_acsm(url, allowed_origins):
+    """An exact HTTPS Numilog signed fulfillment URL, never a navigation link.
+
+    Merely being hosted by Numilog/its partners is NOT evidence of ACSM.
+    The origin, path and nonempty query must all match the attested contract.
+    """
+    try:
+        parsed = urlsplit(url)
+        return (
+            origin(url) == ('https', 'entrepot2r.numilog.com', 443)
+            and origin(url) in allowed_origins
+            and parsed.path == '/fulfillment/URLLink.acsm'
+            and bool(parsed.query)
+            and not parsed.username and not parsed.password
+            and not parsed.fragment and '\\' not in url
+            and not any(c.isspace() or ord(c) < 32 for c in url)
+        )
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
 def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
     """Locate exactly one allowlisted HTML delivery; optionally count shapes.
 
@@ -468,6 +489,7 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
     root = Parser(text).root
     allowed=set(allowed_origins or {origin('https://services.numilog.com/')})
     candidates = set()
+    signed_acsm = set()
     signed_shapes = html_links = html_scripts = 0
     for node in root.walk():
         values = [('href', node.attrs.get('href') or '')]
@@ -500,6 +522,8 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
                     and parsed.port in {None,80,443} | {o[2] for o in allowed if o[2]}
                 ):
                     candidates.add(url)
+                    if _is_fulfillment_acsm(url, allowed):
+                        signed_acsm.add(url)
             except (ValueError, AttributeError, TypeError):
                 continue
     if evidence is not None:
@@ -508,7 +532,15 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
             'absolute_html_hrefs': html_links,
             'absolute_script_literals': html_scripts,
             'allowed_candidates': min(10000, len(candidates)),
+            'attested_acsm_candidates': min(10000, len(signed_acsm)),
         })
+    # Pages intermédiaires may contain harmless site navigation and a
+    # SINGLE signed ACSM. Prefer that exact delivery over ordinary permitted
+    # links; never pick arbitrarily between different ACSM signatures.
+    if len(signed_acsm) == 1:
+        return signed_acsm.pop()
+    if len(signed_acsm) > 1:
+        raise DeliverySelectionError('ambiguous')
     if len(candidates) != 1:
         raise DeliverySelectionError('missing' if not candidates else 'ambiguous')
     return candidates.pop()
