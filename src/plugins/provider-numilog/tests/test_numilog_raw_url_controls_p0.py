@@ -95,3 +95,29 @@ def test_raw_network_validation_does_not_coerce_provider_objects():
         checked_url(Poison(), ALLOWED)
     with pytest.raises(ProviderError, match="redirection réseau inattendue"):
         checked_redirect(READBOOK, Poison(), ALLOWED)
+
+
+@pytest.mark.parametrize("entity", ("&#10;", "&#13;", "&#9;", "&#x202e;", "&#x200b;"))
+def test_js_html_entities_cannot_smuggle_invisible_bytes_into_acsm(entity):
+    # HTMLParser does not decode character references in <script> text.
+    # The extraction itself must reject dangerous characters decoded later.
+    injected = SIGNED.replace("URLLink.acsm", "URLLink" + entity + ".acsm")
+    with pytest.raises(DeliverySelectionError, match="missing"):
+        delivery_url(
+            f'<script>window.delivery = "{injected}";</script>',
+            LIBRARY, allowed_origins=ALLOWED,
+        )
+
+    owned = (
+        '<table id="myTable"><div data-product-id="42" '
+        'data-index-exemplaire="1">'
+        '<span class="pTitle">Achat fictif</span>'
+        '<a class="LnkDownloadBook" '
+        'href="/Pages/Compte/readBook.ashx?lid=12">Télécharger</a>'
+        '<script>window.book = {ProductId: 42, IndexExemplaire: 1, '
+        'DrmTechnlology: "ADOBE", link: "' + injected + '"};</script>'
+        '</div></table>'
+    )
+    rows, _ = parse_library_page(owned, LIBRARY, delivery_evidence=True)
+    assert len(rows) == 1
+    assert "delivery" not in rows[0]
