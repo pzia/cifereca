@@ -215,3 +215,25 @@ def test_http_failure_codes_never_expose_private_request_uri(
         assert summary.providers_failed == 1
     finally:
         service.close()
+
+
+def test_partial_public_provider_warning_is_redacted_without_losing_live_rows(tmp_path):
+    service = _service(tmp_path)
+    try:
+        provider = _FakeSession("public")
+        provider.last_search_warnings = [
+            "HTTP https://private.invalid/fulfillment?auth=SIGNED-PRIVATE-SECRET",
+        ]
+        service._sessions = {"public": provider}
+        batches = []
+        summary = service.search_progressive(
+            "Progressive Book", force=True, on_batch=batches.append,
+        )
+        assert summary.result_count == 1
+        assert len(batches[0].results) == 1
+        assert batches[0].warnings == ("Public: résultats partiels",)
+        assert "SIGNED-PRIVATE-SECRET" not in str(summary)
+        assert "SIGNED-PRIVATE-SECRET" not in str(batches)
+        assert summary.providers_failed == 0
+    finally:
+        service.close()
