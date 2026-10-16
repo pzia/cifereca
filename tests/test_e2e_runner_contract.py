@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 
@@ -601,6 +602,55 @@ def test_906_real_gtk_library_search_is_scoped_and_keyboard_driven():
         'assert window._search_mode == "local" and not online_attempts',
     ):
         assert required in source
+
+
+def test_962_keyboard_focus_return_is_a_separate_real_gtk_1366_gate():
+    runner = _module()
+    scenario = runner.SCENARIOS["youth-focus-return-1366"]
+    assert scenario["plugin"] == "catalog.youth"
+    assert scenario["runner"] == "gtk-youth"
+    assert scenario["fixture"] == "search-filters"
+    assert scenario["width"] == 1366
+    assert scenario["library_search"] is True
+    assert scenario["focus_return"] is True
+    assert "youth-focus-return-1024" not in runner.SCENARIOS
+    command = RUNNER.read_text(encoding="utf-8")
+    assert '"--focus-return"' in command
+    script = (ROOT / "e2e/youth_page_probe.py").read_text(encoding="utf-8")
+    for needle in (
+        'if args.focus_return:',
+        'result["library_search_action_focus_restored"]',
+        'assert result["library_search_action_focus_restored"]',
+        'capture("14-library-search-return")',
+        'device.click_widget(action)',
+        'window.get_focus()',
+        'return\n        assert action.grab_focus() is not False',
+        'assert not online_attempts and not requests',
+    ):
+        assert needle in script
+
+    # Vérifier par AST que later(...) est réellement exécuté par la fonction,
+    # et non seulement présent dans un commentaire (régression du 10/10).
+    tree = ast.parse(script)
+    callback = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "library_search_verify_local"
+    )
+    scheduled_return = [
+        node for node in ast.walk(callback)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name) and node.func.id == "later"
+        and len(node.args) >= 2
+        and isinstance(node.args[0], ast.IfExp)
+        and isinstance(node.args[1], ast.Name)
+        and node.args[1].id == "library_search_verify_return"
+    ]
+    assert len(scheduled_return) == 1, (
+        "Le contrôle UX #962 doit programmer son callback après Retour : "
+        "une correspondance textuelle dans un commentaire est insuffisante."
+    )
+
+
 
 
 def test_xvfb_display_retry_is_limited_to_transport_initialization():

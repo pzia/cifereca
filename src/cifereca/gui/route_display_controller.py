@@ -7,7 +7,7 @@ MainWindow route was already responsible for a lazy refresh.
 from __future__ import annotations
 
 
-def show_route(window, route: str, *, Gtk) -> None:
+def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
     if getattr(window, "_closed", False) or route not in window._pages:
         return
     # GTK signals can synchronously redirect to another route or close the
@@ -28,6 +28,50 @@ def show_route(window, route: str, *, Gtk) -> None:
             dispose_lines()
     if not is_current():
         return
+    # UX #962: retain the *actual focused action*, not an arbitrary first
+    # tab stop, only for a deliberate Jeunesse -> Recherche navigation.
+    # This is scoped to the currently mounted plugin widget and is never a
+    # request to refetch provider data or change the selected book.
+    route_name = getattr(window.view_stack, "get_visible_child_name", None)
+    outgoing = route_name() if callable(route_name) else None
+    if outgoing == "youth" and route == "search":
+        # The clicked action is captured by PublicBookMasterDetailView before
+        # its callback navigates. Preserve it instead of relying on GTK focus
+        # (a pointer click does not necessarily focus the clicked button).
+        youth_widget = window._plugin_page_widgets.get("youth")
+        current_identity = getattr(
+            getattr(getattr(window, "service", None), "current_identity", None),
+            "identity_id", None,
+        )
+        saved = getattr(window, "_youth_return_focus", None)
+        explicit_valid = False
+        if saved is not None and youth_widget is not None:
+            focus_widget, saved_identity = saved
+            explicit_valid = (
+                saved_identity == current_identity
+                and youth_widget.is_ancestor(focus_widget)
+                and focus_widget.get_mapped() and focus_widget.get_sensitive()
+            )
+        if not explicit_valid:
+            window._youth_return_focus = None
+            # Compatibility for keyboard-originated routes where the focused
+            # button itself initiated the navigation.
+            current_focus = getattr(window, "get_focus", lambda: None)()
+            button_type = getattr(Gtk, "Button", None)
+            if (
+                button_type is not None and isinstance(current_focus, button_type)
+                and youth_widget is not None and youth_widget.is_ancestor(current_focus)
+                and current_focus.get_mapped() and current_focus.get_sensitive()
+            ):
+                window._youth_return_focus = (current_focus, current_identity)
+    elif (
+        route != "youth"
+        and not (route == "search" and outgoing == "search")
+        and not getattr(window, "_restoring_navigation", False)
+    ):
+        # A second show_route("search") is only a duplicate presentation;
+        # invalidating here loses the clicked Jeunesse action before Back.
+        window._youth_return_focus = None
     window.view_stack.set_visible_child_name(route)
     if not is_current():
         return
@@ -44,7 +88,16 @@ def show_route(window, route: str, *, Gtk) -> None:
         if not is_current():
             return
         if isinstance(root, Gtk.Window):
-            widget.child_focus(Gtk.DirectionType.TAB_FORWARD)
+            # GTK may call _show_route twice while restoring history: once
+            # from select_row() and once explicitly from the coordinator.
+            # Do not overwrite the focus restored by the first call with a
+            # generic FlowBoxChild on the second call (#962).
+            restoring_same_youth = (
+                route == "youth" and outgoing == "youth"
+                and getattr(window, "_restoring_navigation", False)
+            )
+            if not restoring_same_youth:
+                widget.child_focus(Gtk.DirectionType.TAB_FORWARD)
             if not is_current():
                 return
 
@@ -83,3 +136,41 @@ def show_route(window, route: str, *, Gtk) -> None:
     elif route == "plugins" and hasattr(window.plugins_page, "refresh"):
         if is_current():
             window.plugins_page.refresh()
+
+    # Returning through history (not a normal tab switch) restores the exact
+    # action that launched the search, iff it is still the same mapped button
+    # under the same identity. Invalidated/disposed actions are never revived.
+    if route == "youth" and is_current() and getattr(window, "_restoring_navigation", False):
+        saved = getattr(window, "_youth_return_focus", None)
+        window._youth_return_focus = None
+        if saved is not None:
+            focus_widget, identity_id = saved
+            current_identity = getattr(getattr(getattr(window, "service", None), "current_identity", None), "identity_id", None)
+            youth_widget = window._plugin_page_widgets.get("youth")
+            if (
+                identity_id == current_identity and youth_widget is not None
+                and youth_widget.is_ancestor(focus_widget)
+                and focus_widget.get_mapped() and focus_widget.get_sensitive()
+            ):
+                focus_widget.grab_focus()
+                # The history coordinator can call show_route twice and GTK
+                # may apply final focus during the same event dispatch. Restore
+                # after that dispatch, without reviving stale widgets/profiles.
+                if callable(idle_add):
+                    def finish_return_focus():
+                        active_identity = getattr(
+                            getattr(getattr(window, "service", None), "current_identity", None),
+                            "identity_id", None,
+                        )
+                        current_youth = window._plugin_page_widgets.get("youth")
+                        visible = getattr(window.view_stack, "get_visible_child_name", lambda: None)()
+                        if (
+                            not getattr(window, "_closed", False)
+                            and visible == "youth" and active_identity == identity_id
+                            and current_youth is not None
+                            and current_youth.is_ancestor(focus_widget)
+                            and focus_widget.get_mapped() and focus_widget.get_sensitive()
+                        ):
+                            focus_widget.grab_focus()
+                        return False
+                    idle_add(finish_return_focus)
