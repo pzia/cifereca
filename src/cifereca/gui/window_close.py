@@ -36,6 +36,11 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
         window.config.save()
     except Exception:
         pass
+    # Cancel periodic inventory heartbeat AND unsubscribe from broker
+    # notifications before tearing down the worker pool and service. A queued
+    # GTK idle callback additionally checks the already-closed owner.
+    from . import source_inventory_timer
+    source_inventory_timer.stop(window, source_remove=source_remove)
     timer_id = getattr(window, "_kobo_backup_timer_id", None)
     window._kobo_backup_timer_id = None
     if timer_id is not None:
