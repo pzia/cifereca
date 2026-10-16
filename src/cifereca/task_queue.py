@@ -7,6 +7,8 @@ from concurrent.futures import Future
 from enum import IntEnum
 from typing import Any, Callable
 
+from .diagnostic_task_context import diagnostic_task_scope
+
 
 class TaskPriority(IntEnum):
     """Lower values run first; gaps are intentional for future classes."""
@@ -51,7 +53,8 @@ class PriorityExecutor:
                 if not future.set_running_or_notify_cancel():
                     continue
                 try:
-                    result = fn()
+                    with diagnostic_task_scope():
+                        result = fn()
                 except BaseException as exc:  # noqa: BLE001 - Future boundary
                     future.set_exception(exc)
                 else:

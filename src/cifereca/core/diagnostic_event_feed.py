@@ -23,6 +23,9 @@ _LOG_LINE = re.compile(
     r"(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) "
     r"(?P<logger>[\w.-]{1,90}) (?:\[[^\]]{0,80}\] )?(?P<body>.*)$"
 )
+_TASK_CORRELATION = re.compile(
+    r"TRACE task correlation task_ref=([0-9a-f]{12}) status=(success|failed|cancelled)"
+)
 _TRACE = re.compile(r"^TRACE ([a-zA-Z][\w-]{0,30}) ([a-zA-Z][\w-]{0,45})(?:\s|$)")
 _SAFE_FIELDS = re.compile(
     r"\b(phase|status|outcome|operation|duration_ms|count|returncode)="
@@ -154,10 +157,16 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             # Export only known machine-generated TRACE categories and small
             # allowlisted status fields. Everything else remains private.
             trace = _TRACE.match(match["body"])
+            task_correlation = (
+                _TASK_CORRELATION.fullmatch(match["body"])
+                if match["logger"] == "cifereca" else None
+            )
             if match["logger"] == "cifereca_numilog":
                 message = public_numilog_session_log(match["body"]) or (
                     "[contenu libre masqué : consulter le journal local]"
                 )
+            elif task_correlation:
+                message = task_correlation[0]
             elif trace and trace.group(1).lower() in _STRUCTURED_TERMS and trace.group(2).lower() in (_STRUCTURED_TERMS | {"core"}):
                 message = "TRACE " + trace.group(1).lower() + " " + trace.group(2).lower()
                 suffix = match["body"][trace.end():]
@@ -190,6 +199,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "module": ".".join(safe_parts)[:90],
                 "severity": match["level"].lower(),
                 "message": message[:240],
+                **({"task_ref": task_correlation[1]} if task_correlation else {}),
                 # Neither the rotation suffix nor a moving tail line index
                 # participates in the ID. Distinct lines remain distinct.
                 # A file can be overwritten on the same inode/offset.
@@ -272,6 +282,10 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             public_detail = public_numilog_fields(
                 operation, row.get("detail"), row.get("duration_ms"),
             )
+            task_ref = row.get("task_ref")
+            if (operation in {"acquisition_delivery", "session_state"}
+                    and type(task_ref) is str and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
+                public_detail["task_ref"] = task_ref
             message = public_numilog_message(operation, public_detail) or "[opération masquée]"
         base_id = _event_id("core_events", stamp, category + ":" + operation)
         event_id = base_id

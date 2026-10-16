@@ -1,0 +1,91 @@
+"""#1346: a completed Kobo worker must not be starved by GTK idle traffic."""
+from __future__ import annotations
+
+from queue import Queue
+
+from tests.test_core_p0_981_task_coalescing import session
+
+
+def test_cancelled_kobo_receipt_is_dispatched_before_idle_repaints(session):
+    """Exercise the real TaskRunner class with a priority-aware GLib seam."""
+    runner = session.runner
+    glib = runner.submit.__globals__["GLib"]
+    default_ready = Queue()
+    idle_ready = Queue()
+    priorities = []
+
+    def schedule(fn, *args, priority=200):
+        priorities.append((fn.__name__, priority))
+        (default_ready if priority <= 0 else idle_ready).put((fn, args))
+
+    glib.PRIORITY_DEFAULT = 0
+    glib.idle_add = schedule
+
+    worker, entered, release, calls = session.work()
+    outcomes = []
+    runner.submit(
+        "Kobo confirmé", worker, ok=outcomes.append,
+        kind="kobo-acquisition", origin="user",
+    )
+    assert entered.wait(3)
+
+    # GTK main loop can stay busy with an unbounded stream of repaint and
+    # polling callbacks. A final result must not sit behind that idle queue.
+    for _ in range(150):
+        schedule(lambda: None)
+    assert default_ready.empty() and idle_ready.qsize() >= 151
+
+    release.set()
+    callback, args = default_ready.get(timeout=5)
+    assert callback.__name__ == "deliver"
+    assert ("deliver", 0) in priorities
+    assert priorities[0][1] == 200  # the fake window uses a lambda for _task_started
+
+    # The genuine worker result is delivered, not fabricated from the
+    # cancellation button, despite pending lower-priority UI callbacks.
+    callback(*args)
+    assert calls == ["started"]
+    assert outcomes == ["result"]
+    assert runner._count == 0
+    assert [name for name, _ in session.events] == ["finished"]
+
+
+def test_legacy_headless_gtk_seam_still_delivers_without_priority_constant(session):
+    """Old seam has no PRIORITY_DEFAULT: keep existing deterministic tests."""
+    worker, entered, release, calls = session.work()
+    outcomes = []
+    session.runner.submit(
+        "Kobo", worker, ok=outcomes.append, kind="kobo-acquisition",
+    )
+    assert entered.wait(3)
+    release.set()
+    session.drain_until(lambda: len(outcomes) == 1)
+    assert outcomes == ["result"]
+    assert session.runner._count == 0
+
+
+def test_unrelated_providers_keep_existing_idle_callback_order(session):
+    """A Kobo cancellation workaround cannot reorder Numilog/Paris events."""
+    runner = session.runner
+    glib = runner.submit.__globals__["GLib"]
+    events = []
+    glib.PRIORITY_DEFAULT = 0
+    glib.idle_add = lambda fn, *args, priority=200: events.append(
+        (fn.__name__, priority, fn, args)
+    )
+    worker, entered, release, calls = session.work()
+    runner.submit("Catalogue distant", worker, kind="source-sync")
+    assert entered.wait(3)
+    release.set()
+
+    from time import monotonic, sleep
+    deadline = monotonic() + 3
+    while not any(event[0] == "deliver" for event in events):
+        assert monotonic() < deadline
+        sleep(0.005)
+
+    assert events[-1][0] == "deliver"
+    assert events[-1][1] == 200
+    assert all(priority == 200 for _name, priority, _fn, _args in events)
+    events[-1][2](*events[-1][3])
+    assert runner._count == 0

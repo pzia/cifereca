@@ -7,6 +7,8 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any
 
+from .diagnostic_task_context import numilog_task_reference
+
 SENSITIVE_KEYS = re.compile(r"pass|password|cookie|token|secret|readerid|barcode|session|authorization", re.I)
 
 
@@ -52,6 +54,7 @@ class DiagnosticEntry:
     status: str
     duration_ms: int | None = None
     detail: dict[str, Any] | None = None
+    task_ref: str | None = None
 
 
 class Diagnostics:
@@ -78,6 +81,7 @@ class Diagnostics:
             status=status,
             duration_ms=duration_ms,
             detail=redact(detail or {}),
+            task_ref=numilog_task_reference() if category == "NUMILOG" else None,
         )
         with self._lock:
             self._items.append(entry)
@@ -88,7 +92,11 @@ class Diagnostics:
 
     def snapshot(self) -> list[dict[str, Any]]:
         with self._lock:
-            return [asdict(x) for x in self._items]
+            rows = [asdict(x) for x in self._items]
+            for row in rows:
+                if row.get("task_ref") is None:
+                    row.pop("task_ref", None)
+            return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
         lines = [
@@ -102,6 +110,8 @@ class Diagnostics:
         lines.append("")
         for item in self.snapshot():
             lines.append(f"[{item['timestamp']}] {item['category']} {item['operation']} status={item['status']}")
+            if item.get("task_ref"):
+                lines.append("task_ref=" + item["task_ref"])
             if item.get("duration_ms") is not None:
                 lines.append(f"duration={item['duration_ms']}ms")
             detail = item.get("detail") or {}

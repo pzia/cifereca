@@ -30,6 +30,45 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
     if not self.sync_source_enabled(account):
         return {**result, "status": "skipped", "reason": "source_disabled"}
     session = self._session_for_account(account)
+
+    def valid_kobo_source() -> bool:
+        """Refresh must not publish rights from a stale Kobo binding."""
+        try:
+            matching = [
+                current for current in self.accounts
+                if current.provider_id == "kobo"
+                and current.credential_id == account.credential_id
+            ]
+            bound = self.storage.identity_for_connection(
+                "kobo", account.credential_id,
+            )
+            connections = (
+                self.storage.provider_connections(identity_id=bound)
+                if bound else []
+            )
+            return bool(
+                len(matching) == 1
+                and matching[0].identity_id == account.identity_id
+                and matching[0].unique_id == account.unique_id
+                and self.identity_by_id(account.identity_id) is not None
+                and bound == account.identity_id
+                and sum(
+                    row.get("provider_id") == "kobo"
+                    and row.get("credential_id") == account.credential_id
+                    and row.get("enabled") is True
+                    for row in connections
+                ) == 1
+                and self.sync_source_enabled(matching[0])
+                and self._sessions.get(
+                    self._session_key("kobo", account.credential_id)
+                ) is session
+                and session.connected is True
+            )
+        except Exception:
+            return False
+
+    if account.provider_id == "kobo" and not valid_kobo_source():
+        raise ProviderConfigurationError("Source Kobo non liée au compte demandé")
     if account.provider_id == "numilog":
         from .numilog_manifest_rights import numilog_inventory_binding_valid
         if not numilog_inventory_binding_valid(self, account, session=session):
@@ -56,6 +95,8 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             from .numilog_private_rows import private_library_rows_valid
             if not private_library_rows_valid(rows, account.credential_id):
                 raise ProviderConfigurationError("Inventaire privé Numilog non conforme")
+        if account.provider_id == "kobo" and not valid_kobo_source():
+            raise ProviderConfigurationError("Source Kobo modifiée pendant la lecture")
         if account.provider_id == "kobo":
             # Persist attested personal rights, but never start Kobo acquisition.
             from .kobo_manifest_rights import mirror_kobo_manifest_rights

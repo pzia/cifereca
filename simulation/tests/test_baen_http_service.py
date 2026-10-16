@@ -156,8 +156,10 @@ class BaenContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, LocalBaenServer(Path(tmp)) as server:
             session = make_session(server, transport=RecordingTransport(server))
             try:
-                for query in ("rate-limit", "down"):
-                    with self.subTest(query=query), self.assertRaisesRegex(ProviderError, "catalogue inaccessible"):
+                # Provider #1917 now exposes stable, redacted failure
+                # categories rather than the former generic error string.
+                for query, code in (("rate-limit", "rate_limited"), ("down", "service_unavailable")):
+                    with self.subTest(query=query), self.assertRaisesRegex(ProviderError, f"^Baen : {code}$"):
                         session.search(query)
                 self.assertEqual(session.search("nothing"), [])
             finally:

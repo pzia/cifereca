@@ -183,13 +183,18 @@ def test_due_source_uses_v1_checkpoint_and_does_not_inherit_other_account_cache(
         service.storage.metadata_set("kobo_backup_last_success_at", now)
         service.storage.metadata_set(
             key, json.dumps({"schema_version": 1, "updated_at": now - 7200,
-                             "status": "attention_required"}),
+                             "status": "partial"}),
         )
         assert service._kobo_backup_account_due("vault-1") is True
         service.storage.metadata_set(
             key, json.dumps({"schema_version": 1, "updated_at": now,
-                             "status": "attention_required"}),
+                             "status": "partial"}),
         )
+        assert service._kobo_backup_account_due("vault-1") is False
+        service.storage.metadata_set(key, json.dumps({
+            "schema_version": 1, "updated_at": now - 7200,
+            "status": "attention_required",
+        }))
         assert service._kobo_backup_account_due("vault-1") is False
         # An account without a checkpoint must be selected even when a
         # different source's cache timestamp is fresh.
