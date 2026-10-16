@@ -1,0 +1,179 @@
+"""P1 #1916: public search outages use only explicit stale catalogue facts."""
+from __future__ import annotations
+
+from dataclasses import replace
+import time
+
+import httpx
+import pytest
+
+from cifereca.core.known_catalog_fallback import (
+    known_public_fallback, public_service_unavailable,
+)
+from tests.test_core043_progress_cache_stats import _service, _FakeSession
+
+
+def _known(service, *, provider="good", identity="alice", key="one",
+           title="Aventure maritime", author="Émile Auteur",
+           state="remote_catalog", mirrored=None, collection="catalog"):
+    return service.storage.catalog_entry_put({
+        "catalog_entry_id": "known-" + identity + "-" + key,
+        "title": title, "author": author,
+        "identity_id": identity, "provider_id": provider,
+        "item_id": "public-" + key, "local_state": state,
+        "media_format": "epub", "metadata": {
+            "mirrored_at": int(time.time()) if mirrored is None else mirrored,
+            "medium": "digital", "source_collection": collection,
+            "description": "Description publique",
+            "source_credential": "PRIVATE-CREDENTIAL-NOT-REEXPOSED",
+            "rights": "https://private.invalid/?auth=SIGNED_SECRET",
+        },
+    })
+
+
+def test_offline_stale_fallback_is_scoped_and_never_grants_owned_rights(tmp_path):
+    service = _service(tmp_path)
+    try:
+        _known(service, key="matching")
+        _known(service, identity="bob", key="foreign")
+        _known(service, key="owned", state="remote_owned")
+        _known(service, key="library", collection="library")
+        _known(service, key="local", state="local")
+        _known(service, key="very-old", mirrored=int(time.time()) - 100 * 86400)
+        _known(service, key="wrong-provider", provider="other")
+        rows = known_public_fallback(
+            service.storage, provider_id="good", identity_id="alice",
+            query="maritime", scope="digital", field="title",
+            content_types=("epub",),
+        )
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.id == "known-stale:known-alice-matching"
+        assert row.record_id == "public-matching"
+        assert row.metadata["search_provenance"] == "known_catalog_stale"
+        assert row.owned is False and row.downloadable is False
+        assert row.friendly_url is None and row.thumbnail_url is None
+        assert row.source_credential == "known-public"
+        assert "PRIVATE-CREDENTIAL" not in repr(row)
+        assert "rights" not in row.metadata
+        assert "SIGNED_SECRET" not in str(row.metadata)
+        assert known_public_fallback(
+            service.storage, provider_id="good", identity_id="bob",
+            query="maritime", scope="digital", field="title",
+            content_types=("epub",),
+        )[0].record_id == "public-foreign"
+    finally:
+        service.close()
+
+
+def test_progressive_transport_outage_keeps_good_live_and_marks_old_as_stale(
+    tmp_path, monkeypatch,
+):
+    service = _service(tmp_path)
+    try:
+        _known(service, provider="bad", key="old", title="Progressive Book")
+        bad = _FakeSession("bad")
+        good = _FakeSession("good")
+        requests = []
+
+        def unavailable(query, scope, **kwargs):
+            requests.append((query, scope))
+            raise httpx.ConnectError("sensitive-secret-URL")
+
+        bad.search = unavailable
+        service._sessions = {"good": good, "bad": bad}
+        live_mirrors = []
+        monkeypatch.setattr(
+            service, "_mirror_remote_results",
+            lambda rows, **kwargs: live_mirrors.extend(rows) or len(rows),
+        )
+        batches = []
+        summary = service.search_progressive(
+            "Progressive Book", force=True, on_batch=batches.append,
+        )
+        assert len(requests) == 1
+        assert summary.result_count == 2
+        assert summary.providers_failed == 1
+        assert len(batches) == 2
+        stale_batch = next(b for b in batches if b.provider_id == "bad")
+        assert stale_batch.error_code == "SearchTemporarilyUnavailable"
+        assert stale_batch.results[0].metadata["search_provenance"] == "known_catalog_stale"
+        assert "résultats connus" in stale_batch.warnings[0]
+        assert "sensitive-secret" not in str(summary.warnings)
+        assert {r.source_provider for r in live_mirrors} == {"good"}
+        assert all(r.metadata.get("search_provenance") != "known_catalog_stale" for r in live_mirrors)
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("failure", ["forbidden", "timeout", "rate_limited", "server_error", "legitimate_zero"])
+def test_fallback_only_on_public_outage_not_rights_or_real_empty(
+    tmp_path, failure,
+):
+    service = _service(tmp_path)
+    try:
+        _known(service, provider="bad", title="Maritime Book")
+        session = _FakeSession("bad")
+        attempts = []
+
+        def search(query, scope, **kwargs):
+            attempts.append(query)
+            if failure == "legitimate_zero":
+                return []
+            if failure == "timeout":
+                raise httpx.ReadTimeout("remote host private")
+            if failure in {"forbidden", "rate_limited", "server_error"}:
+                status = {"forbidden": 403, "rate_limited": 429, "server_error": 503}[failure]
+                request = httpx.Request("GET", "https://catalog.example.invalid/search")
+                raise httpx.HTTPStatusError("not available", request=request,
+                                            response=httpx.Response(status, request=request))
+            raise AssertionError("unexpected")
+
+        session.search = search
+        service._sessions = {"bad": session}
+        batches = []
+        summary = service.search_progressive(
+            "Maritime Book", force=True, on_batch=batches.append,
+        )
+        assert len(batches) == 1
+        if failure in {"timeout", "rate_limited", "server_error"}:
+            assert len(attempts) == 1
+            assert batches[0].results[0].metadata["search_provenance"] == "known_catalog_stale"
+            assert summary.providers_failed == 1
+        else:
+            assert not batches[0].results
+            assert summary.result_count == 0
+    finally:
+        service.close()
+
+
+def test_fallback_without_known_rows_is_error_not_zero_results(tmp_path):
+    service = _service(tmp_path)
+    try:
+        bad = _FakeSession("bad")
+        bad.search = lambda *a, **kw: (_ for _ in ()).throw(httpx.ConnectTimeout("offline"))
+        service._sessions = {"bad": bad}
+        batches = []
+        summary = service.search_progressive("unseen", force=True, on_batch=batches.append)
+        assert summary.result_count == 0
+        assert summary.providers_failed == 1
+        assert "aucun résultat connu" in batches[0].warnings[0]
+        assert batches[0].error_code == "SearchTemporarilyUnavailable"
+    finally:
+        service.close()
+
+
+def test_no_source_scope_or_future_timestamp_can_surface_foreign_book(tmp_path):
+    service = _service(tmp_path)
+    try:
+        _known(service, key="future", mirrored=int(time.time()) + 3600)
+        assert known_public_fallback(
+            service.storage, provider_id="good", identity_id=None,
+            query="maritime", scope="all", field="all", content_types=(),
+        ) == ()
+        assert known_public_fallback(
+            service.storage, provider_id="good", identity_id="alice",
+            query="maritime", scope="all", field="all", content_types=(),
+        ) == ()
+    finally:
+        service.close()
