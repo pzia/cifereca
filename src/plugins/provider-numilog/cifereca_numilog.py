@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.22'
+VERSION = '0.1.23'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -266,7 +266,7 @@ class NumilogSession(ProviderSession):
             self.credentials.clear()
             self._session_event('session_closed')
 
-    def _rows(self, *, include_delivery=False, delivery_record_id=None):
+    def _rows(self, *, include_delivery=False, delivery_record_id=None, enrichment_record_id=None):
         # A signed library URL is only ever decoded for a single selected
         # account-scoped book at an explicit action; never during inventory,
         # search, or a broad scan of all owned purchases.
@@ -275,6 +275,11 @@ class NumilogSession(ProviderSession):
             or not delivery_record_id.startswith('numilog:'+self.scope+':')
         ):
             raise ProviderError('Numilog : livre ciblé du compte requis pour la livraison')
+        if enrichment_record_id is not None and (
+            include_delivery or type(enrichment_record_id) is not str
+            or not enrichment_record_id.startswith('numilog:'+self.scope+':')
+        ):
+            raise ProviderError('Numilog : enrichissement ciblé du compte requis')
         if not self.connected:
             self._session_event('not_connected')
             raise ProviderError('Numilog : connecter le compte avant cette opération')
@@ -301,6 +306,10 @@ class NumilogSession(ProviderSession):
                         (lambda row: self._id(row) == delivery_record_id)
                         if include_delivery else None
                     ),
+                    strict_public_enrichment_selector=(
+                        (lambda row: self._id(row) == enrichment_record_id)
+                        if enrichment_record_id is not None else None
+                    ),
                 )
                 if include_delivery:
                     # Fixed enum + bounded numeric structure only; enough to
@@ -319,6 +328,11 @@ class NumilogSession(ProviderSession):
                         if include_delivery and self._id(row) == delivery_record_id:
                             raise ProviderError(
                                 'Numilog : livre dupliqué entre pages ; livraison non autorisée'
+                            )
+                        if (enrichment_record_id is not None
+                                and self._id(row) == enrichment_record_id):
+                            raise ProviderError(
+                                'Numilog : édition dupliquée entre pages ; enrichissement arrêté'
                             )
                         continue
                     seen_items.add(key)
@@ -378,6 +392,41 @@ class NumilogSession(ProviderSession):
         matches = [row for row in self.library() if all(t in fold(row.title) for t in terms)]
         start = max(0,int(page))*50
         return matches[start:start+50]
+
+    def enrich_owned_public_listing(self, item):
+        """Explicit one-page public enrichment of an attested, fresh owned book.
+
+        Not called by library(), search(), sync or holdings() automatically:
+        querying the commercial site for a private purchase requires an
+        explicit user-initiated enrichment action. No signed delivery URL is
+        read, resolved, saved or sent. A failed lookup is not a false match.
+        """
+        with self.lock:
+            # Validate a shallow copy: a stale or revoked caller must not be
+            # promoted to owned merely by asking for enrichment.
+            from dataclasses import replace
+            self._canonical_item(replace(item))
+            rows = self._rows(enrichment_record_id=item.record_id)
+            matches = [row for row in rows if self._id(row) == item.record_id]
+            if len(matches) != 1:
+                raise ProviderError(
+                    'Numilog : édition achetée non attestée dans le compte courant'
+                )
+            # Use a fresh owned projection, never the caller's potentially
+            # stale rights, metadata or public link.
+            owned = self._normalize(matches[0])
+            if owned.friendly_url is None:
+                return owned
+            from cifereca_numilog_public_client import fetch_public_search
+            from cifereca_numilog_enrichment import merge_attested_public_listing
+            # One bounded anonymous public query, no second-page scan, no
+            # private cookie or automatic re-try. The title is search text
+            # only: the edition match must be the explicit identical URL.
+            public_page = fetch_public_search(matches[0]['title'], page=0, field='all')
+            enriched, _status = merge_attested_public_listing(
+                owned, public_page.items,
+            )
+            return enriched
 
     def holdings(self,item,search_terms=''):
         self._canonical_item(item)
