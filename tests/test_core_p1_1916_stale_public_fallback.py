@@ -177,3 +177,41 @@ def test_no_source_scope_or_future_timestamp_can_surface_foreign_book(tmp_path):
         ) == ()
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("status,expected_code", [
+    (401, "SearchAuthenticationRequired"),
+    (403, "SearchAccessDenied"),
+    (429, "SearchTemporarilyUnavailable"),
+    (503, "SearchTemporarilyUnavailable"),
+])
+def test_http_failure_codes_never_expose_private_request_uri(
+    tmp_path, status, expected_code,
+):
+    service = _service(tmp_path)
+    try:
+        _known(service, provider="bad", title="Maritime Book")
+        session = _FakeSession("bad")
+        private_url = "https://catalog.example.invalid/private?auth=SIGNED_SECRET"
+        calls = []
+
+        def failure(*args, **kwargs):
+            calls.append("network")
+            req = httpx.Request("GET", private_url)
+            raise httpx.HTTPStatusError(private_url, request=req,
+                                        response=httpx.Response(status, request=req))
+
+        session.search = failure
+        service._sessions = {"bad": session}
+        batches = []
+        summary = service.search_progressive(
+            "Maritime Book", force=True, on_batch=batches.append,
+        )
+        assert len(calls) == 1
+        assert batches[0].error_code == expected_code
+        assert "SIGNED_SECRET" not in str(batches)
+        assert "SIGNED_SECRET" not in str(summary)
+        assert bool(batches[0].results) is (status in {429, 503})
+        assert summary.providers_failed == 1
+    finally:
+        service.close()
