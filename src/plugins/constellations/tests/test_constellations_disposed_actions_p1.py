@@ -77,3 +77,15 @@ def test_disposed_load_does_not_consult_even_an_invalid_dropdown():
     view.disposed = True
     view.identity_id = lambda: (_ for _ in ()).throw(AssertionError("read GTK after close"))
     assert view.load() is None
+
+
+def test_return_without_attested_origin_identity_never_uses_current_profile():
+    view, calls = closed_view()
+    view.disposed = False
+    view.origin_identity = ""
+    view.open_origin()
+    assert calls == [("toast", "Profil d’origine inconnu ; retour à la fiche indisponible.")]
+    # The fallback must also remain forbidden if the dropdown changes.
+    view.identity_id = lambda: "other-profile"
+    view.open_origin()
+    assert all(call[0] != "open" for call in calls)

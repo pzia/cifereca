@@ -1632,6 +1632,19 @@ def main() -> int:
             next_step = kobo_download_running if phase == "cancel-running" else kobo_download_finished
         button = next(node for node in walk(dialog) if isinstance(node, Gtk.Button)
                       and str(node.get_label()).replace("_", "") == label)
+        # GTK can report a modal as mapped before its button has real X11
+        # coordinates. A (-5, -5) XTEST click was observed before an unintended
+        # Kobo materialization in two separate CI runs. Never send that click.
+        try:
+            target = device[0].widget_point(button) if button.get_mapped() else (-1, -1)
+        except RuntimeError:
+            target = (-1, -1)
+        if target[0] < 0 or target[1] < 0:
+            assert monotonic() < f["download_deadline"], (
+                "Kobo confirmation button has no on-screen XTEST coordinates"
+            )
+            later(80, kobo_download_dialog)
+            return
         capture("03k-kobo-explicit-source-confirmation-" + phase)
         report["pointer_actions"].append(device[0].click_widget(button))
         f["download_deadline"] = monotonic() + 6
@@ -1639,7 +1652,16 @@ def main() -> int:
 
     def kobo_download_dialog_cancelled():
         f = loan_sync_fixture
-        assert not f["dialog"].get_visible() and not f["materialize_calls"]
+        # Cancellation must never reach materialization, including while GTK
+        # animates the modal closure. Do not mistake a delayed redraw for a
+        # failed cancellation; retain a bounded hard failure if it stays open.
+        assert not f["materialize_calls"], "Kobo cancellation triggered acquisition"
+        if f["dialog"].get_visible():
+            assert monotonic() < f["download_deadline"], (
+                "Kobo confirmation still visible after cancel deadline"
+            )
+            later(80, kobo_download_dialog_cancelled)
+            return
         report["checks"]["P0_1347_Kobo_XTEST_prepare_cancel_zero_acquisition"] = True
         f["download_phase"] = "cancel-running"
         kobo_download_prepare_click()

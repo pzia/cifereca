@@ -4,6 +4,7 @@ from html import unescape
 from html.parser import HTMLParser
 import json
 import re
+from unicodedata import category
 from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qs
 
 BASE = 'https://www.numilog.com/'
@@ -69,6 +70,18 @@ class Parser(HTMLParser):
 
 def classes(node):
     return set((node.attrs.get('class') or '').split())
+
+
+def _raw_delivery_url_safe(value):
+    # urllib.parse.urljoin/urlsplit silently remove CR/LF/TAB in Python.
+    # Do not turn a malformed signed link into a different valid URL.
+    return (
+        type(value) is str and bool(value)
+        and not any(
+            char.isspace() or category(char) in {'Cc', 'Cf', 'Cs'}
+            for char in value
+        )
+    )
 
 
 def origin(value):
@@ -241,7 +254,10 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
         # known. The caller can select one exact scoped record ID, so signed
         # links for unrelated purchases never enter memory on a user click.
         for link in links:
-            href = urljoin(base_url, link.attrs.get('href') or '')
+            raw_link = link.attrs.get('href') or ''
+            if not _raw_delivery_url_safe(raw_link):
+                raise ParseError('Lien de bibliothèque inattendu')
+            href = urljoin(base_url, raw_link)
             url = urlsplit(href)
             if origin(href) != site_origin or url.username or url.password or url.fragment or url.path != '/Pages/Compte/readBook.ashx':
                 raise ParseError('Lien de bibliothèque inattendu')
@@ -290,6 +306,8 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
         href=str(node.attrs.get('href') or '').strip()
         if not href:
             continue
+        if not _raw_delivery_url_safe(href):
+            raise ParseError('Lien de pagination inattendu')
         resolved=urljoin(base_url,href)
         parsed=urlsplit(resolved)
         if origin(resolved)!=site_origin or parsed.username or parsed.password or parsed.fragment:
@@ -383,21 +401,24 @@ def _owned_delivery_candidates(node, *, allowed_origins):
                     or not isinstance(url, str) or len(url) > 4096):
                 continue
             try:
-                parsed = urlsplit(unescape(url))
+                decoded_url = unescape(url)
+                if not _raw_delivery_url_safe(decoded_url):
+                    continue
+                parsed = urlsplit(decoded_url)
                 # Only the exact ACSM delivery origin/path, with no user-info,
                 # fragment, whitespace, relative URL, or disguised port.
                 if (
-                    origin(url) not in allowed_origins
-                    or origin(url) != ('https', 'entrepot2r.numilog.com', 443)
+                    origin(decoded_url) not in allowed_origins
+                    or origin(decoded_url) != ('https', 'entrepot2r.numilog.com', 443)
                     or parsed.username or parsed.password or parsed.fragment
                     or parsed.path != '/fulfillment/URLLink.acsm'
                     or not parsed.query or any(c.isspace() for c in url)
-                    or '\\' in url or any(ord(c) < 32 for c in url)
+                    or '\\' in url or not _raw_delivery_url_safe(url)
                 ):
                     continue
             except (TypeError, ValueError, AttributeError):
                 continue
-            deliveries.append(OwnedDelivery(product, index, unescape(url)))
+            deliveries.append(OwnedDelivery(product, index, decoded_url))
     return deliveries
 
 
@@ -480,7 +501,84 @@ def _is_fulfillment_acsm(url, allowed_origins):
         return False
 
 
-def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
+def _readbook_coordinates(value, base_url):
+    try:
+        if not _raw_delivery_url_safe(value):
+            return None
+        url = urljoin(base_url, value)
+        parsed = urlsplit(url)
+        if (origin(url) != origin(base_url) or parsed.username or parsed.password
+                or parsed.fragment or parsed.path.lower() != '/pages/compte/readbook.ashx'):
+            return None
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        lid = query.get('lid', [])
+        if len(lid) != 1 or not re.fullmatch(r'[0-9]{1,20}', lid[0]):
+            return None
+        # Do not silently discard an unknown upstream copy/edition parameter.
+        # The card must repeat the whole fresh readBook query, order of keys
+        # aside; values and repeated-value ordering remain exact.
+        return (lid[0], tuple((key, tuple(query[key])) for key in sorted(query)))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _confirmation_delivery(root, base_url, expected_readbook, allowed):
+    """Bind the observed global Links array to ONE explicitly selected card.
+
+    A single signed URL is not sufficient when a confirmation names another
+    product/copy. No JS evaluation, ProductId=lid inference or endpoint guess.
+    Unknown/dynamic versions of this known layout fail closed.
+    """
+    declaration = re.compile(r'\b(?:const|let|var)\s+Links\s*=')
+    scripts = [n for n in root.walk() if n.tag == 'script'
+               and declaration.search(''.join(n.pieces))]
+    if not scripts:
+        return None  # historical intermediary layouts retain their contract
+    def require(condition):
+        if not condition:
+            raise DeliverySelectionError('ambiguous')
+    require(len(scripts) == 1)
+    raw = ''.join(scripts[0].pieces)
+    require(len(raw) <= 64 * 1024 and len(declaration.findall(raw)) == 1)
+    literal = re.search(
+        r'\b(?:const|let|var)\s+Links\s*=\s*'
+        r'(\[(?:\s|,|\{[^{}]{1,4096}\})*\])\s*;', raw,
+    )
+    require(literal is not None)
+    candidates = _owned_delivery_candidates(
+        Node('script', pieces=[literal.group(1)]), allowed_origins=allowed,
+    )
+    require(len(candidates) == 1)
+    candidate = candidates[0]
+    expected = _readbook_coordinates(expected_readbook, base_url)
+    require(expected is not None)
+    parents = {id(child): node for node in root.walk() for child in node.children}
+    bindings = []
+    for action in root.walk():
+        handler = action.attrs.get('onclick', '')
+        if not re.search(r'\bModalDownload\s*\(', handler):
+            continue
+        card = action
+        while card is not None and 'card' not in classes(card):
+            card = parents.get(id(card))
+        require(card is not None)
+        readbooks = [n for n in card.walk() if n.tag == 'a'
+                     and _readbook_coordinates(n.attrs.get('href', ''), base_url) is not None]
+        if not any(_readbook_coordinates(n.attrs['href'], base_url) == expected for n in readbooks):
+            continue
+        require(len(readbooks) == 1)
+        require(sum(bool(re.search(r'\bModalDownload\s*\(', n.attrs.get('onclick', '')))
+                    for n in card.walk()) == 1)
+        call = re.fullmatch(
+            r'\s*ModalDownload\(\s*([0-9]{1,16})\s*,\s*([0-9]{1,16})\s*\)\s*;?\s*', handler,
+        )
+        require(call is not None)
+        bindings.append(call.groups())
+    require(bindings == [(candidate.product_id, candidate.copy_index)])
+    return candidate.url
+
+
+def delivery_url(text, base_url, *, allowed_origins=None, evidence=None, expected_readbook=None):
     """Locate exactly one allowlisted HTML delivery; optionally count shapes.
 
     Evidence contains only bounded integers. Raw URLs and HTML never escape
@@ -504,7 +602,10 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
                     continue
                 values.append(('script', value))
         for source, value in values:
-            if not isinstance(value,str) or not value.startswith(('https://','http://')):
+            if (
+                not _raw_delivery_url_safe(value)
+                or not value.startswith(('https://','http://'))
+            ):
                 continue
             if evidence is not None:
                 if source == 'href':
@@ -512,7 +613,12 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
                 else:
                     html_scripts = min(10000, html_scripts + 1)
             try:
-                url = urljoin(base_url,unescape(value))
+                decoded_url = unescape(value)
+                # A JS literal can carry numeric HTML character references;
+                # reject controls introduced by unescape as well as raw ones.
+                if not _raw_delivery_url_safe(decoded_url):
+                    continue
+                url = urljoin(base_url, decoded_url)
                 parsed = urlsplit(url)
                 # Every HTML-derived delivery URL obeys the same exact origin
                 # and credential/fragment policy as the subsequent GET.
@@ -534,6 +640,11 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
             'allowed_candidates': min(10000, len(candidates)),
             'attested_acsm_candidates': min(10000, len(signed_acsm)),
         })
+    bound_confirmation = _confirmation_delivery(
+        root, base_url, expected_readbook, allowed,
+    )
+    if bound_confirmation is not None and signed_acsm != {bound_confirmation}:
+        raise DeliverySelectionError('ambiguous')
     # Pages intermédiaires may contain harmless site navigation and a
     # SINGLE signed ACSM. Prefer that exact delivery over ordinary permitted
     # links; never pick arbitrarily between different ACSM signatures.

@@ -1,14 +1,46 @@
 # Numilog P0 #1883 — livraison ACSM depuis une fiche possédée
 
-## État de qualification (15/10/2026)
+## Qualification de la page fournie (16/10/2026)
 
-**Anomalie réelle encore non reproduite** : la localisation précise de l'objet
-`{ProductId, IndexExemplaire, DrmTechnlology, link}` n'est pas établie
-dans les éléments expurgés disponibles. Il peut être dans la page privée
-`MesLivres.aspx`, dans un composant de fiche possédée ou dans
-`readBook.ashx`. Un script du dernier cas était **déjà** reconnu par
-`delivery_url` dès lors qu'il ne contenait qu'une destination autorisée.
-Ce correctif ne constitue donc pas une preuve de résolution réelle.
+La page privée fournie a été analysée **hors réseau et en mémoire**. Elle
+n'est ni une page `MesLivres` ni un script attaché à une fiche de cet inventaire :
+son formulaire cible `/Pages/Commande/ConfirmationPaiement.aspx`, sans
+`myTable` ni `LnkDownloadBook`. Un tableau JavaScript global `Links` contient
+**deux objets pour un même couple produit/exemplaire**, variantes **LCP et
+ADOBE**. Le bouton `ModalDownload` référence exactement ce couple. Aucune
+équivalence `ProductId == lid` n'est supposée.
+
+La comparaison a porté sur **le même HTML privé**, sans exécuter ses scripts
+ni interroger un lien : `delivery_url` avant #1890 (main `4586b642`) le rejette
+avec `ParseError`, car **deux URL d'origines autorisées** sont candidates.
+La version livrée dans #1890 (`b2ede93b`) sélectionne **l'unique ACSM ADOBE**,
+égal au candidat du couple du bouton ; l'autre URL autorisée est ordinaire.
+Les seuls compteurs conservés sont `js_delivery_shapes=2`,
+`allowed_candidates=2`, `attested_acsm_candidates=1`.
+
+La différence HTML/parseur du critère de sortie #1883 est ainsi reproduite
+sur la page fournie. **Aucun téléchargement réel ni fulfillment ADEPT n'a
+été effectué.** L'analyse ne prouve pas la succession HTTP réellement
+renvoyée à l'installation de l'utilisateur ni le succès de sa session.
+
+Le complément 0.1.18 lie ce tableau global à **une seule carte** portant
+le `readBook` exact (lid, variante et autres paramètres de query) choisi dans l'inventaire frais. Le
+couple du bouton `ModalDownload` doit être celui de l'unique ACSM ADOBE.
+Un autre produit/exemplaire, une variante différente, une carte dupliquée,
+un tableau dynamique ou plusieurs déclarations sont refusés avant GET signé.
+Cette vérification ne généralise pas le rattachement des anciens HTML sans
+ce tableau : leur contrat historique de destination unique reste inchangé.
+
+`tests/fixtures/confirmation_delivery_structure.html` conserve seulement
+ces relations DOM/JS, avec contenu, identifiants, commandes, paramètres et
+liens **entièrement inventés**. Ce fichier n'est pas une copie nettoyée du
+HTML privé. Le test de transport utilise un HTTP 302 fictif depuis un
+`readBook` sélectionné dans un inventaire frais, cette page intermédiaire,
+un ACSM fictif et un seul import pour le propriétaire. Il vérifie aussi
+zéro acquisition à l'inventaire, aucun GET LCP/navigation/autre livre,
+l'absence de secrets dans les diagnostics, le refus de deux ACSM et dix
+cas de rattachement incorrect (produit, exemplaire, readBook, variante, query, contrôle HTML encodé,
+carte absente/dupliquée, tableau dynamique/dupliqué).
 
 ## Nouveau parcours sûr
 
@@ -41,7 +73,11 @@ Ce correctif ne constitue donc pas une preuve de résolution réelle.
    n'est conservé en catalogue. Chaque saut réseau reste soumis à
    `checked_url`, à l'allowlist stricte et aux limites MIME/taille/redirect.
 5. Sans preuve de fiche, le parcours historique `readBook.ashx` s'applique.
-   Ses HTML intermédiaires à URL unique étaient déjà supportés. Un formulaire
+   Les HTML intermédiaires, y compris une confirmation avec tableau global
+   LCP/ADOBE, sont lus seulement pendant cette acquisition ciblée. Une unique
+   destination ACSM exacte est préférée aux autres URL admises ; deux ACSM
+   distincts sont refusés. Aucun endpoint de commande n'est deviné ni chargé
+   automatiquement depuis l'inventaire. Un formulaire
    de connexion HTML 200, un HTML d'erreur, zéro lien, plusieurs liens,
    HTTP 410, HTTP 429 et XML non ACSM ont maintenant des codes de sortie
    distincts et non sensibles.
@@ -161,5 +197,11 @@ ambiguïtés, HTTP 403/410/429, redirections hôte/port interdits, XML trompeur,
 login HTML 200, import ACSM unique, action ADEPT requise et suppression
 des temporaires. Elles ne contactent pas Numilog.
 
-La capture d'une **structure expurgée du HTML effectivement reçu en production**
-et un essai manuel autorisé restent nécessaires avant de fermer #1883.
+La page réellement fournie a désormais été confrontée aux deux parseurs
+hors réseau : le défaut d'ambiguïté est reproduit et sa correction vérifiée.
+Les assertions de transport restent fictives. Un essai terrain de la version
+corrigée peut vérifier la session et le fulfillment, sans être présenté comme
+un succès déjà obtenu ni imposé comme recette manuelle implicite de clôture.
+Une observation nouvelle peut conduire à rouvrir #1883 ou à qualifier une
+étape distincte avec des diagnostics expurgés. Aucun HTML privé, cookie,
+identifiant réel ou lien signé du document joint n'est archivé dans le dépôt.
