@@ -179,3 +179,49 @@ def test_general_all_warning_cannot_survive_unsupported_field():
         assert session.last_search_warnings == []
     finally:
         session.close()
+
+def test_subject_two_matching_server_selectors_reports_partial_coverage():
+    form = '''<select name="id_categorie">
+    <option value="7">Science-fiction</option></select>
+    <select name="id_genre">
+    <option value="9">Science-fiction</option></select>'''
+    client = FakeClient(form=form)
+    session = make_session(client)
+    try:
+        rows = session.search("science-fiction", field="subject")
+        assert len(rows) == 1
+        assert rows[0].owned is False
+        assert rows[0].metadata["categories"] == ["Science-fiction"]
+        assert "genres" not in rows[0].metadata
+        assert client.get_calls[1][1]["params"]["id_categorie"] == "7"
+        assert client.get_calls[1][1]["params"]["id_genre"] == "1"
+        assert session.last_search_warnings == [
+            "partial_results : catégorie et genre correspondants ; un seul interrogé"
+        ]
+    finally:
+        session.close()
+
+
+def test_subject_two_available_selectors_one_match_needs_no_false_partial_warning():
+    client = FakeClient(form=FORM)
+    session = make_session(client)
+    try:
+        rows = session.search("mystere", field="subject")
+        assert len(rows) == 1
+        assert rows[0].metadata["genres"] == ["Policier & Mystère"]
+        assert "categories" not in rows[0].metadata
+        assert session.last_search_warnings == []
+        assert len(client.get_calls) == 2
+    finally:
+        session.close()
+
+
+def test_subject_without_matching_options_remains_true_zero():
+    client = FakeClient(form=FORM)
+    session = make_session(client)
+    try:
+        assert session.search("introuvable", field="subject") == []
+        assert session.last_search_warnings == []
+        assert len(client.get_calls) == 1
+    finally:
+        session.close()
