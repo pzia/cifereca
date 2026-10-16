@@ -80,7 +80,10 @@ def test_mainwindow_startup_facade_still_delegates_without_import_cycle():
 def test_opening_sync_idle_callback_checks_window_liveness_at_dispatch():
     """#1132: the queued callback must guard the live window."""
     source = _method_source("MainWindow", "connect_configured_sources")
-    assert "idle_add(once_while_open(window, window.run_opening_sync))" in source
+    assert "idle_add(once_while_open(window, initial_opening_sync))" in source
+    assert "window._source_inventory_startup_pending = True" in source
+    assert "window.run_opening_sync()" in source
+    assert "window._source_inventory_startup_pending = False" in source
     from cifereca.gui.startup_lifecycle import once_while_open
 
     calls = []
