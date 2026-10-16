@@ -52,6 +52,10 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             self, account, session=session,
         ):
             raise ProviderConfigurationError("Source Numilog non liée au compte demandé")
+        if account.provider_id == "numilog":
+            from .numilog_private_rows import private_library_rows_valid
+            if not private_library_rows_valid(rows, account.credential_id):
+                raise ProviderConfigurationError("Inventaire privé Numilog non conforme")
         if account.provider_id == "kobo":
             # Persist attested personal rights, but never start Kobo acquisition.
             from .kobo_manifest_rights import mirror_kobo_manifest_rights
@@ -75,6 +79,11 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         # direct_download but that capability must not implicitly acquire
         # every returned EPUB from the generic Sync broker (#1346).
         # The separate legacy opening/acquisition workflow remains unchanged.
+        if account.provider_id == "numilog" and not numilog_inventory_binding_valid(
+            self, account, session=session,
+        ):
+            # Revoke a stale source even if the ownership projection completed.
+            raise ProviderConfigurationError("Source Numilog non liée au compte demandé")
         result["library"] = self._mirror_remote_results(rows, identity_id=account.identity_id)
     if deep:
         result["catalog_scan"] = self.catalog_scan()
