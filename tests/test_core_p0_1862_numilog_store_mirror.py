@@ -6,6 +6,7 @@ SearchResult. Fake network endpoints fail loudly if any download is requested.
 from __future__ import annotations
 
 import logging
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -18,7 +19,9 @@ from tests.test_sync_state_contract import _service
 
 
 def _row(credential: str, index: int) -> SearchResult:
-    record_id = f"numilog:scoped:{credential}:{index}"
+    scope = hashlib.sha256(credential.encode("utf-8")).hexdigest()[:20]
+    variant = hashlib.sha256(f"variant-{index}".encode("utf-8")).hexdigest()[:16]
+    record_id = f"numilog:{scope}:lid{index}:{variant}"
     return SearchResult(
         id=record_id, record_id=record_id, docbase="NUMILOG",
         medium="digital", title=f"Achat #{index}", author=None,
