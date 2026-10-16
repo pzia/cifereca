@@ -188,7 +188,12 @@ class ParisClient:
             detail = {"error": type(exc).__name__}
             # Search errors may contain untrusted upstream body text or a
             # request URL. Search diagnostics are exported to the UI/support.
-            if not (category == "CATALOG" and operation.startswith("search ")):
+            if not (
+                category == "CATALOG" and (
+                    operation.startswith("search ")
+                    or operation.startswith("history cover search ")
+                )
+            ):
                 detail["message"] = str(exc)[:240]
             self.diagnostics.add(category, operation, "error", int((time.perf_counter()-start)*1000), detail)
             raise
