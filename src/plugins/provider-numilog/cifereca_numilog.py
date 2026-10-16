@@ -266,7 +266,7 @@ class NumilogSession(ProviderSession):
             self.credentials.clear()
             self._session_event('session_closed')
 
-    def _rows(self, *, include_delivery=False, delivery_record_id=None):
+    def _rows(self, *, include_delivery=False, delivery_record_id=None, enrichment_record_id=None):
         # A signed library URL is only ever decoded for a single selected
         # account-scoped book at an explicit action; never during inventory,
         # search, or a broad scan of all owned purchases.
@@ -275,6 +275,11 @@ class NumilogSession(ProviderSession):
             or not delivery_record_id.startswith('numilog:'+self.scope+':')
         ):
             raise ProviderError('Numilog : livre ciblé du compte requis pour la livraison')
+        if enrichment_record_id is not None and (
+            include_delivery or type(enrichment_record_id) is not str
+            or not enrichment_record_id.startswith('numilog:'+self.scope+':')
+        ):
+            raise ProviderError('Numilog : enrichissement ciblé du compte requis')
         if not self.connected:
             self._session_event('not_connected')
             raise ProviderError('Numilog : connecter le compte avant cette opération')
@@ -301,6 +306,10 @@ class NumilogSession(ProviderSession):
                         (lambda row: self._id(row) == delivery_record_id)
                         if include_delivery else None
                     ),
+                    strict_public_enrichment_selector=(
+                        (lambda row: self._id(row) == enrichment_record_id)
+                        if enrichment_record_id is not None else None
+                    ),
                 )
                 if include_delivery:
                     # Fixed enum + bounded numeric structure only; enough to
@@ -319,6 +328,11 @@ class NumilogSession(ProviderSession):
                         if include_delivery and self._id(row) == delivery_record_id:
                             raise ProviderError(
                                 'Numilog : livre dupliqué entre pages ; livraison non autorisée'
+                            )
+                        if (enrichment_record_id is not None
+                                and self._id(row) == enrichment_record_id):
+                            raise ProviderError(
+                                'Numilog : édition dupliquée entre pages ; enrichissement arrêté'
                             )
                         continue
                     seen_items.add(key)
@@ -392,7 +406,7 @@ class NumilogSession(ProviderSession):
             # promoted to owned merely by asking for enrichment.
             from dataclasses import replace
             self._canonical_item(replace(item))
-            rows = self._rows()  # Current account inventory, no delivery evidence.
+            rows = self._rows(enrichment_record_id=item.record_id)
             matches = [row for row in rows if self._id(row) == item.record_id]
             if len(matches) != 1:
                 raise ProviderError(
