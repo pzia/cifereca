@@ -143,12 +143,28 @@ SCENARIOS = {
         "width": 1366,
         "editions": True,
     },
+    "youth-editions-1600": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #1599 : deux éditions, ISBN distincts et âges par provenance dans le vrai détail GTK 1600.",
+        "runner": "gtk-youth",
+        "width": 1600,
+        "editions": True,
+    },
     "youth-library-search-1366": {
         "plugin": "catalog.youth",
         "fixture": "search-filters",
         "description": "P0 #906 UX : Jeunesse -> Recherche connue -> Retour par vraie GTK/XTEST 1366.",
         "runner": "gtk-youth",
         "width": 1366,
+        "library_search": True,
+    },
+    "youth-library-search-1600": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #1599 : Jeunesse -> Recherche connue -> Retour, sélection et clavier XTEST 1600.",
+        "runner": "gtk-youth",
+        "width": 1600,
         "library_search": True,
     },
     "diagnostics-1366": {

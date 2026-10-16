@@ -2301,13 +2301,31 @@ class Storage:
             db.executemany(sql, rows)
         return ids
 
-    def catalog_entries(self, *, state: str | None = None) -> list[dict[str, Any]]:
+    def catalog_entries(
+        self, *, state: str | None = None, identity_id: str | None = None,
+        provider_id: str | None = None, limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read optional exact scopes before loading/decoding catalogue rows."""
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 100_001):
+            raise ValueError("invalid catalogue read limit")
         columns = ["catalog_entry_id", "artifact_id", "placement_id", "title", "author", "media_format", "identity_id", "provider_id", "item_id", "local_state", "metadata_json", "created_at", "updated_at"]
         sql = "SELECT " + ",".join(columns) + " FROM catalog_entries"
-        args: tuple[Any, ...] = ()
-        if state is not None:
-            sql += " WHERE local_state=?"; args = (state,)
+        conditions = []
+        args: list[Any] = []
+        for column, value in (
+            ("local_state", state), ("identity_id", identity_id), ("provider_id", provider_id),
+        ):
+            if value is not None:
+                if type(value) is not str:
+                    raise ValueError("invalid catalogue scope")
+                conditions.append(column + "=?")
+                args.append(value)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY title COLLATE NOCASE, catalog_entry_id"
+        if limit is not None:
+            sql += " LIMIT ?"
+            args.append(limit)
         with self._lock, self._connect() as db:
             values = db.execute(sql, args).fetchall()
         out=[]
