@@ -190,9 +190,9 @@ def test_history_popover_has_one_box_and_remains_hidden_until_activity():
 
 def test_footer_dismiss_callback_uses_current_window_only_on_click():
     window, root, events, styles, header = _render()
-    assert window.activity_dismiss.options["icon_name"] == "window-close-symbolic"
+    assert window.activity_dismiss.options["label"] == "Acquitter"
     assert window.activity_dismiss.properties["visible"] is False
-    assert window.activity_dismiss.properties["tooltip_text"] == "Acquitter le résultat courant"
+    assert window.activity_dismiss.properties["tooltip_text"] == "Acquitter les erreurs affichées (historique conservé)"
     assert events == ["header", "pages", ("navigate", "dashboard")]
     window.activity_dismiss.click()
     assert events[-1] == "dismiss"

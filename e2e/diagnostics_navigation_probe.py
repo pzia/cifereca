@@ -749,7 +749,9 @@ def main() -> int:
         assert w.service.current_identity.identity_id == "camille"
         assert w.identity_dropdown.get_model().get_n_items() == 2
         report["window_size"] = [w.get_width(), w.get_height()]
-        begin_library_volume()
+        from activity_feedback_acceptance import exercise
+        exercise(w, Gtk=Gtk, Adw=Adw, walk=walk, device=device[0], report=report,
+                 capture=capture, later=later, done=begin_library_volume)
 
     library_volume = {}
 

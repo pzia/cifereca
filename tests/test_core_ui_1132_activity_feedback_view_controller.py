@@ -134,7 +134,7 @@ def test_history_projects_newest_first_and_only_errors_receive_warning():
     window._refresh_activity_history()
     labels = window.activity_history_box.children
     assert [x.label for x in labels] == [
-        "Erreur · Erreur réseau", "Terminé · Lecture",
+        "Erreur · Opération · Erreur réseau", "Terminé · Lecture",
     ]
     assert "warning" in labels[0].classes
     assert "warning" not in labels[1].classes
@@ -175,7 +175,7 @@ def test_pending_error_displays_exact_latest_unacknowledged_error():
     add_error(window.activity_feedback, 1, "Première")
     add_error(window.activity_feedback, 2, "Deuxième")
     assert show_pending_activity_error(window) is True
-    assert window.busy_label.label == "Erreur · Deuxième"
+    assert window.busy_label.label == "Erreur · Opération · Deuxième · à l’instant"
     assert ("icon", "dialog-warning-symbolic") in window.activity_status_icon.calls
     assert window.activity_status_icon.classes == {"activity-error"}
     assert ("visible", True) in window.activity_dismiss.calls
@@ -197,7 +197,7 @@ def test_pending_error_wins_over_successful_reduction():
     window = context()
     add_error(window.activity_feedback, 1, "Droits refusés")
     assert window._hide_activity_feedback() is False
-    assert window.busy_label.label == "Erreur · Droits refusés"
+    assert window.busy_label.label == "Erreur · Opération · Droits refusés · à l’instant"
     assert window._activity_hide_source is None
     assert ("reveal", False) not in window.busy_revealer.calls
 

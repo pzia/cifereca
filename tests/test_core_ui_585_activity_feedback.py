@@ -80,7 +80,7 @@ def test_success_then_error_stays_pending_until_acknowledged():
     feedback.started(2, "Seconde", "two")
     feedback.finished(2, "Seconde", "two", success=False, error="Réseau indisponible")
     assert feedback.latest_unacknowledged_error().task_id == 2
-    assert feedback.latest_unacknowledged_error().display_text == "Erreur · Réseau indisponible"
+    assert feedback.latest_unacknowledged_error().display_text == "Erreur · Opération · Réseau indisponible"
     feedback.acknowledge_errors()
     assert feedback.latest_unacknowledged_error() is None
 
@@ -101,7 +101,7 @@ def test_main_footer_has_one_activity_row_with_history_and_acknowledgement():
     assert source.count("window.busy_revealer = Gtk.Revealer()") == 1
     assert "Gtk.MenuButton(label='Historique')" in source
     assert "window.activity_history_box" in source
-    assert "Acquitter le résultat courant" in source
+    assert "Acquitter les erreurs affichées" in source
 
 
 def test_task_feedback_names_running_success_and_error_states():
