@@ -84,6 +84,13 @@ SCENARIOS = {
         "runner": "gtk-youth",
         "width": 1366,
     },
+    "youth-1600": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "Plugins P1 #1599 : vraie page Jeunesse GTK/XTEST 1600px ; détails, identités, retour et sélection.",
+        "runner": "gtk-youth",
+        "width": 1600,
+    },
     "youth-filter-help-1366": {
         "plugin": "catalog.youth",
         "fixture": "search-filters",
