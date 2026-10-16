@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 28)
+        self.assertEqual(len(mod.ALL), 30)
 
     def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
         for path in ("src/cifereca/gui/settings_ai_actions.py",
@@ -103,11 +103,15 @@ class SelectionTests(unittest.TestCase):
         )
         self.assertEqual(
             mod.select(["src/plugins/recommendations/page.py"]),
-            mod.DETAIL,
+            mod.RECOMMENDATIONS,
         )
         self.assertEqual(
             mod.select(["e2e/constellations_detail_probe.py"]),
             mod.CONSTELLATIONS_GTK,
+        )
+        self.assertEqual(
+            mod.select(["e2e/recommendations_detail_probe.py"]),
+            mod.RECOMMENDATIONS_GTK,
         )
         self.assertEqual(
             mod.select(["src/plugins/youth-detail-enrichment/enrich.py"]),
@@ -128,6 +132,17 @@ class SelectionTests(unittest.TestCase):
             "src/plugins/constellations/constellations.py",
         ):
             assert set(mod.CONSTELLATIONS_GTK).issubset(set(mod.select([path])))
+
+    def test_1599_recommendations_gtk_both_widths(self):
+        assert set(mod.RECOMMENDATIONS_GTK) == {
+            "recommendations-detail-1366", "recommendations-detail-1600",
+        }
+        assert set(mod.RECOMMENDATIONS_GTK).issubset(set(mod.RECOMMENDATIONS))
+        for path in (
+            "src/plugins/recommendations/recommendations.py",
+            "src/plugins/recommendations/recommendation_engine.py",
+        ):
+            assert set(mod.RECOMMENDATIONS_GTK).issubset(set(mod.select([path])))
 
     def test_922_filter_ux_in_youth_scope(self):
         self.assertIn("youth-filter-help-1366", mod.select([
@@ -199,6 +214,7 @@ class SelectionTests(unittest.TestCase):
             "gtk-diagnostics-navigation": "diagnostics_navigation_probe.py",
             "gtk-youth": "youth_page_probe.py",
             "gtk-constellations": "constellations_detail_probe.py",
+            "gtk-recommendations": "recommendations_detail_probe.py",
         }
         for scenario, descriptor in runner.SCENARIOS.items():
             filename = entrypoints.get(descriptor.get("runner"))
