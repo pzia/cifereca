@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -131,6 +132,8 @@ class SynchronizationBrokerImpl:
     _subscribers: list[Callable[[], None]] | None = None
     _materialization_plans: MaterializationPlans = field(default_factory=MaterializationPlans, repr=False)
     _scheduled_inventory_requested: set[str] = field(default_factory=set, repr=False)
+    _scheduled_inventory_running: set[str] = field(default_factory=set, repr=False)
+    _scheduled_inventory_lock: Any = field(default_factory=threading.Lock, repr=False)
 
     def __post_init__(self) -> None:
         if self._subscribers is None:
@@ -463,7 +466,7 @@ class SynchronizationBrokerImpl:
         )
         if type(identity_id) is not str or not identity_id:
             return SyncResult(False, facts={"reason": "identity_required"})
-        if trigger not in {"startup", "periodic"} or type(trigger) is not str:
+        if type(trigger) is not str or trigger not in {"startup", "periodic"}:
             return SyncResult(False, facts={"reason": "invalid_trigger"})
         instant = datetime.now(timezone.utc) if now is None else now
         if not isinstance(instant, datetime) or instant.tzinfo is None:
@@ -514,12 +517,26 @@ class SynchronizationBrokerImpl:
                     continue
             except Exception:
                 continue
-            if trigger == "startup":
-                self._scheduled_inventory_requested.add(source_id)
+            # Singleflight within this broker: concurrent startup/timer
+            # triggers must never dispatch the same account twice. The
+            # persisted last_attempt additionally throttles new instances.
+            with self._scheduled_inventory_lock:
+                if source_id in self._scheduled_inventory_running:
+                    continue
+                if (trigger == "startup"
+                        and source_id in self._scheduled_inventory_requested):
+                    continue
+                self._scheduled_inventory_running.add(source_id)
+                if trigger == "startup":
+                    self._scheduled_inventory_requested.add(source_id)
             attempted += 1
-            result = self.synchronize_source(
-                source_id, SyncRequest(identity_id=identity_id), control,
-            )
+            try:
+                result = self.synchronize_source(
+                    source_id, SyncRequest(identity_id=identity_id), control,
+                )
+            finally:
+                with self._scheduled_inventory_lock:
+                    self._scheduled_inventory_running.discard(source_id)
             total += result.changed
             if not result.ok:
                 failed += 1
