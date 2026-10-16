@@ -13,15 +13,16 @@ LAST_SUCCESS = "2026-10-15T10:00:00+00:00"
 
 
 def broker(bound_identity):
+    # Use the real read-only broker method: SynchronizationBrokerImpl is a
+    # slotted dataclass and its methods cannot be monkeypatched per instance.
     storage = SimpleNamespace(
         identity_for_connection=lambda provider, credential: bound_identity,
+        metadata_get=lambda key: (
+            '{"status":"success","last_attempt":"' + LAST_SUCCESS +
+            '","last_success":"' + LAST_SUCCESS + '"}'
+        ),
     )
-    result = SynchronizationBrokerImpl(service=SimpleNamespace(storage=storage))
-    result._materialization_state = lambda _source: {
-        "status": "success", "last_attempt": LAST_SUCCESS,
-        "last_success": LAST_SUCCESS,
-    }
-    return result
+    return SynchronizationBrokerImpl(service=SimpleNamespace(storage=storage))
 
 
 def test_rebound_identity_cannot_show_stale_acquisition_success():
