@@ -125,7 +125,9 @@ def test_bad_kobo_binding_does_not_block_other_valid_personal_source(tmp_path):
     try:
         first, broken_calls = _setup(service, credential="kobo-bad")
         service.accounts[0] = replace(first, identity_id="bob")
-        valid, valid_calls = _setup(service, credential="kobo-good")
+        valid, valid_calls = _setup(
+            service, credential="kobo-good", identity="bob",
+        )
         service.accounts.append(replace(first, identity_id="bob"))
         # Only one source has a matching persisted account/identity; both
         # are connected. The nonmatching source must not be fetched.
@@ -135,6 +137,6 @@ def test_bad_kobo_binding_does_not_block_other_valid_personal_source(tmp_path):
         assert broken_calls == []
         assert valid_calls == ["library"]
         assert len(service.storage.entitlements(provider_id="kobo")) == 1
-        assert service.storage.entitlements(provider_id="kobo")[0]["identity_id"] == "alice"
+        assert service.storage.entitlements(provider_id="kobo")[0]["identity_id"] == "bob"
     finally:
         service.close()
