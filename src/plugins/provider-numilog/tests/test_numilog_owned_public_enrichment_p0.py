@@ -280,13 +280,16 @@ def test_duplicate_owned_public_links_in_same_page_block_enrichment_without_acsm
     assert len(parsed) == 1
     session = make_session("alice")
     session._page = lambda url: (url, html)
+    # The raw readBook variant belongs to the actual parsed card, not an
+    # invented equality between lid and product identifier.
+    target = session._normalize(parsed[0])
     monkeypatch.setattr(
         public_client, "fetch_public_search",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("public GET")),
     )
     try:
         with pytest.raises(ProviderError, match="enrichissement arrêté"):
-            session.enrich_owned_public_listing(session._normalize(owned_row()))
+            session.enrich_owned_public_listing(target)
     finally:
         session.close()
 
@@ -304,13 +307,16 @@ def test_duplicate_owned_product_across_pages_blocks_enrichment(monkeypatch):
         return (url, second if "page=2" in url else first)
 
     session._page = private_page
+    from cifereca_numilog_html import parse_library_page
+    first_rows, _ = parse_library_page(first)
+    target = session._normalize(first_rows[0])
     monkeypatch.setattr(
         public_client, "fetch_public_search",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("public GET")),
     )
     try:
         with pytest.raises(ProviderError, match="édition dupliquée entre pages"):
-            session.enrich_owned_public_listing(session._normalize(owned_row()))
+            session.enrich_owned_public_listing(target)
         assert len(accessed) == 2
     finally:
         session.close()
