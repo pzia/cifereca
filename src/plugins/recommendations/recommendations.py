@@ -1689,7 +1689,7 @@ class UxRecommendationsView:
         # that exact projection before sending anything to a potentially
         # remote LLM. tuple(mapping) would otherwise turn private field keys
         # into prompt content, even though the detail never displayed them.
-        reasons = _public_ranked_values(getattr(ranked, "reasons", ()), limit=3)
+        reasons = _public_ranked_values(getattr(ranked, "reasons", ()))[:3]
         if not reasons:
             self._llm_hint.set_label(
                 "Aucune raison publique exploitable pour une reformulation."
