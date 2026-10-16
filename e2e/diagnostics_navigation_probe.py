@@ -1406,6 +1406,40 @@ def main() -> int:
             "Kobo confirmation row vertically collapsed by crowded actions",
             acquisition_row.get_height(),
         )
+        # P1 #1889: measure *real* GTK allocations, not only widget properties.
+        # The source subtitles span multiple lines; suffix actions must keep
+        # their natural command height, vertically centered even when disabled.
+        suffix_allocations = []
+        for sync_row in rows:
+            for button in (node for node in walk(sync_row)
+                           if isinstance(node, Gtk.Button)):
+                assert button.get_valign() == Gtk.Align.CENTER, (
+                    "Uncentered Synchronisation suffix", sync_row.get_title(),
+                    button.get_label(),
+                )
+                button_height = button.get_height()
+                assert 0 < button_height <= 72, (
+                    "Synchronisation suffix stretched to subtitle height",
+                    sync_row.get_title(), button.get_label(),
+                    button_height, sync_row.get_height(),
+                )
+                ok, bounds = button.compute_bounds(sync_row)
+                assert ok and bounds.get_y() >= 0, (
+                    "Suffix outside ActionRow", sync_row.get_title(),
+                )
+                assert bounds.get_y() + bounds.get_height() <= sync_row.get_height() + 1
+                suffix_allocations.append({
+                    "row_height": sync_row.get_height(),
+                    "button_height": button_height,
+                    "button_width": button.get_width(),
+                    "valign": "center",
+                })
+        assert len(suffix_allocations) >= 20, (
+            "Missing expected Kobo/Paris/public source suffixes",
+            len(suffix_allocations),
+        )
+        report["sync_suffix_allocations"] = suffix_allocations
+        report["checks"]["P1_1889_gtk_sync_suffix_natural_height_centered"] = True
         report["checks"]["P0_kobo_acquisition_controls_keep_source_row_compact"] = True
         report["checks"]["P0_kobo_acquisition_off_by_default_on_sync_page"] = True
         for provider in ("gutenberg", "gallica"):
