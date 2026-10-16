@@ -157,3 +157,40 @@ def test_duplicate_show_route_during_back_does_not_replace_restored_action():
     show_route(host, "youth", Gtk=Gtk)
     assert host.get_focus() is host.button
     assert host.youth.default_focus_calls == 1
+
+
+def test_gtk_idle_restoration_survives_double_render_and_late_focus_override():
+    host = Host()
+    _outbound(host)
+    host._restoring_navigation = True
+    callbacks = []
+    show_route(host, "youth", Gtk=Gtk, idle_add=lambda callback: callbacks.append(callback))
+    show_route(host, "youth", Gtk=Gtk, idle_add=lambda callback: callbacks.append(callback))
+    host._restoring_navigation = False
+    # Simulate GTK assigning keyboard focus after the synchronous callbacks.
+    host.focus = object()
+    assert len(callbacks) == 1
+    assert callbacks.pop()() is False
+    assert host.get_focus() is host.button
+
+
+def test_deferred_focus_is_never_restored_to_stale_profile_or_route():
+    for invalidation in ("profile", "route", "detached", "closed"):
+        host = Host()
+        _outbound(host)
+        host._restoring_navigation = True
+        callbacks = []
+        show_route(host, "youth", Gtk=Gtk, idle_add=lambda callback: callbacks.append(callback))
+        host._restoring_navigation = False
+        host.focus = object()
+        assert len(callbacks) == 1
+        if invalidation == "profile":
+            host.service.current_identity.identity_id = "alex"
+        elif invalidation == "route":
+            host.view_stack.visible = "search"
+        elif invalidation == "detached":
+            host.button.mapped = False
+        else:
+            host._closed = True
+        assert callbacks.pop()() is False
+        assert host.get_focus() is not host.button
