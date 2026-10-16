@@ -344,7 +344,7 @@ def main():
         plugin.from_book(host)
         assert state["routes"] == ["constellations"]
         widget = plugin.build(host)
-        window.set_child(widget)
+        window.set_content(widget)
         state.update(window=window, plugin=plugin, view=plugin.view,
                      host=host, device=X11Input())
         window.present()
