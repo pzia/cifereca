@@ -1139,6 +1139,11 @@ def main() -> int:
             SyncSourceRef("p0-kobo-audit", "camille", "kobo", "fictitious-credential",
                           "Kobo audit hors ligne", enabled=False,
                           connected=False, status="failed"),
+            *[SyncSourceRef(
+                f"p0-kobo-target-{number}", "camille", "kobo",
+                f"fictitious-target-{number}", f"Kobo ciblé {number}",
+                sync_capabilities=("local_materialization",),
+            ) for number in (1, 2, 3)],
             SyncSourceRef("p0-partial", "camille", "paris", "fictif-a", "Source partielle fictive",
                           status="partial", last_attempt="2026-10-11T12:00:00+00:00",
                           last_success="2026-10-10T12:00:00+00:00"),
@@ -1197,10 +1202,46 @@ def main() -> int:
                 },
             )
 
+        # CoreUI acceptance boundary: real widgets and TaskRunner, synthetic
+        # broker responses only. No provider, file or DRM success is claimed.
+        from threading import Event
+        f["prepare_calls"] = []
+        f["materialize_calls"] = []
+        f["download_release"] = Event()
+        f["download_started"] = Event()
+        def prepare_materialization(source_id):
+            assert source_id == "p0-kobo-target-2", "Préparation sur un autre compte"
+            f["prepare_calls"].append(source_id)
+            counts = dict.fromkeys((
+                "already_local_linked", "already_local_verified",
+                "needs_reconciliation", "candidate_unverified", "potentially_missing",
+                "attention_required", "blocked_scope", "blocked_unlinked",
+                "not_downloadable", "invalid_manifest_items",
+            ), 0)
+            counts.update(already_local_linked=1, potentially_missing=2)
+            return NS(ok=True, changed=0, facts={
+                "status": "prepared", "requires_explicit_confirmation": True,
+                "acquisition_authorized": False, "manifest_refreshed": True,
+                "confirmation_token": f"{len(f['prepare_calls']):064x}",
+                "expires_in_seconds": 600, "counts": counts,
+            })
+        def materialize_one(source_id, token, *, control):
+            assert source_id == "p0-kobo-target-2", "Acquisition sur un autre compte"
+            assert token == f"{len(f['prepare_calls']):064x}"
+            f["materialize_calls"].append(source_id)
+            if len(f["materialize_calls"]) == 1:
+                f["download_started"].set()
+                assert f["download_release"].wait(10), "Annulation GTK absente"
+                assert control.cancelled(), "Le contrôle n'a pas reçu l'annulation"
+                return NS(ok=False, changed=1, facts={"status": "cancelled"})
+            assert not control.cancelled()
+            return NS(ok=True, changed=1, facts={"status": "success"})
         sync_broker = NS(
             sources=read_sources, synchronize=forbidden,
             synchronize_source=synchronize_one, set_enabled=forbidden,
             audit_local_reconciliation=audit_local_reconciliation,
+            prepare_local_materialization=prepare_materialization,
+            materialize_source=materialize_one,
         )
         class FixtureManager:
             active = True
@@ -1303,10 +1344,10 @@ def main() -> int:
         report["checks"]["P0_sync_real_gtk_disconnected_source_action_disabled"] = True
         capture("03i-sync-partial-last-success-and-offline-source")
         # #980 acceptance uses the real MainWindow/controller/widgets and
-        # XTEST, with seven synthetic broker rows; no provider/network/DRM.
-        # Seven sources and four distinct Kobo rows: preview, audit,
-        # manual confirmation and the independent on_start consent (#1346).
-        assert len(rows) == 11, ("Unexpected GTK sync action-row count", len(rows))
+        # XTEST, with ten synthetic broker rows; no provider/network/DRM.
+        # Ten sources and four additional rows per Kobo account: preview,
+        # audit, manual confirmation and independent on_start consent.
+        assert len(rows) == 26, ("Unexpected GTK sync action-row count", len(rows))
         schedule_row = next(row for row in rows
                             if row.get_title() == "Téléchargement automatique de ce compte")
         assert "Planification indisponible" in schedule_row.get_subtitle()
@@ -1486,6 +1527,170 @@ def main() -> int:
         report["checks"]["P0_kobo_audit_real_gtk_explicit_offline_read_only"] = True
         report["checks"]["P0_kobo_audit_real_gtk_bounded_redacted_partial_result"] = True
         capture("03j-kobo-offline-explicit-audit")
+        w.navigate("library")
+        await_route("library", kobo_library_operations)
+
+    def kobo_library_operations():
+        w = window[0]
+        menu = next(node for node in walk(w) if isinstance(node, Gtk.MenuButton)
+                    and node.get_label() == "Opérations…")
+        loan_sync_fixture["operations_menu"] = menu
+        report["pointer_actions"].append(device[0].click_widget(menu))
+        later(180, kobo_library_sync_navigation)
+
+    def kobo_library_sync_navigation():
+        f = loan_sync_fixture
+        popover = f["operations_menu"].get_popover()
+        assert popover.get_mapped()
+        button = next(node for node in walk(popover) if isinstance(node, Gtk.Button)
+                      and node.get_label() == "Gérer la synchronisation Kobo…")
+        assert not f["prepare_calls"] and not f["materialize_calls"]
+        report["pointer_actions"].append(device[0].click_widget(button))
+        await_route("sync", kobo_download_begin)
+
+    def kobo_download_begin():
+        f = loan_sync_fixture
+        w = window[0]
+        assert not f["prepare_calls"] and not f["materialize_calls"]
+        report["checks"]["P0_1347_library_menu_XTEST_navigates_without_acquisition"] = True
+        groups = [node for node in walk(w._sync_sources_box)
+                  if isinstance(node, Adw.PreferencesGroup)]
+        groups = [group for group in groups if any(
+            isinstance(row, Adw.ActionRow) and row.get_title() == "Kobo ciblé 2"
+            for row in walk(group))]
+        assert len(groups) == 1
+        f["download_group"] = groups[0]
+        f["download_row"] = next(row for row in walk(groups[0])
+            if isinstance(row, Adw.ActionRow)
+            and row.get_title() == "Téléchargement local · confirmation obligatoire")
+        assert "Non préparé" in f["download_row"].get_subtitle()
+        f["download_button"] = next(node for node in walk(groups[0])
+            if isinstance(node, Gtk.Button)
+            and getattr(node, "_cifereca_action_label", node.get_label()) == "Télécharger les livres manquants…")
+        f["stop_button"] = next(node for node in walk(groups[0])
+            if isinstance(node, Gtk.Button)
+            and getattr(node, "_cifereca_action_label", node.get_label()) == "Annuler le téléchargement")
+        report["checks"]["P0_1347_library_menu_XTEST_navigates_without_acquisition"] = True
+        f["download_phase"] = "cancel-dialog"
+        kobo_download_prepare_click()
+
+    def kobo_click_visible(button, continuation):
+        # Real allocation, scrolling and physical pointer; mapping alone is
+        # insufficient for the long source list at either viewport width.
+        w = window[0]
+        scroll = loan_sync_fixture["sync_scroll"]
+        ok, bounds = button.compute_bounds(scroll)
+        assert ok
+        top, bottom = bounds.get_y(), bounds.get_y() + bounds.get_height()
+        if top < 4 or bottom > scroll.get_height() - 4:
+            attempts = loan_sync_fixture.get("download_scroll_attempts", 0) + 1
+            loan_sync_fixture["download_scroll_attempts"] = attempts
+            assert attempts <= 6, "Action Kobo toujours hors du viewport"
+            adjustment = scroll.get_vadjustment()
+            maximum = max(adjustment.get_lower(),
+                          adjustment.get_upper() - adjustment.get_page_size())
+            adjustment.set_value(max(adjustment.get_lower(), min(
+                adjustment.get_value() + top - 60, maximum)))
+            later(180, lambda: kobo_click_visible(button, continuation))
+            return
+        loan_sync_fixture["download_scroll_attempts"] = 0
+        ok, bounds = button.compute_bounds(w)
+        assert ok and 0 <= bounds.get_y() and (
+            bounds.get_y() + bounds.get_height() <= w.get_height())
+        assert button.get_sensitive() and button.get_mapped()
+        report["pointer_actions"].append(device[0].click_widget(button))
+        later(120, continuation)
+
+    def kobo_download_prepare_click():
+        f = loan_sync_fixture
+        f["download_deadline"] = monotonic() + 6
+        kobo_click_visible(f["download_button"], kobo_download_dialog)
+
+    def kobo_download_dialog():
+        f = loan_sync_fixture
+        dialogs = [node for node in Gtk.Window.list_toplevels()
+                   if isinstance(node, Adw.MessageDialog) and node.get_visible()
+                   and node.get_heading() == "Confirmer les téléchargements Kobo ?"]
+        if not dialogs:
+            assert monotonic() < f["download_deadline"], "Confirmation Kobo absente"
+            later(100, kobo_download_dialog)
+            return
+        assert len(dialogs) == 1 and dialogs[0].get_mapped()
+        dialog = dialogs[0]
+        f["dialog"] = dialog
+        body = dialog.get_body()
+        assert "Kobo ciblé 2" in body and "déjà locaux : 1" in body
+        assert "manquants possibles : 2" in body
+        assert "fictitious-target" not in body
+        phase = f["download_phase"]
+        if phase == "cancel-dialog":
+            assert not f["materialize_calls"]
+            label = "Annuler"
+            next_step = kobo_download_dialog_cancelled
+        else:
+            label = "Télécharger pour ce compte"
+            next_step = kobo_download_running if phase == "cancel-running" else kobo_download_finished
+        button = next(node for node in walk(dialog) if isinstance(node, Gtk.Button)
+                      and str(node.get_label()).replace("_", "") == label)
+        capture("03k-kobo-explicit-source-confirmation-" + phase)
+        report["pointer_actions"].append(device[0].click_widget(button))
+        f["download_deadline"] = monotonic() + 6
+        later(120, next_step)
+
+    def kobo_download_dialog_cancelled():
+        f = loan_sync_fixture
+        assert not f["dialog"].get_visible() and not f["materialize_calls"]
+        report["checks"]["P0_1347_Kobo_XTEST_prepare_cancel_zero_acquisition"] = True
+        f["download_phase"] = "cancel-running"
+        kobo_download_prepare_click()
+
+    def kobo_download_running():
+        f = loan_sync_fixture
+        if not f["download_started"].is_set():
+            assert monotonic() < f["download_deadline"], "Worker Kobo absent"
+            later(100, kobo_download_running)
+            return
+        assert f["materialize_calls"] == ["p0-kobo-target-2"]
+        kobo_click_visible(f["stop_button"], kobo_download_release)
+
+    def kobo_download_release():
+        f = loan_sync_fixture
+        assert "Annulation demandée" in f["download_row"].get_subtitle()
+        f["download_release"].set()
+        later(120, kobo_download_cancelled)
+
+    def kobo_download_cancelled():
+        f = loan_sync_fixture
+        subtitle = f["download_row"].get_subtitle()
+        if not subtitle.startswith("Annulé ·"):
+            assert monotonic() < f["download_deadline"], "Résultat annulé absent"
+            later(100, kobo_download_cancelled)
+            return
+        assert "1 fichier(s) acquis durablement" in subtitle
+        assert "Relancer une préparation" in subtitle
+        assert not f["stop_button"].get_sensitive()
+        report["checks"]["P0_1347_Kobo_XTEST_cancel_keeps_partial_count"] = True
+        capture("03l-kobo-cancelled-result")
+        f["download_phase"] = "retry"
+        kobo_download_prepare_click()
+
+    def kobo_download_finished():
+        f = loan_sync_fixture
+        subtitle = f["download_row"].get_subtitle()
+        if not subtitle.startswith("Téléchargement terminé ·"):
+            assert monotonic() < f["download_deadline"], "Résultat terminé absent"
+            later(100, kobo_download_finished)
+            return
+        assert "1 fichier(s) acquis durablement" in subtitle
+        assert f["prepare_calls"] == ["p0-kobo-target-2"] * 3
+        assert f["materialize_calls"] == ["p0-kobo-target-2"] * 2
+        assert not f["mutations"] and not f["stop_button"].get_sensitive()
+        report["checks"]["P0_1347_Kobo_XTEST_three_accounts_only_second_confirmed"] = True
+        report["checks"]["P0_1347_Kobo_XTEST_retry_requires_new_preparation"] = True
+        report["kobo_confirmation_scope"] = (
+            "real GTK/TaskRunner/XTEST; three synthetic accounts and observed broker boundary; "
+            "no live provider, file or DRM acquisition claimed")
+        capture("03m-kobo-single-account-completed-result")
         cleanup_loan_sync()
         later(100, continue_baseline_settings)
 
@@ -1494,6 +1699,8 @@ def main() -> int:
         if not f.get("overrides"):
             return
         w = window[0]
+        if f.get("download_release") is not None:
+            f["download_release"].set()
         dialog = f.get("dialog")
         if dialog is not None and dialog.get_visible():
             dialog.close()
