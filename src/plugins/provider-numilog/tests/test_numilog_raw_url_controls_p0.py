@@ -26,7 +26,7 @@ ALLOWED = {
 }
 
 
-@pytest.mark.parametrize("unsafe", ("\\n", "\\r", "\\t", "\\u202e", "\\u200b"))
+@pytest.mark.parametrize("unsafe", ("\n", "\r", "\t", "\u202e", "\u200b"))
 def test_raw_control_in_signed_acsm_is_not_normalized_into_valid_url(unsafe):
     injected = SIGNED.replace("URLLink.acsm", "URLLink" + unsafe + ".acsm")
     with pytest.raises(ProviderError, match="destination réseau inattendue"):
@@ -38,7 +38,7 @@ def test_raw_control_in_signed_acsm_is_not_normalized_into_valid_url(unsafe):
         )
 
 
-@pytest.mark.parametrize("unsafe", ("\\n", "\\r", "\\t", "\\u202e", "\\u200b"))
+@pytest.mark.parametrize("unsafe", ("\n", "\r", "\t", "\u202e", "\u200b"))
 def test_raw_control_in_redirect_is_rejected_before_urljoin(unsafe):
     destination = SIGNED.replace("auth=", "auth=" + unsafe)
     with pytest.raises(ProviderError, match="redirection réseau inattendue"):
@@ -57,12 +57,12 @@ def test_safe_signed_query_is_never_decoded_or_rewritten():
         f'<a href="{SIGNED.replace("&", "&amp;")}">Get ACSM</a>',
         LIBRARY, allowed_origins=ALLOWED,
     ) == SIGNED
-    assert checked_url(SIGNED.replace("&auth=", "&auth=%250A%2526"), ALLOWED).endswith(
+    assert checked_url(SIGNED.split("&auth=")[0] + "&auth=%250A%2526", ALLOWED).endswith(
         "&auth=%250A%2526"
     )
 
 
-@pytest.mark.parametrize("unsafe", ("\\n", "\\r", "\\t", "\\u202e", "\\u200b"))
+@pytest.mark.parametrize("unsafe", ("\n", "\r", "\t", "\u202e", "\u200b"))
 def test_library_readbook_href_is_rejected_before_urljoin(unsafe):
     # A corrupted library anchor cannot be 'fixed' by urljoin into a
     # seemingly valid readBook endpoint at an explicit download.
@@ -76,7 +76,7 @@ def test_library_readbook_href_is_rejected_before_urljoin(unsafe):
         parse_library_page(html, LIBRARY)
 
 
-@pytest.mark.parametrize("unsafe", ("\\n", "\\t", "\\u202e"))
+@pytest.mark.parametrize("unsafe", ("\n", "\t", "\u202e"))
 def test_library_pagination_cannot_normalize_invalid_href(unsafe):
     html = (
         '<table id="myTable"></table>'
