@@ -759,25 +759,33 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
     if not identity_id:
         return 0
     now = int(time.time())
-    # A search/catalog item advertising owned=True is not proof of purchase.
-    # Kobo needs an active right attested by a connected personal manifest,
-    # for this identity AND credential, before Search displays remote_owned.
-    verified_kobo = set()
-    if any(row.source_provider == "kobo" and row.owned is True for row in rows):
-        verified_kobo = {
-            (str(right.get("identity_id") or ""),
+    # Neither Kobo nor Numilog public search flags are purchase evidence.
+    # A positive right from an authenticated personal library must already
+    # exist for this identity, credential and exact edition/variant (#1905).
+    verified_owned: set[tuple[str, str, str, str]] = set()
+    for provider_id in ("kobo", "numilog"):
+        if not any(row.source_provider == provider_id and row.owned is True for row in rows):
+            continue
+        verified_owned.update({
+            (provider_id, str(right.get("identity_id") or ""),
              str(right.get("credential_id") or ""),
              str(right.get("item_id") or ""))
-            for right in self.storage.entitlements(provider_id="kobo", state="active")
+            for right in self.storage.entitlements(provider_id=provider_id, state="active")
             if right.get("entitlement_type") == "owned"
-        }
+        })
     keyed: list[tuple[str, SearchResult, str]] = []
     for row in rows:
         owned = row.owned is True and (
-            row.source_provider != "kobo" or
-            (identity_id, row.source_credential, row.record_id) in verified_kobo
+            row.source_provider not in {"kobo", "numilog"} or
+            (row.source_provider, identity_id, row.source_credential, row.record_id)
+            in verified_owned
         )
-        state = "remote_owned" if owned else ("available_to_buy" if row.source_provider == "kobo" and row.price else ("available_to_borrow" if row.source_provider == "paris" and row.medium == "digital" else "remote_catalog"))
+        state = (
+            "remote_owned" if owned else
+            "available_to_buy" if row.source_provider in {"kobo", "numilog"} and row.price else
+            "available_to_borrow" if row.source_provider == "paris" and row.medium == "digital" else
+            "remote_catalog"
+        )
         key = hashlib.sha256(f"mirror\0{identity_id}\0{row.source_provider}\0{row.record_id}".encode()).hexdigest()
         keyed.append((key, row, state))
     existing_by_id = self.storage.catalog_entries_by_ids([key for key, _row, _state in keyed])
