@@ -457,7 +457,10 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
             partial_failure = False
             for source in (session, concrete):
                 for warning in list(getattr(source, "last_search_warnings", []) or []):
-                    warnings.append(f"{session.descriptor.display_name}: {warning}")
+                    # Provider-owned strings may contain signed URLs,
+                    # cookies or a private title; the public batch only
+                    # exposes a fixed partial-result reason.
+                    warnings.append(f"{session.descriptor.display_name}: résultats partiels")
                     partial_failure = True
             if partial_failure:
                 break
