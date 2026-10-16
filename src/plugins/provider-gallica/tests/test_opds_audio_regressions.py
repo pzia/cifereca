@@ -307,7 +307,7 @@ def test_sru_audio_recovers_valid_records_from_partially_malformed_xml(tmp_path)
         session.close()
 
 
-def test_audio_xml_failure_exposes_short_user_message_not_parser_details(tmp_path):
+def test_audio_xml_failure_with_empty_healthy_opds_warns_without_parser_details(tmp_path):
     empty_feed = b'''<?xml version="1.0" encoding="utf-8"?>
     <feed xmlns="http://www.w3.org/2005/Atom"><title>Vide</title></feed>'''
     broken_sru = b'''<?xml version="1.0"?><srw:searchRetrieveResponse xmlns:srw="http://www.loc.gov/zing/srw/">
@@ -328,9 +328,13 @@ def test_audio_xml_failure_exposes_short_user_message_not_parser_details(tmp_pat
 
     session = _session(tmp_path, handler, include_audio=True)
     try:
-        with pytest.raises(ProviderError) as raised:
-            session.search("audio-test", "digital")
-        message = str(raised.value)
+        # The OPDS branch is healthy but empty: a broken SRU audio branch
+        # must report partial coverage, not turn a real zero into a global
+        # failure. Its parse details must still remain private.
+        assert session.search("audio-test", "digital") == []
+        assert len(session.last_search_warnings) == 1
+        message = session.last_search_warnings[0]
+        assert message.startswith("partial_results : Gallica : ")
         assert "recherche audio temporairement indisponible" in message
         assert "mismatched tag" not in message
         assert "XML invalide" not in message
