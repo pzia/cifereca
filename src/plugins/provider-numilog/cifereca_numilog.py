@@ -31,7 +31,7 @@ DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
         search=True,holdings=True,personal_library=True,direct_download=True),
     credential_fields=(CredentialField('email','Adresse email Numilog'),CredentialField('password','Mot de passe Numilog',secret=True)),
-    homepage=BASE,notes=('Recherche limitée aux titres possédés. Achats sur numilog.com.',
+    homepage=BASE,notes=('Recherche habituelle dans Mes achats ; scope=catalog active la recherche publique anonyme brSimple, sans acquisition.',
         'EPUB direct et Adobe ACSM via le broker public d’acquisition ; LCP, PDF et audio non qualifiés.'))
 
 ALLOWED = {'www.numilog.com','services.numilog.com','www.edenlivres.fr','storage.googleapis.com'}
