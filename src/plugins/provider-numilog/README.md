@@ -91,10 +91,22 @@ Aucune URL privée/signée, origine externe ou traversée arbitraire ne passe
 comme URL produit/navigation. Les couvertures non qualifiées sont omises avec
 un avertissement fixe. Les champs optionnels absents restent inconnus.
 
-**Étape hors réseau seulement** : `NumilogSession.search()` continue de lire
-Mes achats ; aucun client HTTP public, changement de capabilities ou branchement
-fédéré n'est activé ici. Les tentatives de lecture de recherche/robots.txt par
-l'outil web n'ont pas donné de contenu : transport anonyme, conditions d'accès,
-réponses filtrées, vrai zéro, vraie page suivante et DOM fiche produit restent
-à qualifier. Les cas dérivés de tests ne sont pas des captures amont réelles.
+**Étape transport public explicite** : `NumilogSession.search(query, scope='catalog',
+field='all', page=n)` utilise désormais un **nouveau client HTTP anonyme** à
+chaque appel, sans cookies du compte, sur le chemin HTTPS public `brSimple`
+attesté par la fixture. Il refuse les redirections, MIME inattendus, réponses
+supérieures à 4 MiB, 403/429 et HTML dont la structure diffère ; jamais de
+repli sur un endpoint privé. `search_public()` est aussi exposée comme
+méthode explicite de session. Tout autre `field` public est refusé : les modes
+auteur/ISBN filtrés ne sont pas encore prouvés. Le scope normal `all/digital`
+continue temporairement de chercher dans **Mes achats** pour ne pas changer
+silencieusement les workflows privés avant intégration du moteur fédéré ; le
+scope `catalog` ne donne pas de droit d'achat ou de téléchargement.
+
+**Limite de preuve** : transport live anonyme, conditions d'accès, robots/CGU,
+réponses filtrées, vrais zéros, deuxième page et DOM fiche produit restent à
+qualifier sur des observations publiques autorisées. Les tests hors réseau
+n'attestent pas un succès HTTP chez Numilog. Le déploiement en recherche
+fédérée par défaut et ses capacités publiques restent à coordonner côté Core.
+Les cas dérivés de tests ne sont pas des captures amont réelles.
 La documentation de référence demeure `docs/NUMILOG-PUBLIC-SEARCH-FIXTURE.md`.
