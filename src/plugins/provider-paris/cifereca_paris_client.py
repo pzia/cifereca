@@ -185,20 +185,17 @@ class ParisClient:
         except Exception as exc:
             if category=="PNB" and operation=="borrow digital":
                 _TRACE_LOG.warning("TRACE paris pnb-loan failed error=%s duration_ms=%s",type(exc).__name__,int((time.perf_counter()-start)*1000))
-            diagnostic = {"error": type(exc).__name__}
-            if category == "CATALOG" and (
-                operation.startswith("search ")
-                or operation.startswith("history cover search ")
+            detail = {"error": type(exc).__name__}
+            # Search errors may contain untrusted upstream body text or a
+            # request URL. Search diagnostics are exported to the UI/support.
+            if not (
+                category == "CATALOG" and (
+                    operation.startswith("search ")
+                    or operation.startswith("history cover search ")
+                )
             ):
-                # Search errors may contain a remote URL, query, account hint
-                # or response text. Do not put those into exported diagnostics.
-                diagnostic["code"] = "service_unavailable"
-            else:
-                diagnostic["message"] = str(exc)[:240]
-            self.diagnostics.add(
-                category, operation, "error",
-                int((time.perf_counter()-start)*1000), diagnostic,
-            )
+                detail["message"] = str(exc)[:240]
+            self.diagnostics.add(category, operation, "error", int((time.perf_counter()-start)*1000), detail)
             raise
 
     def bootstrap(self) -> int:
@@ -428,6 +425,7 @@ class ParisClient:
         seen: set[str] = set()
         self.last_search_warnings: list[str] = []
         failures: list[tuple[str, Exception]] = []
+        successful_scenarios = 0
 
         for scenario in scenarios:
             rows: list[SearchResult] | None = None
@@ -440,11 +438,7 @@ class ParisClient:
                 # Retry borné : utile surtout pour EBOOKS sur les recherches larges.
                 self.diagnostics.add(
                     "CATALOG", f"search {scenario} fallback", "retry",
-                    detail={
-                        "result_size": 20,
-                        "error": type(first_exc).__name__,
-                        "code": "service_unavailable",
-                    },
+                    detail={"result_size": 20, "error": type(first_exc).__name__},
                     level="detailed",
                 )
                 try:
@@ -466,12 +460,20 @@ class ParisClient:
                 )
                 continue
 
+            # An empty result from an available catalogue is still a
+            # successful search, not evidence that every route failed.
+            successful_scenarios += 1
             for item in rows or []:
                 if item.id not in seen:
                     seen.add(item.id)
                     out.append(item)
 
-        if failures and not out:
+        if failures and successful_scenarios:
+            self.last_search_warnings = [
+                "partial_results : " + warning
+                for warning in self.last_search_warnings
+            ]
+        if failures and not successful_scenarios:
             if scope == "digital":
                 raise ParisSearchUnavailable("Le catalogue numérique n'a pas répondu à cette recherche. Essayez un terme plus précis ou réessayez dans quelques instants.") from failures[-1][1]
             if scope == "physical":
