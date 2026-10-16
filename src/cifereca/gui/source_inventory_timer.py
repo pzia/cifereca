@@ -255,6 +255,7 @@ def configure(
             return True
 
         def work():
+            failures = 0
             # No unbounded refresh batch and no user-selected-account fallback.
             for identity_id in ids:
                 if (
@@ -265,11 +266,15 @@ def configure(
                     # manager/broker after the GTK tick checked its scope.
                     return
                 try:
-                    broker.synchronize_scheduled_inventory(identity_id, "periodic")
+                    receipt = broker.synchronize_scheduled_inventory(identity_id, "periodic")
+                    if getattr(receipt, "ok", None) is not True:
+                        failures += 1
                 except Exception:
-                    # Keep worker exceptions (signed URLs, account IDs, paths)
-                    # out of TaskRunner global UI feedback.
-                    raise RuntimeError("Actualisation des notices des comptes indisponible") from None
+                    # One failed account must not starve its eligible siblings.
+                    # Keep private exception text out of TaskRunner feedback.
+                    failures += 1
+            if failures:
+                raise RuntimeError("Actualisation des notices des comptes indisponible") from None
 
         try:
             window.runner.submit(
