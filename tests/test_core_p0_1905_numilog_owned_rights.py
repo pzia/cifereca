@@ -277,3 +277,49 @@ def test_signed_numilog_urls_and_private_metadata_not_persisted(
         assert catalogue[0]["metadata"]["isbn"] == "9780000000001"
     finally:
         service.close()
+
+@pytest.mark.parametrize("mode", ["opening", "manual"])
+def test_numilog_rebound_while_fetching_never_persists_stale_rights_or_catalogue(
+    tmp_path, monkeypatch, mode,
+):
+    from cifereca.providers import ProviderConfigurationError
+
+    service = _service(tmp_path)
+    try:
+        account, session, calls = _connect(service, number=0)
+
+        def changed_owner_library():
+            calls.append("library")
+            service.storage.provider_connection_put({
+                "identity_id": "alex", "provider_id": "numilog",
+                "credential_id": account.credential_id, "enabled": True,
+            })
+            return [_row(account.credential_id, 0)]
+
+        session.library = changed_owner_library
+        if mode == "opening":
+            monkeypatch.setattr(service, "_loans_for_account",
+                                lambda *_args, **_kwargs: [])
+            summary = service.mirror_personal_libraries()
+            assert summary == {}
+            assert summary.blocked_sources == 1
+        else:
+            with pytest.raises(ProviderConfigurationError):
+                service._synchronize_account_source_impl(account)
+        assert calls == ["library"]
+        assert service.storage.entitlements(provider_id="numilog") == []
+        assert service.storage.catalog_entries() == []
+    finally:
+        service.close()
+
+
+def test_numilog_entitlement_helper_is_inert_without_authenticated_owner(tmp_path):
+    service = _service(tmp_path)
+    try:
+        assert mirror_numilog_manifest_rights(
+            service, [_row("not-connected", 0)], identity_id="default",
+            credential_id="not-connected", account_id="unbound",
+        ) == 0
+        assert service.storage.entitlements(provider_id="numilog") == []
+    finally:
+        service.close()
