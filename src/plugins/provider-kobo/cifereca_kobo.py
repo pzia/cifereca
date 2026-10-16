@@ -398,7 +398,26 @@ class KoboSession(ProviderSession):
         options = {"field": field, "limit": 50, "page": page}
         if account_id is None or scope == "catalog":
             options["scope"] = "catalog"
+        # Core reads this stable warning channel to distinguish a public-only
+        # fallback from a complete authenticated catalogue/library search.
+        # Reset at every attempt: previous credential-denial warnings must
+        # never survive recovery, a public-only query or a failed request.
+        self.last_search_warnings = []
         rows = self.catalog.search(query, **options)
+        if account_id is not None and scope != "catalog":
+            rejections = getattr(self.catalog, "last_search_rejections", ())
+            if type(rejections) in (tuple, list) and any(
+                type(row) is dict
+                and row.get("source") == "library"
+                and row.get("reason") == "personal_search_denied"
+                for row in rejections[:64]
+            ):
+                # Never pass Vault exception/body, credentials or account IDs
+                # across the public warning boundary.
+                self.last_search_warnings.append(
+                    "partial_results : recherche personnelle refusée ; "
+                    "catalogue public seulement"
+                )
         accepted: list[SearchResult] = []
         for item in rows:
             # A single broken normalized hit (including a hostile property or
