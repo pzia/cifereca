@@ -64,7 +64,13 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
                 and current_focus.get_mapped() and current_focus.get_sensitive()
             ):
                 window._youth_return_focus = (current_focus, current_identity)
-    elif route != "youth" and not getattr(window, "_restoring_navigation", False):
+    elif (
+        route != "youth"
+        and not (route == "search" and outgoing == "search")
+        and not getattr(window, "_restoring_navigation", False)
+    ):
+        # A second show_route("search") is only a duplicate presentation;
+        # invalidating here loses the clicked Jeunesse action before Back.
         window._youth_return_focus = None
     window.view_stack.set_visible_child_name(route)
     if not is_current():
