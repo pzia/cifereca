@@ -39,7 +39,7 @@ def test_cancelled_kobo_receipt_is_dispatched_before_idle_repaints(session):
     callback, args = default_ready.get(timeout=5)
     assert callback.__name__ == "deliver"
     assert ("deliver", 0) in priorities
-    assert ("_task_started", 200) in priorities
+    assert priorities[0][1] == 200  # the fake window uses a lambda for _task_started
 
     # The genuine worker result is delivered, not fabricated from the
     # cancellation button, despite pending lower-priority UI callbacks.
