@@ -125,3 +125,28 @@ et l'ordonnanceur ne remplace pas ce cycle. Ce sous-lot n'assure pas un
 verrou distribué au-delà du verrou Core utilisé à l'exécution. La prise en
 charge du signal `startup` dans le nouvel ordonnanceur et la migration
 progressive de `opening_sync` restent ouvertes dans #1346.
+
+
+## Déclenchement `on_start` Kobo après l'ouverture (#1346)
+
+Le mode `on_start` n'est **pas** une seconde synchronisation globale
+pendant le chargement initial. `startup_coordinator` transmet une marque
+éphémère à **son unique** appel `run_opening_sync()`. Le callback GTK de
+succès, exécuté après la restitution du verrou Core d'ouverture, peut alors
+appeler `source_inventory_startup.dispatch_after_opening()`.
+
+L'ordonnanceur lit uniquement les sources Kobo avec politique
+`on_start` explicite, la phase `discover_rights` attestée, une identité
+configurée non ambiguë, une connexion active et l'activation de la source.
+Les résultats absents, malformés, inactifs, en cours ou non dus n'autorisent
+aucune tâche. Les permissions et le rattachement du compte sont revérifiés
+avant le lancement de chaque source par `synchronize_scheduled_inventory`,
+ainsi qu'après une éventuelle attente dans la file GTK.
+
+Ce parcours est **à usage unique par fenêtre** ; ni un clic de synchronisation
+manuelle, ni une vérification profonde, ni une reconnexion tardive n'héritent
+d'une autorisation de démarrage. Le worker utilise `origin=automatic`, une
+priorité fournisseur et une clé de déduplication spécifique, distincte du
+timer périodique. Il ne télécharge pas d'ebook. La coordination initiale
+d'inventaire utilise les horloges de phase corrigées dans **#1987** :
+cette tranche doit être intégrée **après #1987**.
