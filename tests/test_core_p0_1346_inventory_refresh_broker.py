@@ -245,3 +245,21 @@ def test_concurrent_due_triggers_are_singleflight_for_exact_source(tmp_path):
         assert len(calls) == 1
     finally:
         service.storage.close()
+
+
+def test_clients_cannot_override_due_clock_to_bypass_refresh_throttle(tmp_path):
+    service, account, _, calls = _rig(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        broker.set_inventory_refresh_schedule(sid, "periodic", interval_minutes=10080)
+        assert broker.synchronize_scheduled_inventory("alice", "periodic").facts["attempted"] == 1
+        assert broker.synchronize_scheduled_inventory("alice", "periodic").facts["attempted"] == 0
+        with pytest.raises(TypeError):
+            broker.synchronize_scheduled_inventory(
+                "alice", "periodic",
+                now=datetime.now(timezone.utc) + timedelta(days=365),
+            )
+        assert len(calls) == 1
+    finally:
+        service.storage.close()
