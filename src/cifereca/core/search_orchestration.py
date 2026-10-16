@@ -199,6 +199,21 @@ def _search_contract_warning(session: ProviderSession, field: str, scope: str, *
     return ""
 
 
+def _effective_search_field(session: ProviderSession, field: str, scope: str, *, facade_type) -> tuple[str | None, str]:
+    """Conservatively degrade unsupported title/author fields to global search."""
+    contract = facade_type._session_search_capabilities(session)
+    name = session.descriptor.display_name
+    if not contract.supports_scope(scope):
+        return None, f"{name}: périmètre de recherche non pris en charge ({scope})"
+    if contract.supports_field(field):
+        return field, ""
+    # Only these fields can be verified against normalized search results.
+    # ISBN/subject must never be silently presented as exact matches.
+    if field in {"title", "author"} and contract.supports_field("all"):
+        return "all", f"{name}: recherche {field} approchée via recherche globale"
+    return None, f"{name}: champ de recherche non pris en charge ({field})"
+
+
 def _field_match(cls, field: str, query: str, row: SearchResult) -> bool:
     field = str(field or "all").lower()
     if field == "all" or field in {"isbn", "subject"}:
@@ -294,9 +309,12 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     for session in searchable:
         provider_rows: list[SearchResult] = []
         provider_seen: set[tuple[str, str, str]] = set()
-        contract_warning = facade_type._search_contract_warning(session, field, provider_scope)
+        effective_field, contract_warning = _effective_search_field(
+            session, field, provider_scope, facade_type=facade_type,
+        )
         if contract_warning:
             warnings.append(contract_warning)
+        if effective_field is None:
             continue
         primary_ok = False
         for attempt, variant in enumerate(variants):
@@ -308,7 +326,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 try:
                     import inspect
                     parameters = inspect.signature(session.search).parameters
-                    kwargs = {"field": field}
+                    kwargs = {"field": effective_field}
                     if "content_types" in parameters:
                         kwargs["content_types"] = tuple(content_types or ())
                     session_rows = session.search(variant, provider_scope, **kwargs)
@@ -406,9 +424,13 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
     provider_rows: list[SearchResult] = []
     provider_seen: set[tuple[str, str, str]] = set()
     warnings: list[str] = []
-    contract_warning = facade_type._search_contract_warning(session, field, provider_scope)
+    effective_field, contract_warning = _effective_search_field(
+        session, field, provider_scope, facade_type=facade_type,
+    )
     if contract_warning:
-        return [], [contract_warning], "", ""
+        warnings.append(contract_warning)
+    if effective_field is None:
+        return [], warnings, "", ""
     variants = self._search_query_variants(query)
     primary_ok = False
     terminal_error_code = terminal_error_message = ""
@@ -419,7 +441,7 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
             try:
                 import inspect
                 parameters = inspect.signature(session.search).parameters
-                kwargs = {"field": field}
+                kwargs = {"field": effective_field}
                 if "content_types" in parameters:
                     kwargs["content_types"] = tuple(content_types or ())
                 session_rows = session.search(variant, provider_scope, **kwargs)
@@ -615,6 +637,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 entry is not None
                 and "catalog.search.stream" in entry.capabilities
                 and isinstance(session, ProviderSearchStream)
+                and self._session_search_capabilities(session).supports_field(field)
             ):
                 streamed[session.provider_id] = entry.catalog_generation
                 future = executor.submit(
