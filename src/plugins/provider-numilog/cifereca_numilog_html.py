@@ -195,7 +195,7 @@ def _js_delivery_shape_count(script):
     ))
 
 
-def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None, delivery_selector=None):
+def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None, delivery_selector=None, strict_public_enrichment_selector=None):
     root = Parser(text).root
     tables = [n for n in root.walk() if n.attrs.get('id') == 'myTable']
     if len(tables) != 1:
@@ -277,6 +277,14 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                     or delivery_selector({'lid':lid[0],'variant':repr(key[1])})
                 ):
                     raise ParseError('Fiches de livraison dupliquées : téléchargement arrêté')
+                if (strict_public_enrichment_selector is not None
+                        and strict_public_enrichment_selector({
+                            'lid': lid[0], 'variant': repr(key[1]),
+                        })):
+                    # No signed delivery evidence is read. An owned edition
+                    # with two competing public links is ambiguous even if
+                    # the ordinary library list deduplicates such rows.
+                    raise ParseError('Fiches publiques dupliquées : enrichissement arrêté')
                 continue
             keys.add(key)
             cover = urljoin(site_root,images[0]) if images and images[0] else None
