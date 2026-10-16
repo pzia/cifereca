@@ -82,7 +82,7 @@ def test_all_search_keeps_physical_results_when_ebooks_fails():
     try:
         rows = client.search("manga", "all")
         assert [row.title for row in rows] == ["Manga papier"]
-        assert client.last_search_warnings == ["Catalogue numérique momentanément indisponible"]
+        assert client.last_search_warnings == ["partial_results : Catalogue numérique momentanément indisponible"]
     finally:
         client.close()
 
