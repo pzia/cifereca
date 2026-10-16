@@ -172,3 +172,25 @@ def test_private_service_failures_are_not_downgraded_to_partial_success(status):
         assert session.last_search_warnings == []
     finally:
         session.close()
+
+
+
+@pytest.mark.parametrize("spelling", ("ALL", " All ", "all"))
+def test_allowed_all_field_is_canonical_before_vault_dispatch(spelling):
+    session, paths = _case(library_status=200)
+    try:
+        real_search = session.catalog.search
+        passed_fields = []
+
+        def spy_search(query, **kwargs):
+            passed_fields.append(kwargs["field"])
+            return real_search(query, **kwargs)
+
+        session.catalog.search = spy_search
+        rows = session.search("book", scope="catalog", field=spelling)
+        assert passed_fields == ["all"]
+        assert paths == ["/api/v2/catalog/search"]
+        assert [row.record_id for row in rows] == ["public-edition"]
+        assert rows[0].owned is False
+    finally:
+        session.close()
