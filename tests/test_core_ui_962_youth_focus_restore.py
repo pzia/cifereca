@@ -194,3 +194,29 @@ def test_deferred_focus_is_never_restored_to_stale_profile_or_route():
             host._closed = True
         assert callbacks.pop()() is False
         assert host.get_focus() is not host.button
+
+
+def test_duplicate_search_route_keeps_clicked_action_until_history_return():
+    host = Host()
+    _outbound(host)
+    assert host._youth_return_focus == (host.button, "camille")
+    # The navigation shell emits two presentations, via select_row and
+    # explicit show_route. This must not erase the user's initiating action.
+    show_route(host, "search", Gtk=Gtk)
+    assert host._youth_return_focus == (host.button, "camille")
+    host._restoring_navigation = True
+    callbacks = []
+    show_route(host, "youth", Gtk=Gtk, idle_add=lambda callback: callbacks.append(callback))
+    host._restoring_navigation = False
+    host.focus = object()
+    assert len(callbacks) == 1
+    assert callbacks.pop()() is False
+    assert host.get_focus() is host.button
+
+
+def test_unrelated_route_after_search_invalidates_saved_youth_action():
+    host = Host()
+    _outbound(host)
+    host._pages["library"] = NS(title="Bibliothèque")
+    show_route(host, "library", Gtk=Gtk)
+    assert host._youth_return_focus is None
