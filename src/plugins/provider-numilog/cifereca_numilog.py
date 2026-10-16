@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.22'
+VERSION = '0.1.23'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -388,7 +388,10 @@ class NumilogSession(ProviderSession):
         read, resolved, saved or sent. A failed lookup is not a false match.
         """
         with self.lock:
-            self._canonical_item(item)
+            # Validate a shallow copy: a stale or revoked caller must not be
+            # promoted to owned merely by asking for enrichment.
+            from dataclasses import replace
+            self._canonical_item(replace(item))
             rows = self._rows()  # Current account inventory, no delivery evidence.
             matches = [row for row in rows if self._id(row) == item.record_id]
             if len(matches) != 1:
