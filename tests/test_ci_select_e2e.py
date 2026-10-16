@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 26)
+        self.assertEqual(len(mod.ALL), 28)
 
     def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
         for path in ("src/cifereca/gui/settings_ai_actions.py",
@@ -86,11 +86,15 @@ class SelectionTests(unittest.TestCase):
     def test_1599_detail_plugin_changes_select_gtk_smoke(self):
         self.assertEqual(
             mod.select(["src/plugins/constellations/view_model.py"]),
-            mod.DETAIL,
+            mod.CONSTELLATIONS,
         )
         self.assertEqual(
             mod.select(["src/plugins/recommendations/page.py"]),
             mod.RECOMMENDATIONS,
+        )
+        self.assertEqual(
+            mod.select(["e2e/constellations_detail_probe.py"]),
+            mod.CONSTELLATIONS_GTK,
         )
         self.assertEqual(
             mod.select(["e2e/recommendations_detail_probe.py"]),
@@ -103,7 +107,18 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(mod.select([
             "src/plugins/constellations/view_model.py",
             "src/plugins/youth-detail-enrichment/enrich.py",
-        ])), set(mod.DETAIL + mod.YOUTH))
+        ])), set(mod.CONSTELLATIONS + mod.YOUTH))
+
+    def test_1599_constellations_real_gtk_both_widths(self):
+        assert set(mod.CONSTELLATIONS_GTK) == {
+            "constellations-detail-1366", "constellations-detail-1600",
+        }
+        assert set(mod.CONSTELLATIONS_GTK).issubset(set(mod.CONSTELLATIONS))
+        for path in (
+            "src/plugins/constellations/constellations_page.py",
+            "src/plugins/constellations/constellations.py",
+        ):
+            assert set(mod.CONSTELLATIONS_GTK).issubset(set(mod.select([path])))
 
     def test_1599_recommendations_gtk_both_widths(self):
         assert set(mod.RECOMMENDATIONS_GTK) == {
@@ -185,6 +200,7 @@ class SelectionTests(unittest.TestCase):
             "gtk-diagnostics-volume": "diagnostics_volume_probe.py",
             "gtk-diagnostics-navigation": "diagnostics_navigation_probe.py",
             "gtk-youth": "youth_page_probe.py",
+            "gtk-constellations": "constellations_detail_probe.py",
             "gtk-recommendations": "recommendations_detail_probe.py",
         }
         for scenario, descriptor in runner.SCENARIOS.items():

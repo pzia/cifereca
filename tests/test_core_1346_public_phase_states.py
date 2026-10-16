@@ -36,6 +36,11 @@ def test_inventory_success_survives_partial_kobo_materialization():
     broker._set_state(target.source_id, {
         "status": "ok", "last_attempt": "2026-10-14T04:00:00+00:00",
         "last_success": "2026-10-14T04:00:00+00:00",
+        # A generic source success no longer proves Kobo discovery. The
+        # private-library attempt has its own attested phase metadata.
+        "inventory_status": "success",
+        "inventory_last_attempt": "2026-10-14T04:00:00+00:00",
+        "inventory_last_success": "2026-10-14T04:00:00+00:00",
     })
     checkpoint_key = _kobo_checkpoint_key("reader-2", "vault-secret")
     service.storage.metadata_set(checkpoint_key, json.dumps({

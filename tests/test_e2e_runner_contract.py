@@ -634,6 +634,31 @@ def test_e2e_workflow_replays_each_selected_scenario_only_once():
     assert "steps.select.outputs.scenarios" in workflow
 
 
+def test_1599_constellations_real_gtk_navigation_and_identity_contract():
+    runner = _module()
+    probe = (ROOT / "e2e/constellations_detail_probe.py").read_text(
+        encoding="utf-8"
+    )
+    for width in (1366, 1600):
+        scenario = runner.SCENARIOS[f"constellations-detail-{width}"]
+        assert scenario["runner"] == "gtk-constellations"
+        assert scenario["plugin"] == "ui.page.constellations"
+        assert scenario["width"] == width
+    for marker in (
+        "ConstellationsPlugin().activate(Context())",
+        "host = _UiHost(window",
+        "PublicBookMasterDetailView",
+        "key_activate(neighbour_button(view, \"Livre C\"))",
+        "key_activate(view.back_button)",
+        "key_activate(view.origin_button)",
+        'state["old_button"].emit("clicked")',
+        'report["checks"]["stale_neighbour_after_identity_change"]',
+        'report["checks"]["stale_neighbour_after_plugin_deactivation"]',
+        'report["status"] = "PASS"',
+    ):
+        assert marker in probe
+
+
 def test_1599_recommendations_real_gtk_identity_and_local_isbn_action():
     runner = _module()
     probe = (ROOT / "e2e/recommendations_detail_probe.py").read_text(
