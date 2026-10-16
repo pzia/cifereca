@@ -122,8 +122,8 @@ def test_poisoned_values_are_filtered_and_just_visible_reasons_are_sent():
         "Quatrième motif hors budget",
     )
     view, service, broker, idle, selected = fixture(reasons)
-    visible = _public_ranked_values(reasons, limit=3)
-    assert visible == ("Auteur commun", "Thème proche")
+    visible = _public_ranked_values(reasons)[:3]
+    assert visible == ("Auteur commun", "Thème proche", "Troisième motif")
     view._explain_selected()
     assert len(broker.tasks) == 1 and not service.requests
     broker.tasks[0].finish()
