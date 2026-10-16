@@ -622,7 +622,15 @@ class GutenbergSession(ProviderSession):
             except httpx.HTTPError as exc:
                 elapsed_ms = int((time.perf_counter() - started) * 1000); status = getattr(getattr(exc, "response", None), "status_code", None)
                 self._diagnostic("GUTENBERG", "OPDS search", "error", duration_ms=elapsed_ms,detail={"endpoint": endpoint, "status": status, "error": type(exc).__name__, "requested_page": page})
-                raise ProviderError("Project Gutenberg : recherche OPDS indisponible (service_unavailable)") from exc
+                # Typed and stable public status: no upstream body, URI or
+                # httpx request representation is allowed in this exception.
+                code = (
+                    "auth_required" if status == 401 else
+                    "access_denied" if status == 403 else
+                    "rate_limited" if status == 429 else
+                    "service_unavailable"
+                )
+                raise ProviderError(f"Project Gutenberg : recherche OPDS indisponible ({code})") from exc
             self._remember_page(rows_cache,page_index,str(response.url))
             next_url=self._next_page_url(response.content,str(response.url))
             if next_url: self._remember_page(rows_cache,page_index+1,next_url)
