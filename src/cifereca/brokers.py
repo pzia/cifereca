@@ -130,6 +130,7 @@ class SynchronizationBrokerImpl:
     service: Any
     _subscribers: list[Callable[[], None]] | None = None
     _materialization_plans: MaterializationPlans = field(default_factory=MaterializationPlans, repr=False)
+    _scheduled_inventory_requested: set[str] = field(default_factory=set, repr=False)
 
     def __post_init__(self) -> None:
         if self._subscribers is None:
@@ -400,6 +401,135 @@ class SynchronizationBrokerImpl:
         self.service.storage.metadata_set(self._preference_key(source_id), "1" if enabled else "0")
         self._notify()
         return self._ref(account)
+
+    def inventory_refresh_schedule(self, source_id: str) -> dict[str, object]:
+        """Read the *discover/rights* opt-in, not the acquisition policy."""
+        from .core.source_refresh_policy import load_source_refresh_schedule
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            raise ValueError("unknown sync source") from None
+        if getattr(account, "provider_id", None) != "kobo":
+            raise ValueError("inventory refresh schedule not supported")
+        policy = load_source_refresh_schedule(self.service.storage, source_id)
+        return {"mode": policy.mode, "interval_minutes": policy.interval_minutes}
+
+    def set_inventory_refresh_schedule(
+        self, source_id: str, mode: str, *, interval_minutes: int = 60,
+    ) -> dict[str, object]:
+        """Explicit per-source metadata/rights consent; no provider call.
+
+        Neither this method nor its stored policy authorizes acquisition.
+        Only the exact, enabled, connected Kobo source can be opted in.
+        An ineligible source may still have its schedule disabled manually.
+        """
+        from .core.source_refresh_policy import (
+            SourceRefreshSchedule, kobo_inventory_source_eligible,
+            save_source_refresh_schedule,
+        )
+        policy = SourceRefreshSchedule(mode=mode, interval_minutes=interval_minutes)
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            raise ValueError("unknown sync source") from None
+        if getattr(account, "provider_id", None) != "kobo":
+            raise ValueError("inventory refresh schedule not supported")
+        if policy.mode != "manual" and not kobo_inventory_source_eligible(
+            self.service, account,
+        ):
+            raise ValueError("source not eligible for scheduled inventory")
+        saved = save_source_refresh_schedule(
+            self.service.storage, source_id, mode=policy.mode,
+            interval_minutes=policy.interval_minutes,
+        )
+        self._notify()
+        return {"mode": saved.mode, "interval_minutes": saved.interval_minutes}
+
+    def synchronize_scheduled_inventory(
+        self, identity_id: str, trigger: str, *, now: datetime | None = None,
+        control: Any = None,
+    ) -> SyncResult:
+        """Dispatch due Kobo *inventory* refreshes for one explicit identity.
+
+        A scheduler may call this at startup or on its periodic tick; this
+        method does not install timers or silently enroll any accounts.
+        Permissions and identity bindings are rechecked immediately before
+        each metadata-only `synchronize_source` call. Acquisitions are never
+        executed by this broker path.
+        """
+        from .core.source_refresh_policy import (
+            kobo_inventory_source_eligible, load_source_refresh_schedule,
+            source_refresh_due,
+        )
+        if type(identity_id) is not str or not identity_id:
+            return SyncResult(False, facts={"reason": "identity_required"})
+        if trigger not in {"startup", "periodic"} or type(trigger) is not str:
+            return SyncResult(False, facts={"reason": "invalid_trigger"})
+        instant = datetime.now(timezone.utc) if now is None else now
+        if not isinstance(instant, datetime) or instant.tzinfo is None:
+            return SyncResult(False, facts={"reason": "invalid_clock"})
+        total = 0
+        attempted = 0
+        failed = 0
+        for account in sorted(
+            self.service.accounts_for_identity(identity_id),
+            key=self._source_id,
+        ):
+            if getattr(account, "provider_id", None) != "kobo":
+                continue
+            source_id = self._source_id(account)
+            # Unknown/duplicate source references and invalid source state
+            # must never become an automatic network retry.
+            try:
+                if self._find_account(source_id) is not account:
+                    continue
+                raw = self.service.storage.metadata_get(
+                    "sync.source.state." + source_id
+                )
+                state = self._state(source_id)
+                if raw and not state:
+                    continue
+                if (
+                    state.get("last_attempt")
+                    and not self._safe_phase_timestamp(state["last_attempt"])
+                ):
+                    continue
+                policy = load_source_refresh_schedule(
+                    self.service.storage, source_id,
+                )
+                eligible = kobo_inventory_source_eligible(self.service, account)
+                if not source_refresh_due(
+                    policy, trigger=trigger, now=instant,
+                    last_attempt=state.get("last_attempt", ""),
+                    phase_status=state.get("status", "idle"),
+                    enabled=eligible, connected=eligible, capable=eligible,
+                    already_requested_this_startup=(
+                        source_id in self._scheduled_inventory_requested
+                    ),
+                ):
+                    continue
+                # Revalidation is intentional: no cached account choice,
+                # cross-identity batch or stale opt-in can authorize a call.
+                if not kobo_inventory_source_eligible(self.service, account):
+                    continue
+            except Exception:
+                continue
+            if trigger == "startup":
+                self._scheduled_inventory_requested.add(source_id)
+            attempted += 1
+            result = self.synchronize_source(
+                source_id, SyncRequest(identity_id=identity_id), control,
+            )
+            total += result.changed
+            if not result.ok:
+                failed += 1
+        return SyncResult(
+            ok=failed == 0, changed=total,
+            warnings=("synchronisation planifiée partielle",) if failed else (),
+            facts={"phase": "discover_rights", "trigger": trigger,
+                   "attempted": attempted, "failed": failed,
+                   "acquisition_authorized": False},
+        )
 
     def local_materialization_schedule(self, source_id: str) -> str:
         """Read the *materialize* schedule only; inventory uses its own flow.
