@@ -146,13 +146,13 @@ class EbooksSession(ProviderSession):
     def _search_payload(query,page,page_size=50):
         return {'titre':str(query or '').strip(),'offset':str(max(0,int(page))*int(page_size)),'Submit':'Rechercher'}
     def search(self,query,scope='all',page=0,field='all'):
+        self.last_search_warnings = []
         # Unimplemented fields/scopes must never masquerade as zero matches.
         if type(field) is not str or field.strip().casefold() not in DESCRIPTOR.search_capabilities.fields:
             raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_field')
         if type(scope) is not str or scope.strip().casefold() not in DESCRIPTOR.search_capabilities.scopes:
             raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_scope')
         if not self.connected: raise ProviderError('Ebooks libres et gratuits : connecter le catalogue')
-        self.last_search_warnings = []
         page=max(0,int(page)); field=field.strip().casefold(); attested_metadata={}
         if field in {'author','subject','category','genre'} and str(query or '').strip():
             try:
