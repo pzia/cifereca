@@ -21,7 +21,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from cifereca.plugin_api import (
-    ProviderCapabilities, ProviderDescriptor, ProviderPlugin, ProviderSession,
+    ProviderCapabilities, ProviderSearchCapabilities, ProviderDescriptor, ProviderPlugin, ProviderSession,
     SearchResult, ProviderCollectionSnapshot, validate_provider_collection_snapshot,
 )
 
@@ -404,6 +404,10 @@ class CifericaSession(ProviderSession):
             raise ContractUnavailable("unsupported candidate search field")
         if self._mode != "fixture" and field != "all":
             raise ContractUnavailable("candidate server search field unverified")
+        if type(scope) is not str or scope != "all":
+            # Neither local fixture nor candidate HTTP API attests a
+            # physical/digital/private scope filter.
+            raise ContractUnavailable("unsupported candidate search scope")
         if type(page) is not int or not 0 <= page <= 100:
             raise ContractUnavailable("invalid search page")
         if page:
@@ -464,6 +468,17 @@ class CifericaProvider(ProviderPlugin):
             description="Public metadata only; no acquisition rights",
             state="ready",
             capabilities=ProviderCapabilities(search="catalog.search" in capabilities),
+            search_capabilities=ProviderSearchCapabilities(
+                fields=("all", "title", "author", "isbn", "language")
+                if mode == "fixture" else ("all",),
+                scopes=("all",),
+                pagination="none",
+                notes=(
+                    "Filtres de champ exécutés localement sur la fixture bornée ; aucune pagination réseau.",
+                ) if mode == "fixture" else (
+                    "Mode HTTP candidat v0.2 : seul q/source_id est attesté ; champs spécialisés et pagination non vérifiés.",
+                ),
+            ),
         )
 
     def create_session(self, *, credential_id, label, credentials, options,
