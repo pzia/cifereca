@@ -76,6 +76,10 @@ def test_opening_partial_provider_rows_do_not_erase_other_source_success(
     try:
         paris, kobo, _numilog = _accounts(service)
         service._sessions[service._session_key("paris", paris.credential_id)] = NS(
+            provider_id="paris", credential_id=paris.credential_id,
+            connected=True, capabilities=NS(
+                loans=True, personal_library=False, backup=False,
+            ),
             last_loan_errors=[{"upstream": "catalogue", "error": "temporary"}],
         )
         monkeypatch.setattr(service, "_loans_for_account", lambda _a, force=False: [])
