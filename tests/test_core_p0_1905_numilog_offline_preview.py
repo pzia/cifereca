@@ -421,3 +421,73 @@ def test_preview_never_creates_configured_library_or_identity_directories(tmp_pa
         assert not absent.exists()
     finally:
         service.close()
+
+
+def test_artifact_identifier_must_match_verified_digest(tmp_path):
+    """A corrupted stored hash must not become a proven local copy."""
+    service = _service(tmp_path)
+    try:
+        account, session, calls = _connect(service, number=0)
+        item, entitlement_id = _owned(service, account)
+        _ledger(service, account, item, entitlement_id)
+        # Storage enforces UNIQUE(sha256): deliberately corrupt the one
+        # existing artifact row instead of inserting an impossible duplicate.
+        # The ledger and placement still point at that artifact identifier.
+        with service.storage._lock, service.storage._connect() as db:
+            row = db.execute("SELECT artifact_id, sha256 FROM artifacts").fetchone()
+            assert row is not None
+            artifact_id, digest = row
+            bogus_sha = ("f" if digest[0] != "f" else "e") + digest[1:]
+            db.execute(
+                "UPDATE artifacts SET sha256=? WHERE artifact_id=?",
+                (bogus_sha, artifact_id),
+            )
+        session.library = lambda: pytest.fail("preview must stay offline")
+        broker, sid = _broker(service, account)
+        result = _preview(broker, sid, verify=True)
+        assert result.ok
+        assert result.facts["counts"]["already_local_verified"] == 0
+        assert result.facts["counts"]["needs_reconciliation"] == 1
+        assert result.facts["acquisition_authorized"] is False
+        assert calls == []
+    finally:
+        service.close()
+
+@pytest.mark.parametrize("media_format,kind,expected_verified", [
+    ("acsm", "file", False),
+    ("html", "file", False),
+    ("unknown", "file", False),
+    ("epub", "bundle", False),
+    ("epub", "file", True),
+    ("pdf", "file", True),
+    ("EPUB", "file", True),
+])
+def test_non_book_artifacts_are_not_proven_numilog_backup(
+    tmp_path, media_format, kind, expected_verified,
+):
+    """A signed ACSM or a bundle with a good hash is not a local ebook."""
+    service = _service(tmp_path)
+    try:
+        account, session, calls = _connect(service, number=0)
+        item, entitlement_id = _owned(service, account)
+        path = _ledger(service, account, item, entitlement_id)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        service.storage.artifact_put({
+            "artifact_id": "sha256:" + digest,
+            "sha256": digest, "size": path.stat().st_size,
+            "media_format": media_format, "kind": kind,
+        })
+        session.library = lambda: pytest.fail("offline preview must not fetch")
+        session.download_direct = lambda *_a: pytest.fail("preview must not acquire")
+        broker, sid = _broker(service, account)
+        result = _preview(broker, sid, verify=True)
+        assert result.ok and result.changed == 0
+        counts = result.facts["counts"]
+        assert counts["owned_purchases"] == 1
+        assert counts["already_local_verified"] == int(expected_verified)
+        assert counts["needs_reconciliation"] == int(not expected_verified)
+        assert counts["potentially_missing"] == 0
+        assert result.facts["acquisition_authorized"] is False
+        assert calls == []
+    finally:
+        service.close()

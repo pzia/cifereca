@@ -16,6 +16,8 @@ from cifereca.plugin_api import (
 )
 from cifereca.plugin_api import (
     ProviderCapabilities,
+    ProviderSearchCapabilities,
+    ProviderCapabilityError,
     ProviderDescriptor,
     ProviderError,
     ProviderPlugin,
@@ -60,6 +62,17 @@ DESCRIPTOR = ProviderDescriptor(
     description="Gallica (BnF) : livres EPUB via OPDS et documents sonores publics via SRU/OAI.",
     state="ready",
     capabilities=ProviderCapabilities(search=True, holdings=True, direct_download=True),
+    search_capabilities=ProviderSearchCapabilities(
+        fields=("all", "title", "author", "subject", "isbn"),
+        scopes=("all", "digital"),
+        pagination="page",
+        page_size=50,
+        notes=(
+            "all utilise OpenSearch/OPDS pour les livres EPUB ; les champs title/author/subject/isbn utilisent les index SRU EPUB.",
+            "Audio SRU indépendant, optionnel ; les défaillances de branche donnent des résultats partiels explicitement signalés.",
+            "Les résultats sont paginés par branche, 50 documents par requête ; aucune recherche physique ni collection privée.",
+        ),
+    ),
     homepage="https://gallica.bnf.fr",
     notes=(
         "Source publique sans authentification.",
@@ -505,8 +518,12 @@ class GallicaSession(ProviderSession):
 
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all", content_types: tuple[str, ...] = ()) -> list[SearchResult]:
         self.last_search_warnings = []
-        if scope == "physical":
-            return []
+        # Validate before any network or short-query zero: unsupported field
+        # and physical catalogue are not evidence of missing public books.
+        if type(field) is not str or field not in DESCRIPTOR.search_capabilities.fields:
+            raise ProviderCapabilityError("Gallica : unsupported_field")
+        if type(scope) is not str or scope not in DESCRIPTOR.search_capabilities.scopes:
+            raise ProviderCapabilityError("Gallica : unsupported_scope")
         query = str(query or "").strip()
         if len(query) < 2:
             return []

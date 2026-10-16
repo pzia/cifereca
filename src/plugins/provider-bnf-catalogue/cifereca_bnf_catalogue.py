@@ -10,7 +10,8 @@ import httpx
 from cifereca.plugin_api import (
     description_text,
     description_element,
-    Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderDescriptor,
+    Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities,
+    ProviderCapabilityError, ProviderDescriptor,
     ProviderError, ProviderPlugin, ProviderSession, normalize_language_tag,
 )
 
@@ -27,6 +28,18 @@ DESCRIPTOR = ProviderDescriptor(
     id="bnf-catalogue", display_name="BnF — Catalogue général",
     description="Notices bibliographiques publiques : titres, auteurs, ISBN, sujets, séries et collections. Pas de prêt ni de téléchargement.",
     state="ready", capabilities=ProviderCapabilities(search=True, holdings=True),
+    search_capabilities=ProviderSearchCapabilities(
+        fields=tuple(FIELDS),
+        scopes=("all", "physical", "digital"),
+        pagination="page",
+        page_size=50,
+        notes=(
+            "SRU BnF : all/title/author/isbn/subject passent par des champs serveur dédiés.",
+            "series/collection : SRU bib.anywhere puis post-filtre local sur la page reçue ; résultats non exhaustifs.",
+            "digital/physical : post-filtre du support attesté sur les notices de la page SRU ; 'all' conserve les supports inconnus.",
+            "Taille de page par défaut 50, configurable de 1 à 100 selon la session.",
+        ),
+    ),
     homepage="https://catalogue.bnf.fr",
     notes=("API SRU publique, sans compte BnF.",
            "Une notice bibliographique n'est pas une offre d'acquisition.",),
@@ -95,12 +108,12 @@ class BnfCatalogueSession(ProviderSession):
 
     def search(self, query: str, scope="all", page=0, field="all"):
         query = str(query or "").strip()
+        if type(field) is not str or field not in FIELDS:
+            raise ProviderCapabilityError("BnF : unsupported_field")
+        if type(scope) is not str or scope not in {"all", "physical", "digital"}:
+            raise ProviderCapabilityError("BnF : unsupported_scope")
         if len(query) < 2:
             return []
-        if field not in FIELDS:
-            raise ProviderError(f"BnF : champ de recherche non pris en charge : {field}")
-        if scope not in {"all", "physical", "digital"}:
-            raise ProviderError("BnF : périmètre de recherche non pris en charge")
         if field == "isbn":
             query = re.sub(r"[\s-]", "", query)
             if not re.fullmatch(r"(?:\d{9}[\dXx]|\d{13})", query):
