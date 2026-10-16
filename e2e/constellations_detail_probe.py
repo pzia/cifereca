@@ -181,7 +181,8 @@ def main():
     def capture(stage):
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).convert("RGB")
         assert image.width == args.width
-        assert len(image.getcolors(maxcolors=2) or []) > 1, "Blank X11 screenshot"
+        colors = image.getcolors(maxcolors=2)
+        assert colors is None or len(colors) > 1, "Blank X11 screenshot"
         filename = out / (stage + ".png")
         image.save(filename)
         shutil.copyfile(filename, out / "screen.png")
@@ -263,7 +264,7 @@ def main():
     def check_c():
         view = state["view"]
         assert view.center.book.title == "Livre C"
-        assert [view.nodes[0].key in view.nav.history]  # Every step is a real graph key.
+        assert len(set(view.nav.history)) == 3  # Three distinct graph editions.
         assert len(view.nav.history) == 3
         capture("02-neighbour-c")
         key_activate(view.back_button)
@@ -300,6 +301,7 @@ def main():
     def check_bob():
         view = state["view"]
         if view._nodes_identity != "bob":
+            assert monotonic() - start < 20, "Bob graph did not load"
             later(120, check_bob)
             return
         assert view.identity_id() == "bob"
