@@ -30,14 +30,21 @@ def show_pending_activity_error(window) -> bool:
     entry = window.activity_feedback.latest_unacknowledged_error()
     if entry is None or not hasattr(window, "busy_revealer"):
         return False
+    current = window.activity_feedback.latest_completed()
+    earlier = current is not None and current.state == 'success' and current.sequence > entry.sequence
     window.busy_spinner.stop()
     window.busy_spinner.set_visible(False)
     window.activity_status_icon.set_visible(True)
-    window.activity_status_icon.set_from_icon_name("dialog-warning-symbolic")
-    window.activity_status_icon.add_css_class("activity-error")
-    window.activity_status_icon.remove_css_class("activity-success")
+    window.activity_status_icon.set_from_icon_name('emblem-ok-symbolic' if earlier else 'dialog-warning-symbolic')
+    window.activity_status_icon.add_css_class('activity-success' if earlier else 'activity-error')
+    window.activity_status_icon.remove_css_class('activity-error' if earlier else 'activity-success')
     window.busy_label.set_visible(True)
-    window.busy_label.set_label(entry.display_text)
+    age = window.activity_feedback.error_age(entry)
+    if earlier:
+        text = f'{current.display_text}\nErreur antérieure · {entry.operation_label} · {age} · {entry.message}'
+    else:
+        text = f'{entry.display_text} · {age}'
+    window.busy_label.set_label(text)
     window.activity_dismiss.set_visible(True)
     window.busy_revealer.set_reveal_child(True)
     return True
