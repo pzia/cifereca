@@ -88,7 +88,7 @@ def test_unbound_search_never_sends_private_get_even_if_personal_route_fails(
                 unique_id="bad PRIVATE id", display_name="Synthetic",
                 provider_id=session.provider_id, credential_id=session.credential_id,
             )]
-        rows = session.search("catalogue", field="title")
+        rows = session.search("catalogue", field="all")
         assert paths == ["/api/v2/catalog/search"]
         assert [row.record_id for row in rows] == ["public-edition"]
         assert rows[0].owned is False
