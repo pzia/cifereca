@@ -223,6 +223,11 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
                     or not _path_in_identity(placement.get("path"), roots)
                     or type(sha) is not str or _SHA.fullmatch(sha) is None
                     or artifact_id != "sha256:" + sha
+                    # ACSM, HTML, unknown blobs and bundles are not readable
+                    # local books, even with an exact SHA and a completed ledger.
+                    or artifact.get("kind") != "file"
+                    or type(artifact.get("media_format")) is not str
+                    or artifact["media_format"].casefold() not in {"epub", "kepub", "pdf"}
                     or type(size) is not int or size <= 0):
                 counts["needs_reconciliation"] += 1
                 continue
