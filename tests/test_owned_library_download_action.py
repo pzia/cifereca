@@ -1,0 +1,64 @@
+"""CoreUI target action: no preparation/download on render, no stale callbacks."""
+from types import SimpleNamespace as NS
+
+import pytest
+
+from cifereca.gui.local_book_action_controller import add_local_book_actions
+from tests.test_core_ui_1129_local_book_actions import _environment
+
+
+def setup_action():
+    window, entry, detail, actions, events, submissions, launched, deps = _environment(
+        item={"provider_id": "kobo", "item_id": "book", "possessions": []}, local=False)
+    target = NS(identity_id="alice")
+    window.service.owned_library_download_target = lambda entry: target
+    calls = []
+    window.service.obtain_owned_library_item = lambda requested: calls.append(requested) or NS(path="fake-path")
+    add_local_book_actions(window, detail, entry, **deps)
+    return window, actions, calls, submissions, target
+
+
+def test_render_is_passive_and_only_explicit_click_submits_one_book():
+    window, actions, calls, submissions, target = setup_action()
+    assert len(actions) == 1 and actions[0]._cifereca_action_id == "download-owned-kobo"
+    assert not calls and not submissions
+    actions[0].click()
+    args, kwargs = submissions[0]
+    result = args[1]()
+    args[2](result)
+    assert calls == [target] and kwargs["kind"] == "obtain"
+
+
+@pytest.mark.parametrize("when", ["before_click", "before_worker", "closed", "detached", "hidden", "identity_roundtrip"])
+def test_stale_identity_closed_window_or_detached_action_never_downloads(when):
+    window, actions, calls, submissions, _target = setup_action()
+    if when == "before_click":
+        window.service.current_identity = NS(identity_id="bob")
+    elif when == "closed":
+        window._closed = True
+    elif when == "detached":
+        actions[0].get_root = lambda: None
+    elif when == "hidden":
+        actions[0].get_mapped = lambda: False
+    elif when == "identity_roundtrip":
+        window._identity_context_generation = 2
+    actions[0].click()
+    if when == "before_worker":
+        window.service.current_identity = NS(identity_id="bob")
+        with pytest.raises(RuntimeError, match="contexte"):
+            submissions[0][0][1]()
+    else:
+        assert not submissions
+    assert not calls
+
+
+def test_worker_and_failure_callback_never_publish_private_provider_errors():
+    window, actions, _calls, submissions, _target = setup_action()
+    def fail(target):
+        raise ValueError("Bearer PRIVATE query /private/path")
+    window.service.obtain_owned_library_item = fail
+    actions[0].click()
+    args, _kwargs = submissions[0]
+    with pytest.raises(RuntimeError) as caught:
+        args[1]()
+    assert "PRIVATE" not in str(caught.value)
