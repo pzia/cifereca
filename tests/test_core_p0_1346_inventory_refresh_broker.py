@@ -85,7 +85,8 @@ def test_startup_opt_in_dispatches_once_for_exact_source_and_reopen_throttles(tm
         assert SynchronizationBrokerImpl(service).synchronize_scheduled_inventory(
             "alice", "startup",
         ).facts["attempted"] == 0
-        assert broker.synchronize_scheduled_inventory("bob", "startup").facts["attempted"] == 0
+        unknown = broker.synchronize_scheduled_inventory("bob", "startup")
+        assert not unknown.ok and unknown.facts == {"reason": "unknown_identity"}
         assert len(calls) == 1
         assert service.storage.metadata_get(acquisition_policy_key(sid)) is None
     finally:
