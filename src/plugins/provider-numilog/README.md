@@ -61,3 +61,40 @@ mais sa tâche de téléchargement n'expose pas la cause de l'échec. Les notice
 en cache ne prouvent pas une connexion active. Cette instrumentation ne
 prétend pas corriger une cause amont non observée : aucune reconnexion,
 requête supplémentaire ou modification des gardes d'acquisition.
+
+
+## Parseur de recherche publique hors réseau (#1886, 0.1.20)
+
+`cifereca_numilog_public.parse_public_search(html, source_url)` lit une page
+publique du DOM attesté par la capture Jefferson du 16 octobre. Il retourne
+`PublicSearchPage` : notices `SearchResult`, total annoncé, index de page,
+prochain lien GET, facettes et options de tri observées. Le booléen `complete`
+ne vaut vrai que si la première page couvre à elle seule le total annoncé,
+sans lien suivant. Aucun résultat vide n'est fabriqué à partir d'une page
+inconnue, d'une grille absente ou d'un total contradictoire.
+
+Les notices portent `numilog:public:ID`, `source_credential=__public__`,
+`source_collection=public_catalog`, `owned=False`, `downloadable=False` et
+aucune URL de téléchargement. Ce namespace est refusé par le chemin privé
+d'acquisition. Les cartes homonymes PDF et EPUB conservent leurs IDs distincts.
+Le prix alimente `SearchResult.price` (chaîne décimale) et `.currency`, ainsi
+que `metadata.price` (centimes, parties brutes, portée offre de carte,
+sélecteurs). Un prix complètement absent reste inconnu ; un prix fragmentaire,
+ambigu ou de devise non qualifiée provoque une erreur publique fixe.
+Les champs présents ont leur preuve HTML et leur URL source dans
+`metadata.field_evidence`. Aucun ISBN n'est déduit des couvertures.
+
+Le parseur borne HTML, structure, cartes, textes et navigation. Les liens de
+pagination doivent garder la même requête et les mêmes filtres ; la résolution
+des liens produit relatifs est précédée d'une validation de leur forme brute.
+Aucune URL privée/signée, origine externe ou traversée arbitraire ne passe
+comme URL produit/navigation. Les couvertures non qualifiées sont omises avec
+un avertissement fixe. Les champs optionnels absents restent inconnus.
+
+**Étape hors réseau seulement** : `NumilogSession.search()` continue de lire
+Mes achats ; aucun client HTTP public, changement de capabilities ou branchement
+fédéré n'est activé ici. Les tentatives de lecture de recherche/robots.txt par
+l'outil web n'ont pas donné de contenu : transport anonyme, conditions d'accès,
+réponses filtrées, vrai zéro, vraie page suivante et DOM fiche produit restent
+à qualifier. Les cas dérivés de tests ne sont pas des captures amont réelles.
+La documentation de référence demeure `docs/NUMILOG-PUBLIC-SEARCH-FIXTURE.md`.
