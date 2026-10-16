@@ -17,13 +17,19 @@ def test_clock_rollback_forces_source_revalidation_but_preserves_cancellation(tm
     key = _kobo_checkpoint_key("default", "vault-1")
     now = int(time.time())
     try:
-        for status in ("complete", "failed", "partial", "attention_required"):
+        for status in ("complete", "failed", "partial"):
             service.storage.metadata_set(key, json.dumps({
                 "schema_version": 1, "status": status,
                 "updated_at": now + 86400,
                 "failure_streak": 6,
             }))
             assert service._kobo_backup_account_due("vault-1"), status
+
+        service.storage.metadata_set(key, json.dumps({
+            "schema_version": 1, "status": "attention_required",
+            "updated_at": now + 86400, "failure_streak": 6,
+        }))
+        assert not service._kobo_backup_account_due("vault-1")
 
         service.storage.metadata_set(key, json.dumps({
             "schema_version": 1, "status": "complete",
