@@ -1365,9 +1365,26 @@ def main() -> int:
         capture("03i-sync-partial-last-success-and-offline-source")
         # #980 acceptance uses the real MainWindow/controller/widgets and
         # XTEST, with ten synthetic broker rows; no provider/network/DRM.
-        # Ten sources and four additional rows per Kobo account: preview,
-        # audit, manual confirmation and independent on_start consent.
-        assert len(rows) == 26, ("Unexpected GTK sync action-row count", len(rows))
+        # Ten sources and five additional rows per Kobo account: preview,
+        # audit, confirmed materialization, independent acquisition startup
+        # consent, and now the separate inventory/rights refresh consent.
+        # The synthetic broker intentionally exposes neither schedule API;
+        # new rows must remain inert, and no source may be synchronized.
+        assert len(rows) == 30, ("Unexpected GTK sync action-row count", len(rows))
+        inventory_schedule_rows = [
+            row for row in rows
+            if row.get_title() == "Actualisation automatique des notices Kobo"
+        ]
+        assert len(inventory_schedule_rows) == 4
+        for inventory_row in inventory_schedule_rows:
+            assert "Planification des notices indisponible" in inventory_row.get_subtitle()
+            assert "Aucune synchronisation automatique" in inventory_row.get_subtitle()
+            assert 0 < inventory_row.get_height() <= 420
+            assert not any(
+                isinstance(node, Gtk.Button) and node.get_sensitive()
+                for node in walk(inventory_row)
+            )
+        report["checks"]["P0_1346_inventory_schedule_is_separate_and_inert_without_broker"] = True
         schedule_row = next(row for row in rows
                             if row.get_title() == "Téléchargement automatique de ce compte")
         assert "Planification indisponible" in schedule_row.get_subtitle()
