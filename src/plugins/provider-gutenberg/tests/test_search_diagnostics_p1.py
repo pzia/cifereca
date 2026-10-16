@@ -98,3 +98,26 @@ def test_opds_transport_failure_has_stable_redacted_service_code():
         assert not session.last_search_warnings
     finally:
         session.close()
+
+
+
+@pytest.mark.parametrize("status,code", (
+    (401, "auth_required"),
+    (403, "access_denied"),
+    (429, "rate_limited"),
+    (500, "service_unavailable"),
+))
+def test_opds_http_denial_and_throttle_are_typed_and_redacted(status, code):
+    session, calls = make_session(status=status)
+    try:
+        with pytest.raises(ProviderError) as caught:
+            session.search("query", field="all")
+        assert str(caught.value) == (
+            f"Project Gutenberg : recherche OPDS indisponible ({code})"
+        )
+        assert len(calls) == 1
+        assert "PRIVATE" not in str(caught.value)
+        assert "access_token" not in str(caught.value)
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
