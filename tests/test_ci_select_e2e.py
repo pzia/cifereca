@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 26)
+        self.assertEqual(len(mod.ALL), 28)
 
     def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
         for path in ("src/cifereca/gui/settings_ai_actions.py",
@@ -75,6 +75,19 @@ class SelectionTests(unittest.TestCase):
         ):
             selected = set(mod.select([path]))
             assert {"youth-1366", "youth-1600"}.issubset(selected), path
+
+    def test_1599_youth_edition_and_library_navigation_1600_are_selected(self):
+        expected = {
+            "youth-editions-1366", "youth-editions-1600",
+            "youth-library-search-1366", "youth-library-search-1600",
+        }
+        assert expected.issubset(set(mod.YOUTH))
+        for path in (
+            "e2e/youth_page_probe.py",
+            "src/plugins/youth-catalog/youth_page.py",
+            "src/plugins/youth-detail-enrichment/enrich.py",
+        ):
+            assert expected.issubset(set(mod.select([path]))), path
 
     def test_youth_and_its_source_adapters(self):
         for path in ("src/plugins/youth-catalog/page.py",
@@ -154,7 +167,7 @@ class SelectionTests(unittest.TestCase):
     def test_1269_mainwindow_imports_cover_core_youth_diagnostics_navigation(self):
         selected = mod.select(["src/cifereca/gui/main_window.py"])
         self.assertEqual(set(selected), set(mod.MAINWINDOW))
-        self.assertEqual(len(selected), 19)
+        self.assertEqual(len(selected), 21)
         for name in mod.CORE + mod.YOUTH + (
             "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366"
         ):
