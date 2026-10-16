@@ -2389,6 +2389,8 @@ class LibraryService:
 
     def can_direct_download(self, item: SearchResult) -> bool:
         """Whether Paris can execute an acquisition with the published contracts."""
+        if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
+            return False
         try:
             session = self._session_for_source(item.source_provider, item.source_credential)
             if item.source_provider == "kobo":
@@ -2595,6 +2597,10 @@ class LibraryService:
         return kobo_backup._execute_kobo_acquisition(self, item, target_dir)
 
     def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None) -> Acquisition:
+        if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
+            raise ProviderConfigurationError(
+                "Résultat connu hors ligne : acquisition indisponible"
+            )
         # An admission callback is part of the security contract: silently
         # ignoring it would turn an attested per-account Numilog Library action
         # into an unrestricted direct download. Only Kobo currently rechecks

@@ -497,6 +497,57 @@ def main():
         )
         report["checks"]["security_detail_visible_counter_942"] = True
         report["checks"]["security_detail_all_private_hidden_942"] = True
+        begin_stale_public_detail()
+
+    def begin_stale_public_detail():
+        from cifereca.models import SearchResult
+        from cifereca.gui.query_model import QueryState
+        from datetime import datetime, timezone
+        service = window.service
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError("Stale public detail requested download, holdings or plugin decoration")
+        # Assert the final GTK detail boundary independently of the Core's own
+        # refusal: no capability lookup/decorator/holdings may be requested.
+        service.can_direct_download = forbidden
+        service.holdings = forbidden
+        panel("search")._decorate = forbidden
+        window.navigate("search")
+        window.search_controls.set_state(QueryState(text="Camille", field="title"), notify=False)
+        item = SearchResult(
+            id="known-stale:fixture", record_id="fixture", docbase="CATALOG",
+            medium="digital", title=TITLE + " connu", author="Autrice fictive",
+            type="Livre numérique", format="epub", publisher=None,
+            published_at=None, description="Notice publique déjà collectée.",
+            thumbnail_url=None, friendly_url=None, scenario="KNOWN_CATALOG_STALE",
+            source_provider="gallica", source_credential="known-public",
+            source_collection="catalog", owned=False, downloadable=False,
+            metadata={"search_provenance": "known_catalog_stale",
+                      "mirrored_at": int(datetime(2026, 10, 16, 12, tzinfo=timezone.utc).timestamp()),
+                      "access_token": "STALE_SECRET_NEVER_DISPLAY"},
+        )
+        window._search_local_objects = {}
+        window._remote_search_results = [item]
+        window._populate_search([item], announce=False)
+        assert window.search_page.store.get_n_items() == 1
+        window.search_page.selection.set_selected(0)
+        later(280, stale_public_detail_rendered)
+
+    def stale_public_detail_rendered():
+        p = panel("search")
+        fields = [(row.get_title(), row.get_subtitle()) for row in walk(p.content)
+                  if isinstance(row, Adw.ActionRow)]
+        assert ("Recherche en ligne", "Indisponible") in fields
+        texts = [node.get_text() for node in walk(p.content) if isinstance(node, Gtk.Label)]
+        assert "Résultat connu · hors ligne" in texts
+        assert not any("STALE_SECRET_NEVER_DISPLAY" in text for text in texts)
+        assert not any(
+            isinstance(node, Gtk.Button)
+            and str(getattr(node, "_cifereca_action_label", "")).startswith(("Télécharger", "Sauvegarder"))
+            for node in walk(p)
+        )
+        assert len(report["online_calls"]) == 1
+        report["checks"]["P1_1916_stale_public_detail_readonly_without_acquisition"] = True
+        capture("06-stale-public-detail-readonly")
         report["status"] = "PASS"
         save()
         rc[0] = 0
