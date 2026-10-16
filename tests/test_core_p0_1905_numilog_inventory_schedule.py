@@ -35,6 +35,85 @@ def _numilog(tmp_path):
     return service, account, session, calls
 
 
+def _phase(broker, sid):
+    source = next(row for row in broker.sources("alice") if row.source_id == sid)
+    return next(row for row in source.phase_states if row.phase == "discover_rights")
+
+
+def test_opening_success_cannot_certify_or_throttle_numilog_inventory(tmp_path):
+    service, account, _, calls = _numilog(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        broker.set_inventory_refresh_schedule(sid, "periodic", interval_minutes=120)
+        broker.record_opening_state(
+            sid, identity_id="alice", status="success",
+            attempted_at=datetime.now(timezone.utc).isoformat(),
+        )
+        phase = _phase(broker, sid)
+        assert phase.status == "idle"
+        assert not phase.last_attempt and not phase.last_success
+        assert broker.synchronize_scheduled_inventory("alice", "periodic").facts["attempted"] == 1
+        phase = _phase(broker, sid)
+        assert phase.status == "success" and phase.last_attempt and phase.last_success
+        assert len(calls) == 1
+        broker.record_opening_state(
+            sid, identity_id="alice", status="failed",
+            attempted_at="2099-01-01T00:00:00+00:00",
+        )
+        assert _phase(broker, sid) == phase
+        assert broker.synchronize_scheduled_inventory("alice", "periodic").facts["attempted"] == 0
+        assert len(calls) == 1
+    finally:
+        service.storage.close()
+
+
+@pytest.mark.parametrize("outcome", ["partial", "failed", "invalid"])
+def test_numilog_inventory_failure_preserves_only_attested_success(tmp_path, outcome):
+    service, account, _, calls = _numilog(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        assert broker.synchronize_source(sid).ok
+        previous = _phase(broker, sid).last_success
+        def fail(*args, **kwargs):
+            calls.append("failure")
+            if outcome == "failed":
+                raise RuntimeError("https://private.invalid/?auth=SECRET")
+            return {"library": 1, "warnings": 1} if outcome == "partial" else None
+        service.synchronize_account_source = fail
+        assert not broker.synchronize_source(sid).ok
+        phase = _phase(broker, sid)
+        assert phase.status == ("partial" if outcome == "partial" else "failed")
+        assert phase.last_attempt and phase.last_success == previous
+        assert "SECRET" not in repr(broker.sources("alice"))
+        broker.set_inventory_refresh_schedule(sid, "periodic", interval_minutes=120)
+        assert broker.synchronize_scheduled_inventory("alice", "periodic").facts["attempted"] == 0
+        assert len(calls) == 2
+    finally:
+        service.storage.close()
+
+
+def test_numilog_damaged_inventory_clock_blocks_automatic_retry(tmp_path):
+    service, account, _, calls = _numilog(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        broker.set_inventory_refresh_schedule(sid, "on_start")
+        service.storage.metadata_set("sync.source.state." + sid, json.dumps({
+            "status": "success", "scope": "opening",
+            "inventory_status": "success",
+            "inventory_last_attempt": "https://private.invalid/?auth=SECRET",
+        }))
+        phase = _phase(broker, sid)
+        assert phase.status == "unknown" and phase.last_attempt == ""
+        assert "SECRET" not in repr(phase)
+        assert broker.synchronize_scheduled_inventory("alice", "startup").facts["attempted"] == 0
+        assert calls == []
+    finally:
+        service.storage.close()
+
+
 def test_numilog_manual_is_default_and_not_a_backup_permission(tmp_path):
     service, account, session, calls = _numilog(tmp_path)
     try:

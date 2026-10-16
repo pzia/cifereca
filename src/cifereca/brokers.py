@@ -281,11 +281,11 @@ class SynchronizationBrokerImpl:
             "error": "failed", "failed": "failed",
         }.get(raw_status, "idle")
         if (
-            getattr(account, "provider_id", None) == "kobo"
+            getattr(account, "provider_id", None) in {"kobo", "numilog"}
             and "remote_inventory" in sync_caps
         ):
             # Opening sync may refresh loans, without reading the private
-            # Kobo inventory. It cannot attest discover/rights freshness.
+            # store inventory. It cannot attest discover/rights freshness.
             inventory_status = state.get("inventory_status", "idle") or "idle"
             inventory_attempt = state.get("inventory_last_attempt")
             inventory_success = state.get("inventory_last_success")
@@ -544,9 +544,9 @@ class SynchronizationBrokerImpl:
                     and not self._safe_phase_timestamp(state["last_attempt"])
                 ):
                     continue
-                is_kobo = getattr(account, "provider_id", None) == "kobo"
+                is_private_inventory = getattr(account, "provider_id", None) in {"kobo", "numilog"}
                 inventory_status = (
-                    state.get("inventory_status", "idle") if is_kobo
+                    state.get("inventory_status", "idle") if is_private_inventory
                     else state.get("status", "idle")
                 )
                 if inventory_status not in {
@@ -559,7 +559,7 @@ class SynchronizationBrokerImpl:
                 if state.get("status") == "running":
                     inventory_status = "running"
                 inventory_last_attempt = (
-                    state.get("inventory_last_attempt", "") if is_kobo
+                    state.get("inventory_last_attempt", "") if is_private_inventory
                     else state.get("last_attempt", "")
                 )
                 policy = load_source_refresh_schedule(
@@ -894,13 +894,13 @@ class SynchronizationBrokerImpl:
         state = self._state(source_id)
         state.update(last_attempt=now, status="running", error="", scope="manual",
                      identity_id=str(getattr(account, "identity_id", "") or ""))
-        # Only a real Kobo personal-library operation starts this clock. A
+        # Only a real private-store library operation starts this clock. A
         # generic opening/loan operation must not refresh or throttle it.
-        refreshes_kobo_inventory = (
-            getattr(account, "provider_id", None) == "kobo"
+        refreshes_private_inventory = (
+            getattr(account, "provider_id", None) in {"kobo", "numilog"}
             and "personal_library" in current.capabilities
         )
-        if refreshes_kobo_inventory:
+        if refreshes_private_inventory:
             state.update(inventory_last_attempt=now, inventory_status="running")
         self._set_state(source_id, state); self._notify()
         try:
@@ -912,7 +912,7 @@ class SynchronizationBrokerImpl:
             # counters and known status/reason codes to plugins and GTK.
             if not isinstance(result, dict):
                 state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
-                if refreshes_kobo_inventory:
+                if refreshes_private_inventory:
                     state["inventory_status"] = "failed"
                 self._set_state(source_id, state); self._notify()
                 return SyncResult(ok=False, warnings=("invalid sync response",),
@@ -936,14 +936,14 @@ class SynchronizationBrokerImpl:
             if incomplete:
                 facts["reason"] = "invalid_response" if invalid_status else "source_partial"
                 state.update(status="partial", error="Synchronisation partielle")
-                if refreshes_kobo_inventory:
+                if refreshes_private_inventory:
                     state["inventory_status"] = "partial"
                 self._set_state(source_id, state); self._notify()
                 return SyncResult(ok=False, changed=changed,
                                   warnings=("synchronisation partielle",), facts=facts)
             success_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             state.update(last_success=success_at, status="ok", error="")
-            if refreshes_kobo_inventory:
+            if refreshes_private_inventory:
                 state.update(
                     inventory_last_success=success_at, inventory_status="success",
                 )
@@ -951,7 +951,7 @@ class SynchronizationBrokerImpl:
             return SyncResult(ok=True, changed=changed, facts=facts)
         except Exception:
             state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
-            if refreshes_kobo_inventory:
+            if refreshes_private_inventory:
                 state["inventory_status"] = "failed"
             self._set_state(source_id, state); self._notify()
             return SyncResult(ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
