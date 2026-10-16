@@ -274,6 +274,7 @@ class SynchronizationBrokerImpl:
             last_attempt=self._safe_phase_timestamp(state.get("last_attempt")),
             last_success=self._safe_phase_timestamp(state.get("last_success")),
         )
+        binding_valid = False
         if "local_materialization" not in sync_caps:
             materialization = SyncPhaseState("materialize", "not_supported")
         else:
@@ -284,7 +285,8 @@ class SynchronizationBrokerImpl:
                 bound = self.service.storage.identity_for_connection("kobo", credential)
             except (AttributeError, TypeError, ValueError, KeyError):
                 bound = None
-            if not identity or not credential or bound != identity:
+            binding_valid = bool(identity and credential and bound == identity)
+            if not binding_valid:
                 materialization = SyncPhaseState("materialize", "unknown")
             else:
                 from .core.kobo_backup import _kobo_checkpoint_for
@@ -317,7 +319,8 @@ class SynchronizationBrokerImpl:
                         last_success=when if status == "success" else "",
                     )
         explicit = self._materialization_state(self._source_id(account))
-        if explicit and "local_materialization" in sync_caps:
+        # Never expose an old successful acquisition after credential rebinding.
+        if explicit and "local_materialization" in sync_caps and binding_valid:
             status = explicit.get("status")
             if status == "running":
                 from .core.source_materialization import process_owner
