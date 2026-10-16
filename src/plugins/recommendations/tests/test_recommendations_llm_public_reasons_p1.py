@@ -131,7 +131,7 @@ def test_poisoned_values_are_filtered_and_just_visible_reasons_are_sent():
     prompt = service.requests[0].prompt
     assert "Auteur commun" in prompt and "Thème proche" in prompt
     assert "PRIVATE" not in prompt
-    assert "Troisième motif" not in prompt
+    assert "Troisième motif" in prompt
     assert "Quatrième motif" not in prompt
     assert len(idle) == 1
     assert idle.pop()() is False
