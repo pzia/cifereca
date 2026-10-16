@@ -264,3 +264,39 @@ def test_live_public_notice_does_not_claim_offline_or_render_cache_timestamp():
     row = host.search_page.show_rows.call_args.args[0][0]
     assert "Résultat connu" not in row.meta
     assert "Notice indexée localement" not in row.meta
+
+
+def test_stale_public_search_warns_partial_degraded_mode_without_provider_secrets():
+    from dataclasses import replace
+
+    host = _host()
+    stale = replace(_book("public-provider"), metadata={
+        "search_provenance": "known_catalog_stale", "mirrored_at": 1792067400,
+    })
+    host.service.last_search_warnings = [
+        "Provider failed: https://private.invalid/?token=SECRET",
+    ]
+    host._remote_search_results = [stale]
+    host._populate_search([stale], announce=True)
+    host.toast.assert_called_once_with(
+        "Résultats connus, recherche en ligne indisponible · résultats partiels.", 6,
+    )
+    assert "SECRET" not in repr(host.toast.call_args)
+    # These results are only displayed; neither acquisition nor authorization
+    # is ever initiated from the warning.
+    assert host.download_direct_item.call_count == 0
+
+
+def test_degraded_toast_requires_failure_warning_and_final_announcement():
+    from dataclasses import replace
+
+    host = _host()
+    stale = replace(_book("public-provider"), metadata={
+        "search_provenance": "known_catalog_stale", "mirrored_at": 1792067400,
+    })
+    host._remote_search_results = [stale]
+    host._populate_search([stale], announce=True)
+    host.toast.assert_not_called()
+    host.service.last_search_warnings = ["source unavailable"]
+    host._populate_search([stale], announce=False)
+    host.toast.assert_not_called()
