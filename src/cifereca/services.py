@@ -1043,6 +1043,46 @@ class LibraryService:
                             "provider=numilog reason=invalid_private_rows"
                         )
                         continue
+                if provider_id == "kobo":
+                    # A source may be disabled/rebound or replaced while
+                    # library() fetches remote pages. Never project the stale
+                    # response into entitlements or the catalog (#1346).
+                    current_accounts = [
+                        a for a in self.accounts
+                        if a.provider_id == "kobo"
+                        and a.credential_id == credential_id
+                    ]
+                    current_identity = self.storage.identity_for_connection(
+                        "kobo", credential_id,
+                    )
+                    current_connections = (
+                        self.storage.provider_connections(identity_id=current_identity)
+                        if current_identity else []
+                    )
+                    if (
+                        len(current_accounts) != 1
+                        or account is None
+                        or current_accounts[0].identity_id != identity.identity_id
+                        or current_accounts[0].unique_id != account.unique_id
+                        or current_identity != identity.identity_id
+                        or sum(
+                            row.get("provider_id") == "kobo"
+                            and row.get("credential_id") == credential_id
+                            and row.get("enabled") is True
+                            for row in current_connections
+                        ) != 1
+                        or not self.sync_source_enabled(current_accounts[0])
+                        or self._sessions.get(
+                            self._session_key("kobo", credential_id)
+                        ) is not session
+                        or session.connected is not True
+                    ):
+                        result.blocked_sources += 1
+                        _TRACE_LOG.warning(
+                            "TRACE catalog personal-library inventory skipped "
+                            "provider=kobo reason=source_binding_changed"
+                        )
+                        continue
                 if provider_id == "kobo" and account is not None:
                     from .core.kobo_manifest_rights import mirror_kobo_manifest_rights
                     mirror_kobo_manifest_rights(
