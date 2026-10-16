@@ -31,6 +31,7 @@ SOURCE_NAMES = {
     'local':'Local',
     'paris':'Bibliothèques de Paris',
     'kobo':'Kobo',
+    'numilog':'Numilog',
     'gallica':'Gallica',
     'gutenberg':'Gutenberg',
     'bnf-catalogue':'BnF',
