@@ -1507,7 +1507,7 @@ class UxRecommendationsView:
             DetailField(
                 "reasons",
                 "Pourquoi",
-                reasons or "Plusieurs signaux concordants",
+                reasons or "Aucun motif attesté disponible",
             ),
         ]
         catalogue_fields = [
