@@ -1032,6 +1032,17 @@ class LibraryService:
                         "provider=numilog reason=source_binding_changed"
                     )
                     continue
+                if provider_id == "numilog":
+                    from .core.numilog_private_rows import private_library_rows_valid
+                    if not private_library_rows_valid(rows, credential_id):
+                        # Reject a mixed public/foreign-account response in its
+                        # entirety; none may be persisted under this identity.
+                        result.blocked_sources += 1
+                        _TRACE_LOG.warning(
+                            "TRACE catalog personal-library inventory skipped "
+                            "provider=numilog reason=invalid_private_rows"
+                        )
+                        continue
                 if provider_id == "kobo":
                     # A source may be disabled/rebound or replaced while
                     # library() fetches remote pages. Never project the stale
@@ -1086,6 +1097,17 @@ class LibraryService:
                         credential_id=credential_id,
                         account_id=account.unique_id or None,
                     )
+                if provider_id == "numilog" and not numilog_inventory_binding_valid(
+                    self, account, session=session,
+                ):
+                    # Rights projection can itself take time; do not publish
+                    # its stale catalogue snapshot after source revocation.
+                    result.blocked_sources += 1
+                    _TRACE_LOG.warning(
+                        "TRACE catalog personal-library inventory skipped "
+                        "provider=numilog reason=source_binding_changed"
+                    )
+                    continue
                 result[f"{provider_id}:{credential_id}"] = self._mirror_remote_results(
                     rows, identity_id=identity.identity_id,
                 )

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from cifereca.plugin_api import ProviderError
+from cifereca.plugin_api import ProviderError, ProviderCapabilityError
 from cifereca_gallica import GallicaSession
 
 
@@ -172,7 +172,7 @@ def test_partial_search_keeps_valid_branch_when_diagnostics_sink_fails(tmp_path,
 
         assert [row.id for row in rows] == [item.id]
         assert session.last_search_warnings == [
-            "Gallica : recherche audio temporairement indisponible"
+            "partial_results : Gallica : recherche audio temporairement indisponible"
         ]
     finally:
         session.close()
@@ -199,12 +199,13 @@ def test_successful_ebook_download_is_not_failed_by_diagnostics_sink(tmp_path):
         session.close()
 
 
-def test_physical_scope_is_empty_and_epub_download_uses_validating_transport(tmp_path):
+def test_physical_scope_is_explicitly_unsupported_and_epub_download_uses_validating_transport(tmp_path):
     epub = b"PK\x03\x04" + b"fake-epub-test" * 20
     transport = MemoryTransport(epub)
     session = _session(tmp_path, lambda request: httpx.Response(404), transport=transport)
     try:
-        assert session.search("anything", "physical") == []
+        with pytest.raises(ProviderCapabilityError, match="unsupported_scope"):
+            session.search("anything", "physical")
         item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
         path, url = session.download_direct(item, tmp_path / "downloads")
         assert path.suffix == ".epub"
