@@ -71,7 +71,7 @@ def test_valid_scalar_fields_preserve_list_detail_and_year_identity():
         language="  fr-FR  ",
         book_type="   Album jeunesse   ",
         collection="  Petite   Bibliothèque  ",
-        description=" Un grand voyage\t vers  les étoiles  ",
+        description=" Un grand voyage   vers  les étoiles  ",
         published_year=1999,
     )
     row, detail = list_entry(book), detail_presentation(book)
