@@ -984,9 +984,48 @@ class LibraryService:
                     )
                     continue
                 identity = self.identity_by_id(bound_identity)
+            elif provider_id == "kobo":
+                # An authenticated session alone is not an authorized source.
+                # The opening mirror must not fetch a disconnected/rebound or
+                # orphan Kobo account, or project its purchases into whichever
+                # identity happens to be selected (#1346).
+                accounts = [
+                    a for a in self.accounts
+                    if a.provider_id == "kobo" and a.credential_id == credential_id
+                ]
+                try:
+                    bound_identity = self.storage.identity_for_connection(
+                        "kobo", credential_id,
+                    )
+                    connections = (
+                        self.storage.provider_connections(identity_id=bound_identity)
+                        if bound_identity else []
+                    )
+                except Exception:
+                    bound_identity = None
+                    connections = []
+                bound_connections = [
+                    row for row in connections
+                    if row.get("provider_id") == "kobo"
+                    and row.get("credential_id") == credential_id
+                    and row.get("enabled") is True
+                ]
+                identity = self.identity_by_id(bound_identity) if bound_identity else None
+                if (
+                    len(accounts) != 1
+                    or identity is None
+                    or accounts[0].identity_id != bound_identity
+                    or len(bound_connections) != 1
+                ):
+                    result.blocked_sources += 1
+                    _TRACE_LOG.warning(
+                        "TRACE catalog personal-library inventory skipped "
+                        "provider=kobo reason=source_binding_unavailable"
+                    )
+                    continue
             else:
-                # Preserve the pre-existing behavior for providers other than
-                # Numilog; this P0 concerns store-owned personal libraries.
+                # Preserve the behavior of other providers; their contracts
+                # require separate binding qualification before stricter rules.
                 identity = self.identity_for_connection(provider_id, credential_id)
             try:
                 # One-shot iterators feed the owned-rights projection and
