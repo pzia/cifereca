@@ -224,6 +224,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             if adept_profiles and profile is None:
                 detail["adept_attention"] = "profile_missing"
         accounts: list[Account] = []
+        # Source-level rights/discovery outcomes must not inherit failures from
+        # another account of the same identity (#1346). Keep only opaque source
+        # IDs in this bookkeeping; the identity-level run remains aggregate.
+        source_outcomes: dict[str, str] = {}
         try:
             loans: list[Loan] = []
             seen_loans: set[tuple[str, str, str, str]] = set()
@@ -233,6 +237,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 key=lambda a: (0 if a.provider_id == "paris" else 1, a.provider_id, a.credential_id, a.unique_id),
             )
             for account in accounts:
+                source_id = self.sync_source_id(account)
+                # A provider exception leaves this source failed, never successful.
+                source_outcomes[source_id] = "failed"
                 provider = account.provider_id
                 if provider not in detail["providers"]:
                     detail["providers"].append(provider)
@@ -263,6 +270,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                             "TRACE loans sync partial identity=%s provider=%s credential=%s account=%s errors=%s",
                             identity.identity_id, provider, account.credential_id, account.unique_id or "primary", partial_errors,
                         )
+                    source_outcomes[source_id] = (
+                        "partial" if partial_errors else "success"
+                    )
                     for loan in account_loans:
                         key = (loan.source_provider, loan.source_credential, str(loan.source_account_id or ""), loan.id)
                         if key not in seen_loans:
@@ -295,6 +305,21 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     errors += 1
                     self._record_action(identity.identity_id, "acquisition", "failed", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id, "status": result["status"]})
                 if result["status"] in {"retryable_error", "attention_required"}:
+                    # The acquiring loan belongs to one source. Do not mark
+                    # healthy siblings partial because its ADEPT action failed.
+                    affected = [
+                        self.sync_source_id(account) for account in accounts
+                        if account.provider_id == loan.source_provider
+                        and account.credential_id == loan.source_credential
+                        and (account.unique_id or "") == (loan.source_account_id or "")
+                    ]
+                    # An orphan/ambiguous loan cannot prove that any source
+                    # completed its opening cycle. Be conservative.
+                    if len(affected) != 1:
+                        affected = list(source_outcomes)
+                    for source_id in affected:
+                        if source_outcomes.get(source_id) == "success":
+                            source_outcomes[source_id] = "partial"
                     issue = redact({"provider": loan.source_provider, "loan_id": loan.id,
                                     "title": loan.title, "status": result["status"],
                                     "code": result.get("code"), "error": result.get("error"),
@@ -307,6 +332,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 status = "success"
         except Exception as exc:
             errors += 1; status = "failed"; detail["error"] = str(exc)
+            # An identity-level persistence/coordination failure invalidates
+            # confirmation of the entire batch, even when a provider replied.
+            source_outcomes = {
+                self.sync_source_id(account): "failed" for account in accounts
+            }
         finished = int(time.time())
         self.storage.sync_run_put({
             "sync_run_id": run_id, "identity_id": identity.identity_id, "scope": "opening", "status": status,
@@ -316,15 +346,15 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         summary = {"identity_id": identity.identity_id, "label": identity.label, "status": status,
                    "new_acquisitions": new_acquisitions, "attention_required": attention, "errors": errors, **detail}
         summaries.append(summary)
-        # Opening sync previously wrote only sync_runs, while GTK reads
-        # sync.source.state.*. Project the *confirmed* identity result into
-        # each enabled account, without inventing a success on partial ADEPT.
+        # GTK reads sync.source.state.*. Project each confirmed source result,
+        # not the aggregate identity status (which can include other providers).
         attempted_at = datetime.fromtimestamp(started, timezone.utc).isoformat(timespec="seconds")
         for account in accounts:
             try:
                 source_status.record_opening_state(
                     self.sync_source_id(account), identity_id=identity.identity_id,
-                    status=status, attempted_at=attempted_at,
+                    status=source_outcomes.get(self.sync_source_id(account), "failed"),
+                    attempted_at=attempted_at,
                 )
             except Exception as sync_state_exc:
                 logger.warning(

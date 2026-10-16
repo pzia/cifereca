@@ -481,7 +481,9 @@ class View:
         self.task.add_done_callback(done)
 
     def loaded(self, generation, identity, result, error):
-        if self.disposed or generation != self.generation:
+        if self.disposed or generation != self.generation or identity != self.identity_id():
+            # Also guard the direct completion boundary: a matching task
+            # generation is not proof that the selected account is unchanged.
             return False
         if error:
             self.status.set_label(error); return False
@@ -647,8 +649,14 @@ class View:
         if original is None:
             self.host.toast('Sélectionnez d’abord un livre dans Recherche ou Bibliothèque.')
             return
+        # An origin without an attested profile must not be reinterpreted as
+        # belonging to whichever identity is currently selected.
+        origin_identity = getattr(self, 'origin_identity', '')
+        if not origin_identity:
+            self.host.toast('Profil d’origine inconnu ; retour à la fiche indisponible.')
+            return
         method = getattr(self.host, 'open_book_detail', None)
-        if callable(method) and method(original, identity_id=self.origin_identity or self.identity_id()):
+        if callable(method) and method(original, identity_id=origin_identity):
             return
         self.host.toast('Fiche d’origine indisponible pour ce profil.')
 

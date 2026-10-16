@@ -42,3 +42,22 @@ Livres », vérifier la redirection vers la bonne édition publique,
 comparer l'EAN de l'EPUB puis qualifier ses données HTML/JSON-LD. Cette
 qualification est nécessaire avant tout enrichissement de bibliothèque
 ou filtrage Jeunesse depuis les pages commerciales.
+
+
+## Connexion déclarée perdue après le démarrage (#1884)
+
+Depuis 0.1.19, le log applicatif expose `TRACE numilog session` avec un
+booléen `connected` et une raison fixe : connexion commencée/réussie/échouée,
+fermeture explicite, opération refusée car déjà déconnectée, redirection hors
+bibliothèque, structure de bibliothèque invalide ou panne transport. Ces
+événements existent même sans collecteur Diagnostics ; aucune URL, identité,
+credential, donnée HTML, cookie ou exception brute n'est journalisée.
+`library_redirect` décrit la décision du provider de déconnecter après une
+redirection ; ce code ne prouve pas à lui seul une expiration côté fournisseur.
+Une erreur de structure ou de transport ne change pas l'état connecté.
+
+Le log utilisateur du 16 octobre confirme une connexion initiale réussie,
+mais sa tâche de téléchargement n'expose pas la cause de l'échec. Les notices
+en cache ne prouvent pas une connexion active. Cette instrumentation ne
+prétend pas corriger une cause amont non observée : aucune reconnexion,
+requête supplémentaire ou modification des gardes d'acquisition.

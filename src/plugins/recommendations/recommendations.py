@@ -1067,11 +1067,24 @@ class UxRecommendationsView:
             badge.set_visible(self._provisional_active)
 
     def _reload_providers(self, providers: tuple[tuple[str, str], ...]) -> None:
-        for provider_id, label in providers:
-            pid = str(provider_id or "")
-            if pid:
-                self._provider_labels[pid] = str(label or pid)
-        self._base_reload_providers(providers)
+        # Catalogue labels populate the GTK filter *before* a detail is
+        # selected. Apply the same public text boundary already used by
+        # _display_source; never stringify a provider object or iterate
+        # mapping keys as (provider, label) pairs after a cache restore.
+        safe: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        entries = providers[:128] if type(providers) in (list, tuple) else ()
+        for entry in entries:
+            if type(entry) not in (list, tuple) or len(entry) != 2:
+                continue
+            provider_id = _public_candidate_text(entry[0], limit=120)
+            if not provider_id or provider_id in seen:
+                continue
+            label = _public_candidate_text(entry[1], limit=240) or provider_id
+            seen.add(provider_id)
+            self._provider_labels[provider_id] = label
+            safe.append((provider_id, label))
+        self._base_reload_providers(tuple(safe))
 
     def _start_refresh(self):
         self._reset_llm_selection(None)
@@ -1436,6 +1449,12 @@ class UxRecommendationsView:
         self._master.show_rows(tuple(rows), total_count=len(self._ranked))
 
         if not rows:
+            # Empty filters invalidate prior detail and pending LLM callbacks,
+            # even if the host emits no selection-changed signal.
+            self._detail_selection_generation = (
+                getattr(self, "_detail_selection_generation", 0) + 1
+            )
+            self._reset_llm_selection(None)
             self._master.empty_detail(
                 "Aucune recommandation sélectionnée",
                 "Modifiez les filtres ou relancez le calcul.",
@@ -1494,7 +1513,7 @@ class UxRecommendationsView:
             DetailField(
                 "reasons",
                 "Pourquoi",
-                reasons or "Plusieurs signaux concordants",
+                reasons or "Aucun motif attesté disponible",
             ),
         ]
         catalogue_fields = [
