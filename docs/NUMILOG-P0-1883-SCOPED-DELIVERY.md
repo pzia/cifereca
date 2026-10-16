@@ -64,7 +64,8 @@ Ce correctif ne constitue donc pas une preuve de résolution réelle.
   `session_expired/html_error/missing/ambiguous/single_allowed_candidate`
   et, pour les pages HTML intermédiaires parsables, uniquement
   `js_delivery_shapes`, `absolute_html_hrefs`,
-  `absolute_script_literals`, `allowed_candidates` (entiers bornés).
+  `absolute_script_literals`, `allowed_candidates`,
+  `attested_acsm_candidates` (entiers bornés).
   Pas de chemin, query string, cookie, titre, `ProductId`,
   `IndexExemplaire` ni document HTML.
 
@@ -79,8 +80,14 @@ Interprétation **sans présumer le comportement du site réel** :
 - `bound_links>0` puis échec HTTP : une preuve structurée a été retenue,
   mais aucun succès ACSM/ADEPT ne peut être déduit du compteur.
 - `page_kind=readbook`, `js_delivery_shapes>0` et
-  `allowed_candidates=1` : le parcours intermédiaire avait un lien
-  admissible, indépendamment de la forme de la fiche MesLivres.
+  `attested_acsm_candidates=1` : le parcours intermédiaire avait **une
+  destination ACSM attestée**, même si des liens de navigation Numilog
+  étaient également présents. Le lien signé est alors prioritaire sur
+  les autres URL admises ; plusieurs ACSM restent **ambiguës** et sont
+  refusées. Sans ACSM, une seule destination générique conserve le
+  parcours EPUB historique.
+- `allowed_candidates>1`, `attested_acsm_candidates=0` : la page
+  intermédiaire n'a pas de destination unique prouvée ; elle est rejetée.
 - `page_kind=readbook`, `allowed_candidates=0` : le HTML réellement
   reçu ne fournit pas de destination sûre identifiable par le parseur.
   Ce **n'est pas** une preuve de session expirée sans marqueur de login.
@@ -129,6 +136,13 @@ retrouvable via `MesLivres.aspx` : ne pas ajouter de nouvel endpoint
 d'acquisition ni supposer une relation `ProductId == lid` sans attestation
 supplémentaire. Un rapport `invalid_or_ambiguous` n'expose pas la cause
 HTML brute ; conserver le refus.
+
+Le même raisonnement s'applique à un HTML intermédiaire contenant
+plusieurs URL d'origines autorisées : une destination HTTPS
+`entrepot2r.numilog.com:443/fulfillment/URLLink.acsm` **unique et signée**
+est sélectionnée plutôt qu'un lien générique vers le compte, le CSS ou
+l'accueil. La présence de **plusieurs signatures ACSM distinctes** arrête
+tout téléchargement ; aucun choix arbitraire par premier candidat.
 
 Le propriétaire peut transmettre **uniquement ce petit JSON expurgé** au
 ticket #1883. Conserver le HTML brut et les URLs ACSM signées hors de toute
