@@ -38,6 +38,18 @@ class SynchronizationBroker(Protocol):
     def subscribe(self, callback: Any) -> Any: ...
 
 @runtime_checkable
+class SourceInventoryRefreshScheduleBroker(Protocol):
+    """Optional schedule/dispatch for per-source inventory and rights only."""
+    def inventory_refresh_schedule(self, source_id: str) -> Mapping[str, object]: ...
+    def set_inventory_refresh_schedule(
+        self, source_id: str, mode: str, *, interval_minutes: int = 60,
+    ) -> Mapping[str, object]: ...
+    def synchronize_scheduled_inventory(
+        self, identity_id: str, trigger: str, *, control: TaskControl | None = None,
+    ) -> SyncResult: ...
+
+
+@runtime_checkable
 class SourceMaterializationScheduleBroker(Protocol):
     """Optional Sync capability: legacy SynchronizationBroker stays compatible."""
     def local_materialization_schedule(self, source_id: str) -> str: ...
