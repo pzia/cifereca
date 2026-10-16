@@ -13,6 +13,13 @@ spec.loader.exec_module(home)
 
 
 class OverviewOwnershipTests(unittest.TestCase):
+    def test_numilog_source_is_named_even_without_local_cached_books(self):
+        row = {"providers": ["numilog"], "statistics": {"local_books": 0}}
+        grouped = home.source_groups(row)
+        assert grouped["authenticated"][0]["provider_id"] == "numilog"
+        assert grouped["authenticated"][0]["label"] == "Numilog"
+        assert grouped["local"] == []
+
     def test_store_only_has_zero_loans_but_owned_rights_not_local_files(self):
         stats = {"local_books": 0, "remote_owned_rights": 5, "known_loans": 0}
         rows = home.overview_counts_lines(stats)
