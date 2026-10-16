@@ -201,7 +201,9 @@ def _refresh_sync_page(self) -> None:
                 completed, control=_button,
                 priority=TaskPriority.USER_ACTION, kind="source-sync",
             )
-        now.connect("clicked", one); row.add_suffix(now)
+        now.connect("clicked", one)
+        now.set_valign(Gtk.Align.CENTER)
+        row.add_suffix(now)
         if source.provider_id == "kobo":
             # Only a targeted Core broker may resolve the private credential.
             # Neither page building nor switching identity reads the ledger.
@@ -216,6 +218,7 @@ def _refresh_sync_page(self) -> None:
                 if capability and supported else
                 "Aperçu Kobo non pris en charge par cette source"
             )
+            preflight.set_valign(Gtk.Align.CENTER)
             row.add_suffix(preflight)
             preview_row = Adw.ActionRow()
             preview_row.set_title("Aperçu local des acquisitions Kobo")
@@ -277,6 +280,7 @@ def _refresh_sync_page(self) -> None:
                 "Audit SHA local de ce compte (lecture seule, peut être long)"
                 if audit_supported else "Audit local non pris en charge"
             )
+            audit_button.set_valign(Gtk.Align.CENTER)
             row.add_suffix(audit_button)
             audit_row = Adw.ActionRow()
             audit_row.set_title("Vérification des fichiers et rapprochements")
@@ -356,7 +360,9 @@ def _refresh_sync_page(self) -> None:
                 "Non préparé · aucun fichier téléchargé. Vérifiez d’abord les droits et fichiers."
             )
             acquisition_row.set_subtitle_lines(0)
+            download_button.set_valign(Gtk.Align.CENTER)
             acquisition_row.add_suffix(download_button)
+            stop_download.set_valign(Gtk.Align.CENTER)
             acquisition_row.add_suffix(stop_download)
             group.add(acquisition_row)
             acquisition_state = {"serial": 0, "cancel": None}
@@ -649,6 +655,7 @@ def _refresh_sync_page(self) -> None:
                 "Ne modifie que la planification de ce compte Kobo. "
                 "Aucun téléchargement n’est lancé par ce bouton."
             )
+            schedule_button.set_valign(Gtk.Align.CENTER)
             schedule_row.add_suffix(schedule_button)
             group.add(schedule_row)
 
@@ -784,6 +791,7 @@ def _refresh_sync_page(self) -> None:
                 "Modifie seulement la politique de notices/droits de ce compte. "
                 "Aucune acquisition et aucun téléchargement."
             )
+            inventory_button.set_valign(Gtk.Align.CENTER)
             inventory_row.add_suffix(inventory_button)
             group.add(inventory_row)
 
