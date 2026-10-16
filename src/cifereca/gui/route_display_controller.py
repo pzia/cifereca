@@ -99,11 +99,21 @@ def show_route(window, route: str, *, Gtk) -> None:
         window._render_dashboard()
     elif route == "library":
         window._render_library(window._library_entries_cache)
-        if is_current() and not window._library_entries_cache:
+        if (
+            is_current() and not window._library_entries_cache
+            and getattr(window, "_library_loaded_generation", -1)
+                != getattr(window, "_identity_context_generation", 0)
+        ):
+            # A successful empty snapshot is not the same as an uninitialized
+            # cache. Reopening Library must not repeatedly query the provider.
             window.refresh_library(False)
     elif route == "recent":
         window._render_recent(window._recent_entries_cache)
-        if is_current() and not window._recent_entries_cache:
+        if (
+            is_current() and not window._recent_entries_cache
+            and getattr(window, "_recent_loaded_generation", -1)
+                != getattr(window, "_identity_context_generation", 0)
+        ):
             window.refresh_recent()
     elif route == "history" and not window.service.last_history:
         if is_current():

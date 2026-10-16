@@ -73,9 +73,23 @@ class TaskRunner:
             "automatic", "navigation", "user", "maintenance", "unspecified",
         }:
             origin = "unspecified"
-        # A physical user action must *always* be admitted, even if its caller
-        # accidentally supplied the same automatic key.
-        admission = (kind, coalesce_key) if coalesce_key is not None and control is None else None
+        # Never log raw display labels or plugin-supplied kind strings: these
+        # may contain URLs, credentials or account details. Preserve the real
+        # kind and label for routing and on-screen progress; sanitize TRACE only.
+        trace_kind = kind if type(kind) is str and kind in {
+            "task", "opening-sync", "deep-sync", "source-sync",
+            "sync-preflight", "kobo-acquisition", "maintenance", "library",
+            "recent", "search", "plugin", "other",
+        } else "other"
+        # An explicit user request must always run, including callers that
+        # deliberately have no GTK control (keyboard actions, headless host).
+        # A missing widget is not evidence that a task is automatic (#981).
+        # Keep legacy unspecified-key coalescing for compatibility.
+        admission = (
+            (kind, coalesce_key)
+            if coalesce_key is not None and control is None and origin != "user"
+            else None
+        )
         # A detached Gtk widget must be checked before activity counters or
         # reservations are allocated, as with the original TaskRunner. User
         # controls cannot be coalesced, so this cannot touch a skipped task.
@@ -86,7 +100,7 @@ class TaskRunner:
             if admission is not None and admission in active:
                 _TRACE_LOG.info(
                     "TRACE task coalesced active_id=%s kind=%s origin=%s",
-                    active[admission], kind, origin,
+                    active[admission], trace_kind, origin,
                 )
                 return
             task_id = next(self._task_ids)
@@ -115,8 +129,8 @@ class TaskRunner:
 
         queued_at = time.monotonic()
         _TRACE_LOG.info(
-            "TRACE task submit id=%s priority=%s kind=%s origin=%s label=%s",
-            task_id, int(priority), kind, origin, label,
+            "TRACE task submit id=%s priority=%s kind=%s origin=%s",
+            task_id, int(priority), trace_kind, origin,
         )
 
         def report(progress_label: str) -> None:
@@ -132,8 +146,8 @@ class TaskRunner:
             started = time.monotonic()
             observe("queue_wait", max(0, started - queued_at))
             _TRACE_LOG.info(
-                "TRACE task begin id=%s priority=%s kind=%s queue_wait=%.3fs label=%s",
-                task_id, int(priority), kind, started - queued_at, label,
+                "TRACE task begin id=%s priority=%s kind=%s queue_wait=%.3fs",
+                task_id, int(priority), trace_kind, started - queued_at,
             )
             outcome_status = "success"
             try:
@@ -145,8 +159,8 @@ class TaskRunner:
                 elapsed = max(0, time.monotonic() - started)
                 observe("worker", elapsed, outcome_status)
                 _TRACE_LOG.info(
-                    "TRACE task end id=%s kind=%s dt=%.3fs label=%s",
-                    task_id, kind, elapsed, label,
+                    "TRACE task end id=%s kind=%s dt=%.3fs",
+                    task_id, trace_kind, elapsed,
                 )
 
         try:
@@ -162,7 +176,7 @@ class TaskRunner:
                     del self._coalesced[admission]
             _TRACE_LOG.info(
                 "TRACE task outcome id=%s kind=%s origin=%s status=rejected",
-                task_id, kind, origin,
+                task_id, trace_kind, origin,
             )
 
             def rejected() -> bool:
@@ -196,15 +210,30 @@ class TaskRunner:
             # until the UI consumes it; close() clears detached reservations.
             _TRACE_LOG.info(
                 "TRACE task outcome id=%s kind=%s origin=%s status=%s",
-                task_id, kind, origin,
+                task_id, trace_kind, origin,
                 "success" if outcome[0] == "ok" else "failed",
             )
 
             gtk_pending_since = time.monotonic()
 
             def deliver() -> bool:
-                # Keep the historical callback self-contained: tests and
-                # UI teardown adapters may exercise it in isolation.
+                # This callback is part of the real GTK/TaskRunner lifecycle:
+                # it owns the pending coalescing reservation until delivery.
+                # Its historical name also identifies the actual event held
+                # in the GLib queue by deterministic race tests (#981).
+                # Existing teardown tests compile deliver() alone, so a
+                # missing enclosing observer must remain harmless.
+                try:
+                    phase_observer = observe
+                    queued_completion_at = gtk_pending_since
+                except NameError:
+                    pass
+                else:
+                    phase_observer(
+                        "gtk_delivery_wait",
+                        max(0, time.monotonic() - queued_completion_at),
+                        "success" if outcome[0] == "ok" else "failed",
+                    )
                 with self._lock:
                     self._count = max(0, self._count - 1)
                     remaining = self._count
@@ -248,17 +277,7 @@ class TaskRunner:
                         self.present_error(payload)
                 return False
 
-            def measured_deliver() -> bool:
-                # A wrapper observes GLib queue delay without modifying the
-                # independently usable legacy GTK delivery callback.
-                observe(
-                    "gtk_delivery_wait",
-                    max(0, time.monotonic() - gtk_pending_since),
-                    "success" if outcome[0] == "ok" else "failed",
-                )
-                return deliver()
-
-            GLib.idle_add(measured_deliver)
+            GLib.idle_add(deliver)
 
         future.add_done_callback(done)
 

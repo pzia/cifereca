@@ -133,3 +133,141 @@ def test_explicit_same_origin_local_vault_keeps_covers_without_trusting_other_ho
         "http://127.0.0.1:9854/covers/book%0aPRIVATE.jpg",
     ):
         assert catalog.cover_url({"cover_url": value}) is None
+
+
+@pytest.mark.parametrize("unsafe", (
+    "https://cdn.example/cover%250APRIVATE_BEARER.jpg",
+    "https://cdn.example/cover%25250dPRIVATE_SECRET.jpg",
+    "https://cdn.example/cover%25252500PRIVATE_TOKEN.jpg",
+    "https://cdn.example/cover%257FPRIVATE_TOKEN.jpg",
+    "/covers/PRIVATE%250aCOVER.jpg",
+    "covers/PRIVATE%25250dBOOK.jpg",
+))
+def test_nested_percent_encoded_controls_never_become_public_cover_urls(unsafe):
+    catalog = _catalog()
+    assert catalog.cover_url({"cover_url": unsafe}) is None
+    projected = catalog.normalize_item({
+        "product_id": "edition", "title": "Public",
+        "cover_url": unsafe, "collection": "catalog",
+    })
+    assert projected.thumbnail_url is None
+    assert "cover_url" not in projected.metadata
+    assert "catalog_cover" not in projected.metadata
+    public = json.dumps(projected.metadata, ensure_ascii=False)
+    for private in ("PRIVATE_", "Bearer", "SECRET", "TOKEN"):
+        assert private not in public
+
+
+@pytest.mark.parametrize("cover", (
+    "https://cdn.example/cover%20name.jpg",
+    "https://cdn.example/cover%2520name.jpg",
+    "https://cdn.example/cover%25name.jpg",
+    "https://cdn.example/cover%GG.jpg",
+    "/covers/book%20name.jpg",
+))
+def test_benign_percent_encoded_cover_paths_remain_valid(cover):
+    catalog = _catalog()
+    expected = catalog.cover_url({"cover_url": cover})
+    assert expected is not None
+    projected = catalog.normalize_item({"product_id": "edition", "cover_url": cover})
+    assert projected.thumbnail_url == expected
+
+
+@pytest.mark.parametrize("unsafe", (
+    "http://127.1/PRIVATE_COVER.jpg",
+    "http://127.0.1/PRIVATE_COVER.jpg",
+    "http://0177.0.0.1/PRIVATE_COVER.jpg",
+    "http://192.168.1/PRIVATE_COVER.jpg",
+    "http://0x7f.0.0.1/PRIVATE_COVER.jpg",
+    "https://cdn.example.123/PRIVATE_COVER.jpg",
+))
+def test_noncanonical_numeric_hosts_cannot_trigger_private_cover_fetch(unsafe):
+    catalog = _catalog()
+    assert catalog.cover_url({"cover_url": unsafe}) is None
+    result = catalog.normalize_item({
+        "product_id": "edition", "title": "Public",
+        "cover_url": unsafe, "collection": "catalog",
+    })
+    assert result.thumbnail_url is None
+    assert "cover_url" not in result.metadata
+    assert "catalog_cover" not in result.metadata
+    assert "PRIVATE" not in json.dumps(result.metadata)
+
+
+def test_configured_local_vault_origin_still_allows_its_explicit_cover():
+    catalog = KoboCatalogService(
+        SimpleNamespace(base_url="http://127.0.0.1:9854/api"),
+        credential_id="fixture",
+    )
+    assert catalog.cover_url({
+        "cover_url": "http://127.0.0.1:9854/covers/cover.jpg",
+    }) == "http://127.0.0.1:9854/covers/cover.jpg"
+    assert catalog.cover_url({
+        "cover_url": "http://127.1:9854/covers/private.jpg",
+    }) is None
+
+
+@pytest.mark.parametrize("unsafe", (
+    "../api/v2/library/PRIVATE_BOOK/acquisition",
+    "covers/../../token/PRIVATE_ACCESS",
+    "covers/%2e%2e/api/v2/library/PRIVATE_BOOK/acquisition",
+    "covers/%252e%252e%252flicense/PRIVATE_FILE.lcpl",
+    "covers/%25252Fdownload%25252fPRIVATE_BOOK.epub",
+    "/api/v2/library/PRIVATE_BOOK/acquisition",
+    "https://cdn.example/download/PRIVATE_BOOK.jpg",
+    "https://cdn.example/covers/book%252fdrm%252ftoken.jpg",
+    "https://cdn.example/covers/PRIVATE_BOOK.acsm",
+    "https://cdn.example/covers/PRIVATE_BOOK.pdf",
+    "https://cdn.example/license/PRIVATE_COVER",
+))
+def test_cover_route_never_exposes_acquisition_or_parent_traversal(unsafe):
+    catalog = _catalog()
+    assert catalog.cover_url({"cover_url": unsafe}) is None
+    for collection in ("catalog", "library"):
+        result = catalog.normalize_item({
+            "product_id": "edition", "title": "Public",
+            "cover_url": unsafe,
+            "collection": collection,
+            "owned": collection == "library",
+        })
+        assert result.thumbnail_url is None
+        assert "cover_url" not in result.metadata
+        assert "catalog_cover" not in result.metadata
+        assert "PRIVATE_" not in json.dumps(result.metadata)
+
+
+def test_malicious_primary_cover_can_fall_back_to_independent_public_image():
+    catalog = _catalog()
+    result = catalog.normalize_item({
+        "product_id": "edition", "title": "Public",
+        "cover_url": "covers/%252e%252e%252fdownload/PRIVATE_BOOK",
+        "thumbnail_url": "https://cdn.example/covers/verified.jpg",
+        "collection": "catalog",
+    })
+    assert result.thumbnail_url == "https://cdn.example/covers/verified.jpg"
+    assert result.metadata["cover_url"] == result.thumbnail_url
+    assert "PRIVATE" not in json.dumps(result.metadata)
+
+
+@pytest.mark.parametrize("safe", (
+    "covers/edition/cover.jpg",
+    "/covers/edition/cover.webp",
+    "https://cdn.example/book/cover%20image.jpg",
+    "https://cdn.example/covers/cover%2520image.jpg",
+    "https://cdn.example/covers/book%25variant.jpg",
+))
+def test_safe_nested_images_remain_usable_after_route_guard(safe):
+    assert _catalog().cover_url({"cover_url": safe}) is not None
+
+
+def test_same_origin_local_vault_does_not_bypass_cover_route_policy():
+    catalog = KoboCatalogService(
+        SimpleNamespace(base_url="http://127.0.0.1:9854/api"),
+        credential_id="fixture",
+    )
+    assert catalog.cover_url({
+        "cover_url": "http://127.0.0.1:9854/api/v2/library/PRIVATE_BOOK/acquisition",
+    }) is None
+    assert catalog.cover_url({
+        "cover_url": "/covers/book.jpg",
+    }) == "http://127.0.0.1:9854/covers/book.jpg"

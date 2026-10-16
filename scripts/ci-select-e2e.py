@@ -6,7 +6,17 @@ from pathlib import Path
 
 LLM = ("llm-settings-1366", "llm-settings-1600")
 MAINT = ("maintenance-tools-1366", "maintenance-tools-1600")
-CORE = ("search-filter-p0", "book-detail-1366", "mainwindow-baseline-1366",
+# P0 source operations affect the real Synchronisation page even when no
+# GTK module changes. Baselines cover source rows, exact account targeting,
+# preview/audit gating and independent inventory/acquisition feedback.
+SYNC_CORE = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
+SYNC_PRODUCERS = frozenset((
+    "src/cifereca/brokers.py",
+    "src/cifereca/core/source_materialization.py",
+    "src/cifereca/core/sync_coordination.py",
+))
+BOOK_DETAIL = ("book-detail-1366", "book-detail-1600")
+CORE = ("search-filter-p0",) + BOOK_DETAIL + ("mainwindow-baseline-1366",
         "mainwindow-baseline-1600", "startup", "core-navigation") + LLM + MAINT
 DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-structured-1366", "diagnostics-volume-1366",
@@ -14,6 +24,10 @@ DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
 YOUTH = ("youth-1366", "youth-filter-help-1366", "youth-milan-1366",
          "youth-editions-1366", "youth-library-search-1366",
          "youth-focus-return-1366")
+# CI smoke for P1 bibliographic detail plugins (#1599). These existing GTK
+# scenarios are regression guards, not plugin-specific acceptance evidence.
+DETAIL = BOOK_DETAIL + ("mainwindow-baseline-1366",
+          "mainwindow-baseline-1600")
 ALL = CORE + DIAG + YOUTH
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          "startup", "core-navigation", "diagnostics-navigation-1366",
@@ -32,16 +46,16 @@ DIAG_STATES = ("diagnostics-states-1366", "diagnostics-navigation-1366",
                "mainwindow-baseline-1366", "mainwindow-baseline-1600")
 
 LOCAL_GUI = {
-    "action_layout.py": ("book-detail-1366",),
-    "action_widgets.py": ("book-detail-1366",),
-    "book_facets.py": ("search-filter-p0", "book-detail-1366"),
-    "book_widgets.py": ("book-detail-1366", "search-filter-p0"),
-    "cover_loader.py": ("book-detail-1366",),
-    "cover_preview.py": ("book-detail-1366",),
+    "action_layout.py": BOOK_DETAIL,
+    "action_widgets.py": BOOK_DETAIL,
+    "book_facets.py": ("search-filter-p0",) + BOOK_DETAIL,
+    "book_widgets.py": BOOK_DETAIL + ("search-filter-p0",),
+    "cover_loader.py": BOOK_DETAIL,
+    "cover_preview.py": BOOK_DETAIL,
     "facet_text.py": ("search-filter-p0",),
     "query_controls.py": ("search-filter-p0", "core-navigation"),
     # youth_page_probe imports QueryState from this module directly.
-    "query_model.py": ("search-filter-p0", "book-detail-1366") + YOUTH,
+    "query_model.py": ("search-filter-p0",) + BOOK_DETAIL + YOUTH,
     "search_intent.py": ("search-filter-p0",),
     "settings_ai_actions.py": LLM,
     "settings_ai_section.py": LLM,
@@ -52,7 +66,7 @@ LOCAL_GUI = {
     "maintenance_line_widgets.py": MAINT,
 }
 PROBES = {
-    "e2e/book_detail_probe.py": ("book-detail-1366",),
+    "e2e/book_detail_probe.py": BOOK_DETAIL,
     "e2e/llm_settings_probe.py": LLM,
     "e2e/maintenance_tools_probe.py": MAINT,
     "e2e/search_filter_probe.py": ("search-filter-p0",),
@@ -93,9 +107,16 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             return ALL  # unknown or shared E2E helper
         elif path.startswith("src/plugins/diagnostics-page/"):
             selected.update(DIAG)
+        elif path.startswith(("src/plugins/constellations/",
+                              "src/plugins/recommendations/")):
+            selected.update(DETAIL)
+        elif path.startswith("src/plugins/youth-detail-enrichment/"):
+            selected.update(YOUTH)
         elif path.startswith(("src/plugins/youth-catalog/", "src/plugins/youth-source-",
                               "simulation/youth_sources/", "simulation/milan/")):
             selected.update(YOUTH)
+        elif path in SYNC_PRODUCERS:
+            selected.update(SYNC_CORE)
         elif path.startswith("src/cifereca/builtin_ui/"):
             selected.update(SHELL)
         elif path == "src/cifereca/gui/main_window.py":

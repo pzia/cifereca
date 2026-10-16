@@ -672,6 +672,40 @@ class KoboFakeApp:
             "total": total,
         })
 
+    def manifest_fault(self, handler, qs) -> bool:
+        """Opt-in negative Vault fixtures; ordinary requests are unchanged.
+
+        These endpoints are synthetic and HTTP-local. A fault must be explicitly
+        requested through ux_fault; no stored token, provider or book is touched.
+        """
+        fault = (qs.get("ux_fault") or [""])[0]
+        if fault == "429":
+            self.send_json(
+                handler, HTTPStatus.TOO_MANY_REQUESTS,
+                {"error": {"code": "rate_limited", "message": "Réessayer plus tard"}},
+                extra_headers={"Retry-After": "2"},
+            )
+        elif fault == "503":
+            self.error(handler, HTTPStatus.SERVICE_UNAVAILABLE,
+                       "temporary_unavailable", "Service fictif indisponible")
+        elif fault == "expired":
+            self.error(handler, HTTPStatus.UNAUTHORIZED,
+                       "expired_token", "Session fictive expirée")
+        elif fault == "malformed_json":
+            self.send_bytes(handler, HTTPStatus.OK,
+                            "application/json; charset=utf-8", b'{"items":[')
+        elif fault == "cursor_loop":
+            offset = decode_cursor((qs.get("cursor") or [None])[0])
+            total, rows = self.cache.manifest(offset, 2)
+            self.send_json(handler, HTTPStatus.OK, {
+                "items": [self.item_json(handler, row, library=True) for row in rows],
+                "next_cursor": encode_cursor(offset),
+                "total": total,
+            })
+        else:
+            return False
+        return True
+
     def manifest(self, handler, qs):
         if not self.allows_vault():
             return self.error(handler, HTTPStatus.NOT_FOUND, "not_found", "Vault désactivé")
@@ -949,7 +983,12 @@ class KoboFakeApp:
         if m:
             return self.acsm(handler, m.group(1))
 
-        if path.startswith("/api/v2/") and not self.authenticated(handler):
+        # The delegated ContentAccess fixture advertises an Authorization
+        # header to the consumer. Keep it private like the Vault API; a
+        # synthetic endpoint must not teach clients that delegation is public.
+        if (
+            path.startswith("/api/v2/") or path.startswith("/delegated/")
+        ) and not self.authenticated(handler):
             return
 
         if path == "/api/v2/account":
@@ -959,6 +998,8 @@ class KoboFakeApp:
         if path == "/api/v2/library/search":
             return self.library_search(handler, qs)
         if path == "/api/v2/library/manifest":
+            if self.manifest_fault(handler, qs):
+                return
             return self.manifest(handler, qs)
 
         m = re.fullmatch(r"/api/v2/library/([^/]+)/acquisition", path)

@@ -2,11 +2,54 @@ from __future__ import annotations
 from typing import Any
 from ipaddress import ip_address
 import re
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 from cifereca.plugin_api import ProviderError, SearchResult, normalize_language_tag, description_text, description_element
 from cifereca_kobo_policy import _strict_product_id
 from cifereca_kobo_vault import KoboVaultClient, KoboVaultError
+
+
+def _unsafe_encoded_cover_path(path: str) -> bool:
+    """Reject controls hidden under repeated URI decoding, without network I/O."""
+    for _ in range(5):
+        if any(ord(char) < 32 or ord(char) == 127 for char in path):
+            return True
+        decoded = unquote(path)
+        if decoded == path:
+            return False
+        path = decoded
+    # An excessively wrapped path has not been fully inspected.
+    return True
+
+
+def _unsafe_cover_resource_path(path: str) -> bool:
+    """Only image-like paths cross the public, auto-loaded thumbnail boundary.
+
+    urljoin() normalizes ordinary '..' segments, so inspect the *original*
+    source path before joining, including repeatedly percent-encoded slashes.
+    Do not rewrite the URL or accept partially decoded opaque paths.
+    """
+    private_segments = {
+        "acquire", "acquisition", "download", "downloads", "fulfillment",
+        "license", "licence", "licenses", "licences", "oauth", "token",
+        "tokens", "authorization", "authorize", "delegate", "drm", "adept",
+    }
+    for _ in range(5):
+        segments = (
+            segment.casefold() for segment in path.replace("\\", "/").split("/")
+            if segment
+        )
+        if any(
+            segment == ".." or segment in private_segments
+            or segment.endswith((".acsm", ".lcpl", ".epub", ".kepub", ".pdf"))
+            for segment in segments
+        ):
+            return True
+        decoded = unquote(path)
+        if decoded == path:
+            return False
+        path = decoded
+    return True
 
 
 class KoboCatalogService:
@@ -40,7 +83,7 @@ class KoboCatalogService:
                 return None
             try:
                 raw = urlsplit(value)
-                if raw.query or raw.fragment:
+                if raw.query or raw.fragment or _unsafe_cover_resource_path(raw.path):
                     return None
                 if not raw.scheme and not raw.netloc and '/' not in raw.path and '.' not in raw.path:
                     return None
@@ -74,7 +117,8 @@ class KoboCatalogService:
                     not trusted_vault_origin
                     and port not in (None, 443 if parsed.scheme == 'https' else 80)
                 )
-                or re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I)
+                or _unsafe_encoded_cover_path(parsed.path)
+                or _unsafe_cover_resource_path(parsed.path)
             ):
                 return None
             host = hostname.rstrip('.').casefold()
@@ -88,7 +132,12 @@ class KoboCatalogService:
                 try:
                     address = ip_address(host)
                 except ValueError:
-                    pass
+                    # Some URL clients resolve shorthand IPv4 notations
+                    # (127.1, 0177.0.0.1, 192.168.1) to private networks,
+                    # while ipaddress() rejects their noncanonical spelling.
+                    # A numeric final DNS label is not a public hostname.
+                    if host.rsplit(".", 1)[-1].isdigit():
+                        return None
                 else:
                     if not address.is_global:
                         return None
@@ -158,22 +207,49 @@ class KoboCatalogService:
             or hostname.endswith(
                 ('.localhost', '.local', '.internal', '.lan', '.home.arpa')
             )
-            or re.search(r'%(?:0[0-9a-f]|1[0-9a-f]|7f)', parsed.path, re.I)
+            or len(hostname) > 253
+            or any(
+                not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label)
+                for label in hostname.split('.')
+            )
         ):
             return None
         try:
             address = ip_address(hostname)
         except ValueError:
-            pass
-        else:
+            address = None
+        if address is not None:
             if not address.is_global:
                 return None
-        # Download/license/acquisition endpoints are not bibliographic
-        # product notices even if hosted on an otherwise public domain.
-        segments = [segment.casefold() for segment in parsed.path.split('/')]
-        if any(segment in {'download', 'downloads', 'license', 'licence', 'acquisition', 'authorize', 'oauth', 'token'} for segment in segments):
+        elif not re.fullmatch(r'[a-z][a-z0-9-]{1,62}', hostname.rsplit('.', 1)[-1]):
+            # Noncanonical numeric hosts such as 127.1 and 0177.0.0.1
+            # are not harmless public DNS hostnames.
             return None
-        return value
+        # Decode solely to reject acquisition/license endpoints concealed
+        # as percent-encoded URL paths. The returned URL is never rewritten.
+        path = parsed.path
+        private_segments = {
+            'download', 'downloads', 'license', 'licence', 'licenses',
+            'licences', 'acquisition', 'acquire', 'authorize',
+            'authorization', 'oauth', 'token', 'tokens', 'login',
+            'signin', 'drm', 'adept',
+        }
+        for _ in range(4):
+            if any(ord(char) < 32 or ord(char) == 127 for char in path):
+                return None
+            segments = [part.casefold() for part in path.split('/') if part]
+            if any(
+                part in private_segments
+                or part.endswith(('.acsm', '.lcpl', '.epub', '.kepub'))
+                for part in segments
+            ):
+                return None
+            decoded = unquote(path)
+            if decoded == path:
+                return value
+            path = decoded
+        # Deeply encoded routes have not been fully inspected: fail closed.
+        return None
 
     @staticmethod
     def _price(item: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -363,12 +439,17 @@ class KoboCatalogService:
                 continue
             try:
                 rows.append(self.normalize_item(raw))
-            except ProviderError:
-                reason = (
-                    "missing_product_id"
-                    if _strict_product_id(raw) is None
-                    else "normalization_error"
-                )
+            except Exception:
+                # A malformed scalar or custom mapping may throw while
+                # normalizing a single row (e.g. __str__/__bool__ on a
+                # provider value). Keep other safe books searchable, but
+                # never echo its private exception text or class name.
+                reason = "normalization_error"
+                try:
+                    if type(raw) is dict and _strict_product_id(raw) is None:
+                        reason = "missing_product_id"
+                except Exception:
+                    pass
                 self.last_search_rejections.append({
                     "type": "ProviderError",
                     "reason": reason,

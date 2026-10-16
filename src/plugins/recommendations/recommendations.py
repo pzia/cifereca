@@ -4,7 +4,9 @@ import logging
 import re
 import time
 from ipaddress import ip_address
+from itertools import islice
 from typing import Any, Mapping
+from unicodedata import category
 from urllib.parse import unquote, urlsplit
 
 from cifereca.plugin_api import (
@@ -20,7 +22,7 @@ from cifereca.plugin_api import (
 )
 from recommendation_llm import explain_reasons
 
-from recommendation_engine import RankedCandidate, author_values, candidate_key, get_field, identifier_values, normalize
+from recommendation_engine import RankedCandidate, candidate_key, get_field, identifier_values, normalize
 from recommendation_service import LibrarySnapshotCache, RecommendationPartial, RecommendationResult, compute_recommendations
 from reference_recommendation import compute_reference_recommendations
 
@@ -36,6 +38,110 @@ _DIVERSITY_TOOLTIP = (
     "une valeur élevée varie davantage auteurs, sujets et sources."
 )
 
+def _public_candidate_text(value: Any, *, limit: int = 180) -> str:
+    """Project provider scalars without serializing private cached objects.
+
+    Recommendation candidates can outlive their provider. Object reprs,
+    mapping internals and control/bidi characters are not public metadata.
+    """
+    if type(value) is not str:
+        return ""
+    cleaned = value.strip()
+    if (
+        not cleaned or len(cleaned) > limit
+        or any(category(char) in {"Cc", "Cf", "Cs"} for char in cleaned)
+    ):
+        return ""
+    return cleaned
+
+
+def _public_ranked_values(raw: Any, *, limit: int = 32) -> tuple[str, ...]:
+    """Bound public rank explanations and provider provenance.
+
+    A restored/partial ranking can contain malformed list members or a
+    mapping where a tuple of reasons/sources is expected. Never iterate
+    field names as bibliographic facts or coerce objects into GTK labels.
+    """
+    if type(raw) is str:
+        rows = (raw,)
+    elif type(raw) in (list, tuple):
+        rows = raw[:limit]
+    else:
+        return ()
+    return tuple(
+        cleaned for value in rows
+        if (cleaned := _public_candidate_text(value, limit=240))
+    )
+
+
+def _candidate_public_field(item: Any, name: str, *, limit: int = 180) -> str:
+    try:
+        raw = get_field(item, name, None)
+    except Exception:
+        return ""
+    return _public_candidate_text(raw, limit=limit)
+
+
+def _public_candidate_description(item: Any) -> str:
+    # Invalid primary provider description must not hide an independently
+    # safe summary, nor stringify malformed metadata into the public detail.
+    return (
+        _candidate_public_field(item, "description", limit=8000)
+        or _candidate_public_field(item, "summary", limit=8000)
+    )
+
+
+
+def _public_candidate_authors(item: Any) -> tuple[str, ...]:
+    """Only attested, bounded author strings reach the public host detail.
+
+    The recommendation ranking engine accepts a broader legacy data model;
+    its text coercion must not be repeated at the UI boundary, where a cache
+    can contain arbitrary objects, malformed mappings or private values.
+    """
+    def read(container: Any, key: str) -> Any:
+        try:
+            return get_field(container, key, None)
+        except Exception:
+            return None
+
+    metadata = read(item, "metadata")
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    epub = read(metadata, "epub_metadata")
+    epub = epub if isinstance(epub, Mapping) else {}
+    values: list[str] = []
+    seen: set[str] = set()
+    for field_name in ("author", "authors", "creator", "creators"):
+        for source in (item, metadata, epub):
+            raw = read(source, field_name)
+            if type(raw) is str:
+                rows = (raw,)
+            elif type(raw) in (list, tuple):
+                rows = raw[:32]
+            elif isinstance(raw, Mapping):
+                rows = (raw,)
+            else:
+                continue
+            for row in rows:
+                if isinstance(row, Mapping):
+                    # An invalid first mapping value must not mask a valid
+                    # independently attested label or name.
+                    row = next((
+                        safe for key in ("value", "label", "name")
+                        if (safe := _public_candidate_text(read(row, key)))
+                    ), "")
+                author = _public_candidate_text(row)
+                if not author:
+                    continue
+                identity = normalize(author)
+                if identity and identity not in seen:
+                    seen.add(identity)
+                    values.append(author)
+                    if len(values) == 32:
+                        return tuple(values)
+    return tuple(values)
+
+
 def _reference_isbn(book: Any) -> str:
     """One checksum-validated edition ISBN, not an inferred title match."""
     identifiers = identifier_values(book)
@@ -43,8 +149,8 @@ def _reference_isbn(book: Any) -> str:
 
 
 def _reference_label(book: Any) -> str:
-    title = str(get_field(book, "title", "") or "").strip() or "Sans titre"
-    authors = author_values(book)
+    title = _candidate_public_field(book, "title", limit=2048) or "Sans titre"
+    authors = _public_candidate_authors(book)
     author = authors[0] if authors else ""
     label = f"{title} — {author}" if author else title
     isbn = _reference_isbn(book)
@@ -154,6 +260,17 @@ def _external_book_url(value: Any) -> str | None:
     return None
 
 
+def _public_recommendation_notice(item: Any) -> str | None:
+    """Prefer a validated friendly page, then an independent public notice.
+
+    Never use download or acquisition coordinates as a fallback.
+    """
+    return (
+        _external_book_url(get_field(item, "friendly_url", ""))
+        or _external_book_url(get_field(item, "notice_url", ""))
+    )
+
+
 def _public_cover_url(item: Any) -> str | None:
     """Conservative cover URL for both list rows and the detail panel.
 
@@ -206,25 +323,42 @@ _LANGUAGE_LABELS = {
 
 
 def _candidate_languages(item: Any) -> tuple[str, ...]:
-    metadata = get_field(item, "metadata", {}) or {}
-    values = []
+    """Project only safely normalized language tags from explicit evidence.
+
+    Provider metadata and legacy language normalizers are independent trust
+    boundaries: one poisoned accessor/tag must not hide later valid languages,
+    break the language filter or expose private exception messages.
+    """
+    def field(container: Any, key: str) -> Any:
+        try:
+            return get_field(container, key, None)
+        except Exception:
+            return None
+
+    metadata = field(item, "metadata")
+    values: list[str] = []
     for raw in (
-        get_field(item, "language", None),
-        get_field(item, "languages", None),
-        metadata.get("language") if isinstance(metadata, Mapping) else None,
-        metadata.get("languages") if isinstance(metadata, Mapping) else None,
+        field(item, "language"),
+        field(item, "languages"),
+        field(metadata, "language") if isinstance(metadata, Mapping) else None,
+        field(metadata, "languages") if isinstance(metadata, Mapping) else None,
     ):
-        if isinstance(raw, (list, tuple, set)):
-            # Catalogue metadata is untrusted: nested maps, numbers and
-            # foreign objects are not language tags. Never stringify them.
-            values.extend(item for item in raw if isinstance(item, str))
-        elif isinstance(raw, str) and raw.strip():
+        if type(raw) in (list, tuple, set):
+            # Bound untrusted provider arrays; never stringify nested values
+            # or accept a str subclass with overridable text methods.
+            for tag in islice(raw, 128):
+                if type(tag) is str and tag.strip():
+                    values.append(tag)
+        elif type(raw) is str and raw.strip():
             values.append(raw)
 
-    normalized = []
-    for raw in values:
-        canonical = normalize_language_tag(raw)
-        if canonical and canonical not in normalized:
+    normalized: list[str] = []
+    for raw in values[:256]:
+        try:
+            canonical = normalize_language_tag(raw)
+        except Exception:
+            continue
+        if type(canonical) is str and canonical and canonical not in normalized:
             normalized.append(canonical)
     return tuple(normalized)
 
@@ -605,7 +739,20 @@ class UxRecommendationsView:
             else:
                 for identity_id in changed_identities:
                     snapshot_cache.invalidate(identity_id)
-        if self._active_identity_id is None or not self._identity_ids:
+        if self._active_identity_id is None:
+            return
+        if (
+            (previous_identity is not None and previous_identity != current_identity)
+            or self._active_identity_id != current_identity
+        ):
+            # An in-flight task belongs to the previous profile. Do not wait
+            # for its completion to schedule the new refresh: a queued result
+            # could repaint the old account's recommendations under the new
+            # GTK selection. refresh() immediately revokes its generation,
+            # cancels its handle and clears the old visible list/detail.
+            self.refresh()
+            return
+        if not self._identity_ids:
             return
         self._overview_refresh_pending = True
         if not self._busy:
@@ -815,7 +962,13 @@ class UxRecommendationsView:
         needle = normalize(self._text.get_text())
         if needle:
             item = ranked.item
-            haystack = normalize(" ".join((str(get_field(item, "title", "") or ""), str(get_field(item, "author", "") or ""))))
+            # The same attested author variants as the public detail must
+            # participate in local filtering; the scalar "author" field may
+            # be empty even when "authors" contains several names.
+            haystack = normalize(" ".join((
+                _candidate_public_field(item, "title", limit=2048),
+                " ".join(_public_candidate_authors(item)),
+            )))
             if needle not in haystack:
                 return False
         return True
@@ -887,8 +1040,14 @@ class UxRecommendationsView:
         )
 
     def _display_source(self, provider_id: str) -> str:
-        provider_id = str(provider_id or "")
-        return self._provider_labels.get(provider_id, provider_id)
+        # The source name is copied into both the list and the public
+        # detail; never stringify provider objects or expose bad cache labels.
+        source = _public_candidate_text(provider_id, limit=120)
+        if not source:
+            return ""
+        return _public_candidate_text(
+            self._provider_labels.get(source, source), limit=240,
+        )
 
     def _provider_label(self) -> str:
         provider_id = self.selected_provider_id()
@@ -1229,21 +1388,33 @@ class UxRecommendationsView:
 
         rows = []
         mapping = {}
-        for index, ranked in enumerate(visible):
+        # Keep the original identities reserved, including those on *later*
+        # rows: a generated suffix must never shadow a real edition key.
+        # This matters when two providers legitimately return the same
+        # candidate key or a key already ending in ":<index>".
+        original_keys = tuple(
+            self._candidate_key(ranked) or f"recommendation-{index}"
+            for index, ranked in enumerate(visible)
+        )
+        reserved_keys = set(original_keys)
+        for index, (ranked, original_key) in enumerate(zip(visible, original_keys)):
             item = ranked.item
-            key = self._candidate_key(ranked) or f"recommendation-{index}"
+            key = original_key
             if key in mapping:
-                key = f"{key}:{index}"
+                suffix = index
+                key = f"{original_key}:{suffix}"
+                while key in mapping or key in reserved_keys:
+                    suffix += 1
+                    key = f"{original_key}:{suffix}"
             mapping[key] = ranked
 
-            author = str(get_field(item, "author", "") or "").strip()
+            author = ", ".join(_public_candidate_authors(item))
             source_labels = [
-                self._display_source(source)
-                for source in ranked.sources
-                if str(source or "")
+                label for source in _public_ranked_values(ranked.sources)
+                if (label := self._display_source(source))
             ]
             sources = " · ".join(dict.fromkeys(source_labels))
-            reasons = " · ".join(ranked.reasons)
+            reasons = " · ".join(_public_ranked_values(ranked.reasons))
             meta_parts = []
             if sources:
                 meta_parts.append(sources)
@@ -1253,7 +1424,7 @@ class UxRecommendationsView:
             rows.append(
                 UiBookListEntry(
                     key=key,
-                    title=str(get_field(item, "title", "") or "Sans titre"),
+                    title=_candidate_public_field(item, "title", limit=2048) or "Sans titre",
                     subtitle=author,
                     meta=" · ".join(meta_parts),
                     badge=f"Affinité {ranked.score}/100",
@@ -1273,6 +1444,11 @@ class UxRecommendationsView:
             self._update_view_summary(provisional=self._provisional_active)
 
     def _selected_row(self, row: UiBookListEntry | None) -> None:
+        # Invalidate all callbacks from prior presentations, even on an
+        # A→B→A revisit or when two editions reuse the same list key.
+        self._detail_selection_generation = (
+            getattr(self, "_detail_selection_generation", 0) + 1
+        )
         self._reset_llm_selection(row.key if row is not None else None)
         if row is None:
             self._master.empty_detail(
@@ -1296,24 +1472,17 @@ class UxRecommendationsView:
             self._llm_button.set_sensitive(not self._busy and self._llm_handle is None)
 
         item = ranked.item
-        title = str(get_field(item, "title", "") or "Sans titre")
-        authors = tuple(author_values(item))
+        title = _candidate_public_field(item, "title", limit=2048) or "Sans titre"
+        authors = _public_candidate_authors(item)
         author = ", ".join(authors)
-        fmt = str(get_field(item, "format", "") or "").strip()
-        published = str(get_field(item, "published_at", "") or "").strip()
-        reasons = " · ".join(ranked.reasons)
-        source_labels = tuple(
-            dict.fromkeys(
-                self._display_source(source)
-                for source in ranked.sources
-                if str(source or "")
-            )
-        )
-        description = str(
-            get_field(item, "description", "")
-            or get_field(item, "summary", "")
-            or ""
-        ).strip()
+        fmt = _candidate_public_field(item, "format")
+        published = _candidate_public_field(item, "published_at")
+        reasons = " · ".join(_public_ranked_values(ranked.reasons))
+        source_labels = tuple(dict.fromkeys(
+            label for source in _public_ranked_values(ranked.sources)
+            if (label := self._display_source(source))
+        ))
+        description = _public_candidate_description(item)
 
         recommendation_fields = [
             DetailField("affinity", "Affinité", f"{ranked.score}/100"),
@@ -1332,12 +1501,22 @@ class UxRecommendationsView:
             DetailField(f"author-{index}", "Auteur", value, kind="author")
             for index, value in enumerate(authors)
         ]
-        if source_labels:
-            catalogue_fields.append(
-                DetailField("source", "Source", " · ".join(source_labels))
-            )
+        # Each attested provider remains an independent, copyable value,
+        # like provenance in Youth and Constellations. Flattening sources
+        # into a single string loses their individual bibliographic meaning.
+        for index, source in enumerate(source_labels):
+            catalogue_fields.append(DetailField(
+                f"source-{index}", "Source", source, kind="copy",
+            ))
+        # Use the exact same normalized, source-attested values as the
+        # existing language filter. A recommendation never invents a
+        # language merely from its title or provider.
+        for index, language in enumerate(_candidate_languages(item)):
+            catalogue_fields.append(DetailField(
+                f"language-{index}", "Langue", language, kind="language",
+            ))
         if fmt:
-            catalogue_fields.append(DetailField("format", "Format", fmt))
+            catalogue_fields.append(DetailField("format", "Format", fmt, kind="all"))
         if published:
             catalogue_fields.append(
                 DetailField("published", "Publication", published)
@@ -1415,13 +1594,17 @@ class UxRecommendationsView:
         # acquisition decision; Recommandations never duplicates that policy.
         identity_at_selection = self.selected_identity_id()
         generation_at_selection = self._generation
+        detail_generation_at_selection = self._detail_selection_generation
         key_at_selection = row.key
+        ranked_at_selection = ranked
         if identity_at_selection:
             for isbn in _attested_catalogue_isbns(variants):
                 def open_isbn(isbn=isbn):
                     if (
                         self._generation != generation_at_selection
+                        or self._detail_selection_generation != detail_generation_at_selection
                         or self._llm_selection_key != key_at_selection
+                        or self._ranked_by_key.get(key_at_selection) is not ranked_at_selection
                         or self.selected_identity_id() != identity_at_selection
                     ):
                         return False
@@ -1437,7 +1620,10 @@ class UxRecommendationsView:
                     f"Chercher l’édition ISBN {isbn} dans Recherche",
                     "system-search-symbolic", callback=open_isbn,
                 ))
-        url = _external_book_url(get_field(item, "friendly_url", ""))
+        # An unsafe/missing friendly link must not mask an independently
+        # attested public notice. Both candidates pass the same strict
+        # validation; no download, token or private URL reaches CoreUI.
+        url = _public_recommendation_notice(item)
         if url:
             actions.append(
                 UiBookDetailAction(

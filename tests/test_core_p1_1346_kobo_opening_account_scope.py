@@ -32,7 +32,7 @@ def test_two_identities_same_credential_count_as_two_accounts_one_session():
     result = _kobo_opening_decision(host)
     assert result["eligible_kobo"] == 1
     assert result["eligible_kobo_bindings"] == 2
-    assert result["status"] == "started"
+    assert result["status"] == "manual_only"
 
 
 def test_disabled_account_and_other_provider_do_not_count():
@@ -55,18 +55,18 @@ def test_disconnected_or_uncapable_session_never_qualifies():
         assert result["status"] in {"no_session", "capability_unavailable"}
 
 
-def test_fresh_cache_and_disabled_flag_preserve_existing_reason_codes():
+def test_old_global_toggle_cannot_turn_manual_source_into_auto():
     host = _host([_account("a", "c")], [_session("c")])
-    assert _kobo_opening_decision(host)["status"] == "fresh_cache"
+    assert _kobo_opening_decision(host)["status"] == "manual_only"
     host.kobo_backup_enabled = lambda: False
     assert _kobo_opening_decision(host)["status"] == "disabled"
 
 
-def test_deep_bypasses_freshness_only_not_account_switch():
+def test_deep_never_overrides_source_manual_mode():
     host = _host([_account("a", "c", False)], [_session("c")])
     assert _kobo_opening_decision(host, deep=True)["status"] == "source_disabled"
     host.accounts[0].enabled = True
-    assert _kobo_opening_decision(host, deep=True)["status"] == "started"
+    assert _kobo_opening_decision(host, deep=True)["status"] == "manual_only"
 
 
 def test_report_does_not_expose_private_account_or_credential_identifiers():

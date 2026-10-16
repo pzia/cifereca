@@ -25,6 +25,12 @@ def test_milan_and_fixture_changes_trigger_real_gtk_e2e():
     patterns = e2e_pull_request_patterns()
     included = (
         "src/plugins/youth-catalog/youth_page.py",
+        "src/cifereca/brokers.py",
+        "src/cifereca/core/source_materialization.py",
+        "src/cifereca/core/sync_coordination.py",
+        "src/plugins/youth-detail-enrichment/enrich.py",
+        "src/plugins/constellations/page.py",
+        "src/plugins/recommendations/page.py",
         "src/plugins/youth-source-milan/milan_youth.py",
         "src/plugins/youth-source-milan/cifereca-plugin.json",
         "simulation/youth_sources/pseudo_youth_sources_service.py",

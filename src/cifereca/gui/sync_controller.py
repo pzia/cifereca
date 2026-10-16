@@ -17,7 +17,7 @@ from .action_widgets import AdaptiveActionBar, add_css, clear_box
 from .sync_view import (
     sync_identity_action_label, sync_source_presentation,
     sync_source_row_labels,
-    sync_local_preflight_presentation,
+    sync_local_preflight_presentation, sync_local_reconciliation_presentation,
 )
 from .task_runner import TaskPriority
 from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
@@ -261,6 +261,463 @@ def _refresh_sync_page(self) -> None:
             preflight.connect("clicked", preview_one)
             group.add(row)
             group.add(preview_row)
+
+            # #1345/#1347: explicit, offline, identity-scoped SHA audit.
+            # Unlike a backup or source refresh, it does not require a live
+            # Kobo session, online access or enabled acquisition settings.
+            # The Core broker resolves the credential, never GTK.
+            audit_supported = callable(
+                getattr(broker, "audit_local_reconciliation", None)
+            )
+            audit_button = self.action_button(
+                "Vérifier les fichiers…", "document-properties-symbolic",
+            )
+            audit_button.set_sensitive(audit_supported)
+            audit_button.set_tooltip_text(
+                "Audit SHA local de ce compte (lecture seule, peut être long)"
+                if audit_supported else "Audit local non pris en charge"
+            )
+            row.add_suffix(audit_button)
+            audit_row = Adw.ActionRow()
+            audit_row.set_title("Vérification des fichiers et rapprochements")
+            audit_row.set_subtitle(
+                "Non consulté · aucun téléchargement, déplacement ou suppression"
+            )
+            audit_row.set_subtitle_lines(0)
+
+            def audit_one(
+                button, sid=source.source_id, identity_id=source.identity_id,
+                version=preview_generation, output=audit_row,
+            ):
+                if (
+                    not sync_action_scope_current(self, scope)
+                    or getattr(self.service.current_identity, "identity_id", None)
+                       != identity_id
+                ):
+                    return
+                output.set_subtitle("Inspection locale en cours (lecture seule)…")
+                def still_current():
+                    return (
+                        not getattr(self, "_closed", False)
+                        and getattr(self, "_sync_preview_generation", None) == version
+                        and getattr(self.service.current_identity, "identity_id", None)
+                            == identity_id
+                        and sync_action_scope_current(self, scope)
+                    )
+                def completed(result):
+                    if still_current():
+                        output.set_subtitle(
+                            sync_local_reconciliation_presentation(result)
+                        )
+                def failed(_error):
+                    if still_current():
+                        # Errors may carry absolute paths, rights and secrets.
+                        output.set_subtitle(
+                            "Audit local indisponible. Aucun fichier modifié."
+                        )
+                self.runner.submit(
+                    "Audit local Kobo…",
+                    lambda: broker.audit_local_reconciliation(sid)
+                    if sync_action_scope_current(self, scope) else None,
+                    completed, failed, control=button,
+                    priority=TaskPriority.USER_ACTION, kind="sync-audit",
+                )
+            audit_button.connect("clicked", audit_one)
+            group.add(audit_row)
+
+            # #1347: this is the *only* GUI entry for confirmed Kobo local
+            # acquisitions. Unlike the advisory local preview above, the
+            # broker prepares a fresh account-bound manifest and one-use token.
+            # No preparation or materialization runs while building this page.
+            download_button = self.action_button(
+                "Télécharger les livres manquants…", "folder-download-symbolic",
+            )
+            can_download = (
+                source.enabled and source.connected and capability
+                and callable(getattr(broker, "prepare_local_materialization", None))
+                and callable(getattr(broker, "materialize_source", None))
+            )
+            download_button.set_sensitive(bool(can_download))
+            download_button.set_tooltip_text(
+                "Préparer puis confirmer le téléchargement de ce compte uniquement"
+                if can_download else
+                "Compte Kobo connecté et capable de téléchargement requis"
+            )
+            stop_download = self.action_button("Annuler le téléchargement", "process-stop-symbolic")
+            stop_download.set_sensitive(False)
+            # Do not add these actions to the existing source row: its
+            # refresh, preview and audit buttons already consume horizontal
+            # space. At 1366px GTK otherwise squeezes the source title into
+            # a one-character column and expands the row to several thousand
+            # pixels, putting even unrelated audit actions off-screen.
+            acquisition_row = Adw.ActionRow()
+            acquisition_row.set_title("Téléchargement local · confirmation obligatoire")
+            acquisition_row.set_subtitle(
+                "Non préparé · aucun fichier téléchargé. Vérifiez d’abord les droits et fichiers."
+            )
+            acquisition_row.set_subtitle_lines(0)
+            acquisition_row.add_suffix(download_button)
+            acquisition_row.add_suffix(stop_download)
+            group.add(acquisition_row)
+            acquisition_state = {"serial": 0, "cancel": None}
+
+            def download_current(expected_identity=source.identity_id, captured_scope=scope):
+                return (
+                    sync_action_scope_current(self, captured_scope)
+                    and getattr(self.service.current_identity, "identity_id", None)
+                        == expected_identity
+                )
+
+            def cancel_download(_button, state=acquisition_state, output=acquisition_row,
+                                current=download_current):
+                active = state["cancel"]
+                if active is not None:
+                    active.set()
+                    _button.set_sensitive(False)
+                    if current():
+                        output.set_subtitle(
+                            "Annulation demandée. Les fichiers déjà terminés sont conservés."
+                        )
+            stop_download.connect("clicked", cancel_download)
+
+            def prepare_download(
+                button, sid=source.source_id, identity_id=source.identity_id,
+                account_label=display_label, output=acquisition_row,
+                stop=stop_download, state=acquisition_state,
+                current=download_current, allowed=bool(can_download),
+            ):
+                if not current() or not allowed or state["cancel"] is not None:
+                    return
+                state["serial"] += 1
+                serial = state["serial"]
+                state["cancel"] = None
+                stop.set_sensitive(False)
+                output.set_subtitle(
+                    "Préparation distante des droits et vérification locale… Aucun téléchargement."
+                )
+
+                def prepared(result):
+                    if not current() or state["serial"] != serial:
+                        return
+                    facts = getattr(result, "facts", None)
+                    if (
+                        getattr(result, "ok", None) is not True
+                        or not isinstance(facts, dict)
+                        or facts.get("status") != "prepared"
+                        or facts.get("requires_explicit_confirmation") is not True
+                        or facts.get("acquisition_authorized") is not False
+                        or facts.get("manifest_refreshed") is not True
+                    ):
+                        output.set_subtitle(
+                            "Préparation refusée : droits, compte ou rapprochements à vérifier. "
+                            "Aucun téléchargement."
+                        )
+                        return
+                    token = facts.get("confirmation_token")
+                    expires = facts.get("expires_in_seconds")
+                    counts = facts.get("counts")
+                    required = (
+                        "already_local_linked", "already_local_verified",
+                        "needs_reconciliation", "candidate_unverified",
+                        "potentially_missing", "attention_required",
+                        "blocked_scope", "blocked_unlinked", "not_downloadable",
+                        "invalid_manifest_items",
+                    )
+                    if (
+                        type(token) is not str or len(token) != 64
+                        or any(char not in "0123456789abcdef" for char in token)
+                        or type(expires) is not int or not 0 < expires <= 600
+                        or not isinstance(counts, dict)
+                        or any(type(counts.get(key)) is not int
+                               or not 0 <= counts[key] <= 1000000 for key in required)
+                    ):
+                        output.set_subtitle(
+                            "Réponse de préparation invalide. Aucun téléchargement."
+                        )
+                        return
+                    linked = counts["already_local_linked"] + counts["already_local_verified"]
+                    missing = counts["potentially_missing"]
+                    uncertain = counts["needs_reconciliation"] + counts["candidate_unverified"]
+                    blocked = sum(counts[key] for key in (
+                        "attention_required", "blocked_scope", "blocked_unlinked",
+                        "not_downloadable", "invalid_manifest_items",
+                    ))
+                    summary = (
+                        f"Compte : {account_label} · déjà locaux : {linked} · "
+                        f"manquants possibles : {missing} · à rapprocher : {uncertain} · "
+                        f"non admissibles : {blocked}."
+                    )
+                    if missing == 0:
+                        output.set_subtitle(summary + " Aucun fichier à télécharger.")
+                        return
+                    output.set_subtitle(summary + " En attente d’une confirmation explicite.")
+                    dialog = Adw.MessageDialog.new(
+                        self, "Confirmer les téléchargements Kobo ?",
+                        summary + "\n\nSeuls les fichiers admissibles de ce compte "
+                        "seront traités. Le manifeste et les preuves locales "
+                        "seront revérifiés sous verrou. Les fichiers déjà "
+                        "acquis sont conservés en cas d'annulation."
+                    )
+                    dialog.add_response("cancel", "Annuler")
+                    dialog.add_response("run", "Télécharger pour ce compte")
+                    dialog.set_response_appearance(
+                        "run", Adw.ResponseAppearance.SUGGESTED,
+                    )
+
+                    def response(_dialog, choice):
+                        if choice != "run" or not current() or state["serial"] != serial:
+                            return
+                        # The token remains in this closure only: no logs,
+                        # widget property or persisted setting may hold it.
+                        from threading import Event
+                        cancellation = Event()
+                        state["cancel"] = cancellation
+                        stop.set_sensitive(True)
+                        output.set_subtitle(
+                            "Téléchargement de ce compte en cours · nombre total inconnu…"
+                        )
+
+                        def work(report):
+                            # No widget access from the worker. Scope is a
+                            # GTK-free identity/page generation predicate.
+                            if cancellation.is_set() or not current():
+                                return None
+
+                            class ScopedControl:
+                                def cancelled(self):
+                                    return cancellation.is_set() or not current()
+
+                                def check_cancelled(self):
+                                    if self.cancelled():
+                                        raise RuntimeError("Acquisition annulée")
+
+                                def report(self, *, current=None, total=None, message=""):
+                                    if self.cancelled():
+                                        return
+                                    if type(current) is int and 0 <= current <= 1000000:
+                                        report(f"Téléchargement Kobo · {current} fichier(s) acquis")
+                                    else:
+                                        report("Téléchargement Kobo en cours…")
+
+                            try:
+                                return broker.materialize_source(
+                                    sid, token, control=ScopedControl(),
+                                )
+                            except Exception:
+                                # TaskRunner records exceptions before its
+                                # callback; redact at the worker boundary.
+                                raise RuntimeError("Téléchargement Kobo indisponible") from None
+
+                        def done(result):
+                            if not current() or state["serial"] != serial:
+                                return
+                            stop.set_sensitive(False)
+                            state["cancel"] = None
+                            if result is None:
+                                output.set_subtitle(
+                                    "Opération interrompue : aucune nouvelle acquisition lancée."
+                                )
+                                return
+                            facts_out = getattr(result, "facts", None)
+                            facts_out = facts_out if isinstance(facts_out, dict) else {}
+                            status = facts_out.get("status")
+                            changed = getattr(result, "changed", None)
+                            if type(changed) is not int or not 0 <= changed <= 1000000:
+                                changed = None
+                            count_label = (
+                                f"{changed} fichier(s) acquis durablement" if changed is not None
+                                else "Nombre de fichiers acquis indéterminé"
+                            )
+                            if getattr(result, "ok", None) is True and status == "success":
+                                output.set_subtitle("Téléchargement terminé · " + count_label + ".")
+                            else:
+                                known_status = {
+                                    "cancelled": "Annulé",
+                                    "partial": "Partiel",
+                                    "blocked": "Bloqué",
+                                    "acquisition_busy": "Verrou occupé",
+                                    "manifest_changed": "Manifeste modifié",
+                                    "preview_changed": "État local modifié",
+                                }.get(status if type(status) is str else None, "Non terminé")
+                                output.set_subtitle(
+                                    known_status + " · " + count_label
+                                    + ". Relancer une préparation avant toute reprise."
+                                )
+                            if facts_out.get("completion_unknown") is True:
+                                output.set_subtitle(
+                                    "Résultat incomplet : vérifier les fichiers avant toute reprise."
+                                )
+                            if changed and current():
+                                self.refresh_library(False)
+
+                        def failed(_exc):
+                            if current() and state["serial"] == serial:
+                                stop.set_sensitive(False)
+                                state["cancel"] = None
+                                output.set_subtitle(
+                                    "Téléchargement indisponible ; vérifier les fichiers "
+                                    "avant de réessayer. Aucun rollback des fichiers acquis."
+                                )
+
+                        self.runner.submit(
+                            "Téléchargement Kobo confirmé…",
+                            work, done, failed, control=button,
+                            priority=TaskPriority.USER_ACTION,
+                            kind="kobo-acquisition", with_progress=True,
+                            origin="user",
+                        )
+                    dialog.connect("response", response)
+                    dialog.present()
+
+                def failed(_error):
+                    if current() and state["serial"] == serial:
+                        output.set_subtitle(
+                            "Préparation indisponible. Aucun téléchargement lancé."
+                        )
+
+                def prepare_work():
+                    if not current():
+                        return None
+                    try:
+                        return broker.prepare_local_materialization(sid)
+                    except Exception:
+                        # Do not leak a provider exception via TaskRunner.
+                        raise RuntimeError("Préparation Kobo indisponible") from None
+
+                self.runner.submit(
+                    "Préparer les acquisitions Kobo…",
+                    prepare_work,
+                    prepared, failed, control=button,
+                    priority=TaskPriority.USER_ACTION,
+                    kind="sync-preflight", origin="user",
+                )
+            download_button.connect("clicked", prepare_download)
+
+            # #1346/#1347: optional source-specific *startup* materialization.
+            # This is an independent preference, never the old global Kobo
+            # toggle. Reading it neither contacts the provider nor prepares a
+            # batch; only a dedicated human click can change it.
+            read_schedule = getattr(broker, "local_materialization_schedule", None)
+            write_schedule = getattr(broker, "set_local_materialization_schedule", None)
+            schedule_mode = "unavailable"
+            if callable(read_schedule) and callable(write_schedule):
+                try:
+                    raw_schedule = read_schedule(source.source_id)
+                    if type(raw_schedule) is str and raw_schedule in {
+                        "manual", "on_start", "not_supported",
+                    }:
+                        schedule_mode = raw_schedule
+                except Exception:
+                    # A plugin might raise an exception containing private
+                    # account names, URLs or tokens. Never echo that exception.
+                    pass
+            schedule_row = Adw.ActionRow()
+            schedule_row.set_title("Téléchargement automatique de ce compte")
+            schedule_row.set_subtitle_lines(0)
+            if schedule_mode == "on_start":
+                schedule_row.set_subtitle(
+                    "Autorisé à l’ouverture pour ce compte uniquement ; "
+                    "pas de minuterie périodique. Les contrôles anti-doublons "
+                    "et les blocages s’appliquent toujours."
+                )
+            elif schedule_mode == "manual":
+                schedule_row.set_subtitle(
+                    "Mode manuel (par défaut) : aucun téléchargement automatique. "
+                    "L’actualisation des notices et droits reste indépendante."
+                )
+            else:
+                schedule_row.set_subtitle(
+                    "Planification indisponible pour ce compte ; "
+                    "aucun téléchargement automatique autorisé depuis cette page."
+                )
+            schedule_button = self.action_button(
+                "Désactiver au démarrage" if schedule_mode == "on_start"
+                else "Autoriser au démarrage…",
+                "preferences-system-symbolic",
+            )
+            schedule_button.set_sensitive(bool(
+                callable(read_schedule) and callable(write_schedule)
+                and (
+                    schedule_mode == "on_start"  # disabling is always possible
+                    or (
+                        schedule_mode == "manual" and source.enabled
+                        and source.connected and capability
+                    )
+                )
+            ))
+            schedule_button.set_tooltip_text(
+                "Ne modifie que la planification de ce compte Kobo. "
+                "Aucun téléchargement n’est lancé par ce bouton."
+            )
+            schedule_row.add_suffix(schedule_button)
+            group.add(schedule_row)
+
+            def schedule_change(
+                button, sid=source.source_id, account_label=display_label,
+                mode=schedule_mode, current=download_current,
+                output=schedule_row,
+            ):
+                if not current() or mode not in {"manual", "on_start"}:
+                    return
+                target = "manual" if mode == "on_start" else "on_start"
+
+                def apply_mode():
+                    # A dialog may have remained open across another edit.
+                    # Check both the scoped UI generation and the persisted
+                    # source value immediately before the attempted mutation.
+                    if not current():
+                        return
+                    try:
+                        if read_schedule(sid) != mode:
+                            if current():
+                                self._refresh_sync_page()
+                            return
+                        updated = write_schedule(sid, target)
+                        if updated != target:
+                            raise ValueError("invalid schedule response")
+                    except Exception:
+                        if current():
+                            self.show_error(
+                                "Planification de ce compte Kobo indisponible.",
+                                "Synchronisation",
+                            )
+                        return
+                    if current():
+                        self._refresh_sync_page()
+
+                if target == "manual":
+                    # A source can be disabled even when disconnected. No
+                    # dialog is needed to revoke an automatic authorization.
+                    apply_mode()
+                    return
+
+                dialog = Adw.MessageDialog.new(
+                    self, "Autoriser les téléchargements au démarrage ?",
+                    f"Compte : {account_label}.\n\n"
+                    "Cette autorisation persistante concerne uniquement ce "
+                    "compte Kobo. À une prochaine ouverture, l’application "
+                    "pourra acquérir automatiquement les fichiers encore "
+                    "manquants et admissibles, sans nouvelle confirmation par "
+                    "livre. Le volume peut être important et des erreurs "
+                    "ADEPT ou des rapprochements incertains peuvent bloquer "
+                    "des acquisitions. Aucun fichier n’est téléchargé maintenant.\n\n"
+                    "Pour conserver les acquisitions manuelles seulement, "
+                    "choisissez Annuler.",
+                )
+                dialog.add_response("cancel", "Annuler")
+                dialog.add_response("confirm", "Autoriser pour ce compte")
+                dialog.set_response_appearance(
+                    "confirm", Adw.ResponseAppearance.SUGGESTED,
+                )
+
+                def response(_dialog, choice):
+                    if choice == "confirm" and current():
+                        apply_mode()
+
+                dialog.connect("response", response)
+                dialog.present()
+
+            schedule_button.connect("clicked", schedule_change)
         else:
             group.add(row)
 
@@ -276,8 +733,23 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             return
         kind = str(event.get("event") or "")
         if kind == "identity_begin":
-            label = f"Synchronisation · {event.get('label') or event.get('identity_id')}…"
+            # Identity IDs are private internal routing keys. If the service
+            # has no user-facing name, do not fall back to the raw ID.
+            identity_label = event.get("label")
+            identity_label = identity_label.strip() if type(identity_label) is str else ""
+            label = f"Synchronisation · {identity_label or 'une identité'}…"
             report(label)
+    def work(report):
+        try:
+            return self.service.opening_sync(
+                progress=lambda event: progress(event, report), deep=deep,
+            )
+        except Exception:
+            # TaskRunner also renders failed worker payloads in global GTK
+            # feedback *before* invoking err(). Never enqueue a raw provider
+            # exception with a bearer URL/path/account ID into that boundary.
+            raise RuntimeError("Synchronisation des bibliothèques indisponible") from None
+
     def ok(summary: dict[str, Any]) -> None:
         if getattr(self, "_closed", False):
             return
@@ -294,14 +766,13 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
     def err(exc: BaseException) -> None:
         if getattr(self, "_closed", False):
             return
-        self.diagnostics.add("SYNC", "opening sync", "error", detail={"error": type(exc).__name__, "message": str(exc)})
+        self.diagnostics.add("SYNC", "opening sync", "error", detail={"reason": "opening_sync_failed"})
         self._render_dashboard()
-        if control is not None: self.show_error(str(exc), "Synchronisation impossible")
+        if control is not None:
+            self.show_error("Synchronisation des bibliothèques indisponible.", "Synchronisation impossible")
     task_label = "Vérification complète de la bibliothèque…" if deep else "Synchronisation des bibliothèques…"
     self.runner.submit(
-        task_label, lambda report: self.service.opening_sync(
-            progress=lambda event: progress(event, report), deep=deep,
-        ), ok, err, control=control,
+        task_label, work, ok, err, control=control,
         priority=TaskPriority.USER_ACTION if control is not None else (TaskPriority.MAINTENANCE if deep else TaskPriority.ACTIVE_LOAN),
         kind="deep-sync" if deep else "opening-sync",
         with_progress=True,
@@ -317,10 +788,12 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
 
 
 def _configure_kobo_backup_timer(self, *, run_now: bool = False) -> None:
-    """0.8.2 compatibility shim: automation runs at application opening only.
+    """Retire the legacy GUI timer without launching a second Kobo batch.
 
-    The historical interval setting remains readable for rollback compatibility,
-    but Paris no longer installs a recurring in-process timer.
+    Opening synchronization has its own Core coordination and acquisition lock.
+    A GUI idle callback must never start another global backup, including
+    after a settings save or a delayed startup event. The interval is retained
+    only for backwards-compatible configuration reads (#1346).
     """
     if getattr(self, "_closed", False):
         return
@@ -330,11 +803,6 @@ def _configure_kobo_backup_timer(self, *, run_now: bool = False) -> None:
         except Exception:
             pass
         self._kobo_backup_timer_id = None
-    if run_now and self.service.kobo_backup_enabled():
-        GLib.idle_add(lambda: (
-            self.run_kobo_backup(False) if not getattr(self, "_closed", False) else None,
-            False,
-        )[1])
 
 
 def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None) -> None:
@@ -369,7 +837,12 @@ def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None
         GLib.idle_add(update_label)
 
     def work() -> dict[str, Any]:
-        return self.service.sync_kobo_backup(progress=progress)
+        try:
+            return self.service.sync_kobo_backup(progress=progress)
+        except Exception:
+            # The global task feedback path prints worker exceptions. A raw
+            # provider failure can contain private delegation URLs or tokens.
+            raise RuntimeError("Synchronisation locale Kobo indisponible") from None
 
     def restore_label() -> None:
         if getattr(self, "_closed", False):
@@ -432,9 +905,9 @@ def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None
             return
         restore_label()
         if manual:
-            self.show_error(str(exc), "Synchronisation Kobo impossible")
+            self.show_error("Synchronisation locale Kobo indisponible.", "Synchronisation Kobo impossible")
         else:
-            self.diagnostics.add("KOBO", "automatic backup task", "error", detail={"error": type(exc).__name__, "message": str(exc)})
+            self.diagnostics.add("KOBO", "automatic backup task", "error", detail={"reason": "kobo_sync_failed"})
     self.runner.submit(
         "Synchronisation locale Kobo…", work, ok, err, control=control,
         priority=TaskPriority.USER_ACTION if manual else TaskPriority.ACTIVE_LOAN, kind="kobo-acquisition",

@@ -22,8 +22,9 @@ def _timestamp_label(value: object) -> str:
         return ""
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return text
+    except (ValueError, OverflowError):
+        # Provider timestamps can contain private URLs or credential data.
+        return ""
     return parsed.strftime("%d/%m/%Y %H:%M")
 
 
@@ -95,6 +96,106 @@ def sync_local_preflight_presentation(result: object) -> str:
         f"{evidence}. Manifeste distant non actualisé ; "
         "aucun téléchargement autorisé depuis cet aperçu."
     )
+
+def sync_local_reconciliation_presentation(result: object) -> str:
+    """Safe UI text derived only from fixed, bounded audit counters.
+
+    Never echo a provider failure, persisted path, case payload or SHA. An
+    audit is proof of local bytes only: it grants no acquisition/repair rights.
+    """
+    facts = getattr(result, "facts", None)
+    if not isinstance(facts, Mapping):
+        return "Audit local indisponible. Aucun fichier modifié."
+    status = facts.get("status")
+    if getattr(result, "ok", False) is not True or status != "audit_only":
+        reasons = {
+            "unknown_source": "Source introuvable.",
+            "not_supported": "Audit réservé aux sources Kobo.",
+            "invalid_source": "Liaison identité-compte incohérente.",
+            "ambiguous_source": "Plusieurs identités revendiquent ce compte : audit bloqué.",
+            "audit_unavailable": "Audit local indisponible.",
+        }
+        return (
+            reasons.get(status, "Audit local indisponible.")
+            if type(status) is str else "Audit local indisponible."
+        ) + " Aucun fichier modifié."
+    if (facts.get("read_only") is not True
+            or facts.get("offline") is not True
+            or facts.get("acquisition_authorized") is not False
+            or type(facts.get("truncated")) is not bool):
+        return "Audit local indisponible. Aucun fichier modifié."
+    allowed = (
+        "backup_rows", "linked_files_verified", "unverified_placements",
+        "missing_or_unlinked", "stored_hash_mismatch",
+        "unproven_catalogue_links", "same_product_different_bytes",
+        "binary_match_groups", "active_entitlements_unmaterialized",
+        "unindexed_regular_file_candidates", "identity_flat_file_candidates",
+    )
+    counts = facts.get("counts")
+    if (not isinstance(counts, Mapping)
+            or any(type(counts.get(key)) is not int or
+                   not 0 <= counts[key] <= 1_000_000 for key in allowed)):
+        return "Audit local indisponible. Aucun fichier modifié."
+    completeness = (
+        "Audit partiel : limites d’inspection atteintes."
+        if facts["truncated"] else "Audit terminé dans les limites prévues."
+    )
+    return (
+        f"Fichiers locaux vérifiés par SHA : {counts['linked_files_verified']} · "
+        f"groupes de doublons binaires : {counts['binary_match_groups']} · "
+        f"empreintes divergentes : {counts['stored_hash_mismatch']}.\n"
+        f"Fichiers non indexés candidats : {counts['unindexed_regular_file_candidates']} · "
+        f"placements incertains : {counts['unverified_placements']} · "
+        f"droits sans artefact confirmé : {counts['active_entitlements_unmaterialized']}.\n"
+        f"{completeness} Aucune réconciliation, acquisition ni suppression autorisée."
+    )
+
+
+def sync_source_phase_summary(source: object) -> str:
+    """Present only Core-enumerated phase states, never provider diagnostics.
+
+    Inventory/rights and local acquisition have different success clocks.
+    A partial acquisition must not inherit an inventory success timestamp.
+    """
+    entries = getattr(source, "phase_states", ())
+    if not isinstance(entries, (tuple, list)) or len(entries) > 8:
+        return ""
+    known = {
+        "idle": "Jamais exécutée", "running": "En cours",
+        "success": "Réussie", "partial": "Partielle",
+        "failed": "Échec", "cancelled": "Annulée",
+        "blocked": "Bloquée", "attention_required": "Action nécessaire",
+        "interrupted": "Interrompue", "unknown": "État inconnu",
+        "not_supported": "Non prise en charge",
+        "materialization_failed": "Indisponible",
+        "source_changed": "Source modifiée",
+        "source_disabled": "Source désactivée",
+        "source_disconnected": "Source déconnectée",
+    }
+    captions = (
+        ("discover_rights", "Notices et droits"),
+        ("materialize", "Téléchargement local"),
+    )
+    parts = []
+    for phase, heading in captions:
+        row = next((
+            value for value in entries
+            if getattr(value, "phase", None) == phase
+        ), None)
+        if row is None:
+            continue
+        raw_status = getattr(row, "status", None)
+        status = known.get(raw_status if type(raw_status) is str else None, "État inconnu")
+        attempt = _timestamp_label(getattr(row, "last_attempt", ""))
+        success = _timestamp_label(getattr(row, "last_success", ""))
+        detail = heading + " : " + status
+        if attempt:
+            detail += " · dernier essai " + attempt
+        if success:
+            detail += " · dernier succès confirmé " + success
+        parts.append(detail)
+    return "\n".join(parts)
+
 
 def _public_sync_provider_slug(source: object) -> str:
     """Bound public plugin ID; never render private connection coordinates."""
@@ -170,7 +271,9 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
     activation = "Activée" if enabled else "Désactivée"
     connection = "Connectée" if connected else "Déconnectée"
 
-    error = str(getattr(source, "error", "") or "").strip()
+    # A provider error is an opaque diagnostic, not safe UI text: it may
+    # contain bearer URLs, filesystem paths, or private account identifiers.
+    error = bool(getattr(source, "error", ""))
     status = str(getattr(source, "status", "") or "idle").strip().casefold()
     last_success = _timestamp_label(getattr(source, "last_success", ""))
     last_attempt = _timestamp_label(getattr(source, "last_attempt", ""))
@@ -182,7 +285,7 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
     elif status == "partial":
         sync_label = "Partielle" + (f" · {last_attempt}" if last_attempt else "")
     elif error or status in {"error", "failed"}:
-        sync_label = "Échec" + (f" · {error}" if error else "")
+        sync_label = "Échec"
     elif last_success:
         sync_label = f"Dernier succès {last_success}"
     elif last_attempt:
@@ -191,12 +294,14 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         sync_label = "Jamais synchronisée"
 
     action_enabled = enabled and connected and capable
-    if not enabled:
+    # Capability is intrinsic to the source: disabling an unsupported
+    # public catalogue must not suggest that enabling it would allow sync.
+    if not capable:
+        disabled_reason = "Cette source ne fournit pas de synchronisation de données."
+    elif not enabled:
         disabled_reason = "Activez cette source pour la synchroniser."
     elif not connected:
         disabled_reason = "Reconnectez ce compte avant de synchroniser."
-    elif not capable:
-        disabled_reason = "Cette source ne fournit pas de synchronisation de données."
     else:
         disabled_reason = ""
 
@@ -205,6 +310,36 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         f"Activation : {activation} · Connexion : {connection}\n"
         f"Synchronisation : {sync_label}"
     )
+    phase_summary = sync_source_phase_summary(source)
+    if phase_summary:
+        summary += "\n" + phase_summary
+    # Explicit scope, independent of provider-supplied free-form metadata.
+    # A manual source sync is not the global opening/acquisition workflow.
+    if capable:
+        capabilities = getattr(source, "sync_capabilities", ())
+        if not isinstance(capabilities, (tuple, list, frozenset)):
+            capabilities = ()
+        phases = []
+        # Stores expose a customer's purchased/owned collection. This is
+        # neither a public-library loan nor a physically downloaded EPUB.
+        store_owned = getattr(source, "provider_id", "") in {"kobo", "numilog"}
+        if "remote_inventory" in capabilities:
+            phases.append(
+                "inventaire des livres achetés"
+                if store_owned else "inventaire distant"
+            )
+        if "entitlements" in capabilities:
+            phases.append(
+                "droits sur les livres possédés"
+                if store_owned else "droits et emprunts"
+            )
+        if phases:
+            summary += "\nPortée de cette source : " + ", ".join(phases) + "."
+        else:
+            summary += "\nPortée de cette source : données en ligne prises en charge."
+        summary += "\nOpération ciblée : ne lance pas la synchronisation globale au démarrage."
+    else:
+        summary += "\nCatalogue public consultable indépendamment de la synchronisation."
     # A Kobo source refresh only updates online metadata. It is deliberately
     # NOT equivalent to the separate opt-in Kobo backup/acquisition operation.
     kobo_notices_only = getattr(source, "provider_id", "") == "kobo"
@@ -217,6 +352,11 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
             )
         else:
             summary += "\nAcquisition locale Kobo : non prise en charge par ce compte."
+    if getattr(source, "provider_id", "") == "numilog":
+        summary += (
+            "\nActualise les livres achetés chez Numilog : aucun emprunt "
+            "de bibliothèque créé et aucun fichier EPUB/ACSM téléchargé."
+        )
     if status in {"partial", "error", "failed"} and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:
@@ -228,6 +368,8 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
         sync_label=sync_label,
         summary=summary,
         action_label=("Mettre à jour les notices Kobo en ligne" if kobo_notices_only
+                      else "Actualiser les livres achetés Numilog"
+                      if getattr(source, "provider_id", "") == "numilog"
                       else f"Synchroniser {label}"),
         action_enabled=action_enabled,
         disabled_reason=disabled_reason,

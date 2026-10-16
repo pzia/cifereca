@@ -288,6 +288,8 @@ def _kobo_manifest_flags_invalid(raw: dict[str, Any]) -> bool:
 def kobo_backup_preview(
     self, credential_id: str, *,
     refresh_manifest: bool = False, verify_local_files: bool = False,
+    _manifest_evidence: tuple[list, int] | None = None,
+    _item_reasons: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Read-only preflight for one Kobo source; never grants acquisition.
 
@@ -316,7 +318,10 @@ def kobo_backup_preview(
 
     stored = self.storage.backup_list("kobo", credential_id)
     previous = {str(row.get("item_id") or ""): row for row in stored}
-    if refresh_manifest:
+    if _manifest_evidence is not None:
+        manifest, upstream_rejected = _manifest_evidence
+        refresh_manifest = True
+    elif refresh_manifest:
         manifest = session.backup_manifest()
         if not isinstance(manifest, list):
             raise ProviderConfigurationError("Manifeste Kobo non conforme")
@@ -445,6 +450,8 @@ def kobo_backup_preview(
                 reason = "potentially_missing"
 
         counts[reason] += 1
+        if _item_reasons is not None:
+            _item_reasons[product_id] = reason
         if len(examples) < 20 and reason not in {
             "already_local_linked", "already_local_verified",
         }:
@@ -492,7 +499,7 @@ def _safe_kobo_opening_decision(raw: Any) -> dict[str, Any] | None:
         return None
     allowed = {
         "disabled", "no_session", "capability_unavailable", "source_disabled",
-        "fresh_cache", "started", "partial", "error",
+        "fresh_cache", "started", "partial", "error", "manual_only",
     }
     status = raw.get("status")
     result: dict[str, Any] = {
@@ -500,7 +507,7 @@ def _safe_kobo_opening_decision(raw: Any) -> dict[str, Any] | None:
         "status": status if type(status) is str and status in allowed else "unknown",
         "persisted_enabled": raw.get("persisted_enabled") is True,
     }
-    for key in ("connected_kobo", "eligible_kobo"):
+    for key in ("connected_kobo", "eligible_kobo", "scheduled_kobo"):
         value = raw.get(key)
         if type(value) is int and 0 <= value <= 1_000_000:
             result[key] = value
@@ -849,7 +856,7 @@ def kobo_unlinked_local_count(self, identity_id: str) -> int:
     return len(paths)
 
 
-def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, cancelled: Callable[[], bool] | None = None, retry_scope_blocked: bool = False) -> dict[str, Any]:
+def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, cancelled: Callable[[], bool] | None = None, retry_scope_blocked: bool = False, confirmed_manifest: list | None = None, source_guard: Callable[[], None] | None = None, item_guard: Callable[[SearchResult, str, str | None], None] | None = None) -> dict[str, Any]:
     """Reconcile the Vault manifest and acquire missing Kobo books locally.
 
     Paris owns the destination and orchestration. Vault Provider API v2.x
@@ -863,6 +870,14 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     states and cross-process serialization remain unchanged. Adept contract v8 remains the preferred local executor;
     existing reconciliation safeguards still prevent duplicate redownloads.
     """
+    # The confirmed broker path already refreshed/validated this exact manifest
+    # under the acquisition lock. Never broaden it with another provider read,
+    # a global catalogue scan, remnant recovery or authoritative pruning.
+    confirmed = confirmed_manifest is not None
+    if confirmed:
+        if credential_id is None or source_guard is None or item_guard is None:
+            raise ProviderConfigurationError("Confirmation de source invalide")
+        source_guard()
     cancellation_latched = False
 
     def cancellation_requested() -> bool:
@@ -894,11 +909,11 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # local catalog/ADEPT probes entirely, and preserve existing artifacts.
     # The normal per-account loop still commits a durable cancelled checkpoint.
     cancelled_before_scan = cancellation_requested()
-    if not cancelled_before_scan:
+    if not cancelled_before_scan and not confirmed:
         self.catalog_scan()
         indexed_kobo_paths = _indexed_kobo_catalog_paths(self)
     else:
-        indexed_kobo_paths = {}
+        indexed_kobo_paths = _indexed_kobo_catalog_paths(self) if confirmed and not cancelled_before_scan else {}
     sessions = [
         session for session in self._sessions.values()
         if session.connected and session.provider_id == "kobo" and session.capabilities.backup
@@ -906,7 +921,11 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     ]
     if credential_id is not None and not sessions:
         raise ProviderConfigurationError("Compte Kobo demandé indisponible ou non connecté")
-    target_dir = self._kobo_backup_target_dir()
+    if confirmed and len(sessions) != 1:
+        raise ProviderConfigurationError("Confirmation de source invalide")
+    target_dir = self._kobo_backup_target_dir(
+        self.identity_for_connection("kobo", credential_id).identity_id
+    ) if confirmed else self._kobo_backup_target_dir()
     target_dirs: dict[str, str] = {}
     preferred = str(self.config.get("kobo_backup.format", "epub") or "epub").lower()
     vault_versions = sorted({
@@ -975,7 +994,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # one plausible artifact is quarantined for verification; several
     # plausible artifacts become an explicit conflict. This prevents the
     # historical ``Title [deadbeef].epub`` duplication loop.
-    if not cancelled_before_scan:
+    if not cancelled_before_scan and not confirmed:
         _recover_local_remnants(self, summary, target_dirs, emit, credential_id=credential_id)
     error_counts: Counter[tuple[str, str, int | None, str]] = Counter()
     error_examples: list[dict[str, Any]] = []
@@ -1075,7 +1094,7 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         checkpoint("manifest_fetch")
         try:
             emit("manifest_fetch", credential_id=session.credential_id, message="Lecture du manifest Kobo-Vault")
-            manifest = session.backup_manifest()
+            manifest = confirmed_manifest if confirmed else session.backup_manifest()
             source_total = len(manifest)
             checkpoint("running")
             summary["manifests_fetched"] += 1
@@ -1126,6 +1145,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             continue
 
         for index, raw in enumerate(manifest):
+            if source_guard is not None:
+                source_guard()
             # Cooperative cancellation is checked strictly BETWEEN items:
             # never abandon an in-flight content write or mark it complete
             # without its durable backup row.
@@ -1207,7 +1228,9 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     item_committed = True
                     continue
 
-                if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, defer_item_event, record_error, logger):
+                if source_guard is not None:
+                    source_guard()
+                if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, defer_item_event, record_error, logger, item_guard=item_guard):
                     abort_all = True
                     item_committed = True
                     break
@@ -1259,7 +1282,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # sync must never make a remote title disappear merely because its
     # manifest could not be observed.  Artifacts/placements/catalog rows are
     # deliberately preserved by Storage.backup_prune_missing().
-    _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit, prunable_credentials=prunable_credentials)
+    if not confirmed:
+        _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit, prunable_credentials=prunable_credentials)
     summary["attempts_saved"] = sum(
         max(0, int(getattr(session, "_cifereca_delegation_attempts_saved", 0))
             - delegation_saved_before.get(id(session), 0))
@@ -1846,7 +1870,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
 
 
 
-def _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, total, summary, emit, record_error, logger):
+def _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, total, summary, emit, record_error, logger, *, item_guard=None):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     summary["attempted"] += 1
@@ -1866,6 +1890,8 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
         if normalizer is None:
             raise ProviderConfigurationError("Kobo provider sans normalisation LibraryItem")
         search_item = normalizer(raw, default_collection="library")
+        if item_guard is not None:
+            item_guard(search_item, product_id, revision_id)
         result = self._execute_kobo_acquisition(search_item, session_target_dir)
         artifact = result.path
         if artifact is None or not artifact.is_file():

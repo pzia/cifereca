@@ -1,5 +1,6 @@
 """Constellations page and contextual action, using public Plugin API only."""
 from collections.abc import Mapping
+from unicodedata import category
 from cifereca.plugin_api import (UiPageContribution, UiActionContribution,
     UiBookDetailPresentation, DetailSection, DetailField, DocumentLink)
 from constellation_view_model import (node_from_row, merge_nodes, neighbours,
@@ -37,24 +38,109 @@ def _attested_cover_url(node) -> str | None:
     """
     try:
         record = getattr(node, "raw", None)
-        if not isinstance(record, Mapping):
-            return None
-        layers = [record]
-        metadata = record.get("metadata")
-        if isinstance(metadata, Mapping):
-            layers.append(metadata)
-            search = metadata.get("search_result")
-            if isinstance(search, Mapping):
-                layers.append(search)
-        for layer in layers:
-            for field in ("cover_url", "thumbnail_url"):
-                if safe := public_url(layer.get(field)):
-                    return safe
     except Exception:
-        # A malformed provider field may carry credentials in the exception.
-        # Keep the detail valid, but omit the untrusted thumbnail.
         return None
+    if not isinstance(record, Mapping):
+        return None
+    layers = [record]
+    try:
+        metadata = record.get("metadata")
+    except Exception:
+        metadata = None
+    if isinstance(metadata, Mapping):
+        layers.append(metadata)
+        try:
+            search = metadata.get("search_result")
+        except Exception:
+            search = None
+        if isinstance(search, Mapping):
+            layers.append(search)
+    for layer in layers:
+        for field in ("cover_url", "thumbnail_url"):
+            try:
+                candidate = layer.get(field)
+                safe = public_url(candidate)
+            except Exception:
+                # A corrupt accessor or hostile value must not mask an
+                # independently attested public thumbnail on another field
+                # or layer, nor leak private provider exception text.
+                continue
+            if safe:
+                return safe
     return None
+
+
+def _attested_bibliography_fields(node) -> tuple[DetailField, ...]:
+    """Project only bibliographic facts of this exact source record.
+
+    Never use merged graph provenance to infer ownership, an edition or a
+    right; inferred period/mood/length and acquisition metadata stay out of
+    the public detail. This is a supplementary projection of the already
+    validated local graph normalizer, not a new resolver or CoreUI renderer.
+    """
+    try:
+        raw = getattr(node, 'raw', None)
+        if not isinstance(raw, Mapping):
+            return ()
+        from constellations import normalize_book
+        model = normalize_book(raw)
+    except Exception:
+        return ()
+
+    fields = []
+
+    def add(key, label, value, kind='copy'):
+        if (
+            type(value) is str and 0 < len(value.strip()) <= 180
+            and not any(category(char) in {'Cc', 'Cf', 'Cs'} for char in value)
+        ):
+            fields.append(DetailField(key, label, value.strip(), kind=kind))
+
+    identifiers = model.identifiers
+    add('isbn', 'ISBN', identifiers.get('isbn'), kind='isbn')
+    add('language', 'Langue', model.language, kind='language')
+    add('publisher', 'Éditeur', model.publisher, kind='all')
+    for index, value in enumerate(model.series[:4]):
+        add(f'series-{index}', 'Série', value, kind='all')
+    for index, value in enumerate(model.formats[:4]):
+        add(f'format-{index}', 'Format', value, kind='all')
+    for index, value in enumerate(model.subjects[:8]):
+        add(f'subject-{index}', 'Sujet', value, kind='subject')
+    return tuple(fields)
+
+
+def _public_detail_text(value, *, limit=180) -> str:
+    """Accept visible, bounded public text without coercing provider objects."""
+    if type(value) is not str:
+        return ''
+    cleaned = value.strip()
+    if (
+        not cleaned or len(cleaned) > limit
+        or any(category(char) in {'Cc', 'Cf', 'Cs'} for char in cleaned)
+    ):
+        return ''
+    return cleaned
+
+
+def _public_detail_values(values, *, limit=32) -> tuple[str, ...]:
+    """Bound lists and isolate malformed source/author/badge values."""
+    if type(values) is str:
+        values = (values,)
+    elif isinstance(values, Mapping) or isinstance(values, str):
+        # A mapping's keys are field names, not attested authors/sources.
+        # A str subclass is similarly not a trusted scalar: iterating it
+        # character by character would manufacture bibliographic values.
+        return ()
+    out = []
+    try:
+        for value in islice(iter(values or ()), limit):
+            cleaned = _public_detail_text(value)
+            if cleaned:
+                out.append(cleaned)
+    except Exception:
+        # Do not stringify or expose arbitrary provider exception messages.
+        pass
+    return tuple(out)
 
 
 def constellation_detail_presentation(node) -> UiBookDetailPresentation:
@@ -63,14 +149,11 @@ def constellation_detail_presentation(node) -> UiBookDetailPresentation:
     The host continues to render its single DetailPanel. The graphed node
     contributes neither an acquisition action nor proof of entitlement.
     """
-    authors = tuple(
-        str(value).strip() for value in tuple(node.book.authors or ())
-        if str(value).strip()
-    )
-    sources = tuple(
-        str(value).strip() for value in tuple(node.sources or ())
-        if str(value).strip()
-    )
+    authors = _public_detail_values(node.book.authors)
+    # A merged constellation may repeat the same attested provider. Keep
+    # provenance values independent, but show each public source only once,
+    # in its original order (as already done in Recommendations).
+    sources = tuple(dict.fromkeys(_public_detail_values(node.sources)))
     sections = []
     if authors:
         sections.append(DetailSection(
@@ -80,6 +163,12 @@ def constellation_detail_presentation(node) -> UiBookDetailPresentation:
                 for index, value in enumerate(authors)
             ), order=10,
         ))
+    metadata_fields = _attested_bibliography_fields(node)
+    if metadata_fields:
+        sections.append(DetailSection(
+            'attested-metadata', 'Métadonnées bibliographiques attestées',
+            metadata_fields, order=15,
+        ))
     if sources:
         sections.append(DetailSection(
             'provenance', 'Provenance',
@@ -88,30 +177,38 @@ def constellation_detail_presentation(node) -> UiBookDetailPresentation:
                 for index, value in enumerate(sources)
             ), order=20,
         ))
+    # Recheck at the final public-model boundary as well as at ingestion:
+    # a transformed, restored or caller-supplied Card is not a URL attestation.
+    notice_url = public_url(node.url)
     links = (
-        (DocumentLink('notice', 'Voir la notice en ligne', node.url),)
-        if node.url else ()
+        (DocumentLink('notice', 'Voir la notice en ligne', notice_url),)
+        if notice_url else ()
     )
     return UiBookDetailPresentation(
-        title=str(node.book.title or ''),
+        title=_public_detail_text(node.book.title, limit=2048),
         subtitle=', '.join(authors),
         thumbnail_url=_attested_cover_url(node),
-        badges=tuple(node.availability or ()),
+        badges=_public_detail_values(node.availability),
         links=links,
         sections=tuple(sections),
     )
 
 
 def neighbour_card_fields(edge):
-    """Read-only presentation, with inferred reasons kept distinguishable."""
+    """Public, bounded neighbour projection; never stringify provider objects.
+
+    The neighbour FlowBox is an alternate path into the same bibliographic
+    content as DetailPanel. It must apply the same text trust boundary and
+    keep deterministic vs inferred reasons distinct without leaking raw data.
+    """
     book = edge.target.book
-    reasons = tuple(str(item) for item in edge.reasons if str(item))
+    reasons = _public_detail_values(edge.reasons)
     certain = tuple(value for value in reasons if not value.startswith('Inféré :'))
     inferred = tuple(value for value in reasons if value.startswith('Inféré :'))
     return {
-        'title': str(book.title or ''),
-        'authors': ', '.join(str(value) for value in book.authors if str(value)),
-        'access': ', '.join(str(value) for value in edge.target.availability if str(value)),
+        'title': _public_detail_text(book.title, limit=2048),
+        'authors': ', '.join(_public_detail_values(book.authors)),
+        'access': ', '.join(_public_detail_values(edge.target.availability)),
         'reason': certain[0] if certain else (inferred[0] if inferred else 'Raison inconnue'),
         'other_reasons': max(0, len(reasons) - 1),
         'inferred': bool(inferred),
@@ -120,7 +217,10 @@ def neighbour_card_fields(edge):
 
 def neighbour_count_label(edges):
     number = len(edges)
-    inferred = sum(any(str(item).startswith('Inféré :') for item in e.reasons) for e in edges)
+    inferred = sum(
+        any(reason.startswith('Inféré :') for reason in _public_detail_values(edge.reasons))
+        for edge in edges
+    )
     return (f"{number} voisin(s) proposé(s) · {inferred} avec un indice inféré"
             if number else "Aucun voisin proposé avec les paramètres actuels")
 
@@ -165,6 +265,8 @@ class View:
         self.plugin, self.host, self.Gtk, self.GLib = plugin, host, Gtk, GLib
         self.nodes, self.local, self.cache = (), (), {}
         self.nav, self.center = Navigation(), None
+        # Scope the visible graph independently of transient GTK dropdown state.
+        self._nodes_identity = ''
         self.origin_book = plugin.pending
         self.origin_identity = plugin.pending_identity
         self.generation, self.task, self.disposed = 0, None, False
@@ -300,6 +402,9 @@ class View:
         if getattr(self, 'disposed', False):
             return
         identity = self.identity_id()
+        # Discard old graph authority as soon as the profile is changed,
+        # even while the next asynchronous graph is still loading.
+        self._nodes_identity = ''
         if not identity:
             self.generation += 1
             if self.task:
@@ -381,6 +486,7 @@ class View:
         if error:
             self.status.set_label(error); return False
         rows, self.local, self.nodes, seed_key, *extra = result
+        self._nodes_identity = identity
         truncated = bool(extra[0]) if extra else False
         rejected = int(extra[1]) if len(extra) > 1 else 0
         self.cache.pop(identity, None)
@@ -469,19 +575,64 @@ class View:
     def visit(self, node):
         if getattr(self, 'disposed', False):
             return
+        # A retained GTK button may still call visit() after graph reload or
+        # identity change. Only a node *object* in the current scoped graph
+        # can be visited: matching ISBN/title/key is not account evidence.
+        if not any(candidate is node for candidate in getattr(self, 'nodes', ())):
+            return
+        graph_identity = getattr(self, '_nodes_identity', None)
+        if graph_identity is not None and (
+            not graph_identity or graph_identity != self.identity_id()
+        ):
+            # load() deliberately invalidates graph scope while async work
+            # runs. Empty scope is not permission to reopen an old book.
+            return
         self.cancel_calculation()
         self.center = node; self.nav.visit(node.key); self.render()
 
     def move(self, offset):
         if getattr(self, 'disposed', False):
             return
-        self.cancel_calculation()
+        graph_identity = getattr(self, '_nodes_identity', None)
+        if graph_identity is not None and (
+            not graph_identity or graph_identity != self.identity_id()
+        ):
+            # A retained back/forward GTK callback cannot revive an old
+            # graph after a profile switch, even before load() runs.
+            return
+        nodes = getattr(self, 'nodes', ())
+        center = getattr(self, 'center', None)
+        if not any(node is center for node in nodes):
+            return
+        previous = self.nav.position
         key = self.nav.move(offset)
-        self.center = next((n for n in self.nodes if n.key == key), self.center)
+        target = next((node for node in nodes if node.key == key), None)
+        if target is None:
+            # A stale history key must not preserve another edition as if it
+            # were a valid neighbour in the current identity's graph.
+            self.nav.position = previous
+            return
+        self.cancel_calculation()
+        self.center = target
         self.render()
 
     def open_book(self):
         if getattr(self, 'disposed', False):
+            return
+        # Never reinterpret the previous account's center as a book in the
+        # currently selected profile while a GTK identity switch settles.
+        graph_identity = getattr(self, '_nodes_identity', None)
+        if graph_identity is not None and (
+            not graph_identity or graph_identity != self.identity_id()
+        ):
+            # load() deliberately invalidates graph scope while async work
+            # runs. Empty scope is not permission to reopen an old book.
+            return
+        # A book retaining the same key after refresh is still not the
+        # selected object from the new graph; forbid a stale center.
+        if graph_identity is not None and not any(
+            node is getattr(self, 'center', None) for node in getattr(self, 'nodes', ())
+        ):
             return
         method = getattr(self.host, 'open_book_detail', None)
         if self.center and callable(method) and method(self.center.book, identity_id=self.identity_id()):
@@ -637,7 +788,9 @@ class View:
             self.neighbours_summary.set_label('Aucun point de départ. Utilisez « Explorer les livres proches » depuis une fiche.')
             self.master.empty_detail(); return
         node = self.center
-        self.heading.set_label('Centre : ' + node.book.title)
+        # The heading is public GTK text too: use the same validated title
+        # already projected by DetailPanel and neighbour cards.
+        self.heading.set_label('Centre : ' + _public_detail_text(node.book.title, limit=2048))
         self.master.show_detail(constellation_detail_presentation(node))
         # A single stable ranking keeps the first exploration comprehensible.
         edges = neighbours(self.nodes, node, mode='Confort', surprise=.25, profile=self.local, limit=12)

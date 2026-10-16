@@ -409,6 +409,7 @@ def main() -> int:
     slow_started = [None]
     d16_original_size = [None]
     sync_progress_check = {}
+    coordination = {}
 
     def save():
         report["duration_seconds"] = round(monotonic() - started, 2)
@@ -433,6 +434,7 @@ def main() -> int:
     def fail(exc):
         if report["status"] != "RUNNING":
             return
+        cleanup_sync_coordination()
         cleanup_constellations()
         cleanup_loan_sync()
         report["status"] = "FAIL"
@@ -1132,19 +1134,115 @@ def main() -> int:
         override(w.service, "adept_return_status_for_loan", lambda loan: {"status": "no_acquisition"})
         override(w.service, "local_placement_for_source", lambda **kw: None)
         sources = [
+            # Read-only local SHA audit remains available for a disconnected,
+            # disabled Kobo account; no remote provider is installed here.
+            SyncSourceRef("p0-kobo-audit", "camille", "kobo", "fictitious-credential",
+                          "Kobo audit hors ligne", enabled=False,
+                          connected=False, status="failed"),
+            *[SyncSourceRef(
+                f"p0-kobo-target-{number}", "camille", "kobo",
+                f"fictitious-target-{number}", f"Kobo ciblé {number}",
+                sync_capabilities=("local_materialization",),
+            ) for number in (1, 2, 3)],
             SyncSourceRef("p0-partial", "camille", "paris", "fictif-a", "Source partielle fictive",
                           status="partial", last_attempt="2026-10-11T12:00:00+00:00",
                           last_success="2026-10-10T12:00:00+00:00"),
             SyncSourceRef("p0-offline", "camille", "paris", "fictif-b", "Source déconnectée fictive",
                           connected=False, status="failed"),
+            SyncSourceRef("p0-public-g", "camille", "gutenberg", "", "Catalogue public",
+                          sync_capable=False, enabled=False),
+            SyncSourceRef("p0-public-b", "camille", "gallica", "", "Catalogue public",
+                          sync_capable=False),
+            SyncSourceRef("p0-paris-one", "camille", "paris", "fictif-c", "Paris homonyme",
+                          status="success", last_success="2026-10-10T12:00:00+00:00",
+                          sync_capabilities=("entitlements",)),
+            SyncSourceRef("p0-paris-two", "camille", "paris", "fictif-d", "Paris homonyme",
+                          status="error", error="Bearer PRIVATE_SYNC_ERROR",
+                          sync_capabilities=("entitlements",)),
         ]
+        f["source_sync_calls"] = []
+        f["library_refresh_calls"] = []
+        override(w, "refresh_library", lambda *args: f["library_refresh_calls"].append(args))
+        def synchronize_one(source_id):
+            from dataclasses import replace
+            assert source_id == "p0-paris-two", "Le clic a ciblé un autre compte"
+            f["source_sync_calls"].append(source_id)
+            sources[-1] = replace(sources[-1], status="success", error="",
+                                  last_success="2026-10-15T12:00:00+00:00")
+            return NS(ok=True, changed=0)
         f["source_queries"] = []
         def read_sources(identity_id):
             assert identity_id == "camille"
             f["source_queries"].append(identity_id)
             return sources
-        sync_broker = NS(sources=read_sources, synchronize=forbidden,
-                         synchronize_source=forbidden, set_enabled=forbidden)
+        f["audit_calls"] = []
+
+        def audit_local_reconciliation(source_id):
+            assert source_id == "p0-kobo-audit"
+            f["audit_calls"].append(source_id)
+            return NS(
+                ok=True, changed=0,
+                facts={
+                    "phase": "reconcile", "status": "audit_only",
+                    "read_only": True, "offline": True,
+                    "acquisition_authorized": False, "truncated": True,
+                    "counts": {
+                        "backup_rows": 4,
+                        "linked_files_verified": 3,
+                        "unverified_placements": 1,
+                        "missing_or_unlinked": 0,
+                        "stored_hash_mismatch": 1,
+                        "unproven_catalogue_links": 0,
+                        "same_product_different_bytes": 0,
+                        "binary_match_groups": 1,
+                        "active_entitlements_unmaterialized": 2,
+                        "unindexed_regular_file_candidates": 1,
+                        "identity_flat_file_candidates": 0,
+                    },
+                },
+            )
+
+        # CoreUI acceptance boundary: real widgets and TaskRunner, synthetic
+        # broker responses only. No provider, file or DRM success is claimed.
+        from threading import Event
+        f["prepare_calls"] = []
+        f["materialize_calls"] = []
+        f["download_release"] = Event()
+        f["download_started"] = Event()
+        def prepare_materialization(source_id):
+            assert source_id == "p0-kobo-target-2", "Préparation sur un autre compte"
+            f["prepare_calls"].append(source_id)
+            counts = dict.fromkeys((
+                "already_local_linked", "already_local_verified",
+                "needs_reconciliation", "candidate_unverified", "potentially_missing",
+                "attention_required", "blocked_scope", "blocked_unlinked",
+                "not_downloadable", "invalid_manifest_items",
+            ), 0)
+            counts.update(already_local_linked=1, potentially_missing=2)
+            return NS(ok=True, changed=0, facts={
+                "status": "prepared", "requires_explicit_confirmation": True,
+                "acquisition_authorized": False, "manifest_refreshed": True,
+                "confirmation_token": f"{len(f['prepare_calls']):064x}",
+                "expires_in_seconds": 600, "counts": counts,
+            })
+        def materialize_one(source_id, token, *, control):
+            assert source_id == "p0-kobo-target-2", "Acquisition sur un autre compte"
+            assert token == f"{len(f['prepare_calls']):064x}"
+            f["materialize_calls"].append(source_id)
+            if len(f["materialize_calls"]) == 1:
+                f["download_started"].set()
+                assert f["download_release"].wait(10), "Annulation GTK absente"
+                assert control.cancelled(), "Le contrôle n'a pas reçu l'annulation"
+                return NS(ok=False, changed=1, facts={"status": "cancelled"})
+            assert not control.cancelled()
+            return NS(ok=True, changed=1, facts={"status": "success"})
+        sync_broker = NS(
+            sources=read_sources, synchronize=forbidden,
+            synchronize_source=synchronize_one, set_enabled=forbidden,
+            audit_local_reconciliation=audit_local_reconciliation,
+            prepare_local_materialization=prepare_materialization,
+            materialize_source=materialize_one,
+        )
         class FixtureManager:
             active = True
             def broker(self, name):
@@ -1245,6 +1343,354 @@ def main() -> int:
         report["checks"]["P0_sync_real_gtk_partial_preserves_last_success_and_identity"] = True
         report["checks"]["P0_sync_real_gtk_disconnected_source_action_disabled"] = True
         capture("03i-sync-partial-last-success-and-offline-source")
+        # #980 acceptance uses the real MainWindow/controller/widgets and
+        # XTEST, with ten synthetic broker rows; no provider/network/DRM.
+        # Ten sources and four additional rows per Kobo account: preview,
+        # audit, manual confirmation and independent on_start consent.
+        assert len(rows) == 26, ("Unexpected GTK sync action-row count", len(rows))
+        schedule_row = next(row for row in rows
+                            if row.get_title() == "Téléchargement automatique de ce compte")
+        assert "Planification indisponible" in schedule_row.get_subtitle()
+        assert not any(isinstance(node, Gtk.Button) and node.get_sensitive()
+                       for node in walk(schedule_row))
+        acquisition_row = next(row for row in rows
+                               if row.get_title() == "Téléchargement local · confirmation obligatoire")
+        assert "Non préparé" in acquisition_row.get_subtitle()
+        assert "aucun fichier téléchargé" in acquisition_row.get_subtitle().lower()
+        # A prior layout put six action buttons on the source ActionRow,
+        # leaving its title one character wide and its height >3700px.
+        # Assert the real allocated height in both GTK viewport widths.
+        kobo_source = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
+        assert 0 < kobo_source.get_height() <= 420, (
+            "Kobo source row vertically collapsed by crowded actions",
+            kobo_source.get_height(),
+        )
+        assert 0 < acquisition_row.get_height() <= 420, (
+            "Kobo confirmation row vertically collapsed by crowded actions",
+            acquisition_row.get_height(),
+        )
+        report["checks"]["P0_kobo_acquisition_controls_keep_source_row_compact"] = True
+        report["checks"]["P0_kobo_acquisition_off_by_default_on_sync_page"] = True
+        for provider in ("gutenberg", "gallica"):
+            row = next(row for row in rows if row.get_title() == f"Catalogue public · {provider}")
+            assert f"Fournisseur : {provider}" in row.get_subtitle()
+            assert "Non prise en charge" in row.get_subtitle()
+            assert "Catalogue public consultable indépendamment" in row.get_subtitle()
+            assert "Échec" not in row.get_subtitle()
+            assert any(isinstance(node, Gtk.Button) and not node.get_sensitive()
+                       and "ne fournit pas de synchronisation" in (node.get_tooltip_text() or "")
+                       for node in walk(row))
+        paris = [next(row for row in rows
+                      if row.get_title() == f"Paris homonyme · paris · connexion {i}/2")
+                 for i in (1, 2)]
+        assert "Dernier succès 10/10/2026 12:00" in paris[0].get_subtitle()
+        assert "Synchronisation : Échec" in paris[1].get_subtitle()
+        for row in paris:
+            assert "Portée de cette source : droits et emprunts." in row.get_subtitle()
+            assert "ne lance pas la synchronisation globale au démarrage" in row.get_subtitle()
+        assert not f["source_sync_calls"] and not f["library_refresh_calls"]
+        visible_text = "\n".join(row.get_title() + row.get_subtitle() for row in rows)
+        assert "PRIVATE_SYNC_ERROR" not in visible_text and "fictif-" not in visible_text
+        report["checks"]["P0_980_seven_sources_homonyms_states_scope_no_implicit_sync"] = True
+        # Bring both homonymous Paris rows into the viewport before a physical
+        # click. Mapping alone does not prove the action is visible on screen.
+        scroll = w._sync_sources_box.get_parent().get_parent()
+        while not isinstance(scroll, Gtk.ScrolledWindow):
+            scroll = scroll.get_parent()
+        f["sync_scroll"] = scroll
+        adjustment = scroll.get_vadjustment()
+        adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+        later(200, sync_homonyms_click)
+
+    def sync_homonyms_click():
+        w = window[0]
+        f = loan_sync_fixture
+        row = next(row for row in walk(w._sync_sources_box)
+                   if isinstance(row, Adw.ActionRow)
+                   and row.get_title() == "Paris homonyme · paris · connexion 2/2")
+        button = next(node for node in walk(row) if isinstance(node, Gtk.Button)
+                      and node.get_tooltip_text() == "Synchroniser Paris homonyme")
+        assert button.get_sensitive() and button.get_mapped()
+        ok, bounds = button.compute_bounds(f["sync_scroll"])
+        assert ok and bounds.get_y() >= 0
+        assert bounds.get_y() + bounds.get_height() <= f["sync_scroll"].get_height()
+        capture("03i2-sync-public-and-paris-homonyms")
+        report["pointer_actions"].append(device[0].click_widget(button))
+        f["source_sync_deadline"] = monotonic() + 6
+        later(100, sync_homonyms_completed)
+
+    def sync_homonyms_completed():
+        w = window[0]
+        f = loan_sync_fixture
+        rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
+        row = next(row for row in rows if row.get_title() == "Paris homonyme · paris · connexion 2/2")
+        if "Dernier succès 15/10/2026 12:00" not in row.get_subtitle():
+            assert monotonic() < f["source_sync_deadline"], "Résultat de synchronisation absent"
+            later(100, sync_homonyms_completed)
+            return
+        assert f["source_sync_calls"] == ["p0-paris-two"]
+        assert f["library_refresh_calls"] == [(False,)]
+        assert not f["mutations"] and w.service.current_identity.identity_id == "camille"
+        assert w.search_controls.state() == f["search_state"]
+        assert w.library_controls.state() == f["library_state"]
+        report["checks"]["P0_980_XTEST_second_homonym_only_and_success_feedback"] = True
+        # A changed GObject subtitle is observable before the next paint.
+        # Capture the successful feedback only after GTK has repainted it.
+        later(200, sync_homonyms_capture_success)
+
+    def sync_homonyms_capture_success():
+        w = window[0]
+        f = loan_sync_fixture
+        row = next(row for row in walk(w._sync_sources_box)
+                   if isinstance(row, Adw.ActionRow)
+                   and row.get_title() == "Paris homonyme · paris · connexion 2/2")
+        assert "Dernier succès 15/10/2026 12:00" in row.get_subtitle()
+        capture("03i3-sync-targeted-success")
+        f["sync_scroll"].get_vadjustment().set_value(0)
+        later(200, loan_sync_audit_click)
+
+    def loan_sync_audit_click():
+        w = window[0]
+        f = loan_sync_fixture
+        rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
+        kobo = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
+        assert "Connexion : Déconnectée" in kobo.get_subtitle()
+        audit = next(
+            button for button in walk(kobo)
+            if isinstance(button, Gtk.Button)
+            and button.get_tooltip_text() == (
+                "Audit SHA local de ce compte (lecture seule, peut être long)"
+            )
+        )
+        assert audit.get_sensitive() and audit.get_mapped()
+        assert not f["audit_calls"] and not f["mutations"]
+        # GTK mapping is NOT on-screen visibility. An extra confirmation row
+        # (P0 #1347) pushed this button to y=2036 on a 900px Xvfb screen;
+        # click_widget then clicked outside the display without invoking the
+        # audit. Scroll the *real* Gtk.ScrolledWindow until the action can be
+        # physically reached. Do not weaken the audit-result assertions.
+        scroll = f["sync_scroll"]
+        assert isinstance(scroll, Gtk.ScrolledWindow)
+        ok, bounds = audit.compute_bounds(scroll)
+        assert ok, "Kobo audit action has no scroll-viewport bounds"
+        top, bottom = bounds.get_y(), bounds.get_y() + bounds.get_height()
+        height = scroll.get_height()
+        assert height > 100 and bottom > top, (top, bottom, height)
+        if top < 4 or bottom > height - 4:
+            attempt = f.get("audit_scroll_attempts", 0) + 1
+            assert attempt <= 5, (
+                "Kobo audit button remained outside visible viewport",
+                top, bottom, height,
+            )
+            f["audit_scroll_attempts"] = attempt
+            adjustment = scroll.get_vadjustment()
+            target = adjustment.get_value() + top - min(80, height / 4)
+            maximum = max(adjustment.get_lower(),
+                          adjustment.get_upper() - adjustment.get_page_size())
+            adjustment.set_value(max(adjustment.get_lower(), min(target, maximum)))
+            later(180, loan_sync_audit_click)
+            return
+        ok, window_bounds = audit.compute_bounds(w)
+        assert ok, "Kobo audit action has no MainWindow bounds"
+        assert 0 <= window_bounds.get_y() and (
+            window_bounds.get_y() + window_bounds.get_height() <= w.get_height()
+        ), "Kobo audit action is outside the displayed window"
+        report["checks"]["P0_kobo_audit_XTEST_target_inside_viewport"] = True
+        report["checks"]["P0_kobo_audit_offline_button_no_implicit_scan"] = True
+        # A physical XTEST action is the sole trigger; rendering the row does
+        # not authorize or start any inspection.
+        report["pointer_actions"].append(device[0].click_widget(audit))
+        f["audit_deadline"] = monotonic() + 6
+        later(100, loan_sync_audit_result)
+
+    def loan_sync_audit_result():
+        w = window[0]
+        f = loan_sync_fixture
+        audit_row = next(
+            row for row in walk(w._sync_sources_box)
+            if isinstance(row, Adw.ActionRow)
+            and row.get_title() == "Vérification des fichiers et rapprochements"
+        )
+        subtitle = audit_row.get_subtitle()
+        if "Fichiers locaux vérifiés par SHA : 3" not in subtitle:
+            assert monotonic() < f["audit_deadline"], (
+                "Le résultat GTK de l'audit Kobo n'est pas apparu"
+            )
+            later(100, loan_sync_audit_result)
+            return
+        assert f["audit_calls"] == ["p0-kobo-audit"]
+        assert "groupes de doublons binaires : 1" in subtitle
+        assert "Audit partiel" in subtitle
+        assert "Aucune réconciliation, acquisition ni suppression autorisée" in subtitle
+        assert "fictitious-credential" not in subtitle
+        assert not f["mutations"] and w.service.current_identity.identity_id == "camille"
+        report["checks"]["P0_kobo_audit_real_gtk_explicit_offline_read_only"] = True
+        report["checks"]["P0_kobo_audit_real_gtk_bounded_redacted_partial_result"] = True
+        capture("03j-kobo-offline-explicit-audit")
+        w.navigate("library")
+        await_route("library", kobo_library_operations)
+
+    def kobo_library_operations():
+        w = window[0]
+        menu = next(node for node in walk(w) if isinstance(node, Gtk.MenuButton)
+                    and node.get_label() == "Opérations…")
+        loan_sync_fixture["operations_menu"] = menu
+        report["pointer_actions"].append(device[0].click_widget(menu))
+        later(180, kobo_library_sync_navigation)
+
+    def kobo_library_sync_navigation():
+        f = loan_sync_fixture
+        popover = f["operations_menu"].get_popover()
+        assert popover.get_mapped()
+        button = next(node for node in walk(popover) if isinstance(node, Gtk.Button)
+                      and node.get_label() == "Gérer la synchronisation Kobo…")
+        assert not f["prepare_calls"] and not f["materialize_calls"]
+        report["pointer_actions"].append(device[0].click_widget(button))
+        await_route("sync", kobo_download_begin)
+
+    def kobo_download_begin():
+        f = loan_sync_fixture
+        w = window[0]
+        assert not f["prepare_calls"] and not f["materialize_calls"]
+        report["checks"]["P0_1347_library_menu_XTEST_navigates_without_acquisition"] = True
+        groups = [node for node in walk(w._sync_sources_box)
+                  if isinstance(node, Adw.PreferencesGroup)]
+        groups = [group for group in groups if any(
+            isinstance(row, Adw.ActionRow) and row.get_title() == "Kobo ciblé 2"
+            for row in walk(group))]
+        assert len(groups) == 1
+        f["download_group"] = groups[0]
+        f["download_row"] = next(row for row in walk(groups[0])
+            if isinstance(row, Adw.ActionRow)
+            and row.get_title() == "Téléchargement local · confirmation obligatoire")
+        assert "Non préparé" in f["download_row"].get_subtitle()
+        f["download_button"] = next(node for node in walk(groups[0])
+            if isinstance(node, Gtk.Button)
+            and getattr(node, "_cifereca_action_label", node.get_label()) == "Télécharger les livres manquants…")
+        f["stop_button"] = next(node for node in walk(groups[0])
+            if isinstance(node, Gtk.Button)
+            and getattr(node, "_cifereca_action_label", node.get_label()) == "Annuler le téléchargement")
+        report["checks"]["P0_1347_library_menu_XTEST_navigates_without_acquisition"] = True
+        f["download_phase"] = "cancel-dialog"
+        kobo_download_prepare_click()
+
+    def kobo_click_visible(button, continuation):
+        # Real allocation, scrolling and physical pointer; mapping alone is
+        # insufficient for the long source list at either viewport width.
+        w = window[0]
+        scroll = loan_sync_fixture["sync_scroll"]
+        ok, bounds = button.compute_bounds(scroll)
+        assert ok
+        top, bottom = bounds.get_y(), bounds.get_y() + bounds.get_height()
+        if top < 4 or bottom > scroll.get_height() - 4:
+            attempts = loan_sync_fixture.get("download_scroll_attempts", 0) + 1
+            loan_sync_fixture["download_scroll_attempts"] = attempts
+            assert attempts <= 6, "Action Kobo toujours hors du viewport"
+            adjustment = scroll.get_vadjustment()
+            maximum = max(adjustment.get_lower(),
+                          adjustment.get_upper() - adjustment.get_page_size())
+            adjustment.set_value(max(adjustment.get_lower(), min(
+                adjustment.get_value() + top - 60, maximum)))
+            later(180, lambda: kobo_click_visible(button, continuation))
+            return
+        loan_sync_fixture["download_scroll_attempts"] = 0
+        ok, bounds = button.compute_bounds(w)
+        assert ok and 0 <= bounds.get_y() and (
+            bounds.get_y() + bounds.get_height() <= w.get_height())
+        assert button.get_sensitive() and button.get_mapped()
+        report["pointer_actions"].append(device[0].click_widget(button))
+        later(120, continuation)
+
+    def kobo_download_prepare_click():
+        f = loan_sync_fixture
+        f["download_deadline"] = monotonic() + 6
+        kobo_click_visible(f["download_button"], kobo_download_dialog)
+
+    def kobo_download_dialog():
+        f = loan_sync_fixture
+        dialogs = [node for node in Gtk.Window.list_toplevels()
+                   if isinstance(node, Adw.MessageDialog) and node.get_visible()
+                   and node.get_heading() == "Confirmer les téléchargements Kobo ?"]
+        if not dialogs:
+            assert monotonic() < f["download_deadline"], "Confirmation Kobo absente"
+            later(100, kobo_download_dialog)
+            return
+        assert len(dialogs) == 1 and dialogs[0].get_mapped()
+        dialog = dialogs[0]
+        f["dialog"] = dialog
+        body = dialog.get_body()
+        assert "Kobo ciblé 2" in body and "déjà locaux : 1" in body
+        assert "manquants possibles : 2" in body
+        assert "fictitious-target" not in body
+        phase = f["download_phase"]
+        if phase == "cancel-dialog":
+            assert not f["materialize_calls"]
+            label = "Annuler"
+            next_step = kobo_download_dialog_cancelled
+        else:
+            label = "Télécharger pour ce compte"
+            next_step = kobo_download_running if phase == "cancel-running" else kobo_download_finished
+        button = next(node for node in walk(dialog) if isinstance(node, Gtk.Button)
+                      and str(node.get_label()).replace("_", "") == label)
+        capture("03k-kobo-explicit-source-confirmation-" + phase)
+        report["pointer_actions"].append(device[0].click_widget(button))
+        f["download_deadline"] = monotonic() + 6
+        later(120, next_step)
+
+    def kobo_download_dialog_cancelled():
+        f = loan_sync_fixture
+        assert not f["dialog"].get_visible() and not f["materialize_calls"]
+        report["checks"]["P0_1347_Kobo_XTEST_prepare_cancel_zero_acquisition"] = True
+        f["download_phase"] = "cancel-running"
+        kobo_download_prepare_click()
+
+    def kobo_download_running():
+        f = loan_sync_fixture
+        if not f["download_started"].is_set():
+            assert monotonic() < f["download_deadline"], "Worker Kobo absent"
+            later(100, kobo_download_running)
+            return
+        assert f["materialize_calls"] == ["p0-kobo-target-2"]
+        kobo_click_visible(f["stop_button"], kobo_download_release)
+
+    def kobo_download_release():
+        f = loan_sync_fixture
+        assert "Annulation demandée" in f["download_row"].get_subtitle()
+        f["download_release"].set()
+        later(120, kobo_download_cancelled)
+
+    def kobo_download_cancelled():
+        f = loan_sync_fixture
+        subtitle = f["download_row"].get_subtitle()
+        if not subtitle.startswith("Annulé ·"):
+            assert monotonic() < f["download_deadline"], "Résultat annulé absent"
+            later(100, kobo_download_cancelled)
+            return
+        assert "1 fichier(s) acquis durablement" in subtitle
+        assert "Relancer une préparation" in subtitle
+        assert not f["stop_button"].get_sensitive()
+        report["checks"]["P0_1347_Kobo_XTEST_cancel_keeps_partial_count"] = True
+        capture("03l-kobo-cancelled-result")
+        f["download_phase"] = "retry"
+        kobo_download_prepare_click()
+
+    def kobo_download_finished():
+        f = loan_sync_fixture
+        subtitle = f["download_row"].get_subtitle()
+        if not subtitle.startswith("Téléchargement terminé ·"):
+            assert monotonic() < f["download_deadline"], "Résultat terminé absent"
+            later(100, kobo_download_finished)
+            return
+        assert "1 fichier(s) acquis durablement" in subtitle
+        assert f["prepare_calls"] == ["p0-kobo-target-2"] * 3
+        assert f["materialize_calls"] == ["p0-kobo-target-2"] * 2
+        assert not f["mutations"] and not f["stop_button"].get_sensitive()
+        report["checks"]["P0_1347_Kobo_XTEST_three_accounts_only_second_confirmed"] = True
+        report["checks"]["P0_1347_Kobo_XTEST_retry_requires_new_preparation"] = True
+        report["kobo_confirmation_scope"] = (
+            "real GTK/TaskRunner/XTEST; three synthetic accounts and observed broker boundary; "
+            "no live provider, file or DRM acquisition claimed")
+        capture("03m-kobo-single-account-completed-result")
         cleanup_loan_sync()
         later(100, continue_baseline_settings)
 
@@ -1253,6 +1699,8 @@ def main() -> int:
         if not f.get("overrides"):
             return
         w = window[0]
+        if f.get("download_release") is not None:
+            f["download_release"].set()
         dialog = f.get("dialog")
         if dialog is not None and dialog.get_visible():
             dialog.close()
@@ -1337,7 +1785,8 @@ def main() -> int:
                 for row in settings_rows(section, Adw.EntryRow)
             ),
             "sync": lambda: any(
-                row.get_title() == "Autoriser les téléchargements Kobo au démarrage"
+                row.get_title() == "Ancien réglage global Kobo (compatibilité)"
+                and "ne lance plus de téléchargements" in row.get_subtitle()
                 for row in settings_rows(section, Adw.ActionRow)
             ),
             "interface": lambda: any(
@@ -1669,8 +2118,169 @@ def main() -> int:
         # footer. Only the provider operation is an offline fixture. Hold it
         # open until GTK has actually displayed the producer's identity text.
         w = window[0]
+        # Earlier baseline identity changes can report the absent synthetic
+        # local provider. Acknowledge that exact offline-fixture notification
+        # physically; never ignore an arbitrary product error or blocked click.
+        dialogs = [node for node in Gtk.Window.list_toplevels()
+                   if isinstance(node, Adw.MessageDialog) and node.get_visible()]
+        if dialogs:
+            assert all(node.get_body() == "Provider non connecté: local" for node in dialogs)
+            button = next(node for node in walk(dialogs[-1])
+                          if isinstance(node, Gtk.Button)
+                          and str(node.get_label()).replace("_", "") == "Fermer")
+            report["pointer_actions"].append(device[0].click_widget(button))
+            report["offline_fixture_notifications_acknowledged"] = report.get("offline_fixture_notifications_acknowledged", 0) + 1
+            later(150, begin_sync_progress_checks)
+            return
         sync_progress_check["original"] = w.service.opening_sync
         start_sync_progress_mode(False)
+
+    def cleanup_sync_coordination():
+        if not coordination.get("overrides"):
+            return
+        w = window[0]
+        for owner, name, existed, original in reversed(coordination["overrides"]):
+            if existed:
+                setattr(owner, name, original)
+            else:
+                delattr(owner, name)
+        coordination["overrides"] = []
+        w.service.identities[:] = coordination["identities"]
+        if not getattr(w, "_closed", False):
+            w._populate_accounts()
+
+    def begin_sync_coordination(task_id, completed):
+        """#981: real GTK/TaskRunner, synthetic producer, real local reads."""
+        w = window[0]
+        coordination.update(identities=list(w.service.identities), overrides=[],
+                            reads=[], renders=[], source_calls=[], measurements=[], errors=[])
+        def override(owner, name, value):
+            coordination["overrides"].append((owner, name, name in vars(owner), vars(owner).get(name)))
+            setattr(owner, name, value)
+        original_read = w.service.library_entries
+        original_render = w._render_library
+        def measured_read(**kwargs):
+            start = monotonic()
+            try:
+                assert kwargs.get("scan") is False
+                return original_read(**kwargs)
+            except BaseException as exc:
+                coordination["errors"].append((type(exc).__name__, kwargs.get("scan")))
+                raise
+            finally:
+                coordination["reads"].append((kwargs.get("identity_id"), (monotonic()-start)*1000))
+        def measured_render(*args, **kwargs):
+            start = monotonic()
+            identity = w.service.current_identity.identity_id
+            try:
+                return original_render(*args, **kwargs)
+            finally:
+                coordination["renders"].append((identity, (monotonic()-start)*1000))
+        override(w.service, "library_entries", measured_read)
+        override(w, "_render_library", measured_render)
+        # Only the provider refresh is synthetic in this no-plugins fixture;
+        # local SQLite reads, identity transitions and GTK rendering stay real.
+        def offline_loans(*, force=False, identity_id=None):
+            assert w.service.identity_by_id(identity_id) is not None
+            return []
+        override(w.service, "refresh_identity_loans", offline_loans)
+        # Distinct source missions must not reuse the automatic global task.
+        for source in ("paris-one", "paris-two"):
+            w.runner.submit("Source Paris fictive", lambda sid=source: coordination["source_calls"].append(sid),
+                            kind="source-sync", origin="user")
+        coordination["task_id"] = task_id
+        coordination["completed"] = completed
+        coordination["deadline"] = monotonic() + 7
+        def sources_ready():
+            if (len(coordination["source_calls"]) != 2
+                    or any(kind != "opening-sync" for _p, _t, kind in w._active_tasks.values())):
+                assert monotonic() < coordination["deadline"]
+                later(60, sources_ready)
+                return
+            select_coordination_identity(1)
+        sources_ready()
+
+    def select_coordination_identity(index):
+        w = window[0]
+        assert w.identity_dropdown.get_sensitive() and w.identity_dropdown.get_mapped()
+        capture("10b-before-profile-selection-" + str(index + 1))
+        report["pointer_actions"].append(device[0].click_widget(w.identity_dropdown))
+        def select():
+            capture("10c-profile-selection-popup-" + str(index + 1))
+            for key in ["Home" if index == 0 else "End", "Return"]:
+                device[0].key(key, True); device[0].key(key, False)
+            later(80, lambda: coordination_identity_ready(index))
+        later(220, select)
+
+    def coordination_identity_ready(index):
+        w = window[0]
+        identity = ("camille", "alex", "p0-zoe")[index]
+        if (w.service.current_identity.identity_id != identity
+                or any(kind != "opening-sync" for _p, _t, kind in w._active_tasks.values())
+                or w._library_refresh_pending
+                or w._library_loaded_generation != w._identity_context_generation):
+            assert monotonic() < coordination["deadline"], (
+                "#981 identity/load timeout", index, w.identity_dropdown.get_selected(),
+                w.service.current_identity.identity_id,
+                [kind for _p, _t, kind in w._active_tasks.values()], w._library_refresh_pending,
+                coordination["errors"],
+            )
+            later(60, lambda: coordination_identity_ready(index))
+            return
+        assert coordination["task_id"] in w._active_tasks, "#981 opening-sync worker disappeared during profile change"
+        assert coordination["opening_calls"] == 1, ("#981 opening-sync coalescing", coordination["opening_calls"])
+        assert sorted(coordination["source_calls"]) == ["paris-one", "paris-two"], ("#981 source-sync isolation", len(coordination["source_calls"]))
+        assert w._library_loaded_generation == w._identity_context_generation, ("#981 loaded generation differs from active identity", w._library_loaded_generation, w._identity_context_generation)
+        assert sum(owner == identity for owner, _ms in coordination["reads"]) == 1, ("#981 unexpected library read count during profile switch", index, sum(owner == identity for owner, _ms in coordination["reads"]))
+        before_reads = len(coordination["reads"])
+        before_render = len(coordination["renders"])
+        controls = w.library_controls.state()
+        for _ in range(3):
+            w.navigate("search"); w.navigate("library")
+        w._restore_navigation_state(w._navigation_state("library"))
+        assert len(coordination["reads"]) == before_reads, "#981 cached navigation reloaded library"
+        assert len(coordination["renders"]) - before_render == 4, "#981 duplicate route/history render"
+        assert w.library_controls.state() == controls
+        assert w.service.current_identity.identity_id == identity
+        report["checks"]["P0_981_cached_navigation_single_render_" + str(index)] = True
+        # An explicit refresh remains an independent operation on this profile.
+        coordination["manual_read_start"] = before_reads
+        w.refresh_library(False, Gtk.Button())
+        later(60, lambda: coordination_manual_done(index))
+
+    def coordination_manual_done(index):
+        w = window[0]
+        if w._library_refresh_pending or w.view_stack.get_transition_running():
+            assert monotonic() < coordination["deadline"], "#981 manual refresh timeout"
+            later(60, lambda: coordination_manual_done(index))
+            return
+        assert len(coordination["reads"]) == coordination["manual_read_start"] + 1, ("#981 manual refresh read count", index, len(coordination["reads"]) - coordination["manual_read_start"])
+        assert coordination["task_id"] in w._active_tasks, "#981 opening-sync worker disappeared during manual refresh"
+        identity = w.service.current_identity.identity_id
+        coordination["measurements"].append({
+            "profile": index + 1,
+            "reads_ms": [round(ms, 3) for owner, ms in coordination["reads"] if owner == identity],
+            "renders_ms": [round(ms, 3) for owner, ms in coordination["renders"] if owner == identity],
+            "cached_route_visits": 3, "history_restores": 1, "explicit_refreshes": 1,
+        })
+        capture("10a-sync-navigation-profile-" + str(index + 1))
+        if index in (1, 2):
+            if index == 1:
+                from cifereca.identities import Identity
+                w.service.identities.append(Identity("p0-zoe", "Zoé fictive", directory_name="p0-zoe"))
+                w._populate_accounts()
+            select_coordination_identity(2 if index == 1 else 0)
+            return
+        report["sync_coordination"] = {
+            "automatic_requests": 5, "automatic_executions": coordination["opening_calls"],
+            "distinct_source_executions": len(coordination["source_calls"]),
+            "profiles": coordination["measurements"],
+            "limits": "Real GTK/local SQLite and rendering; synthetic producer and Paris tasks. No live provider latency, acquisitions or absolute timing gate.",
+        }
+        report["checks"]["P0_981_three_profiles_during_one_coalesced_opening_and_two_source_tasks"] = True
+        completed = coordination["completed"]
+        cleanup_sync_coordination()
+        completed()
 
     def start_sync_progress_mode(deep):
         import threading
@@ -1686,6 +2296,8 @@ def main() -> int:
             sync_progress_check["gate"] = gate
 
             def offline_sync(progress=None, *, deep=False):
+                if not deep:
+                    coordination["opening_calls"] = coordination.get("opening_calls", 0) + 1
                 sync_progress_check["callback"] = progress
                 progress({"event": "identity_begin", "label": "Camille"})
                 assert gate.wait(8), "P0: sync progress fixture was not released"
@@ -1693,6 +2305,9 @@ def main() -> int:
 
             w.service.opening_sync = offline_sync
             w.run_opening_sync(deep=deep)
+            if not deep:
+                for _ in range(4):
+                    w.run_opening_sync()
             await_progress()
 
         def await_progress():
@@ -1712,8 +2327,10 @@ def main() -> int:
                     sync_progress_check["closing_pending_task"] = task_id
                     close_baseline_window()
                 else:
-                    sync_progress_check["gate"].set()
-                    later(60, lambda: await_completion(task_id))
+                    def complete():
+                        sync_progress_check["gate"].set()
+                        later(60, lambda: await_completion(task_id))
+                    begin_sync_coordination(task_id, complete)
                 return
             assert monotonic() < deadline, "P0: identity progress hidden: " + label
             later(60, await_progress)

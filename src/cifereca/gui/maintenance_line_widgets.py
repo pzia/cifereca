@@ -8,7 +8,7 @@ from __future__ import annotations
 from .maintenance_line_progress import MaintenanceLineProgress, MaintenanceLineState
 
 
-def build_maintenance_line(*, Gtk, idle_add, alive):
+def build_maintenance_line(*, Gtk, idle_add, alive, activity_label="Purge"):
     status = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
     label = Gtk.Label(label="Au repos", xalign=1)
     label.set_tooltip_text("État de l’opération")
@@ -37,5 +37,6 @@ def build_maintenance_line(*, Gtk, idle_add, alive):
 
     feedback = MaintenanceLineProgress(
         idle_add=idle_add, render=render, alive=alive,
+        activity_label=activity_label,
     )
     return status, feedback

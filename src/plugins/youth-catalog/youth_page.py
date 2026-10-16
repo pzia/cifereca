@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from itertools import islice
+from math import isfinite
+from unicodedata import category
 import ipaddress
 import re
 from time import perf_counter
@@ -19,7 +22,7 @@ from cifereca.plugin_api import (
     UiBookListEntry,
     UiPageContribution,
 )
-from youth_catalog import (InvalidYouthSourcePage, _extract_page,
+from youth_catalog import (InvalidYouthSourcePage, YouthAgeRange, _extract_page,
                            collection_failure_diagnostic, normalize_isbn,
                            safe_ingest_rejection_categories,
                            source_yield_diagnostic, youth_source_support_snapshot,
@@ -43,6 +46,25 @@ _CANCELLED_BEFORE_REQUEST = object()
 
 def _text(value: object) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def _public_youth_title(book: object) -> str:
+    """One bounded, visible title for list, detail, navigation and search.
+
+    Legacy cache restoration can supply a provider object instead of a title.
+    Its __str__ or unusual Unicode controls must never reach GTK or a host
+    search action, where even a transient value is public.
+    """
+    value = getattr(book, "title", "")
+    if type(value) is not str or not 1 <= len(value) <= 2048:
+        return ""
+    if any(category(char) in {"Cc", "Cf", "Cs"} for char in value):
+        return ""
+    return _text(value)
+
+
+def _public_youth_display_title(book: object) -> str:
+    return _public_youth_title(book) or "Sans titre"
 
 
 def _fold(value: object) -> str:
@@ -146,45 +168,152 @@ def age_text(age_range: object) -> str:
         bounds = f"jusqu’à {hi} ans"
     else:
         bounds = "âge inconnu"
-    kind = KIND_LABELS.get(_fold(getattr(age_range, "age_kind", "")), _text(getattr(age_range, "age_kind", "")) or "Âge")
+    raw_kind = getattr(age_range, "age_kind", "")
+    kind = KIND_LABELS.get(raw_kind if type(raw_kind) is str else "", "Âge")
     return f"{kind} · {bounds}"
 
 
 def age_detail(age_range: object) -> str:
     parts = [age_text(age_range)]
-    source_id = _text(getattr(age_range, "source_id", ""))
-    label = _text(getattr(age_range, "source_label", ""))
+    source_id = public_source_id(getattr(age_range, "source_id", ""))
+    label = _public_age_string(getattr(age_range, "source_label", ""))
     confidence = getattr(age_range, "confidence", None)
     if source_id:
         parts.append(f"source {source_id}")
     if label:
         parts.append(f"« {label} »")
-    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+    if (type(confidence) in (int, float) and isfinite(confidence)
+            and 0 <= confidence <= 1):
         parts.append(f"confiance {round(float(confidence) * 100)} %")
     return " · ".join(parts)
 
 
+def _public_age_string(value: object) -> str:
+    """Only visible, bounded text can document a public age attestation."""
+    if type(value) is not str or len(value) > 180 or any(
+        category(char) in {"Cc", "Cf", "Cs"} for char in value
+    ):
+        return ""
+    return _text(value)
+
+
+def _public_age_ranges(book: object) -> tuple[YouthAgeRange, ...]:
+    """Do not mistake malformed cache iterables for attested age brackets."""
+    raw = getattr(book, "age_ranges", ())
+    if type(raw) not in (list, tuple):
+        return ()
+    attested = []
+    for row in raw[:32]:
+        if type(row) is not YouthAgeRange:
+            continue
+        lo, hi = row.age_min, row.age_max
+        if (type(lo) is not int or not 0 <= lo < 18
+                or (hi is not None and
+                    (type(hi) is not int or not lo <= hi < 18))
+                or type(row.age_kind) is not str
+                or row.age_kind not in {"recommended", "interest", "reading", "publisher", "inferred"}):
+            continue
+        attested.append(row)
+    return tuple(attested)
+
+
+def _public_youth_record_id(value: object) -> str:
+    """Never make arbitrary cached objects or signed URLs public book IDs.
+
+    Real source-local opaque IDs can contain Unicode or punctuation. A URL,
+    query, fragment, bidi control or non-text value is not a safe item identity
+    for a GTK row or BookRef. Missing IDs remain explicitly unverified.
+    """
+    if type(value) is not str or not 1 <= len(value) <= 512:
+        return ""
+    if any(category(char) in {"Cc", "Cf", "Cs"} for char in value):
+        return ""
+    if "://" in value or value.lower().startswith(("http:", "https:")):
+        return ""
+    if any(char in value for char in "=?#&@%;\\<>"):
+        return ""
+    return _text(value)
+
+
 def book_key(book: object) -> str:
-    return f"{_text(getattr(book, 'source_id', 'source'))}:{_text(getattr(book, 'record_id', 'record'))}"
+    source = public_source_id(getattr(book, "source_id", "")) or "source"
+    record = _public_youth_record_id(getattr(book, "record_id", "")) or "record"
+    return f"{source}:{record}"
+
+
+_PUBLIC_YOUTH_IDENTIFIER_KEYS = frozenset({
+    "isbn", "isbn10", "isbn13", "provider", "source_item_id",
+    "doi", "ean", "issn", "oclc", "lccn",
+})
+
+
+def _public_identifier_value(value: object) -> str:
+    """No signed URLs, credentials, provider objects or control bytes in IDs."""
+    if (
+        type(value) is not str or not 1 <= len(value) <= 256
+        or any(not 33 <= ord(char) <= 126 for char in value)
+        or any(char in value for char in "?&#@\\%")
+    ):
+        return ""
+    return value
+
+
+def _safe_book_identifiers(book: object) -> dict[str, str]:
+    """Use only public bibliographic coordinates in detail/host BookRef.
+
+    The source ingest accepts arbitrary identifier keys for its own cache,
+    but a cache key named auth/session/token is not public bibliographic
+    evidence and must not escape through a BookRef or edition detail.
+    """
+    raw = getattr(book, "identifiers", None)
+    if not isinstance(raw, Mapping):
+        return {}
+    try:
+        fields = dict(raw)
+    except Exception:
+        # A custom/restored Mapping may fail iteration or indexed lookup;
+        # its error payload is not an attestation or a public diagnostic.
+        return {}
+    result: dict[str, str] = {}
+    for key, value in fields.items():
+        if type(key) is not str or key not in _PUBLIC_YOUTH_IDENTIFIER_KEYS:
+            continue
+        clean = _public_identifier_value(value)
+        if not clean:
+            continue
+        if key == "provider" and not public_source_id(clean):
+            continue
+        if key in {"isbn", "isbn10", "isbn13"} and not normalize_isbn(clean):
+            continue
+        result[key] = clean
+    return result
 
 
 def book_ref(book: object) -> BookRef:
+    identifiers = _safe_book_identifiers(book)
     return BookRef(
-        book_id=_text(getattr(book, "record_id", "")),
-        title=_text(getattr(book, "title", "")),
-        authors=tuple(getattr(book, "authors", ()) or ()),
-        identifiers=dict(getattr(book, "identifiers", {}) or {}),
+        book_id=_public_youth_record_id(getattr(book, "record_id", "")),
+        title=_public_youth_display_title(book),
+        # BookRef is handed to the host for navigation: apply the same public
+        # author projection as the list and detail before crossing that API.
+        authors=_public_authors(book),
+        identifiers=identifiers,
         metadata={
             "youth_age_ranges": tuple(
                 {
-                    "age_min": getattr(row, "age_min", None),
-                    "age_max": getattr(row, "age_max", None),
-                    "age_kind": getattr(row, "age_kind", ""),
-                    "source_label": getattr(row, "source_label", ""),
-                    "source_id": getattr(row, "source_id", ""),
-                    "confidence": getattr(row, "confidence", None),
+                    "age_min": row.age_min,
+                    "age_max": row.age_max,
+                    "age_kind": row.age_kind,
+                    "source_label": _public_age_string(row.source_label),
+                    "source_id": public_source_id(row.source_id),
+                    "confidence": (
+                        row.confidence
+                        if type(row.confidence) in (int, float)
+                        and isfinite(row.confidence)
+                        and 0 <= row.confidence <= 1 else None
+                    ),
                 }
-                for row in tuple(getattr(book, "age_ranges", ()) or ())
+                for row in _public_age_ranges(book)
             )
         },
     )
@@ -204,7 +333,8 @@ def age_badge(age_range: object) -> str:
         bounds = str(lo)
     else:
         bounds = f"{lo}–{hi}"
-    kind = _fold(getattr(age_range, "age_kind", ""))
+    raw_kind = getattr(age_range, "age_kind", "")
+    kind = raw_kind if type(raw_kind) is str else ""
     prefix = {
         "interest": "Intérêt ",
         "reading": "Lecture ",
@@ -220,25 +350,82 @@ def edition_reference(book: object) -> tuple[str, str, str]:
     Labels are explicit so same-title editions stay distinguishable without
     inferring an edition or merging by author/title.
     """
-    identifiers = getattr(book, "identifiers", {}) or {}
-    if not isinstance(identifiers, Mapping):
-        identifiers = {}
+    identifiers = _safe_book_identifiers(book)
     isbn = normalize_isbn(identifiers.get("isbn"))
     if isbn:
         return "isbn", "ISBN", isbn
-    source = _text(getattr(book, "source_id", ""))
-    local_id = _text(identifiers.get("source_item_id") or getattr(book, "record_id", ""))
+    source = public_source_id(getattr(book, "source_id", ""))
+    # A signed URL or account token is not a source-local edition reference.
+    local_id = identifiers.get("source_item_id") or _public_youth_record_id(
+        getattr(book, "record_id", "")
+    )
     if source and local_id:
         return "source-reference", "Référence source", f"{source}:{local_id}"
     return "", "", ""
 
 
+def _public_youth_scalar(raw: object, *, limit: int = 180) -> str:
+    """Project a single source-attested string without coercing cache objects.
+
+    Scalar display fields are public: never call an upstream __str__ method,
+    accept a str subclass, or propagate Unicode controls or signed metadata.
+    """
+    if type(raw) is not str or not 1 <= len(raw) <= limit:
+        return ""
+    if any(category(char) in {"Cc", "Cf", "Cs"} for char in raw):
+        return ""
+    return _text(raw)
+
+
+def _public_published_year(raw: object) -> str:
+    """Only plausible calendar years, not bools, floats or arbitrary strings."""
+    if type(raw) is int:
+        return str(raw) if 1000 <= raw <= 2199 else ""
+    if type(raw) is str and len(raw) == 4 and raw.isascii() and raw.isdecimal():
+        year = int(raw)
+        return raw if 1000 <= year <= 2199 else ""
+    return ""
+
+
+def _public_youth_values(raw: object, *, limit: int = 32) -> tuple[str, ...]:
+    """Only bounded, visible bibliographic values, never mapping field keys.
+
+    The cache can restore malformed provider metadata. Iterating a mapping
+    would publish internal attribute names as attested authors or sources;
+    a str subclass can be split into characters. Neither is evidence.
+    """
+    if type(raw) is str:
+        raw = (raw,)
+    elif isinstance(raw, (Mapping, str)):
+        return ()
+    values = []
+    try:
+        for value in islice(iter(raw if raw is not None else ()), limit):
+            if type(value) is not str or any(
+                category(char) in {"Cc", "Cf", "Cs"} for char in value
+            ):
+                continue
+            cleaned = _text(value)
+            if 0 < len(cleaned) <= 180:
+                values.append(cleaned)
+    except Exception:
+        # A malformed cache iterable or provider object must not leak its
+        # exception text into a public row or suppress independent values.
+        pass
+    return tuple(values)
+
+
+def _public_authors(book: object) -> tuple[str, ...]:
+    """One shared safe author projection for list and detail."""
+    return _public_youth_values(getattr(book, "authors", ()))
+
+
 def list_entry(book: object) -> UiBookListEntry:
-    ranges = tuple(getattr(book, "age_ranges", ()) or ())
+    ranges = _public_age_ranges(book)
     age_summary = " · ".join(age_text(row) for row in ranges[:2])
-    language = _text(getattr(book, "language", ""))
-    formats = tuple(getattr(book, "formats", ()) or ())
-    source = ", ".join(tuple(getattr(book, "provenance", ()) or ())[:3])
+    language = _public_youth_scalar(getattr(book, "language", ""), limit=32)
+    formats = _public_youth_values(getattr(book, "formats", ()))
+    source = ", ".join(_public_youth_values(getattr(book, "provenance", ()), limit=3))
     _, reference_label, reference_value = edition_reference(book)
     edition = f"{reference_label} {reference_value}" if reference_value else ""
     # Lead with edition evidence: the narrow (~440px) GTK master pane
@@ -247,16 +434,43 @@ def list_entry(book: object) -> UiBookListEntry:
     badge = age_badge(ranges[0]) if ranges else "Âge inconnu"
     return UiBookListEntry(
         key=book_key(book),
-        title=_text(getattr(book, "title", "")),
-        subtitle=", ".join(tuple(getattr(book, "authors", ()) or ())),
+        title=_public_youth_display_title(book),
+        subtitle=", ".join(_public_authors(book)),
         meta=meta,
         badge=badge,
         thumbnail_url=public_url(getattr(book, "cover_url", "")) or None,
     )
 
 
+def _mapped_youth_entries(books) -> tuple[dict[str, object], tuple[UiBookListEntry, ...]]:
+    """Keep every cached notice selectable even when source-local IDs collide.
+
+    A provider may expose two different editions with the same source ID and
+    record ID. The list and detail lookup must agree on one unique *UI* key;
+    synthetic suffixes are never fed back to the provider or book reference.
+    Reserve future raw keys first so an earlier generated suffix cannot
+    overwrite a genuine later record ID.
+    """
+    snapshot = tuple(books)
+    original_keys = tuple(book_key(book) for book in snapshot)
+    reserved = set(original_keys)
+    indexed: dict[str, object] = {}
+    entries = []
+    for index, (book, raw_key) in enumerate(zip(snapshot, original_keys)):
+        key = raw_key
+        if key in indexed:
+            suffix = index
+            key = f"{raw_key}:{suffix}"
+            while key in indexed or key in reserved:
+                suffix += 1
+                key = f"{raw_key}:{suffix}"
+        indexed[key] = book
+        entries.append(replace(list_entry(book), key=key))
+    return indexed, tuple(entries)
+
+
 def detail_presentation(book: object) -> UiBookDetailPresentation:
-    ranges = tuple(getattr(book, "age_ranges", ()) or ())
+    ranges = _public_age_ranges(book)
     age_fields = tuple(
         DetailField(f"age-{index}", KIND_LABELS.get(_fold(getattr(row, "age_kind", "")), "Âge"), age_detail(row))
         for index, row in enumerate(ranges)
@@ -264,56 +478,46 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     if not age_fields:
         age_fields = (DetailField("age-empty", "Âge", "Aucune tranche d’âge attestée en cache."),)
     metadata_fields = []
-    title = _text(getattr(book, "title", ""))
+    title = _public_youth_title(book)
     if title:
         metadata_fields.append(DetailField("title", "Titre", title, kind="title"))
-    authors = tuple(_text(value) for value in (getattr(book, "authors", ()) or ()) if _text(value))
+    authors = _public_authors(book)
     for index, author in enumerate(authors):
         metadata_fields.append(DetailField(f"author-{index}", "Auteur", author, kind="author"))
     reference_id, reference_label, reference_value = edition_reference(book)
     if reference_value:
         metadata_fields.append(DetailField(reference_id, reference_label, reference_value, kind="isbn" if reference_id == "isbn" else "copy"))
-    for index, value in enumerate(tuple(getattr(book, "provenance", ()) or ())):
-        source = _text(value)
-        if source:
-            metadata_fields.append(DetailField(f"source-{index}", "Source", source, kind="copy"))
-    language = _text(getattr(book, "language", ""))
+    for index, source in enumerate(_public_youth_values(getattr(book, "provenance", ()))):
+        metadata_fields.append(DetailField(f"source-{index}", "Source", source, kind="copy"))
+    language = _public_youth_scalar(getattr(book, "language", ""), limit=32)
     if language:
         metadata_fields.append(DetailField("language", "Langue", language, kind="language"))
-    formats = tuple(getattr(book, "formats", ()) or ())
-    for index, value in enumerate(formats):
-        cleaned = _text(value)
-        if cleaned:
-            metadata_fields.append(DetailField(f"format-{index}", "Format", cleaned, kind="all"))
-    book_type = _text(getattr(book, "book_type", ""))
+    formats = _public_youth_values(getattr(book, "formats", ()))
+    for index, cleaned in enumerate(formats):
+        metadata_fields.append(DetailField(f"format-{index}", "Format", cleaned, kind="all"))
+    book_type = _public_youth_scalar(getattr(book, "book_type", ""))
     if book_type:
         metadata_fields.append(DetailField("type", "Type", book_type, kind="all"))
-    themes = tuple(getattr(book, "themes", ()) or ())
-    for index, value in enumerate(themes):
-        cleaned = _text(value)
-        if cleaned:
-            metadata_fields.append(DetailField(f"theme-{index}", "Thème", cleaned, kind="subject"))
-    publishers = tuple(getattr(book, "publishers", ()) or ())
-    for index, value in enumerate(publishers):
-        cleaned = _text(value)
-        if cleaned:
-            metadata_fields.append(DetailField(f"publisher-{index}", "Éditeur", cleaned, kind="all"))
-    published_year = getattr(book, "published_year", None)
+    themes = _public_youth_values(getattr(book, "themes", ()))
+    for index, cleaned in enumerate(themes):
+        metadata_fields.append(DetailField(f"theme-{index}", "Thème", cleaned, kind="subject"))
+    publishers = _public_youth_values(getattr(book, "publishers", ()))
+    for index, cleaned in enumerate(publishers):
+        metadata_fields.append(DetailField(f"publisher-{index}", "Éditeur", cleaned, kind="all"))
+    published_year = _public_published_year(getattr(book, "published_year", None))
     if published_year:
-        metadata_fields.append(DetailField("published-year", "Première publication", str(published_year), kind="copy"))
-    collection = _text(getattr(book, "collection", ""))
+        metadata_fields.append(DetailField("published-year", "Première publication", published_year, kind="copy"))
+    collection = _public_youth_scalar(getattr(book, "collection", ""), limit=240)
     if collection:
         metadata_fields.append(DetailField("collection", "Collection", collection, kind="all"))
-    description = _text(getattr(book, "description", ""))
+    description = _public_youth_scalar(getattr(book, "description", ""), limit=4000)
     if description:
         metadata_fields.append(DetailField("summary", "Résumé éditeur", description, kind="copy"))
-    bibliography_sources = tuple(getattr(book, "bibliography_sources", ()) or ())
-    for index, value in enumerate(bibliography_sources):
-        cleaned = _text(value)
-        if cleaned:
-            metadata_fields.append(DetailField(
-                f"bibliography-source-{index}", "Source bibliographique", cleaned, kind="copy"
-            ))
+    bibliography_sources = _public_youth_values(getattr(book, "bibliography_sources", ()))
+    for index, cleaned in enumerate(bibliography_sources):
+        metadata_fields.append(DetailField(
+            f"bibliography-source-{index}", "Source bibliographique", cleaned, kind="copy"
+        ))
     # An unsafe friendly link must not hide an independently safe notice URL.
     link = (public_url(getattr(book, "friendly_url", ""))
             or public_url(getattr(book, "notice_url", "")))
@@ -322,8 +526,8 @@ def detail_presentation(book: object) -> UiBookDetailPresentation:
     if metadata_fields:
         sections.append(DetailSection("metadata-detail", "Détail", tuple(metadata_fields), order=1000))
     return UiBookDetailPresentation(
-        title=_text(getattr(book, "title", "")),
-        subtitle=", ".join(tuple(getattr(book, "authors", ()) or ())),
+        title=_public_youth_display_title(book),
+        subtitle=", ".join(authors),
         thumbnail_url=public_url(getattr(book, "cover_url", "")) or None,
         badges=tuple(age_text(row) for row in ranges[:3]),
         sections=tuple(sections),
@@ -1143,7 +1347,7 @@ class YouthView:
             self.identity.set_selected(selected)
             if self.identity_id() != identity_id:
                 return False
-        title = _text(getattr(book, "title", ""))
+        title = _public_youth_title(book)
         if title:
             self.query.set_text(title)
         self.render_cached()
@@ -1192,8 +1396,7 @@ class YouthView:
             themes=state.themes,
             include_inferred=state.include_inferred,
         )
-        self.rows = {book_key(book): book for book in books}
-        entries = tuple(list_entry(book) for book in books)
+        self.rows, entries = _mapped_youth_entries(books)
         self.master.show_rows(entries, total_count=len(entries))
         if not entries:
             self.master.set_list_state(
@@ -1228,7 +1431,7 @@ class YouthView:
             refresh_actions()
             return
         presentation = detail_presentation(self.selected_book)
-        title = _text(getattr(self.selected_book, "title", ""))
+        title = _public_youth_title(self.selected_book)
         search = getattr(self.host, "search_books", None)
         if callable(search):
             identity_id = self.identity_id()
@@ -1247,9 +1450,8 @@ class YouthView:
                 ))
             # ISBN is a bibliographic *lookup* only. It does not establish
             # inventory, ownership, availability or a direct notice link.
-            identifiers = getattr(self.selected_book, "identifiers", {})
-            getter = getattr(identifiers, "get", None)
-            raw_isbn = getter("isbn", "") if callable(getter) else ""
+            identifiers = _safe_book_identifiers(self.selected_book)
+            raw_isbn = identifiers.get("isbn", "")
             # The public host bridge can reuse this method without importing
             # the whole Youth module. No normalization is needed when the
             # selected row provides no ISBN mapping.

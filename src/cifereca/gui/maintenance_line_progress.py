@@ -26,10 +26,16 @@ class MaintenanceLineProgress:
         idle_add: Callable[[Callable[[], bool]], object],
         render: Callable[[MaintenanceLineState], None],
         alive: Callable[[], bool] = lambda: True,
+        activity_label: str = "Purge",
     ) -> None:
         self._idle_add = idle_add
         self._render = render
         self._alive = alive
+        # Labels are Core-owned constants; reject plugin-provided free text.
+        self._activity_label = (
+            activity_label if activity_label in ("Purge", "Vérification des couvertures", "Vérification des langues", "Audit des noms", "Renormalisation des noms", "Nettoyage des doublons")
+            else "Traitement"
+        )
         self._lock = Lock()
         self._generation = 0
         self._disposed = False
@@ -97,7 +103,7 @@ class MaintenanceLineProgress:
 
     def running(self, ticket: int) -> None:
         self._publish(
-            MaintenanceLineState("running", "Purge en cours…"),
+            MaintenanceLineState("running", f"{self._activity_label} en cours…"),
             ticket=ticket, phases=("confirmation",),
         )
 
@@ -113,10 +119,10 @@ class MaintenanceLineProgress:
             # 100% is reserved for the success callback, NOT for a report
             # that the plugin may emit before returning a failed result.
             percent = min(99, (current * 100) // total)
-            label = f"Purge en cours · {percent} %"
+            label = f"{self._activity_label} en cours · {percent} %"
             fraction = percent / 100.0
         else:
-            label = "Purge en cours…"
+            label = f"{self._activity_label} en cours…"
             fraction = None
         self._publish(MaintenanceLineState("running", label, fraction), ticket=ticket, phases=("running",))
 

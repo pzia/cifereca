@@ -158,6 +158,47 @@ def test_manual_button_bypasses_even_identical_auto_key(session):
     assert not s.runner._coalesced
 
 
+def test_explicit_user_without_gtk_control_is_not_coalesced(session):
+    """A user's keyboard/headless action is still manual when control=None."""
+    s = session
+    background, bg_entered, bg_gate, bg_calls = s.work()
+    manual, user_entered, user_gate, user_calls = s.work()
+    s.runner.submit(
+        "Background", background, kind="opening-sync",
+        coalesce_key="global:shallow", origin="automatic",
+    )
+    assert bg_entered.wait(3)
+    # No widget is passed: the declared trigger, not widget presence, makes
+    # this a physical user request.
+    s.runner.submit(
+        "Keyboard", manual, kind="opening-sync",
+        coalesce_key="global:shallow", origin="user",
+    )
+    assert user_entered.wait(3)
+    assert bg_calls == user_calls == ["started"]
+    assert s.runner._count == 2 and len(s.runner._coalesced) == 1
+    bg_gate.set()
+    user_gate.set()
+    s.drain_until(lambda: len([e for e in s.events if e[0] == "finished"]) == 2)
+    assert s.runner._count == 0 and not s.runner._coalesced
+
+
+def test_two_explicit_users_without_controls_both_run(session):
+    s = session
+    tasks = [s.work() for _ in range(2)]
+    for work, _, _, _ in tasks:
+        s.runner.submit(
+            "Keyboard", work, kind="opening-sync",
+            coalesce_key="global:shallow", origin="user",
+        )
+    for _, entered, _, _ in tasks:
+        assert entered.wait(3)
+    assert s.runner._count == 2 and not s.runner._coalesced
+    for _, _, gate, _ in tasks:
+        gate.set()
+    s.drain_until(lambda: len([e for e in s.events if e[0] == "finished"]) == 2)
+
+
 def test_result_in_gtk_queue_is_reused_until_delivery(session):
     s = session
     worker, entered, gate, calls = s.work()
@@ -297,3 +338,20 @@ def test_destroyed_gtk_control_cannot_strand_task_reservation(session):
     assert s.runner._count == 0
     assert not s.runner._coalesced
     assert s.queue.empty()
+
+
+def test_gtk_queue_exposes_actual_deliver_callback_not_a_wrapper():
+    """#981/#1741: avoid retaining a reservation behind an unrecognized thunk."""
+    source = (ROOT / "task_runner.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    runner = next(node for node in tree.body
+                  if isinstance(node, ast.ClassDef) and node.name == "TaskRunner")
+    submit = next(node for node in runner.body
+                  if isinstance(node, ast.FunctionDef) and node.name == "submit")
+    done = next(node for node in ast.walk(submit)
+                if isinstance(node, ast.FunctionDef) and node.name == "done")
+    body = ast.unparse(done)
+    assert "GLib.idle_add(deliver)" in body
+    assert "measured_deliver" not in body
+    assert "phase_observer(" in body and "'gtk_delivery_wait'" in body
+    assert "queued_completion_at = gtk_pending_since" in body

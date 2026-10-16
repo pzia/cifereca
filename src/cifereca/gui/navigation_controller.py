@@ -85,9 +85,11 @@ def restore_navigation_state(host: NavigationHost, state: NavigationState | None
         host._show_route(state.route)
         if getattr(host, "_closed", False):
             return
-        if state.route == "library":
-            host._render_library()
-        elif state.route == "search":
+        # _show_route("library") already renders the cached Library with
+        # the restored filters via route_display_controller.show_route().
+        # Rendering again here rebuilt the entire Gtk model twice (#981).
+        # Search has no route-level render and still needs its explicit refresh.
+        if state.route == "search":
             host._render_search_results()
     finally:
         host._restoring_navigation = False

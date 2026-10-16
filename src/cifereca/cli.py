@@ -92,6 +92,17 @@ def main(argv: list[str] | None = None) -> int:
         "--plan", action="store_true",
         help="Joindre un plan de vérifications manuelles, sans modifier ni télécharger de fichiers",
     )
+    reconcile = sub.add_parser(
+        "kobo-reconcile-local", help="Rapprochement Kobo local confirmé, atomique et réversible"
+    )
+    reconcile.add_argument("--credential", required=True)
+    reconcile.add_argument("--identity", help="Refuser une connexion liée à une autre identité")
+    reconcile.add_argument("--account-id", required=True)
+    reconcile.add_argument("--item", required=True)
+    reconcile.add_argument("--sha256", required=True, help="SHA déjà attesté dans le ledger, jamais inféré du titre")
+    reconcile.add_argument("--path", help="Fichier EPUB/PDF dans le dossier de cette identité")
+    reconcile.add_argument("--undo", help="Identifiant opaque du rapprochement à annuler (aperçu par défaut)")
+    reconcile.add_argument("--confirm", help="Token de l’aperçu exact ; son absence interdit toute écriture")
     kobo_preview = sub.add_parser(
         "kobo-resume-preview",
         help="Aperçu en lecture seule des candidats Kobo (aucun téléchargement)",
@@ -201,6 +212,24 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, ensure_ascii=False, indent=2)); return 0
         except Exception as exc:
             print(str(exc), file=sys.stderr); return 1
+
+    # A local repair/preview must not activate plugins, chmod Config, purge
+    # caches or recover a directory migration as a side effect of startup.
+    if a.cmd == "kobo-reconcile-local":
+        from .core.kobo_local_reconciliation import ReconciliationRejected, reconcile_existing_profile
+        try:
+            if a.account and a.account != a.credential:
+                raise ReconciliationRejected("source_scope_mismatch")
+            result = reconcile_existing_profile(
+                credential_id=a.credential, account_id=a.account_id, item_id=a.item,
+                expected_sha256=a.sha256, path=a.path, confirmation=a.confirm,
+                undo_operation=a.undo, identity_id=a.identity,
+            )
+        except Exception as exc:
+            result = {"ok": False, "offline": True, "changed": 0,
+                      "reason": exc.code if isinstance(exc, ReconciliationRejected) else "reconciliation_unavailable"}
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ok"] else 2
 
     core = CiferecaCore.open(diagnostics_enabled=True, diagnostics_level="detailed")
     service = core.library

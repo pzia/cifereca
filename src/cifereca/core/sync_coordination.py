@@ -24,6 +24,11 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
     not prevent the other sources from being synchronized.
     """
     result: dict[str, Any] = {"provider": account.provider_id, "account_id": account.unique_id or "primary"}
+    # The low-level facade is callable without the public broker. Re-evaluate
+    # the same enablement switch under the shared acquisition lock, before
+    # any provider/session request. A corrupt preference must fail closed.
+    if not self.sync_source_enabled(account):
+        return {**result, "status": "skipped", "reason": "source_disabled"}
     session = self._session_for_account(account)
     if not session.connected:
         raise ProviderConfigurationError(f"Provider non connecté: {account.provider_id}")
@@ -44,16 +49,12 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
                 credential_id=account.credential_id,
                 account_id=account.unique_id or None,
             )
+        # A source-level sync is an inventory/rights refresh, not a request
+        # to materialize local files. In particular, Numilog may advertise
+        # direct_download but that capability must not implicitly acquire
+        # every returned EPUB from the generic Sync broker (#1346).
+        # The separate legacy opening/acquisition workflow remains unchanged.
         result["library"] = self._mirror_remote_results(rows, identity_id=account.identity_id)
-        if account.provider_id == "numilog" and session.capabilities.direct_download:
-            acquired = 0
-            for row in rows:
-                if control is not None and callable(getattr(control, "check_cancelled", None)):
-                    control.check_cancelled()
-                outcome = self._acquire_personal_library_item(session, row, account.identity_id)
-                if outcome.get("status") == "complete":
-                    acquired += 1
-            result["acquired"] = acquired
     if deep:
         result["catalog_scan"] = self.catalog_scan()
     return result
@@ -66,7 +67,13 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
         # processes; never wait for the lock on a caller/UI thread.
         with InterProcessLock(acquisition_lock_file()):
             result = self._synchronize_account_source_impl(account, deep=deep, control=control)
-        self._record_action(account.identity_id, "synchronization", "success", provider_id=account.provider_id, facts={"deep": bool(deep)})
+        outcome = "skipped" if result.get("status") == "skipped" else "success"
+        self._record_action(
+            account.identity_id, "synchronization", outcome,
+            provider_id=account.provider_id, facts={
+                "deep": bool(deep), "reason": result.get("reason", ""),
+            },
+        )
         return result
     except LockBusyError as exc:
         self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": "operation_busy"})
@@ -93,20 +100,19 @@ def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None=None, *
 
 
 def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
-    """Passive, safe reason for a Kobo auto-backup decision.
+    """Passive decision: only explicit *source* opt-ins permit acquisition.
 
-    No provider calls: inspect only persisted flag, cached session capabilities,
-    configured account switches, and the existing cache freshness marker.
-    Never expose identity, credential, account, product, title, URL or path.
+    Historical global kobo_backup.enabled remains diagnostic/rollback data,
+    never an authorization to download. Deep inventory scanning cannot
+    silently change an acquisition policy. No provider calls here.
     """
-    enabled = bool(self.kobo_backup_enabled())
+    from .source_materialization_schedule import (
+        kobo_on_start_sessions, on_start_due,
+    )
+    legacy_enabled = self.kobo_backup_enabled() is True
     kobo = [s for s in self._sessions.values() if s.provider_id == "kobo"]
     connected = [s for s in kobo if s.connected]
     capable = [s for s in connected if getattr(s.capabilities, "backup", False)]
-    # Credentials can be shared by several distinct accounts/identities.
-    # A session is eligible only when a configured account is enabled and
-    # belongs to that exact provider/credential pair. Count each account
-    # once, not every cached session or an unrelated provider's switch.
     eligible_accounts = [
         a for a in self.accounts
         if a.provider_id == "kobo"
@@ -117,7 +123,12 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         s for s in capable
         if any(a.credential_id == s.credential_id for a in eligible_accounts)
     ]
-    if not enabled:
+    scheduled = kobo_on_start_sessions(self)
+    scheduled_credentials = {s.credential_id for s in scheduled}
+    scheduled_accounts = [
+        a for a in eligible_accounts if a.credential_id in scheduled_credentials
+    ]
+    if not legacy_enabled and not scheduled:
         reason = "disabled"
     elif not connected:
         reason = "no_session"
@@ -125,12 +136,13 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         reason = "capability_unavailable"
     elif not eligible:
         reason = "source_disabled"
-    elif deep or self._kobo_backup_due():
+    elif not scheduled:
+        reason = "manual_only"
+    elif any(on_start_due(self, account) for account in scheduled_accounts):
         reason = "started"
     else:
         reason = "fresh_cache"
-    # Age alone communicates freshness; avoid exposing a user-specific
-    # account identifier, timestamp string or private storage metadata.
+    # Only age/counts, never user/account identifiers, file paths or tokens.
     raw_last = self.storage.metadata_get("kobo_backup_last_success_at")
     try:
         last = int(raw_last)
@@ -139,10 +151,11 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     except (TypeError, ValueError, OverflowError):
         last_success_age_minutes = None
     return {
-        "status": reason, "persisted_enabled": enabled,
+        "status": reason, "persisted_enabled": legacy_enabled,
         "configured_kobo": len(kobo), "connected_kobo": len(connected),
         "eligible_kobo": len(eligible),
         "eligible_kobo_bindings": len(eligible_accounts),
+        "scheduled_kobo": len(scheduled),
         "interval_minutes": self.kobo_backup_interval_minutes(),
         "last_success_age_minutes": last_success_age_minutes,
         "deep": bool(deep),
@@ -299,46 +312,91 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 )
         emit("identity_end", **summary)
 
+    # Personal store catalog mirroring is INVENTORY ONLY (#1862). Do not
+    # report an automatic local acquisition merely because a provider advertises
+    # direct_download or a mirrored notice is already owned. The old Numilog
+    # bulk-backup path is intentionally disabled until a separate scoped policy.
+    catalog_mirror = {
+        "status": "not_run", "notices_mirrored": 0, "sources_reported": 0,
+        "sources_failed": 0, "sources_blocked": 0,
+        "materialization": {
+            "status": "not_requested", "complete": 0, "unchanged": 0,
+            "skipped": 0, "blocked": 0, "failed": 0, "attention_required": 0,
+        },
+    }
     try:
         mirror = self.mirror_personal_libraries()
-        emit("catalog_mirror", result=mirror)
+        counts = (
+            list(mirror.values()) if isinstance(mirror, dict)
+            and all(type(count) is int and 0 <= count <= 1_000_000
+                    for count in mirror.values())
+            and len(mirror) <= 1_000_000
+            else None
+        )
+        failures = getattr(mirror, "failed_sources", 0)
+        blocked = getattr(mirror, "blocked_sources", 0)
+        if (
+            counts is None or type(failures) is not int
+            or type(blocked) is not int
+            or not 0 <= failures <= 1_000_000
+            or not 0 <= blocked <= 1_000_000
+        ):
+            catalog_mirror["status"] = "unknown"
+        else:
+            catalog_mirror["notices_mirrored"] = min(1_000_000, sum(counts))
+            catalog_mirror["sources_reported"] = len(counts)
+            catalog_mirror["sources_failed"] = failures
+            catalog_mirror["sources_blocked"] = blocked
+            catalog_mirror["status"] = (
+                "partial" if counts and (failures or blocked)
+                else "failed" if failures
+                else "blocked" if blocked
+                else "inventory_only"
+            )
     except Exception as exc:
-        logger.warning("TRACE catalog mirror opening error=%s", exc)
+        # A provider exception may contain a signed ACSM URL or bearer cookie.
+        # The error type and phase are sufficient to explain the failure.
+        catalog_mirror["status"] = "failed"
+        logger.warning("TRACE catalog mirror opening error type=%s",
+                       type(exc).__name__)
+    emit("catalog_mirror", result=catalog_mirror)
 
-    # Kobo owned sync is one global batch because the existing engine already
-    # serializes and reconciles all connected Vault sessions.
-    # Record exactly one sanitized decision per opening, even when skipped.
+    # Inventory/rights above always remain independent of local acquisition.
+    # No legacy global fallback: startup materializes only an explicitly
+    # enabled, unambiguous account under the existing global acquisition lock.
+    from .source_materialization_schedule import (
+        kobo_on_start_sessions, on_start_due, mark_on_start_attempt,
+    )
+    from .kobo_backup import _kobo_checkpoint_key
     kobo_summary: dict[str, Any] | None = None
     kobo_decision = _kobo_opening_decision(self, deep=deep)
-    # Once a v1 per-account checkpoint exists, freshness is isolated per
-    # source. Do not create a competing checkpoint store.
-    eligible_kobo = [
-        session for session in self._sessions.values()
-        if session.connected and session.provider_id == "kobo"
-        and getattr(session.capabilities, "backup", False)
-        and any(account.provider_id == "kobo"
-                and account.credential_id == session.credential_id
-                and self.sync_source_enabled(account)
-                for account in self.accounts)
-    ]
-    from .kobo_backup import _kobo_checkpoint_for, _kobo_checkpoint_key
-    have_per_account_checkpoint = any(
-        _kobo_checkpoint_for(
-            self, self.identity_for_connection("kobo", session.credential_id).identity_id,
-            session.credential_id,
-        ) is not None
-        for session in eligible_kobo
-    )
-    if (not deep and have_per_account_checkpoint and
-            kobo_decision["status"] in {"started", "fresh_cache"}):
-        # Opening-sync already holds the global acquisition lock. Calling the
-        # internal scoped helper must NOT attempt to acquire it a second time.
+    eligible_kobo = kobo_on_start_sessions(self)
+    scheduled_credentials = {session.credential_id for session in eligible_kobo}
+    scheduled_accounts = {
+        account.credential_id: account for account in self.accounts
+        if account.provider_id == "kobo"
+        and account.credential_id in scheduled_credentials
+    }
+    if kobo_decision["status"] in {"started", "fresh_cache"}:
+        # The outer opening-sync already owns the cross-process lock.
+        # The scoped helper is the ONLY automatic materialization path.
         due = [
             session for session in eligible_kobo
-            if self._kobo_backup_account_due(session.credential_id)
+            if on_start_due(self, scheduled_accounts[session.credential_id])
         ]
         executed: list[dict[str, Any]] = []
         for session in due:
+            account = scheduled_accounts[session.credential_id]
+            # Settings/identity bindings may change while an opening task
+            # progresses. A stale planned source never gains authorization.
+            if session.credential_id not in {
+                current.credential_id for current in kobo_on_start_sessions(self)
+            }:
+                executed.append({"status": "failed", "errors": 1, "sources": []})
+                continue
+            if not mark_on_start_attempt(self, account):
+                executed.append({"status": "failed", "errors": 1, "sources": []})
+                continue
             try:
                 executed.append(
                     self._sync_kobo_backup_account_locked(
@@ -347,7 +405,8 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 )
             except Exception as exc:
                 logger.warning(
-                    "TRACE kobo account sync error kind=%s", type(exc).__name__,
+                    "TRACE kobo scheduled account sync error kind=%s",
+                    type(exc).__name__,
                 )
                 executed.append({"status": "failed", "errors": 1, "sources": []})
         metric_keys = (
@@ -359,15 +418,14 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             for key in metric_keys
         }
         due_credentials = {session.credential_id for session in due}
-        cached_keys = set()
-        for session in eligible_kobo:
-            if session.credential_id not in due_credentials:
-                identity_id = self.identity_for_connection(
-                    "kobo", session.credential_id,
-                ).identity_id
-                cached_keys.add(
-                    _kobo_checkpoint_key(identity_id, session.credential_id).rsplit(".", 1)[-1]
-                )
+        cached_keys = {
+            _kobo_checkpoint_key(
+                scheduled_accounts[session.credential_id].identity_id,
+                session.credential_id,
+            ).rsplit(".", 1)[-1]
+            for session in eligible_kobo
+            if session.credential_id not in due_credentials
+        }
         cached_sources = [
             row for row in self.kobo_backup_diagnostic().get("sources", ())
             if row.get("source_id") in cached_keys
@@ -378,7 +436,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             if isinstance(source, dict)
         ] + cached_sources
         states = {str(row.get("status") or "partial") for row in sources}
-        if counters["errors"] or {"aborted", "cancelled", "failed", "partial", "interrupted"} & states:
+        if any(result.get("status") == "error" for result in executed):
+            batch_status = "error"
+        elif counters["errors"] or {"aborted", "cancelled", "failed", "partial", "interrupted"} & states:
             batch_status = "partial"
         elif "attention_required" in states:
             batch_status = "attention_required"
@@ -398,33 +458,14 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             "sources": sources, "skipped_fresh": not bool(due),
         }
         kobo_decision["status"] = (
-            "partial" if batch_status in {"partial", "attention_required", "fresh_cache_partial", "cancelled"}
-            else "fresh_cache" if batch_status == "fresh_cache" else "started"
+            "error" if batch_status == "error"
+            else "partial" if batch_status in {
+                "partial", "attention_required", "fresh_cache_partial", "cancelled",
+            } else "fresh_cache" if batch_status == "fresh_cache" else "started"
         )
-    elif kobo_decision["status"] == "started":
-        try:
-            kobo_summary = self._sync_kobo_backup_locked(progress=progress)
-            if (kobo_summary or {}).get("status") == "error":
-                kobo_decision["status"] = "error"
-            elif (kobo_summary or {}).get("status") in {
-                "partial", "attention_required", "aborted", "failed", "cancelled"
-            } or int((kobo_summary or {}).get("errors", 0) or 0) > 0:
-                kobo_decision["status"] = "partial"
-        except Exception:
-            kobo_summary = {"errors": 1, "status": "error"}
-            kobo_decision["status"] = "error"
-    elif kobo_decision["status"] == "fresh_cache":
-        previous_batch = str(
-            self.storage.metadata_get("kobo_backup_last_batch_status") or ""
-        )
-        kobo_summary = {
-            "errors": 0, "status": "fresh_cache", "skipped_fresh": True
-        }
-        if previous_batch and previous_batch != "complete":
-            kobo_summary.update(
-                status="fresh_cache_partial", last_batch_status=previous_batch
-            )
-            kobo_decision["status"] = "partial"
+    elif kobo_decision["status"] == "manual_only":
+        # A formerly enabled global toggle never licenses new downloads.
+        kobo_summary = {"status": "manual_only", "skipped": True}
     for field in ("manifest_items", "owned", "archived", "downloadable",
                   "candidate_count", "attempted", "downloaded", "pending",
                   "attention_required", "reconcile_required", "errors"):
@@ -447,6 +488,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             "persisted_enabled": kobo_decision["persisted_enabled"] is True,
             "connected_kobo": kobo_decision["connected_kobo"],
             "eligible_kobo": kobo_decision["eligible_kobo"],
+            "scheduled_kobo": kobo_decision["scheduled_kobo"],
             "checked_at": int(time.time()),
         }, sort_keys=True))
     except Exception as exc:
@@ -472,6 +514,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         "started_at": started, "finished_at": int(time.time()), "recovered_interrupted": recovered,
         "expired_realized": expired_before, "identities": summaries, "kobo": kobo_summary, "kobo_decision": kobo_decision, "catalog": catalog,
         "sync_mode": sync_mode, "acsm_cleanup": acsm_cleanup,
+        "catalog_mirror": catalog_mirror,
     }
 
 

@@ -682,7 +682,16 @@ class MainWindow(Adw.ApplicationWindow):
             active_cancel = {"control": None, "ticket": None}
             line_feedback = None
             line_scope = {"active": False, "identity": None, "generation": None}
-            if getattr(info, "id", None) == "core.cache.cleanup":
+            activity_labels = {
+                "core.cache.cleanup": "Purge",
+                "covers.audit": "Vérification des couvertures",
+                "languages.audit": "Vérification des langues",
+                "library.naming.audit": "Audit des noms",
+                "library.naming.repair": "Renormalisation des noms",
+                "library.duplicates.cleanup": "Nettoyage des doublons",
+            }
+            activity_label = activity_labels.get(getattr(info, "id", None))
+            if activity_label is not None:
                 def line_alive(button=run, scope=line_scope):
                     if self._closed or button.get_root() is None:
                         return False
@@ -695,6 +704,7 @@ class MainWindow(Adw.ApplicationWindow):
                     )
                 status_widget, line_feedback = build_maintenance_line(
                     Gtk=Gtk, idle_add=GLib.idle_add, alive=line_alive,
+                    activity_label=activity_label,
                 )
                 row.add_suffix(status_widget)
                 self._maintenance_line_rows.append((line_feedback, active_cancel))
@@ -720,6 +730,22 @@ class MainWindow(Adw.ApplicationWindow):
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
                 destructive = meta.danger_level == "destructive"
+                # Each enabled line owns safe, literal error wording. Never
+                # display provider exceptions, which may contain private paths.
+                preview_error = {
+                    "covers.audit": "Analyse des couvertures impossible.",
+                    "languages.audit": "Analyse des langues impossible.",
+                    "library.naming.audit": "Analyse des noms impossible.",
+                    "library.naming.repair": "Analyse des renommages impossible.",
+                    "library.duplicates.cleanup": "Analyse des doublons impossible.",
+                }.get(getattr(meta, "id", None), "Analyse des caches impossible.")
+                execution_error = {
+                    "covers.audit": "Vérification des couvertures impossible.",
+                    "languages.audit": "Vérification des langues impossible.",
+                    "library.naming.audit": "Audit des noms impossible.",
+                    "library.naming.repair": "Renormalisation des noms impossible.",
+                    "library.duplicates.cleanup": "Nettoyage des doublons impossible.",
+                }.get(getattr(meta, "id", None), "Nettoyage des caches impossible.")
                 context_generation = getattr(self, "_identity_context_generation", None)
                 progress_scope.update(
                     active=True, identity=context.identity_id, generation=context_generation,
@@ -929,7 +955,7 @@ class MainWindow(Adw.ApplicationWindow):
                                 self.show_error(
                                     BUSY_MESSAGE if feedback is not None and isinstance(exc, MaintenanceBusyError)
                                     else CHANGED_MESSAGE if feedback is not None and isinstance(exc, MaintenancePlanChangedError)
-                                    else ("Nettoyage des caches impossible." if feedback is not None else str(exc)),
+                                    else (execution_error if feedback is not None else str(exc)),
                                     meta.title,
                                 )
 
@@ -942,7 +968,7 @@ class MainWindow(Adw.ApplicationWindow):
                                 lambda: execute_maintenance_tool(
                                     service, context, plan, worker_control, destructive=destructive,
                                 ),
-                                "Nettoyage des caches impossible.", worker_control,
+                                execution_error, worker_control,
                             ),
                             completed,
                             failed,
@@ -964,7 +990,7 @@ class MainWindow(Adw.ApplicationWindow):
                     self.show_error(
                         BUSY_MESSAGE if feedback is not None and isinstance(exc, MaintenanceBusyError)
                         else CHANGED_MESSAGE if feedback is not None and isinstance(exc, MaintenancePlanChangedError)
-                        else ("Analyse des caches impossible." if feedback is not None else str(exc)),
+                        else (preview_error if feedback is not None else str(exc)),
                         meta.title,
                     )
 
@@ -976,7 +1002,7 @@ class MainWindow(Adw.ApplicationWindow):
                         lambda: preview_maintenance_tool(
                             service, context, destructive=destructive, control=planning_control,
                         ),
-                        "Analyse des caches impossible.", planning_control,
+                        preview_error, planning_control,
                     ),
                     present_preview,
                     preview_failed,

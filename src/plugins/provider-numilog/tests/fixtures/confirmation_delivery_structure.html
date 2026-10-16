@@ -1,0 +1,27 @@
+<!doctype html>
+<!-- Structural reduction of the page inspected for #1883 on 2026-10-16.
+     All content and coordinates below are invented. No private HTML copied. -->
+<html lang="fr"><body>
+<form method="post" action="/Pages/Commande/ConfirmationPaiement.aspx?ref=FICTIONAL&amp;disp=1">
+  <div class="shopping-cart"><div class="container">
+    <div class="card mp-4"><div class="row">
+      <div><h2>Livre de test entièrement fictif</h2></div>
+      <div class="col-xs-12 col-md-3 mt-5">
+        <a class="btn btn-block btn-checkout3" href="#" onclick="ModalDownload(9001, 1)">Télécharger</a>
+        <a class="btn btn-block btn-option buttonlog" href="/Pages/Compte/readBook.ashx?lid=12&amp;m=download" target="_blank">Autre accès</a>
+      </div>
+    </div></div>
+    <a href="https://www.numilog.com/Pages/Compte/MesLivres.aspx">Bibliothèque</a>
+  </div></div>
+</form>
+<script type="text/javascript">
+const Links = [
+  { ProductId: 9001, IndexExemplaire: 1, DrmTechnlology: 'LCP', link: 'https://lcp.example.invalid/delivery?order=FICTIONAL_LCP' },
+  { ProductId: 9001, IndexExemplaire: 1, DrmTechnlology: 'ADOBE', link: 'https://entrepot2r.numilog.com/fulfillment/URLLink.acsm?action=enterorder&ordersource=Numilog&orderid=FICTIONAL&resid=urn%3Auuid%3Afake&rights=%24copy%230%23ever&gbauthdate=01%2f01%2f2000&dateval=946684800&gblver=4&auth=SYNTHETIC_NOT_A_CREDENTIAL' },
+];
+function ModalDownload(ProductId, IndexExemplaire) {
+  const resultat = Links.filter(element => element.ProductId === ProductId && element.IndexExemplaire === IndexExemplaire);
+  return resultat;
+}
+</script>
+</body></html>

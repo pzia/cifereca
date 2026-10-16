@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 23)
+        self.assertEqual(len(mod.ALL), 24)
 
     def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
         for path in ("src/cifereca/gui/settings_ai_actions.py",
@@ -24,6 +24,21 @@ class SelectionTests(unittest.TestCase):
                      "e2e/llm_settings_probe.py"):
             self.assertEqual(mod.select([path]), mod.LLM, path)
         self.assertTrue(set(mod.LLM).issubset(set(mod.MAINWINDOW)))
+
+    def test_p0_sync_core_changes_select_both_real_source_gtk_baselines(self):
+        for path in (
+            "src/cifereca/brokers.py",
+            "src/cifereca/core/source_materialization.py",
+            "src/cifereca/core/sync_coordination.py",
+        ):
+            self.assertEqual(mod.select([path]), mod.SYNC_CORE, path)
+        self.assertEqual(
+            set(mod.select([
+                "src/cifereca/brokers.py",
+                "src/cifereca/gui/sync_controller.py",
+            ])),
+            set(mod.ALL),
+        )  # Unknown direct GUI owner remains fail-closed to full E2E.
 
     def test_1358_maintenance_safety_selected_at_both_widths(self):
         for path in ("src/cifereca/gui/maintenance_tools.py", "e2e/maintenance_tools_probe.py"):
@@ -58,6 +73,19 @@ class SelectionTests(unittest.TestCase):
                      "simulation/youth_sources/fixture.py"):
             self.assertEqual(mod.select([path]), mod.YOUTH, path)
 
+    def test_1599_detail_plugin_changes_select_gtk_smoke(self):
+        for path in ("src/plugins/constellations/view_model.py",
+                     "src/plugins/recommendations/page.py"):
+            self.assertEqual(mod.select([path]), mod.DETAIL, path)
+        self.assertEqual(
+            mod.select(["src/plugins/youth-detail-enrichment/enrich.py"]),
+            mod.YOUTH,
+        )
+        self.assertEqual(set(mod.select([
+            "src/plugins/constellations/view_model.py",
+            "src/plugins/youth-detail-enrichment/enrich.py",
+        ])), set(mod.DETAIL + mod.YOUTH))
+
     def test_922_filter_ux_in_youth_scope(self):
         self.assertIn("youth-filter-help-1366", mod.select([
             "src/plugins/youth-catalog/youth_page.py",
@@ -73,7 +101,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_local_widget(self):
         self.assertEqual(mod.select(["src/cifereca/gui/book_widgets.py"]),
-                         ("search-filter-p0", "book-detail-1366"))
+                         ("search-filter-p0",) + mod.BOOK_DETAIL)
 
     def test_1269_diagnostics_shared_probe_keeps_transitive_consumers(self):
         self.assertEqual(
@@ -91,12 +119,12 @@ class SelectionTests(unittest.TestCase):
 
     def test_1269_query_model_includes_youth_query_state_consumers(self):
         selected = mod.select(["src/cifereca/gui/query_model.py"])
-        self.assertEqual(set(selected), set(("search-filter-p0", "book-detail-1366") + mod.YOUTH))
+        self.assertEqual(set(selected), set(("search-filter-p0",) + mod.BOOK_DETAIL + mod.YOUTH))
 
     def test_1269_mainwindow_imports_cover_core_youth_diagnostics_navigation(self):
         selected = mod.select(["src/cifereca/gui/main_window.py"])
         self.assertEqual(set(selected), set(mod.MAINWINDOW))
-        self.assertEqual(len(selected), 18)
+        self.assertEqual(len(selected), 19)
         for name in mod.CORE + mod.YOUTH + (
             "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366"
         ):

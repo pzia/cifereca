@@ -2,7 +2,7 @@ from __future__ import annotations
 import ast
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -13,6 +13,7 @@ from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, 
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
 from .task_runtime import TaskBrokerImpl
+from .core.source_materialization import MaterializationPlans
 
 _SYNC_LOG = logging.getLogger("cifereca.sync")
 # The synchronization broker is a public plugin/UI boundary: no exception,
@@ -128,6 +129,7 @@ class AcquisitionBrokerImpl:
 class SynchronizationBrokerImpl:
     service: Any
     _subscribers: list[Callable[[], None]] | None = None
+    _materialization_plans: MaterializationPlans = field(default_factory=MaterializationPlans, repr=False)
 
     def __post_init__(self) -> None:
         if self._subscribers is None:
@@ -147,10 +149,9 @@ class SynchronizationBrokerImpl:
         return "sync.source.enabled." + source_id
 
     def _enabled(self, source_id: str) -> bool:
+        from .core.source_enablement import source_enabled
         raw = self.service.storage.metadata_get(self._preference_key(source_id))
-        if raw is None:
-            return True
-        return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+        return source_enabled(raw)
 
     def _state(self, source_id: str) -> dict[str, Any]:
         key = "sync.source.state." + source_id
@@ -218,10 +219,16 @@ class SynchronizationBrokerImpl:
         self._notify()
 
     def _find_account(self, source_id: str) -> Any:
-        for account in getattr(self.service, "accounts", ()) or ():
-            if self._source_id(account) == source_id:
-                return account
-        raise ValueError(f"unknown sync source: {source_id}")
+        # This is a routing key, not an instruction to pick the first
+        # matching session. Duplicate account bindings must fail closed
+        # before network access or local mutations.
+        matches = [
+            account for account in (getattr(self.service, "accounts", ()) or ())
+            if self._source_id(account) == source_id
+        ]
+        if len(matches) != 1:
+            raise ValueError("ambiguous sync source" if matches else "unknown sync source")
+        return matches[0]
 
     @staticmethod
     def _safe_phase_timestamp(value: Any) -> str:
@@ -293,7 +300,50 @@ class SynchronizationBrokerImpl:
                         # never substitute an inventory clock or fabricate it.
                         last_success=when if status == "success" else "",
                     )
+        explicit = self._materialization_state(self._source_id(account))
+        if explicit and "local_materialization" in sync_caps:
+            status = explicit.get("status")
+            if status == "running":
+                from .core.source_materialization import process_owner
+                if explicit.get("owner") != process_owner():
+                    status = "interrupted"
+            if type(status) is str and status in {"running", "success", "partial", "blocked", "failed", "cancelled", "interrupted",
+                          "materialization_failed", "source_changed", "source_disabled", "source_disconnected"}:
+                materialization = SyncPhaseState(
+                    "materialize", status, self._safe_phase_timestamp(explicit.get("last_attempt")),
+                    self._safe_phase_timestamp(explicit.get("last_success")),
+                )
         return (inventory, materialization, SyncPhaseState("reconcile", "not_supported"))
+
+    def _materialization_state(self, source_id: str) -> dict:
+        raw = self.service.storage.metadata_get("sync.source.materialization." + source_id)
+        if type(raw) is not str or len(raw) > 2048:
+            return {}
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, dict) else {}
+        except (ValueError, RecursionError):
+            return {}
+
+    def _set_materialization_state(self, source_id: str, status: str, attempted_at: str) -> None:
+        previous = self._materialization_state(source_id)
+        state = {"status": status, "last_attempt": attempted_at,
+                 "last_success": attempted_at if status == "success" else
+                 self._safe_phase_timestamp(previous.get("last_success"))}
+        if status == "running":
+            from .core.source_materialization import process_owner
+            state["owner"] = process_owner()
+        self.service.storage.metadata_set("sync.source.materialization." + source_id, json.dumps(state))
+
+    def prepare_local_materialization(self, source_id: str) -> SyncResult:
+        """Explicit fresh rights read and bounded one-use confirmation plan."""
+        from .core.source_materialization import prepare
+        return prepare(self, source_id)
+
+    def materialize_source(self, source_id: str, confirmation_token: str, control: Any = None) -> SyncResult:
+        """Confirm one previously prepared source; never falls back to a batch."""
+        from .core.source_materialization import execute
+        return execute(self, source_id, confirmation_token, control)
 
     def _ref(self, account: Any) -> SyncSourceRef:
         source_id = self._source_id(account)
@@ -344,10 +394,53 @@ class SynchronizationBrokerImpl:
         return tuple(rows)
 
     def set_enabled(self, source_id: str, enabled: bool) -> SyncSourceRef:
+        if type(enabled) is not bool:
+            raise ValueError("invalid source enabled preference")
         account = self._find_account(source_id)
         self.service.storage.metadata_set(self._preference_key(source_id), "1" if enabled else "0")
         self._notify()
         return self._ref(account)
+
+    def local_materialization_schedule(self, source_id: str) -> str:
+        """Read the *materialize* schedule only; inventory uses its own flow.
+
+        Defaults to manual for missing/legacy/malformed preferences, including
+        the old global kobo_backup.enabled switch. Never exposes credentials.
+        """
+        from .core.source_materialization_schedule import policy_key
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            raise ValueError("unknown sync source") from None
+        if account.provider_id != "kobo":
+            return "not_supported"
+        raw = self.service.storage.metadata_get(policy_key(source_id))
+        return "on_start" if raw == "1" else "manual"
+
+    def set_local_materialization_schedule(self, source_id: str, mode: str) -> str:
+        """Explicit, durable, per-source opt-in. No remote operation.
+
+        There is deliberately no periodic option until a real source-owned
+        scheduler exists; no hidden fallback to the old global backup batch.
+        """
+        from .core.source_materialization_schedule import (
+            can_enable_kobo_on_start, policy_key,
+        )
+        if type(mode) is not str or mode not in {"manual", "on_start"}:
+            raise ValueError("unsupported materialization schedule")
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            raise ValueError("unknown sync source") from None
+        if account.provider_id != "kobo":
+            raise ValueError("local materialization not supported")
+        if mode == "on_start" and not can_enable_kobo_on_start(self.service, account):
+            raise ValueError("source not eligible for automatic materialization")
+        self.service.storage.metadata_set(
+            policy_key(source_id), "1" if mode == "on_start" else "0",
+        )
+        self._notify()
+        return mode
 
     def preview_local_materialization(
         self, source_id: str, *, verify_local_files: bool = False,
@@ -440,6 +533,88 @@ class SynchronizationBrokerImpl:
             },
         )
 
+    def audit_local_reconciliation(self, source_id: str) -> SyncResult:
+        """Run the bounded offline Kobo SHA audit for exactly one source (#1345).
+
+        Unlike a refresh/materialization request, this read-only operation is
+        available even while the source is disabled or disconnected. No
+        provider, session, manifest, network or acquisition API is called.
+        Return only allowlisted totals: original audit cases/paths/identifiers
+        must never become a public plugin or GTK payload.
+        """
+        def rejected(reason: str) -> SyncResult:
+            return SyncResult(
+                ok=False, changed=0, warnings=(reason,),
+                facts={"phase": "reconcile", "status": reason,
+                       "read_only": True, "acquisition_authorized": False},
+            )
+
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            return rejected("unknown_source")
+        if getattr(account, "provider_id", None) != "kobo":
+            return rejected("not_supported")
+        credential = getattr(account, "credential_id", None)
+        identity = getattr(account, "identity_id", None)
+        if type(credential) is not str or not credential or type(identity) is not str or not identity:
+            return rejected("invalid_source")
+        try:
+            if self.service.storage.identity_for_connection("kobo", credential) != identity:
+                return rejected("invalid_source")
+        except (AttributeError, KeyError, ValueError, TypeError):
+            return rejected("invalid_source")
+
+        try:
+            from .core.kobo_local_audit import kobo_local_reconciliation_audit
+            raw = kobo_local_reconciliation_audit(
+                self.service, credential_id=credential,
+            )
+        except ValueError as exc:
+            # Ambiguous/stale account ownership must be a public fixed code,
+            # never a credential or path echoed from a provider or database.
+            if str(exc) == "ambiguous_kobo_audit_scope":
+                return rejected("ambiguous_source")
+            return rejected("audit_unavailable")
+        except Exception:
+            return rejected("audit_unavailable")
+
+        allowed = (
+            "backup_rows", "linked_files_verified", "unverified_placements",
+            "missing_or_unlinked", "stored_hash_mismatch",
+            "unproven_catalogue_links", "same_product_different_bytes",
+            "binary_match_groups", "active_entitlements_unmaterialized",
+            "unindexed_regular_file_candidates", "identity_flat_file_candidates",
+        )
+        counts = raw.get("counts") if isinstance(raw, dict) else None
+        accounts = raw.get("accounts") if isinstance(raw, dict) else None
+        if (
+            not isinstance(raw, dict)
+            or raw.get("schema") != "kobo.local.reconciliation.audit/1"
+            or raw.get("scope") != "single_account"
+            or raw.get("offline") is not True
+            or raw.get("read_only") is not True
+            or raw.get("dry_run") is not True
+            or raw.get("downloads_authorized") is not False
+            or raw.get("mutations_authorized") is not False
+            or type(raw.get("truncated")) is not bool
+            or not isinstance(accounts, list) or len(accounts) != 1
+            or not isinstance(accounts[0], dict) or accounts[0].get("account") != "account-1"
+            or not isinstance(counts, dict) or set(counts) != set(allowed)
+            or any(type(counts[name]) is not int or not 0 <= counts[name] <= 1_000_000
+                   for name in allowed)
+        ):
+            return rejected("audit_unavailable")
+        return SyncResult(
+            ok=True, changed=0,
+            facts={
+                "phase": "reconcile", "status": "audit_only",
+                "read_only": True, "acquisition_authorized": False,
+                "offline": True, "truncated": raw["truncated"],
+                "counts": {name: counts[name] for name in allowed},
+            },
+        )
+
     def synchronize_source(self, source_id: str, request: SyncRequest | None = None, control: Any = None) -> SyncResult:
         try:
             account = self._find_account(source_id)
@@ -487,6 +662,18 @@ class SynchronizationBrokerImpl:
         if not self._enabled(source_id):
             return SyncResult(ok=True, changed=0, warnings=("source disabled",),
                               facts={"source_id": source_id, "skipped": True})
+        # GTK rows are only a snapshot. A plugin, CLI client, stale callback
+        # or a session that disconnected after the row was rendered must not
+        # bypass the same connection/capability gates at the broker boundary.
+        # Rechecking the account ref is local and never reconnects or probes
+        # the remote provider. No attempted state is written on rejection.
+        current = _account_ref(self.service, account)
+        if not current.connected:
+            return SyncResult(ok=False, changed=0, warnings=("source disconnected",),
+                              facts={"reason": "source_disconnected"})
+        if not (set(current.capabilities) & {"loans", "personal_library"}):
+            return SyncResult(ok=False, changed=0, warnings=("source sync unsupported",),
+                              facts={"reason": "not_supported"})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         state = self._state(source_id)
         state.update(last_attempt=now, status="running", error="", scope="manual",
@@ -557,7 +744,7 @@ class SynchronizationBrokerImpl:
             if control is not None and callable(getattr(control, "check_cancelled", None)):
                 control.check_cancelled()
             if control is not None and callable(getattr(control, "report", None)):
-                control.report(current=index - 1, total=len(sources), message=f"Synchronisation {source.label}")
+                control.report(current=index - 1, total=len(sources), message="Synchronisation d’une source")
             result = self.synchronize_source(source.source_id, request, control)
             total += result.changed
             warnings.extend(result.warnings)

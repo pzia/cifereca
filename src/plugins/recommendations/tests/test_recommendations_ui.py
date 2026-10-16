@@ -68,6 +68,32 @@ def test_affinity_tooltips_explain_low_high_effect_without_external_docs():
     assert "varie davantage" in _DIVERSITY_TOOLTIP
 
 
+def test_text_filter_finds_every_attested_author_not_just_scalar_author():
+    view = object.__new__(UxRecommendationsView)
+    view._score = SimpleNamespace(get_value=lambda: 0)
+    view.selected_provider_id = lambda: ""
+    view.selected_language_id = lambda: ""
+    needle = ["bob"]
+    view._text = SimpleNamespace(get_text=lambda: needle[0])
+    candidate = SimpleNamespace(
+        item={"title": "Livre", "authors": ["Alice", "Bob"], "author": ""},
+        score=80,
+        sources=(),
+    )
+    assert view._matches(candidate) is True
+    needle[0] = "alice"
+    assert view._matches(candidate) is True
+    needle[0] = "inconnu"
+    assert view._matches(candidate) is False
+
+    # The legacy scalar field still behaves as before.
+    legacy = SimpleNamespace(
+        item={"title": "Livre", "author": "Claire"}, score=80, sources=(),
+    )
+    needle[0] = "claire"
+    assert view._matches(legacy) is True
+
+
 def test_partial_order_keeps_existing_rows_stable():
     view = object.__new__(UxRecommendationsView)
     view._provisional_order = {}

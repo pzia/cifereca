@@ -246,7 +246,7 @@ def test_stats_provenance_and_derived_actions_preserve_counts_and_zero():
     window, events, _diagnostics, styled, render = _window([card])
     render()
     labels = _descendant_labels(window.dashboard_cards.children[0])
-    assert "10 livres locaux · 0 emprunts connus" in labels
+    assert "10 livres locaux · 0 prêts de bibliothèque connus" in labels
     assert "Actions (30 j) : 5 réussies · 5 échouées" in labels
     assert "Sources : Paris, Librairie (à connecter)" in labels
     assert "Profil Adobe : Lié" in labels

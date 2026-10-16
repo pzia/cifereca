@@ -381,3 +381,45 @@ def test_valid_account_scope_still_supports_uuid_and_provider_namespaces():
     assert result["counts"]["candidate_unverified"] == 1
     assert result["manifest_authoritative"] is True
     assert result["acquisition_authorized"] is False
+
+
+@pytest.mark.parametrize("rejections", (
+    ["Bearer PRIVATE_TOKEN"],
+    [None, "https://private.example/?token=SECRET"],
+    {"error": "PRIVATE_TOKEN"},
+    "Bearer PRIVATE_TOKEN",
+    None,
+))
+def test_malformed_upstream_rejection_envelope_never_marks_manifest_authoritative(rejections):
+    """#1346: partial rights evidence cannot be erased by an invalid envelope."""
+    vault = FakeVault([{"product_id": "owned", "downloadable": True}])
+    vault.last_manifest_rejections = rejections
+    session = session_with_vault(vault)
+    try:
+        # Read-only inventory is still available; no acquisition is requested.
+        assert len(session.backup_manifest()) == 1
+        assert vault.manifest_calls == 1 and vault.acquisition_calls == 0
+        expected_count = len(rejections) if type(rejections) in (list, tuple) else 1
+        assert session.backup_manifest_rejection_count == expected_count
+        policy = session.backup_manifest_policy
+        assert policy["manifest_rejections"] == expected_count
+        assert policy["status"] == "incomplete"
+        assert policy["manifest_authoritative"] is False
+        assert policy["acquisition_authorized"] is False
+        published = json.dumps(session.diagnostic_state()["manifest_materialization_policy"])
+        for secret in ("PRIVATE_TOKEN", "SECRET", "Bearer", "private.example", "owned"):
+            assert secret not in published
+    finally:
+        session.close()
+
+
+def test_clean_empty_rejection_envelope_remains_authoritative():
+    vault = FakeVault([{"product_id": "owned", "downloadable": True}])
+    session = session_with_vault(vault)
+    try:
+        assert len(session.backup_manifest()) == 1
+        assert session.backup_manifest_rejection_count == 0
+        assert session.backup_manifest_policy["manifest_authoritative"] is True
+        assert vault.acquisition_calls == 0
+    finally:
+        session.close()

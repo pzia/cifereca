@@ -395,3 +395,32 @@ def test_direct_llm_endpoint_rejects_hidden_controls_before_http(suffix):
     assert service.destination()["host"] == ""
     assert service.generate(LLMRequest("Livre privé")).reason == "unavailable"
     assert not http.calls
+
+
+@pytest.mark.parametrize("failure,expected", [
+    (TimeoutError("PRIVATE_TIMEOUT_ENDPOINT"), "timeout"),
+    (__import__("urllib.error", fromlist=["URLError"]).URLError(
+        TimeoutError("PRIVATE_TIMEOUT_ENDPOINT")
+    ), "timeout"),
+    (__import__("urllib.error", fromlist=["URLError"]).URLError(
+        RuntimeError("PRIVATE_NETWORK_ENDPOINT")
+    ), "backend_unavailable"),
+])
+def test_urllib_network_timeout_and_deadline_agree_on_safe_public_reason(failure, expected):
+    """#1346 CI: a socket/read timeout must not race into backend_unavailable.
+
+    This is the same URL-opening path exercised by llm-settings-1600 GTK.
+    The injected errors are synthetic; none of their private text is exposed.
+    """
+    def opener(_request, *, timeout):
+        assert 0.2 <= timeout <= 0.3
+        raise failure
+
+    service = OptionalLLMService(
+        _config(timeout_seconds=0.2), opener=opener,
+    )
+    result = service.generate(LLMRequest("PRIVATE_USER_MESSAGE"))
+    assert not result.ok and result.reason == expected
+    assert result.generated is False
+    assert "PRIVATE" not in repr(result)
+    assert result.text == ""

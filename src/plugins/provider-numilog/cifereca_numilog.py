@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.15, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.18, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -16,10 +16,12 @@ import httpx
 from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderCapabilities,
     ProviderCapabilityError, ProviderConfigurationError, ProviderDescriptor, ProviderError,
     ProviderPlugin, ProviderSession, SearchResult, inspect_artifact, publish_artifact_file)
-from cifereca_numilog_html import BASE, LIBRARY, ParseError, parse_library, parse_library_page, delivery_url, public_book_url
+from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionError,
+    OwnedDelivery, parse_library, parse_library_page, delivery_url, public_book_url,
+    html_response_kind)
 from cifereca_numilog_filename import publish
 
-VERSION = '0.1.16'
+VERSION = '0.1.18'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -29,12 +31,15 @@ DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
         'EPUB direct et Adobe ACSM via le broker public d’acquisition ; LCP, PDF et audio non qualifiés.'))
 
 ALLOWED = {'www.numilog.com','services.numilog.com','www.edenlivres.fr','storage.googleapis.com'}
+# Fulfillment ACSM observé : origine HTTPS exacte, jamais un wildcard Numilog.
+ALLOWED_ACSM_ORIGINS = {('https', 'entrepot2r.numilog.com', 443)}
 REDIRECTS = {301,302,303,307,308}
 MAX_HTML = 4*1024*1024
 
 def url_origin(value):
     p=urlsplit(value)
-    port=p.port or (443 if p.scheme=='https' else 80 if p.scheme=='http' else None)
+    # An explicit :0 is not an omitted port: it must never inherit 443/80.
+    port=p.port if p.port is not None else (443 if p.scheme=='https' else 80 if p.scheme=='http' else None)
     return (p.scheme.casefold(),(p.hostname or '').casefold(),port)
 
 def normalized_base_url(value):
@@ -52,15 +57,46 @@ def normalized_base_url(value):
         pass
     raise ProviderConfigurationError('Numilog : base_url invalide ; HTTPS requis, sauf loopback HTTP pour les tests locaux')
 
+def _raw_network_url(value):
+    """Reject raw controls before urllib may silently strip CR/LF/TAB.
+
+    A signed ACSM URL must be sent exactly as received. Normalizing a
+    malformed redirect could change its signature and obscure the origin of
+    a download failure. Percent-encoded bytes remain untouched.
+    """
+    return (
+        type(value) is str and bool(value)
+        and not any(
+            char.isspace() or unicodedata.category(char) in {'Cc', 'Cf', 'Cs'}
+            for char in value
+        )
+    )
+
+
 def checked_url(value, allowed_origins=None):
-    allowed=set(allowed_origins or {url_origin('https://'+host+'/') for host in ALLOWED})
+    if not _raw_network_url(value):
+        raise ProviderError('Numilog : destination réseau inattendue ; téléchargement arrêté')
+    allowed=set(allowed_origins if allowed_origins is not None else ({url_origin('https://'+host+'/') for host in ALLOWED} | ALLOWED_ACSM_ORIGINS))
     try:
         p = urlsplit(value)
         if p.scheme in {'http','https'} and url_origin(value) in allowed and not p.username and not p.password and not p.fragment:
+            # A wildcard path under the ACSM fulfillment host is NOT an
+            # authorization to query arbitrary private Numilog endpoints.
+            if url_origin(value) in ALLOWED_ACSM_ORIGINS and (
+                p.path != '/fulfillment/URLLink.acsm' or not p.query
+            ):
+                raise ProviderError('Numilog : destination réseau inattendue ; téléchargement arrêté')
             return value
     except ValueError:
         pass
     raise ProviderError('Numilog : destination réseau inattendue ; téléchargement arrêté')
+
+def checked_redirect(base_url, location, allowed_origins):
+    """Validate the unmodified Location before urljoin can normalize it."""
+    if not _raw_network_url(location):
+        raise ProviderError('Numilog : redirection réseau inattendue ; téléchargement arrêté')
+    return checked_url(urljoin(base_url, location), allowed_origins)
+
 
 def validate_epub(path):
     inspected = inspect_artifact(Path(path), 'epub', strict_structure=True)
@@ -91,7 +127,7 @@ class NumilogSession(ProviderSession):
         self.scope = hashlib.sha256(self.credential_id.encode()).hexdigest()[:20]
         self.base_url = normalized_base_url(self.options.get('base_url') or BASE)
         self.library_url = urljoin(self.base_url,'Pages/Compte/MesLivres.aspx')
-        self.allowed_origins = {url_origin('https://'+host+'/') for host in ALLOWED}
+        self.allowed_origins = {url_origin('https://'+host+'/') for host in ALLOWED} | ALLOWED_ACSM_ORIGINS
         self.allowed_origins.add(url_origin(self.base_url))
         timeout = float(self.options.get('timeout_seconds',30))
         self.maximum = int(self.options.get('max_download_bytes',100*1024*1024))
@@ -117,6 +153,8 @@ class NumilogSession(ProviderSession):
             raise ProviderError('Numilog : accès refusé ou contrôle du navigateur ; session HTTP à qualifier')
         if response.status_code == 429:
             raise ProviderError('Numilog : trop de requêtes ; réessayer plus tard')
+        if response.status_code == 410:
+            raise ProviderError('Numilog : lien de livraison expiré ; relancer le téléchargement')
         if response.status_code != 200:
             raise ProviderError('Numilog : réponse HTTP '+str(response.status_code))
 
@@ -142,7 +180,7 @@ class NumilogSession(ProviderSession):
                 if r.status_code in REDIRECTS:
                     if payload is not None:
                         raise ProviderError('Numilog : redirection inattendue pendant la connexion')
-                    url = urljoin(str(r.url),r.headers.get('location',''))
+                    url = checked_redirect(str(r.url),r.headers.get('location',''),self.allowed_origins)
                     continue
                 self._status(r)
                 return str(r.url),self._small(r).decode('utf-8-sig',errors='replace')
@@ -189,7 +227,15 @@ class NumilogSession(ProviderSession):
             self._accounts = []
             self.credentials.clear()
 
-    def _rows(self):
+    def _rows(self, *, include_delivery=False, delivery_record_id=None):
+        # A signed library URL is only ever decoded for a single selected
+        # account-scoped book at an explicit action; never during inventory,
+        # search, or a broad scan of all owned purchases.
+        if include_delivery and (
+            type(delivery_record_id) is not str
+            or not delivery_record_id.startswith('numilog:'+self.scope+':')
+        ):
+            raise ProviderError('Numilog : livre ciblé du compte requis pour la livraison')
         if not self.connected:
             raise ProviderError('Numilog : connecter le compte avant cette opération')
         try:
@@ -205,11 +251,37 @@ class NumilogSession(ProviderSession):
                 if urlsplit(final_url).path.lower() != '/pages/compte/meslivres.aspx':
                     self.connected = False
                     raise ProviderError('Numilog : session expirée ; reconnecter le compte')
-                page_rows,next_url = parse_library_page(text,final_url,cover_origins=self.allowed_origins)
+                structural = {} if include_delivery else None
+                page_rows,next_url = parse_library_page(
+                    text,final_url,cover_origins=self.allowed_origins,
+                    delivery_evidence=include_delivery,
+                    delivery_diagnostics=structural,
+                    delivery_selector=(
+                        (lambda row: self._id(row) == delivery_record_id)
+                        if include_delivery else None
+                    ),
+                )
+                if include_delivery:
+                    # Fixed enum + bounded numeric structure only; enough to
+                    # distinguish an out-of-card JS object from a bound one,
+                    # without capturing private account HTML or signed URLs.
+                    self._diag('bibliothèque livraison',phase='owned_card',
+                        page_kind='meslivres',page_index=page_index+1,
+                        **structural)
                 for row in page_rows:
                     key=(row['lid'],row['variant'])
-                    if key not in seen_items:
-                        seen_items.add(key);rows.append(row)
+                    if key in seen_items:
+                        # Pagination may repeat a book or splice another
+                        # purchase into the same lid/format. On an explicit
+                        # signed delivery, duplicate identity is ambiguous,
+                        # even if the display title appears to match.
+                        if include_delivery and self._id(row) == delivery_record_id:
+                            raise ProviderError(
+                                'Numilog : livre dupliqué entre pages ; livraison non autorisée'
+                            )
+                        continue
+                    seen_items.add(key)
+                    rows.append(row)
                 if not next_url:
                     self._diag('pagination bibliothèque',pages=page_index+1,items=len(rows))
                     return rows
@@ -298,13 +370,20 @@ class NumilogSession(ProviderSession):
             Path(path), identity_id=identity_id, provider_id='numilog', title=title or None)
         if not isinstance(result,dict):
             raise ProviderError('Numilog : résultat de fulfillment ACSM invalide')
-        status=str(result.get('status') or '')
+        # The broker is the authority for fulfillment, not for arbitrary
+        # provider-visible error text. Only published fixed ADEPT reasons
+        # may cross the plugin boundary; never stringify unknown objects.
+        status = result.get('status') if type(result.get('status')) is str else ''
         if status=='attention_required':
-            code=str(result.get('code') or 'adept_attention_required')
+            raw_code = result.get('code')
+            code = raw_code if type(raw_code) is str and raw_code in {
+                'adept_profile_required', 'adept_profile_ambiguous',
+            } else 'adept_attention_required'
             raise ProviderCapabilityError('Numilog : fulfillment ACSM nécessite une action ('+code+')')
-        if status not in {'complete','unchanged'} or not result.get('path'):
+        path = result.get('path')
+        if status not in {'complete','unchanged'} or type(path) is not str or not path:
             raise ProviderError('Numilog : fulfillment ACSM non confirmé')
-        produced=Path(str(result['path']))
+        produced=Path(path)
         if not produced.is_file():
             raise ProviderError('Numilog : fichier final ADEPT introuvable')
         self._diag('téléchargement',format='ACSM/ADEPT',fulfillment=status)
@@ -312,24 +391,71 @@ class NumilogSession(ProviderSession):
 
     def _download(self,url,destination,*,title=None,author=None,book_id=None):
         seen = set()
+        # Keep the fresh owned row's readBook coordinates across redirects;
+        # confirmation-page product/copy evidence cannot choose another book.
+        expected_readbook = url
         for _ in range(12):
             checked_url(url,self.allowed_origins)
+            if url_origin(url) in ALLOWED_ACSM_ORIGINS:
+                # A signed link may be single-use. Validate ownership and
+                # the importer BEFORE consuming it, even after an ordinary
+                # readBook 302 or an HTML intermediary (#1883).
+                self._identity_id()
+                if self.acquisition_broker is None:
+                    raise ProviderCapabilityError(
+                        'Numilog : broker acquisition requis pour traiter un ACSM'
+                    )
             if url in seen:
                 raise ProviderError('Numilog : boucle de téléchargement')
             seen.add(url)
             with self.client.stream('GET',url,headers={'Referer':self.base_url}) as r:
                 self._diag('HTTP',method='GET',host=urlsplit(url).hostname,status=r.status_code)
                 if r.status_code in REDIRECTS:
-                    url = urljoin(str(r.url),r.headers.get('location',''))
+                    url = checked_redirect(str(r.url),r.headers.get('location',''),self.allowed_origins)
                     continue
                 self._status(r)
                 mime = r.headers.get('content-type','').split(';')[0].lower().strip()
                 if mime == 'text/html':
                     html = self._small(r).decode('utf-8-sig',errors='replace')
+                    kind = html_response_kind(html)
+                    # Only the endpoint *category*, never signed query/HTML,
+                    # belongs in the report. This distinguishes readBook from
+                    # other intermediates without disclosing a customer's URL.
+                    page_path = urlsplit(str(r.url)).path.lower()
+                    page_kind = (
+                        'readbook' if page_path == '/pages/compte/readbook.ashx'
+                        else 'meslivres' if page_path == '/pages/compte/meslivres.aspx'
+                        else 'delivery_intermediate'
+                    )
+                    if kind == 'login':
+                        self._diag('livraison HTML',phase='download',
+                                   page_kind=page_kind,kind='login',result='session_expired')
+                        self.connected = False
+                        raise ProviderError('Numilog : session de connexion expirée ; reconnecter le compte')
+                    if kind == 'error':
+                        self._diag('livraison HTML',phase='download',
+                                   page_kind=page_kind,kind='error',result='html_error')
+                        raise ProviderError('Numilog : page d’erreur reçue au lieu du fichier attendu')
+                    evidence = {}
                     try:
-                        url = delivery_url(html,str(r.url),allowed_origins=self.allowed_origins)
-                    except ParseError:
+                        url = delivery_url(
+                            html,str(r.url),allowed_origins=self.allowed_origins,
+                            evidence=evidence, expected_readbook=expected_readbook,
+                        )
+                    except DeliverySelectionError as exc:
+                        self._diag('livraison HTML',phase='download',
+                                   page_kind=page_kind,kind='intermediate',
+                                   result=exc.code,**evidence)
+                        if exc.code == 'ambiguous':
+                            raise ProviderError('Numilog : plusieurs liens de livraison ; téléchargement arrêté') from None
                         raise ProviderError('Numilog : lien de livraison absent ; reconnecter le compte ou signaler la page modifiée') from None
+                    except ParseError:
+                        self._diag('livraison HTML',phase='download',
+                                   page_kind=page_kind,kind='invalid',result='invalid_structure')
+                        raise ProviderError('Numilog : structure HTML de livraison inattendue') from None
+                    self._diag('livraison HTML',phase='download',
+                               page_kind=page_kind,kind='intermediate',
+                               result='single_allowed_candidate',**evidence)
                     continue
                 if mime not in {'application/epub+zip','application/octet-stream','application/zip',
                         'application/vnd.adobe.adept+xml','application/xml','text/xml'}:
@@ -354,6 +480,8 @@ class NumilogSession(ProviderSession):
                             return self._fulfill_acsm(acsm,title=title)
                         finally:
                             acsm.unlink(missing_ok=True)
+                    if mime in {'application/vnd.adobe.adept+xml','application/xml','text/xml'}:
+                        raise ProviderCapabilityError('Numilog : réponse XML non ACSM ; téléchargement arrêté')
                     validate_epub(part)
                     if title:
                         destination = publish(part, destination.parent, title=title, author=author, book_id=book_id or title)
@@ -369,7 +497,12 @@ class NumilogSession(ProviderSession):
     def download_direct(self,item,target_dir):
         with self.lock:
             self._canonical_item(item)
-            rows = self._rows()
+            # Read a fresh private library only for an explicit user action.
+            # Search/sync call _rows() without delivery_evidence, so no signed
+            # ACSM link escapes into SearchResult, catalog, or diagnostics.
+            rows = self._rows(
+                include_delivery=True, delivery_record_id=item.record_id,
+            )
             row = next((row for row in rows if self._id(row) == item.record_id),None)
             if row is None:
                 raise ProviderError('Numilog : livre absent de la bibliothèque actuelle')
@@ -377,7 +510,26 @@ class NumilogSession(ProviderSession):
             directory.mkdir(parents=True,exist_ok=True)
             name = 'numilog-'+hashlib.sha256(self._id(row).encode()).hexdigest()[:32]+'.epub'
             try:
-                return self._download(row['href'],directory/name,title=row['title'],author=item.author,book_id=self._id(row))
+                evidence = row.get('delivery')
+                # Only the exact fresh row matched by the stable scoped ID can
+                # supply a signed URL. ProductId != lid unless independently
+                # attested; the DOM card binding is the evidence, not numbers.
+                if isinstance(evidence, OwnedDelivery):
+                    # A pre-bound account identity is mandatory BEFORE a
+                    # signed ACSM GET. The broker will re-check it at import;
+                    # direct EPUB fallback retains its existing contract.
+                    self._identity_id()
+                    if self.acquisition_broker is None:
+                        raise ProviderCapabilityError(
+                            'Numilog : broker acquisition requis pour traiter un ACSM'
+                        )
+                    checked_url(evidence.url, self.allowed_origins)
+                    start = evidence.url
+                    self._diag('livraison ACSM',phase='owned_card',kind='card_bound',result='single_allowed_candidate')
+                else:
+                    start = row['href']
+                    self._diag('livraison ACSM',phase='readbook',kind='scoped_link',result='fallback')
+                return self._download(start,directory/name,title=row['title'],author=item.author,book_id=self._id(row))
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
 

@@ -29,8 +29,12 @@ def build_settings_application_interface(
     diagnostic_section.append(config_group)
 
     diag_row = Adw.ActionRow()
-    diag_row.set_title("Logs de diagnostic")
-    diag_row.set_subtitle("Conserver un journal technique expurgé des secrets")
+    diag_row.set_title("Collecte des événements de diagnostic")
+    diag_row.set_subtitle(
+        "Active ou désactive le collecteur Core. Les logs essentiels et les " 
+        "mesures UI passives restent actifs ; la capture de performance détaillée " 
+        "est désactivée par défaut."
+    )
     diag_switch = Gtk.Switch()
     diag_switch.set_active(bool(config.get("diagnostics.enabled", True)))
     diag_switch.set_valign(Gtk.Align.CENTER)

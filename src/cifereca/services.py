@@ -328,8 +328,14 @@ class LibraryService:
         return "sync:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
     def sync_source_enabled(self, account: Account) -> bool:
+        """Same fail-closed toggle as the public Sync broker.
+
+        Missing metadata retains the legacy inventory default; malformed
+        values cannot opt a source back into startup refresh (#1346).
+        """
+        from .core.source_enablement import source_enabled
         raw = self.storage.metadata_get("sync.source.enabled." + self.sync_source_id(account))
-        return raw is None or str(raw).strip().lower() not in {"0", "false", "no", "off"}
+        return source_enabled(raw)
 
     def select_identity(self, identity_id: str) -> Identity:
         identity = self.identity_by_id(identity_id)
@@ -932,72 +938,91 @@ class LibraryService:
         return kobo_personal_right_states(self, identity_id)
 
     def mirror_personal_libraries(self) -> dict[str, int]:
-        """Refresh enumerable personal libraries and acquire qualified Numilog EPUBs.
+        """Refresh owned-store inventory without initiating local acquisition.
 
-        Mirroring remains provider-agnostic.  Automatic acquisition is deliberately
-        restricted to providers advertising both a personal library and direct
-        downloads; the first provider using this path is Numilog.  Existing valid
-        artifacts are checked before calling the provider so a refresh is idempotent.
+        personal_library and direct_download describe different provider
+        contracts. The latter authorizes explicit direct acquisition of a
+        selected SearchResult, not bulk download_library_item backups.
+        In particular Numilog does not implement that backup contract (#1862).
         """
-        result: dict[str, int] = {}
+        from .core.personal_library_mirror import PersonalLibraryMirrorCounts
+        result = PersonalLibraryMirrorCounts()
         for session in self._sessions.values():
             if not session.connected or not session.capabilities.personal_library:
                 continue
-            account = next((a for a in self.accounts if a.provider_id == session.provider_id and a.credential_id == session.credential_id), None)
+            provider_id = str(session.provider_id)
+            credential_id = str(session.credential_id)
+            account = next((
+                a for a in self.accounts
+                if a.provider_id == provider_id and a.credential_id == credential_id
+            ), None)
             if account is not None and not self.sync_source_enabled(account):
                 continue
-            identity = self.identity_for_connection(session.provider_id, session.credential_id)
+            if provider_id == "numilog":
+                # Personal purchases are account-bound. A disconnected or
+                # ambiguous owner is NOT the currently selected identity.
+                accounts = [
+                    a for a in self.accounts
+                    if a.provider_id == "numilog" and a.credential_id == credential_id
+                ]
+                try:
+                    bound_identity = self.storage.identity_for_connection(
+                        provider_id, credential_id,
+                    )
+                except Exception:
+                    bound_identity = None
+                if (
+                    len(accounts) != 1
+                    or not bound_identity
+                    or accounts[0].identity_id != bound_identity
+                    or self.identity_by_id(bound_identity) is None
+                ):
+                    result.blocked_sources += 1
+                    _TRACE_LOG.warning(
+                        "TRACE catalog personal-library inventory skipped "
+                        "provider=numilog reason=source_binding_unavailable"
+                    )
+                    continue
+                identity = self.identity_by_id(bound_identity)
+            else:
+                # Preserve the pre-existing behavior for providers other than
+                # Numilog; this P0 concerns store-owned personal libraries.
+                identity = self.identity_for_connection(provider_id, credential_id)
             try:
-                # The personal-library result is consumed by both rights
-                # projection and catalog mirroring. Snapshot one-shot provider
-                # iterators once; never lose purchased books on the second pass.
+                # One-shot iterators feed the owned-rights projection and
+                # remote catalog exactly once. Neither phase downloads files.
                 rows = list(session.library())
-                if session.provider_id == "kobo" and account is not None:
-                    # Only a connected PERSONAL manifest may assert ownership.
-                    # Catalog searches never enter this path; no download here.
+                if provider_id == "kobo" and account is not None:
                     from .core.kobo_manifest_rights import mirror_kobo_manifest_rights
                     mirror_kobo_manifest_rights(
                         self, rows, identity_id=identity.identity_id,
-                        credential_id=session.credential_id,
+                        credential_id=credential_id,
                         account_id=account.unique_id or None,
                     )
-                result[f"{session.provider_id}:{session.credential_id}"] = self._mirror_remote_results(rows, identity_id=identity.identity_id)
-                if session.provider_id == "numilog" and session.capabilities.direct_download:
-                    for row in rows:
-                        self._acquire_personal_library_item(session, row, identity.identity_id)
+                result[f"{provider_id}:{credential_id}"] = self._mirror_remote_results(
+                    rows, identity_id=identity.identity_id,
+                )
             except Exception as exc:
-                _TRACE_LOG.warning("TRACE catalog mirror error provider=%s credential=%s error=%s", session.provider_id, session.credential_id, exc)
+                result.failed_sources += 1
+                # Do not print a provider exception: it can contain a signed
+                # ACSM URL, cookie, private title or credential.
+                _TRACE_LOG.warning(
+                    "TRACE catalog personal-library inventory error "
+                    "provider=%s reason=%s",
+                    provider_id, type(exc).__name__,
+                )
         return result
 
     def _acquire_personal_library_item(self, session, row, identity_id: str) -> dict[str, Any]:
-        """Acquire one owned-library row only when no valid local artifact exists."""
-        provider_id = str(session.provider_id)
-        item_id = str(getattr(row, "record_id", None) or getattr(row, "id", None) or "")
-        if not item_id:
-            return {"status": "skipped", "reason": "missing_item_id"}
-        existing = [entry for entry in self.storage.catalog_entries()
-                    if entry.get("identity_id") == identity_id
-                    and entry.get("provider_id") == provider_id
-                    and str(entry.get("item_id") or "") == item_id
-                    and entry.get("local_state") == "local"]
-        for entry in existing:
-            path = Path(str((entry.get("metadata") or {}).get("path") or ""))
-            if path.is_file() and inspect_artifact(path).valid:
-                return {"status": "skipped", "reason": "valid_local", "path": str(path)}
-        target_dir = self.library_identity_provider_dir(identity_id, provider_id)
-        try:
-            payload = asdict(row) if hasattr(row, "__dataclass_fields__") else dict(row)
-            path, media_format, metadata = session.download_library_item(payload, target_dir)
-            path = Path(path)
-            if not path.is_file() or not inspect_artifact(path, media_format or None).valid:
-                raise ProviderConfigurationError("Le téléchargement de la bibliothèque n'est pas un artifact valide")
-            self.catalog_index_path(path, title=str(getattr(row, "title", "") or path.stem),
-                                    item_id=item_id, identity_id=identity_id, provider_id=provider_id)
-            _TRACE_LOG.info("TRACE catalog personal-library acquired provider=%s item_id=%s identity=%s path=%s", provider_id, item_id, identity_id, path)
-            return {"status": "complete", "path": str(path)}
-        except Exception as exc:
-            _TRACE_LOG.warning("TRACE catalog personal-library acquisition error provider=%s item_id=%s identity=%s error=%s", provider_id, item_id, identity_id, exc)
-            return {"status": "error", "error": str(exc)}
+        """Deprecated fail-closed backup shim; never called by mirroring.
+
+        The old method passed Numilog SearchResult dictionaries to the
+        unsupported ProviderSession.download_library_item contract, then
+        swallowed errors as if opening acquisition had succeeded. A per-book
+        user action must instead use the existing direct acquisition broker,
+        which validates the provider, account and ACSM/ADEPT path.
+        """
+        return {"status": "blocked", "reason": "explicit_acquisition_required"}
 
     def recent_acquisitions(self, *, identity_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         """Return recent local materializations, newest first.
@@ -2460,7 +2485,7 @@ class LibraryService:
         """Compatibility façade; Kobo execution lives in the provider adapter."""
         return kobo_backup._execute_kobo_acquisition(self, item, target_dir)
 
-    def _acquire_direct_item_impl(self, item: SearchResult) -> Acquisition:
+    def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None) -> Acquisition:
         session = self._session_for_source(item.source_provider, item.source_credential)
         content_type = self.acquisition.content_type_for(item)
 
@@ -2475,6 +2500,9 @@ class LibraryService:
             # the lock and calls _execute_kobo_acquisition directly).
             try:
                 with InterProcessLock(acquisition_lock_file()):
+                    if _admission is not None:
+                        item = _admission()
+                        identity = self.identity_for_connection(item.source_provider, item.source_credential)
                     target = self._kobo_backup_target_dir(identity.identity_id)
                     candidates = self._kobo_record_candidate_paths(
                         {"item_id": item.record_id, "title": item.title,
@@ -2541,14 +2569,15 @@ class LibraryService:
             item, path=path, url=url, target_dir=target_dir, action="download",
         )
 
-    def acquire_direct_item(self, item: SearchResult) -> Acquisition:
+    def acquire_direct_item(self, item: SearchResult, *, _admission=None) -> Acquisition:
         identity_id = None
         try:
             identity_id = self.identity_for_connection(item.source_provider, item.source_credential).identity_id
         except Exception:
             identity_id = self.current_identity.identity_id if self.current_identity else None
         try:
-            result = self._acquire_direct_item_impl(item)
+            result = (self._acquire_direct_item_impl(item, _admission=_admission) if _admission is not None
+                      else self._acquire_direct_item_impl(item))
             self._record_action(identity_id, "acquisition", "success", provider_id=item.source_provider, facts={"record_id": item.record_id})
             return result
         except Exception as exc:
@@ -2563,6 +2592,14 @@ class LibraryService:
             index_path=self.catalog_index_path,
             resolve_identity=self.identity_for_connection,
         ).obtain(item)
+
+    def owned_library_download_target(self, entry):
+        from .core.owned_library_download import owned_library_download_target
+        return owned_library_download_target(self, entry)
+
+    def obtain_owned_library_item(self, target):
+        from .core.owned_library_download import obtain_owned_library_item
+        return obtain_owned_library_item(self, target)
 
     def prepare_direct_download(self, item: SearchResult) -> tuple[Path, str]:
         """Compatibility wrapper around the normalized direct acquisition."""

@@ -81,6 +81,78 @@ def _vault_account_label(account: dict[str, Any]) -> str:
     return "Compte Kobo"
 
 
+
+# Provider diagnostics are exported through Core and may appear in support
+# bundles. Even a substitute Vault/catalogue adapter is not trusted to supply
+# safe rejection texts, keys, or account-scoped reason values.
+_PUBLIC_REJECTION_TYPES = frozenset({"invalid_shape", "invalid_scope", "ProviderError"})
+_PUBLIC_REJECTION_REASONS = frozenset({
+    "unbound_account", "different_account", "ambiguous_account_binding",
+    "duplicate_product_id", "missing_product_id", "unverifiable_product_id",
+    "tainted_product_id", "item_not_object", "items_not_list",
+    "normalization_error", "personal_search_denied",
+})
+_PUBLIC_REJECTION_SOURCES = frozenset({"catalog", "library"})
+_MAX_PUBLIC_REJECTIONS = 256
+
+
+def _public_kobo_rejections(rows: Any) -> list[dict[str, str]]:
+    """Only publish fixed diagnostic codes, never arbitrary upstream fields."""
+    if rows is None:
+        return []
+    if type(rows) not in (tuple, list):
+        return [{"type": "invalid_shape", "reason": "unverified_rejection_list"}]
+    published: list[dict[str, str]] = []
+    for row in rows[:_MAX_PUBLIC_REJECTIONS]:
+        if type(row) is not dict:
+            published.append({
+                "type": "invalid_shape", "reason": "unverified_provider_rejection",
+            })
+            continue
+        category = row.get("type")
+        reason = row.get("reason")
+        source = row.get("source")
+        published_row = {
+            "type": (
+                category if type(category) is str
+                and category in _PUBLIC_REJECTION_TYPES else "invalid_shape"
+            ),
+            "reason": (
+                reason if type(reason) is str
+                and reason in _PUBLIC_REJECTION_REASONS
+                else "unverified_provider_rejection"
+            ),
+        }
+        if type(source) is str and source in _PUBLIC_REJECTION_SOURCES:
+            published_row["source"] = source
+        published.append(published_row)
+    if len(rows) > _MAX_PUBLIC_REJECTIONS:
+        published.append({
+            "type": "invalid_shape", "reason": "truncated_rejections",
+        })
+    return published
+
+
+def _safe_cover_count(items: Any, cover_url: Any) -> int:
+    """Advisory thumbnail statistics cannot invalidate a rights inventory.
+
+    Each Vault row is independent. Malformed nested cover fields or a custom
+    adapter raising from its extractor must not abort all other account rows.
+    Only the integer count is logged; never the private provider payload.
+    """
+    counted = 0
+    for row in items:
+        if type(row) is not dict:
+            continue
+        try:
+            cover = cover_url(row)
+        except Exception:
+            continue
+        if type(cover) is str and cover:
+            counted += 1
+    return counted
+
+
 DESCRIPTOR = ProviderDescriptor(
     id="kobo",
     display_name="Kobo",
@@ -160,7 +232,9 @@ class KoboSession(ProviderSession):
         self.api_version = _vault_public_version(status.get("api_version") or status.get("version"))
         self.vault_release = _vault_public_version(status.get("release"))
         try:
-            parts = self.api_version.split(".")
+            parts = self.api_version.removeprefix("v").split(".")
+            # The version validator explicitly accepts "v2.3", but the
+            # compatibility guard must parse that same legal spelling.
             major = int(parts[0]) if parts else 0
             minor = int(parts[1]) if len(parts) > 1 else 0
         except (TypeError, ValueError):
@@ -308,26 +382,44 @@ class KoboSession(ProviderSession):
         rows = self.catalog.search(query, **options)
         accepted: list[SearchResult] = []
         for item in rows:
-            # SearchResult is the normal catalogue contract. Some legacy
-            # providers/test doubles omit optional attributes: do not crash
-            # while deciding whether a returned result is account-scoped.
-            raw_metadata = getattr(item, "metadata", None)
-            meta = raw_metadata if isinstance(raw_metadata, dict) else {}
-            private = (
-                getattr(item, "owned", None) is True
-                or getattr(item, "source_collection", None) in {"library", "archived"}
-            )
-            if private and account_id is None:
-                continue
-            if "account_id" in meta and (
-                account_id is None or type(meta["account_id"]) is not str
-                or meta["account_id"] != account_id
-            ):
+            # A single broken normalized hit (including a hostile property or
+            # unhashable source_collection) must not abort other safe results
+            # or cause a private row to bypass the account-scope check.
+            try:
+                raw_metadata = getattr(item, "metadata", None)
+                if raw_metadata is not None and type(raw_metadata) is not dict:
+                    continue
+                meta = raw_metadata if raw_metadata is not None else {}
+                owned = getattr(item, "owned", None)
+                collection = getattr(item, "source_collection", None)
+                if (owned is not None and type(owned) is not bool):
+                    continue
+                if type(collection) is not str and collection is not None:
+                    continue
+                private = owned is True or collection in ("library", "archived")
+                if private and account_id is None:
+                    continue
+                if "account_id" in meta and (
+                    account_id is None or type(meta["account_id"]) is not str
+                    or meta["account_id"] != account_id
+                ):
+                    continue
+            except Exception:
+                # Never expose the provider's exception text or class name.
                 continue
             accepted.append(item)
+        cover_count = 0
+        for item in accepted:
+            try:
+                cover = getattr(item, "thumbnail_url", None)
+                if type(cover) is str and cover:
+                    cover_count += 1
+            except Exception:
+                # Traces are advisory; a bad cover must not hide good books.
+                pass
         _TRACE_LOG.debug(
             "TRACE kobo catalog plugin source=search items=%s with_cover=%s",
-            len(accepted), sum(1 for row in accepted if row.thumbnail_url),
+            len(accepted), cover_count,
         )
         return accepted
 
@@ -349,9 +441,9 @@ class KoboSession(ProviderSession):
         account_id = self._accounts[0].unique_id
         items = self.client.library_manifest()
         self.last_library_rejections.extend(
-            dict(row)
-            for row in getattr(self.client, "last_manifest_rejections", ())
-            if isinstance(row, dict)
+            _public_kobo_rejections(
+                getattr(self.client, "last_manifest_rejections", ())
+            )
         )
 
         def foreign_account(raw: Any) -> bool:
@@ -390,7 +482,7 @@ class KoboSession(ProviderSession):
         duplicated_products = tainted_products | {
             product for product, count in product_counts.items() if count > 1
         }
-        _cover_count = sum(1 for x in items if isinstance(x, dict) and self.cover_url(x))
+        _cover_count = _safe_cover_count(items, self.cover_url)
         # Never emit a credential/account, product, URL, or arbitrary Vault JSON
         # key in a trace: the list of keys itself may contain private data.
         _TRACE_LOG.debug(
@@ -427,7 +519,10 @@ class KoboSession(ProviderSession):
                 continue
             try:
                 rows.append(self.normalize_item(raw, default_collection="library"))
-            except ProviderError:
+            except Exception:
+                # Normalization also touches provider-controlled scalar fields
+                # and cover containers: one corrupt row must not erase the
+                # remaining authenticated inventory or reveal exception text.
                 self.last_library_rejections.append({
                     "type": "ProviderError", "reason": "normalization_error",
                 })
@@ -457,10 +552,16 @@ class KoboSession(ProviderSession):
         # Transfer only a bounded *count* across the public provider boundary:
         # no upstream raw items, message strings, URLs or credentials.
         rejected = getattr(self.client, "last_manifest_rejections", ())
-        if isinstance(rejected, (list, tuple)):
-            self.backup_manifest_rejection_count = min(
-                1_000_000, sum(isinstance(item, dict) for item in rejected),
-            )
+        if type(rejected) in (list, tuple):
+            # A malformed rejection entry is still proof that the fetched
+            # snapshot is incomplete. Counting only dict entries previously
+            # erased that evidence and could mark a partial rights manifest
+            # authoritative for Core reconciliation. Never copy the payload.
+            self.backup_manifest_rejection_count = min(1_000_000, len(rejected))
+        else:
+            # An explicit non-sequence (None, string, mapping, etc.) is an
+            # unverified rejection envelope, not evidence of zero failures.
+            self.backup_manifest_rejection_count = 1
         # Provider-only projection: no local file checks or entitlement
         # authorization, no further Vault request. Core can consume the
         # bounded summary after it has independently resolved the identity.
@@ -494,15 +595,32 @@ class KoboSession(ProviderSession):
                     )
                 )
 
-            # A rejected permission/foreign row may share its product with
-            # another otherwise plausible row. Quarantine the *whole* group
-            # rather than letting Core treat the duplicate as a sole item.
-            blocked_products = {
-                product for row in items
-                if type(row) is dict
-                and (foreign_account(row) or invalid_permission_flags(row))
-                if (product := _strict_product_id(row)) is not None
-            }
+            # Do not rely solely on Vault-client pagination hygiene. Direct
+            # session callers, legacy adapters or incomplete provider snapshots
+            # may still supply duplicate editions. Never hand either row to
+            # the legacy Core materialization path, even when both rows look
+            # individually entitled; no first/last revision may win.
+            product_counts: dict[str, int] = {}
+            blocked_products: set[str] = set()
+            for row in items:
+                if type(row) is not dict:
+                    continue
+                product = _strict_product_id(row)
+                if product is not None:
+                    product_counts[product] = product_counts.get(product, 0) + 1
+                    if foreign_account(row) or invalid_permission_flags(row):
+                        blocked_products.add(product)
+                else:
+                    # If the two legacy aliases disagree, quarantine any
+                    # sibling bearing either individually valid key.
+                    for alias in ("product_id", "id"):
+                        candidate = _strict_product_id({alias: row.get(alias)})
+                        if candidate is not None:
+                            blocked_products.add(candidate)
+            blocked_products.update(
+                product for product, count in product_counts.items()
+                if count > 1
+            )
             accepted = []
             rejected_count = 0
             for item in items:
@@ -534,7 +652,7 @@ class KoboSession(ProviderSession):
                 getattr(self, "_cifereca_delegation_forbidden", False) is True
             ),
         )
-        _cover_count = sum(1 for x in items if isinstance(x, dict) and self.cover_url(x))
+        _cover_count = _safe_cover_count(items, self.cover_url)
         _TRACE_LOG.debug(
             "TRACE kobo covers source=backup items=%s with_cover=%s missing=%s",
             len(items), _cover_count, len(items) - _cover_count,
@@ -670,16 +788,12 @@ class KoboSession(ProviderSession):
                 "manifest_authoritative": self.backup_manifest_policy["manifest_authoritative"],
                 "acquisition_authorized": False,
             },
-            "catalog_search_rejections": [
-                dict(row)
-                for row in getattr(self.catalog, "last_search_rejections", ())
-                if isinstance(row, dict)
-            ],
-            "library_rejections": [
-                dict(row)
-                for row in self.last_library_rejections
-                if isinstance(row, dict)
-            ],
+            "catalog_search_rejections": _public_kobo_rejections(
+                getattr(self.catalog, "last_search_rejections", ())
+            ),
+            "library_rejections": _public_kobo_rejections(
+                self.last_library_rejections
+            ),
         })
         return data
 

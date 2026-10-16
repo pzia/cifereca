@@ -93,7 +93,7 @@ def test_malformed_tags_and_failing_normalizers_are_isolated_and_redacted(monkey
     control = Control()
     result = tool.run(plan, control)
     assert result.changed == 0
-    assert result.ok is True
+    assert result.ok is False  # Two Core normalization failures: incomplete scan.
     assert control.checks == 2
     assert control.events == [{"message": plan.summary}]
     assert result.facts == plan.facts

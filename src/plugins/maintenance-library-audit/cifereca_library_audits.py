@@ -57,6 +57,23 @@ def _encoded_cover_has_control(value: str) -> bool:
     return False
 
 
+def _relative_cover_has_parent_segment(value: str) -> bool:
+    """Reject path traversal in a relative cover reference, including encodings.
+
+    This is an offline audit, not a path resolver. A parent segment is
+    ambiguous without the caller's content root; never present it as a
+    verified relative thumbnail. Keep ordinary nested filenames valid.
+    """
+    for _ in range(5):
+        if ".." in value.replace("\\", "/").split("/"):
+            return True
+        decoded = unquote(value)
+        if decoded == value:
+            break
+        value = decoded
+    return False
+
+
 def _language_values(row: Mapping[str, Any]) -> tuple[list[str], int]:
     """Return only text language tags and count malformed non-text values.
 
@@ -304,7 +321,10 @@ class CoverAuditTool(_ReadOnlyTool):
                         or parsed.password is not None
                     )
                 elif not scheme:
-                    suspicious = suspicious or bool(parsed.netloc)
+                    suspicious = (
+                        suspicious or bool(parsed.netloc)
+                        or _relative_cover_has_parent_segment(parsed.path)
+                    )
             except Exception:
                 # Even a malicious str subclass can fail outside urlsplit's
                 # documented ValueError cases. One bad reference must never
@@ -359,6 +379,8 @@ class CoverAuditTool(_ReadOnlyTool):
             valid = type(plan.warnings) in (tuple, list) and len(plan.warnings) <= 12
             if valid:
                 import re
+                sample_counts = {"Sans couverture": 0, "Couverture non reconnue": 0}
+                last_ordinal = 0
                 for warning in plan.warnings:
                     if type(warning) is not str:
                         valid = False
@@ -367,10 +389,33 @@ class CoverAuditTool(_ReadOnlyTool):
                         r"(Sans couverture|Couverture non reconnue) : notice n°([1-9][0-9]{0,6})",
                         warning,
                     )
-                    if match is None or int(match.group(2)) > counts["entries"]:
+                    if match is None:
                         valid = False
                         break
+                    ordinal = int(match.group(2))
+                    # A source row has exactly one cover classification. The
+                    # original plan samples at most 12 anomalies in scan
+                    # order, never duplicating or reordering their ordinals.
+                    if not last_ordinal < ordinal <= counts["entries"]:
+                        valid = False
+                        break
+                    last_ordinal = ordinal
+                    sample_counts[match.group(1)] += 1
                     safe_warnings.append(warning)
+                if valid:
+                    defects = counts["missing"] + counts["invalid"]
+                    valid = (
+                        len(safe_warnings) == min(12, defects)
+                        and sample_counts["Sans couverture"] <= counts["missing"]
+                        and sample_counts["Couverture non reconnue"] <= counts["invalid"]
+                    )
+                    # All anomalies fit in the preview: every one must be
+                    # represented. More than 12: only the first 12 are known.
+                    if valid and defects <= 12:
+                        valid = (
+                            sample_counts["Sans couverture"] == counts["missing"]
+                            and sample_counts["Couverture non reconnue"] == counts["invalid"]
+                        )
         control.check_cancelled()
         if not valid:
             control.report(message="Audit des couvertures impossible : plan invalide")
@@ -515,14 +560,43 @@ class LanguageAuditTool(_ReadOnlyTool):
             valid = type(plan.warnings) in (tuple, list) and len(plan.warnings) <= 12
             if valid:
                 import re
+                labels = {
+                    "non textuelle": "malformed",
+                    "non vérifiable": "normalization_failures",
+                    "invalide": "invalid",
+                    "non canonique": "noncanonical",
+                }
+                sample_counts = {key: 0 for key in labels.values()}
+                last_ordinal = 0
                 for warning in plan.warnings:
-                    if type(warning) is not str or re.fullmatch(
-                        r"Langue (?:non textuelle|non vérifiable|invalide|non canonique) : notice n°[1-9][0-9]{0,6}",
+                    if type(warning) is not str:
+                        valid = False
+                        break
+                    match = re.fullmatch(
+                        r"Langue (non textuelle|non vérifiable|invalide|non canonique) : notice n°([1-9][0-9]{0,6})",
                         warning,
-                    ) is None:
+                    )
+                    if match is None:
+                        valid = False
+                        break
+                    ordinal = int(match.group(2))
+                    # Several tags of one notice can legitimately be faulty.
+                    # Notices, however, are scanned in order, never backwards.
+                    if ordinal < last_ordinal:
+                        valid = False
+                        break
+                    last_ordinal = ordinal
+                    kind = labels[match.group(1)]
+                    sample_counts[kind] += 1
+                    if sample_counts[kind] > counts[kind]:
                         valid = False
                         break
                     safe_warnings.append(warning)
+                # Samples are optional and may omit entire categories,
+                # including when fewer than twelve anomalies were counted.
+                # Some historical/cached providers only expose an excerpt.
+                # Each *present* sample must still be ordered and supported
+                # by a corresponding positive, bounded count.
         control.check_cancelled()
         if not valid:
             control.report(message="Audit des langues impossible : plan invalide")
@@ -536,7 +610,11 @@ class LanguageAuditTool(_ReadOnlyTool):
         control.report(message=expected)
         control.check_cancelled()
         return MaintenanceResult(
-            ok=True, changed=0, summary=expected,
+            # Invalid/noncanonical *tags* are audit findings. A failed Core
+            # normalizer is different: some language values were not checked,
+            # so the scan cannot be reported as an entirely successful audit.
+            ok=counts["normalization_failures"] == 0,
+            changed=0, summary=expected,
             warnings=tuple(safe_warnings), facts=counts,
         )
 
@@ -585,14 +663,22 @@ class NamingAuditTool(_ReadOnlyTool):
                     index=str(row.get("series_index") or row.get("index") or ""),
                     extension=extension,
                 )
-                # A null/empty/non-stringifiable proposal is not a valid
-                # comparison target and must not count as a mismatch.
-                if expected is None:
+                # A broker preview is a filename proposal, not an arbitrary
+                # object or a complete filesystem path. Never coerce a bool,
+                # number or provider-supplied object into a plausible name,
+                # and never downgrade an absolute or nested path by basename.
+                if type(expected) is not str:
                     raise ValueError("unusable naming policy proposal")
-                proposed = str(expected).strip()
-                if not proposed:
-                    raise ValueError("empty naming policy proposal")
-                different = PurePath(current).name != PurePath(proposed).name
+                proposed = expected
+                if (
+                    not proposed or proposed != proposed.strip()
+                    or len(proposed) > 512
+                    or proposed in {".", ".."}
+                    or "/" in proposed or "\\" in proposed
+                    or any(ord(ch) < 32 or ord(ch) == 127 for ch in proposed)
+                ):
+                    raise ValueError("invalid naming policy filename")
+                different = PurePath(current).name != proposed
             except Exception:
                 # Never include provider values, exception texts or dynamic
                 # exception class names in the public preview/progress.
@@ -652,31 +738,62 @@ class NamingAuditTool(_ReadOnlyTool):
             valid = type(plan.warnings) in (tuple, list) and len(plan.warnings) <= 15
         if valid:
             import re
+            # Each sampled notice has exactly one classified outcome. For
+            # restored plans, counts alone are not enough: the warning list
+            # must reflect the actual bounded, ordered preview policy.
+            samples = []
+            observed = {"mismatch": 0, "policy_failures": 0}
+            last_ordinal = 0
             for warning in plan.warnings:
                 if type(warning) is not str:
                     valid = False
                     break
-                if (
-                    re.fullmatch(
-                        r"(?:Politique de nommage indisponible|Nom non conforme) : notice n°[1-9][0-9]{0,6}",
-                        warning,
+                match = re.fullmatch(
+                    r"(Politique de nommage indisponible|Nom non conforme) : notice n°([1-9][0-9]{0,6})",
+                    warning,
+                )
+                if match:
+                    ordinal = int(match.group(2))
+                    if len(samples) >= 12 or ordinal <= last_ordinal:
+                        valid = False
+                        break
+                    last_ordinal = ordinal
+                    kind = (
+                        "mismatch" if match.group(1) == "Nom non conforme"
+                        else "policy_failures"
                     )
-                    or warning == (
-                        f'{counts["unavailable"]} entrée(s) sans nom/titre public vérifiable.'
-                    ) and counts["unavailable"] > 0
-                    or warning == (
-                        f'{counts["policy_failures"]} entrée(s) sans proposition valide de la politique Core.'
-                    ) and counts["policy_failures"] > 0
-                    or warning == "Audit uniquement : aucune mutation de placement n'est effectuée."
-                ):
-                    safe_warnings.append(warning)
+                    observed[kind] += 1
+                    if observed[kind] > counts[kind]:
+                        valid = False
+                        break
+                    samples.append(warning)
                 else:
-                    valid = False
+                    # Aggregate warnings cannot be interspersed with samples.
                     break
             if valid:
-                valid = bool(safe_warnings) and safe_warnings[-1] == (
-                    "Audit uniquement : aucune mutation de placement n'est effectuée."
+                expected_samples = min(
+                    12, counts["mismatch"] + counts["policy_failures"]
                 )
+                valid = len(samples) == expected_samples
+                if valid and expected_samples < 12:
+                    valid = (
+                        observed["mismatch"] == counts["mismatch"]
+                        and observed["policy_failures"] == counts["policy_failures"]
+                    )
+            if valid:
+                tail = []
+                if counts["unavailable"]:
+                    tail.append(
+                        f'{counts["unavailable"]} entrée(s) sans nom/titre public vérifiable.'
+                    )
+                if counts["policy_failures"]:
+                    tail.append(
+                        f'{counts["policy_failures"]} entrée(s) sans proposition valide de la politique Core.'
+                    )
+                tail.append("Audit uniquement : aucune mutation de placement n'est effectuée.")
+                valid = list(plan.warnings[len(samples):]) == tail
+            if valid:
+                safe_warnings = list(plan.warnings)
         control.check_cancelled()
         if not valid:
             control.report(message="Audit des noms impossible : plan invalide")
@@ -913,22 +1030,42 @@ class IntegrityAuditTool(_ReadOnlyTool):
                     # diagnostics. Never disclose a library title, filename,
                     # path, or upstream string while reporting a file failure.
                     warnings.append(f"Fichier {index}/{total} : {', '.join(issues)}")
-        # A cancellation received while the last file was being inspected
-        # must not publish a misleading completed/100% state.
+        # Files without a usable path were excluded by plan(), but still
+        # prevent the scan from proving that the local library is healthy.
+        # Distinguish inspected anomalies from unavailable checks; neither
+        # case is a completed successful audit.
+        unavailable = counts["missing_path"] + read_failures + reference_failures
+        incomplete = bool(invalid or unavailable)
+        # Cancellation during the final inspection must not publish 100%.
         control.check_cancelled()
         if total:
-            control.report(current=total,total=total,message="Audit d’intégrité terminé")
+            status = (
+                f"Audit d’intégrité incomplet : {invalid} anomalie(s), "
+                f"{unavailable} contrôle(s) indisponible(s)"
+                if incomplete else "Audit d’intégrité terminé"
+            )
+            control.report(current=total, total=total, message=status)
         else:
-            control.report(message="Audit d’intégrité terminé : aucun fichier")
+            control.report(message=(
+                f"Audit d’intégrité incomplet : {unavailable} contrôle(s) indisponible(s)"
+                if incomplete else "Audit d’intégrité terminé : aucun fichier"
+            ))
+        summary = (
+            f"{invalid} fichier(s) en anomalie sur {len(candidates)} vérifié(s), "
+            f"dont {missing} manquant(s)."
+        )
+        if unavailable:
+            summary += f" {unavailable} contrôle(s) indisponible(s)."
         return MaintenanceResult(
-            ok=invalid==0 and read_failures==0 and reference_failures==0,
+            ok=not incomplete,
             changed=0,
-            summary=f"{invalid} fichier(s) en anomalie sur {len(candidates)} vérifié(s), dont {missing} manquant(s).",
+            summary=summary,
             warnings=tuple(warnings),
             facts={
                 "checked":len(candidates),
                 "invalid":invalid,
                 "missing":missing,
+                "missing_path":counts["missing_path"],
                 "read_failures":read_failures,
                 "reference_failures":reference_failures,
                 "issues":by_issue,
@@ -1062,12 +1199,22 @@ class NamingRepairTool(_ReadOnlyTool):
                         index=index,
                         extension=extension,
                     )
-                    if proposed is None:
-                        raise ValueError("no naming policy proposal")
-                    expected = str(proposed).strip()
-                    if not expected:
-                        raise ValueError("empty naming policy proposal")
-                    matches = PurePath(current).name == PurePath(expected).name
+                    # A Core naming preview is a single filename, not a
+                    # file path or a stringifiable provider object. Match the
+                    # read-only naming audit's strict proposal contract:
+                    # an invalid preview must never enter a mutation plan.
+                    if type(proposed) is not str:
+                        raise ValueError("unusable naming policy proposal")
+                    expected = proposed
+                    if (
+                        not expected or expected != expected.strip()
+                        or len(expected) > 512
+                        or expected in {".", ".."}
+                        or "/" in expected or "\\" in expected
+                        or any(ord(ch) < 32 or ord(ch) == 127 for ch in expected)
+                    ):
+                        raise ValueError("invalid naming policy filename")
+                    matches = PurePath(current).name == expected
                 except Exception:
                     # Untrusted proposed filenames may fail while converted,
                     # even when the Core preview call itself succeeded.
@@ -1210,10 +1357,17 @@ class NamingRepairTool(_ReadOnlyTool):
                 # A changed counter is evidence of completed mutations, not
                 # an arbitrary provider value to coerce with int(). Refuse
                 # negative, boolean, non-numeric or unbounded claims.
-                raw_changed = getattr(result, "changed", 0)
-                if type(raw_changed) is not int or not 0 <= raw_changed <= 1_000_000:
-                    raise ValueError("unverifiable Core mutation count")
-                if getattr(result, "ok", True) is False:
+                raw_changed = getattr(result, "changed", None)
+                raw_ok = getattr(result, "ok", None)
+                if (
+                    type(raw_changed) is not int or raw_changed not in (0, 1)
+                    or type(raw_ok) is not bool
+                ):
+                    # The Core mutation response must attest *both* status
+                    # and modification count; no implicit success from a
+                    # partial or malformed broker result.
+                    raise ValueError("unverifiable Core mutation outcome")
+                if raw_ok is False:
                     failures += 1
                 changed += raw_changed
                 # Broker warnings may include private local paths or provider
@@ -1238,36 +1392,59 @@ class NamingRepairTool(_ReadOnlyTool):
                 warnings.append(f"Renormalisation {index}/{total} : échec du service")
         # A cancellation during the last mutation must not emit completion.
         control.check_cancelled()
+        # A skipped placement was never checked against the naming policy.
+        # Do not report a fully successful run solely because the remaining
+        # placements were renamed without error.
+        incomplete = bool(
+            failures or preview_failures
+            or plan_counts["read_failures"] or plan_counts["skipped"]
+        )
         if total:
             status = (
                 "Renormalisation terminée"
-                if not failures and not preview_failures and not plan_counts["read_failures"]
+                if not incomplete
                 else (
-                    f"Renormalisation : {failures} échec(s), "
+                    f"Renormalisation partielle : {failures} échec(s), "
                     f"{preview_failures} proposition(s) indisponible(s), "
-                    f"{plan_counts['read_failures']} artefact(s) non inspecté(s)"
+                    f"{plan_counts['read_failures']} artefact(s) non inspecté(s), "
+                    f"{plan_counts['skipped']} entrée(s) ignorée(s)"
                 )
             )
             control.report(current=total, total=total, message=status)
         else:
-            message = (
-                f"Renormalisation : {preview_failures} placement(s) sans proposition"
-                if preview_failures else (
-                    f"Renormalisation incomplète : {plan_counts['read_failures']} artefact(s) non inspecté(s)"
-                    if plan_counts["read_failures"] else
-                    "Renormalisation terminée : aucun placement"
+            if plan_counts["skipped"]:
+                message = (
+                    f"Renormalisation incomplète : "
+                    f"{preview_failures} proposition(s) indisponible(s), "
+                    f"{plan_counts['read_failures']} artefact(s) non inspecté(s), "
+                    f"{plan_counts['skipped']} entrée(s) ignorée(s)"
                 )
-            )
+            else:
+                # Preserve established feedback for plans containing only
+                # preview policy failures or library.read failures.
+                message = (
+                    f"Renormalisation : {preview_failures} placement(s) sans proposition"
+                    if preview_failures else (
+                        f"Renormalisation incomplète : {plan_counts['read_failures']} artefact(s) non inspecté(s)"
+                        if plan_counts["read_failures"] else
+                        "Renormalisation terminée : aucun placement"
+                    )
+                )
             control.report(message=message)
         facts = {"planned": len(ids), "failures": failures}
         if preview_failures:
             facts["policy_failures"] = preview_failures
         if plan_counts["read_failures"]:
             facts["read_failures"] = plan_counts["read_failures"]
+        if plan_counts["skipped"]:
+            facts["skipped"] = plan_counts["skipped"]
+        summary = f"{changed} placement(s) renormalisé(s)."
+        if plan_counts["skipped"]:
+            summary += f" {plan_counts['skipped']} entrée(s) ignorée(s)."
         return MaintenanceResult(
-            ok=failures == 0 and preview_failures == 0 and plan_counts["read_failures"] == 0,
+            ok=not incomplete,
             changed=changed,
-            summary=f"{changed} placement(s) renormalisé(s).",
+            summary=summary,
             warnings=tuple(warnings),
             facts=facts,
         )
@@ -1291,22 +1468,44 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         pairs: list[tuple[str, str]] = []
         changes: list[str] = []
         read_failures: list[str] = []
-        seen_views: set[str] = set()
+        seen_views: set[tuple[str, str, tuple[str, ...]]] = set()
 
         for _row, view in _iter_views(metadata, library_read, context.identity_id, read_failures):
             try:
                 # These values come from a third-party Core-backed view.
                 # Invalid fields must not abort other artifacts in the plan.
-                key = str(getattr(view.book, "book_id", "") or "") + ":" + ",".join(
+                book_key = str(getattr(view.book, "book_id", "") or "")
+                artifact_key = ",".join(
                     sorted(str(a.artifact_id) for a in getattr(view, "artifacts", ()))
                 )
                 placements = tuple(getattr(view, "placements", ()) or ())
+                # Some legacy Core views expose no artifact list. Book ID
+                # alone then conflates independently fetched placement sets,
+                # suppressing real duplicate candidates from later views.
+                # Keep a fingerprint of actual, native placement references.
+                fingerprint_ids: set[str] = set()
+                for placement in placements:
+                    try:
+                        identifier = getattr(placement, "placement_id", None)
+                    except Exception:
+                        # A single poisoned placement must not discard valid
+                        # sibling placements or their duplicate candidates.
+                        continue
+                    if (
+                        type(identifier) is str and 0 < len(identifier) <= 1024
+                        and identifier.strip() == identifier
+                        and not any(ord(ch) < 32 or ord(ch) == 127 for ch in identifier)
+                    ):
+                        fingerprint_ids.add(identifier)
+                placement_key = tuple(sorted(fingerprint_ids))
+                key = (book_key, artifact_key, placement_key)
             except Exception:
                 read_failures.append("unavailable")
                 continue
-            if key in seen_views:
+            if placement_key and key in seen_views:
                 continue
-            seen_views.add(key)
+            if placement_key:
+                seen_views.add(key)
             groups: dict[tuple[str, str | None], list[Any]] = {}
             seen_placements: set[str] = set()
             for placement in placements:
@@ -1349,6 +1548,42 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                     pairs.append((duplicate.placement_id, keep.placement_id))
                     if len(changes) < 100:
                         changes.append(f"Supprimer le doublon n°{len(pairs)}")
+
+        # A placement may appear in overlapping Core read views. Publishing
+        # the same duplicate twice makes run() reject the *entire* destructive
+        # plan, including independent safe candidates. Worse, competing
+        # keepers or a keeper that is deleted elsewhere make its preview
+        # ambiguous. Drop those references before presenting any actions;
+        # Core will still revalidate every retained delete_duplicate call.
+        keepers_by_duplicate: dict[str, set[str]] = {}
+        for duplicate_id, keep_id in pairs:
+            keepers_by_duplicate.setdefault(duplicate_id, set()).add(keep_id)
+        duplicate_ids = set(keepers_by_duplicate)
+        keeper_ids = {keep for keeps in keepers_by_duplicate.values() for keep in keeps}
+        ambiguous_ids = duplicate_ids & keeper_ids
+        ambiguous_ids.update(
+            duplicate_id for duplicate_id, keep_ids in keepers_by_duplicate.items()
+            if len(keep_ids) != 1
+        )
+        if ambiguous_ids:
+            # This is an incomplete scan/preview, not a successful cleanup.
+            # Never publish the identifiers themselves in the diagnostic.
+            read_failures.append("unavailable")
+        safe_pairs: list[tuple[str, str]] = []
+        seen_safe_duplicates: set[str] = set()
+        for duplicate_id, keep_id in pairs:
+            if (
+                duplicate_id in ambiguous_ids or keep_id in ambiguous_ids
+                or duplicate_id in seen_safe_duplicates
+            ):
+                continue
+            seen_safe_duplicates.add(duplicate_id)
+            safe_pairs.append((duplicate_id, keep_id))
+        pairs = safe_pairs
+        changes = [
+            f"Supprimer le doublon n°{index}"
+            for index in range(1, min(100, len(pairs)) + 1)
+        ]
 
         warnings: list[str] = []
         if pairs:
@@ -1469,10 +1704,17 @@ class DuplicateCleanupTool(_ReadOnlyTool):
                 # A changed counter is evidence of completed mutations, not
                 # an arbitrary provider value to coerce with int(). Refuse
                 # negative, boolean, non-numeric or unbounded claims.
-                raw_changed = getattr(result, "changed", 0)
-                if type(raw_changed) is not int or not 0 <= raw_changed <= 1_000_000:
-                    raise ValueError("unverifiable Core mutation count")
-                if getattr(result, "ok", True) is False:
+                raw_changed = getattr(result, "changed", None)
+                raw_ok = getattr(result, "ok", None)
+                if (
+                    type(raw_changed) is not int or raw_changed not in (0, 1)
+                    or type(raw_ok) is not bool
+                ):
+                    # A missing/non-boolean outcome must not default to
+                    # success for a destructive operation. Core could have
+                    # partially changed files: only attested counts are shown.
+                    raise ValueError("unverifiable Core mutation outcome")
+                if raw_ok is False:
                     failures += 1
                 changed += raw_changed
                 # The Core mutation may return a private filesystem path,
