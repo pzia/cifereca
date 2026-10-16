@@ -107,6 +107,9 @@ class BnfCatalogueSession(ProviderSession):
             pass
 
     def search(self, query: str, scope="all", page=0, field="all"):
+        # A previous partial search must not pollute subsequent requests,
+        # including rejected fields, too-short queries and network failures.
+        self.last_search_warnings = []
         query = str(query or "").strip()
         if type(field) is not str or field not in FIELDS:
             raise ProviderCapabilityError("BnF : unsupported_field")
@@ -129,8 +132,20 @@ class BnfCatalogueSession(ProviderSession):
             response.raise_for_status()
             rows = self.parse_records(response.content)
         except httpx.HTTPError as exc:
-            self._diagnostic("SRU search", "error", detail={"error": type(exc).__name__})
-            raise ProviderError("BnF : catalogue temporairement indisponible") from exc
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            code = (
+                "auth_required" if status == 401 else
+                "access_denied" if status == 403 else
+                "rate_limited" if status == 429 else
+                "service_unavailable"
+            )
+            # Stable, redacted failure codes. Never echo URLs, credentials or
+            # provider response text in user-exportable diagnostics.
+            self._diagnostic("SRU search", "error", detail={
+                "error": type(exc).__name__,
+                "http_status": status if type(status) is int and 100 <= status <= 599 else None,
+            })
+            raise ProviderError(f"BnF : catalogue temporairement indisponible ({code})") from exc
         # Unknown support is omitted from scoped searches. API v1 only allows
         # physical/digital; all-scope uses a documented physical fallback.
         if scope != "all":
@@ -139,6 +154,12 @@ class BnfCatalogueSession(ProviderSession):
             key="series" if field=="series" else "collections"
             needle=query.casefold()
             rows=[r for r in rows if any(needle in str(value).casefold() for value in r.metadata.get(key,[]))]
+        if scope != "all" or field in {"series", "collection"}:
+            # Scoped support and series/collection filtering use only the
+            # retrieved SRU page; a local zero is not a catalogue-wide zero.
+            self.last_search_warnings.append(
+                "partial_results : post-filtre local limité à la page SRU demandée"
+            )
         self._diagnostic("SRU search", "ok", detail={"results": len(rows), "page": page, "field": field})
         return rows
 
