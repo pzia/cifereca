@@ -38,8 +38,8 @@ HTML privé. Le test de transport utilise un HTTP 302 fictif depuis un
 `readBook` sélectionné dans un inventaire frais, cette page intermédiaire,
 un ACSM fictif et un seul import pour le propriétaire. Il vérifie aussi
 zéro acquisition à l'inventaire, aucun GET LCP/navigation/autre livre,
-l'absence de secrets dans les diagnostics, le refus de deux ACSM et neuf
-cas de rattachement incorrect (produit, exemplaire, readBook, variante, query,
+l'absence de secrets dans les diagnostics, le refus de deux ACSM et dix
+cas de rattachement incorrect (produit, exemplaire, readBook, variante, query, contrôle HTML encodé,
 carte absente/dupliquée, tableau dynamique/dupliqué).
 
 ## Nouveau parcours sûr

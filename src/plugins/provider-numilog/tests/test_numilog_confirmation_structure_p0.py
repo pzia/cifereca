@@ -112,7 +112,7 @@ def test_second_signed_adobe_candidate_remains_ambiguous_before_any_import(tmp_p
 
 
 @pytest.mark.parametrize('mutation', (
-    'other-product', 'other-copy', 'other-readbook', 'other-format', 'other-query',
+    'other-product', 'other-copy', 'other-readbook', 'other-format', 'other-query', 'normalized-readbook',
     'no-card', 'duplicate-card', 'dynamic-array', 'duplicate-array',
 ))
 def test_confirmation_requires_exact_modal_copy_and_fresh_readbook_before_signed_get(tmp_path, mutation):
@@ -125,6 +125,8 @@ def test_confirmation_requires_exact_modal_copy_and_fresh_readbook_before_signed
         html = html.replace('lid=12', 'lid=34')
     elif mutation == 'other-format':
         html = html.replace('m=download', 'm=another-format')
+    elif mutation == 'normalized-readbook':
+        html = html.replace('readBook.ashx', 'read&#10;Book.ashx')
     elif mutation == 'other-query':
         html = html.replace('m=download', 'm=download&amp;copy=2')
     elif mutation == 'no-card':
