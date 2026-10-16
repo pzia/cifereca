@@ -135,7 +135,7 @@ def test_http_failure_is_typed_without_leaking_exception_text():
     client = FakeClient(error=httpx.ConnectError("PRIVATE_TOKEN"))
     session = make_session(client)
     try:
-        with pytest.raises(ProviderError, match="réseau indisponible") as caught:
+        with pytest.raises(ProviderError, match="service_unavailable") as caught:
             session.search("Doyle", field="author")
         assert "PRIVATE_TOKEN" not in str(caught.value)
     finally:
