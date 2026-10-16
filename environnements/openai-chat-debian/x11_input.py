@@ -27,7 +27,8 @@ class X11Input:
         self.xtst.XTestFakeButtonEvent(self.display, 1, False, 0)
         self.x11.XSync(self.display, False)
 
-    def click_widget(self, widget) -> dict:
+    def widget_point(self, widget) -> tuple[int, int]:
+        """Find an XTEST target without dispatching any input event."""
         from native_capture import pointer
         native = widget.get_native()
         success, rect = widget.compute_bounds(native)
@@ -52,6 +53,14 @@ class X11Input:
         transform_x, transform_y = native.get_surface_transform()
         x = round(origin_x.value + rect.get_x() + rect.get_width() / 2 - transform_x)
         y = round(origin_y.value + rect.get_y() + rect.get_height() / 2 - transform_y)
+        return x, y
+
+    def click_widget(self, widget) -> dict:
+        x, y = self.widget_point(widget)
+        # XTEST may silently clamp a transient GTK modal's unallocated
+        # (-5, -5) position. Never dispatch an unintended pointer action.
+        if x < 0 or y < 0:
+            raise RuntimeError("XTEST widget has no on-screen pointer coordinates")
         self.click(x, y)
         return {"widget": widget.get_name(), "x": x, "y": y, "source": "XTEST pointer/button events"}
 
