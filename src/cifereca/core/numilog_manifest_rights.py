@@ -101,6 +101,29 @@ def mirror_numilog_manifest_rights(
     """
     if not identity_id or not credential_id or not account_id:
         return 0
+    # Revalidate at the write boundary, too: bindings can change while
+    # library() is reading pages. Neither a caller nor a stale SearchResult
+    # can turn an earlier authorization into a durable purchase on its own.
+    try:
+        matches = [
+            account for account in service.accounts
+            if account.provider_id == "numilog"
+            and account.credential_id == credential_id
+            and account.identity_id == identity_id
+            and account.unique_id == account_id
+        ]
+        sessions = [
+            session for session in service._sessions.values()
+            if getattr(session, "provider_id", None) == "numilog"
+            and getattr(session, "credential_id", None) == credential_id
+        ]
+        if (len(matches) != 1 or len(sessions) != 1
+                or not numilog_inventory_binding_valid(
+                    service, matches[0], session=sessions[0],
+                )):
+            return 0
+    except Exception:
+        return 0
     existing = service.storage.entitlements(provider_id="numilog")
     by_scope = {
         (
