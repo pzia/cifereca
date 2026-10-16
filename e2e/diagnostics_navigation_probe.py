@@ -1517,9 +1517,24 @@ def main() -> int:
         later(200, numilog_inventory_revoke_click)
 
     def numilog_inventory_revoke_click():
-        report["pointer_actions"].append(device[0].click_widget(
-            loan_sync_fixture["inventory_revoke_button"]
-        ))
+        f = loan_sync_fixture
+        button = f["inventory_revoke_button"]
+        scroll = f["sync_scroll"]
+        ok, bounds = button.compute_bounds(scroll)
+        assert ok, "Numilog revocation action has no viewport bounds"
+        if bounds.get_y() < 0 or bounds.get_y() + bounds.get_height() > scroll.get_height():
+            # Page regeneration resets the adjustment before GTK allocates
+            # the replacement rows. Scroll against the *current* allocation,
+            # then recheck on a later frame before sending a physical click.
+            attempts = f.get("inventory_revoke_scroll_attempts", 0) + 1
+            f["inventory_revoke_scroll_attempts"] = attempts
+            assert attempts <= 6, "Numilog revocation remained outside the viewport"
+            adjustment = scroll.get_vadjustment()
+            adjustment.set_value(adjustment.get_value() + bounds.get_y() - 100)
+            later(180, numilog_inventory_revoke_click)
+            return
+        assert button.get_mapped() and button.get_sensitive()
+        report["pointer_actions"].append(device[0].click_widget(button))
         later(250, numilog_inventory_schedule_complete)
 
     def numilog_inventory_schedule_complete():
