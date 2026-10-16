@@ -110,7 +110,7 @@ def test_zero_results_and_service_failure_are_distinct():
     failed = FakeClient(error=httpx.ConnectError("PRIVATE_SIGNED_TOKEN"))
     session = session_for_test(failed)
     try:
-        with pytest.raises(ProviderError, match="Baen : catalogue inaccessible") as caught:
+        with pytest.raises(ProviderError, match="Baen : service_unavailable") as caught:
             session.search("Missing", field="all")
         assert "PRIVATE_SIGNED_TOKEN" not in str(caught.value)
         assert len(failed.calls) == 1
