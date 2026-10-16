@@ -401,8 +401,6 @@ class SynchronizationBrokerImpl:
         # The service owns this session. Kobo's explicit backup capability
         # alone licenses declaring the *availability* of an opt-in local
         # materialization phase; this metadata read never executes it.
-        # Do NOT announce scheduled_refresh: the current Kobo timer does
-        # not yet implement periodic source refresh (#1346).
         provider_id = account_ref.provider_id
         credential_id = str(getattr(account, "credential_id", "") or "")
         session = getattr(self.service, "_sessions", {}).get(
@@ -413,6 +411,11 @@ class SynchronizationBrokerImpl:
             and bool(getattr(getattr(session, "capabilities", None), "backup", False))
         ):
             declared_sync_caps.append("local_materialization")
+        # Core owns real startup/periodic inventory dispatch for these stores.
+        # Availability is not consent: policies still default to manual and
+        # the scheduler revalidates exact source/account/session before I/O.
+        if provider_id in {"kobo", "numilog"} and "personal_library" in source_caps:
+            declared_sync_caps.append("scheduled_refresh")
         return SyncSourceRef(
             source_id=source_id,
             identity_id=account_ref.identity_id,
