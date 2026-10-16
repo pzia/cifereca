@@ -101,8 +101,9 @@ def _render_search_results(self) -> int:
         else:
             medium = "Livre numérique"
         source = self.service.provider_display_name(item.source_provider)
-        extras: list[str] = []
-        if item.source_provider == "kobo":
+        stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
+        extras: list[str] = ["Résultat connu · hors ligne"] if stale_known else []
+        if item.source_provider == "kobo" and not stale_known:
             right_state = kobo_rights.get((item.source_credential, item.record_id))
             if right_state == "active":
                 extras.append("Possédé sur Kobo")
@@ -113,8 +114,12 @@ def _render_search_results(self) -> int:
             elif item.price:
                 extras.append(f"{item.price} {item.currency or ''}".strip())
         meta = " · ".join(x for x in [medium, *extras, item.published_at] if x)
-        placement = linked.get((item.source_provider, item.source_credential, item.record_id))
-        direct = self.service.can_direct_download(item)
+        # An offline public result is never evidence of a current entitlement,
+        # a download offer or a verified local placement.
+        placement = None if stale_known else linked.get(
+            (item.source_provider, item.source_credential, item.record_id)
+        )
+        direct = False if stale_known else self.service.can_direct_download(item)
         callback = None
         if placement:
             extras.append('Fichier local disponible')
