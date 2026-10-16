@@ -406,3 +406,18 @@ def test_unattested_loan_or_expired_entitlement_is_not_a_purchase(
         assert result.facts["counts"]["potentially_missing"] == 0
     finally:
         service.close()
+
+
+def test_preview_never_creates_configured_library_or_identity_directories(tmp_path):
+    service = _service(tmp_path)
+    try:
+        account, _session, _calls = _connect(service, number=0)
+        absent = tmp_path / "not-created-by-preview"
+        service.config.set("library.directory", str(absent))
+        assert not absent.exists()
+        broker, sid = _broker(service, account)
+        assert _preview(broker, sid, verify=False).ok
+        assert _preview(broker, sid, verify=True).ok
+        assert not absent.exists()
+    finally:
+        service.close()
