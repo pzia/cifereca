@@ -172,7 +172,7 @@ def test_partial_search_keeps_valid_branch_when_diagnostics_sink_fails(tmp_path,
 
         assert [row.id for row in rows] == [item.id]
         assert session.last_search_warnings == [
-            "Gallica : recherche audio temporairement indisponible"
+            "partial_results : Gallica : recherche audio temporairement indisponible"
         ]
     finally:
         session.close()
