@@ -227,7 +227,12 @@ def configure(
         def work():
             # No unbounded refresh batch and no user-selected-account fallback.
             for identity_id in ids:
-                if getattr(window, "_closed", False):
+                if (
+                    getattr(window, "_closed", False)
+                    or _broker(window) is not broker
+                ):
+                    # A queued task must not reanimate a replaced plugin
+                    # manager/broker after the GTK tick checked its scope.
                     return
                 try:
                     broker.synchronize_scheduled_inventory(identity_id, "periodic")
