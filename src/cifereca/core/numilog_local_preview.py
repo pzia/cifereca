@@ -18,8 +18,8 @@ from ..plugin_api import SyncResult
 from .kobo_local_audit import _read_hash_within
 
 _MAX_ROWS = 100_000
-_ID = re.compile(r"numilog:([0-9a-f]{20}):([A-Za-z0-9_.-]{1,160}):([0-9a-f]{16})\\Z")
-_SHA = re.compile(r"[0-9a-f]{64}\\Z")
+_ID = re.compile(r"numilog:([0-9a-f]{20}):([A-Za-z0-9_.-]{1,160}):([0-9a-f]{16})\Z")
+_SHA = re.compile(r"[0-9a-f]{64}\Z")
 _COUNT_NAMES = (
     "owned_purchases", "already_local_linked", "already_local_verified",
     "needs_file_verification", "potentially_missing", "candidate_unverified",
