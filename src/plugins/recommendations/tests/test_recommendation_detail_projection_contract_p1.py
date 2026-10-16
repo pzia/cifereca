@@ -366,7 +366,6 @@ def test_untrusted_authors_never_create_public_metadata_or_duplicate_values():
     assert _public_candidate_authors(item) == ("Alice", "Bob")
     assert rows[0].subtitle == details[0].subtitle == "Alice, Bob"
 
-
 def test_empty_filter_invalidates_previous_detail_without_selection_callback():
     view, rows, details, empties = _make_view({"title": "Old book"})
     view._render(preserve_summary=True)
