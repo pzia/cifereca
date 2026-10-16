@@ -10,7 +10,7 @@ from cifereca_kobo_policy import (
     classify_personal_manifest, _strict_account_scope, _strict_product_id,
     _SCOPE_DENIED,
 )
-from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOffer, CredentialField, ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
+from cifereca.plugin_api import Account, ItemDetail, SearchResult, AcquisitionOffer, CredentialField, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
 
 _TRACE_LOG = logging.getLogger("cifereca")
@@ -165,6 +165,21 @@ DESCRIPTOR = ProviderDescriptor(
         holdings=True,
         personal_library=True,
         backup=True,
+    ),
+    search_capabilities=ProviderSearchCapabilities(
+        # Vault accepts arbitrary 'field' as a query parameter, but the
+        # deployed server-side semantics for specific fields are not proven.
+        # Until verified, never advertise an exact author/ISBN/etc filter.
+        fields=("all",),
+        scopes=("all", "digital", "catalog"),
+        pagination="page",
+        page_size=50,
+        notes=(
+            "Recherche générale via Kobo-Vault ; filtrage serveur auteur/ISBN non attesté.",
+            "Sans compte attesté, all/digital restent limités au catalogue public.",
+            "Avec un compte attesté, all/digital peuvent inclure la bibliothèque privée.",
+            "catalog force exclusivement la projection publique sans droits inférés.",
+        ),
     ),
     credential_fields=(CredentialField("api_token", "Token API Kobo-Vault", secret=True),),
     notes=(
@@ -356,12 +371,16 @@ class KoboSession(ProviderSession):
         # silently become an authenticated all-sources search and issue a
         # private /library/search request. Keep diagnostics independent of
         # the rejected caller value (which could contain a signed URL).
+        if type(field) is not str or field.strip().casefold() != "all":
+            # Never forward an unverified field query to the public or private
+            # Vault routes, nor present general results as exact field matches.
+            raise ProviderCapabilityError("Kobo-Vault : unsupported_field")
         if type(scope) is not str or scope not in {
-            "all", "digital", "physical", "catalog",
+            "all", "digital", "catalog",
         }:
+            if scope == "physical":
+                raise ProviderCapabilityError("Kobo-Vault : unsupported_scope")
             raise ProviderError("Kobo-Vault : portée de recherche invalide")
-        if scope == "physical":
-            return []
         # Determine whether personal discovery is authorized *before* the
         # service can issue /library/search. Post-filtering private hits is
         # insufficient: a disconnected or mismatched account must not incur
