@@ -65,7 +65,15 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
     # account IDs or local paths) in search warnings. Never echo their text
     # into GTK. The presence of a partial failure is sufficient for UX.
     if getattr(self.service, "last_search_warnings", None):
-        self.toast("Résultats partiels · certaines sources sont indisponibles.", 6)
+        # Read-only fallback rows are not a fresh remote response. Make the
+        # degraded provenance explicit without ever echoing provider errors.
+        if any(
+            (getattr(item, "metadata", None) or {}).get("search_provenance")
+            == "known_catalog_stale" for item in rows
+        ):
+            self.toast("Résultats connus, recherche en ligne indisponible · résultats partiels.", 6)
+        else:
+            self.toast("Résultats partiels · certaines sources sont indisponibles.", 6)
 
 
 def _render_search_results(self) -> int:
