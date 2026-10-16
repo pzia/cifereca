@@ -142,3 +142,61 @@ def source_refresh_due(
         return elapsed >= policy.interval_minutes * 60
     except (ValueError, TypeError, OverflowError):
         return False
+
+
+def kobo_inventory_source_eligible(service: Any, account: Any) -> bool:
+    """Authorize only an exact, enabled Kobo *inventory* source binding.
+
+    This is deliberately independent of the provider's backup capability.
+    Source refresh cannot authorize file acquisition or ADEPT operations.
+    A stale connection, duplicate credential, disabled source or corrupt
+    stored enablement always blocks scheduled requests.
+    """
+    try:
+        if getattr(account, "provider_id", None) != "kobo":
+            return False
+        identity = getattr(account, "identity_id", None)
+        credential = getattr(account, "credential_id", None)
+        if (
+            type(identity) is not str or not identity
+            or type(credential) is not str or not credential
+        ):
+            return False
+        accounts = [
+            row for row in service.accounts
+            if getattr(row, "provider_id", None) == "kobo"
+            and getattr(row, "credential_id", None) == credential
+        ]
+        if len(accounts) != 1 or accounts[0] is not account:
+            return False
+        from ..brokers import SynchronizationBrokerImpl
+        source_id = SynchronizationBrokerImpl._source_id(account)
+        if not service.sync_source_enabled(account):
+            return False
+        # Legacy enablement may be permissive for inventory reads. A new
+        # automatic schedule must require an unambiguous exact stored bool.
+        enabled = service.storage.metadata_get("sync.source.enabled." + source_id)
+        if enabled is not None and enabled not in {"1", "true", "yes", "on"}:
+            return False
+        if service.storage.identity_for_connection("kobo", credential) != identity:
+            return False
+        bindings = [
+            row for row in service.storage.provider_connections(identity_id=identity)
+            if row.get("provider_id") == "kobo"
+            and row.get("credential_id") == credential
+            and row.get("enabled") is True
+        ]
+        if len(bindings) != 1:
+            return False
+        sessions = [
+            session for session in service._sessions.values()
+            if getattr(session, "provider_id", None) == "kobo"
+            and getattr(session, "credential_id", None) == credential
+        ]
+        if len(sessions) != 1 or not getattr(sessions[0], "connected", False):
+            return False
+        caps = getattr(sessions[0], "capabilities", None)
+        return getattr(caps, "personal_library", False) is True
+    except Exception:
+        # A failed permission check never grants scheduled network access.
+        return False
