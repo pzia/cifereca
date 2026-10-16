@@ -123,3 +123,42 @@ def test_partial_search_diagnostics_redact_untrusted_exception_text():
     assert "message" not in diagnostic
     assert "PRIVATE" not in str(diagnostic)
     assert "token=" not in str(diagnostic)
+
+
+
+@pytest.mark.parametrize("healthy,failed", (
+    ("OPDS", "audio"),
+    ("audio", "OPDS"),
+))
+def test_empty_successful_branch_remains_valid_zero_when_other_branch_fails(healthy, failed):
+    """A healthy empty response is not a total service failure."""
+    session = fake_session()
+    calls = []
+
+    def healthy_search(*_args):
+        calls.append(healthy)
+        return []
+
+    def broken_search(*_args):
+        calls.append(failed)
+        raise RuntimeError("PRIVATE_SIGNED_URL?token=SECRET")
+
+    session._search_ebooks = healthy_search if healthy == "OPDS" else broken_search
+    session._search_audio = healthy_search if healthy == "audio" else broken_search
+
+    assert session.search("absent", field="all") == []
+    assert sorted(calls) == ["OPDS", "audio"]
+    assert len(session.last_search_warnings) == 1
+    assert session.last_search_warnings[0].startswith("partial_results : Gallica :")
+    assert "PRIVATE_" not in session.last_search_warnings[0]
+
+
+def test_only_failed_branch_still_raises_even_without_result_rows():
+    """Audio-only search must not silently pass when SRU is unavailable."""
+    session = fake_session()
+    session._search_ebooks = lambda *_args: pytest.fail("unrequested OPDS branch")
+    session._search_audio = lambda *_args: (_ for _ in ()).throw(RuntimeError("SECRET"))
+    with pytest.raises(ProviderError) as raised:
+        session.search("absent", content_types=("mp3",))
+    assert getattr(raised.value, "code", None) == "search_temporarily_unavailable"
+    assert "SECRET" not in str(raised.value)

@@ -135,8 +135,93 @@ def test_http_failure_is_typed_without_leaking_exception_text():
     client = FakeClient(error=httpx.ConnectError("PRIVATE_TOKEN"))
     session = make_session(client)
     try:
-        with pytest.raises(ProviderError, match="réseau indisponible") as caught:
+        with pytest.raises(ProviderError, match="service_unavailable") as caught:
             session.search("Doyle", field="author")
         assert "PRIVATE_TOKEN" not in str(caught.value)
+    finally:
+        session.close()
+
+
+
+def test_general_all_search_declares_title_only_coverage_even_if_empty():
+    client = FakeClient(catalogue="<ul></ul>")
+    session = make_session(client)
+    try:
+        assert session.search("absent auteur", field="all") == []
+        assert len(client.post_calls) == 1
+        assert client.post_calls[0][1]["data"]["titre"] == "absent auteur"
+        assert session.last_search_warnings == [
+            "partial_results : recherche générale limitée au titre"
+        ]
+        # Explicit title queries and public browsing have no fake warning.
+        session.search("absent auteur", field="title")
+        assert session.last_search_warnings == []
+        session.search("", field="all", page=0)
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+def test_general_all_warning_cannot_survive_unsupported_field():
+    client = FakeClient()
+    session = make_session(client)
+    try:
+        assert session.search("livre", field="all")
+        assert session.last_search_warnings == [
+            "partial_results : recherche générale limitée au titre"
+        ]
+        before = len(client.post_calls)
+        with pytest.raises(ProviderCapabilityError, match="unsupported_field"):
+            session.search("livre", field="isbn")
+        # The broker avoids unsupported fields; a rejected query must not
+        # leak an old warning into later results.
+        assert len(client.post_calls) == before
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+def test_subject_two_matching_server_selectors_reports_partial_coverage():
+    form = '''<select name="id_categorie">
+    <option value="7">Science-fiction</option></select>
+    <select name="id_genre">
+    <option value="9">Science-fiction</option></select>'''
+    client = FakeClient(form=form)
+    session = make_session(client)
+    try:
+        rows = session.search("science-fiction", field="subject")
+        assert len(rows) == 1
+        assert rows[0].owned is False
+        assert rows[0].metadata["categories"] == ["Science-fiction"]
+        assert "genres" not in rows[0].metadata
+        assert client.get_calls[1][1]["params"]["id_categorie"] == "7"
+        assert client.get_calls[1][1]["params"]["id_genre"] == "1"
+        assert session.last_search_warnings == [
+            "partial_results : catégorie et genre correspondants ; un seul interrogé"
+        ]
+    finally:
+        session.close()
+
+
+def test_subject_two_available_selectors_one_match_needs_no_false_partial_warning():
+    client = FakeClient(form=FORM)
+    session = make_session(client)
+    try:
+        rows = session.search("mystere", field="subject")
+        assert len(rows) == 1
+        assert rows[0].metadata["genres"] == ["Policier & Mystère"]
+        assert "categories" not in rows[0].metadata
+        assert session.last_search_warnings == []
+        assert len(client.get_calls) == 2
+    finally:
+        session.close()
+
+
+def test_subject_without_matching_options_remains_true_zero():
+    client = FakeClient(form=FORM)
+    session = make_session(client)
+    try:
+        assert session.search("introuvable", field="subject") == []
+        assert session.last_search_warnings == []
+        assert len(client.get_calls) == 1
     finally:
         session.close()

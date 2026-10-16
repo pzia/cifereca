@@ -182,7 +182,7 @@ def _refresh_sync_page(self) -> None:
         now.set_tooltip_text(
             presentation.action_label if presentation.action_enabled else presentation.disabled_reason
         )
-        def one(_button, sid=source.source_id, label=display_label):
+        def one(_button, sid=source.source_id, label=display_label, provider=source.provider_id):
             if not sync_action_scope_current(self, scope):
                 return
             def completed(_result):
@@ -195,7 +195,7 @@ def _refresh_sync_page(self) -> None:
                 if refreshed is not None and refreshed.identity_id == scope.identity_id:
                     self.refresh_library(False)
             self.runner.submit(
-                f"Synchronisation {label}…",
+                ("Actualiser mes achats Numilog…" if provider == "numilog" else f"Synchronisation {label}…"),
                 lambda: broker.synchronize_source(sid)
                 if sync_action_scope_current(self, scope) else None,
                 completed, control=_button,

@@ -749,7 +749,9 @@ def main() -> int:
         assert w.service.current_identity.identity_id == "camille"
         assert w.identity_dropdown.get_model().get_n_items() == 2
         report["window_size"] = [w.get_width(), w.get_height()]
-        begin_library_volume()
+        from activity_feedback_acceptance import exercise
+        exercise(w, Gtk=Gtk, Adw=Adw, walk=walk, device=device[0], report=report,
+                 capture=capture, later=later, done=begin_library_volume)
 
     library_volume = {}
 
@@ -1678,7 +1680,13 @@ def main() -> int:
     def kobo_download_release():
         f = loan_sync_fixture
         assert "Annulation demandée" in f["download_row"].get_subtitle()
+        # The prior deadline covered the confirmation dialog and scrolling
+        # to the real stop button. Start a distinct bounded deadline only
+        # after XTEST cancellation has reached GTK and the worker is released.
+        # Otherwise a slow 1600px layout can time out before GTK processes
+        # the worker's terminal result, without actually failing acquisition.
         f["download_release"].set()
+        f["download_deadline"] = monotonic() + 6
         later(120, kobo_download_cancelled)
 
     def kobo_download_cancelled():

@@ -113,8 +113,6 @@ def on_start_due(service: Any, account: Any) -> bool:
     from .kobo_backup import _kobo_checkpoint_for
     credential = account.credential_id
     identity = account.identity_id
-    if _kobo_checkpoint_for(service, identity, credential) is not None:
-        return bool(service._kobo_backup_account_due(credential))
     try:
         raw = service.storage.metadata_get("sync.source.materialization.last_attempt." + _account_id(account))
         if raw is None:
@@ -127,7 +125,14 @@ def on_start_due(service: Any, account: Any) -> bool:
         now = int(time.time())
         if last > now + 300:
             return False  # clock rollback/future metadata: require manual action
-        return last <= 0 or now - last >= interval * 60
+        # A checkpoint must not bypass the per-source retry throttle. A
+        # failed/partial run can leave a checkpoint and must not trigger a
+        # download attempt on every application startup.
+        if last > 0 and now - last < interval * 60:
+            return False
+        if _kobo_checkpoint_for(service, identity, credential) is not None:
+            return bool(service._kobo_backup_account_due(credential))
+        return True
     except Exception:
         # Inability to read the attempt clock is not permission to retry.
         return False

@@ -13,6 +13,15 @@ from typing import Callable, Iterator
 
 _LOG = logging.getLogger("cifereca")
 
+def _p95_nearest_rank_index(size: int) -> int:
+    """Nearest-rank p95 index, consistent for exports and passive snapshots.
+
+    With 14 observations p95 is the 14th (maximum), not the 13th.
+    Small sample counts are always shown alongside the percentile.
+    """
+    return max(0, math.ceil(size * 0.95) - 1)
+
+
 def _process_resource_sample() -> dict[str, float | int | None]:
     """One explicit, local sample: process CPU and Linux resident pages.
 
@@ -356,7 +365,7 @@ class UiPerfMonitor:
         stats = {}
         for key, values in sorted(samples.items()):
             ordered = sorted(values)
-            p95 = max(0, min(len(ordered) - 1, int(round((len(ordered) - 1) * 0.95))))
+            p95 = _p95_nearest_rank_index(len(ordered))
             stats[key] = {
                 "count": len(ordered),
                 "p50_ms": round(statistics.median(ordered), 2),
@@ -365,6 +374,7 @@ class UiPerfMonitor:
             }
         return {
             "schema": "cifereca.performance.phases/1",
+            "percentile_method": "nearest_rank",
             "measurement_origin": self._measurement_origin,
             "no_samples": not bool(stats),
             "detailed_capture_enabled": enabled,
@@ -422,7 +432,7 @@ class UiPerfMonitor:
                 continue
             ordered = sorted(values)
             p50 = statistics.median(ordered)
-            p95_index = max(0, min(len(ordered) - 1, int(round((len(ordered) - 1) * 0.95))))
+            p95_index = _p95_nearest_rank_index(len(ordered))
             out[key] = {
                 "count": len(ordered),
                 "p50_ms": round(p50, 2),
