@@ -18,6 +18,8 @@ from cifereca_paris_client import ParisClient
 from cifereca.plugin_api import (
     CredentialField,
     ProviderCapabilities,
+    ProviderSearchCapabilities,
+    ProviderCapabilityError,
     ProviderConfigurationError,
     ProviderDescriptor,
     ProviderPlugin,
@@ -50,6 +52,17 @@ DESCRIPTOR = ProviderDescriptor(
         digital_download=True,
         return_loan=True,
         renew_loan=True,
+    ),
+    search_capabilities=ProviderSearchCapabilities(
+        fields=("all",),
+        scopes=("all", "digital", "physical"),
+        pagination="page",
+        page_size=50,
+        notes=(
+            "Recherche textuelle générale Syracuse ; aucun filtre auteur/ISBN/sujet natif attesté.",
+            "all interroge les catalogues physique et numérique ; une panne de branche est signalée.",
+            "Catalogue distinct des droits de prêt et des bibliothèques personnelles.",
+        ),
     ),
     credential_fields=(
         CredentialField("username", "Identifiant", placeholder="Numéro de carte ou e-mail"),
@@ -403,6 +416,12 @@ class ParisProviderSession(ProviderSession):
         return self._decorate(self.client.all_bookings(account.unique_id), self.provider_id, self.credential_id)
 
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
+        # Syracuse search is a general text query. Do not advertise an
+        # author/ISBN/subject restriction that the upstream client ignores.
+        if type(field) is not str or field.strip().casefold() != "all":
+            raise ProviderCapabilityError("Bibliothèques de Paris : unsupported_field")
+        if type(scope) is not str or scope.strip().casefold() not in ("all", "digital", "physical"):
+            raise ProviderCapabilityError("Bibliothèques de Paris : unsupported_scope")
         try:
             rows = self._decorate(
                 self.client.search(query, scope, page),

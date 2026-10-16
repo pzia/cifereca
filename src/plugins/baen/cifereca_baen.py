@@ -3,9 +3,9 @@ import hashlib, html, re
 from pathlib import Path
 from urllib.parse import urljoin
 import httpx
-from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
+from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 BASE='https://www.baen.com/'; FREE=BASE+'allbooks/category/index/id/2012'
-DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),homepage=BASE,notes=('Fonds public qualifié ; achats et bibliothèque privée à qualifier.',))
+DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all',),scopes=('all','digital'),pagination='page',page_size=50,notes=('Le formulaire Baen Free Library interroge la recherche générale uniquement ; ni auteur ni ISBN ne sont filtrés séparément.','Pagination par numéro de page ; couverture du catalogue non exhaustive sans parcourir les pages.',)),homepage=BASE,notes=('Fonds public qualifié ; achats et bibliothèque privée à qualifier.',))
 class BaenSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
         super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.9','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
@@ -48,8 +48,13 @@ class BaenSession(ProviderSession):
         return item
 
     def search(self,query,scope='all',page=0,field='all'):
+        # A direct caller must not mistake a general search for an exact
+        # author/ISBN query. The Core broker also checks these declarations.
+        if type(field) is not str or field.strip().casefold() != 'all':
+            raise ProviderCapabilityError('Baen : unsupported_field')
+        if type(scope) is not str or scope.strip().casefold() not in ('all','digital'):
+            raise ProviderCapabilityError('Baen : unsupported_scope')
         if not self.connected: raise ProviderError('Baen : connecter le catalogue')
-        if scope == 'physical': return []
         try:r=self.client.get(FREE,params=self._search_params(query,page,self.page_size));r.raise_for_status()
         except httpx.HTTPError as e: raise ProviderError('Baen : catalogue inaccessible') from e
         out=[]; seen=set()

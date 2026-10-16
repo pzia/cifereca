@@ -445,12 +445,10 @@ class SynchronizationBrokerImpl:
     def preview_local_materialization(
         self, source_id: str, *, verify_local_files: bool = False,
     ) -> SyncResult:
-        """Read-only, offline, account-scoped Kobo preview (#1346/#1347).
+        """Offline source preview: Kobo manifest or Numilog purchase evidence.
 
-        The broker alone resolves the private credential. The result contains
-        only stable allowlisted counters, never a product, path, token or a
-        potentially provider-supplied message. A preview never authorizes a
-        download, even when the local ledger looks complete.
+        Numilog is read-only, never a confirmation or an auto-backup policy.
+        No credentials, product IDs, local paths or provider messages escape.
         """
         def rejected(reason: str) -> SyncResult:
             return SyncResult(
@@ -465,10 +463,16 @@ class SynchronizationBrokerImpl:
             account = self._find_account(source_id)
         except (ValueError, TypeError):
             return rejected("unknown_source")
-        if str(getattr(account, "provider_id", "")) != "kobo":
-            return rejected("not_supported")
         if not self._enabled(source_id):
             return rejected("source_disabled")
+        if getattr(account, "provider_id", None) == "numilog":
+            from .core.numilog_local_preview import preview
+            return preview(
+                self, account, source_id,
+                verify_local_files=verify_local_files,
+            )
+        if str(getattr(account, "provider_id", "")) != "kobo":
+            return rejected("not_supported")
         credential = str(getattr(account, "credential_id", "") or "")
         identity = str(getattr(account, "identity_id", "") or "")
         if not credential or not identity:
