@@ -185,7 +185,20 @@ class ParisClient:
         except Exception as exc:
             if category=="PNB" and operation=="borrow digital":
                 _TRACE_LOG.warning("TRACE paris pnb-loan failed error=%s duration_ms=%s",type(exc).__name__,int((time.perf_counter()-start)*1000))
-            self.diagnostics.add(category, operation, "error", int((time.perf_counter()-start)*1000), {"error": type(exc).__name__, "message": str(exc)[:240]})
+            diagnostic = {"error": type(exc).__name__}
+            if category == "CATALOG" and (
+                operation.startswith("search ")
+                or operation.startswith("history cover search ")
+            ):
+                # Search errors may contain a remote URL, query, account hint
+                # or response text. Do not put those into exported diagnostics.
+                diagnostic["code"] = "service_unavailable"
+            else:
+                diagnostic["message"] = str(exc)[:240]
+            self.diagnostics.add(
+                category, operation, "error",
+                int((time.perf_counter()-start)*1000), diagnostic,
+            )
             raise
 
     def bootstrap(self) -> int:
@@ -427,7 +440,11 @@ class ParisClient:
                 # Retry borné : utile surtout pour EBOOKS sur les recherches larges.
                 self.diagnostics.add(
                     "CATALOG", f"search {scenario} fallback", "retry",
-                    detail={"result_size": 20, "message": str(first_exc)[:180]},
+                    detail={
+                        "result_size": 20,
+                        "error": type(first_exc).__name__,
+                        "code": "service_unavailable",
+                    },
                     level="detailed",
                 )
                 try:
