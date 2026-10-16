@@ -4,6 +4,7 @@ from html import unescape
 from html.parser import HTMLParser
 import json
 import re
+from unicodedata import category
 from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qs
 
 BASE = 'https://www.numilog.com/'
@@ -69,6 +70,18 @@ class Parser(HTMLParser):
 
 def classes(node):
     return set((node.attrs.get('class') or '').split())
+
+
+def _raw_delivery_url_safe(value):
+    # urllib.parse.urljoin/urlsplit silently remove CR/LF/TAB in Python.
+    # Do not turn a malformed signed link into a different valid URL.
+    return (
+        type(value) is str and bool(value)
+        and not any(
+            char.isspace() or category(char) in {'Cc', 'Cf', 'Cs'}
+            for char in value
+        )
+    )
 
 
 def origin(value):
@@ -241,7 +254,10 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
         # known. The caller can select one exact scoped record ID, so signed
         # links for unrelated purchases never enter memory on a user click.
         for link in links:
-            href = urljoin(base_url, link.attrs.get('href') or '')
+            raw_link = link.attrs.get('href') or ''
+            if not _raw_delivery_url_safe(raw_link):
+                raise ParseError('Lien de bibliothèque inattendu')
+            href = urljoin(base_url, raw_link)
             url = urlsplit(href)
             if origin(href) != site_origin or url.username or url.password or url.fragment or url.path != '/Pages/Compte/readBook.ashx':
                 raise ParseError('Lien de bibliothèque inattendu')
@@ -290,6 +306,8 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
         href=str(node.attrs.get('href') or '').strip()
         if not href:
             continue
+        if not _raw_delivery_url_safe(href):
+            raise ParseError('Lien de pagination inattendu')
         resolved=urljoin(base_url,href)
         parsed=urlsplit(resolved)
         if origin(resolved)!=site_origin or parsed.username or parsed.password or parsed.fragment:
@@ -392,7 +410,7 @@ def _owned_delivery_candidates(node, *, allowed_origins):
                     or parsed.username or parsed.password or parsed.fragment
                     or parsed.path != '/fulfillment/URLLink.acsm'
                     or not parsed.query or any(c.isspace() for c in url)
-                    or '\\' in url or any(ord(c) < 32 for c in url)
+                    or '\\' in url or not _raw_delivery_url_safe(url)
                 ):
                     continue
             except (TypeError, ValueError, AttributeError):
@@ -504,7 +522,10 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
                     continue
                 values.append(('script', value))
         for source, value in values:
-            if not isinstance(value,str) or not value.startswith(('https://','http://')):
+            if (
+                not _raw_delivery_url_safe(value)
+                or not value.startswith(('https://','http://'))
+            ):
                 continue
             if evidence is not None:
                 if source == 'href':
