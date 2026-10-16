@@ -27,7 +27,9 @@ YOUTH = ("youth-1366", "youth-1600", "youth-filter-help-1366", "youth-milan-1366
 # scenarios are regression guards, not plugin-specific acceptance evidence.
 DETAIL = BOOK_DETAIL + ("mainwindow-baseline-1366",
           "mainwindow-baseline-1600")
-ALL = CORE + DIAG + YOUTH
+RECOMMENDATIONS_GTK = ("recommendations-detail-1366", "recommendations-detail-1600")
+RECOMMENDATIONS = DETAIL + RECOMMENDATIONS_GTK
+ALL = CORE + DIAG + YOUTH + RECOMMENDATIONS_GTK
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          "startup", "core-navigation", "diagnostics-navigation-1366",
          "diagnostics-navigation-slow-1366", "youth-library-search-1366")
@@ -66,6 +68,7 @@ LOCAL_GUI = {
 }
 PROBES = {
     "e2e/book_detail_probe.py": BOOK_DETAIL,
+    "e2e/recommendations_detail_probe.py": RECOMMENDATIONS_GTK,
     "e2e/llm_settings_probe.py": LLM,
     "e2e/maintenance_tools_probe.py": MAINT,
     "e2e/search_filter_probe.py": ("search-filter-p0",),
@@ -106,9 +109,10 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             return ALL  # unknown or shared E2E helper
         elif path.startswith("src/plugins/diagnostics-page/"):
             selected.update(DIAG)
-        elif path.startswith(("src/plugins/constellations/",
-                              "src/plugins/recommendations/")):
+        elif path.startswith("src/plugins/constellations/"):
             selected.update(DETAIL)
+        elif path.startswith("src/plugins/recommendations/"):
+            selected.update(RECOMMENDATIONS)
         elif path.startswith("src/plugins/youth-detail-enrichment/"):
             selected.update(YOUTH)
         elif path.startswith(("src/plugins/youth-catalog/", "src/plugins/youth-source-",
