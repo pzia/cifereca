@@ -866,6 +866,13 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
     # might have closed after scheduling but before this callback runs.
     if getattr(self, "_closed", False):
         return
+    # Only startup_coordinator's scoped initial callback can set this flag.
+    # The worker's future completion captures it, independent of a later
+    # identity/profile switch or an unrelated manual opening command.
+    first_opening = (
+        getattr(self, "_source_inventory_startup_pending", False) is True
+        and control is None and deep is False
+    )
 
     def progress(event: dict[str, Any], report) -> None:
         if getattr(self, "_closed", False):
@@ -902,6 +909,12 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
                 success=not bool(attention or errors),
                 persistent=bool(attention or errors),
             )
+        # The global opening worker has finished and released its process
+        # acquisition lock. Only now may opted-in Kobo inventory sources
+        # request a *separate* metadata/rights refresh. No opt-in => no task.
+        if first_opening:
+            from .source_inventory_startup import dispatch_after_opening
+            dispatch_after_opening(self)
     def err(exc: BaseException) -> None:
         if getattr(self, "_closed", False):
             return
