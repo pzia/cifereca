@@ -299,8 +299,99 @@ def main():
         report["library_expanded"] = expander.get_expanded()
         capture("03-library-shared-detail")
         assert len(report["online_calls"]) == 1
+        begin_owned_book_action()
+
+    owned_action = {}
+
+    def begin_owned_book_action():
+        """#1347: real Library renderer/TaskRunner and physical targeted click.
+
+        Ownership/source eligibility uses real Core storage. The acquisition
+        boundary is observed, never connected to a provider or DRM runtime;
+        tests/test_owned_library_download.py verifies the engine/file boundary.
+        """
+        from types import SimpleNamespace as NS
+        from cifereca.models import Account
+        service = window.service
+        owner = service.current_identity.identity_id
+        assert owner == "camille"
+        account = Account(display_name="Kobo fictif ciblé", unique_id="gtk-owned-account",
+                          provider_id="kobo", credential_id="gtk-owned-credential", identity_id=owner)
+        owned_action.update(accounts=list(service.accounts), sessions=dict(service._sessions),
+                            obtain=service.obtain_owned_library_item, refresh=window.refresh_library,
+                            recent=window.refresh_recent, calls=[], refreshed=[], recents=[])
+        service.storage.provider_connection_put({"provider_id": "kobo", "credential_id": account.credential_id,
+            "identity_id": owner, "label": "Kobo fictif ciblé"})
+        service.storage.entitlement_put({"entitlement_id": "gtk-owned-right", "provider_id": "kobo",
+            "credential_id": account.credential_id, "account_id": account.unique_id, "identity_id": owner,
+            "item_id": "gtk-owned-product", "revision_id": "r1", "entitlement_type": "owned", "state": "active",
+            "metadata": {"title": TITLE, "media_format": "epub"}})
+        service.accounts = [*service.accounts, account]
+        service._sessions[service._session_key("kobo", account.credential_id)] = NS(
+            provider_id="kobo", credential_id=account.credential_id, connected=True,
+            capabilities=NS(backup=True), accounts=[account])
+        def observe(target):
+            assert target.identity_id == owner and target.item_id == "gtk-owned-product"
+            owned_action["calls"].append((target.identity_id, target.item_id))
+            return NS(path=out / "synthetic-boundary-only.epub")
+        service.obtain_owned_library_item = observe
+        window.refresh_library = lambda *a, **kw: owned_action["refreshed"].append(a)
+        window.refresh_recent = lambda *a, **kw: owned_action["recents"].append(a)
+        possession = {"identity_id": owner, "provider_id": "kobo", "item_id": "gtk-owned-product",
+                      "kind": "owned", "state": "active", "entitlement_id": "gtk-owned-right"}
+        window._library_entries_cache = [dict(entry, key="gtk-owned-row", provider_id="kobo",
+            item_id="gtk-owned-product", local=False, state="remote_owned", source="entitlement",
+            entitlement_id="gtk-owned-right", possessions=[possession])]
+        window._render_library()
+        later(160, owned_book_select)
+
+    def owned_book_select():
+        assert window.library_page.store.get_n_items() == 1
+        window.library_page.selection.set_selected(0)
+        later(260, owned_book_action_visible)
+
+    def owned_book_action_visible():
+        buttons = [node for node in walk(panel("library"))
+                   if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_id", "") == "download-owned-kobo"]
+        assert len(buttons) == 1, "Action individuelle du livre possédé absente"
+        button = buttons[0]
+        assert button.get_mapped() and button.get_sensitive()
+        ok, bounds = button.compute_bounds(window)
+        assert ok and bounds.get_width() > 0 and bounds.get_height() > 0
+        assert 0 <= bounds.get_x() and bounds.get_x() + bounds.get_width() <= window.get_width()
+        assert 0 <= bounds.get_y() and bounds.get_y() + bounds.get_height() <= window.get_height()
+        assert not owned_action["calls"] and not owned_action["refreshed"]
+        report["checks"]["P0_1347_owned_library_action_passive_until_physical_click"] = True
+        capture("03a-owned-kobo-single-book-action")
+        report.setdefault("pointer_actions", []).append(device.click_widget(button))
+        owned_action["deadline"] = monotonic() + 6
+        later(100, owned_book_action_completed)
+
+    def owned_book_action_completed():
+        if not owned_action["refreshed"]:
+            assert monotonic() < owned_action["deadline"], "Action individuelle GTK non terminée"
+            later(100, owned_book_action_completed)
+            return
+        assert owned_action["calls"] == [("camille", "gtk-owned-product")]
+        assert len(owned_action["refreshed"]) == len(owned_action["recents"]) == 1
+        assert len(report["online_calls"]) == 1, "Téléchargement individuel devenu une recherche distante"
+        report["checks"]["P0_1347_owned_library_XTEST_exact_single_target"] = True
+        report["owned_download_scope"] = "real GTK/TaskRunner + stored ownership; acquisition boundary observed, no live provider"
+        capture("03b-owned-kobo-targeted-click-complete")
+        service = window.service
+        service.accounts = owned_action["accounts"]
+        service._sessions = owned_action["sessions"]
+        service.obtain_owned_library_item = owned_action["obtain"]
+        window.refresh_library = owned_action["refresh"]
+        window.refresh_recent = owned_action["recent"]
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute("DELETE FROM entitlements WHERE entitlement_id='gtk-owned-right'")
+            db.execute("DELETE FROM provider_connections WHERE provider_id='kobo' AND credential_id='gtk-owned-credential'")
+        window._library_entries_cache = [dict(entry, key="ux942-library")]
+        window._render_library()
+        window.library_page.selection.set_selected(0)
         if args.component_contracts:
-            component_summaries()
+            later(160, component_summaries)
         else:
             finish()
 

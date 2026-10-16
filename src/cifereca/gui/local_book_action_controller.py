@@ -6,9 +6,56 @@ widgets and TaskRunner remain owned by the MainWindow facade (#1129).
 from __future__ import annotations
 
 
+def _add_owned_download(window, detail, item, TaskPriority):
+    resolve = getattr(window.service, 'owned_library_download_target', None)
+    if not callable(resolve):
+        return
+    target = resolve(item)
+    if target is None:
+        return
+    button = window.action_button('Télécharger ce livre Kobo', 'folder-download-symbolic')
+    button._cifereca_action_id = 'download-owned-kobo'
+    button.set_tooltip_text('Télécharger uniquement ce livre possédé, pour son compte et son identité. Aucun lot global.')
+    generation = getattr(window, '_identity_context_generation', None)
+    def current():
+        return (not getattr(window, '_closed', False)
+                and getattr(window.service.current_identity, 'identity_id', None) == target.identity_id
+                and getattr(window, '_identity_context_generation', None) == generation)
+    def clicked(_button):
+        if not current():
+            return
+        root = getattr(_button, 'get_root', None)
+        if callable(root) and root() is None:
+            return
+        mapped = getattr(_button, 'get_mapped', None)
+        if callable(mapped) and not mapped():
+            return
+        def work():
+            if not current():
+                raise RuntimeError('Le contexte du téléchargement a changé.')
+            try:
+                return window.service.obtain_owned_library_item(target)
+            except Exception:
+                raise RuntimeError('Téléchargement ciblé indisponible. Actualisez les droits et vérifiez les fichiers locaux.') from None
+        def done(result):
+            if current() and getattr(result, 'path', None) is not None:
+                window._activity_result('Livre téléchargé dans la Bibliothèque.')
+                window.refresh_library(False)
+                window.refresh_recent()
+        def failed(_exc):
+            if current():
+                window.show_error('Téléchargement ciblé indisponible. Actualisez les droits et vérifiez les fichiers locaux.',
+                                  'Téléchargement du livre possédé')
+        window.runner.submit('Téléchargement du livre Kobo possédé…', work, done, failed,
+                             control=_button, priority=TaskPriority.USER_ACTION, kind='obtain')
+    button.connect('clicked', clicked)
+    detail.add_actions([button])
+
+
 def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteRequest, TaskPriority, identity_has_attested_possession):
     if getattr(window, '_closed', False):
         return
+    _add_owned_download(window, detail, item, TaskPriority)
     placement_id=str(item.get('placement_id') or '')
     identity_id=str(item.get('identity_id') or '')
     if not placement_id:

@@ -2485,7 +2485,7 @@ class LibraryService:
         """Compatibility façade; Kobo execution lives in the provider adapter."""
         return kobo_backup._execute_kobo_acquisition(self, item, target_dir)
 
-    def _acquire_direct_item_impl(self, item: SearchResult) -> Acquisition:
+    def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None) -> Acquisition:
         session = self._session_for_source(item.source_provider, item.source_credential)
         content_type = self.acquisition.content_type_for(item)
 
@@ -2500,6 +2500,9 @@ class LibraryService:
             # the lock and calls _execute_kobo_acquisition directly).
             try:
                 with InterProcessLock(acquisition_lock_file()):
+                    if _admission is not None:
+                        item = _admission()
+                        identity = self.identity_for_connection(item.source_provider, item.source_credential)
                     target = self._kobo_backup_target_dir(identity.identity_id)
                     candidates = self._kobo_record_candidate_paths(
                         {"item_id": item.record_id, "title": item.title,
@@ -2566,14 +2569,15 @@ class LibraryService:
             item, path=path, url=url, target_dir=target_dir, action="download",
         )
 
-    def acquire_direct_item(self, item: SearchResult) -> Acquisition:
+    def acquire_direct_item(self, item: SearchResult, *, _admission=None) -> Acquisition:
         identity_id = None
         try:
             identity_id = self.identity_for_connection(item.source_provider, item.source_credential).identity_id
         except Exception:
             identity_id = self.current_identity.identity_id if self.current_identity else None
         try:
-            result = self._acquire_direct_item_impl(item)
+            result = (self._acquire_direct_item_impl(item, _admission=_admission) if _admission is not None
+                      else self._acquire_direct_item_impl(item))
             self._record_action(identity_id, "acquisition", "success", provider_id=item.source_provider, facts={"record_id": item.record_id})
             return result
         except Exception as exc:
@@ -2588,6 +2592,14 @@ class LibraryService:
             index_path=self.catalog_index_path,
             resolve_identity=self.identity_for_connection,
         ).obtain(item)
+
+    def owned_library_download_target(self, entry):
+        from .core.owned_library_download import owned_library_download_target
+        return owned_library_download_target(self, entry)
+
+    def obtain_owned_library_item(self, target):
+        from .core.owned_library_download import obtain_owned_library_item
+        return obtain_owned_library_item(self, target)
 
     def prepare_direct_download(self, item: SearchResult) -> tuple[Path, str]:
         """Compatibility wrapper around the normalized direct acquisition."""

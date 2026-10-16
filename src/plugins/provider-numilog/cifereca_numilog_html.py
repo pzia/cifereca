@@ -174,13 +174,15 @@ def _js_delivery_shape_count(script):
     if len(raw) > 64 * 1024:
         return 0
     return min(10000, sum(
-        all(re.search(r'(?<![A-Za-z0-9_$])' + field + r'\s*:', block)
-            for field in ('ProductId', 'IndexExemplaire', 'DrmTechnlology', 'link'))
+        all(re.search(
+            r"""(?<![A-Za-z0-9_$])(?:["']?)""" + re.escape(field)
+            + r"""(?:["']?)\s*:""", block,
+        ) for field in ('ProductId', 'IndexExemplaire', 'DrmTechnlology', 'link'))
         for block in (m.group(0) for m in _JS_OBJECT.finditer(raw))
     ))
 
 
-def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None):
+def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None, delivery_selector=None):
     root = Parser(text).root
     tables = [n for n in root.walk() if n.attrs.get('id') == 'myTable']
     if len(tables) != 1:
@@ -217,6 +219,10 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
         if not links:
             continue
         title_nodes = [n for n in nodes if 'pTitle' in classes(n) and n.text()]
+        if delivery_evidence and len(title_nodes) > 1:
+            # A single readBook link under multiple title nodes cannot
+            # establish which product the delivery card is advertising.
+            raise ParseError('Titres ambigus dans la fiche de livraison')
         titles = [n.text() for n in title_nodes]
         images = [n.attrs.get('src') for n in nodes if n.tag == 'img' and 'imgCouv' in classes(n)]
         public_candidates=[]
@@ -231,15 +237,9 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                 public_candidates.append(resolved)
         public_candidates=list(dict.fromkeys(public_candidates))
         public_url=public_candidates[0] if len(public_candidates)==1 else None
-        # Never inspect signed JS deliveries during search or inventory sync.
-        delivery = (_card_delivery(
-            card, links,
-            {('https', 'entrepot2r.numilog.com', 443)},
-        ) if delivery_evidence else None)
-        if delivery is not None and delivery_diagnostics is not None:
-            delivery_diagnostics['bound_links'] = min(
-                10000, delivery_diagnostics.get('bound_links', 0) + 1,
-            )
+        # Delay parsing JS URLs until AFTER the validated source row is
+        # known. The caller can select one exact scoped record ID, so signed
+        # links for unrelated purchases never enter memory on a user click.
         for link in links:
             href = urljoin(base_url, link.attrs.get('href') or '')
             url = urlsplit(href)
@@ -252,6 +252,15 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
             variant = tuple((k,tuple(params[k])) for k in ('m','format','FormatId','FORMAT_ID') if k in params)
             key = (lid[0],variant)
             if key in keys:
+                # Multiple distinct cards with the same download ID can
+                # present competing ProductId/copy/order data. Inventory may
+                # deduplicate legacy pages, but an EXPLICIT acquisition must
+                # refuse ambiguity instead of trusting the first link.
+                if delivery_evidence and (
+                    delivery_selector is None
+                    or delivery_selector({'lid':lid[0],'variant':repr(key[1])})
+                ):
+                    raise ParseError('Fiches de livraison dupliquées : téléchargement arrêté')
                 continue
             keys.add(key)
             cover = urljoin(site_root,images[0]) if images and images[0] else None
@@ -260,8 +269,18 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                 if origin(cover) not in allowed_covers or parsed_cover.username or parsed_cover.password or parsed_cover.fragment or parsed_cover.query:
                     cover = None
             row = {'lid':lid[0],'variant':repr(key[1]),'title':titles[0] if titles else 'Livre Numilog '+lid[0], 'cover':cover, 'href':href, 'public_url':public_url}
-            if delivery is not None:
-                row['delivery'] = delivery  # ephemeral; never serialized
+            if delivery_evidence and (delivery_selector is None or delivery_selector(row)):
+                # An ambiguous card (multiple links, products, or revisions)
+                # never yields an attested ACSM. Never equate ProductId to lid.
+                delivery = _card_delivery(
+                    card, links, {('https', 'entrepot2r.numilog.com', 443)},
+                )
+                if delivery is not None:
+                    row['delivery'] = delivery  # transient, target-specific
+                    if delivery_diagnostics is not None:
+                        delivery_diagnostics['bound_links'] = min(
+                            10000, delivery_diagnostics.get('bound_links', 0) + 1,
+                        )
             items.append(row)
 
     next_links=[]
@@ -391,6 +410,13 @@ def _card_delivery(card, links, allowed_origins):
     """
     if len(links) != 1:
         return None
+    # A scoped numeric lid establishes a technical download endpoint, not
+    # an equivalence with the product ID of a JS object. Requiring a single
+    # titled owner card avoids treating a bare/orphan link as store evidence.
+    titles = [n for n in card.walk()
+              if 'pTitle' in classes(n) and n.text()]
+    if len(titles) != 1:
+        return None
     items = _owned_delivery_candidates(card, allowed_origins=allowed_origins)
     if len(items) != 1:
         return None
@@ -433,6 +459,27 @@ class DeliverySelectionError(ParseError):
 QUOTED = re.compile(r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*' ''',re.X)
 
 
+def _is_fulfillment_acsm(url, allowed_origins):
+    """An exact HTTPS Numilog signed fulfillment URL, never a navigation link.
+
+    Merely being hosted by Numilog/its partners is NOT evidence of ACSM.
+    The origin, path and nonempty query must all match the attested contract.
+    """
+    try:
+        parsed = urlsplit(url)
+        return (
+            origin(url) == ('https', 'entrepot2r.numilog.com', 443)
+            and origin(url) in allowed_origins
+            and parsed.path == '/fulfillment/URLLink.acsm'
+            and bool(parsed.query)
+            and not parsed.username and not parsed.password
+            and not parsed.fragment and '\\' not in url
+            and not any(c.isspace() or ord(c) < 32 for c in url)
+        )
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
 def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
     """Locate exactly one allowlisted HTML delivery; optionally count shapes.
 
@@ -442,6 +489,7 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
     root = Parser(text).root
     allowed=set(allowed_origins or {origin('https://services.numilog.com/')})
     candidates = set()
+    signed_acsm = set()
     signed_shapes = html_links = html_scripts = 0
     for node in root.walk():
         values = [('href', node.attrs.get('href') or '')]
@@ -474,6 +522,8 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
                     and parsed.port in {None,80,443} | {o[2] for o in allowed if o[2]}
                 ):
                     candidates.add(url)
+                    if _is_fulfillment_acsm(url, allowed):
+                        signed_acsm.add(url)
             except (ValueError, AttributeError, TypeError):
                 continue
     if evidence is not None:
@@ -482,7 +532,15 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
             'absolute_html_hrefs': html_links,
             'absolute_script_literals': html_scripts,
             'allowed_candidates': min(10000, len(candidates)),
+            'attested_acsm_candidates': min(10000, len(signed_acsm)),
         })
+    # Pages intermédiaires may contain harmless site navigation and a
+    # SINGLE signed ACSM. Prefer that exact delivery over ordinary permitted
+    # links; never pick arbitrarily between different ACSM signatures.
+    if len(signed_acsm) == 1:
+        return signed_acsm.pop()
+    if len(signed_acsm) > 1:
+        raise DeliverySelectionError('ambiguous')
     if len(candidates) != 1:
         raise DeliverySelectionError('missing' if not candidates else 'ambiguous')
     return candidates.pop()

@@ -581,11 +581,11 @@
   },
   "_acquire_direct_item_impl": {
     "kind": "method",
-    "signature": "(self, item: 'SearchResult') -> 'Acquisition'"
+    "signature": "(self, item: 'SearchResult', *, _admission=None) -> 'Acquisition'"
   },
   "acquire_direct_item": {
     "kind": "method",
-    "signature": "(self, item: 'SearchResult') -> 'Acquisition'"
+    "signature": "(self, item: 'SearchResult', *, _admission=None) -> 'Acquisition'"
   },
   "obtain_search_item": {
     "kind": "method",

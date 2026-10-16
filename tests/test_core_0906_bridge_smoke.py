@@ -6,6 +6,9 @@ and never performs HTTP or calls a provider.
 from __future__ import annotations
 
 import ast
+from collections.abc import Mapping
+import runpy
+from unicodedata import category
 from dataclasses import dataclass, replace
 from tests.gui_source import gui_source_text
 from pathlib import Path
@@ -69,6 +72,23 @@ def _setup(active="alice", selected="alice"):
         "FIELDS": ("all", "title", "author", "isbn", "subject",
                    "series", "collection", "language"),
     }
+    # Keep the selected method's real pure dependencies. Extracting only
+    # methods otherwise turns a valid plugin change into a harness NameError.
+    catalog = runpy.run_path(str(YOUTH_FILE.with_name("youth_catalog.py")))
+    env.update(Mapping=Mapping, category=category,
+               normalize_isbn=catalog["normalize_isbn"],
+               public_source_id=catalog["public_source_id"])
+    helpers = {"_public_youth_title", "_public_identifier_value",
+               "_safe_book_identifiers"}
+    tree = ast.parse(gui_source_text(YOUTH_FILE))
+    nodes = [node for node in tree.body
+             if (isinstance(node, ast.FunctionDef) and node.name in helpers)
+             or (isinstance(node, ast.Assign) and any(
+                 isinstance(target, ast.Name)
+                 and target.id == "_PUBLIC_YOUTH_IDENTIFIER_KEYS"
+                 for target in node.targets))]
+    exec(compile(ast.fix_missing_locations(
+        ast.Module(body=nodes, type_ignores=[])), str(YOUTH_FILE), "exec"), env)
     core_type = type("Core", (), {
         "search_books": _method(CORE_FILE, "MainWindow", "search_books", env),
     })

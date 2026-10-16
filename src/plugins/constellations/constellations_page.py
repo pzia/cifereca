@@ -580,8 +580,12 @@ class View:
         # can be visited: matching ISBN/title/key is not account evidence.
         if not any(candidate is node for candidate in getattr(self, 'nodes', ())):
             return
-        graph_identity = getattr(self, '_nodes_identity', '')
-        if graph_identity and graph_identity != self.identity_id():
+        graph_identity = getattr(self, '_nodes_identity', None)
+        if graph_identity is not None and (
+            not graph_identity or graph_identity != self.identity_id()
+        ):
+            # load() deliberately invalidates graph scope while async work
+            # runs. Empty scope is not permission to reopen an old book.
             return
         self.cancel_calculation()
         self.center = node; self.nav.visit(node.key); self.render()
@@ -589,9 +593,27 @@ class View:
     def move(self, offset):
         if getattr(self, 'disposed', False):
             return
-        self.cancel_calculation()
+        graph_identity = getattr(self, '_nodes_identity', None)
+        if graph_identity is not None and (
+            not graph_identity or graph_identity != self.identity_id()
+        ):
+            # A retained back/forward GTK callback cannot revive an old
+            # graph after a profile switch, even before load() runs.
+            return
+        nodes = getattr(self, 'nodes', ())
+        center = getattr(self, 'center', None)
+        if not any(node is center for node in nodes):
+            return
+        previous = self.nav.position
         key = self.nav.move(offset)
-        self.center = next((n for n in self.nodes if n.key == key), self.center)
+        target = next((node for node in nodes if node.key == key), None)
+        if target is None:
+            # A stale history key must not preserve another edition as if it
+            # were a valid neighbour in the current identity's graph.
+            self.nav.position = previous
+            return
+        self.cancel_calculation()
+        self.center = target
         self.render()
 
     def open_book(self):
@@ -599,8 +621,18 @@ class View:
             return
         # Never reinterpret the previous account's center as a book in the
         # currently selected profile while a GTK identity switch settles.
-        graph_identity = getattr(self, '_nodes_identity', '')
-        if graph_identity and graph_identity != self.identity_id():
+        graph_identity = getattr(self, '_nodes_identity', None)
+        if graph_identity is not None and (
+            not graph_identity or graph_identity != self.identity_id()
+        ):
+            # load() deliberately invalidates graph scope while async work
+            # runs. Empty scope is not permission to reopen an old book.
+            return
+        # A book retaining the same key after refresh is still not the
+        # selected object from the new graph; forbid a stale center.
+        if graph_identity is not None and not any(
+            node is getattr(self, 'center', None) for node in getattr(self, 'nodes', ())
+        ):
             return
         method = getattr(self.host, 'open_book_detail', None)
         if self.center and callable(method) and method(self.center.book, identity_id=self.identity_id()):

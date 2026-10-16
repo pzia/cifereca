@@ -541,7 +541,7 @@ def test_structural_diagnostics_do_not_contain_purchase_identifiers_or_tokens(tm
         assert details['page_kind'] == 'meslivres'
         assert details['js_shapes_in_cards'] == 2
         assert details['js_shapes_outside_cards'] == 1
-        assert details['bound_links'] == 2
+        assert details['bound_links'] == 1  # selected record only, not every purchase
         assert all(type(v) in {str, int} for v in details.values())
         text = repr(diagnostic.events)
         for sensitive in (
@@ -571,6 +571,7 @@ def test_readbook_diagnostic_reveals_only_http_structure(tmp_path):
         'js_delivery_shapes': 1, 'absolute_html_hrefs': 0,
         'absolute_script_literals': 1,  # only the absolute URL is counted
         'allowed_candidates': 1,
+        'attested_acsm_candidates': 1,
     }
     assert 'SIGNATURE' not in repr(evidence)
 
@@ -642,3 +643,366 @@ def test_signed_origin_is_not_a_wildcard_path(tmp_path, path):
         assert 'SYNTHETIC' not in repr(diag.events)
     finally:
         session.close()
+
+
+def test_private_signed_link_is_decoded_only_for_explicit_selected_record(
+    tmp_path, monkeypatch,
+):
+    """No signed URL from another bought book is even parsed into a row."""
+    import cifereca_numilog_html as html_parser
+
+    current = _page(
+        _card(12, 9001, SIGNED),
+        _card(34, 9002, SECOND),
+    )
+    session, _, broker, seen = _session(tmp_path, current)
+    called = []
+    original = html_parser._card_delivery
+
+    def spy(card, links, origins):
+        called.append(tuple(str(n.attrs.get('href') or '') for n in links))
+        return original(card, links, origins)
+
+    monkeypatch.setattr(html_parser, '_card_delivery', spy)
+    try:
+        from cifereca.plugin_api import ProviderError
+        with pytest.raises(ProviderError, match='livre ciblé'):
+            session._rows(include_delivery=True)
+        assert seen == []
+        items = session.library()
+        assert seen == [LIBRARY]
+        assert len(items) == 2
+        assert called == []
+        selected = next(row for row in items if row.title.endswith('34'))
+        fresh = session._rows(
+            include_delivery=True, delivery_record_id=selected.record_id,
+        )
+        assert seen == [LIBRARY, LIBRARY]
+        assert len(fresh) == 2
+        assert 'delivery' not in fresh[0]
+        assert fresh[1]['delivery'].url == SECOND
+        assert len(called) == 1 and 'lid=34' in called[0][0]
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(fresh)
+        assert 'SECOND_NOT_A_CREDENTIAL' not in repr(fresh)
+        assert not broker.calls
+    finally:
+        session.close()
+
+
+def test_parser_selector_does_not_decode_other_books_and_preserves_inventory():
+    from cifereca_numilog_html import parse_library_page
+    page = _page(_card(12, 9001, SIGNED), _card(34, 9002, SECOND))
+    inventory, _ = parse_library_page(page)
+    matched, _ = parse_library_page(
+        page,
+        delivery_evidence=True,
+        delivery_selector=lambda row: row['lid'] == '34',
+    )
+    assert len(matched) == len(inventory) == 2
+    assert [
+        {key: value for key, value in row.items() if key != 'delivery'}
+        for row in matched
+    ] == inventory
+    assert 'delivery' not in matched[0]
+    assert matched[1]['delivery'].url == SECOND
+    assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(matched)
+    assert 'SECOND_NOT_A_CREDENTIAL' not in repr(matched)
+
+
+def test_duplicate_same_lid_and_format_on_one_page_never_consumes_signed_link(
+    tmp_path,
+):
+    """Conflicting ProductId links with same readBook identity are ambiguous."""
+    from cifereca_numilog_html import ParseError
+    ambiguous = _page(_card(12, 9001, SIGNED), _card(12, 9002, SECOND))
+    visible, _ = parse_library_page(ambiguous)
+    assert len(visible) == 1  # legacy inventory still deduplicates
+    with pytest.raises(ParseError, match='dupliquées'):
+        parse_library_page(ambiguous, delivery_evidence=True)
+
+    session, diag, broker, requested = _session(tmp_path, ambiguous)
+    try:
+        owned = session.library()[0]
+        with pytest.raises(ProviderError, match='dupliquées'):
+            session.download_direct(owned, tmp_path)
+        assert requested == [LIBRARY, LIBRARY]
+        assert broker.calls == []
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diag.events)
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+def test_duplicate_book_identity_across_pagination_blocks_even_own_signed_get(
+    tmp_path,
+):
+    """Two purchases with one stable lid/format never authorize first-wins."""
+    second_page = LIBRARY + '?page=2'
+    first = _page(_card(12, 9001, SIGNED)).replace(
+        '</body></html>',
+        '<a rel="next" href="/Pages/Compte/MesLivres.aspx?page=2">Next</a></body></html>',
+    )
+    other = _page(_card(12, 9002, SECOND))
+    requested = []
+
+    def handler(request):
+        url = str(request.url)
+        requested.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=first,
+                                  headers={'content-type': 'text/html'})
+        if url == second_page:
+            return httpx.Response(200, text=other,
+                                  headers={'content-type': 'text/html'})
+        pytest.fail('Duplicate product must not reach either signed ACSM GET')
+
+    session, diag, broker = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        inventory = session.library()
+        assert len(inventory) == 1
+        with pytest.raises(ProviderError, match='dupliqué entre pages'):
+            session.download_direct(inventory[0], tmp_path)
+        assert requested == [LIBRARY, second_page, LIBRARY, second_page]
+        assert broker.calls == []
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diag.events)
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+def test_quoted_json_js_keys_produce_same_scoped_acsm_evidence(tmp_path):
+    """Numilog can serialize the object as JSON rather than unquoted JS."""
+    import json
+    from cifereca_numilog_html import _js_delivery_shape_count, Parser
+    obj = json.dumps({
+        'ProductId': 9001, 'IndexExemplaire': 1,
+        'DrmTechnlology': 'ADOBE', 'link': SIGNED,
+    })
+    html = _page(_card(12, 9001, SIGNED).replace(_object(9001, SIGNED), obj))
+    scripts = [n for n in Parser(html).root.walk() if n.tag == 'script']
+    assert sum(_js_delivery_shape_count(n) for n in scripts) == 1
+    diag = {}
+    rows, _ = parse_library_page(
+        html, delivery_evidence=True, delivery_diagnostics=diag,
+    )
+    assert len(rows) == 1 and rows[0]['delivery'].url == SIGNED
+    assert diag['js_shapes_in_cards'] == diag['bound_links'] == 1
+    assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(rows)
+
+    session, _, broker, requested = _session(tmp_path, html)
+    try:
+        book = session.library()[0]
+        result, _ = session.download_direct(book, tmp_path)
+        assert result.is_file()
+        assert requested == [LIBRARY, LIBRARY, SIGNED]
+        assert len(broker.calls) == 1
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+def test_one_action_with_two_titles_refuses_acquisition_instead_of_wrong_book(
+    tmp_path,
+):
+    from cifereca_numilog_html import ParseError
+    ambiguous = _page(
+        '<div><span class="pTitle">Bought book A</span>'
+        '<span class="pTitle">Bought book B</span>'
+        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=12&m=download">Download</a>'
+        f'<script>window.book={_object(9001, SIGNED)};</script></div>',
+    )
+    legacy, _ = parse_library_page(ambiguous)
+    assert len(legacy) == 1  # inventory backward-compatible
+    with pytest.raises(ParseError, match='Titres ambigus'):
+        parse_library_page(ambiguous, delivery_evidence=True)
+    session, _, broker, requested = _session(tmp_path, ambiguous)
+    try:
+        with pytest.raises(ProviderError, match='Titres ambigus'):
+            session.download_direct(session.library()[0], tmp_path)
+        assert requested == [LIBRARY, LIBRARY]
+        assert broker.calls == []
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+def test_orphan_card_without_title_does_not_license_js_signed_get(tmp_path):
+    page = _page(
+        '<div><a class="LnkDownloadBook" '
+        'href="/Pages/Compte/readBook.ashx?lid=12&m=download">Download</a>'
+        f'<script>window.book={_object(9001, SIGNED)};</script></div>',
+    )
+    rows, _ = parse_library_page(page, delivery_evidence=True)
+    assert len(rows) == 1
+    assert 'delivery' not in rows[0]  # title/copy provenance not attested
+    session, _, broker, seen = _session(tmp_path, page)
+    try:
+        with pytest.raises(ProviderError, match='lien de livraison absent'):
+            session.download_direct(session.library()[0], tmp_path)
+        assert seen == [LIBRARY, LIBRARY, READ_12]
+        assert broker.calls == []
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize('across_pages', [False, True])
+def test_unrelated_duplicate_does_not_prevent_unique_selected_book(
+    tmp_path, across_pages,
+):
+    """Only a duplicate of the selected record is blocking."""
+    second_page = LIBRARY + '?page=2'
+    first_page = _page(
+        _card(12, 9001, SIGNED), _card(34, 9002, SECOND),
+        *([] if across_pages else [_card(12, 9007, SIGNED)]),
+    )
+    if across_pages:
+        first_page = first_page.replace(
+            '</body></html>',
+            '<a rel="next" href="/Pages/Compte/MesLivres.aspx?page=2">'
+            'Next</a></body></html>',
+        )
+    requested = []
+
+    def handler(request):
+        url = str(request.url)
+        requested.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=first_page,
+                                  headers={'content-type': 'text/html'})
+        if across_pages and url == second_page:
+            return httpx.Response(200, text=_page(_card(12, 9007, SIGNED)),
+                                  headers={'content-type': 'text/html'})
+        if url == SECOND:
+            return httpx.Response(
+                200, content=ACSM,
+                headers={'content-type': 'application/vnd.adobe.adept+xml'},
+            )
+        pytest.fail('Unexpected URL or attempt to consume other book signature')
+
+    session, diag, broker = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        all_items = session.library()
+        assert len(all_items) == 2
+        chosen = next(x for x in all_items if x.title.endswith('34'))
+        produced, _ = session.download_direct(chosen, tmp_path)
+        assert produced.is_file()
+        prefix = [LIBRARY, second_page] if across_pages else [LIBRARY]
+        assert requested == prefix + prefix + [SECOND]
+        assert SIGNED not in requested
+        assert len(broker.calls) == 1
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diag.events)
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+def test_single_signed_acsm_wins_over_allowed_site_navigation_in_html():
+    """A page may include links to the storefront AND one real ACSM token."""
+    navigation = 'https://www.numilog.com/Pages/Compte/MesLivres.aspx'
+    another = 'https://services.numilog.com/common.css'
+    html = (
+        f'<a href="{navigation}">Mes achats</a>'
+        f'<script>const appRoot = "{another}";'
+        f'window.delivery = {_object(9001, SIGNED)};</script>'
+    )
+    allowed = {
+        ('https', 'entrepot2r.numilog.com', 443),
+        ('https', 'www.numilog.com', 443),
+        ('https', 'services.numilog.com', 443),
+    }
+    diagnosis = {}
+    selected = delivery_url(
+        html, READ_12, allowed_origins=allowed, evidence=diagnosis,
+    )
+    assert selected == SIGNED
+    assert diagnosis == {
+        'js_delivery_shapes': 1,
+        'absolute_html_hrefs': 1,
+        'absolute_script_literals': 2,
+        'allowed_candidates': 3,
+        'attested_acsm_candidates': 1,
+    }
+    assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnosis)
+    assert '9001' not in repr(diagnosis)
+
+
+def test_two_distinct_signed_acsm_tokens_still_block_even_with_navigation():
+    """Do not silently prefer the first signed order token for a purchase."""
+    allowed = {
+        ('https', 'entrepot2r.numilog.com', 443),
+        ('https', 'www.numilog.com', 443),
+    }
+    html = (
+        '<a href="https://www.numilog.com/">Accueil</a>'
+        f'<script>const a = "{SIGNED}"; const b = "{SECOND}";</script>'
+    )
+    summary = {}
+    with pytest.raises(DeliverySelectionError) as error:
+        delivery_url(html, READ_12, allowed_origins=allowed, evidence=summary)
+    assert error.value.code == 'ambiguous'
+    assert summary['attested_acsm_candidates'] == 2
+    assert summary['allowed_candidates'] == 3
+    assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(summary)
+    assert 'SECOND_NOT_A_CREDENTIAL' not in repr(summary)
+
+
+def test_one_signed_acsm_among_html_links_is_fetched_once_via_real_broker(tmp_path):
+    """READBook HTML with incidental allowed links must not cause a false P0 error."""
+    visited = []
+    nav = 'https://www.numilog.com/Pages/Compte/MesLivres.aspx'
+
+    def handler(request):
+        url = str(request.url)
+        visited.append(url)
+        if url == READ_12:
+            html = (
+                f'<a href="{nav}">Ma bibliothèque</a>'
+                f'<script>window.purchase={_object(9001, SIGNED)};</script>'
+            )
+            return httpx.Response(
+                200, text=html,
+                headers={'content-type': 'text/html; charset=utf-8'},
+            )
+        if url == SIGNED:
+            return httpx.Response(
+                200, content=ACSM,
+                headers={'content-type': 'application/vnd.adobe.adept+xml'},
+            )
+        pytest.fail('Incidental navigation URL must not be requested')
+
+    session, diagnostic, broker = setup(tmp_path, handler)
+    try:
+        published, stable_origin = session._download(
+            READ_12, tmp_path / 'book.epub', title='Livre acheté',
+        )
+        assert published.is_file()
+        assert stable_origin == LIBRARY
+        assert visited == [READ_12, SIGNED]
+        assert len(broker.calls) == 1
+        assert broker.calls[0][1]['identity_id'] == 'fictional-reader'
+        entries = [e for e in diagnostic.events if e[0][1] == 'livraison HTML']
+        assert len(entries) == 1
+        assert entries[0][1]['detail']['attested_acsm_candidates'] == 1
+        assert entries[0][1]['detail']['allowed_candidates'] == 2
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostic.events)
+        _assert_no_stage(tmp_path)
+    finally:
+        session.close()
+
+
+def test_html_without_any_signed_acsm_keeps_unambiguous_generic_delivery_path():
+    """Non-ACSM direct EPUB delivery on loopback retains historical behavior."""
+    from cifereca_numilog_html import origin
+    endpoint = 'http://127.0.0.1:8094/Services/Delivery.ashx?lid=12'
+    evidence = {}
+    assert delivery_url(
+        f'<a href="{endpoint}">EPUB</a>',
+        'http://127.0.0.1:8094/Pages/Compte/readBook.ashx?lid=12',
+        allowed_origins={origin('http://127.0.0.1:8094/')},
+        evidence=evidence,
+    ) == endpoint
+    assert evidence['allowed_candidates'] == 1
+    assert evidence['attested_acsm_candidates'] == 0

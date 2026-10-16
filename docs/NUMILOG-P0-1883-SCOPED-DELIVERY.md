@@ -19,14 +19,22 @@ Ce correctif ne constitue donc pas une preuve de résolution réelle.
    retrouve le `record_id` scoped du compte via une nouvelle lecture des
    pages privées ; elle active alors `delivery_evidence=True`.
 3. Une URL de livraison n'est utilisable que lorsque l'objet JavaScript est
-   un descendant structurel de **la même fiche DOM**, qu'une seule action
-   `readBook.ashx` est présente dans cette fiche, qu'un **unique** objet
+   un descendant structurel de **la même fiche DOM**, avec **un seul titre
+   identifié** et une seule action `readBook.ashx`, et qu'un **unique** objet
    `ProductId / IndexExemplaire / DrmTechnlology: ADOBE / link` existe, et
    que ses identifiants concordent avec `data-product-id` /
    `data-index-exemplaire` lorsque ces attributs sont attestés. Le contrat
    **n'assimile jamais** `ProductId` ou `IndexExemplaire` au `lid` HTTP.
    Un script hors fiche, une association contradictoire ou ambiguë n'autorise
    aucune livraison directe.
+   Pendant une acquisition, seuls les champs de livraison correspondant au
+   **record_id exact sélectionné** sont décodés ; les autres livres de la même
+   page ou des pages suivantes restent un inventaire **sans liens signés
+   en mémoire**. Une fiche avec plusieurs titres ou une répétition du même
+   `lid`/format **pour le livre ciblé**, dans une page ou entre pages, est
+   refusée avant tout GET signé. Les répétitions d'autres livres ne bloquent
+   pas l'acquisition de la fiche choisie ; le mode inventaire conserve sa
+   déduplication historique.
 4. En présence d'une unique preuve scoped à fraîcheur de l'action : seul un
    lien `HTTPS entrepot2r.numilog.com:443` de chemin exact
    `/fulfillment/URLLink.acsm` est accepté. Aucun paramètre de signature
@@ -56,7 +64,8 @@ Ce correctif ne constitue donc pas une preuve de résolution réelle.
   `session_expired/html_error/missing/ambiguous/single_allowed_candidate`
   et, pour les pages HTML intermédiaires parsables, uniquement
   `js_delivery_shapes`, `absolute_html_hrefs`,
-  `absolute_script_literals`, `allowed_candidates` (entiers bornés).
+  `absolute_script_literals`, `allowed_candidates`,
+  `attested_acsm_candidates` (entiers bornés).
   Pas de chemin, query string, cookie, titre, `ProductId`,
   `IndexExemplaire` ni document HTML.
 
@@ -71,8 +80,14 @@ Interprétation **sans présumer le comportement du site réel** :
 - `bound_links>0` puis échec HTTP : une preuve structurée a été retenue,
   mais aucun succès ACSM/ADEPT ne peut être déduit du compteur.
 - `page_kind=readbook`, `js_delivery_shapes>0` et
-  `allowed_candidates=1` : le parcours intermédiaire avait un lien
-  admissible, indépendamment de la forme de la fiche MesLivres.
+  `attested_acsm_candidates=1` : le parcours intermédiaire avait **une
+  destination ACSM attestée**, même si des liens de navigation Numilog
+  étaient également présents. Le lien signé est alors prioritaire sur
+  les autres URL admises ; plusieurs ACSM restent **ambiguës** et sont
+  refusées. Sans ACSM, une seule destination générique conserve le
+  parcours EPUB historique.
+- `allowed_candidates>1`, `attested_acsm_candidates=0` : la page
+  intermédiaire n'a pas de destination unique prouvée ; elle est rejetée.
 - `page_kind=readbook`, `allowed_candidates=0` : le HTML réellement
   reçu ne fournit pas de destination sûre identifiable par le parseur.
   Ce **n'est pas** une preuve de session expirée sans marqueur de login.
@@ -122,12 +137,22 @@ d'acquisition ni supposer une relation `ProductId == lid` sans attestation
 supplémentaire. Un rapport `invalid_or_ambiguous` n'expose pas la cause
 HTML brute ; conserver le refus.
 
+Le même raisonnement s'applique à un HTML intermédiaire contenant
+plusieurs URL d'origines autorisées : une destination HTTPS
+`entrepot2r.numilog.com:443/fulfillment/URLLink.acsm` **unique et signée**
+est sélectionnée plutôt qu'un lien générique vers le compte, le CSS ou
+l'accueil. La présence de **plusieurs signatures ACSM distinctes** arrête
+tout téléchargement ; aucun choix arbitraire par premier candidat.
+
 Le propriétaire peut transmettre **uniquement ce petit JSON expurgé** au
 ticket #1883. Conserver le HTML brut et les URLs ACSM signées hors de toute
 issue, fixture, CI, capture et dépôt Git ; supprimer la copie privée lorsque
 son diagnostic n'est plus nécessaire.
 
 ## Validation et limites
+
+Les fixtures valident aussi les objets JS à clés non citées et la forme
+JSON à propriétés entre guillemets, sans exécution de script.
 
 Les fixtures utilisent des comptes, numéros, signatures et réponses
 **entièrement fictifs** avec `httpx.MockTransport`. Elles testent deux livres
