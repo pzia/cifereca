@@ -24,6 +24,7 @@ def test_direct_page_never_visits_arbitrary_first_known_book():
     v.cache, v.nav = {}, Navigation()
     v.status = Label()
     v.plugin = NS(pending=None)
+    v.identity_id = lambda: 'alice'
     v.nodes, v.local, v.center = (), (), None
     snapshots = []
     v.render = lambda: snapshots.append(v.center)
