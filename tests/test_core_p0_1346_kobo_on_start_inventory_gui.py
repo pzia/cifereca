@@ -270,3 +270,21 @@ def test_duplicate_configured_identity_blocks_all_startup_dispatch():
     r.window.service.identities.append(NS(identity_id="alice"))
     assert not startup.dispatch_after_opening(r.window)
     assert r.jobs == []
+
+
+def test_reconnect_even_after_prior_noop_is_not_another_application_start():
+    r, events, run_opening = _startup_window()
+    r.window._source_inventory_startup_connection_seen = True
+    posted = []
+    startup_coordinator.connect_configured_sources(
+        r.window, idle_add=posted.append,
+    )
+    r.jobs.pop().done({"connected": [], "errors": {}})
+    assert len(posted) == 1
+    assert posted.pop()() is False
+    opening = r.jobs.pop()
+    assert opening.options["kind"] == "opening-sync"
+    opening.work(lambda *_a: None)
+    opening.done({"identities": []})
+    assert r.jobs == []
+    assert not any(c[0] == "dispatch" for c in r.records["calls"])
