@@ -401,12 +401,15 @@ def _owned_delivery_candidates(node, *, allowed_origins):
                     or not isinstance(url, str) or len(url) > 4096):
                 continue
             try:
-                parsed = urlsplit(unescape(url))
+                decoded_url = unescape(url)
+                if not _raw_delivery_url_safe(decoded_url):
+                    continue
+                parsed = urlsplit(decoded_url)
                 # Only the exact ACSM delivery origin/path, with no user-info,
                 # fragment, whitespace, relative URL, or disguised port.
                 if (
-                    origin(url) not in allowed_origins
-                    or origin(url) != ('https', 'entrepot2r.numilog.com', 443)
+                    origin(decoded_url) not in allowed_origins
+                    or origin(decoded_url) != ('https', 'entrepot2r.numilog.com', 443)
                     or parsed.username or parsed.password or parsed.fragment
                     or parsed.path != '/fulfillment/URLLink.acsm'
                     or not parsed.query or any(c.isspace() for c in url)
@@ -415,7 +418,7 @@ def _owned_delivery_candidates(node, *, allowed_origins):
                     continue
             except (TypeError, ValueError, AttributeError):
                 continue
-            deliveries.append(OwnedDelivery(product, index, unescape(url)))
+            deliveries.append(OwnedDelivery(product, index, decoded_url))
     return deliveries
 
 
@@ -533,7 +536,12 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
                 else:
                     html_scripts = min(10000, html_scripts + 1)
             try:
-                url = urljoin(base_url,unescape(value))
+                decoded_url = unescape(value)
+                # A JS literal can carry numeric HTML character references;
+                # reject controls introduced by unescape as well as raw ones.
+                if not _raw_delivery_url_safe(decoded_url):
+                    continue
+                url = urljoin(base_url, decoded_url)
                 parsed = urlsplit(url)
                 # Every HTML-derived delivery URL obeys the same exact origin
                 # and credential/fragment policy as the subsequent GET.
