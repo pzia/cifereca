@@ -90,6 +90,24 @@ def statistics_lines(row):
     lines.append('Inventaire local et droits d’achat distincts des prêts de bibliothèque. Les sources peuvent se chevaucher.')
     return lines
 
+def overview_counts_lines(stats):
+    """Keep physical files, store-owned rights and library loans distinct.
+
+    Missing observations are unknown, never zero. These counts may overlap
+    by book identity; they must not be summed into a fictitious total.
+    """
+    def number(key):
+        value = stats.get(key)
+        return value if type(value) is int and value >= 0 else '—'
+
+    return (
+        f"Livres locaux : {number('local_books')} · "
+        f"prêts de bibliothèque connus : {number('known_loans')}",
+        f"Droits d’achat distants : {number('remote_owned_rights')} "
+        "(ne prouvent pas la présence d’un fichier local)",
+    )
+
+
 def attention_items(row, *, now=None):
     """Return prioritized, deduplicated actions from already-known local state."""
     from time import time
@@ -406,18 +424,17 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
             if stats is None:
                 compact_row(summary,'Statistiques indisponibles · actualisation nécessaire')
             else:
-                books=stats.get('local_books')
-                loans=stats.get('known_loans')
+                local_and_loans, owned_rights = overview_counts_lines(stats)
                 compact_row(
                     summary,
-                    f"Livres locaux : {books if books is not None else '—'}"
-                    +f" · emprunts connus : {loans if loans is not None else '—'}",
+                    local_and_loans,
                     action=lambda _b,identity=iid:controller.open(identity),
                     action_title='Bibliothèque',
-                    tooltip='Ouvrir les livres de cette identité. Les emprunts peuvent être partiels.',
+                    tooltip='Ouvrir les fichiers locaux et prêts de cette identité. Les prêts peuvent être partiels.',
                 )
-                if loans is None:
-                    compact_row(summary,'Prêts non actualisés · vérifier les alertes et la synchronisation')
+                compact_row(summary, owned_rights)
+                if stats.get('known_loans') is None:
+                    compact_row(summary,'Prêts de bibliothèque non actualisés · vérifier les alertes et la synchronisation')
 
             groups=compact_source_groups(row,public_providers)
             if any(groups.values()):
