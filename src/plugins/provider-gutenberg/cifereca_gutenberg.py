@@ -18,6 +18,7 @@ from cifereca.plugin_api import (
     ItemDetail,
     ProviderCapabilities,
     ProviderSearchCapabilities,
+    ProviderCapabilityError,
     ProviderConfigurationError,
     ProviderDescriptor,
     ProviderError,
@@ -596,8 +597,11 @@ class GutenbergSession(ProviderSession):
         return image
 
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
-        if scope == "physical":
-            _LOG.info("TRACE gutenberg search skipped reason=physical-scope"); return []
+        self.last_search_warnings = []
+        if type(field) is not str or field.strip().casefold() not in DESCRIPTOR.search_capabilities.fields:
+            raise ProviderCapabilityError("Project Gutenberg : unsupported_field")
+        if type(scope) is not str or scope.strip().casefold() not in DESCRIPTOR.search_capabilities.scopes:
+            raise ProviderCapabilityError("Project Gutenberg : unsupported_scope")
         query, field, filter_query = _search_facet(query, field)
         if len(query) < 2:
             _LOG.info("TRACE gutenberg search skipped reason=query-too-short query_len=%s", len(query)); return []
@@ -612,13 +616,13 @@ class GutenbergSession(ProviderSession):
         response=None
         while page_index <= page:
             endpoint = _safe_url(current_url)
-            _LOG.info("TRACE gutenberg search page begin endpoint=%s query=%r scope=%s field=%s requested_page=%s hop=%s",endpoint, query, scope, field, page, page_index)
+            _LOG.info("TRACE gutenberg search page begin endpoint=%s query_len=%s scope=%s field=%s requested_page=%s hop=%s",endpoint, len(query), scope, field, page, page_index)
             try:
                 response = self.client.get(current_url, params=params); response.raise_for_status()
             except httpx.HTTPError as exc:
                 elapsed_ms = int((time.perf_counter() - started) * 1000); status = getattr(getattr(exc, "response", None), "status_code", None)
                 self._diagnostic("GUTENBERG", "OPDS search", "error", duration_ms=elapsed_ms,detail={"endpoint": endpoint, "status": status, "error": type(exc).__name__, "requested_page": page})
-                raise ProviderError(f"Project Gutenberg : recherche OPDS indisponible ({exc})") from exc
+                raise ProviderError("Project Gutenberg : recherche OPDS indisponible (service_unavailable)") from exc
             self._remember_page(rows_cache,page_index,str(response.url))
             next_url=self._next_page_url(response.content,str(response.url))
             if next_url: self._remember_page(rows_cache,page_index+1,next_url)
@@ -628,6 +632,13 @@ class GutenbergSession(ProviderSession):
             current_url=next_url; params=None; page_index+=1
         assert response is not None
         parsed = self._parse_feed(response.content, str(response.url)); rows = self._field_filter(parsed, filter_query, field); duration_ms = int((time.perf_counter() - started) * 1000)
+        if field not in ("all", ""):
+            # Filters are applied *after* obtaining one requested OPDS page.
+            # Zero rows here are not evidence that the entire corpus lacks
+            # a matching author, subject, bookshelf or language.
+            self.last_search_warnings.append(
+                "partial_results : filtre local limité à la page OPDS demandée"
+            )
         self._diagnostic("GUTENBERG", "OPDS search", "ok", duration_ms=duration_ms,detail={"results": len(rows), "parsed_results": len(parsed), "query_len": len(query), "field": field, "page": page},level="detailed")
         return rows
 
