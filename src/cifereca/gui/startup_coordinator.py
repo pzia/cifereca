@@ -55,7 +55,13 @@ def connect_configured_sources(
                 window.run_opening_sync()
             finally:
                 window._source_inventory_startup_pending = False
-        idle_add(once_while_open(window, initial_opening_sync))
+        if not getattr(window, "_source_inventory_startup_connection_seen", False):
+            window._source_inventory_startup_connection_seen = True
+            idle_add(once_while_open(window, initial_opening_sync))
+        else:
+            # A user-triggered reconnect is not an application startup, even
+            # when no source happened to be due on the first connection.
+            idle_add(once_while_open(window, window.run_opening_sync))
         # No periodic poll is registered unless a Kobo source has a strict
         # per-source inventory opt-in. This is separate from startup backup
         # and does not mutate the legacy global acquisition timer.
