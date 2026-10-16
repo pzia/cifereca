@@ -22,7 +22,8 @@ DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-structured-1366", "diagnostics-volume-1366",
         "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
 YOUTH = ("youth-1366", "youth-1600", "youth-filter-help-1366", "youth-milan-1366",
-         "youth-editions-1366", "youth-library-search-1366")
+         "youth-editions-1366", "youth-editions-1600",
+         "youth-library-search-1366", "youth-library-search-1600")
 # CI smoke for P1 bibliographic detail plugins (#1599). These existing GTK
 # scenarios are regression guards, not plugin-specific acceptance evidence.
 DETAIL = BOOK_DETAIL + ("mainwindow-baseline-1366",
