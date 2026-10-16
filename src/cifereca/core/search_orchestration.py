@@ -753,6 +753,50 @@ def filter_loaded_search_results(rows: list[dict[str, Any]], query: str='', *, f
     )
 
 
+def _numilog_public_catalog_url(value: Any, *, cover: bool = False) -> str | None:
+    """Never persist a store delivery, signed query, or private account URL.
+
+    This is defense in depth after the provider's own public-book validation:
+    no remote request is made, and unknown notices/covers are omitted rather
+    than converting private account pages into persisted public links.
+    """
+    from urllib.parse import urlsplit
+    if type(value) is not str or not 0 < len(value) <= 512:
+        return None
+    if value != value.strip() or any(c.isspace() or ord(c) < 32 for c in value):
+        return None
+    if "\\" in value:
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or parsed.username or parsed.password
+                or parsed.fragment or parsed.port not in (None, 443)
+                or any(x in {".", ".."} for x in parsed.path.split("/"))):
+            return None
+        if cover:
+            if parsed.hostname not in {
+                "www.numilog.com", "services.numilog.com",
+                "www.edenlivres.fr", "storage.googleapis.com",
+            } or parsed.query:
+                return None
+        else:
+            if parsed.hostname != "www.numilog.com":
+                return None
+            official = re.fullmatch(
+                r"/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\\.ebook",
+                parsed.path, flags=re.I,
+            )
+            legacy = re.fullmatch(
+                r"/(?:livres|ebooks)/[A-Za-z0-9][A-Za-z0-9._-]{0,100}",
+                parsed.path, flags=re.I,
+            )
+            if not (official or legacy) or parsed.query not in ("", "ref=library"):
+                return None
+        return value
+    except (ValueError, AttributeError):
+        return None
+
+
 def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None=None) -> int:
     """Persist progressively discovered remote catalog metadata (0.8.3)."""
     identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
@@ -795,16 +839,28 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
         if existing and existing.get("local_state") == "local":
             continue
         raw_meta = dict(row.metadata or {})
+        if row.source_provider == "numilog":
+            # Signed ACSM "rights" must never be copied into the public
+            # catalogue. Ownership is the separate attested entitlement.
+            raw_meta.pop("rights", None)
         allowed_meta = {
             name: raw_meta.get(name)
             for name in ("subjects", "subject", "series", "collection", "publisher", "languages", "isbn", "isbns", "original_language", "authors", "contributors", "identifiers", "edition", "edition_statement", "series_index", "collection_index", "genre", "genres", "categories", "audience", "target_age", "rights", "dates")
             if raw_meta.get(name) not in (None, "", [], {})
         }
+        cover_url = (
+            _numilog_public_catalog_url(row.thumbnail_url, cover=True)
+            if row.source_provider == "numilog" else row.thumbnail_url
+        )
+        product_url = (
+            _numilog_public_catalog_url(row.friendly_url)
+            if row.source_provider == "numilog" else row.friendly_url
+        )
         upserts.append({
             "catalog_entry_id": key, "title": row.title, "author": row.author, "media_format": row.format,
             "identity_id": identity_id, "provider_id": row.source_provider, "item_id": row.record_id, "local_state": state,
             "metadata": {
-                **allowed_meta, "docbase": row.docbase, "scenario": row.scenario, "cover_url": row.thumbnail_url, "product_url": row.friendly_url,
+                **allowed_meta, "docbase": row.docbase, "scenario": row.scenario, "cover_url": cover_url, "product_url": product_url,
                 "price": row.price, "currency": row.currency, "source_credential": row.source_credential,
                 "source_collection": row.source_collection, "publisher": row.publisher or allowed_meta.get("publisher"),
                 "published_at": row.published_at, "type": row.type, "medium": row.medium,
