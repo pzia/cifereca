@@ -480,7 +480,80 @@ def _is_fulfillment_acsm(url, allowed_origins):
         return False
 
 
-def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
+def _readbook_coordinates(value, base_url):
+    try:
+        url = urljoin(base_url, value)
+        parsed = urlsplit(url)
+        if (origin(url) != origin(base_url) or parsed.username or parsed.password
+                or parsed.fragment or parsed.path.lower() != '/pages/compte/readbook.ashx'):
+            return None
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        lid = query.get('lid', [])
+        if len(lid) != 1 or not re.fullmatch(r'[0-9]{1,20}', lid[0]):
+            return None
+        return (lid[0], tuple((key, tuple(query[key]))
+                             for key in ('m', 'format', 'FormatId', 'FORMAT_ID') if key in query))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _confirmation_delivery(root, base_url, expected_readbook, allowed):
+    """Bind the observed global Links array to ONE explicitly selected card.
+
+    A single signed URL is not sufficient when a confirmation names another
+    product/copy. No JS evaluation, ProductId=lid inference or endpoint guess.
+    Unknown/dynamic versions of this known layout fail closed.
+    """
+    declaration = re.compile(r'\b(?:const|let|var)\s+Links\s*=')
+    scripts = [n for n in root.walk() if n.tag == 'script'
+               and declaration.search(''.join(n.pieces))]
+    if not scripts:
+        return None  # historical intermediary layouts retain their contract
+    def require(condition):
+        if not condition:
+            raise DeliverySelectionError('ambiguous')
+    require(len(scripts) == 1)
+    raw = ''.join(scripts[0].pieces)
+    require(len(raw) <= 64 * 1024 and len(declaration.findall(raw)) == 1)
+    literal = re.search(
+        r'\b(?:const|let|var)\s+Links\s*=\s*'
+        r'(\[(?:\s|,|\{[^{}]{1,4096}\})*\])\s*;', raw,
+    )
+    require(literal is not None)
+    candidates = _owned_delivery_candidates(
+        Node('script', pieces=[literal.group(1)]), allowed_origins=allowed,
+    )
+    require(len(candidates) == 1)
+    candidate = candidates[0]
+    expected = _readbook_coordinates(expected_readbook, base_url)
+    require(expected is not None)
+    parents = {id(child): node for node in root.walk() for child in node.children}
+    bindings = []
+    for action in root.walk():
+        handler = action.attrs.get('onclick', '')
+        if not re.search(r'\bModalDownload\s*\(', handler):
+            continue
+        card = action
+        while card is not None and 'card' not in classes(card):
+            card = parents.get(id(card))
+        require(card is not None)
+        readbooks = [n for n in card.walk() if n.tag == 'a'
+                     and _readbook_coordinates(n.attrs.get('href', ''), base_url) is not None]
+        if not any(_readbook_coordinates(n.attrs['href'], base_url) == expected for n in readbooks):
+            continue
+        require(len(readbooks) == 1)
+        require(sum(bool(re.search(r'\bModalDownload\s*\(', n.attrs.get('onclick', '')))
+                    for n in card.walk()) == 1)
+        call = re.fullmatch(
+            r'\s*ModalDownload\(\s*([0-9]{1,16})\s*,\s*([0-9]{1,16})\s*\)\s*;?\s*', handler,
+        )
+        require(call is not None)
+        bindings.append(call.groups())
+    require(bindings == [(candidate.product_id, candidate.copy_index)])
+    return candidate.url
+
+
+def delivery_url(text, base_url, *, allowed_origins=None, evidence=None, expected_readbook=None):
     """Locate exactly one allowlisted HTML delivery; optionally count shapes.
 
     Evidence contains only bounded integers. Raw URLs and HTML never escape
@@ -534,6 +607,11 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None):
             'allowed_candidates': min(10000, len(candidates)),
             'attested_acsm_candidates': min(10000, len(signed_acsm)),
         })
+    bound_confirmation = _confirmation_delivery(
+        root, base_url, expected_readbook, allowed,
+    )
+    if bound_confirmation is not None and signed_acsm != {bound_confirmation}:
+        raise DeliverySelectionError('ambiguous')
     # Pages intermédiaires may contain harmless site navigation and a
     # SINGLE signed ACSM. Prefer that exact delivery over ordinary permitted
     # links; never pick arbitrarily between different ACSM signatures.

@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.17, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.18, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -21,7 +21,7 @@ from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionE
     html_response_kind)
 from cifereca_numilog_filename import publish
 
-VERSION = '0.1.17'
+VERSION = '0.1.18'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -366,6 +366,9 @@ class NumilogSession(ProviderSession):
 
     def _download(self,url,destination,*,title=None,author=None,book_id=None):
         seen = set()
+        # Keep the fresh owned row's readBook coordinates across redirects;
+        # confirmation-page product/copy evidence cannot choose another book.
+        expected_readbook = url
         for _ in range(12):
             checked_url(url,self.allowed_origins)
             if url_origin(url) in ALLOWED_ACSM_ORIGINS:
@@ -412,7 +415,7 @@ class NumilogSession(ProviderSession):
                     try:
                         url = delivery_url(
                             html,str(r.url),allowed_origins=self.allowed_origins,
-                            evidence=evidence,
+                            evidence=evidence, expected_readbook=expected_readbook,
                         )
                     except DeliverySelectionError as exc:
                         self._diag('livraison HTML',phase='download',

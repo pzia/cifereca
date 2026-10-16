@@ -23,6 +23,14 @@ sur la page fournie. **Aucun téléchargement réel ni fulfillment ADEPT n'a
 été effectué.** L'analyse ne prouve pas la succession HTTP réellement
 renvoyée à l'installation de l'utilisateur ni le succès de sa session.
 
+Le complément 0.1.18 lie ce tableau global à **une seule carte** portant
+le `readBook` exact (lid et variante) choisi dans l'inventaire frais. Le
+couple du bouton `ModalDownload` doit être celui de l'unique ACSM ADOBE.
+Un autre produit/exemplaire, une variante différente, une carte dupliquée,
+un tableau dynamique ou plusieurs déclarations sont refusés avant GET signé.
+Cette vérification ne généralise pas le rattachement des anciens HTML sans
+ce tableau : leur contrat historique de destination unique reste inchangé.
+
 `tests/fixtures/confirmation_delivery_structure.html` conserve seulement
 ces relations DOM/JS, avec contenu, identifiants, commandes, paramètres et
 liens **entièrement inventés**. Ce fichier n'est pas une copie nettoyée du
@@ -30,7 +38,9 @@ HTML privé. Le test de transport utilise un HTTP 302 fictif depuis un
 `readBook` sélectionné dans un inventaire frais, cette page intermédiaire,
 un ACSM fictif et un seul import pour le propriétaire. Il vérifie aussi
 zéro acquisition à l'inventaire, aucun GET LCP/navigation/autre livre,
-l'absence de secrets dans les diagnostics et le refus de deux ACSM.
+l'absence de secrets dans les diagnostics, le refus de deux ACSM et huit
+cas de rattachement incorrect (produit, exemplaire, readBook, variante,
+carte absente/dupliquée, tableau dynamique/dupliqué).
 
 ## Nouveau parcours sûr
 

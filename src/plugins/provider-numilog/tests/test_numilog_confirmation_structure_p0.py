@@ -39,7 +39,7 @@ def test_global_lcp_and_adobe_for_same_copy_select_only_unique_allowed_acsm():
     assert not any(n.attrs.get('id') == 'myTable' for n in root.walk())
     assert html_response_kind(html) == 'intermediate'
     evidence = {}
-    assert delivery_url(html, CONFIRMATION, allowed_origins=ALLOWED, evidence=evidence) == SIGNED
+    assert delivery_url(html, CONFIRMATION, allowed_origins=ALLOWED, evidence=evidence, expected_readbook=READ_12) == SIGNED
     assert evidence['js_delivery_shapes'] == 2
     # Prior parser rejected this ambiguity instead of identifying the ACSM.
     assert evidence['allowed_candidates'] == 2
@@ -92,7 +92,7 @@ def test_second_signed_adobe_candidate_remains_ambiguous_before_any_import(tmp_p
         '</script>', 'const conflict = ' + _object(9002, SECOND) + ';</script>',
     )
     with pytest.raises(DeliverySelectionError) as error:
-        delivery_url(html, CONFIRMATION, allowed_origins=ALLOWED)
+        delivery_url(html, CONFIRMATION, allowed_origins=ALLOWED, expected_readbook=READ_12)
     assert error.value.code == 'ambiguous'
     requested = []
 
@@ -106,6 +106,56 @@ def test_second_signed_adobe_candidate_remains_ambiguous_before_any_import(tmp_p
         with pytest.raises(ProviderError, match='plusieurs liens'):
             session._download(CONFIRMATION, tmp_path / 'book.epub')
         assert requested == [CONFIRMATION] and not importer.calls
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize('mutation', (
+    'other-product', 'other-copy', 'other-readbook', 'other-format',
+    'no-card', 'duplicate-card', 'dynamic-array', 'duplicate-array',
+))
+def test_confirmation_requires_exact_modal_copy_and_fresh_readbook_before_signed_get(tmp_path, mutation):
+    html = FIXTURE.read_text()
+    if mutation == 'other-product':
+        html = html.replace('ModalDownload(9001, 1)', 'ModalDownload(9002, 1)')
+    elif mutation == 'other-copy':
+        html = html.replace('ModalDownload(9001, 1)', 'ModalDownload(9001, 2)')
+    elif mutation == 'other-readbook':
+        html = html.replace('lid=12', 'lid=34')
+    elif mutation == 'other-format':
+        html = html.replace('m=download', 'm=another-format')
+    elif mutation == 'no-card':
+        html = html.replace('class="card mp-4"', 'class="unknown"')
+    elif mutation == 'duplicate-card':
+        start = html.index('<div class="card mp-4">')
+        end = html.index('<script')
+        html = html[:end] + html[start:end] + html[end:]
+    elif mutation == 'dynamic-array':
+        html = html.replace('const Links = [', 'const Links = compute([', 1)
+    else:
+        html = html.replace('</script>', 'const Links = [];</script>')
+    requested = []
+
+    def handler(request):
+        url = str(request.url)
+        requested.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=INVENTORY, headers={'content-type': 'text/html'})
+        if url == READ_12:
+            return httpx.Response(302, headers={'location': CONFIRMATION})
+        assert url == CONFIRMATION, 'Rejected binding must not consume a signed link'
+        return httpx.Response(200, text=html, headers={'content-type': 'text/html'})
+
+    session, diagnostics, importer = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        book = session.library()[0]
+        with pytest.raises(ProviderError, match='plusieurs liens'):
+            session.download_direct(book, tmp_path)
+        assert requested == [LIBRARY, LIBRARY, READ_12, CONFIRMATION]
+        assert not importer.calls
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostics.events)
         _assert_clean(tmp_path)
     finally:
         session.close()
