@@ -23,7 +23,7 @@ FORM = '''<select name="id_auteur"><option value="0">Tous</option>
 <option value="9">Policier &amp; Mystère</option></select>'''
 CATALOGUE = '''<ul><li><span class="listeb">Livre test</span>
 <span class="auteur">Autrice</span>
-<a href="details.php?book=1">Fiche</a></li></ul>'''
+<a href="details.php?book=1">Fiche</a><a href="newsendbook.php?id=1&amp;format=epub">EPUB</a></li></ul>'''
 
 
 class FakeClient:
