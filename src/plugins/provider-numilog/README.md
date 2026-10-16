@@ -164,7 +164,10 @@ L'opération n'est **pas** appelée automatiquement par `search()`,
 `library()`, `holdings()`, la synchronisation ou le rendu des listes :
 aucun N+1, aucune acquisition ni récupération ACSM. Elle se limite à
 **une page** publique : absence de correspondance ≠ absence du livre au
-catalogue complet. 403/429, erreur réseau et structure changée sont
+catalogue complet. Lorsque deux cartes du même achat/variante se répètent
+sur une page ou entre pages, le rapprochement est refusé **avant tout GET
+public**, même si l'inventaire ordinaire déduplique ces cartes. La preuve
+\`lid\` reste distincte de l'ID du produit commercial. 403/429, erreur réseau et structure changée sont
 des erreurs publiques typées, sans repli sur le client authentifié.
 
 Reste à livrer : action UI explicite, fiche produit HTML réellement
