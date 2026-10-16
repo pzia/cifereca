@@ -375,7 +375,11 @@ class MainWindow(Adw.ApplicationWindow):
     def connect_configured_sources(self) -> bool:
         if getattr(self, "_closed", False):
             return False
-        return startup_coordinator.connect_configured_sources(self, idle_add=GLib.idle_add)
+        return startup_coordinator.connect_configured_sources(
+            self, idle_add=GLib.idle_add,
+            timeout_add_seconds=GLib.timeout_add_seconds,
+            source_remove=GLib.source_remove,
+        )
 
     def reconnect_sources(self) -> None:
         self.connect_configured_sources()
