@@ -959,23 +959,12 @@ class LibraryService:
             if account is not None and not self.sync_source_enabled(account):
                 continue
             if provider_id == "numilog":
-                # Personal purchases are account-bound. A disconnected or
-                # ambiguous owner is NOT the currently selected identity.
-                accounts = [
-                    a for a in self.accounts
-                    if a.provider_id == "numilog" and a.credential_id == credential_id
-                ]
-                try:
-                    bound_identity = self.storage.identity_for_connection(
-                        provider_id, credential_id,
-                    )
-                except Exception:
-                    bound_identity = None
-                if (
-                    len(accounts) != 1
-                    or not bound_identity
-                    or accounts[0].identity_id != bound_identity
-                    or self.identity_by_id(bound_identity) is None
+                # The connected session alone is NOT ownership. Verify one
+                # enabled durable account/identity before reading private
+                # pages; no current_identity fallback (#1905).
+                from .core.numilog_manifest_rights import numilog_inventory_binding_valid
+                if account is None or not numilog_inventory_binding_valid(
+                    self, account, session=session,
                 ):
                     result.blocked_sources += 1
                     _TRACE_LOG.warning(
@@ -983,7 +972,7 @@ class LibraryService:
                         "provider=numilog reason=source_binding_unavailable"
                     )
                     continue
-                identity = self.identity_by_id(bound_identity)
+                identity = self.identity_by_id(account.identity_id)
             elif provider_id == "kobo":
                 # An authenticated session alone is not an authorized source.
                 # The opening mirror must not fetch a disconnected/rebound or
@@ -1031,9 +1020,28 @@ class LibraryService:
                 # One-shot iterators feed the owned-rights projection and
                 # remote catalog exactly once. Neither phase downloads files.
                 rows = list(session.library())
+                if provider_id == "numilog" and not numilog_inventory_binding_valid(
+                    self, account, session=session,
+                ):
+                    # A connection can be rebound while private pages are
+                    # fetched. Discard the entire stale response, not just its
+                    # rights: otherwise another identity may see its metadata.
+                    result.blocked_sources += 1
+                    _TRACE_LOG.warning(
+                        "TRACE catalog personal-library inventory skipped "
+                        "provider=numilog reason=source_binding_changed"
+                    )
+                    continue
                 if provider_id == "kobo" and account is not None:
                     from .core.kobo_manifest_rights import mirror_kobo_manifest_rights
                     mirror_kobo_manifest_rights(
+                        self, rows, identity_id=identity.identity_id,
+                        credential_id=credential_id,
+                        account_id=account.unique_id or None,
+                    )
+                elif provider_id == "numilog" and account is not None:
+                    from .core.numilog_manifest_rights import mirror_numilog_manifest_rights
+                    mirror_numilog_manifest_rights(
                         self, rows, identity_id=identity.identity_id,
                         credential_id=credential_id,
                         account_id=account.unique_id or None,
