@@ -6,11 +6,32 @@ changes a generation, or introduces an additional subscription.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 from ..models import SearchResult
 from ..core.search import file_format
 from .book_widgets import BookListItem
 from .query_model import result_row
+
+
+def _stale_catalog_provenance(metadata: Any) -> tuple[str, ...]:
+    """Explain a cached *public notice* without implying live availability.
+
+    `mirrored_at` is our local index timestamp, not a publication date,
+    download entitlement, or a last-seen-upstream claim.
+    """
+    if not isinstance(metadata, dict) or metadata.get("search_provenance") != "known_catalog_stale":
+        return ()
+    labels = ["Résultat connu · hors ligne"]
+    observed = metadata.get("mirrored_at")
+    if type(observed) is int and observed > 0:
+        try:
+            date = datetime.fromtimestamp(observed, tz=timezone.utc).strftime("%d/%m/%Y")
+        except (OverflowError, ValueError, OSError):
+            pass
+        else:
+            labels.append(f"Notice indexée localement le {date} (UTC)")
+    return tuple(labels)
 
 
 def _sync_search_detail_after_results(self) -> None:
@@ -102,7 +123,7 @@ def _render_search_results(self) -> int:
             medium = "Livre numérique"
         source = self.service.provider_display_name(item.source_provider)
         stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
-        extras: list[str] = ["Résultat connu · hors ligne"] if stale_known else []
+        extras: list[str] = list(_stale_catalog_provenance(item.metadata)) if stale_known else []
         if item.source_provider == "kobo" and not stale_known:
             right_state = kobo_rights.get((item.source_credential, item.record_id))
             if right_state == "active":
