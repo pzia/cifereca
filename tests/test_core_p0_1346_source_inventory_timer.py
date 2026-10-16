@@ -291,3 +291,13 @@ def test_window_close_always_releases_periodic_inventory_subscription():
     assert r.records["timers"] == {} and not r.listeners
     assert first_timer_id in r.records["cancelled"]
     assert events[-4:] == ["runner", "history", "covers", "service"]
+
+
+def test_queued_periodic_work_is_discarded_after_broker_replacement():
+    r = rig(modes={SOURCE_ID: {"mode": "periodic", "interval_minutes": 15}})
+    r.configure()
+    next(iter(r.records["timers"].values()))()
+    assert len(r.jobs) == 1
+    r.window.plugin_manager.broker = lambda _name: None
+    assert r.jobs[0].work() is None
+    assert not any(entry[0] == "dispatch" for entry in r.records["calls"])
