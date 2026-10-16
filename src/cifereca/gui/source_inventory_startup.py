@@ -98,6 +98,7 @@ def dispatch_after_opening(window: Any) -> bool:
     window._source_inventory_startup_dispatched = True
 
     def work():
+        failures = 0
         for identity_id in identities:
             if getattr(window, "_closed", False) or _broker(window) is not broker:
                 return
@@ -107,11 +108,19 @@ def dispatch_after_opening(window: Any) -> bool:
             if identity_id not in due_startup_identities(window, broker):
                 continue
             try:
-                broker.synchronize_scheduled_inventory(identity_id, "startup")
+                receipt = broker.synchronize_scheduled_inventory(
+                    identity_id, "startup",
+                )
+                if getattr(receipt, "ok", None) is not True:
+                    failures += 1
             except Exception:
-                raise RuntimeError(
-                    "Actualisation initiale des notices Kobo indisponible"
-                ) from None
+                # One account's fault does not starve its eligible siblings.
+                # Never reflect signed URLs or private identifiers in tasks.
+                failures += 1
+        if failures:
+            raise RuntimeError(
+                "Actualisation initiale des notices Kobo indisponible"
+            ) from None
 
     try:
         window.runner.submit(
