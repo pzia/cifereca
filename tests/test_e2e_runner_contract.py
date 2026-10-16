@@ -632,3 +632,28 @@ def test_e2e_workflow_replays_each_selected_scenario_only_once():
     assert 'e2e/run.py --scenario "$scenario"' in workflow
     assert "e2e/run.py --plugin core" not in workflow
     assert "steps.select.outputs.scenarios" in workflow
+
+
+def test_1599_recommendations_real_gtk_identity_and_local_isbn_action():
+    runner = _module()
+    probe = (ROOT / "e2e/recommendations_detail_probe.py").read_text(
+        encoding="utf-8"
+    )
+    for width in (1366, 1600):
+        scenario = runner.SCENARIOS[f"recommendations-detail-{width}"]
+        assert scenario["runner"] == "gtk-recommendations"
+        assert scenario["plugin"] == "ui.page.recommendations"
+        assert scenario["width"] == width
+    for marker in (
+        "RecommendationsPlugin().activate(",
+        "host = _UiHost(window)",
+        "PublicBookMasterDetailView",
+        "view._master._page.selection.set_selected(0)",
+        "activate_key(action)",
+        'view._text.set_text("ABSENT-THIS-TITLE")',
+        "view._identity.set_selected(1)",
+        'state["old_action"].emit("clicked")',
+        'report["checks"]["identity_switch_discards_old_detail"]',
+        'report["status"] = "PASS"',
+    ):
+        assert marker in probe
