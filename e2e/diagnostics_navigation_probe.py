@@ -1459,7 +1459,7 @@ def main() -> int:
                              if row.get_title() == "Actualisation automatique des notices Numilog")
         assert "Mode manuel" in inventory_row.get_subtitle()
         button = next(node for node in walk(inventory_row)
-                      if isinstance(node, Gtk.Button) and node.get_label() == "Planifier les notices…")
+                      if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_label", None) == "Planifier les notices…")
         assert button.get_sensitive() and not f["inventory_policy_writes"]
         ok, bounds = button.compute_bounds(scroll)
         assert ok
@@ -1474,7 +1474,7 @@ def main() -> int:
                    if isinstance(row, Adw.ActionRow)
                    and row.get_title() == "Actualisation automatique des notices Numilog")
         button = next(node for node in walk(row)
-                      if isinstance(node, Gtk.Button) and node.get_label() == "Planifier les notices…")
+                      if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_label", None) == "Planifier les notices…")
         ok, bounds = button.compute_bounds(f["sync_scroll"])
         assert ok and bounds.get_y() >= 0
         assert bounds.get_y() + bounds.get_height() <= f["sync_scroll"].get_height()
@@ -1506,7 +1506,7 @@ def main() -> int:
                    and row.get_title() == "Actualisation automatique des notices Numilog")
         assert "périodique autorisée" in row.get_subtitle()
         button = next(node for node in walk(row) if isinstance(node, Gtk.Button)
-                      and node.get_label() == "Désactiver les actualisations")
+                      and getattr(node, "_cifereca_action_label", None) == "Désactiver les actualisations")
         # A refresh may reset scroll allocation; bring the new button into view.
         scroll = f["sync_scroll"]
         ok, bounds = button.compute_bounds(scroll)
