@@ -275,7 +275,7 @@ def main():
         # No remote ranking task: the synthetic candidate view below probes
         # the real selection, projection, GTK and public actions only.
         plugin._view._start_refresh = lambda: None
-        window.set_child(widget)
+        window.set_content(widget)
         state.update(view=plugin._view, plugin=plugin, window=window,
                      device=X11Input())
         window.present()
