@@ -359,6 +359,13 @@ class NumilogFakeApp:
             return self.home(handler)
         if path == "/health":
             return self.health(handler)
+        if path == "/Pages/Recherche/ResultatRecherche.aspx" and handler.command in {"GET", "HEAD"}:
+            # Simulation-only public catalogue, independent of cookies and
+            # purchased inventory. Never exposes private delivery links.
+            from numilog.public_catalogue import render_public_search
+            status, headers, body = render_public_search(self.cache, qs, self.page_size)
+            content_type = "text/html; charset=utf-8" if status == HTTPStatus.OK else "text/plain; charset=utf-8"
+            return self.send_bytes(handler, status, content_type, body, headers)
         if path == "/Login.Aspx/AuthUser" and handler.command == "POST":
             return self.login(handler)
         if path.lower() == "/pages/compte/meslivres.aspx":
