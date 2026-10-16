@@ -57,7 +57,25 @@ def normalized_base_url(value):
         pass
     raise ProviderConfigurationError('Numilog : base_url invalide ; HTTPS requis, sauf loopback HTTP pour les tests locaux')
 
+def _raw_network_url(value):
+    """Reject raw controls before urllib may silently strip CR/LF/TAB.
+
+    A signed ACSM URL must be sent exactly as received. Normalizing a
+    malformed redirect could change its signature and obscure the origin of
+    a download failure. Percent-encoded bytes remain untouched.
+    """
+    return (
+        type(value) is str and bool(value)
+        and not any(
+            char.isspace() or unicodedata.category(char) in {'Cc', 'Cf', 'Cs'}
+            for char in value
+        )
+    )
+
+
 def checked_url(value, allowed_origins=None):
+    if not _raw_network_url(value):
+        raise ProviderError('Numilog : destination réseau inattendue ; téléchargement arrêté')
     allowed=set(allowed_origins if allowed_origins is not None else ({url_origin('https://'+host+'/') for host in ALLOWED} | ALLOWED_ACSM_ORIGINS))
     try:
         p = urlsplit(value)
@@ -72,6 +90,13 @@ def checked_url(value, allowed_origins=None):
     except ValueError:
         pass
     raise ProviderError('Numilog : destination réseau inattendue ; téléchargement arrêté')
+
+def checked_redirect(base_url, location, allowed_origins):
+    """Validate the unmodified Location before urljoin can normalize it."""
+    if not _raw_network_url(location):
+        raise ProviderError('Numilog : redirection réseau inattendue ; téléchargement arrêté')
+    return checked_url(urljoin(base_url, location), allowed_origins)
+
 
 def validate_epub(path):
     inspected = inspect_artifact(Path(path), 'epub', strict_structure=True)
@@ -155,7 +180,7 @@ class NumilogSession(ProviderSession):
                 if r.status_code in REDIRECTS:
                     if payload is not None:
                         raise ProviderError('Numilog : redirection inattendue pendant la connexion')
-                    url = urljoin(str(r.url),r.headers.get('location',''))
+                    url = checked_redirect(str(r.url),r.headers.get('location',''),self.allowed_origins)
                     continue
                 self._status(r)
                 return str(r.url),self._small(r).decode('utf-8-sig',errors='replace')
@@ -383,7 +408,7 @@ class NumilogSession(ProviderSession):
             with self.client.stream('GET',url,headers={'Referer':self.base_url}) as r:
                 self._diag('HTTP',method='GET',host=urlsplit(url).hostname,status=r.status_code)
                 if r.status_code in REDIRECTS:
-                    url = urljoin(str(r.url),r.headers.get('location',''))
+                    url = checked_redirect(str(r.url),r.headers.get('location',''),self.allowed_origins)
                     continue
                 self._status(r)
                 mime = r.headers.get('content-type','').split(';')[0].lower().strip()
