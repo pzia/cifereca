@@ -206,3 +206,61 @@ def test_stale_public_selection_never_starts_holdings_or_acquisition():
     panel.show_search.assert_called_once_with(item, loading=False)
     host.runner.submit.assert_not_called()
     host._request_cached_book_details.assert_not_called()
+
+
+def test_stale_public_notice_exposes_local_index_date_not_live_status():
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    observed = int(datetime(2026, 10, 15, 12, 30, tzinfo=timezone.utc).timestamp())
+    host = _host()
+    item = replace(
+        _book("public-provider"),
+        downloadable=True,
+        metadata={"search_provenance": "known_catalog_stale", "mirrored_at": observed},
+    )
+    host._remote_search_results = [item]
+    host.service.can_direct_download = Mock(return_value=True)
+    host._populate_search([item], announce=False)
+    rows = host.search_page.show_rows.call_args.args[0]
+    assert len(rows) == 1
+    assert "Résultat connu · hors ligne" in rows[0].meta
+    assert "Notice indexée localement le 15/10/2026 (UTC)" in rows[0].meta
+    assert "disponible actuellement" not in rows[0].meta
+    assert rows[0].options["action_label"] is None
+    host.service.can_direct_download.assert_not_called()
+
+
+def test_stale_public_notice_never_renders_untrusted_or_invalid_cache_dates():
+    from dataclasses import replace
+
+    for invalid in (None, True, False, -1, 0, "2026/SECRET", 10 ** 100):
+        host = _host()
+        item = replace(
+            _book("public-provider"),
+            metadata={
+                "search_provenance": "known_catalog_stale",
+                "mirrored_at": invalid,
+            },
+        )
+        host._remote_search_results = [item]
+        host._populate_search([item], announce=False)
+        row = host.search_page.show_rows.call_args.args[0][0]
+        assert "Résultat connu · hors ligne" in row.meta
+        assert "Notice indexée localement" not in row.meta
+        assert "SECRET" not in row.meta
+        assert row.options["action_callback"] is None
+
+
+def test_live_public_notice_does_not_claim_offline_or_render_cache_timestamp():
+    from dataclasses import replace
+
+    host = _host()
+    item = replace(_book("public-provider"), metadata={
+        "mirrored_at": 1792067400, "search_provenance": "live",
+    })
+    host._remote_search_results = [item]
+    host._populate_search([item], announce=False)
+    row = host.search_page.show_rows.call_args.args[0][0]
+    assert "Résultat connu" not in row.meta
+    assert "Notice indexée localement" not in row.meta
