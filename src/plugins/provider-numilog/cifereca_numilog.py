@@ -345,7 +345,20 @@ class NumilogSession(ProviderSession):
             self._diag('bibliothèque',items=len(rows))
             return [self._normalize(row) for row in rows]
 
+    def search_public(self, query, *, page=0, field='all'):
+        """Explicit public-catalogue lookup with no private-session I/O.
+
+        The brSimple HTML fixture only proves general text search; no native
+        author/ISBN field mode is claimed. Public rows never prove ownership.
+        """
+        from cifereca_numilog_public_client import fetch_public_search
+        return list(fetch_public_search(query, page=page, field=field).items)
+
     def search(self,query,scope='all',page=0,field='all'):
+        if scope == 'catalog':
+            # Strictly separate public commercial results from purchased books.
+            # No _rows(), authentication cookies, or ACSM acquisition here.
+            return self.search_public(query, page=page, field=field)
         if field not in {'all','title','titre'}:
             raise ProviderCapabilityError('Numilog : recherche par titre uniquement dans cette version')
         if scope not in {'all','digital'}:
