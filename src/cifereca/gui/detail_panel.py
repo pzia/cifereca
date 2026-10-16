@@ -625,11 +625,15 @@ class DetailPanel(Gtk.Box):
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
+        stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
+        freshness_rows = [
+            ("Recherche en ligne", "Indisponible"),
+        ] if stale_known else []
         self.show_presentation(book_detail_presentation(
             title=item.title,
             subtitle=item.author,
             thumbnail=item.thumbnail_url,
-            badges=[],
+            badges=["Résultat connu · hors ligne"] if stale_known else [],
             section_rows=[
                 ("Essentiel", [
                     ("Source", source),
@@ -637,6 +641,7 @@ class DetailPanel(Gtk.Box):
                     ("Support", essential_support),
                     ("Langue", detail_language(item.metadata)),
                     ("Disponibilité", "Non vérifiée"),
+                    *freshness_rows,
                 ]),
                 ("Notice", [
                     ("Type", item.type or ""),
@@ -647,6 +652,10 @@ class DetailPanel(Gtk.Box):
             ],
             metadata=item.metadata,
         ), description=item.description)
+        if stale_known:
+            # A public cache row is neither a current download offer nor a
+            # reason to invoke plugin decorators while the source is offline.
+            return
         # A direct-download action must be visible immediately.  Do not wait for
         # the asynchronous holdings request: Gallica has no meaningful holding
         # list and a failed availability lookup must never hide the download.
