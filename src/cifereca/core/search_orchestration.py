@@ -464,14 +464,20 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
             if attempt == 0 and provider_rows:
                 primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
         except Exception as exc:
+            from .known_catalog_fallback import public_service_unavailable
+            outage = public_service_unavailable(exc)
             if attempt == 0 or len(variants) == 1:
-                terminal_error_code = type(exc).__name__
-                terminal_error_message = str(exc)
-                warnings.append(f"{session.descriptor.display_name}: {exc}")
+                terminal_error_code = "SearchTemporarilyUnavailable" if outage else type(exc).__name__
+                terminal_error_message = "Recherche en ligne indisponible" if outage else str(exc)
+                warnings.append(
+                    f"{session.descriptor.display_name}: recherche en ligne indisponible"
+                    if outage else f"{session.descriptor.display_name}: {exc}"
+                )
             self.diagnostics.add(
                 "PLUGIN", "search", "error",
                 detail={"provider": session.provider_id, "attempt": attempt + 1, "q_len": len(variant),
-                        "error": type(exc).__name__, "message": str(exc)},
+                        "error": type(exc).__name__,
+                        "message": "public_search_unavailable" if outage else str(exc)},
             )
             from ..search_failures import is_technical_search_error
             if is_technical_search_error(exc):
@@ -692,10 +698,35 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                         provider_warnings = []
                         error_code = "StreamStale"
                         error_message = "source generation changed"
+                # A transport/protocol outage cannot be repaired by another
+                # equivalent request. Offer only identity-scoped *public*
+                # records already mirrored in SQLite; they are never promoted
+                # to fresh catalogue results or purchase rights.
+                live_rows = provider_rows
+                if (
+                    error_code == "SearchTemporarilyUnavailable"
+                    and not live_rows and not request_cancelled()
+                ):
+                    from .known_catalog_fallback import known_public_fallback
+                    previous = known_public_fallback(
+                        self.storage, provider_id=session.provider_id,
+                        identity_id=identity.identity_id if identity is not None else None,
+                        query=query, scope=scope, field=field,
+                        content_types=types,
+                    )
+                    if previous:
+                        provider_rows = list(previous)
+                        provider_warnings = [
+                            f"{session.descriptor.display_name}: résultats connus, recherche en ligne indisponible"
+                        ]
+                    else:
+                        provider_warnings = [
+                            f"{session.descriptor.display_name}: recherche en ligne indisponible (aucun résultat connu)"
+                        ]
                 aggregate.extend(provider_rows)
                 warnings.extend(provider_warnings)
                 completed_count += 1
-                if error_code and not provider_rows:
+                if error_code:
                     failed += 1
                 if not cancelled:
                     emit(CatalogSearchBatch(
@@ -723,8 +754,13 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         rows.sort(key=lambda row: (self._search_relevance(query, row) if len(variants) > 1 else 0, preference_scores.get(id(row), 0)), reverse=True)
     warnings = list(dict.fromkeys(warnings))
     if not cancelled:
-        try: self._mirror_remote_results(rows)
-        except Exception as exc: logger.warning("TRACE catalog mirror progressive search error=%s", exc)
+        # Stale offline fallbacks must NEVER get a fresh mirrored_at timestamp.
+        live_results = [
+            row for row in rows
+            if row.metadata.get("search_provenance") != "known_catalog_stale"
+        ]
+        try: self._mirror_remote_results(live_results)
+        except Exception as exc: logger.warning("TRACE catalog mirror progressive search error=%s", type(exc).__name__)
     if not cancelled and not warnings and failed == 0:
         self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
     self.last_search = rows; self.last_search_warnings = warnings
