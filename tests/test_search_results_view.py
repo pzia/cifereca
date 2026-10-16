@@ -151,3 +151,58 @@ def test_partial_warning_does_not_toast_for_empty_or_progressive_batches():
     host.service.last_search_warnings = ["private exception"]
     host._populate_search([], announce=False)
     host.toast.assert_not_called()
+
+
+def test_stale_public_row_has_warning_but_no_download_or_placement_action():
+    from dataclasses import replace
+
+    host = _host()
+    stale = replace(
+        _book("public-provider"),
+        downloadable=True,
+        metadata={"search_provenance": "known_catalog_stale", "mirrored_at": 100},
+    )
+    host._remote_search_results = [stale]
+    host.service.can_direct_download = Mock(return_value=True)
+    host._populate_search([stale], announce=False)
+    rows = host.search_page.show_rows.call_args.args[0]
+    assert len(rows) == 1
+    assert "Résultat connu · hors ligne" in rows[0].meta
+    assert rows[0].options["action_label"] is None
+    assert rows[0].options["action_callback"] is None
+    host.service.can_direct_download.assert_not_called()
+    host.download_direct_item.assert_not_called()
+
+
+def test_stale_public_selection_never_starts_holdings_or_acquisition():
+    from dataclasses import replace
+
+    owner = OWNER.with_name("search_details.py")
+    tree = ast.parse(owner.read_text())
+    method = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "_search_selected")
+    namespace = {"result_row": result_row}
+    module = ast.fix_missing_locations(ast.Module(body=[
+        ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
+        method,
+    ], type_ignores=[]))
+    exec(compile(module, str(owner), "exec"), namespace)
+    item = replace(_book("public-provider"), metadata={
+        "search_provenance": "known_catalog_stale",
+    })
+    panel = NS(show_search=Mock(), empty=Mock())
+    host = NS(
+        _closed=False, _search_detail_request_generation=0,
+        _cancel_cached_book_details=Mock(),
+        _search_local_objects={},
+        search_objects={"public-provider:stale": item},
+        search_page=NS(detail=panel),
+        _selected_search_id=None, _add_facets=Mock(),
+        search_controls=NS(), runner=NS(submit=Mock()),
+        _request_cached_book_details=Mock(),
+        _add_local_book_actions=Mock(),
+    )
+    namespace["_search_selected"](host, NS(key="public-provider:stale"))
+    panel.show_search.assert_called_once_with(item, loading=False)
+    host.runner.submit.assert_not_called()
+    host._request_cached_book_details.assert_not_called()

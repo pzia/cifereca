@@ -200,3 +200,51 @@ def kobo_inventory_source_eligible(service: Any, account: Any) -> bool:
     except Exception:
         # A failed permission check never grants scheduled network access.
         return False
+
+
+
+def numilog_inventory_source_eligible(service: Any, account: Any) -> bool:
+    """Admit only a current, unambiguous, *private* Numilog inventory source.
+
+    Inventory refresh is not materialization consent. Reject stale sessions,
+    account rebindings, ambiguous credentials and malformed source switches
+    before the caller performs any network request.
+    """
+    try:
+        if getattr(account, "provider_id", None) != "numilog":
+            return False
+        from ..brokers import SynchronizationBrokerImpl
+        from .numilog_manifest_rights import numilog_inventory_binding_valid
+
+        source_id = SynchronizationBrokerImpl._source_id(account)
+        stored_enabled = service.storage.metadata_get(
+            "sync.source.enabled." + source_id
+        )
+        if stored_enabled is not None and stored_enabled not in {
+            "1", "true", "yes", "on",
+        }:
+            return False
+        sessions = [
+            row for row in getattr(service, "_sessions", {}).values()
+            if getattr(row, "provider_id", None) == "numilog"
+            and getattr(row, "credential_id", None)
+            == getattr(account, "credential_id", None)
+        ]
+        return (
+            len(sessions) == 1
+            and numilog_inventory_binding_valid(
+                service, account, session=sessions[0],
+            )
+        )
+    except Exception:
+        return False
+
+
+def inventory_source_eligible(service: Any, account: Any) -> bool:
+    """Dispatch strictly by provider; never reuse a private entitlement."""
+    provider = getattr(account, "provider_id", None)
+    if provider == "kobo":
+        return kobo_inventory_source_eligible(service, account)
+    if provider == "numilog":
+        return numilog_inventory_source_eligible(service, account)
+    return False

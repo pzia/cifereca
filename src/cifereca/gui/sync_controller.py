@@ -718,6 +718,145 @@ def _refresh_sync_page(self) -> None:
                 dialog.present()
 
             schedule_button.connect("clicked", schedule_change)
+
+            # #1346: a SECOND, independent Kobo policy for refreshing remote
+            # inventory and rights. Never re-use the local acquisition toggle:
+            # reading this policy makes no network request or download.
+            inventory_reader = getattr(broker, "inventory_refresh_schedule", None)
+            inventory_writer = getattr(broker, "set_inventory_refresh_schedule", None)
+            inventory_mode = "unavailable"
+            inventory_minutes = 60
+            inventory_supported = callable(inventory_reader) and callable(inventory_writer)
+            if inventory_supported:
+                try:
+                    raw_policy = inventory_reader(source.source_id)
+                    if (
+                        type(raw_policy) is dict
+                        and raw_policy.get("mode") in {"manual", "on_start", "periodic"}
+                        and type(raw_policy.get("interval_minutes")) is int
+                        and 15 <= raw_policy["interval_minutes"] <= 10080
+                    ):
+                        inventory_mode = raw_policy["mode"]
+                        inventory_minutes = raw_policy["interval_minutes"]
+                except Exception:
+                    # Never reflect provider-owned paths, URLs or credentials.
+                    pass
+
+            inventory_row = Adw.ActionRow()
+            inventory_row.set_title("Actualisation automatique des notices Kobo")
+            inventory_row.set_subtitle_lines(0)
+            if inventory_mode == "manual":
+                inventory_row.set_subtitle(
+                    "Mode manuel (par défaut) : notices et droits à la demande. "
+                    "Aucun téléchargement de fichier autorisé."
+                )
+            elif inventory_mode == "on_start":
+                inventory_row.set_subtitle(
+                    f"Actualisation des notices au démarrage autorisée "
+                    f"(intervalle minimal : {inventory_minutes} min). "
+                    "N'autorise aucun téléchargement."
+                )
+            elif inventory_mode == "periodic":
+                inventory_row.set_subtitle(
+                    f"Actualisation des notices périodique autorisée "
+                    f"(toutes les {inventory_minutes} min, si ordonnanceur actif). "
+                    "N'autorise aucun téléchargement."
+                )
+            else:
+                inventory_row.set_subtitle(
+                    "Planification des notices indisponible. "
+                    "Aucune synchronisation automatique autorisée ici."
+                )
+            inventory_button = self.action_button(
+                "Désactiver les actualisations" if inventory_mode in {"on_start", "periodic"}
+                else "Planifier les notices…",
+                "preferences-system-symbolic",
+            )
+            inventory_button.set_sensitive(bool(
+                inventory_supported and (
+                    inventory_mode in {"on_start", "periodic"}
+                    or (inventory_mode == "manual" and source.enabled
+                        and source.connected and source.sync_capable
+                        and "remote_inventory" in source.sync_capabilities)
+                )
+            ))
+            inventory_button.set_tooltip_text(
+                "Modifie seulement la politique de notices/droits de ce compte. "
+                "Aucune acquisition et aucun téléchargement."
+            )
+            inventory_row.add_suffix(inventory_button)
+            group.add(inventory_row)
+
+            def change_inventory_schedule(
+                button, sid=source.source_id, account_label=display_label,
+                prior_mode=inventory_mode, prior_minutes=inventory_minutes,
+                current=download_current,
+            ):
+                if not current() or prior_mode not in {"manual", "on_start", "periodic"}:
+                    return
+
+                def apply_mode(target):
+                    if not current():
+                        return
+                    try:
+                        fresh = inventory_reader(sid)
+                        if (
+                            type(fresh) is not dict
+                            or fresh.get("mode") != prior_mode
+                            or fresh.get("interval_minutes") != prior_minutes
+                        ):
+                            if current():
+                                self._refresh_sync_page()
+                            return
+                        saved = inventory_writer(
+                            sid, target, interval_minutes=prior_minutes,
+                        )
+                        if (
+                            type(saved) is not dict
+                            or saved.get("mode") != target
+                            or saved.get("interval_minutes") != prior_minutes
+                        ):
+                            raise ValueError("invalid inventory schedule acknowledgement")
+                    except Exception:
+                        if current():
+                            self.show_error(
+                                "Planification des notices Kobo indisponible.",
+                                "Synchronisation",
+                            )
+                        return
+                    if current():
+                        self._refresh_sync_page()
+
+                if prior_mode != "manual":
+                    # Revocation is possible even after disconnect or rebinding
+                    # and must not require a confirmation dialog.
+                    apply_mode("manual")
+                    return
+                dialog = Adw.MessageDialog.new(
+                    self, "Planifier les notices Kobo ?",
+                    f"Compte : {account_label}.\n\n"
+                    "Ce réglage autorise seulement la consultation du catalogue "
+                    "personnel et des droits du compte, sans téléchargement, "
+                    "ADEPT ni acquisition. La cadence est limitée par le "
+                    f"dernier essai et un intervalle de {prior_minutes} min. "
+                    "L’actualisation périodique nécessite un ordonnanceur actif. "
+                    "Vous pourrez revenir au mode manuel à tout moment.",
+                )
+                dialog.add_response("cancel", "Annuler")
+                dialog.add_response("on_start", "Au démarrage")
+                dialog.add_response("periodic", "Périodique")
+                dialog.set_response_appearance(
+                    "on_start", Adw.ResponseAppearance.SUGGESTED,
+                )
+
+                def on_response(_dialog, choice):
+                    if choice in {"on_start", "periodic"} and current():
+                        apply_mode(choice)
+
+                dialog.connect("response", on_response)
+                dialog.present()
+
+            inventory_button.connect("clicked", change_inventory_schedule)
         else:
             group.add(row)
 
