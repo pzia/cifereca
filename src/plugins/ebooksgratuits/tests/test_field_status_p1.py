@@ -176,5 +176,6 @@ def test_general_all_warning_cannot_survive_unsupported_field():
         # The broker avoids unsupported fields; a rejected query must not
         # leak an old warning into later results.
         assert len(client.post_calls) == before
+        assert session.last_search_warnings == []
     finally:
         session.close()
