@@ -72,3 +72,49 @@ def test_attested_general_search_retains_verified_account_scoping():
         assert results[1].owned is True
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("status", (401, 403))
+def test_private_denial_reports_partial_results_without_private_metadata(status):
+    session, paths = _case(library_status=status)
+    try:
+        rows = session.search("book", scope="all", field="all")
+        assert paths == [
+            "/api/v2/catalog/search", "/api/v2/library/search",
+            "/api/v2/catalog/search",
+        ]
+        assert [row.record_id for row in rows] == ["public-edition"]
+        assert rows[0].owned is False
+        assert rows[0].revision_id is None
+        assert session.last_search_warnings == [
+            "partial_results : recherche personnelle refusée ; "
+            "catalogue public seulement"
+        ]
+        assert "PRIVATE" not in repr(session.last_search_warnings)
+        # A subsequent explicit public-only query is complete within its
+        # declared scope and must revoke the former personal-denial warning.
+        paths.clear()
+        public = session.search("book", scope="catalog")
+        assert paths == ["/api/v2/catalog/search"]
+        assert len(public) == 1
+        assert session.last_search_warnings == []
+        # An unbound session also must never claim a personal search failure.
+        paths.clear()
+        session.connected = False
+        assert len(session.search("book", scope="all")) == 1
+        assert paths == ["/api/v2/catalog/search"]
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+def test_successful_personal_search_has_no_false_partial_warning():
+    session, paths = _case(library_status=200)
+    try:
+        rows = session.search("book", scope="digital", field="all")
+        assert [row.record_id for row in rows] == [
+            "public-edition", "owned-edition",
+        ]
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
