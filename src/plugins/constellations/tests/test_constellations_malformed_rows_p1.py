@@ -76,6 +76,7 @@ def test_loaded_renders_bounded_failure_count_not_raw_notice():
     view.center, view.nodes, view.local = None, (), ()
     view.nav = Navigation()
     view.render = lambda: None
+    view.identity_id = lambda: 'alice'
     row = NS(key="a")
     assert view.loaded(4, "alice", (({"book_id": "a"},), (row,), (row,), None, False, 1), "") is False
     assert "1 notice(s) non exploitables" in messages[-1]
