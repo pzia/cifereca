@@ -1663,10 +1663,34 @@ def main() -> int:
                 round(bounds.get_width(), 2), round(bounds.get_height(), 2),
             ]
         report["numilog_inventory_click_geometry"] = click_geometry
+        # GTK can reflow the FlowBox *after* the scrollbar moves: the 760 px
+        # preflight measured y=5395 but a later allocation can move the
+        # button above the viewport (observed y=-593 on CI #2032).
+        # Correct only the viewport and wait for one settled frame. Never
+        # click an invisible widget, skip a validation, or retry a failed run.
+        viewport_height = f["sync_scroll"].get_height()
+        if ok and (
+            bounds.get_y() < 0
+            or bounds.get_y() + bounds.get_height() > viewport_height
+        ):
+            attempts = f.get("numilog_inventory_scroll_corrections", 0) + 1
+            f["numilog_inventory_scroll_corrections"] = attempts
+            click_geometry["correction_attempt"] = attempts
+            report.setdefault("numilog_inventory_scroll_history", []).append(
+                dict(click_geometry)
+            )
+            assert attempts <= 8, (
+                "P0_1905: Numilog planning button never settled in the viewport",
+                report["numilog_inventory_scroll_history"],
+            )
+            adjustment = f["sync_scroll"].get_vadjustment()
+            adjustment.set_value(adjustment.get_value() + bounds.get_y() - 100)
+            later(160, numilog_inventory_schedule_click)
+            return
         assert ok and bounds.get_y() >= 0, (
             "P0_1905: planning button lacks visible scroll-relative bounds", click_geometry,
         )
-        assert bounds.get_y() + bounds.get_height() <= f["sync_scroll"].get_height(), (
+        assert bounds.get_y() + bounds.get_height() <= viewport_height, (
             "P0_1905: planning button outside viewport after scroll", click_geometry,
         )
         report["pointer_actions"].append(device[0].click_widget(button))
