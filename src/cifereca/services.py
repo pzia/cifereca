@@ -2726,6 +2726,18 @@ class LibraryService:
                     target_dir = self.library_identity_provider_dir(
                         identity.identity_id, "numilog",
                     )
+                    # Numilog's explicit direct adapter uses a stable hashed
+                    # filename. A local orphan, broken symlink or pre-existing
+                    # file with no ledger is still a conflict, never an
+                    # invitation to overwrite it on another manual click.
+                    expected_name = "numilog-" + hashlib.sha256(
+                        item.record_id.encode("utf-8"),
+                    ).hexdigest()[:32] + ".epub"
+                    expected_path = target_dir / expected_name
+                    if expected_path.exists() or expected_path.is_symlink():
+                        raise ProviderConfigurationError(
+                            "Numilog : fichier local candidat ; rapprochement requis"
+                        )
                     try:
                         path, _private_url = pinned_session.download_direct(
                             item, target_dir,
