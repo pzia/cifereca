@@ -703,6 +703,9 @@ def test_2027_numilog_consent_e2e_failures_have_stage_and_geometry_evidence():
         '"P0_1905: planning button has no scroll-relative bounds"',
         'report["stage"] = "P0_1905_numilog_inventory_click"',
         'report["numilog_inventory_click_geometry"] = click_geometry',
+        'report.setdefault("numilog_inventory_scroll_history", []).append(',
+        'assert attempts <= 8, (',
+        'later(160, numilog_inventory_schedule_click)',
         '"P0_1905: planning button outside viewport after scroll"',
     ):
         assert marker in probe
