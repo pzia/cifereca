@@ -93,7 +93,7 @@ def save_source_refresh_schedule(
 
 
 def _last_attempt_utc(value) -> datetime | None:
-    if not value:
+    if type(value) is str and value == "":
         return None
     if type(value) is not str or not 20 <= len(value) <= 35:
         raise ValueError("invalid last-attempt time")
