@@ -14,14 +14,13 @@ def _method_source(class_name: str, method_name: str) -> str:
     return ast.unparse(method)
 
 
-def test_sync_header_actions_use_adaptive_bar():
+def test_sync_header_actions_keep_refresh_and_scoped_sync_commands():
     source = _method_source("MainWindow", "_build_sync_page")
 
-    assert "actions = AdaptiveActionBar(source=heading)" in source
     assert "Actualiser" in source
     assert "view-refresh-symbolic" in source
     assert "Synchroniser les sources" in source
     assert "self._sync_all_button = all_now" in source
     assert "emblem-synchronizing-symbolic" in source
-    assert "actions.append(refresh)" in source
-    assert "actions.append(all_now)" in source
+    assert "add_sync_action(heading, refresh)" in source
+    assert "add_sync_action(heading, all_now)" in source

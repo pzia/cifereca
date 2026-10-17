@@ -34,6 +34,7 @@ from PIL import ImageGrab
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow, BookListItem, fr_date
 from cifereca.gui.recent_time import format_recent_timestamp
+from cifereca.gui.sync_action_layout import sync_action_row
 from cifereca.builtin_ui.cifereca_builtin_ui import Pages
 from diagnostics_page_probe import Broker, Context, Host, Tasks
 from diagnostics_states_probe import StateTasks
@@ -1401,7 +1402,7 @@ def main() -> int:
         assert "Connexion : Déconnectée" in offline.get_subtitle()
         assert any(isinstance(node, Gtk.Button) and not node.get_sensitive()
                    and node.get_tooltip_text() == "Reconnectez ce compte avant de synchroniser."
-                   for node in walk(offline))
+                   for node in walk(sync_action_row(offline)))
         assert w._sync_all_button.get_sensitive()
         assert f["source_queries"] and not f["mutations"]
         assert w.service.current_identity.identity_id == "camille"
@@ -1430,14 +1431,14 @@ def main() -> int:
             assert 0 < inventory_row.get_height() <= 420
             assert not any(
                 isinstance(node, Gtk.Button) and node.get_sensitive()
-                for node in walk(inventory_row)
+                for node in walk(sync_action_row(inventory_row))
             )
         report["checks"]["P0_1346_inventory_schedule_is_separate_and_inert_without_broker"] = True
         schedule_row = next(row for row in rows
                             if row.get_title() == "Téléchargement automatique de ce compte")
         assert "Planification indisponible" in schedule_row.get_subtitle()
         assert not any(isinstance(node, Gtk.Button) and node.get_sensitive()
-                       for node in walk(schedule_row))
+                       for node in walk(sync_action_row(schedule_row)))
         acquisition_row = next(row for row in rows
                                if row.get_title() == "Téléchargement local · confirmation obligatoire")
         assert "Non préparé" in acquisition_row.get_subtitle()
@@ -1459,7 +1460,7 @@ def main() -> int:
         # their natural command height, vertically centered even when disabled.
         suffix_allocations = []
         for sync_row in rows:
-            for button in (node for node in walk(sync_row)
+            for button in (node for node in walk(sync_action_row(sync_row))
                            if isinstance(node, Gtk.Button)):
                 assert button.get_valign() == Gtk.Align.CENTER, (
                     "Uncentered Synchronisation suffix", sync_row.get_title(),
@@ -1471,11 +1472,11 @@ def main() -> int:
                     sync_row.get_title(), button.get_label(),
                     button_height, sync_row.get_height(),
                 )
-                ok, bounds = button.compute_bounds(sync_row)
+                ok, bounds = button.compute_bounds(sync_action_row(sync_row))
                 assert ok and bounds.get_y() >= 0, (
                     "Suffix outside ActionRow", sync_row.get_title(),
                 )
-                assert bounds.get_y() + bounds.get_height() <= sync_row.get_height() + 1
+                assert bounds.get_y() + bounds.get_height() <= sync_action_row(sync_row).get_height() + 1
                 suffix_allocations.append({
                     "row_height": sync_row.get_height(),
                     "button_height": button_height,
@@ -1498,7 +1499,7 @@ def main() -> int:
             assert "Échec" not in row.get_subtitle()
             assert any(isinstance(node, Gtk.Button) and not node.get_sensitive()
                        and "ne fournit pas de synchronisation" in (node.get_tooltip_text() or "")
-                       for node in walk(row))
+                       for node in walk(sync_action_row(row)))
         paris = [next(row for row in rows
                       if row.get_title() == f"Paris homonyme · paris · connexion {i}/2")
                  for i in (1, 2)]
@@ -1517,13 +1518,72 @@ def main() -> int:
         while not isinstance(scroll, Gtk.ScrolledWindow):
             scroll = scroll.get_parent()
         f["sync_scroll"] = scroll
+        f["sync_original_font"] = Gtk.Settings.get_default().get_property("gtk-font-name")
+        long_name_row = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
+        f["sync_long_name_row"] = long_name_row
+        f["sync_original_title"] = long_name_row.get_title()
+        long_name_row.set_title("Compte familial de démonstration — plusieurs éditions homonymes et un nom volontairement long")
+        w.set_default_size(760, 780)
+        later(350, lambda: sync_narrow_allocations(False))
+
+    def sync_narrow_allocations(large_font):
+        w = window[0]
+        f = loan_sync_fixture
+        scroll = f["sync_scroll"]
+        geometry = {
+            "window_width": w.get_width(),
+            "header_min": w.shell_header.measure(Gtk.Orientation.HORIZONTAL, -1)[0],
+            "scroll_min": scroll.measure(Gtk.Orientation.HORIZONTAL, -1)[0],
+            "sources_min": w._sync_sources_box.measure(Gtk.Orientation.HORIZONTAL, -1)[0],
+            "source_rows": [
+                {"title": row.get_title(), "minimum": sync_action_row(row).measure(Gtk.Orientation.HORIZONTAL, -1)[0]}
+                for row in walk(w._sync_sources_box) if isinstance(row, Adw.ActionRow)
+            ],
+        }
+        report["sync_minimum_width_geometry"] = geometry
+        assert w.get_width() <= 760, ("Synchronisation minimum window width", geometry)
+        assert scroll.get_width() > 0
+        allocations = []
+        for row in (node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)):
+            area = sync_action_row(row)
+            assert area.get_width() <= scroll.get_width()
+            assert 0 < row.get_height() <= 420, (row.get_title(), row.get_height())
+            for button in (node for node in walk(area) if isinstance(node, Gtk.Button)):
+                assert button.get_mapped() and 0 < button.get_height() <= 96
+                ok, bounds = button.compute_bounds(area)
+                assert ok and bounds.get_x() >= 0
+                assert bounds.get_x() + bounds.get_width() <= area.get_width() + 1
+                assert bounds.get_y() + bounds.get_height() <= area.get_height() + 1
+                assert button.get_valign() == Gtk.Align.CENTER
+                allocations.append({"row": row.get_title(), "height": button.get_height(),
+                                    "width": button.get_width(), "area_width": area.get_width()})
+        assert len(allocations) >= 20
+        key = "large_font" if large_font else "normal_font"
+        report.setdefault("sync_760_allocations", {})[key] = allocations
+        report["checks"]["P1_1889_sync_760_" + key] = True
+        capture("03i-sync-760-" + key)
+        assert not f["source_sync_calls"] and not f["prepare_calls"] and not f["materialize_calls"]
+        if not large_font:
+            Gtk.Settings.get_default().set_property("gtk-font-name", "Sans 12")
+            later(350, lambda: sync_narrow_allocations(True))
+            return
+        Gtk.Settings.get_default().set_property("gtk-font-name", f["sync_original_font"])
+        f["sync_long_name_row"].set_title(f["sync_original_title"])
+        w.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
+        later(350, begin_numilog_inventory_acceptance)
+
+    def begin_numilog_inventory_acceptance():
+        w = window[0]
+        f = loan_sync_fixture
+        scroll = f["sync_scroll"]
+        rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
         # Exercise Numilog's explicit consent with the real GTK dialog before
         # continuing the existing Paris/Kobo acceptance path. Broker data is
         # synthetic; policy writes cannot execute inventory or acquisition.
         inventory_row = next(row for row in rows
                              if row.get_title() == "Actualisation automatique des notices Numilog")
         assert "Mode manuel" in inventory_row.get_subtitle()
-        button = next(node for node in walk(inventory_row)
+        button = next(node for node in walk(sync_action_row(inventory_row))
                       if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_label", None) == "Planifier les notices…")
         assert button.get_sensitive() and not f["inventory_policy_writes"]
         ok, bounds = button.compute_bounds(scroll)
@@ -1538,7 +1598,7 @@ def main() -> int:
         row = next(row for row in walk(w._sync_sources_box)
                    if isinstance(row, Adw.ActionRow)
                    and row.get_title() == "Actualisation automatique des notices Numilog")
-        button = next(node for node in walk(row)
+        button = next(node for node in walk(sync_action_row(row))
                       if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_label", None) == "Planifier les notices…")
         ok, bounds = button.compute_bounds(f["sync_scroll"])
         assert ok and bounds.get_y() >= 0
@@ -1570,7 +1630,7 @@ def main() -> int:
                    if isinstance(row, Adw.ActionRow)
                    and row.get_title() == "Actualisation automatique des notices Numilog")
         assert "périodique autorisée" in row.get_subtitle()
-        button = next(node for node in walk(row) if isinstance(node, Gtk.Button)
+        button = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
                       and getattr(node, "_cifereca_action_label", None) == "Désactiver les actualisations")
         # A refresh may reset scroll allocation; bring the new button into view.
         scroll = f["sync_scroll"]
@@ -1619,7 +1679,7 @@ def main() -> int:
                    if isinstance(row, Adw.ActionRow)
                    and row.get_title() == "Aperçu local des achats Numilog")
         label = "Vérifier les fichiers…" if verify else "Aperçu local…"
-        button = next(node for node in walk(row) if isinstance(node, Gtk.Button)
+        button = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
                       and getattr(node, "_cifereca_action_label", None) == label)
         scroll = f["sync_scroll"]
         ok, bounds = button.compute_bounds(scroll)
@@ -1634,6 +1694,25 @@ def main() -> int:
             return
         assert button.get_mapped() and button.get_sensitive()
         assert row.get_width() <= scroll.get_width()
+        if verify:
+            first = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
+                         and getattr(node, "_cifereca_action_label", None) == "Aperçu local…")
+            first.grab_focus()
+            def tab_to_verify(attempt=0):
+                focus = window[0].get_focus()
+                current = focus
+                while current is not None and current is not button:
+                    current = current.get_parent()
+                if current is button:
+                    device[0].key("space", True); device[0].key("space", False)
+                    report["checks"]["P1_1889_sync_Tab_then_space_preserves_action"] = True
+                    later(300, lambda: numilog_preview_complete(verify, row))
+                    return
+                assert attempt < 6, "Verification action unreachable by Tab"
+                device[0].key("Tab", True); device[0].key("Tab", False)
+                later(80, lambda: tab_to_verify(attempt + 1))
+            tab_to_verify()
+            return
         report["pointer_actions"].append(device[0].click_widget(button))
         later(300, lambda: numilog_preview_complete(verify, row))
 
@@ -1665,7 +1744,7 @@ def main() -> int:
         row = next(row for row in walk(w._sync_sources_box)
                    if isinstance(row, Adw.ActionRow)
                    and row.get_title() == "Paris homonyme · paris · connexion 2/2")
-        button = next(node for node in walk(row) if isinstance(node, Gtk.Button)
+        button = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
                       and node.get_tooltip_text() == "Synchroniser Paris homonyme")
         assert button.get_sensitive() and button.get_mapped()
         ok, bounds = button.compute_bounds(f["sync_scroll"])
@@ -1713,7 +1792,7 @@ def main() -> int:
         kobo = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
         assert "Connexion : Déconnectée" in kobo.get_subtitle()
         audit = next(
-            button for button in walk(kobo)
+            button for button in walk(sync_action_row(kobo))
             if isinstance(button, Gtk.Button)
             and button.get_tooltip_text() == (
                 "Audit SHA local de ce compte (lecture seule, peut être long)"

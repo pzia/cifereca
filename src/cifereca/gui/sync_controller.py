@@ -10,10 +10,10 @@ from typing import Any
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import Gtk, Adw, GLib, Pango
 
 from ..plugin_api import SyncRequest
-from .action_widgets import AdaptiveActionBar, add_css, clear_box
+from .action_widgets import add_css, clear_box
 from .sync_view import (
     sync_identity_action_label, sync_source_presentation,
     sync_source_row_labels,
@@ -22,6 +22,7 @@ from .sync_view import (
 )
 from .task_runner import TaskPriority
 from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
+from .sync_action_layout import add_sync_action, sync_action_row
 
 
 def _build_sync_page(self):
@@ -33,14 +34,18 @@ def _build_sync_page(self):
     outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
     for edge in ("top", "bottom", "start", "end"):
         getattr(outer, "set_margin_" + edge)(20)
-    heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    heading = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
     title = Gtk.Label(label="Synchronisation", xalign=0); title.set_hexpand(True); add_css(title, "page-title")
-    actions = AdaptiveActionBar(source=heading)
+    title.set_wrap(True)
+    title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    title.set_width_chars(1)
     refresh = self.action_button("Actualiser", "view-refresh-symbolic")
     all_now = self.action_button("Synchroniser les sources", "emblem-synchronizing-symbolic", suggested=True)
     self._sync_all_button = all_now
-    actions.append(refresh); actions.append(all_now)
-    heading.append(title); heading.append(actions); outer.append(heading)
+    heading.append(title)
+    add_sync_action(heading, refresh)
+    add_sync_action(heading, all_now)
+    outer.append(sync_action_row(heading))
     scope_note = Gtk.Label(
         label="Actualiser les sources met à jour les notices et droits en ligne. "
         "Ce bouton ne télécharge aucun ebook. L’acquisition locale Kobo est "
@@ -204,7 +209,7 @@ def _refresh_sync_page(self) -> None:
             )
         now.connect("clicked", one)
         now.set_valign(Gtk.Align.CENTER)
-        row.add_suffix(now)
+        add_sync_action(row, now)
         if source.provider_id == "kobo":
             # Only a targeted Core broker may resolve the private credential.
             # Neither page building nor switching identity reads the ledger.
@@ -220,7 +225,7 @@ def _refresh_sync_page(self) -> None:
                 "Aperçu Kobo non pris en charge par cette source"
             )
             preflight.set_valign(Gtk.Align.CENTER)
-            row.add_suffix(preflight)
+            add_sync_action(row, preflight)
             preview_row = Adw.ActionRow()
             preview_row.set_title("Aperçu local des acquisitions Kobo")
             preview_row.set_subtitle(
@@ -263,8 +268,8 @@ def _refresh_sync_page(self) -> None:
                     priority=TaskPriority.USER_ACTION, kind="sync-preflight",
                 )
             preflight.connect("clicked", preview_one)
-            group.add(row)
-            group.add(preview_row)
+            group.add(sync_action_row(row))
+            group.add(sync_action_row(preview_row))
 
             # #1345/#1347: explicit, offline, identity-scoped SHA audit.
             # Unlike a backup or source refresh, it does not require a live
@@ -282,7 +287,7 @@ def _refresh_sync_page(self) -> None:
                 if audit_supported else "Audit local non pris en charge"
             )
             audit_button.set_valign(Gtk.Align.CENTER)
-            row.add_suffix(audit_button)
+            add_sync_action(row, audit_button)
             audit_row = Adw.ActionRow()
             audit_row.set_title("Vérification des fichiers et rapprochements")
             audit_row.set_subtitle(
@@ -328,7 +333,7 @@ def _refresh_sync_page(self) -> None:
                     priority=TaskPriority.USER_ACTION, kind="sync-audit",
                 )
             audit_button.connect("clicked", audit_one)
-            group.add(audit_row)
+            group.add(sync_action_row(audit_row))
 
             # #1347: this is the *only* GUI entry for confirmed Kobo local
             # acquisitions. Unlike the advisory local preview above, the
@@ -362,10 +367,10 @@ def _refresh_sync_page(self) -> None:
             )
             acquisition_row.set_subtitle_lines(0)
             download_button.set_valign(Gtk.Align.CENTER)
-            acquisition_row.add_suffix(download_button)
+            add_sync_action(acquisition_row, download_button)
             stop_download.set_valign(Gtk.Align.CENTER)
-            acquisition_row.add_suffix(stop_download)
-            group.add(acquisition_row)
+            add_sync_action(acquisition_row, stop_download)
+            group.add(sync_action_row(acquisition_row))
             acquisition_state = {"serial": 0, "cancel": None}
 
             def download_current(expected_identity=source.identity_id, captured_scope=scope):
@@ -657,8 +662,8 @@ def _refresh_sync_page(self) -> None:
                 "Aucun téléchargement n’est lancé par ce bouton."
             )
             schedule_button.set_valign(Gtk.Align.CENTER)
-            schedule_row.add_suffix(schedule_button)
-            group.add(schedule_row)
+            add_sync_action(schedule_row, schedule_button)
+            group.add(sync_action_row(schedule_row))
 
             def schedule_change(
                 button, sid=source.source_id, account_label=display_label,
@@ -728,7 +733,7 @@ def _refresh_sync_page(self) -> None:
             schedule_button.connect("clicked", schedule_change)
 
         else:
-            group.add(row)
+            group.add(sync_action_row(row))
 
         if source.provider_id == "numilog":
             # Offline evidence only, including disconnected accounts. Neither
@@ -772,8 +777,8 @@ def _refresh_sync_page(self) -> None:
                         priority=TaskPriority.USER_ACTION, kind="sync-preflight",
                     )
                 button.connect("clicked", preview_numilog)
-                local_row.add_suffix(button)
-            group.add(local_row)
+                add_sync_action(local_row, button)
+            group.add(sync_action_row(local_row))
 
         if source.provider_id in {"kobo", "numilog"}:
             # Inventory consent is separate from local materialization.
@@ -851,8 +856,8 @@ def _refresh_sync_page(self) -> None:
                 "Aucune acquisition et aucun téléchargement."
             )
             inventory_button.set_valign(Gtk.Align.CENTER)
-            inventory_row.add_suffix(inventory_button)
-            group.add(inventory_row)
+            add_sync_action(inventory_row, inventory_button)
+            group.add(sync_action_row(inventory_row))
 
             def change_inventory_schedule(
                 button, sid=source.source_id, account_label=display_label,

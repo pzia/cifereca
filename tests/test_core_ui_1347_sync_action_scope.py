@@ -40,6 +40,8 @@ class Widget:
     set_margin_bottom = set_margin_start = set_margin_end = set_margin_top
     def set_hexpand(self, *args): pass
     def set_wrap(self, *args): pass
+    def set_wrap_mode(self, *args): pass
+    def set_width_chars(self, *args): pass
     def set_valign(self, *args): pass
     def set_subtitle_lines(self, *args): pass
     def set_tooltip_text(self, text): self.tooltip = text
@@ -93,9 +95,14 @@ def _methods():
     adw = NS(PreferencesGroup=Widget, ActionRow=Widget)
     env = dict(
         Gtk=gtk, Adw=adw,
+        Pango=NS(WrapMode=NS(WORD_CHAR=1)),
         AdaptiveActionBar=lambda **kwargs: Widget(),
         add_css=lambda *args: None,
         clear_box=lambda widget: widget.children.clear(),
+        # Callback/scope tests isolate native layout; its real implementation
+        # has separate component and GTK allocation acceptance tests.
+        add_sync_action=lambda row, button: row.add_suffix(button),
+        sync_action_row=lambda row: row,
         sync_identity_action_label=sync_identity_action_label,
         sync_source_presentation=sync_source_presentation,
         sync_source_row_labels=sync_source_row_labels,
