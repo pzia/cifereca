@@ -41,7 +41,7 @@ class Host:
         self.tasks = []
         self.refresh = []
         self.toasts = []
-        self.search_objects = {"book": item()}
+        self.search_objects = {"numilog:book": item()}
         self.search_page = SimpleNamespace(
             detail=SimpleNamespace(add_actions=self.actions.extend),
         )
@@ -78,7 +78,7 @@ def detail():
 
 def build(host, row=None, context=None):
     return add_numilog_enrichment_action(
-        host, "book", row or item(), detail(),
+        host, "book", row if row is not None else host.search_objects["numilog:book"], detail(),
         host.context if context is None else context,
         button_factory=Button,
     )
@@ -104,7 +104,8 @@ def test_click_submits_worker_with_user_origin_and_identity_snapshot():
     enriched = args[1]()
     assert host.network_requests == 1
     args[2](enriched)
-    assert host.search_objects["book"].author == "Autrice détaillée"
+    assert host.search_objects["numilog:book"].author == "Autrice détaillée"
+    assert "book" not in host.search_objects
     assert host.refresh[0][0][2].author == "Autrice détaillée"
     assert host.refresh[0][1]["context"] == host.context
 
@@ -122,7 +123,7 @@ def test_stale_click_does_not_schedule_network_and_stale_result_is_discarded():
     host.active = False
     args[2](enriched)
     args[3](RuntimeError("PRIVATE_TOKEN"))
-    assert host.search_objects["book"].author is None
+    assert host.search_objects["numilog:book"].author is None
     assert host.refresh == [] and host.toasts == []
 
 
@@ -141,6 +142,7 @@ def test_public_ownership_false_is_eligible_but_no_private_scope():
                      source_collection="public_catalog",
                      source_credential="__public__", owned=False,
                      downloadable=False)
+    host.search_objects = {"numilog-catalog:book": public}
     assert build(host, row=public)
     assert host.network_requests == 0
 
@@ -152,3 +154,34 @@ def test_wrong_source_or_missing_context_never_displays_action():
         host, "book", item(), detail(), None, button_factory=Button,
     ) is False
     assert len(host.actions) == 0
+
+
+def test_remote_result_key_may_differ_from_book_id_and_must_not_be_reinvented():
+    host = Host()
+    original = host.search_objects["numilog:book"]
+    assert original.id == "book"
+    assert build(host)
+    host.actions[0].click()
+    args, _kwargs = host.tasks[0]
+    args[2](replace(original, publisher="Éditeur public"))
+    assert list(host.search_objects) == ["numilog:book"]
+    assert host.search_objects["numilog:book"].publisher == "Éditeur public"
+
+
+def test_replaced_remote_row_with_same_id_discards_expired_result():
+    host = Host()
+    original = host.search_objects["numilog:book"]
+    assert build(host)
+    host.actions[0].click()
+    args, _kwargs = host.tasks[0]
+    host.search_objects["numilog:book"] = replace(original, title="Autre livre")
+    args[2](replace(original, author="Fausse métadonnée"))
+    assert host.refresh == []
+    assert host.search_objects["numilog:book"].author is None
+
+
+def test_ambiguous_remote_row_object_does_not_offer_action():
+    host = Host()
+    host.search_objects["duplicate"] = host.search_objects["numilog:book"]
+    assert not build(host)
+    assert host.actions == []
