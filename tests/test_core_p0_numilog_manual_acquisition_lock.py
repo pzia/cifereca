@@ -1,0 +1,221 @@
+"""P0 #1905: explicit Numilog direct acquisition must not bypass Core guards."""
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from cifereca.brokers import SynchronizationBrokerImpl
+from cifereca.models import Account
+from cifereca.providers import ProviderConfigurationError
+from tests.test_core_p0_1862_numilog_store_mirror import _connect, _row
+from tests.test_core_p0_1905_numilog_offline_preview import _ledger, _owned
+from tests.test_sync_state_contract import _service
+
+
+def _rig(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    account, session, calls = _connect(service, number=0)
+    item = _row(account.credential_id, 0)
+    provider_calls = []
+    records = []
+    service._record_action = lambda *a, **k: records.append((a, k))
+
+    def download(item, directory):
+        provider_calls.append(item.record_id)
+        path = Path(directory) / "fictional.epub"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"fake binary")
+        return path, "https://private.invalid/URLLink.acsm?auth=SIGNED_SECRET"
+
+    session.download_direct = download
+    monkeypatch.setattr(
+        service.acquisition, "run_post_download",
+        lambda *_a: provider_calls.append("post_download"),
+    )
+    return service, account, session, item, provider_calls, records
+
+
+def test_manual_numilog_acquire_locks_source_and_discards_signed_url(tmp_path, monkeypatch):
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        acquired = service.acquire_direct_item(item)
+        assert acquired.provider_id == "numilog"
+        assert acquired.credential_id == account.credential_id
+        assert acquired.item_id == item.record_id
+        assert acquired.source_url is None
+        assert acquired.local_path.is_file()
+        assert calls == [item.record_id, "post_download"]
+        assert all("SIGNED_SECRET" not in repr(record) for record in records)
+        assert all(item.record_id not in repr(record) for record in records)
+        assert records[-1][1]["facts"] == {"private_item": True}
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("mutation", [
+    "public_catalog", "owned_false", "owned_missing", "downloadable_false",
+    "wrong_scenario", "wrong_credential", "bad_item_id",
+    "mismatched_ids", "stale_search", "disabled_source", "disabled_connection",
+    "detached_identity", "disconnected", "capability_off", "duplicate_account",
+    "missing_session",
+])
+def test_manual_numilog_acquire_rejects_untrusted_source_before_delivery(
+    tmp_path, monkeypatch, mutation,
+):
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        if mutation == "public_catalog":
+            item.source_collection = "public_catalog"
+        elif mutation == "owned_false":
+            item.owned = False
+        elif mutation == "owned_missing":
+            item.owned = None
+        elif mutation == "downloadable_false":
+            item.downloadable = False
+        elif mutation == "wrong_scenario":
+            item.scenario = "NUMILOG_PUBLIC"
+        elif mutation == "wrong_credential":
+            item.source_credential = "another-credential"
+        elif mutation == "bad_item_id":
+            item.record_id = "numilog:invalid"
+        elif mutation == "mismatched_ids":
+            item.id = "other-book"
+        elif mutation == "stale_search":
+            item.metadata["search_provenance"] = "known_catalog_stale"
+        elif mutation == "disabled_source":
+            broker = SynchronizationBrokerImpl(service)
+            service.storage.metadata_set(
+                "sync.source.enabled." + broker._source_id(account), "0",
+            )
+        elif mutation == "disabled_connection":
+            service.storage.provider_connection_put({
+                "identity_id": account.identity_id, "provider_id": "numilog",
+                "credential_id": account.credential_id, "enabled": False,
+            })
+        elif mutation == "detached_identity":
+            service.storage.provider_connection_put({
+                "identity_id": "alex", "provider_id": "numilog",
+                "credential_id": account.credential_id, "enabled": True,
+            })
+        elif mutation == "disconnected":
+            session.connected = False
+        elif mutation == "capability_off":
+            session.capabilities.direct_download = False
+        elif mutation == "duplicate_account":
+            service.accounts.append(replace(account, unique_id="ambiguous"))
+        elif mutation == "missing_session":
+            service._sessions.clear()
+        with pytest.raises(ProviderConfigurationError) as exc:
+            service.acquire_direct_item(item)
+        assert "SIGNED_SECRET" not in str(exc.value)
+        assert account.credential_id not in str(exc.value)
+        assert item.record_id not in str(exc.value)
+        assert calls == []
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("kind", ["ledger", "placement"])
+def test_numilog_manual_acquire_blocks_existing_or_ambiguous_local_evidence(
+    tmp_path, monkeypatch, kind,
+):
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        if kind == "ledger":
+            service.storage.acquisition_put({
+                "acquisition_id": "old-attempt",
+                "provider_id": "numilog", "credential_id": account.credential_id,
+                "account_id": account.unique_id, "identity_id": account.identity_id,
+                "item_id": item.record_id, "status": "retryable_error",
+            })
+        else:
+            # A provenance-linked placement is enough to require local
+            # reconciliation, even if an acquisition row was lost.
+            _item, entitlement = _owned(service, account, lid="lid0",
+                                        variant=item.record_id.rsplit(":", 1)[-1])
+            service.storage.placement_put({
+                "placement_id": "orphan-local-file",
+                "artifact_id": None, "path": str(tmp_path / "fake.epub"),
+                "identity_id": account.identity_id, "provider_id": "numilog",
+                "source_item_id": item.record_id, "state": "missing",
+            })
+        with pytest.raises(ProviderConfigurationError, match="rapprochement local requis"):
+            service.acquire_direct_item(item)
+        assert calls == []
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("change", ["rebound", "session_swap", "disable"])
+def test_numilog_owner_change_during_download_prevents_registration(
+    tmp_path, monkeypatch, change,
+):
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        original = session.download_direct
+        def changed(item, directory):
+            result = original(item, directory)
+            if change == "rebound":
+                service.storage.provider_connection_put({
+                    "identity_id": "alex", "provider_id": "numilog",
+                    "credential_id": account.credential_id, "enabled": True,
+                })
+            elif change == "session_swap":
+                service._sessions[service._session_key("numilog", account.credential_id)] = (
+                    type(session)(**vars(session))
+                )
+            else:
+                broker = SynchronizationBrokerImpl(service)
+                service.storage.metadata_set(
+                    "sync.source.enabled." + broker._source_id(account), "0",
+                )
+            return result
+        session.download_direct = changed
+        with pytest.raises(ProviderConfigurationError):
+            service.acquire_direct_item(item)
+        assert calls == [item.record_id]
+        assert all("SIGNED_SECRET" not in repr(record) for record in records)
+    finally:
+        service.close()
+
+
+def test_numilog_private_provider_error_does_not_reach_ui_or_diagnostics(
+    tmp_path, monkeypatch,
+):
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        def fail(*_args):
+            raise RuntimeError(
+                "ACSM https://entrepot2r.numilog.com/URLLink.acsm?auth=SIGNED_SECRET"
+            )
+        session.download_direct = fail
+        with pytest.raises(ProviderConfigurationError) as exc:
+            service.acquire_direct_item(item)
+        assert "SIGNED_SECRET" not in str(exc.value)
+        assert all("SIGNED_SECRET" not in repr(record) for record in records)
+        assert calls == []
+    finally:
+        service.close()
+
+
+def test_numilog_busy_global_acquisition_lock_does_not_call_provider(
+    tmp_path, monkeypatch,
+):
+    from cifereca.locking import LockBusyError
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        class Busy:
+            def __init__(self, *_a, **_k):
+                pass
+            def __enter__(self):
+                raise LockBusyError("locked")
+            def __exit__(self, *_a):
+                pass
+        monkeypatch.setattr("cifereca.services.InterProcessLock", Busy)
+        with pytest.raises(ProviderConfigurationError, match="déjà en cours"):
+            service.acquire_direct_item(item)
+        assert calls == []
+    finally:
+        service.close()
