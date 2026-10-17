@@ -368,6 +368,11 @@ class NumilogSession(ProviderSession):
             self._diag('bibliothèque',items=len(rows))
             return [self._normalize(row) for row in rows]
 
+    def public_product_detail(self, product_url):
+        """Explicit anonymous metadata read; never invoked by sync or purchase flows."""
+        from cifereca_numilog_public_client import fetch_public_detail
+        return fetch_public_detail(product_url)
+
     def search_public(self, query, *, page=0, field='all'):
         """Explicit public-catalogue lookup with no private-session I/O.
 
