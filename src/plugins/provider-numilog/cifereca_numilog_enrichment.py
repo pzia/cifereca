@@ -131,10 +131,12 @@ def merge_attested_owned_public_detail(owned, detail):
     if (type(url) is not str or url != getattr(owned, "friendly_url", None)
             or getattr(owned, "source_provider", None) != "numilog"
             or getattr(owned, "source_collection", None) != "library"
+            or getattr(owned, "source_credential", None) in (None, "", "__public__", "legacy")
             or getattr(owned, "owned", None) is not True
             or getattr(owned, "downloadable", None) is not True
             or getattr(owned, "download_url", None) is not None
-            or type(metadata) is not dict):
+            or type(metadata) is not dict
+            or metadata.get("public_url_evidence") != "numilog.library_title_link"):
         raise ProviderCapabilityError(error)
     listing = metadata.get("public_enrichment")
     if (type(listing) is not dict
