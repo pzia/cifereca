@@ -2700,6 +2700,48 @@ class LibraryService:
                     "Une synchronisation locale est déjà en cours dans une autre instance de cifereca"
                 ) from exc
 
+        if item.source_provider == "numilog":
+            # Even an explicit UI click is not permission to download from a
+            # detached account or to race an existing manual/materialize run.
+            # Numilog resolves delivery URLs afresh *inside* download_direct.
+            from .core.numilog_manual_acquisition import require_source
+            try:
+                with InterProcessLock(acquisition_lock_file()):
+                    identity, pinned_session = require_source(
+                        self, item, session=session,
+                    )
+                    if self.storage.numilog_purchase_has_local_conflict(
+                        credential_id=item.source_credential,
+                        item_id=item.record_id,
+                    ):
+                        raise ProviderConfigurationError(
+                            "Numilog : acquisition existante ; rapprochement local requis"
+                        )
+                    target_dir = self.library_identity_provider_dir(
+                        identity.identity_id, "numilog",
+                    )
+                    path, _private_url = pinned_session.download_direct(
+                        item, target_dir,
+                    )
+                    # The provider may release its per-session lock before
+                    # returning. A reconnect/rebind during HTTP or ADEPT must
+                    # not be committed under a different identity.
+                    require_source(self, item, session=pinned_session)
+                    self.acquisition.run_post_download(
+                        item, path, "", target_dir,
+                    )
+                    require_source(self, item, session=pinned_session)
+                    # A provider-returned URL may contain single-use ACSM
+                    # signatures. Never persist it as Acquisition.source_url.
+                    return self.acquisition.acquisition_from_direct(
+                        item, path=path, url="", target_dir=target_dir,
+                        action="download",
+                    )
+            except LockBusyError:
+                raise ProviderConfigurationError(
+                    "Numilog : acquisition locale déjà en cours"
+                ) from None
+
         identity = self.identity_for_connection(item.source_provider, item.source_credential)
         target_dir = (
             self.library_identity_provider_dir(identity.identity_id, item.source_provider)
@@ -2733,10 +2775,17 @@ class LibraryService:
         try:
             result = (self._acquire_direct_item_impl(item, _admission=_admission) if _admission is not None
                       else self._acquire_direct_item_impl(item))
-            self._record_action(identity_id, "acquisition", "success", provider_id=item.source_provider, facts={"record_id": item.record_id})
+            safe_facts = ({"private_item": True} if item.source_provider == "numilog"
+                          else {"record_id": item.record_id})
+            self._record_action(identity_id, "acquisition", "success",
+                                provider_id=item.source_provider, facts=safe_facts)
             return result
         except Exception as exc:
-            self._record_action(identity_id, "acquisition", "failed", provider_id=item.source_provider, facts={"record_id": item.record_id, "error": type(exc).__name__})
+            safe_facts = ({"private_item": True, "error": type(exc).__name__}
+                          if item.source_provider == "numilog"
+                          else {"record_id": item.record_id, "error": type(exc).__name__})
+            self._record_action(identity_id, "acquisition", "failed",
+                                provider_id=item.source_provider, facts=safe_facts)
             raise
 
     def obtain_search_item(self, item: SearchResult):
