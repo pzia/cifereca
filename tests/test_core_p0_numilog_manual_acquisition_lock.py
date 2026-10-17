@@ -290,3 +290,52 @@ def test_numilog_manual_acquire_will_not_overwrite_untracked_hashed_file(
             assert not candidate.exists()
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("kind", [
+    "outside_identity", "symlink_file", "symlink_parent",
+    "unreadable_acsm", "nested_adept_book",
+])
+def test_numilog_provider_output_requires_owned_regular_book_path(
+    tmp_path, monkeypatch, kind,
+):
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        def provider_output(book, target):
+            calls.append("download_called")
+            if kind == "outside_identity":
+                destination = tmp_path / "foreign-user-book.epub"
+            elif kind == "symlink_file":
+                original = tmp_path / "outside.epub"
+                original.write_bytes(b"NOT-FROM-IDENTITY")
+                destination = target / "linked-book.epub"
+                destination.symlink_to(original)
+            elif kind == "symlink_parent":
+                real = target / "actual"
+                real.mkdir()
+                (real / "book.epub").write_bytes(b"NOT-TRUSTED")
+                alias = target / "linked"
+                alias.symlink_to(real, target_is_directory=True)
+                destination = alias / "book.epub"
+            elif kind == "unreadable_acsm":
+                destination = target / "raw-delivery.acsm"
+            else:
+                destination = target / "acsm-abcdef" / "book.epub"
+                destination.parent.mkdir()
+            if not destination.exists() and not destination.is_symlink():
+                destination.write_bytes(b"NOT-REAL-BOOK")
+            return destination, "https://private.invalid?auth=SIGNED_SECRET"
+        session.download_direct = provider_output
+        if kind == "nested_adept_book":
+            result = service.acquire_direct_item(item)
+            assert result.local_path.name == "book.epub"
+            assert calls == ["download_called", "post_download"]
+        else:
+            with pytest.raises(
+                ProviderConfigurationError, match="artefact local non attesté",
+            ):
+                service.acquire_direct_item(item)
+            assert calls == ["download_called"]
+        assert all("SIGNED_SECRET" not in repr(row) for row in records)
+    finally:
+        service.close()
