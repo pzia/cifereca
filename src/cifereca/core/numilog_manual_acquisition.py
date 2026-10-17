@@ -13,7 +13,7 @@ from ..providers import ProviderConfigurationError
 from .numilog_manifest_rights import _scoped_record_id, numilog_inventory_binding_valid
 
 
-def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any, Any]:
+def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any, Any, str]:
     """Recheck provider, source and live session before/after the download."""
     refused = "Numilog : achat ou compte non attesté ; actualiser mes achats"
     try:
@@ -55,7 +55,7 @@ def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any
         identity = service.identity_by_id(account.identity_id)
         if identity is None:
             raise ValueError("unknown_identity")
-        return identity, active
+        return identity, active, account.unique_id
     except Exception:
         # Private provider arguments, user title, credentials, signed links
         # and upstream database exceptions never reach logs or the GTK UI.
