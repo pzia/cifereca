@@ -10,7 +10,7 @@ from typing import Any
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, GLib
+from gi.repository import Gtk, Adw, GLib, Pango
 
 from ..plugin_api import SyncRequest
 from .action_widgets import AdaptiveActionBar, add_css, clear_box
@@ -36,6 +36,9 @@ def _build_sync_page(self):
         getattr(outer, "set_margin_" + edge)(20)
     heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     title = Gtk.Label(label="Synchronisation", xalign=0); title.set_hexpand(True); add_css(title, "page-title")
+    title.set_wrap(True)
+    title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    title.set_width_chars(1)
     actions = AdaptiveActionBar(source=heading)
     refresh = self.action_button("Actualiser", "view-refresh-symbolic")
     all_now = self.action_button("Synchroniser les sources", "emblem-synchronizing-symbolic", suggested=True)
