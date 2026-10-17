@@ -445,3 +445,35 @@ fiches. Cette observation ne qualifie ni toutes les règles d'accès/CGS,
 ni la recherche paginée, ni l'association d'un achat authentifié à une fiche.
 Le catalogue reste désactivé par défaut. Aucun accès privé, lien ACSM ou
 acquisition n'est ajouté ; #1886/#1072 ne sont pas terminés par ce lot.
+
+## Recherche publique : deux pages et zéro résultat observés (#1886, 0.1.33)
+
+Le 17/10/2026, trois GET anonymes sous le User-Agent public du plugin ont
+reçu HTTP 200, après vérification du groupe robots applicable :
+
+- `brSimple`, `query=loup`, page initiale : 20 cartes, total annoncé 973 ;
+- même requête, `GRID_PAGE=1` : 20 autres cartes, total 973, IDs disjoints ;
+- une requête synthétique sans résultat : table connue et marqueur explicite
+  `GridView1_ctl01_lblAucunLivre`, sans compteur numérique et sans pagination.
+
+La page suivante publie ses liens de retour à la première page **sans**
+`GRID_PAGE`. Le parseur les normalise vers l'index 0, tout en vérifiant
+l'origine et tous les autres paramètres ; il ne modifie pas la requête.
+Un zéro sans compteur n'est accepté qu'avec l'unique marqueur observé, ses
+classes et son texte exacts, sans carte ni pager. Page inconnue, message de
+maintenance, compteur contradictoire ou structure ambiguë restent refusés.
+
+Les fixtures `observed_search-*.html` contiennent **une carte par page
+positive**, les compteurs et pagers observés, et le marqueur vide. Elles
+sont des extraits DOM réduits, pas des réponses complètes ; les résumés,
+états ASP.NET, scripts, liens reader/streaming et éléments de compte sont
+retirés. SHA-256 des trois réponses complètes non versionnées :
+
+- `5768b56acbc1e0565e1aa235b8f57290e887d76c371bf97b25e085773ae97d1f`
+- `e2927ee9d1fdfd6a421f76b1707b27031c4ebed27233e5c8860942d1405c3ade`
+- `e130eaced6d2705d9e453119209e0fe20ab392494a185397631818317cda8351`
+
+Ces observations ne prouvent ni une recherche serveur par champ dédié
+(auteur/ISBN/etc.), ni toutes les facettes, ni les modalités d'accès à long
+terme. Le catalogue demeure à activation explicite. Aucune possession,
+acquisition, page de compte ni requête supplémentaire implicite n'est ajoutée.

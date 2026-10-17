@@ -151,7 +151,7 @@ def test_public_catalogue_is_declared_separately_and_release_version_matches():
     assert cap.scopes == ("all", "digital", "catalog")
     assert cap.supports_scope("catalog")
     assert not cap.supports_field("isbn")
-    assert VERSION == "0.1.32"
+    assert VERSION == "0.1.33"
     manifest = json.loads((Path(__file__).parents[1] / "cifereca-plugin.json").read_text())
     assert manifest["package"]["version"] == VERSION
     assert manifest["plugins"][0]["version"] == VERSION
