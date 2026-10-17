@@ -19,6 +19,7 @@ from .detail_model import book_detail_presentation, detail_language
 from .local_book_detail_sections import local_book_detail_sections
 from .task_runner import TaskPriority
 from .search_detail_context import detail_callback_is_current
+from .numilog_enrichment_action import add_numilog_enrichment_action
 
 
 def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
