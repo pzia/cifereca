@@ -156,8 +156,9 @@ def mirror_numilog_manifest_rights(
             continue
         staged[item_id] = row
         if len(staged) > 100_000:
-            # An unbounded/malformed catalogue must not create partial rights.
-            return 0
+            # Over budget is a failure, never a false "zero owned purchases"
+            # success or a partial batch of persisted rights.
+            raise ValueError("numilog_rights_budget_exhausted")
     if not staged:
         return 0
 
