@@ -19,6 +19,21 @@ def test_scheduled_inventory_state_write_exception_is_scoped_to_one_account(
     # identity. Exercise legal Numilog+Kobo and Numilog+Numilog batches.
     service, _account, _session, calls = _numilog(tmp_path)
     try:
+        # _numilog starts from a Kobo test rig and mutates its live account
+        # into Numilog; its synthetic SQLite Kobo binding remains behind.
+        # Remove that fixture-only orphan, not the production uniqueness rule.
+        with service.storage._lock, service.storage._connect() as db:
+            stale = db.execute(
+                "SELECT credential_id FROM provider_connections WHERE "
+                "identity_id=? AND provider_id=? AND credential_id=?",
+                ("alice", "kobo", "vault-alice"),
+            ).fetchall()
+            assert len(stale) == 1
+            db.execute(
+                "DELETE FROM provider_connections WHERE identity_id=? "
+                "AND provider_id=? AND credential_id=?",
+                ("alice", "kobo", "vault-alice"),
+            )
         other = Account(
             display_name="Private store second", unique_id="alice-second",
             provider_id=second_provider, credential_id="vault-second",
