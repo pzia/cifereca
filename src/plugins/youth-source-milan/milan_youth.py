@@ -8,12 +8,14 @@ from hashlib import sha256
 from time import perf_counter
 import re
 from typing import Mapping
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 import httpx
 
 BASE = "https://www.editionsmilan.com"
 CATALOG = BASE + "/livres/"
+SEARCH = BASE + "/recherche/books/"
+_SEARCH_PATH = re.compile(r"^/recherche/books(?:/page/(\d+))?/?$")
 _PRODUCT_PATH = re.compile(r"^/livres/\d+-[^/]+/?$")
 _LISTING_PATH = re.compile(r"^/livres(?:/page/(\d+))?/?$")
 _AGE_RE = re.compile(r"^\s*À\s+partir\s+de\s+(\d{1,2})\s+ans?\s*$", re.I)
@@ -71,12 +73,56 @@ def allowed_url(value: object) -> str:
 
 def product_url(value: object) -> str:
     url = allowed_url(value)
-    return url if url and _PRODUCT_PATH.fullmatch(urlsplit(url).path) else ""
+    return url if url and not urlsplit(url).query and _PRODUCT_PATH.fullmatch(urlsplit(url).path) else ""
 
 
 def listing_url(*, page: int) -> str:
     bounded = max(1, min(int(page), 100))
     return CATALOG if bounded == 1 else f"{CATALOG}page/{bounded}/"
+
+
+def search_url(value: str) -> str:
+    """Only the publisher's observed /recherche/books/?text=... endpoint."""
+    query = _text(value)
+    if not query or len(query) > 120 or any(ord(c) < 32 for c in query):
+        raise ValueError("invalid Milan search text")
+    return SEARCH + "?" + urlencode({"text": query})
+
+
+def _search_page(value: object, *, query: str) -> int:
+    """Validate an actual pagination link, never infer a remote page URL."""
+    url = allowed_url(value)
+    if not url:
+        return 0
+    parts = urlsplit(url)
+    match = _SEARCH_PATH.fullmatch(parts.path)
+    if not match or len(parts.query) > 512:
+        return 0
+    params = parse_qs(parts.query, keep_blank_values=True)
+    if not set(params).issubset({"text", "page"}) or params.get("text") != [query]:
+        return 0
+    if any(len(values) != 1 for values in params.values()):
+        return 0
+    try:
+        number = int(params.get("page", [match.group(1) or "1"])[0])
+    except ValueError:
+        return 0
+    if not 1 <= number <= 100 or (match.group(1) and number != int(match.group(1))):
+        return 0
+    return number
+
+
+def search_next_cursor(html: object, *, query: str, current_url: str) -> str:
+    """Opaque next-page cursor is the published and validated search link."""
+    current = _search_page(current_url, query=query)
+    if not current or current == 100:
+        return ""
+    for kind, _label, href in tokens(html):
+        if kind != "link":
+            continue
+        if _search_page(href, query=query) == current + 1:
+            return allowed_url(href)
+    return ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,7 +325,7 @@ def next_cursor(html: object, *, current_page: int) -> str:
 
 def _next_value(rows: tuple[tuple[str, str, str], ...], label_names: set[str]) -> str:
     for index, (kind, value, _href) in enumerate(rows):
-        if kind != "text" or _fold(value) not in label_names:
+        if kind not in {"text", "heading"} or _fold(value) not in label_names:
             continue
         for next_kind, next_value, _next_href in rows[index + 1:index + 5]:
             if next_kind in {"text", "heading"}:
@@ -287,6 +333,41 @@ def _next_value(rows: tuple[tuple[str, str, str], ...], label_names: set[str]) -
                 if candidate and _fold(candidate) not in label_names:
                     return candidate
     return ""
+
+
+def _cover_url(html: object) -> str:
+    """Use only explicit, public cover imagery from approved publisher hosts."""
+    class Covers(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.cover = ""
+
+        def handle_starttag(self, tag, attrs):
+            if self.cover or tag.casefold() != "img":
+                return
+            data = dict(attrs)
+            candidate = _text(data.get("src") or data.get("data-src"))
+            alt = _fold(data.get("alt"))
+            if not candidate or not ("couverture" in alt or "/couvertures/" in candidate):
+                return
+            url = urljoin(BASE + "/", candidate)
+            try:
+                parts = urlsplit(url)
+                port = parts.port
+            except ValueError:
+                return
+            if (parts.scheme == "https" and parts.hostname in
+                    {"www.editionsmilan.com", "editionsmilan.com", "imagine.bayard.io"}
+                    and not parts.query and not parts.username and not parts.password
+                    and port in (None, 443)):
+                self.cover = url
+
+    parser = Covers()
+    try:
+        parser.feed(str(html or "")[:2_000_000])
+    except Exception:
+        return ""
+    return parser.cover
 
 
 def _detail_title(rows: tuple[tuple[str, str, str], ...], fallback: str) -> str:
@@ -339,7 +420,37 @@ def parse_detail(
 
     collection = _next_value(rows, {"collection"})
     themes_raw = _next_value(rows, {"thème", "thèmes", "theme", "themes"})
-    themes = tuple(part for part in re.split(r"\s{2,}|[,;]", themes_raw) if _text(part))
+    themes = tuple(_text(part) for part in re.split(r"\s{2,}|[,;]", themes_raw) if _text(part))
+    illustrator = _next_value(rows, {"illustrateur", "illustratrice", "illustrateurs", "illustrations"})
+    illustrators = tuple(_text(v) for v in re.split(r"[,;]", illustrator) if _text(v))
+    summary = _next_value(rows, {"résumé", "resume", "description", "présentation"})
+    publication = _next_value(rows, {"date de parution", "parution", "date de publication"})
+    pages_raw = _next_value(rows, {"nombre de pages", "pages"})
+    format_raw = _next_value(rows, {"format", "reliure"})
+    price = _next_value(rows, {"prix", "prix papier"})
+    digital_price = _next_value(rows, {"prix numérique", "prix ebook", "prix e-book"})
+    pages = int(pages_raw) if re.fullmatch(r"[1-9][0-9]{0,3}", pages_raw) else None
+    date_match = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", publication)
+    published_date = ""
+    if date_match:
+        from datetime import date
+        try:
+            published_date = date(int(date_match[3]), int(date_match[2]), int(date_match[1])).isoformat()
+        except ValueError:
+            pass
+    metadata = {
+        "age_evidence": "milan.product.explicit",
+        "collection": collection,
+    }
+    # Only safe, explicitly labelled bibliographic values; no page HTML or cookies.
+    for key, value in (
+        ("illustrators", illustrators), ("summary", summary[:3000]),
+        ("publication_date", published_date), ("pages", pages),
+        ("format", format_raw[:100]), ("price", price[:100]),
+        ("digital_price", digital_price[:100]),
+    ):
+        if value:
+            metadata[key] = value
 
     title = _detail_title(rows, fallback_title)
     return {
@@ -359,10 +470,11 @@ def parse_detail(
             "confidence": 1.0,
         }],
         "themes": tuple(_fold(value) for value in themes if _fold(value)),
-        "metadata": {
-            "age_evidence": "milan.product.explicit",
-            "collection": collection,
-        },
+        "cover_url": _cover_url(html),
+        "published_year": int(published_date[:4]) if published_date else None,
+        "description": summary[:3000],
+        "illustrators": illustrators,
+        "metadata": metadata,
     }
 
 
@@ -431,8 +543,10 @@ class MilanYouthSource:
             raise ValueError("Milan URL rejected")
         path = urlsplit(allowed).path
         if kind == "listing":
-            if not _LISTING_PATH.fullmatch(path):
-                raise ValueError("only Milan catalogue pages are allowed")
+            if not (_LISTING_PATH.fullmatch(path) and not urlsplit(allowed).query
+                    or _SEARCH_PATH.fullmatch(path) and
+                    _search_page(allowed, query=parse_qs(urlsplit(allowed).query).get("text", [""])[0])):
+                raise ValueError("only Milan catalogue/search pages are allowed")
         elif kind == "product":
             if not _PRODUCT_PATH.fullmatch(path):
                 raise ValueError("only Milan product pages are allowed")
@@ -478,12 +592,22 @@ class MilanYouthSource:
                 raise MilanCollectionCancelled("Milan collection cancelled")
 
         del themes
-        try:
-            page = int(cursor or "1")
-        except ValueError:
-            raise ValueError("invalid Milan page cursor")
-        if not 1 <= page <= 100:
-            raise ValueError("invalid Milan page cursor")
+        query = _text(text_filter)
+        remote = bool(query and (not cursor or str(cursor).startswith("https://")))
+        if remote:
+            first_url = search_url(query)
+            selected_url = first_url if not cursor else allowed_url(cursor)
+            page = _search_page(selected_url, query=query)
+            if not page:
+                raise ValueError("invalid Milan search cursor")
+        else:
+            try:
+                page = int(cursor or "1")
+            except (TypeError, ValueError):
+                raise ValueError("invalid Milan page cursor") from None
+            if not 1 <= page <= 100:
+                raise ValueError("invalid Milan page cursor")
+            selected_url = listing_url(page=page)
         # Validate age before requesting even the listing: an empty page
         # must never hide a malformed/out-of-range youth filter.
         wanted_age = None
@@ -505,7 +629,7 @@ class MilanYouthSource:
         request_token = self._call_requests.set(0)
         started = perf_counter()
         pipeline: dict[str, object] = {
-            "query_mode": "local", "effective_limit": bounded,
+            "query_mode": "remote" if remote else "local", "effective_limit": bounded,
             "isbn_valid_count": 0, "age_published_count": 0,
             "age_qualified_count": 0,
         }
@@ -526,12 +650,12 @@ class MilanYouthSource:
 
         try:
             check_cancelled()  # no network call if already cancelled
-            listing_html = fetch(listing_url(page=page), kind="listing")
+            listing_html = fetch(selected_url, kind="listing")
             check_cancelled()  # don't parse a cancelled listing
             parse_started = perf_counter()
             try:
                 products = listing_products(
-                    listing_html, text_filter=text_filter, limit=36,
+                    listing_html, text_filter="" if remote else text_filter, limit=36,
                     listing_diagnostic=pipeline,
                 )
             finally:
@@ -541,7 +665,8 @@ class MilanYouthSource:
                 key: value for key, value in pipeline.items()
                 if key not in {"query_mode", "effective_limit", "rejection_reasons"}
             })
-            cursor = next_cursor(listing_html, current_page=page)
+            cursor = (search_next_cursor(listing_html, query=query, current_url=selected_url)
+                      if remote else next_cursor(listing_html, current_page=page))
             self._last_diagnostic["next_cursor_present"] = bool(cursor)
             # This is an incompatibility, not a successful empty catalogue.
             if not products and not text_filter and cursor:
@@ -558,6 +683,7 @@ class MilanYouthSource:
                 )
 
             out = []
+            seen_isbns: set[str] = set()
             inspected = 0
             self._last_diagnostic["phase"] = "products"
             for title, url in products:
@@ -580,6 +706,11 @@ class MilanYouthSource:
                 pipeline["analyzed_count"] = inspected
                 if detail is None:
                     continue
+                if detail["isbn13"] in seen_isbns:
+                    reasons = pipeline.setdefault("rejection_reasons", {})
+                    reasons["duplicate"] = reasons.get("duplicate", 0) + 1
+                    continue
+                seen_isbns.add(detail["isbn13"])
                 if wanted_age is not None and int(detail["age_ranges"][0]["age_min"]) > wanted_age:
                     reasons = pipeline.setdefault("rejection_reasons", {})
                     reasons["age_filter_excluded"] = reasons.get("age_filter_excluded", 0) + 1

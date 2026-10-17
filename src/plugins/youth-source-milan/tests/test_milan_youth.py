@@ -324,7 +324,7 @@ def test_search_filters_listing_titles_locally_without_remote_search_param():
         return httpx.Response(200, headers={"content-type": "text/html"}, text=MOQUEUSE)
 
     source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
-    result = source.search("moqueuse", limit=8)
+    result = source.browse(text_filter="moqueuse", cursor="1", limit=8)
     assert [row["title"] for row in result["items"]] == ["Moqueuse"]
     assert seen[0].url.path == "/livres/"
     assert not seen[0].url.query
@@ -654,7 +654,7 @@ def test_milan_per_collection_http_counter_includes_listing_and_product_details(
         text = LISTING if req.url.path == "/livres/" else MOQUEUSE
         return httpx.Response(200, headers={"content-type": "text/html"}, text=text)
     source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
-    result = source.browse(text_filter="Moqueuse", limit=1)
+    result = source.browse(text_filter="Moqueuse", cursor="1", limit=1)
     assert len(result["items"]) == 1
     assert result["collection_request_count"] == 2
     assert requests == ["/livres/", "/livres/63047-moqueuse/"]
@@ -666,7 +666,7 @@ def test_milan_per_collection_http_counter_includes_listing_and_product_details(
         return httpx.Response(503, headers={"content-type": "text/html"}, text="private")
     source.client = httpx.Client(transport=httpx.MockTransport(fail_detail))
     with pytest.raises(RuntimeError, match="503") as exc:
-        source.browse(text_filter="Moqueuse", limit=1)
+        source.browse(text_filter="Moqueuse", cursor="1", limit=1)
     assert exc.value.collection_request_count == 2
     assert source._call_requests.get() is None
 
@@ -733,11 +733,11 @@ def test_milan_cooperative_cancel_between_details_avoids_unneeded_http():
     source.client = httpx.Client(transport=httpx.MockTransport(
         lambda request: httpx.Response(
             200, headers={"content-type": "text/html"},
-            text=LISTING if request.url.path == "/livres/" else MOQUEUSE,
+            text=LISTING if request.url.path in {"/livres/", "/recherche/books/"} else MOQUEUSE,
         )
     ))
     success = source.browse_with_cancellation(
-        cancelled=lambda: state["cancel"], text_filter="Moqueuse", limit=1,
+        cancelled=lambda: state["cancel"], text_filter="Moqueuse", cursor="1", limit=1,
     )
     assert success["collection_request_count"] == 2
     assert len(success["items"]) == 1
@@ -764,11 +764,11 @@ def test_milan_search_and_legacy_browse_contracts_unchanged_by_extension():
     source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(
         lambda request: httpx.Response(
             200, headers={"content-type": "text/html"},
-            text=LISTING if request.url.path == "/livres/" else MOQUEUSE,
+            text=LISTING if request.url.path in {"/livres/", "/recherche/books/"} else MOQUEUSE,
         )
     )))
     assert source.search("Moqueuse", limit=1)["collection_request_count"] == 2
-    assert source.browse(text_filter="Moqueuse", limit=1)["collection_request_count"] == 2
+    assert source.browse(text_filter="Moqueuse", cursor="1", limit=1)["collection_request_count"] == 2
 
 
 def test_milan_funnel_counts_listing_details_and_local_exclusions():
@@ -781,7 +781,7 @@ def test_milan_funnel_counts_listing_details_and_local_exclusions():
         )
 
     source = MilanYouthSource(client=httpx.Client(transport=httpx.MockTransport(handler)))
-    result = source.browse(text_filter="Moqueuse", limit=1)
+    result = source.browse(text_filter="Moqueuse", cursor="1", limit=1)
     funnel = result["collection_pipeline"]
     assert len(result["items"]) == 1
     assert requests == ["/livres/", "/livres/63047-moqueuse/"]
