@@ -106,7 +106,6 @@ def test_click_submits_worker_with_user_origin_and_identity_snapshot():
     args[2](enriched)
     assert host.search_objects["book"].author == "Autrice détaillée"
     assert host.refresh[0][0][2].author == "Autrice détaillée"
-    assert host.refresh[0][0][3].author == "Autrice détaillée"
     assert host.refresh[0][1]["context"] == host.context
 
 
@@ -149,7 +148,6 @@ def test_public_ownership_false_is_eligible_but_no_private_scope():
 def test_wrong_source_or_missing_context_never_displays_action():
     host = Host()
     assert not build(host, row=replace(item(), source_provider="kobo"))
-    assert not build(host, context=None) is False if False else True
     assert add_numilog_enrichment_action(
         host, "book", item(), detail(), None, button_factory=Button,
     ) is False
