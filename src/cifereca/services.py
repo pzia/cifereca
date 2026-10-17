@@ -2641,7 +2641,13 @@ class LibraryService:
             raise ProviderConfigurationError(
                 "Acquisition ciblée indisponible : autorisation du compte non vérifiable"
             )
-        session = self._session_for_source(item.source_provider, item.source_credential)
+        # Numilog's account/credential is untrusted until the dedicated
+        # source guard validates its persistent owner under the global lock.
+        # Do not look up the session using an untrusted credential first.
+        session = (
+            None if item.source_provider == "numilog"
+            else self._session_for_source(item.source_provider, item.source_credential)
+        )
         content_type = self.acquisition.content_type_for(item)
 
         if item.source_provider == "kobo":
