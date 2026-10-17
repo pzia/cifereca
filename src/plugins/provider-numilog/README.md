@@ -261,3 +261,32 @@ restent à qualifier avec captures autorisées. La méthode n'est pas encore
 raccordée au contrat `holdings` ni à une action UI ; le catalogue public
 reste désactivé par défaut. Les tests sont **offline et synthétiques**,
 sans achat ou requête réelle. Le P0 #1072 reste ouvert après cette tranche.
+
+
+## Notice du catalogue commercial dans le détail Core (#1886, 0.1.27)
+
+Le singleton `numilog-catalog` déclare maintenant **`catalog.detail`** /
+`ProviderCapabilities.holdings=True`. Core appelle automatiquement
+`holdings(item)` lorsqu'une notice issue d'une recherche est sélectionnée :
+cette méthode ne fait **aucun appel réseau** et restitue uniquement les
+champs attestés **déjà présents dans le `SearchResult`** (titre, auteurs,
+date, couverture). Elle affiche le statut conservateur
+« Catalogue Numilog — achat non attesté », avec
+`availability_status=unknown` et `holdings=[]`. Aucun prêt ni achat ne
+peut être inféré de cette vue ; ni `acquisition.download` ni droits ne sont
+ajoutés au manifeste de ce singleton.
+
+Avant affichage, `validate_public_detail_item` contrôle la provenance de
+la notice, le produit Numilog, le namespace `numilog:public`, la requête
+publique et les attributs `owned=False`, `downloadable=False`,
+`download_url=None`. Toute notice étrangère ou non qualifiée est rejetée
+avec un code public fixe. Une fiche enrichie explicitement auparavant
+conserve ses métadonnées et le même statut d'achat non attesté.
+
+**Distinct de** `enrich_public_detail(item)` et
+`enrich_owned_public_detail(item)` : ces opérations restent **uniquement
+à la demande**, sans intégration à la sélection, au démarrage, à la
+synchronisation ou au téléchargement. Le provider public reste
+`enabled_by_default=false` jusqu'à qualification réelle de son transport
+et de ses conditions d'accès. Les tests sont hors réseau, notamment sur la
+fixture Jefferson expurgée.
