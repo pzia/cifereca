@@ -3,28 +3,34 @@ from __future__ import annotations
 
 from types import SimpleNamespace as NS
 
+import pytest
+
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.models import Account
 from tests.test_core_p0_1346_inventory_refresh_broker import _rig
+from tests.test_core_p0_1905_numilog_inventory_schedule import _numilog
 
 
+@pytest.mark.parametrize("provider", ["kobo", "numilog"])
 def test_scheduled_inventory_state_write_exception_is_scoped_to_one_account(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, provider,
 ):
-    service, _account, _session, calls = _rig(tmp_path)
+    service, _account, _session, calls = (
+        _rig(tmp_path) if provider == "kobo" else _numilog(tmp_path)
+    )
     try:
         other = Account(
-            display_name="Kobo second", unique_id="alice-second",
-            provider_id="kobo", credential_id="vault-second",
-            provider_label="Kobo", identity_id="alice",
+            display_name="Private store second", unique_id="alice-second",
+            provider_id=provider, credential_id="vault-second",
+            provider_label=provider.title(), identity_id="alice",
         )
         service.accounts.append(other)
-        service._sessions["kobo::vault-second"] = NS(
-            provider_id="kobo", credential_id="vault-second",
+        service._sessions[provider + "::vault-second"] = NS(
+            provider_id=provider, credential_id="vault-second",
             connected=True, capabilities=NS(personal_library=True, backup=False),
         )
         service.storage.provider_connection_put({
-            "identity_id": "alice", "provider_id": "kobo",
+            "identity_id": "alice", "provider_id": provider,
             "credential_id": "vault-second", "enabled": True,
         })
         broker = SynchronizationBrokerImpl(service)
