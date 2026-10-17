@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.20, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.24, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.23'
+VERSION = '0.1.24'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -467,12 +467,28 @@ class NumilogSession(ProviderSession):
             raise ProviderCapabilityError('Numilog : identité propriétaire du compte non résolue pour le fulfillment ACSM')
         return next(iter(identity_ids))
 
-    def _fulfill_acsm(self,path,*,title=None,trace=None):
+    def _validate_download_owner(self, expected):
+        # A newly valid binding is not the binding which authorized this
+        # delivery. Do not redirect Alice's bytes into Bob's ADEPT profile.
+        try:
+            current = self._identity_id()
+        except Exception:
+            current = None
+        if current != expected:
+            raise ProviderCapabilityError(
+                'Numilog : rattachement du compte modifié ; téléchargement arrêté'
+            ) from None
+
+    def _fulfill_acsm(self,path,*,title=None,trace=None,identity_id=None):
         if self.acquisition_broker is None:
             raise ProviderCapabilityError('Numilog : broker acquisition requis pour traiter un ACSM')
-        identity_id=self._identity_id()
+        if identity_id is None:
+            identity_id=self._identity_id()
+        else:
+            self._validate_download_owner(identity_id)
         result=self.acquisition_broker.import_acsm(
             Path(path), identity_id=identity_id, provider_id='numilog', title=title or None)
+        self._validate_download_owner(identity_id)
         if not isinstance(result,dict):
             raise ProviderError('Numilog : résultat de fulfillment ACSM invalide')
         # The broker is the authority for fulfillment, not for arbitrary
@@ -497,13 +513,20 @@ class NumilogSession(ProviderSession):
         self._diag('téléchargement',format='ACSM/ADEPT',fulfillment=status)
         return produced,self.library_url
 
-    def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url'):
+    def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None):
         with DeliveryTrace(self.diagnostics, source=source) as trace:
+            trace.fail('adept_unconfirmed')
+            owner = identity_id
+            if owner is None and self.identity_broker is not None:
+                owner = self._identity_id()
             seen = set()
             # Keep the fresh owned row's readBook coordinates across redirects;
             # confirmation-page product/copy evidence cannot choose another book.
             expected_readbook = url
             for hop in range(12):
+                trace.fail('adept_unconfirmed')
+                if owner is not None:
+                    self._validate_download_owner(owner)
                 trace.fail('origin_rejected')
                 checked_url(url,self.allowed_origins)
                 trace.fail('adept_unconfirmed')
@@ -511,7 +534,10 @@ class NumilogSession(ProviderSession):
                     # A signed link may be single-use. Validate ownership and
                     # the importer BEFORE consuming it, even after an ordinary
                     # readBook 302 or an HTML intermediary (#1883).
-                    self._identity_id()
+                    if owner is None:
+                        owner = self._identity_id()
+                    else:
+                        self._validate_download_owner(owner)
                     if self.acquisition_broker is None:
                         raise ProviderCapabilityError(
                             'Numilog : broker acquisition requis pour traiter un ACSM'
@@ -610,13 +636,16 @@ class NumilogSession(ProviderSession):
                                 if size > self.maximum:
                                     raise ProviderError('Numilog : téléchargement trop volumineux')
                                 output.write(chunk)
+                        trace.fail('adept_unconfirmed')
+                        if owner is not None:
+                            self._validate_download_owner(owner)
                         trace.fail('artifact_invalid')
                         if inspect_artifact(part, 'acsm').valid:
                             acsm = part.with_suffix('.acsm')
                             os.replace(part, acsm)
                             try:
                                 trace.fail('adept_unconfirmed')
-                                result = self._fulfill_acsm(acsm,title=title,trace=trace)
+                                result = self._fulfill_acsm(acsm,title=title,trace=trace,identity_id=owner)
                                 trace.success('acsm_complete')
                                 trace.event('adept_fulfillment', 'acsm_complete', hops=hop+1)
                                 return result
@@ -626,6 +655,9 @@ class NumilogSession(ProviderSession):
                             trace.fail('xml_not_acsm')
                             raise ProviderCapabilityError('Numilog : réponse XML non ACSM ; téléchargement arrêté')
                         validate_epub(part)
+                        trace.fail('adept_unconfirmed')
+                        if owner is not None:
+                            self._validate_download_owner(owner)
                         if title:
                             destination = publish(part, destination.parent, title=title, author=author, book_id=book_id or title)
                         else:
@@ -643,12 +675,15 @@ class NumilogSession(ProviderSession):
     def download_direct(self,item,target_dir):
         with self.lock:
             self._canonical_item(item)
+            owner = self._identity_id() if self.identity_broker is not None else None
             # Read a fresh private library only for an explicit user action.
             # Search/sync call _rows() without delivery_evidence, so no signed
             # ACSM link escapes into SearchResult, catalog, or diagnostics.
             rows = self._rows(
                 include_delivery=True, delivery_record_id=item.record_id,
             )
+            if owner is not None:
+                self._validate_download_owner(owner)
             row = next((row for row in rows if self._id(row) == item.record_id),None)
             if row is None:
                 raise ProviderError('Numilog : livre absent de la bibliothèque actuelle')
@@ -676,7 +711,8 @@ class NumilogSession(ProviderSession):
                     start = row['href']
                     self._diag('livraison ACSM',phase='readbook',kind='scoped_link',result='fallback')
                 return self._download(start,directory/name,title=row['title'],author=item.author,
-                    book_id=self._id(row),source='owned_card' if isinstance(evidence, OwnedDelivery) else 'readbook')
+                    book_id=self._id(row),source='owned_card' if isinstance(evidence, OwnedDelivery) else 'readbook',
+                    identity_id=owner)
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
 
