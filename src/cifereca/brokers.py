@@ -926,7 +926,8 @@ class SynchronizationBrokerImpl:
                 self._set_state(source_id, state); self._notify()
                 return SyncResult(ok=False, warnings=("invalid sync response",),
                                   facts={"reason": "invalid_response"})
-            if result.get("status") == "skipped":
+            skip_status = result.get("status")
+            if type(skip_status) is str and skip_status.lower() == "skipped":
                 # The source can be revoked after our local admission check
                 # but before the underlying service starts remote inventory.
                 # Skipped is not proof of a successful refresh and must not
