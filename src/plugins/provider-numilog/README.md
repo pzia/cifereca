@@ -290,3 +290,46 @@ synchronisation ou au téléchargement. Le provider public reste
 `enabled_by_default=false` jusqu'à qualification réelle de son transport
 et de ses conditions d'accès. Les tests sont hors réseau, notamment sur la
 fixture Jefferson expurgée.
+
+
+## Identifiants des offres commerciales typés et isolés (#1072, 0.1.28)
+
+Les pages publiques Numilog distinguent explicitement l'**EAN papier** et
+l'**EAN EPUB**, parfois `EAN EPUB SANS DRM` ; elles peuvent aussi annoncer
+un `ISBN numérique` sans préciser le format. Constats publics au
+17 octobre 2026 (consultation de la page, **pas une capture HTML** intégrée
+aux tests) :
+
+- [Blackbone — Coltan Song](https://www.numilog.com/1171334/blackbone--coltan-song-tome-1--des-15-ans.ebook) :
+  EAN papier `9782092591086`, EAN EPUB sans DRM `9782092591093`.
+- [Le Piège de Sainte-Soline](https://www.numilog.com/1956345/le-piege-de-sainte-soline--megabassines--la-lutte-pour-l-eau.ebook) :
+  ISBN papier `9782380354522` et ISBN numérique non typé
+  `9782380354539`. Ce dernier **n'est pas présumé EPUB**.
+
+`cifereca_numilog_public_identifiers.extract_public_identifiers(html, url)`
+lit **hors réseau** uniquement des couples étiquette/ISBN-13 explicites,
+visibles et à somme de contrôle correcte. Les rôles distincts
+`paper`, `epub`, `pdf`, `digital_unspecified` ne sont ni déduits de la
+couverture, ni des guides génériques DRM, ni d'un même titre. Un doublon
+contradictoire échoue fermé ; les scripts/formulaires sont ignorés et la
+lecture est bornée. La valeur de DRM éventuelle provient **exclusivement**
+de l'étiquette de l'offre (ex. `EAN EPUB SANS DRM`) : jamais des conseils
+généraux du site.
+
+L'extraction est ajoutée **en option probante** à
+`parse_public_detail_jsonld`, seulement après qualification du JSON-LD
+`Book` sur l'URL exacte. Les valeurs sont gardées séparément dans
+`public_identifiers` et `identifier_evidence`, avec
+`owned_format_proven=False`, et sont revérifiées avant toute projection sur
+une notice catalogue ou achetée. Un format de l'**offre publique** ne prouve
+pas le format acheté par le compte : les informations restent sous
+`metadata.public_detail.public_identifiers` ou
+`metadata.public_detail_enrichment.public_identifiers`, **jamais** dans
+`isbn_digital`, `format`, l'inventaire d'artefacts ou les droits.
+
+La sélection de notice reste **sans GET supplémentaire** ; seul le parcours
+explicite de fiche peut consulter ces valeurs. Le provider public reste
+désactivé par défaut. Les tests HTML sont **synthétiques** et ne qualifient
+pas encore la structure DOM réelle de Numilog : confirmation sur captures
+expurgées avec consentement, ISBN EPUB/PDF multiples et protections
+réelles reste nécessaire avant promotion de ces champs dans l'UI.
