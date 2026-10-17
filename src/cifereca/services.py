@@ -2737,14 +2737,23 @@ class LibraryService:
                     # returning. A reconnect/rebind during HTTP or ADEPT must
                     # not be committed under a different identity.
                     require_source(self, item, session=pinned_session)
+                    from dataclasses import replace
+                    # Never pass unverified private cover/link metadata to
+                    # post-download hooks or the persisted Acquisition object.
+                    # The original item is used only by the provider's
+                    # exact owned-library resolver, inside the source lock.
+                    clean_item = replace(
+                        item, thumbnail_url=None, friendly_url=None,
+                        download_url=None, metadata={},
+                    )
                     self.acquisition.run_post_download(
-                        item, path, "", target_dir,
+                        clean_item, path, "", target_dir,
                     )
                     require_source(self, item, session=pinned_session)
                     # A provider-returned URL may contain single-use ACSM
                     # signatures. Never persist it as Acquisition.source_url.
                     return self.acquisition.acquisition_from_direct(
-                        item, path=path, url="", target_dir=target_dir,
+                        clean_item, path=path, url="", target_dir=target_dir,
                         action="download",
                     )
             except LockBusyError:
