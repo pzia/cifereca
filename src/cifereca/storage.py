@@ -2020,6 +2020,56 @@ class Storage:
         rows = self.acquisitions(acquisition_id=acquisition_id)
         return rows[0] if rows else None
 
+    def numilog_purchase_preflight_evidence(
+        self, *, identity_id: str, credential_id: str, account_id: str,
+        item_id: str,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Read one exact purchase and conflicting ledger owners, atomically.
+
+        This is a local *preflight*, never a download authorization. Other
+        identities' entitlements/metadata are not read. Conflicting ledger
+        rows for the same credential + variant must remain visible even if
+        owned by a different account: never mistake them for a missing book.
+        """
+        from .core.numilog_local_preview import _item_id
+        scope = (identity_id, credential_id, account_id)
+        if (not all(type(v) is str and 0 < len(v) <= 1024
+                    and not any(c in v for c in "\0\r\n") for v in scope)
+                or not _item_id(item_id, credential_id)):
+            raise ValueError("invalid_purchase_scope")
+        with self._lock, self._connect() as db:
+            db.execute("SAVEPOINT numilog_purchase_preflight")
+            try:
+                rights = db.execute(
+                    "SELECT entitlement_id,identity_id,credential_id,account_id,"
+                    "item_id,entitlement_type,state,loan_id,expires_at,metadata_json "
+                    "FROM entitlements WHERE provider_id='numilog' "
+                    "AND identity_id=? AND credential_id=? AND account_id=? "
+                    "AND item_id=? LIMIT 3", (*scope, item_id),
+                ).fetchall()
+                ledgers = db.execute(
+                    "SELECT acquisition_id,entitlement_id,identity_id,account_id,"
+                    "item_id,status FROM acquisition_ledger "
+                    "WHERE provider_id='numilog' AND credential_id=? AND item_id=? "
+                    "LIMIT 3", (credential_id, item_id),
+                ).fetchall()
+            finally:
+                db.execute("RELEASE SAVEPOINT numilog_purchase_preflight")
+        right_keys = ("entitlement_id", "identity_id", "credential_id",
+                      "account_id", "item_id", "entitlement_type", "state",
+                      "loan_id", "expires_at", "metadata_json")
+        ledger_keys = ("acquisition_id", "entitlement_id", "identity_id",
+                       "account_id", "item_id", "status")
+        result = []
+        for values in rights:
+            row = dict(zip(right_keys, values))
+            row["metadata"] = self._json_load(row.pop("metadata_json"))
+            result.append(row)
+        return {
+            "entitlements": result,
+            "acquisitions": [dict(zip(ledger_keys, values)) for values in ledgers],
+        }
+
     def source_materialization_evidence(
         self, *, provider_id: str, credential_id: str, account_id: str,
         identity_id: str, max_rows: int = 100_000,
