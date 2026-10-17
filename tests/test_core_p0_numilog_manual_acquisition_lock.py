@@ -339,3 +339,29 @@ def test_numilog_provider_output_requires_owned_regular_book_path(
         assert all("SIGNED_SECRET" not in repr(row) for row in records)
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("symlink_at", ["provider", "identity"])
+def test_numilog_manual_acquire_refuses_symlinked_identity_root_before_network(
+    tmp_path, monkeypatch, symlink_at,
+):
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        target = service.library_identity_provider_dir(account.identity_id, "numilog")
+        outer = tmp_path / "foreign-root"
+        outer.mkdir()
+        if symlink_at == "provider":
+            target.rmdir()
+            target.symlink_to(outer, target_is_directory=True)
+        else:
+            target.rmdir()
+            target.parent.rmdir()
+            (outer / "numilog").mkdir()
+            target.parent.symlink_to(outer, target_is_directory=True)
+        with pytest.raises(
+            ProviderConfigurationError, match="répertoire identité non attesté",
+        ):
+            service.acquire_direct_item(item)
+        assert calls == []
+    finally:
+        service.close()
