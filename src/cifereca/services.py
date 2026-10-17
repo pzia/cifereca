@@ -2758,9 +2758,23 @@ class LibraryService:
                     require_source(self, item, session=pinned_session)
                     # A provider-returned URL may contain single-use ACSM
                     # signatures. Never persist it as Acquisition.source_url.
-                    return self.acquisition.acquisition_from_direct(
+                    result = self.acquisition.acquisition_from_direct(
                         clean_item, path=path, url="", target_dir=target_dir,
                         action="download",
+                    )
+                    owner = next(
+                        a for a in self.accounts
+                        if a.provider_id == "numilog"
+                        and a.credential_id == item.source_credential
+                        and a.identity_id == identity.identity_id
+                    )
+                    # The generic direct adapter historically dropped the
+                    # account ID. Preserve the exact attested purchase owner.
+                    from dataclasses import replace
+                    return replace(
+                        result, account_id=owner.unique_id,
+                        metadata={**result.metadata,
+                                  "identity_id": identity.identity_id},
                     )
             except LockBusyError:
                 raise ProviderConfigurationError(
