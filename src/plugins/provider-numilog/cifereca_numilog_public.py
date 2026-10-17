@@ -265,11 +265,22 @@ def parse_public_search(text, source_url):
     grids = [n for n in root.walk() if n.tag == 'table' and n.attrs.get('id') == GRID_ID]
     if len(grids) != 1:
         _fail('unknown_search_layout')
-    totals = [n.text() for n in _nodes(root, 'ResultatDetail') if re.fullmatch(r'[0-9]{1,9}', n.text())]
-    if len(totals) != 1:
-        _fail('unqualified_total')
-    total = int(totals[0])
     cards = _nodes(grids[0], 'LivreDuThemeDetail')
+    empty_markers = [n for n in grids[0].walk()
+                     if n.attrs.get('id') == GRID_ID + '_ctl01_lblAucunLivre']
+    explicit_empty = (len(empty_markers) == 1
+                      and empty_markers[0].tag == 'span'
+                      and {'alert', 'alert-warning'}.issubset(classes(empty_markers[0]))
+                      and empty_markers[0].text() == 'Aucun livre trouvé avec ces critères.')
+    totals = [n.text() for n in _nodes(root, 'ResultatDetail') if re.fullmatch(r'[0-9]{1,9}', n.text())]
+    if not totals and explicit_empty and not cards and not _nodes(root, 'pagination'):
+        total = 0  # Observed upstream empty result, never a generic missing count.
+    elif len(totals) == 1:
+        total = int(totals[0])
+        if empty_markers and (not explicit_empty or total != 0):
+            _fail('inconsistent_results')
+    else:
+        _fail('unqualified_total')
     if len(cards) > MAX_CARDS or len(cards) > total or (total and not cards):
         _fail('inconsistent_results')
     items = tuple(_card(card, source_url, rank, page_index) for rank, card in enumerate(cards, 1))
@@ -287,13 +298,15 @@ def parse_public_search(text, source_url):
             if len(pages) >= 100:
                 _fail('excessive_pagination')
             url, target = _search_link(link.attrs.get('href'), source_url)
-            if 'GRID_PAGE' not in target or {k: v for k, v in target.items() if k != 'GRID_PAGE'} != {k: v for k, v in query.items() if k != 'GRID_PAGE'}:
+            # Numilog's first-page links omit GRID_PAGE. _query already
+            # validates explicit page values and all other query parameters.
+            if {k: v for k, v in target.items() if k != 'GRID_PAGE'} != {k: v for k, v in query.items() if k != 'GRID_PAGE'}:
                 _fail('pagination_query_changed')
             label = link.text()
             if not _safe_text(label, 32):
                 _fail('invalid_pagination')
-            pages.append({'label': label, 'url': url, 'GRID_PAGE': target['GRID_PAGE']})
-            if int(target['GRID_PAGE']) == page_index + 1:
+            pages.append({'label': label, 'url': url, 'GRID_PAGE': target.get('GRID_PAGE', '0')})
+            if int(target.get('GRID_PAGE', '0')) == page_index + 1:
                 next_urls.add(url)
     # Equivalent textual query ordering must not create multiple next links.
     next_queries = {urlencode(sorted(_query(u).items())) for u in next_urls}
