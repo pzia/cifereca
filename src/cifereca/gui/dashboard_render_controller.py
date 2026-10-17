@@ -8,6 +8,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
+def _dashboard_count(stats: dict, key: str) -> str:
+    """In a dashboard snapshot, unknown is not a real count of zero."""
+    value = stats.get(key)
+    return str(value) if type(value) is int and value >= 0 else "—"
+
+
 def render_dashboard(window, *, Gtk, add_css) -> None:
     if getattr(window, '_closed', False):
         return
@@ -74,9 +80,18 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
         box.append(head)
         stats=card.get('statistics') or {}
         if stats:
-            loans=stats.get('known_loans')
-            count=Gtk.Label(label=f"{stats.get('local_books',0)} livres locaux · {loans if loans is not None else '—'} prêts de bibliothèque connus",xalign=0)
+            local = _dashboard_count(stats, "local_books")
+            loans = _dashboard_count(stats, "known_loans")
+            owned = _dashboard_count(stats, "remote_owned_rights")
+            count=Gtk.Label(label=f"{local} livres locaux · {loans} prêts de bibliothèque connus",xalign=0)
             count.set_wrap(True);box.append(count)
+            # A distant store entitlement is neither a library loan nor
+            # evidence of a downloaded EPUB. Never add these three counts.
+            rights=Gtk.Label(
+                label=f"{owned} droits d’achat distants · fichier local non présumé",
+                xalign=0,
+            )
+            rights.set_wrap(True);box.append(rights)
             actions=stats.get('actions') or {}
             if actions:
                 ok=sum(int(actions.get(key,0) or 0) for key in ('acquisitions_succeeded','imports_succeeded','synchronizations_succeeded','transformations_succeeded','transfers_succeeded'))
