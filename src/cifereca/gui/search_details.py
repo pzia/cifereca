@@ -19,7 +19,6 @@ from .detail_model import book_detail_presentation, detail_language
 from .local_book_detail_sections import local_book_detail_sections
 from .task_runner import TaskPriority
 from .search_detail_context import detail_callback_is_current
-from .numilog_enrichment_action import add_numilog_enrichment_action
 
 
 def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
@@ -134,10 +133,14 @@ def _apply_search_detail(
     self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
     self._add_local_book_actions(self.search_page.detail, result_row(item))
     self._request_cached_book_details("search", item.id, result_row(item))
-    add_numilog_enrichment_action(
-        self, selected_id, item, detail, context,
-        button_factory=self.search_page.detail.window.action_button,
-    )
+    # Keep unrelated provider callbacks (and AST-isolated host tests)
+    # independent of the optional Numilog UI adapter.
+    if getattr(item, "source_provider", None) in {"numilog", "numilog-catalog"}:
+        from .numilog_enrichment_action import add_numilog_enrichment_action
+        add_numilog_enrichment_action(
+            self, selected_id, item, detail, context,
+            button_factory=self.search_page.detail.window.action_button,
+        )
 
 
 def _search_detail_error(
