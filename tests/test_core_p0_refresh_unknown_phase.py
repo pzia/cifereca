@@ -35,3 +35,22 @@ def test_running_inventory_phase_cannot_reenter_periodic_refresh():
         trigger="periodic", now=datetime(2026, 10, 17, tzinfo=timezone.utc),
         phase_status="running", enabled=True, connected=True, capable=True,
     ) is False
+
+
+@pytest.mark.parametrize("invalid_clock", [None, False, 0, [], {}])
+def test_invalid_falsy_inventory_clocks_do_not_grant_scheduled_refresh(invalid_clock):
+    assert source_refresh_due(
+        SourceRefreshSchedule(mode="periodic", interval_minutes=60),
+        trigger="periodic", now=datetime(2026, 10, 17, tzinfo=timezone.utc),
+        last_attempt=invalid_clock, phase_status="idle",
+        enabled=True, connected=True, capable=True,
+    ) is False
+
+
+def test_explicit_empty_inventory_clock_allows_first_refresh():
+    assert source_refresh_due(
+        SourceRefreshSchedule(mode="periodic", interval_minutes=60),
+        trigger="periodic", now=datetime(2026, 10, 17, tzinfo=timezone.utc),
+        last_attempt="", phase_status="idle",
+        enabled=True, connected=True, capable=True,
+    ) is True
