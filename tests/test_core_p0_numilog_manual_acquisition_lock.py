@@ -262,3 +262,31 @@ def test_numilog_cooperative_cancellation_propagates_without_registration(
         assert records[-1][1]["facts"]["error"] == "Cancelled"
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("kind", ["orphan_file", "orphan_dangling_symlink"])
+def test_numilog_manual_acquire_will_not_overwrite_untracked_hashed_file(
+    tmp_path, monkeypatch, kind,
+):
+    import hashlib
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        directory = service.library_identity_provider_dir(account.identity_id, "numilog")
+        name = "numilog-" + hashlib.sha256(
+            item.record_id.encode("utf-8"),
+        ).hexdigest()[:32] + ".epub"
+        candidate = directory / name
+        if kind == "orphan_file":
+            candidate.write_bytes(b"ORIGINAL-LOCAL-BOOK")
+        else:
+            candidate.symlink_to(directory / "nonexistent-untrusted-target.epub")
+        with pytest.raises(ProviderConfigurationError, match="rapprochement requis"):
+            service.acquire_direct_item(item)
+        assert calls == []
+        if kind == "orphan_file":
+            assert candidate.read_bytes() == b"ORIGINAL-LOCAL-BOOK"
+        else:
+            assert candidate.is_symlink()
+            assert not candidate.exists()
+    finally:
+        service.close()
