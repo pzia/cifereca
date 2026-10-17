@@ -10,6 +10,7 @@ import pytest
 from cifereca.core.known_catalog_fallback import (
     known_public_fallback, public_service_unavailable,
 )
+from cifereca.core import known_catalog_fallback as fallback_module
 from tests.test_core043_progress_cache_stats import _service, _FakeSession
 
 
@@ -29,6 +30,59 @@ def _known(service, *, provider="good", identity="alice", key="one",
             "rights": "https://private.invalid/?auth=SIGNED_SECRET",
         },
     })
+
+
+def test_foreign_catalogues_cannot_exhaust_one_sources_fallback_budget(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        monkeypatch.setattr(fallback_module, "_MAX_CATALOG_ROWS", 2)
+        _known(service, key="matching")
+        for index in range(4):
+            _known(service, provider="other", key=f"other-{index}")
+            _known(service, identity="bob", key=f"bob-{index}")
+        rows = known_public_fallback(
+            service.storage, provider_id="good", identity_id="alice",
+            query="maritime", scope="digital", field="title", content_types=(),
+        )
+        assert [row.record_id for row in rows] == ["public-matching"]
+        # The source's own budget remains fail-closed, not a false complete page.
+        _known(service, key="second")
+        _known(service, key="third")
+        assert known_public_fallback(
+            service.storage, provider_id="good", identity_id="alice",
+            query="maritime", scope="digital", field="title", content_types=(),
+        ) == ()
+    finally:
+        service.close()
+
+
+def test_catalogue_scopes_and_limit_are_applied_before_metadata_decode(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        _known(service, key="first")
+        _known(service, key="second")
+        _known(service, identity="bob", key="foreign")
+        _known(service, provider="other", key="other")
+        assert len(service.storage.catalog_entries()) == 4
+        assert len(service.storage.catalog_entries(state="remote_catalog")) == 4
+        decoded = []
+        original = service.storage._json_load
+        def decode(raw):
+            decoded.append(raw)
+            return original(raw)
+        monkeypatch.setattr(service.storage, "_json_load", decode)
+        rows = service.storage.catalog_entries(
+            identity_id="alice", provider_id="good", state="remote_catalog", limit=1,
+        )
+        assert len(rows) == len(decoded) == 1
+        assert rows[0]["identity_id"] == "alice" and rows[0]["provider_id"] == "good"
+        assert service.storage.catalog_entries(identity_id="", provider_id="good") == []
+        assert service.storage.catalog_entries(provider_id="good' OR 1=1 --") == []
+        for bad in (True, 0, -1, "1", 100_002):
+            with pytest.raises(ValueError):
+                service.storage.catalog_entries(limit=bad)
+    finally:
+        service.close()
 
 
 def test_offline_stale_fallback_is_scoped_and_never_grants_owned_rights(tmp_path):

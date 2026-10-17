@@ -18,6 +18,7 @@ from .sync_view import (
     sync_identity_action_label, sync_source_presentation,
     sync_source_row_labels,
     sync_local_preflight_presentation, sync_local_reconciliation_presentation,
+    sync_numilog_local_preview_presentation,
 )
 from .task_runner import TaskPriority
 from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
@@ -201,7 +202,9 @@ def _refresh_sync_page(self) -> None:
                 completed, control=_button,
                 priority=TaskPriority.USER_ACTION, kind="source-sync",
             )
-        now.connect("clicked", one); row.add_suffix(now)
+        now.connect("clicked", one)
+        now.set_valign(Gtk.Align.CENTER)
+        row.add_suffix(now)
         if source.provider_id == "kobo":
             # Only a targeted Core broker may resolve the private credential.
             # Neither page building nor switching identity reads the ledger.
@@ -216,6 +219,7 @@ def _refresh_sync_page(self) -> None:
                 if capability and supported else
                 "Aperçu Kobo non pris en charge par cette source"
             )
+            preflight.set_valign(Gtk.Align.CENTER)
             row.add_suffix(preflight)
             preview_row = Adw.ActionRow()
             preview_row.set_title("Aperçu local des acquisitions Kobo")
@@ -277,6 +281,7 @@ def _refresh_sync_page(self) -> None:
                 "Audit SHA local de ce compte (lecture seule, peut être long)"
                 if audit_supported else "Audit local non pris en charge"
             )
+            audit_button.set_valign(Gtk.Align.CENTER)
             row.add_suffix(audit_button)
             audit_row = Adw.ActionRow()
             audit_row.set_title("Vérification des fichiers et rapprochements")
@@ -356,7 +361,9 @@ def _refresh_sync_page(self) -> None:
                 "Non préparé · aucun fichier téléchargé. Vérifiez d’abord les droits et fichiers."
             )
             acquisition_row.set_subtitle_lines(0)
+            download_button.set_valign(Gtk.Align.CENTER)
             acquisition_row.add_suffix(download_button)
+            stop_download.set_valign(Gtk.Align.CENTER)
             acquisition_row.add_suffix(stop_download)
             group.add(acquisition_row)
             acquisition_state = {"serial": 0, "cancel": None}
@@ -649,6 +656,7 @@ def _refresh_sync_page(self) -> None:
                 "Ne modifie que la planification de ce compte Kobo. "
                 "Aucun téléchargement n’est lancé par ce bouton."
             )
+            schedule_button.set_valign(Gtk.Align.CENTER)
             schedule_row.add_suffix(schedule_button)
             group.add(schedule_row)
 
@@ -719,7 +727,65 @@ def _refresh_sync_page(self) -> None:
 
             schedule_button.connect("clicked", schedule_change)
 
-            # #1346: a SECOND, independent Kobo policy for refreshing remote
+        else:
+            group.add(row)
+
+        if source.provider_id == "numilog":
+            # Offline evidence only, including disconnected accounts. Neither
+            # rendering nor a preview grants acquisition/scheduler consent.
+            local_row = Adw.ActionRow()
+            local_row.set_title("Aperçu local des achats Numilog")
+            local_row.set_subtitle("Non consulté · aucun téléchargement ni actualisation distante")
+            local_row.set_subtitle_lines(0)
+            supported = callable(getattr(broker, "preview_local_materialization", None))
+            allowed = bool(source.enabled and supported)
+            local_state = {"serial": 0}
+            for verify, label in ((False, "Aperçu local…"), (True, "Vérifier les fichiers…")):
+                button = self.action_button(label, "document-properties-symbolic")
+                button.set_sensitive(allowed)
+                button.set_valign(Gtk.Align.CENTER)
+                button.set_tooltip_text(
+                    "Vérifier les empreintes SHA de ce compte, hors réseau et en lecture seule"
+                    if verify else "Consulter les liens de ce compte sans lire les fichiers ni accéder au réseau"
+                )
+                def preview_numilog(
+                    control, sid=source.source_id, output=local_row,
+                    verify_files=verify, permitted=allowed, captured_scope=scope,
+                    state=local_state,
+                ):
+                    if not permitted or not sync_action_scope_current(self, captured_scope):
+                        return
+                    state["serial"] += 1
+                    serial = state["serial"]
+                    output.set_subtitle("Inspection locale en cours (lecture seule)…")
+                    def completed(result):
+                        if state["serial"] == serial and sync_action_scope_current(self, captured_scope):
+                            output.set_subtitle(sync_numilog_local_preview_presentation(result))
+                    def failed(_error):
+                        if state["serial"] == serial and sync_action_scope_current(self, captured_scope):
+                            output.set_subtitle("Aperçu local indisponible. Aucun téléchargement autorisé.")
+                    self.runner.submit(
+                        "Vérification locale Numilog…" if verify_files else "Aperçu local Numilog…",
+                        lambda: broker.preview_local_materialization(sid, verify_local_files=verify_files)
+                        if sync_action_scope_current(self, captured_scope) else None,
+                        completed, failed, control=control,
+                        priority=TaskPriority.USER_ACTION, kind="sync-preflight",
+                    )
+                button.connect("clicked", preview_numilog)
+                local_row.add_suffix(button)
+            group.add(local_row)
+
+        if source.provider_id in {"kobo", "numilog"}:
+            # Inventory consent is separate from local materialization.
+            def inventory_current(expected_identity=source.identity_id, captured_scope=scope):
+                return (
+                    sync_action_scope_current(self, captured_scope)
+                    and getattr(self.service.current_identity, "identity_id", None)
+                        == expected_identity
+                )
+
+            inventory_provider = "Numilog" if source.provider_id == "numilog" else "Kobo"
+            # #1346/#1905: an independent private-store policy for refreshing remote
             # inventory and rights. Never re-use the local acquisition toggle:
             # reading this policy makes no network request or download.
             inventory_reader = getattr(broker, "inventory_refresh_schedule", None)
@@ -743,7 +809,7 @@ def _refresh_sync_page(self) -> None:
                     pass
 
             inventory_row = Adw.ActionRow()
-            inventory_row.set_title("Actualisation automatique des notices Kobo")
+            inventory_row.set_title(f"Actualisation automatique des notices {inventory_provider}")
             inventory_row.set_subtitle_lines(0)
             if inventory_mode == "manual":
                 inventory_row.set_subtitle(
@@ -784,13 +850,14 @@ def _refresh_sync_page(self) -> None:
                 "Modifie seulement la politique de notices/droits de ce compte. "
                 "Aucune acquisition et aucun téléchargement."
             )
+            inventory_button.set_valign(Gtk.Align.CENTER)
             inventory_row.add_suffix(inventory_button)
             group.add(inventory_row)
 
             def change_inventory_schedule(
                 button, sid=source.source_id, account_label=display_label,
                 prior_mode=inventory_mode, prior_minutes=inventory_minutes,
-                current=download_current,
+                current=inventory_current, provider_label=inventory_provider,
             ):
                 if not current() or prior_mode not in {"manual", "on_start", "periodic"}:
                     return
@@ -820,7 +887,7 @@ def _refresh_sync_page(self) -> None:
                     except Exception:
                         if current():
                             self.show_error(
-                                "Planification des notices Kobo indisponible.",
+                                f"Planification des notices {provider_label} indisponible.",
                                 "Synchronisation",
                             )
                         return
@@ -833,7 +900,7 @@ def _refresh_sync_page(self) -> None:
                     apply_mode("manual")
                     return
                 dialog = Adw.MessageDialog.new(
-                    self, "Planifier les notices Kobo ?",
+                    self, f"Planifier les notices {provider_label} ?",
                     f"Compte : {account_label}.\n\n"
                     "Ce réglage autorise seulement la consultation du catalogue "
                     "personnel et des droits du compte, sans téléchargement, "
@@ -857,8 +924,7 @@ def _refresh_sync_page(self) -> None:
                 dialog.present()
 
             inventory_button.connect("clicked", change_inventory_schedule)
-        else:
-            group.add(row)
+
 
 
 def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:

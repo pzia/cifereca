@@ -49,7 +49,7 @@ def test_on_start_is_queued_once_and_never_calls_provider_on_gtk_thread():
     job = r.jobs[0]
     assert job.options["origin"] == "automatic"
     assert job.options["kind"] == "source-sync"
-    assert job.options["coalesce_key"] == "kobo:inventory:startup"
+    assert job.options["coalesce_key"] == "source:inventory:startup"
     assert not any(c[0] == "dispatch" for c in r.records["calls"])
     job.work()
     assert [
@@ -260,7 +260,7 @@ def test_startup_worker_redacts_provider_exception_without_leaking_secret():
     r.broker.synchronize_scheduled_inventory = lambda *args: (
         _ for _ in ()
     ).throw(RuntimeError("https://private.invalid/?token=TOP_SECRET"))
-    with pytest.raises(RuntimeError, match="Actualisation initiale des notices Kobo indisponible") as caught:
+    with pytest.raises(RuntimeError, match="Actualisation initiale des notices des comptes indisponible") as caught:
         r.jobs[0].work()
     assert "TOP_SECRET" not in str(caught.value)
 
@@ -307,7 +307,7 @@ def test_failed_first_account_is_redacted_and_second_account_still_runs():
         return NS(ok=True)
     r.broker.synchronize_scheduled_inventory = dispatch
     assert startup.dispatch_after_opening(r.window)
-    with pytest.raises(RuntimeError, match="Actualisation initiale des notices Kobo indisponible") as exc:
+    with pytest.raises(RuntimeError, match="Actualisation initiale des notices des comptes indisponible") as exc:
         r.jobs[0].work()
     assert "SECRET" not in str(exc.value)
     assert [

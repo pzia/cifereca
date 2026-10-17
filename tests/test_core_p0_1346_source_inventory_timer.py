@@ -99,7 +99,7 @@ def test_periodic_opt_in_creates_single_minute_heartbeat_then_due_dispatch():
     job = r.jobs[0]
     assert job.options["kind"] == "source-sync"
     assert job.options["origin"] == "automatic"
-    assert job.options["coalesce_key"] == "kobo:inventory:periodic"
+    assert job.options["coalesce_key"] == "source:inventory:periodic"
     assert not any(c[0] == "dispatch" for c in r.records["calls"])
     job.work()
     assert ("dispatch", "alice", "periodic") in r.records["calls"]
@@ -110,6 +110,38 @@ def test_on_start_policy_does_not_install_a_periodic_timer():
     r.configure()
     assert r.records["timers"] == {}
     assert r.jobs == []
+
+
+@pytest.mark.parametrize("failure", ["exception", "partial", "invalid_receipt"])
+def test_periodic_failed_profile_does_not_starve_other_identities_or_claim_success(failure):
+    accounts = [NS(
+        identity_id=identity, source_id="sync:" + character * 24,
+        provider_id="numilog" if identity == "bob" else "kobo",
+        connected=True, enabled=True, sync_capable=True, status="idle",
+        phase_states=(NS(phase="discover_rights", status="idle", last_attempt=""),),
+    ) for identity, character in (("alice", "a"), ("bob", "b"), ("carol", "c"))]
+    r = rig(accounts=accounts, modes={
+        row.source_id: {"mode": "periodic", "interval_minutes": 15}
+        for row in accounts
+    })
+    attempts = []
+    def dispatch(identity, trigger):
+        attempts.append((identity, trigger))
+        if identity == "alice":
+            if failure == "exception":
+                raise ValueError("https://private.invalid/?auth=PRIVATE")
+            if failure == "partial":
+                return NS(ok=False, facts={"private": "PRIVATE"})
+            return None
+        return NS(ok=True)
+    r.broker.synchronize_scheduled_inventory = dispatch
+    r.configure()
+    assert next(iter(r.records["timers"].values()))()
+    assert len(r.jobs) == 1 and attempts == []
+    with pytest.raises(RuntimeError, match="Actualisation des notices des comptes indisponible") as exc:
+        r.jobs[0].work()
+    assert attempts == [(identity, "periodic") for identity in ("alice", "bob", "carol")]
+    assert "PRIVATE" not in str(exc.value)
 
 
 def test_due_probe_uses_per_source_interval_and_running_status():
@@ -227,7 +259,7 @@ def test_provider_error_cannot_escape_automatic_worker():
         _ for _ in ()
     ).throw(ValueError("https://secret.invalid/?token=PRIVATE"))
     next(iter(r.records["timers"].values()))()
-    with pytest.raises(RuntimeError, match="Actualisation des notices Kobo indisponible") as exc:
+    with pytest.raises(RuntimeError, match="Actualisation des notices des comptes indisponible") as exc:
         r.jobs[0].work()
     assert "PRIVATE" not in str(exc.value)
 

@@ -1,4 +1,4 @@
-"""GTK-owned, opt-in Kobo inventory timer (#1346).
+"""GTK-owned, opt-in private-store inventory timer (#1346).
 
 A heartbeat only exists when a *per-source* periodic inventory policy is
 present. All due decisions are passive broker reads; workers revalidate the
@@ -79,7 +79,7 @@ def periodic_identities_due(
             for source in rows:
                 if (
                     getattr(source, "identity_id", None) != identity_id
-                    or getattr(source, "provider_id", None) != "kobo"
+                    or getattr(source, "provider_id", None) not in {"kobo", "numilog"}
                     or getattr(source, "sync_capable", None) is not True
                 ):
                     continue
@@ -90,7 +90,7 @@ def periodic_identities_due(
                 if policy is None:
                     continue
                 # The source-level clock is shared with opening/loan sync.
-                # Only discover_rights phase evidence may throttle a Kobo
+                # Only discover_rights phase evidence may throttle a private-store
                 # inventory refresh. Legacy test/dummy brokers without phase
                 # states keep their original passive source projection.
                 phase_rows = getattr(source, "phase_states", ())
@@ -113,6 +113,8 @@ def periodic_identities_due(
                     ):
                         continue
                 else:
+                    if getattr(source, "provider_id", None) == "numilog":
+                        continue  # Numilog requires its own attested inventory clock.
                     last_inventory_attempt = getattr(source, "last_attempt", "")
                     inventory_status = getattr(source, "status", "idle")
                 if getattr(source, "status", None) == "running":
@@ -219,7 +221,7 @@ def configure(
             for source in rows:
                 if (
                     getattr(source, "identity_id", None) == identity_id
-                    and getattr(source, "provider_id", None) == "kobo"
+                    and getattr(source, "provider_id", None) in {"kobo", "numilog"}
                     and getattr(source, "enabled", None) is True
                     and getattr(source, "connected", None) is True
                     and getattr(source, "sync_capable", None) is True
@@ -253,6 +255,7 @@ def configure(
             return True
 
         def work():
+            failures = 0
             # No unbounded refresh batch and no user-selected-account fallback.
             for identity_id in ids:
                 if (
@@ -263,18 +266,22 @@ def configure(
                     # manager/broker after the GTK tick checked its scope.
                     return
                 try:
-                    broker.synchronize_scheduled_inventory(identity_id, "periodic")
+                    receipt = broker.synchronize_scheduled_inventory(identity_id, "periodic")
+                    if getattr(receipt, "ok", None) is not True:
+                        failures += 1
                 except Exception:
-                    # Keep worker exceptions (signed URLs, account IDs, paths)
-                    # out of TaskRunner global UI feedback.
-                    raise RuntimeError("Actualisation des notices Kobo indisponible") from None
+                    # One failed account must not starve its eligible siblings.
+                    # Keep private exception text out of TaskRunner feedback.
+                    failures += 1
+            if failures:
+                raise RuntimeError("Actualisation des notices des comptes indisponible") from None
 
         try:
             window.runner.submit(
-                "Actualisation périodique des notices Kobo…",
+                "Actualisation périodique des notices des comptes…",
                 work, priority=TaskPriority.PROVIDER_SYNC,
                 kind="source-sync", origin="automatic",
-                coalesce_key="kobo:inventory:periodic",
+                coalesce_key="source:inventory:periodic",
             )
         except Exception:
             # A torn-down runner or plugin replacement cannot crash GTK tick.

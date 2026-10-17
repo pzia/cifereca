@@ -30,6 +30,8 @@ def test_milan_and_fixture_changes_trigger_real_gtk_e2e():
         "src/cifereca/core/sync_coordination.py",
         "src/plugins/youth-detail-enrichment/enrich.py",
         "src/plugins/constellations/page.py",
+        "src/plugins/home-page/cifereca_home.py",
+        "src/plugins/home-page/cifereca-plugin.json",
         "src/plugins/recommendations/page.py",
         "src/plugins/youth-source-milan/milan_youth.py",
         "src/plugins/youth-source-milan/cifereca-plugin.json",

@@ -256,6 +256,11 @@ def test_sync_source_declares_phase_capabilities_without_starting_acquisition(tm
                 provider_id="paris", credential_id="paris-1",
                 provider_label="Paris", identity_id="alice",
             ),
+            Account(
+                display_name="Numilog", unique_id="store-reader",
+                provider_id="numilog", credential_id="store-1",
+                provider_label="Numilog", identity_id="alice",
+            ),
         ]
         sessions = {
             "kobo::vault-1": NS(capabilities=NS(personal_library=True, backup=True),
@@ -263,6 +268,7 @@ def test_sync_source_declares_phase_capabilities_without_starting_acquisition(tm
             "kobo::vault-2": NS(capabilities=NS(personal_library=True, backup=False),
                                 connected=True),
             "paris::paris-1": NS(capabilities=NS(loans=True), connected=True),
+            "numilog::store-1": NS(capabilities=NS(personal_library=True), connected=True),
         }
         calls = []
         service = NS(
@@ -279,14 +285,21 @@ def test_sync_source_declares_phase_capabilities_without_starting_acquisition(tm
         broker = SynchronizationBrokerImpl(service)
         alice = broker.sources("alice")
         bob = broker.sources("bob")
-        assert len(alice) == 2 and len(bob) == 1
+        assert len(alice) == 3 and len(bob) == 1
         by_provider = {row.provider_id: row for row in alice}
         assert by_provider["kobo"].sync_capabilities == (
-            "remote_inventory", "entitlements", "local_materialization",
+            "remote_inventory", "entitlements", "local_materialization", "scheduled_refresh",
         )
         assert by_provider["paris"].sync_capabilities == ("entitlements",)
-        assert bob[0].sync_capabilities == ("remote_inventory", "entitlements")
-        assert "scheduled_refresh" not in by_provider["kobo"].sync_capabilities
+        assert bob[0].sync_capabilities == ("remote_inventory", "entitlements", "scheduled_refresh")
+        assert by_provider["numilog"].sync_capabilities == (
+            "remote_inventory", "entitlements", "scheduled_refresh",
+        )
+        for source in (*alice, *bob):
+            if source.provider_id in {"kobo", "numilog"}:
+                assert broker.inventory_refresh_schedule(source.source_id) == {
+                    "mode": "manual", "interval_minutes": 60,
+                }
         assert SyncSourceRef(
             source_id="legacy", identity_id="alice",
             provider_id="kobo", account_id="legacy", label="Kobo",
@@ -298,6 +311,18 @@ def test_sync_source_declares_phase_capabilities_without_starting_acquisition(tm
             sync_source_presentation(bob[0]).summary
         )
         assert calls == []  # Read-only projection never syncs or downloads.
+    finally:
+        storage.close()
+
+
+def test_personal_inventory_alone_does_not_invent_a_scheduler_for_other_providers(tmp_path):
+    storage = Storage(tmp_path / "unsupported-schedule.sqlite")
+    try:
+        broker = fake_broker(storage)
+        broker.service._sessions["paris::paris-1"].capabilities.personal_library = True
+        source = broker.sources()[0]
+        assert "remote_inventory" in source.sync_capabilities
+        assert "scheduled_refresh" not in source.sync_capabilities
     finally:
         storage.close()
 
