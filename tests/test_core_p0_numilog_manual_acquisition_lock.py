@@ -367,3 +367,22 @@ def test_numilog_manual_acquire_refuses_symlinked_identity_root_before_network(
         assert calls == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize('mutation', ['deleted', 'foreign_symlink'])
+def test_manual_numilog_revalidates_artifact_after_post_download_hook(tmp_path, monkeypatch, mutation):
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        foreign = tmp_path/'foreign.epub'
+        foreign.write_bytes(b'outside admitted identity')
+        def change_file(_item, path, _url, _directory):
+            path.unlink()
+            if mutation == 'foreign_symlink':
+                path.symlink_to(foreign)
+        monkeypatch.setattr(service.acquisition, 'run_post_download', change_file)
+        with pytest.raises(ProviderConfigurationError, match='artefact local non attesté'):
+            service.acquire_direct_item(item)
+        assert foreign.read_bytes()==b'outside admitted identity'
+        assert records[-1][1]['facts']=={'private_item':True,'error':'ProviderConfigurationError'}
+    finally:
+        service.close()

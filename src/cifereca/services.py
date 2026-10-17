@@ -2793,6 +2793,9 @@ class LibraryService:
                         raise ProviderConfigurationError(
                             "Numilog : rattachement du compte modifié"
                         )
+                    # Post-download hooks may remove or replace the file.
+                    # Attest the final artifact, not just its pre-hook path.
+                    require_local_artifact(path, target_dir)
                     # A provider-returned URL may contain single-use ACSM
                     # signatures. Never persist it as Acquisition.source_url.
                     result = self.acquisition.acquisition_from_direct(
