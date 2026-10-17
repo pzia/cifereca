@@ -81,7 +81,7 @@ def _book_type(node):
     if isinstance(values, str):
         values = [values]
     return isinstance(values, list) and any(
-        v in {"Book", "https://schema.org/Book", "http://schema.org/Book"}
+        isinstance(v, str) and v in {"Book", "https://schema.org/Book", "http://schema.org/Book"}
         for v in values
     )
 
