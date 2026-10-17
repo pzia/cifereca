@@ -27,11 +27,9 @@ def add_numilog_enrichment_action(host, selected_id, item, detail, context, *,
         # context. A changed profile invalidates both the worker's request
         # and its subsequent GTK callback.
         expected_identity_id = context[3] or ""
-        from cifereca.core.numilog_explicit_enrichment import enrich_numilog_result_once
-
         def do_enrich():
-            return enrich_numilog_result_once(
-                host.service, item, expected_identity_id=expected_identity_id,
+            return host.service.enrich_numilog_search_result(
+                item, expected_identity_id=expected_identity_id,
             )
 
         def success(enriched):
