@@ -7,6 +7,7 @@ import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.models import Account
+from cifereca.plugin_api import Cancelled, SyncResult
 from tests.test_core_p0_1905_numilog_inventory_schedule import _numilog
 
 
@@ -74,5 +75,79 @@ def test_scheduled_inventory_state_write_exception_is_scoped_to_one_account(
         repeated = broker.synchronize_scheduled_inventory("alice", "startup")
         assert repeated.ok and repeated.facts["attempted"] == 0
         assert len(calls) == 1
+    finally:
+        service.storage.close()
+
+
+class _CancelControl:
+    def __init__(self):
+        self.stopped = False
+
+    def cancel(self):
+        self.stopped = True
+
+    def check_cancelled(self):
+        if self.stopped:
+            raise Cancelled("task cancelled")
+
+
+def test_cancelled_before_dispatch_never_starts_scheduled_inventory(tmp_path):
+    service, account, _session, calls = _numilog(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        broker.set_inventory_refresh_schedule(broker._source_id(account), "on_start")
+        control = _CancelControl()
+        control.cancel()
+        with pytest.raises(Cancelled):
+            broker.synchronize_scheduled_inventory("alice", "startup", control=control)
+        assert calls == []
+        assert broker._scheduled_inventory_requested == set()
+        assert broker._scheduled_inventory_running == set()
+    finally:
+        service.storage.close()
+
+
+@pytest.mark.parametrize("failure", ["raised_cancelled", "returned_after_cancel"])
+def test_cancellation_is_not_swallowed_or_followed_by_sibling_refresh(
+    tmp_path, monkeypatch, failure,
+):
+    service, account, _session, calls = _numilog(tmp_path)
+    try:
+        second = Account(
+            display_name="Numilog second", unique_id="second-account",
+            provider_id="numilog", credential_id="vault-other",
+            provider_label="Numilog", identity_id="alice",
+        )
+        service.accounts.append(second)
+        service._sessions["numilog::vault-other"] = NS(
+            provider_id="numilog", credential_id="vault-other",
+            connected=True, capabilities=NS(personal_library=True, backup=False),
+        )
+        service.storage.provider_connection_put({
+            "identity_id": "alice", "provider_id": "numilog",
+            "credential_id": "vault-other", "enabled": True,
+        })
+        broker = SynchronizationBrokerImpl(service)
+        for current in (account, second):
+            broker.set_inventory_refresh_schedule(
+                broker._source_id(current), "on_start",
+            )
+
+        visited = []
+        def interrupt(self, source_id, request=None, control=None):
+            visited.append(source_id)
+            if failure == "raised_cancelled":
+                raise Cancelled("cancelled by user")
+            control.cancel()
+            return SyncResult(ok=True, changed=1)
+
+        monkeypatch.setattr(SynchronizationBrokerImpl, "synchronize_source", interrupt)
+        control = _CancelControl()
+        with pytest.raises(Cancelled):
+            broker.synchronize_scheduled_inventory("alice", "startup", control=control)
+        assert len(visited) == 1
+        assert broker._scheduled_inventory_running == set()
+        assert len(broker._scheduled_inventory_requested) == 1
+        assert calls == []
     finally:
         service.storage.close()
