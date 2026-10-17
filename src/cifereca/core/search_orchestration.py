@@ -554,6 +554,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     with self._search_generation_lock:
         self._search_generation += 1
         search_generation = self._search_generation
+        identity = self.current_identity
     requested = {str(x).strip().lower() for x in (provider_ids or ()) if str(x).strip() and str(x).strip().lower() != "local"}
     single = str(provider_id or "all").strip().lower()
     if single != "all": requested.add(single)
@@ -575,7 +576,6 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     )
     searchable.sort(key=lambda row: row.provider_id)
     provider_key = ",".join(sorted(x.provider_id for x in searchable)) or (",".join(sorted(requested)) or single)
-    identity = self.current_identity
     pref_key = "" if identity is None else f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
     types = tuple(sorted(content_types or ()))
     virtual_versions = ",".join(
@@ -586,8 +586,20 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     cache_key = hashlib.sha256(f"search-v8-progressive\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
+    def request_current_locked() -> bool:
+        return (
+            search_generation == self._search_generation
+            and self.current_identity is identity
+        )
+
+    def request_cancelled() -> bool:
+        with self._search_generation_lock:
+            if not request_current_locked():
+                return True
+        return bool(control is not None and callable(getattr(control, "cancelled", None)) and control.cancelled())
+
     def emit(batch):
-        if on_batch is None: return
+        if on_batch is None or request_cancelled(): return
         try: on_batch(batch)
         except Exception as exc:
             self.diagnostics.add("SEARCH", "progress callback", "error", detail={"error": type(exc).__name__, "message": str(exc)})
@@ -599,10 +611,18 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             groups: dict[str, list[SearchResult]] = {}
             for row in rows: groups.setdefault(str(row.source_provider or "unknown"), []).append(row)
             for pid in sorted(groups):
+                if request_cancelled():
+                    break
                 emit(CatalogSearchBatch(pid, self.provider_display_name(pid), tuple(groups[pid]), cached=True))
-            self.last_search = rows; self.last_search_warnings = []
+            cancelled = request_cancelled()
+            if not cancelled:
+                with self._search_generation_lock:
+                    if request_current_locked():
+                        self.last_search = rows; self.last_search_warnings = []
+                    else:
+                        cancelled = True
             completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            return CatalogSearchSummary(query, len(rows), len(groups), len(groups), 0, False, (), started_dt.isoformat(timespec="seconds"), completed)
+            return CatalogSearchSummary(query, len(rows), len(groups), len(groups), 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
 
     aggregate: list[SearchResult] = []
     warnings: list[str] = []
@@ -611,12 +631,6 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     futures = {}
     streamed: dict[str, int] = {}
     event_queue: Queue[ProviderSearchEvent] = Queue(maxsize=512)
-
-    def request_cancelled() -> bool:
-        with self._search_generation_lock:
-            if search_generation != self._search_generation:
-                return True
-        return bool(control is not None and callable(getattr(control, "cancelled", None)) and control.cancelled())
 
     def publish_from_provider(event: ProviderSearchEvent) -> None:
         # Bounded queue enforces backpressure on a noisy provider.
@@ -648,6 +662,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
 
     if searchable:
         for session in searchable:
+            if request_cancelled():
+                cancelled = True
+                break
             entry = self.registry.virtual_entry(session.provider_id)
             if (
                 entry is not None
@@ -697,6 +714,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 except Exception as exc:
                     provider_rows, provider_warnings = [], [f"{session.descriptor.display_name}: {exc}"]
                     error_code, error_message = type(exc).__name__, str(exc)
+                if request_cancelled():
+                    cancelled = True
+                    break
                 # An inventory revision during a search invalidates any
                 # partial results from the former generation.
                 expected = streamed.get(session.provider_id)
@@ -763,17 +783,24 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     if len(variants) > 1 or any(preference_scores.values()):
         rows.sort(key=lambda row: (self._search_relevance(query, row) if len(variants) > 1 else 0, preference_scores.get(id(row), 0)), reverse=True)
     warnings = list(dict.fromkeys(warnings))
-    if not cancelled:
+    cancelled = cancelled or request_cancelled()
+    if not cancelled and identity is not None:
         # Stale offline fallbacks must NEVER get a fresh mirrored_at timestamp.
         live_results = [
             row for row in rows
             if row.metadata.get("search_provenance") != "known_catalog_stale"
         ]
-        try: self._mirror_remote_results(live_results)
+        try: self._mirror_remote_results(live_results, identity_id=identity.identity_id)
         except Exception as exc: logger.warning("TRACE catalog mirror progressive search error=%s", type(exc).__name__)
+    cancelled = cancelled or request_cancelled()
     if not cancelled and not warnings and failed == 0:
         self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
-    self.last_search = rows; self.last_search_warnings = warnings
+    if not cancelled:
+        with self._search_generation_lock:
+            if request_current_locked():
+                self.last_search = rows; self.last_search_warnings = warnings
+            else:
+                cancelled = True
     self.diagnostics.add("SEARCH", "progressive federated", detail={"providers": provider_key, "field": field, "results": len(rows), "completed": completed_count, "failed": failed, "cancelled": cancelled, "dt_ms": int((time.monotonic()-started_mono)*1000)}, level="detailed")
     completed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     return CatalogSearchSummary(query, len(rows), len(searchable), completed_count, failed, cancelled, tuple(warnings), started_dt.isoformat(timespec="seconds"), completed_at)

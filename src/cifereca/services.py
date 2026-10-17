@@ -341,8 +341,14 @@ class LibraryService:
         identity = self.identity_by_id(identity_id)
         if identity is None:
             raise ProviderConfigurationError(f"Identité inconnue: {identity_id}")
-        self.current_identity = identity
-        self._account_context_epoch += 1
+        # Revoke in-flight progressive searches, including an Alice→Bob→Alice
+        # round trip. Serialize snapshot publication with this transition.
+        with self._search_generation_lock:
+            self.current_identity = identity
+            self._account_context_epoch += 1
+            self._search_generation += 1
+            self.last_search = []
+            self.last_search_warnings = []
         # History and bookings are identity-scoped snapshots. Invalidate them
         # at the service boundary so non-UI callers cannot observe data that
         # belonged to the previously selected identity.
