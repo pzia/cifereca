@@ -149,3 +149,35 @@ def test_runtime_output_symlink_is_not_indexed_or_removed(tmp_path, importer, mo
     assert existing.read_bytes() == b'%PDF-1.4\n% other book\n%%EOF\n'
     assert Path(requests[0]['destination']).is_symlink()
     assert not service.storage.artifacts()
+
+
+def test_source_changed_while_staging_never_starts_drm(tmp_path, importer, monkeypatch):
+    from cifereca.providers import ProviderConfigurationError
+    service, requests = importer
+    source = tmp_path / 'changing.acsm'
+    source.write_text('<fulfillment><id>before</id></fulfillment>')
+    original_copy = facade.shutil.copy2
+    def changed(source_path, target):
+        source.write_text('<fulfillment><id>after</id></fulfillment>')
+        return original_copy(source_path, target)
+    monkeypatch.setattr(facade.shutil, 'copy2', changed)
+    with pytest.raises(ProviderConfigurationError, match='changé'):
+        service.import_acsm(source)
+    assert not requests and not service.storage.artifacts()
+
+
+def test_staging_symlink_never_overwrites_another_file(tmp_path, importer):
+    from cifereca.library_files import sha256_file
+    from cifereca.providers import ProviderConfigurationError
+    service, requests = importer
+    source = tmp_path / 'staging-link.acsm'
+    source.write_text('<fulfillment><id>staging-link</id></fulfillment>')
+    work = tmp_path / 'data' / 'acquisition-work' / 'alice' / 'manual' / sha256_file(source)[:16]
+    work.mkdir(parents=True)
+    existing = tmp_path / 'kept.acsm'
+    existing.write_bytes(b'keep original foreign file')
+    (work / 'source.acsm').symlink_to(existing)
+    with pytest.raises(ProviderConfigurationError, match='ambigu'):
+        service.import_acsm(source)
+    assert existing.read_bytes() == b'keep original foreign file'
+    assert not requests

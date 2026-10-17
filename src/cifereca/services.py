@@ -2120,8 +2120,12 @@ class LibraryService:
         work = data_dir() / "acquisition-work" / identity.identity_id / "manual" / source_sha[:16]
         work.mkdir(parents=True, exist_ok=True)
         staged = work / "source.acsm"
+        if work.is_symlink() or staged.is_symlink():
+            raise ProviderConfigurationError("Zone de reprise ACSM ambiguë")
         if not staged.exists() or sha256_file(staged) != source_sha:
             shutil.copy2(source, staged)
+        if sha256_file(staged) != source_sha:
+            raise ProviderConfigurationError("Le fichier ACSM a changé pendant l’import")
         self.storage.acquisition_put({
             "acquisition_id": acquisition_id, "provider_id": provider_id, "credential_id": "manual",
             "identity_id": identity.identity_id, "item_id": source_sha, "title": title or source.stem,
@@ -2210,20 +2214,16 @@ class LibraryService:
         identity = self.identity_by_id(identity_id) if identity_id else self.current_identity
         iid = identity.identity_id if identity else identity_id
         try:
-            # A separate non-blocking lock avoids re-entering the global
-            # acquisition lock when a provider delegates to this public import.
-            selected_source = Path(source).expanduser().resolve()
-            if not selected_source.is_file() or selected_source.suffix.casefold() != ".acsm":
-                raise ProviderConfigurationError("Sélectionnez un fichier ACSM valide")
+            # One dedicated import lock also covers two paths containing the
+            # same ACSM, and avoids re-entering the global acquisition lock
+            # when a provider delegates fulfillment to this public broker.
             if identity is None:
                 raise ProviderConfigurationError("Aucune Identity active pour l'import ACSM")
-            source_key = sha256_file(selected_source)
-            lock_key = hashlib.sha256(f"{iid}:{source_key}".encode()).hexdigest()
             try:
-                with InterProcessLock(acquisition_lock_file().with_name(f"acsm-{lock_key}.lock")):
+                with InterProcessLock(acquisition_lock_file().with_name("manual-acsm.lock")):
                     result = self._import_acsm_impl(source, identity_id=iid, provider_id=provider_id, title=title)
             except LockBusyError:
-                raise ProviderConfigurationError("Un import de cet ACSM est déjà en cours") from None
+                raise ProviderConfigurationError("Un import ACSM est déjà en cours") from None
             outcome = "success" if result.get("status") in {"complete", "unchanged"} else "failed"
             self._record_action(iid, "import", outcome, provider_id=provider_id, facts={"status": result.get("status", "")})
             return result
