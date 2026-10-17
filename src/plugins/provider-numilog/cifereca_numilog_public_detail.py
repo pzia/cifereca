@@ -36,6 +36,7 @@ class _Scripts(HTMLParser):
         self.scripts = []
         self.active = False
         self.parts = []
+        self.parts_bytes = 0
 
     def handle_starttag(self, tag, attrs):
         if tag != "script":
@@ -48,12 +49,16 @@ class _Scripts(HTMLParser):
                 raise PublicDetailError("too_many_jsonld_scripts")
             self.active = True
             self.parts = []
+            self.parts_bytes = 0
 
     def handle_data(self, data):
         if self.active:
-            self.parts.append(data)
-            if sum(len(part) for part in self.parts) > MAX_JSONLD_BYTES:
+            # Count actual encoded bytes once per chunk: the previous
+            # sum(parts) loop had quadratic runtime on fragmented scripts.
+            self.parts_bytes += len(data.encode("utf-8", "replace"))
+            if self.parts_bytes > MAX_JSONLD_BYTES:
                 raise PublicDetailError("jsonld_too_large")
+            self.parts.append(data)
 
     def handle_endtag(self, tag):
         if tag == "script" and self.active:
@@ -116,6 +121,10 @@ def parse_public_detail_jsonld(html, product_url):
     try:
         reader.feed(html)
         reader.close()
+    except PublicDetailError:
+        # Stable public error codes are part of the parser contract.
+        # Do not fold bounds violations into a generic invalid_html.
+        raise
     except (ValueError, OverflowError):
         raise PublicDetailError("invalid_html") from None
     matches = []

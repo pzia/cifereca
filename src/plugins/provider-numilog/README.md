@@ -372,6 +372,28 @@ homologation de scraping Numilog en production**. L'activation automatique
 du singleton public reste désactivée. Aucune requête supplémentaire à la
 sélection/synchronisation ni aucune preuve de possession n'est ajoutée.
 
+
+## Stabilité et quotas du parseur JSON-LD (#1886, 0.1.31)
+
+Le parseur de fiche produit impose un plafond de **128 Kio UTF-8 par
+script JSON-LD**, en plus du plafond HTML de 1 Mio, du nombre maximal
+de scripts et de la profondeur d'exploration. Le décompte est cumulatif,
+linéaire sur des morceaux HTMLParser successifs : un flux fragmenté ne
+provoque ni contrôle de taille quadratique ni dépassement par caractères
+multioctets.
+
+Les erreurs sont intentionnellement **typiées**. Les violations
+`jsonld_too_large` et `too_many_jsonld_scripts` restent
+distinctes de `invalid_html`, `invalid_jsonld` et
+`missing_or_ambiguous_book`. Aucun fragment de HTML, URL d'acquisition
+ou valeur de page privée n'est inclus dans les messages. La couche
+HTTP publique continue de transformer les erreurs de structure en son
+code générique expurgé pour la présentation utilisateur.
+
+Cette correction ne modifie ni les droits de possession, ni la
+consultation implicite de fiches, ni le statut de qualification du
+scraping HTML réel. Tests entièrement hors réseau.
+
 ## Livraison refusée avec formulaire de connexion (#1884 / #2024, 0.1.30)
 
 `login_form_detected` signifie seulement qu'un champ HTML de mot de passe a
