@@ -1521,7 +1521,18 @@ def main() -> int:
         w = window[0]
         f = loan_sync_fixture
         scroll = f["sync_scroll"]
-        assert w.get_width() <= 760, ("Synchronisation minimum window width", w.get_width())
+        geometry = {
+            "window_width": w.get_width(),
+            "header_min": w.shell_header.measure(Gtk.Orientation.HORIZONTAL, -1)[0],
+            "scroll_min": scroll.measure(Gtk.Orientation.HORIZONTAL, -1)[0],
+            "sources_min": w._sync_sources_box.measure(Gtk.Orientation.HORIZONTAL, -1)[0],
+            "source_rows": [
+                {"title": row.get_title(), "minimum": sync_action_row(row).measure(Gtk.Orientation.HORIZONTAL, -1)[0]}
+                for row in walk(w._sync_sources_box) if isinstance(row, Adw.ActionRow)
+            ],
+        }
+        report["sync_minimum_width_geometry"] = geometry
+        assert w.get_width() <= 760, ("Synchronisation minimum window width", geometry)
         assert scroll.get_width() > 0
         allocations = []
         for row in (node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)):

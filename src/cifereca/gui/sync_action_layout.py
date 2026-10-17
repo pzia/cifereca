@@ -30,7 +30,14 @@ def add_sync_action(row, button):
         flow.set_margin_start(10)
         flow.set_margin_end(10)
         flow.set_margin_bottom(10)
-        container.append(flow)
+        # FlowBox's minimum request can otherwise prevent shrinking its
+        # toplevel before it gets the new width at which to reflow children.
+        viewport = Gtk.ScrolledWindow()
+        viewport.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        viewport.set_propagate_natural_width(False)
+        viewport.set_min_content_width(0)
+        viewport.set_child(flow)
+        container.append(viewport)
         row._cifereca_action_flow = flow
     button.set_valign(Gtk.Align.CENTER)
     # Large fonts must wrap the caption rather than impose a new minimum
