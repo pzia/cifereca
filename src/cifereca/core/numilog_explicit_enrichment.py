@@ -56,6 +56,11 @@ def can_enrich_numilog_result(item: object) -> bool:
     """UI visibility hint only; provider will re-attest all source evidence."""
     if not isinstance(item, SearchResult):
         return False
+    url = getattr(item, "friendly_url", None)
+    if (type(url) is not str
+            or not url.startswith("https://www.numilog.com/")
+            or "?" in url or "#" in url):
+        return False
     if item.source_provider == "numilog":
         return (item.owned is True
                 and item.source_collection == "library"
