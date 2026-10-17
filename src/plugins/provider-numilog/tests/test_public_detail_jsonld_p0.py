@@ -74,3 +74,23 @@ def test_rejects_bad_json_and_oversized_payload_without_leaking_it():
     assert "PRIVATE_MARKER" not in str(caught.value)
     with pytest.raises(PublicDetailError, match="html_too_large"):
         parse_public_detail_jsonld("a" * (1024 * 1024 + 1), URL)
+
+
+def test_bad_date_remains_unknown_not_valid_publication():
+    result = parse_public_detail_jsonld(page(book(datePublished="2026-99-99")), URL)
+    assert "published_at" not in result["fields"]
+    assert "published_at" not in result["field_evidence"]
+
+
+def test_untyped_script_and_malformed_book_type_fail_with_fixed_code():
+    html = '<script type>ignored</script>' + page(book(**{"@type": [{"bad": 1}]}))
+    with pytest.raises(PublicDetailError, match="missing_or_ambiguous_book"):
+        parse_public_detail_jsonld(html, URL)
+
+
+def test_nested_jsonld_graph_has_bounded_depth():
+    obj = book()
+    for _ in range(12):
+        obj = {"@graph": [obj]}
+    with pytest.raises(PublicDetailError, match="jsonld_too_deep"):
+        parse_public_detail_jsonld(page(obj), URL)
