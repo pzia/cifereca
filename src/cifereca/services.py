@@ -2755,6 +2755,8 @@ class LibraryService:
                     # returning. A reconnect/rebind during HTTP or ADEPT must
                     # not be committed under a different identity.
                     require_source(self, item, session=pinned_session)
+                    from .core.numilog_manual_acquisition import require_local_artifact
+                    require_local_artifact(path, target_dir)
                     from dataclasses import replace
                     # Never pass unverified private cover/link metadata to
                     # post-download hooks or the persisted Acquisition object.
