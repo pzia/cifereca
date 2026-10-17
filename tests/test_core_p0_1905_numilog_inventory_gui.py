@@ -20,8 +20,8 @@ def _sources():
 
 def _control(window, index=0):
     group = window._sync_sources_box.children[index]
-    assert len(group.children) == 2  # source + inventory, no backup controls
-    row = group.children[1]
+    assert len(group.children) == 3  # source + read-only preview + inventory
+    row = group.children[2]
     assert row.title == "Actualisation automatique des notices Numilog"
     return row.suffixes[0], row
 
