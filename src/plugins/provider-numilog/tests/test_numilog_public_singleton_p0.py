@@ -33,7 +33,7 @@ def test_manifest_installs_independent_opt_in_singleton_without_brokers():
     manifest = json.loads(
         (Path(__file__).parents[1] / "cifereca-plugin.json").read_text()
     )
-    assert manifest["package"]["version"] == PRIVATE_VERSION == "0.1.27"
+    assert manifest["package"]["version"] == PRIVATE_VERSION == "0.1.28"
     owned, catalogue = manifest["plugins"]
     assert owned["id"] == "provider.numilog"
     assert catalogue["id"] == "provider.numilog.catalog"
