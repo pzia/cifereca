@@ -9,6 +9,7 @@ from __future__ import annotations
 from html.parser import HTMLParser
 import re
 import unicodedata
+from urllib.parse import urlsplit
 
 from cifereca_numilog_html import public_book_url
 
@@ -58,8 +59,10 @@ class _VisibleLabels(HTMLParser):
         "nav", "footer", "header", "aside", "dialog", "svg", "button",
     })
 
-    def __init__(self):
+    def __init__(self, product_url):
         super().__init__(convert_charrefs=True)
+        self.product_path = urlsplit(product_url).path
+        self.product_form_seen = False
         self.tokens: list[str] = []
         self.ignored: list[str] = []
         self._h1_depth = 0
@@ -67,6 +70,21 @@ class _VisibleLabels(HTMLParser):
         self.h1_count = 0
 
     def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        # Numilog's ASP.NET root form wraps the whole public product page.
+        # Admit only the observed canonical wrapper, never login/account forms
+        # or a form whose target points at another product or signed endpoint.
+        if tag == 'form' and not self.ignored and (
+            len(attributes) == len(attrs)
+            and attributes.get('id') == 'aspnetForm'
+            and attributes.get('name') == 'aspnetForm'
+            and str(attributes.get('method', '')).casefold() == 'post'
+            and attributes.get('action') == self.product_path
+        ):
+            if self.product_form_seen:
+                raise PublicIdentifierError('ambiguous_product_form')
+            self.product_form_seen = True
+            return
         if self.ignored:
             if tag in self._IGNORED:
                 self.ignored.append(tag)
@@ -115,8 +133,9 @@ _MAX_DETAIL_TOKENS = 96
 def _product_tokens(reader: _VisibleLabels) -> list[str]:
     """Two bounded areas: product description and the explicit Détails block.
 
-    The HTML layout itself is NOT yet production-qualified. This conservative
-    anchor deliberately returns empty for unrecognized markup, rather than
+    The canonical WebForms wrapper is covered by two observed public fixtures;
+    other layouts remain unqualified. This conservative anchor returns empty
+    for unrecognized markup, rather than
     searching the whole page and mislabelling related titles or generic help.
     """
     if reader.h1_count != 1 or reader.title_end is None:
@@ -166,8 +185,8 @@ def _role(label: str) -> tuple[str, str | None] | None:
 def extract_public_identifiers(html: str, product_url: str) -> dict:
     """Extract only explicit label/valid EAN pairs, never inferred format rights.
 
-    This is a conservative *candidate* parser: labels in real upstream HTML
-    remain unqualified until independent live fixtures confirm its structure.
+    This is a conservative *candidate* parser: two upstream public excerpts
+    qualify the canonical wrapper, not arbitrary catalogue layouts.
     Multiple conflicting EANs for the same role fail closed.
     """
     if (type(product_url) is not str
@@ -176,7 +195,7 @@ def extract_public_identifiers(html: str, product_url: str) -> dict:
         raise PublicIdentifierError("invalid_product_url")
     if type(html) is not str or len(html.encode("utf-8", "replace")) > _MAX_HTML_BYTES:
         raise PublicIdentifierError("html_too_large")
-    reader = _VisibleLabels()
+    reader = _VisibleLabels(product_url)
     reader.feed(html)
     reader.close()
     # Only an unambiguous, bounded product region can supply identifiers;

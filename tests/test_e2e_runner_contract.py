@@ -682,3 +682,33 @@ def test_1599_recommendations_real_gtk_identity_and_local_isbn_action():
         'report["status"] = "PASS"',
     ):
         assert marker in probe
+
+
+def test_2027_numilog_consent_e2e_failures_have_stage_and_geometry_evidence():
+    """Keep the real GTK assertions; failures must identify their exact gate."""
+    import ast
+
+    probe = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(
+        encoding="utf-8"
+    )
+    ast.parse(probe)
+    for marker in (
+        'report["stage"] = "P1_1889_sync_760_post_capture_" + key',
+        'report["sync_760_post_capture"] = side_effects',
+        'report["stage"] = "P0_1905_numilog_inventory_preflight"',
+        'report["numilog_inventory_preflight"] = preflight',
+        'assert len(inventory_rows) == 1, (',
+        'assert preflight["manual_subtitle"], (',
+        'assert len(buttons) == 1, (',
+        '"P0_1905: planning button has no scroll-relative bounds"',
+        'report["stage"] = "P0_1905_numilog_inventory_click"',
+        'report["numilog_inventory_click_geometry"] = click_geometry',
+        'report.setdefault("numilog_inventory_scroll_history", []).append(',
+        'assert attempts <= 8, (',
+        'later(160, numilog_inventory_schedule_click)',
+        '"P0_1905: planning button outside viewport after scroll"',
+    ):
+        assert marker in probe
+    # No forced focus, synthetic click, skipped gate, or added retry replaces
+    # the physical XTEST action or changes any of the existing UX thresholds.
+    assert 'report["pointer_actions"].append(device[0].click_widget(button))' in probe

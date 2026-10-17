@@ -1169,6 +1169,13 @@ class LibraryService:
         """
         return library_mutation.materialize_to_identity(self, placement_id, target_identity_id)
 
+    def enrich_numilog_search_result(self, item: SearchResult, *, expected_identity_id: str) -> SearchResult:
+        """User-triggered metadata-only Numilog enrichment; never auto-sync."""
+        from .core.numilog_explicit_enrichment import enrich_numilog_result_once
+        return enrich_numilog_result_once(
+            self, item, expected_identity_id=expected_identity_id,
+        )
+
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
         key = f"{item.source_provider}:{item.source_credential}:{item.scenario}:{item.docbase}:{item.record_id}"
         ttl = int(self.config.get("cache.holdings_seconds", 300))

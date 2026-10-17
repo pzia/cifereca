@@ -1561,8 +1561,20 @@ def main() -> int:
         key = "large_font" if large_font else "normal_font"
         report.setdefault("sync_760_allocations", {})[key] = allocations
         report["checks"]["P1_1889_sync_760_" + key] = True
+        report["stage"] = "P1_1889_sync_760_post_capture_" + key
         capture("03i-sync-760-" + key)
-        assert not f["source_sync_calls"] and not f["prepare_calls"] and not f["materialize_calls"]
+        # The prior failure report only said "AssertionError" after this
+        # screenshot; record which of the strict no-side-effect gates failed.
+        side_effects = {
+            "source_sync_calls": len(f["source_sync_calls"]),
+            "prepare_calls": len(f["prepare_calls"]),
+            "materialize_calls": len(f["materialize_calls"]),
+        }
+        report["sync_760_post_capture"] = side_effects
+        assert not any(side_effects.values()), (
+            "P1_1889: sync layout must not trigger source or acquisition work",
+            side_effects,
+        )
         if not large_font:
             Gtk.Settings.get_default().set_property("gtk-font-name", "Sans 12")
             later(350, lambda: sync_narrow_allocations(True))
@@ -1576,18 +1588,55 @@ def main() -> int:
         w = window[0]
         f = loan_sync_fixture
         scroll = f["sync_scroll"]
+        report["stage"] = "P0_1905_numilog_inventory_preflight"
         rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
         # Exercise Numilog's explicit consent with the real GTK dialog before
         # continuing the existing Paris/Kobo acceptance path. Broker data is
         # synthetic; policy writes cannot execute inventory or acquisition.
-        inventory_row = next(row for row in rows
-                             if row.get_title() == "Actualisation automatique des notices Numilog")
-        assert "Mode manuel" in inventory_row.get_subtitle()
-        button = next(node for node in walk(sync_action_row(inventory_row))
-                      if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_label", None) == "Planifier les notices…")
-        assert button.get_sensitive() and not f["inventory_policy_writes"]
+        inventory_rows = [
+            row for row in rows
+            if row.get_title() == "Actualisation automatique des notices Numilog"
+        ]
+        preflight = {
+            "matching_rows": len(inventory_rows),
+            "window_size": [w.get_width(), w.get_height()],
+            "scroll_size": [scroll.get_width(), scroll.get_height()],
+            "scroll_mapped": bool(scroll.get_mapped()),
+            "scroll_value": round(scroll.get_vadjustment().get_value(), 2),
+            "policy_write_count": len(f["inventory_policy_writes"]),
+        }
+        report["numilog_inventory_preflight"] = preflight
+        assert len(inventory_rows) == 1, (
+            "P0_1905: expected one Numilog inventory row", preflight,
+        )
+        inventory_row = inventory_rows[0]
+        preflight["manual_subtitle"] = "Mode manuel" in (inventory_row.get_subtitle() or "")
+        assert preflight["manual_subtitle"], (
+            "P0_1905: Numilog consent row no longer starts in manual mode", preflight,
+        )
+        buttons = [
+            node for node in walk(sync_action_row(inventory_row))
+            if isinstance(node, Gtk.Button)
+            and getattr(node, "_cifereca_action_label", None) == "Planifier les notices…"
+        ]
+        preflight["matching_buttons"] = len(buttons)
+        assert len(buttons) == 1, (
+            "P0_1905: expected one Numilog planning button", preflight,
+        )
+        button = buttons[0]
+        preflight["button_sensitive"] = bool(button.get_sensitive())
+        preflight["button_mapped"] = bool(button.get_mapped())
+        assert button.get_sensitive() and not f["inventory_policy_writes"], (
+            "P0_1905: planning disabled or consent written before explicit click", preflight,
+        )
         ok, bounds = button.compute_bounds(scroll)
-        assert ok
+        preflight["bounds_available"] = bool(ok)
+        if ok:
+            preflight["button_bounds"] = [
+                round(bounds.get_x(), 2), round(bounds.get_y(), 2),
+                round(bounds.get_width(), 2), round(bounds.get_height(), 2),
+            ]
+        assert ok, ("P0_1905: planning button has no scroll-relative bounds", preflight)
         adjustment = scroll.get_vadjustment()
         adjustment.set_value(adjustment.get_value() + bounds.get_y() - 100)
         later(250, numilog_inventory_schedule_click)
@@ -1595,14 +1644,55 @@ def main() -> int:
     def numilog_inventory_schedule_click():
         w = window[0]
         f = loan_sync_fixture
+        report["stage"] = "P0_1905_numilog_inventory_click"
         row = next(row for row in walk(w._sync_sources_box)
                    if isinstance(row, Adw.ActionRow)
                    and row.get_title() == "Actualisation automatique des notices Numilog")
         button = next(node for node in walk(sync_action_row(row))
                       if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_label", None) == "Planifier les notices…")
         ok, bounds = button.compute_bounds(f["sync_scroll"])
-        assert ok and bounds.get_y() >= 0
-        assert bounds.get_y() + bounds.get_height() <= f["sync_scroll"].get_height()
+        click_geometry = {
+            "bounds_available": bool(ok),
+            "scroll_height": f["sync_scroll"].get_height(),
+            "scroll_value": round(f["sync_scroll"].get_vadjustment().get_value(), 2),
+            "button_mapped": bool(button.get_mapped()),
+        }
+        if ok:
+            click_geometry["button_bounds"] = [
+                round(bounds.get_x(), 2), round(bounds.get_y(), 2),
+                round(bounds.get_width(), 2), round(bounds.get_height(), 2),
+            ]
+        report["numilog_inventory_click_geometry"] = click_geometry
+        # GTK can reflow the FlowBox *after* the scrollbar moves: the 760 px
+        # preflight measured y=5395 but a later allocation can move the
+        # button above the viewport (observed y=-593 on CI #2032).
+        # Correct only the viewport and wait for one settled frame. Never
+        # click an invisible widget, skip a validation, or retry a failed run.
+        viewport_height = f["sync_scroll"].get_height()
+        if ok and (
+            bounds.get_y() < 0
+            or bounds.get_y() + bounds.get_height() > viewport_height
+        ):
+            attempts = f.get("numilog_inventory_scroll_corrections", 0) + 1
+            f["numilog_inventory_scroll_corrections"] = attempts
+            click_geometry["correction_attempt"] = attempts
+            report.setdefault("numilog_inventory_scroll_history", []).append(
+                dict(click_geometry)
+            )
+            assert attempts <= 8, (
+                "P0_1905: Numilog planning button never settled in the viewport",
+                report["numilog_inventory_scroll_history"],
+            )
+            adjustment = f["sync_scroll"].get_vadjustment()
+            adjustment.set_value(adjustment.get_value() + bounds.get_y() - 100)
+            later(160, numilog_inventory_schedule_click)
+            return
+        assert ok and bounds.get_y() >= 0, (
+            "P0_1905: planning button lacks visible scroll-relative bounds", click_geometry,
+        )
+        assert bounds.get_y() + bounds.get_height() <= viewport_height, (
+            "P0_1905: planning button outside viewport after scroll", click_geometry,
+        )
         report["pointer_actions"].append(device[0].click_widget(button))
         later(250, numilog_inventory_schedule_dialog)
 

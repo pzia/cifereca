@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.29, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.32, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.29'
+VERSION = '0.1.32'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -167,6 +167,7 @@ class NumilogSession(ProviderSession):
             'connect_started', 'connect_succeeded', 'credentials_missing',
             'connect_failed', 'session_closed', 'not_connected',
             'library_redirect', 'library_invalid', 'library_http_error',
+            'delivery_login_form_detected',
         }
         reason = reason if type(reason) is str and reason in allowed else 'unknown'
         connected = bool(self.connected)
@@ -538,7 +539,7 @@ class NumilogSession(ProviderSession):
         return produced,self.library_url
 
     def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None):
-        with DeliveryTrace(self.diagnostics, source=source) as trace:
+        with DeliveryTrace(self.diagnostics, source=source, connected_initial=self.connected) as trace:
             trace.fail('adept_unconfirmed')
             owner = identity_id
             if owner is None and self.identity_broker is not None:
@@ -603,12 +604,15 @@ class NumilogSession(ProviderSession):
                             else 'delivery_intermediate'
                         )
                         if kind == 'login':
-                            trace.fail('session_expired_confirmed')
-                            trace.event('html_selection','session_expired_confirmed',html_kind='login',hops=hop+1)
+                            # A password field proves a form, not cookie expiry
+                            # or the server's reason for returning this page.
+                            trace.fail('login_form_detected')
+                            trace.event('html_selection','login_form_detected',html_kind='login',hops=hop+1)
                             self._diag('livraison HTML',phase='download',
-                                       page_kind=page_kind,kind='login',result='session_expired')
+                                       page_kind=page_kind,kind='login',result='login_form_detected')
                             self.connected = False
-                            raise ProviderError('Numilog : session de connexion expirée ; reconnecter le compte')
+                            self._session_event('delivery_login_form_detected')
+                            raise ProviderError('Numilog : formulaire de connexion reçu au lieu du fichier ; reconnecter le compte puis réessayer explicitement')
                         if kind == 'error':
                             trace.fail('html_error')
                             trace.event('html_selection','html_error',html_kind='error',hops=hop+1)

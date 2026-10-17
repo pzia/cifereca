@@ -371,3 +371,77 @@ cette version améliore l'isolement et **ne constitue toujours pas une
 homologation de scraping Numilog en production**. L'activation automatique
 du singleton public reste désactivée. Aucune requête supplémentaire à la
 sélection/synchronisation ni aucune preuve de possession n'est ajoutée.
+
+
+## Stabilité et quotas du parseur JSON-LD (#1886, 0.1.31)
+
+Le parseur de fiche produit impose un plafond de **128 Kio UTF-8 par
+script JSON-LD**, en plus du plafond HTML de 1 Mio, du nombre maximal
+de scripts et de la profondeur d'exploration. Le décompte est cumulatif,
+linéaire sur des morceaux HTMLParser successifs : un flux fragmenté ne
+provoque ni contrôle de taille quadratique ni dépassement par caractères
+multioctets.
+
+Les erreurs sont intentionnellement **typiées**. Les violations
+`jsonld_too_large` et `too_many_jsonld_scripts` restent
+distinctes de `invalid_html`, `invalid_jsonld` et
+`missing_or_ambiguous_book`. Aucun fragment de HTML, URL d'acquisition
+ou valeur de page privée n'est inclus dans les messages. La couche
+HTTP publique continue de transformer les erreurs de structure en son
+code générique expurgé pour la présentation utilisateur.
+
+Cette correction ne modifie ni les droits de possession, ni la
+consultation implicite de fiches, ni le statut de qualification du
+scraping HTML réel. Tests entièrement hors réseau.
+
+## Livraison refusée avec formulaire de connexion (#1884 / #2024, 0.1.30)
+
+`login_form_detected` signifie seulement qu'un champ HTML de mot de passe a
+été reçu à la place du fichier. Cela ne prouve ni expiration du cookie, ni
+refus serveur précis. Le provider suspend la session et demande une reconnexion
+explicite, sans retry ni modification des règles de cookies ou des origines.
+`connected_initial` conserve le booléen initial de la tentative ; la transition
+`delivery_login_form_detected` expose ensuite `connected=False`. Aucun cookie,
+URL, HTML ou identifiant n'est exporté. Le code historique
+`session_expired_confirmed` reste accepté pour la lecture d'anciennes traces.
+
+Tests MockTransport : connexion réussie puis readBook 302 / HTML login 200,
+absence de fichier, nouvelle tentative après reconnexion explicite, cookies
+fictifs Domain/Path/Secure/expiration. HTTPX conserve SameSite mais ne dispose
+pas du contexte de navigation d'un navigateur pour l'appliquer : ces tests
+ne prouvent pas une politique navigateur ni la cause du refus Numilog réel.
+La recette fournisseur du même achat demeure non vérifiée.
+
+## Fiches publiques observées et wrapper WebForms (#1886 / #1072, 0.1.32)
+
+Deux GET anonymes, sans compte ni cookie préexistant, ont reçu HTTP 200 le
+17 octobre 2026. Les extraits sous `tests/fixtures/observed_public_*.html`
+conservent les balises/attributs pertinents et métadonnées publiques ; résumés,
+état ASP.NET, champs cachés, suivi et scripts hors JSON-LD sont retirés.
+
+| Fiche | Observation et régression |
+| --- | --- |
+| [1171334](https://www.numilog.com/1171334/blackbone--coltan-song-tome-1--des-15-ans.ebook) | JSON-LD `Product`, `additionalType=Book`, `sku=1171334`, canonical exact ; formulaire `aspnetForm` POST sur le chemin produit. EAN papier 9782092591086 et EPUB sans DRM 9782092591093 distincts. |
+| [1956345](https://www.numilog.com/1956345/le-piege-de-sainte-soline--megabassines--la-lutte-pour-l-eau.ebook) | Même structure. Les ISBN inline du résumé contredisent l'EAN papier de Détails : refus `public_identifier_evidence_unverified`, aucun choix automatique de l'édition. |
+
+Empreintes SHA-256 des réponses publiques complètes (non versionnées) :
+`654d1387e198cee55f1e95947ceae0111bec6f0dc82021c78e50da443829e1f8`
+et `a95acc980f0ad469fc1a7671159e4a875083154e8d8afcf0ed9432cdb33bf315`.
+Le second extrait conserve les labels contradictoires ; ne pas le réduire
+à une fixture positive en supprimant cette preuve.
+
+L'acceptation Product exige le type Book explicite, un SKU textuel identique
+à l'ID numérique canonique et une seule notice correspondante. Le parseur
+d'identifiants admet seulement le wrapper WebForms observé (id, name,
+méthode, action exacte, sans attribut doublé) ; les formulaires de connexion
+ou d'autres produits restent exclus. Aucun formulaire n'est soumis. Un
+wrapper canonique dupliqué ou des identifiants contradictoires échouent fermé.
+La provenance JSON-LD distingue Product/Book d'un Book direct ; `gtin13`
+n'est jamais transformé en ISBN numérique ni en droit de possession.
+
+`robots.txt` a aussi répondu HTTP 200 : son groupe générique interdit
+notamment les chemins de compte, commande et handlers, sans interdire ces
+fiches. Cette observation ne qualifie ni toutes les règles d'accès/CGS,
+ni la recherche paginée, ni l'association d'un achat authentifié à une fiche.
+Le catalogue reste désactivé par défaut. Aucun accès privé, lien ACSM ou
+acquisition n'est ajouté ; #1886/#1072 ne sont pas terminés par ce lot.
