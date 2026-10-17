@@ -467,19 +467,11 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
             if attempt == 0 and provider_rows:
                 primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
         except Exception as exc:
-            from .known_catalog_fallback import public_service_unavailable
-            outage = public_service_unavailable(exc)
+            from ..search_failures import search_failure_code
             # Provider exceptions can include signed URLs, account IDs and
             # personal search terms. Neither the result batch nor diagnostics
             # may carry their raw message.
-            failure_code = "SearchTemporarilyUnavailable" if outage else type(exc).__name__
-            if not outage:
-                import httpx
-                if isinstance(exc, httpx.HTTPStatusError):
-                    if exc.response.status_code == 401:
-                        failure_code = "SearchAuthenticationRequired"
-                    elif exc.response.status_code == 403:
-                        failure_code = "SearchAccessDenied"
+            failure_code = search_failure_code(exc) or type(exc).__name__
             if attempt == 0 or len(variants) == 1:
                 terminal_error_code = failure_code
                 terminal_error_message = "Recherche en ligne indisponible"
@@ -873,6 +865,7 @@ def _numilog_public_catalog_url(value: Any, *, cover: bool = False) -> str | Non
             if parsed.hostname not in {
                 "www.numilog.com", "services.numilog.com",
                 "www.edenlivres.fr", "storage.googleapis.com",
+                "couverture.numilog.com",
             } or parsed.query:
                 return None
         else:

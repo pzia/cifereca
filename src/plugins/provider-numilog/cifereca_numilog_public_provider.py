@@ -56,6 +56,17 @@ class NumilogPublicSession(ProviderSession):
         self.connected = False
         self._accounts = []
 
+    def enrich_public_detail(self, item):
+        """Explicit detail request only, not part of connect/search/sync."""
+        if not self.connected:
+            raise ProviderError("Numilog public : catalogue non connecté")
+        from cifereca_numilog_public_client import fetch_public_detail
+        from cifereca_numilog_public_detail import (
+            validate_public_detail_item, merge_public_detail,
+        )
+        url = validate_public_detail_item(item)  # No HTTP for foreign/private rows.
+        return merge_public_detail(item, fetch_public_detail(url))
+
     def search(self, query, scope="all", page=0, field="all"):
         if type(field) is not str or field != "all":
             raise ProviderCapabilityError("Numilog public : unsupported_field")

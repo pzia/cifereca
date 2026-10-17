@@ -2120,8 +2120,12 @@ class LibraryService:
         work = data_dir() / "acquisition-work" / identity.identity_id / "manual" / source_sha[:16]
         work.mkdir(parents=True, exist_ok=True)
         staged = work / "source.acsm"
+        if work.is_symlink() or staged.is_symlink():
+            raise ProviderConfigurationError("Zone de reprise ACSM ambiguë")
         if not staged.exists() or sha256_file(staged) != source_sha:
             shutil.copy2(source, staged)
+        if sha256_file(staged) != source_sha:
+            raise ProviderConfigurationError("Le fichier ACSM a changé pendant l’import")
         self.storage.acquisition_put({
             "acquisition_id": acquisition_id, "provider_id": provider_id, "credential_id": "manual",
             "identity_id": identity.identity_id, "item_id": source_sha, "title": title or source.stem,
@@ -2131,7 +2135,17 @@ class LibraryService:
         try:
             media_format = detect_acsm_format(staged) or "epub"
             suffix = ".pdf" if media_format == "pdf" else ".epub"
-            destination = self.library_identity_provider_dir(identity.identity_id, provider_id) / self._loan_destination_name(title or source.stem, suffix)
+            # A title is presentation, never an artifact identity. Keep each
+            # ACSM's outputs in its own namespace and refuse unindexed residue.
+            root = self.library_identity_provider_dir(identity.identity_id, provider_id)
+            destination_dir = root / ("acsm-" + source_sha)
+            if destination_dir.is_symlink() or (destination_dir.exists() and not destination_dir.is_dir()):
+                raise ProviderConfigurationError("Dossier d’import ACSM ambigu")
+            destination_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            filename = self._loan_destination_name(title or source.stem, suffix)
+            destination = destination_dir / filename
+            if any(destination_dir.iterdir()):
+                raise ProviderConfigurationError("Un artefact ACSM non attesté existe déjà ; réconciliation nécessaire")
             try:
                 profile_name, _profile_source = self.resolve_adept_profile_for_identity(identity.identity_id)
             except AdeptProfileResolutionError as exc:
@@ -2153,7 +2167,7 @@ class LibraryService:
             adept_binding = capture_binding(result, profile_name=profile_name, profile_id=originating_profile_id)
             artifact = result.get("artifact") if isinstance(result, dict) else None
             produced = Path(str((artifact or {}).get("path") or destination))
-            if produced.resolve() != destination.resolve():
+            if produced.is_symlink() or produced.resolve() != destination.resolve():
                 raise ProviderConfigurationError("Chemin d’artefact ADEPT inattendu")
             if not produced.is_file():
                 raise ProviderConfigurationError("Le runtime DRM n'a produit aucun Artifact")
@@ -2163,8 +2177,10 @@ class LibraryService:
             expected_suffix = ".pdf" if inspected.media_format == "pdf" else ".epub"
             if produced.suffix.casefold() != expected_suffix:
                 corrected = produced.with_suffix(expected_suffix)
-                corrected.unlink(missing_ok=True)
-                produced.replace(corrected)
+                # link() atomically refuses any existing destination, including
+                # a dangling symlink. Never unlink another local document.
+                os.link(produced, corrected)
+                produced.unlink()
                 produced = corrected
             indexed = self.catalog_index_path(
                 produced, title=title or source.stem, item_id=source_sha,
@@ -2198,7 +2214,16 @@ class LibraryService:
         identity = self.identity_by_id(identity_id) if identity_id else self.current_identity
         iid = identity.identity_id if identity else identity_id
         try:
-            result = self._import_acsm_impl(source, identity_id=identity_id, provider_id=provider_id, title=title)
+            # One dedicated import lock also covers two paths containing the
+            # same ACSM, and avoids re-entering the global acquisition lock
+            # when a provider delegates fulfillment to this public broker.
+            if identity is None:
+                raise ProviderConfigurationError("Aucune Identity active pour l'import ACSM")
+            try:
+                with InterProcessLock(acquisition_lock_file().with_name("manual-acsm.lock")):
+                    result = self._import_acsm_impl(source, identity_id=iid, provider_id=provider_id, title=title)
+            except LockBusyError:
+                raise ProviderConfigurationError("Un import ACSM est déjà en cours") from None
             outcome = "success" if result.get("status") in {"complete", "unchanged"} else "failed"
             self._record_action(iid, "import", outcome, provider_id=provider_id, facts={"status": result.get("status", "")})
             return result

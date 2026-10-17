@@ -76,3 +76,51 @@ def fetch_public_search(query: str, *, page: int = 0, field: str = "all",
         )
     except PublicSearchParseError:
         raise ProviderError("Numilog : public_catalog_layout_unverified") from None
+
+
+def fetch_public_detail(product_url: str, *, timeout: float = 15.0):
+    """Explicit on-demand, anonymous product detail; never called by sync/search.
+
+    No redirects, account cookies, signed endpoints or unbounded responses.
+    """
+    from cifereca_numilog_html import public_book_url
+    from cifereca_numilog_public_detail import (
+        MAX_DETAIL_BYTES, PublicDetailError, parse_public_detail_jsonld,
+    )
+    if (type(product_url) is not str
+            or public_book_url(product_url, base_url=PUBLIC_ORIGIN + "/") != product_url
+            or not product_url.startswith(PUBLIC_ORIGIN + "/")):
+        raise ProviderCapabilityError("Numilog : invalid_public_product_url")
+    try:
+        with httpx.Client(
+            timeout=timeout, follow_redirects=False, trust_env=False,
+            headers={"User-Agent": "Cifereca-Numilog-Public/1.0",
+                     "Accept": "text/html", "Accept-Language": "fr-FR,fr;q=0.9"},
+        ) as client:
+            with client.stream("GET", product_url) as response:
+                status = response.status_code
+                if status in (401, 403):
+                    raise ProviderError("Numilog : public_detail_forbidden")
+                if status == 429:
+                    raise ProviderError("Numilog : public_detail_rate_limited")
+                if status in (301, 302, 303, 307, 308):
+                    raise ProviderError("Numilog : public_detail_redirect_unverified")
+                if status != 200:
+                    raise ProviderError("Numilog : public_detail_unavailable")
+                mime = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if mime not in ("text/html", "application/xhtml+xml"):
+                    raise ProviderError("Numilog : public_detail_unexpected_mime")
+                chunks, size = [], 0
+                for chunk in response.iter_bytes():
+                    size += len(chunk)
+                    if size > MAX_DETAIL_BYTES:
+                        raise ProviderError("Numilog : public_detail_response_too_large")
+                    chunks.append(chunk)
+    except httpx.HTTPError:
+        raise ProviderError("Numilog : public_detail_network_unavailable") from None
+    try:
+        return parse_public_detail_jsonld(
+            b"".join(chunks).decode("utf-8-sig", errors="replace"), product_url,
+        )
+    except PublicDetailError:
+        raise ProviderError("Numilog : public_detail_layout_unverified") from None

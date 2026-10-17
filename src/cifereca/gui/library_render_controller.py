@@ -23,6 +23,7 @@ def _render_phase_probe(window, clock, category: str, started: float):
     record = getattr(monitor, "record_phase", None)
     if not callable(record):
         return None
+    generation = getattr(monitor, "capture_generation", None)
     try:
         allocator = getattr(monitor, "new_operation_id", None)
         operation_id = allocator() if callable(allocator) else None
@@ -30,13 +31,22 @@ def _render_phase_probe(window, clock, category: str, started: float):
         operation_id = None
     prior = started
 
+    def is_current() -> bool:
+        return (
+            getattr(monitor, "detailed_capture_enabled", False) is True
+            and getattr(monitor, "capture_generation", None) == generation
+        )
+
     def mark(phase: str) -> None:
         nonlocal prior
+        if not is_current():
+            return
         now = clock()
         try:
             record(
                 category, phase, max(0.0, (now - prior) * 1000),
                 operation_id=operation_id, trigger="navigation",
+                capture_generation=generation,
             )
         except Exception:
             # A disabled/misbehaving monitor cannot break a GTK render.
@@ -45,6 +55,7 @@ def _render_phase_probe(window, clock, category: str, started: float):
         prior = clock()
 
     mark.operation_id = operation_id
+    mark.is_current = is_current
     return mark
 
 
@@ -105,7 +116,10 @@ def render_library(window, entries: list[dict[str, Any]] | None = None, *, perf_
     # GC observation is opt-in and only surrounds native GTK model updates.
     # No hook is installed for headless adapters or ordinary rendering.
     monitor = getattr(window, "ui_perf", None)
-    gc_probe = getattr(monitor, "observe_gc", None) if phase is not None else None
+    gc_probe = (
+        getattr(monitor, "observe_gc", None)
+        if phase is not None and phase.is_current() else None
+    )
     if callable(gc_probe) and callable(getattr(window.library_page, "get_root", None)):
         with gc_probe("library"):
             window.library_page.show_rows(rows, total_count=len(entries))
@@ -119,7 +133,7 @@ def render_library(window, entries: list[dict[str, Any]] | None = None, *, perf_
     if phase is not None:
         phase("selection")
     window.ui_perf.record("render_library", (perf_counter() - _perf_started) * 1000.0)
-    if phase is not None:
+    if phase is not None and phase.is_current():
         _observe_after_paint(
             window, "library", window.library_page, perf_counter,
             operation_id=getattr(phase, "operation_id", None),
@@ -143,7 +157,10 @@ def render_recent(window, items: list[dict[str, Any]] | None = None, *, perf_cou
     if phase is not None:
         phase("facets")
     monitor = getattr(window, "ui_perf", None)
-    gc_probe = getattr(monitor, "observe_gc", None) if phase is not None else None
+    gc_probe = (
+        getattr(monitor, "observe_gc", None)
+        if phase is not None and phase.is_current() else None
+    )
     if callable(gc_probe) and callable(getattr(window.recent_page, "get_root", None)):
         with gc_probe("recent"):
             window.recent_page.show_rows(rows)
@@ -152,7 +169,7 @@ def render_recent(window, items: list[dict[str, Any]] | None = None, *, perf_cou
     if phase is not None:
         phase("model_update")
     window.ui_perf.record("render_recent", (perf_counter() - _perf_started) * 1000.0)
-    if phase is not None:
+    if phase is not None and phase.is_current():
         _observe_after_paint(
             window, "recent", window.recent_page, perf_counter,
             operation_id=getattr(phase, "operation_id", None),
