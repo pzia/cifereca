@@ -153,7 +153,7 @@ def test_numilog_manual_acquire_blocks_existing_or_ambiguous_local_evidence(
         service.close()
 
 
-@pytest.mark.parametrize("change", ["rebound", "session_swap", "disable"])
+@pytest.mark.parametrize("change", ["rebound", "session_swap", "disable", "account_changed"])
 def test_numilog_owner_change_during_download_prevents_registration(
     tmp_path, monkeypatch, change,
 ):
@@ -171,6 +171,8 @@ def test_numilog_owner_change_during_download_prevents_registration(
                 service._sessions[service._session_key("numilog", account.credential_id)] = (
                     type(session)(**vars(session))
                 )
+            elif change == "account_changed":
+                account.unique_id = "reassigned-account"
             else:
                 broker = SynchronizationBrokerImpl(service)
                 service.storage.metadata_set(
