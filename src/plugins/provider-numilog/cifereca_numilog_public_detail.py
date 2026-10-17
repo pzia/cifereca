@@ -172,3 +172,95 @@ def parse_public_detail_jsonld(html, product_url):
         "downloadable": False,
         "download_url": None,
     }
+
+
+def merge_public_detail(item, detail):
+    """Opt-in projection onto an attested *public catalogue* SearchResult.
+
+    Never use this function for a purchased/private Numilog row. The Book
+    JSON-LD may contain a generic ISBN: keep it edition-unspecified even when
+    the listing identifies an EPUB. Offers cannot prove entitlement.
+    Existing card values win; disagreements are signalled, not overwritten.
+    """
+    from dataclasses import replace
+
+    from cifereca.plugin_api import ProviderCapabilityError
+    from cifereca_numilog_public import _query
+
+    error = "Numilog public : detail_evidence_conflict"
+    url = getattr(item, "friendly_url", None)
+    metadata = getattr(item, "metadata", None)
+    if (type(url) is not str
+            or public_book_url(url, base_url="https://www.numilog.com/") != url
+            or type(metadata) is not dict
+            or getattr(item, "source_provider", None) != "numilog-catalog"
+            or getattr(item, "source_credential", None) != "__public__"
+            or getattr(item, "source_collection", None) != "public_catalog"
+            or getattr(item, "owned", None) is not False
+            or getattr(item, "downloadable", None) is not False
+            or getattr(item, "download_url", None) is not None):
+        raise ProviderCapabilityError(error)
+    product_id = urlsplit(url).path.split("/")[1]
+    if (getattr(item, "record_id", None) != "numilog:public:" + product_id
+            or metadata.get("source_item_id") != product_id):
+        raise ProviderCapabilityError(error)
+    try:
+        _query(metadata.get("source_url"))
+    except Exception:
+        raise ProviderCapabilityError(error) from None
+
+    if (type(detail) is not dict or detail.get("product_url") != url
+            or detail.get("owned") is not False
+            or detail.get("downloadable") is not False
+            or detail.get("download_url", False) is not None
+            or type(detail.get("fields")) is not dict
+            or type(detail.get("field_evidence")) is not dict):
+        raise ProviderCapabilityError(error)
+    fields = detail["fields"]
+    evidence = detail["field_evidence"]
+    allowed = {
+        "title", "description", "language", "published_at",
+        "isbn_edition_unspecified", "authors", "publisher",
+    }
+    if not set(fields).issubset(allowed) or set(evidence) != set(fields):
+        raise ProviderCapabilityError(error)
+    for key in fields:
+        proof = evidence[key]
+        if (type(proof) is not dict
+                or proof.get("source_url") != url
+                or proof.get("kind") != "observed_public_jsonld"
+                or proof.get("edition_proven") is not False):
+            raise ProviderCapabilityError(error)
+
+    projection = {}
+    conflicts = []
+    for key, target in (
+        ("description", "description"), ("published_at", "published_at"),
+        ("publisher", "publisher"), ("authors", "author"),
+    ):
+        value = fields.get(key)
+        if key == "authors":
+            if not isinstance(value, list) or not value:
+                continue
+            value = " ; ".join(value)
+        if not isinstance(value, str) or not value:
+            continue
+        original = getattr(item, target, None)
+        if original:
+            if original.strip() != value.strip():
+                conflicts.append(key)
+        else:
+            projection[target] = value
+    if fields.get("title") and fields["title"].strip() != item.title.strip():
+        conflicts.append("title")
+    next_meta = dict(metadata)
+    next_meta["public_detail"] = {
+        "status": "observed_jsonld",
+        "source_url": url,
+        "fields": dict(fields),
+        "field_evidence": dict(evidence),
+        "listing_conflicts": tuple(conflicts),
+        "edition_match": "canonical_product_url_only",
+        "rights_proven": False,
+    }
+    return replace(item, metadata=next_meta, **projection)
