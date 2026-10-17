@@ -895,6 +895,12 @@ class SynchronizationBrokerImpl:
                               facts={"reason": "not_supported"})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         state = self._state(source_id)
+        # Keep the previous private-inventory evidence when a provider
+        # rejects work after the broker's initial enabled/connection check.
+        previous_inventory = {
+            key: state[key] for key in ("inventory_last_attempt", "inventory_status")
+            if key in state
+        }
         state.update(last_attempt=now, status="running", error="", scope="manual",
                      identity_id=str(getattr(account, "identity_id", "") or ""))
         # Only a real private-store library operation starts this clock. A
@@ -920,6 +926,22 @@ class SynchronizationBrokerImpl:
                 self._set_state(source_id, state); self._notify()
                 return SyncResult(ok=False, warnings=("invalid sync response",),
                                   facts={"reason": "invalid_response"})
+            if result.get("status") == "skipped":
+                # The source can be revoked after our local admission check
+                # but before the underlying service starts remote inventory.
+                # Skipped is not proof of a successful refresh and must not
+                # mint last_success or advance the private inventory clock.
+                state.update(status="skipped", error="")
+                if refreshes_private_inventory:
+                    for key in ("inventory_last_attempt", "inventory_status"):
+                        if key in previous_inventory:
+                            state[key] = previous_inventory[key]
+                        else:
+                            state.pop(key, None)
+                self._set_state(source_id, state); self._notify()
+                return SyncResult(ok=True, changed=0, facts={
+                    "status": "skipped", "skipped": True,
+                })
             facts = {
                 name: result[name] for name in _SYNC_PUBLIC_COUNTS
                 if type(result.get(name)) is int and 0 <= result[name] <= 1_000_000
