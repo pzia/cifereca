@@ -96,6 +96,10 @@ def _methods():
         AdaptiveActionBar=lambda **kwargs: Widget(),
         add_css=lambda *args: None,
         clear_box=lambda widget: widget.children.clear(),
+        # Callback/scope tests isolate native layout; its real implementation
+        # has separate component and GTK allocation acceptance tests.
+        add_sync_action=lambda row, button: row.add_suffix(button),
+        sync_action_row=lambda row: row,
         sync_identity_action_label=sync_identity_action_label,
         sync_source_presentation=sync_source_presentation,
         sync_source_row_labels=sync_source_row_labels,
