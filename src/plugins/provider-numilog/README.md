@@ -229,3 +229,35 @@ les pages produit réelles et leurs JSON-LD, la seconde page commerciale et
 les conditions d'accès live restent à qualifier. Le contrat Core `holdings`
 et l'action UI ne sont pas branchés dans cet incrément. Il n'existe donc
 aucune garantie d'extraction de champs JSON-LD présents sur les pages réelles.
+
+
+## Achat Numilog : fiche commerciale détaillée sur demande (#1072, 0.1.26)
+
+`NumilogSession.enrich_owned_public_detail(owned_item)` est une **nouvelle
+action opt-in Python**, non déclenchée par `library`, `search`, `holdings`,
+la synchronisation, le démarrage ou l'interface. Le point d'entrée réutilise
+la vérification d'appartenance du compte et la lecture de l'inventaire
+`MesLivres` frais de `enrich_owned_public_listing` : doublons, compte
+différent, achat disparu et URL non attestée sont refusés. Le lien public
+exact de la ligne achetée doit être confirmé par une **carte produit publique**
+sur la première page de recherche avant une seule requête additionnelle
+anonyme vers la fiche `/ID/slug.ebook`.
+
+L'objet JSON-LD `Book` est analysé sans faire appel au client privé.
+`merge_attested_owned_public_detail` exige la même URL canonique et
+un titre cohérent ; un titre contradictoire bloque l'enrichissement. Seuls
+les champs bibliographiques **manquants** sont projetés sur un **nouveau**
+`SearchResult`, avec preuves sous `metadata.public_detail_enrichment` ;
+les désaccords avec la carte publique sont conservés comme avertissements,
+et aucune métadonnée ou droit transmis par l'appelant non fiable n'est repris.
+Un ISBN non rattaché à un format reste
+`public_detail_enrichment.isbn_edition_unspecified` : **aucune preuve
+d'ISBN numérique acheté**, d'EPUB/PDF réellement détenu, de DRM, de droit
+de fulfillment, de fichier ou de prix historique n'est inférée. Les champs
+de droits et les URL de téléchargement sont inchangés.
+
+La fiche HTML live, ses JSON-LD et la correspondance d'édition numérique
+restent à qualifier avec captures autorisées. La méthode n'est pas encore
+raccordée au contrat `holdings` ni à une action UI ; le catalogue public
+reste désactivé par défaut. Les tests sont **offline et synthétiques**,
+sans achat ou requête réelle. Le P0 #1072 reste ouvert après cette tranche.
