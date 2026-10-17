@@ -333,3 +333,41 @@ désactivé par défaut. Les tests HTML sont **synthétiques** et ne qualifient
 pas encore la structure DOM réelle de Numilog : confirmation sur captures
 expurgées avec consentement, ISBN EPUB/PDF multiples et protections
 réelles reste nécessaire avant promotion de ces champs dans l'UI.
+
+
+## Bornage des identifiants visibles d'une fiche (#1072 / #1886, 0.1.29)
+
+La recherche d'EAN/ISBN HTML de `0.1.28` parcourait tous les textes
+visibles dès qu'une page contenait « Détails ». C'était insuffisant :
+un EAN inclus dans l'en-tête, un pied de page, un guide des formats ou une
+suggestion pouvait être **faussement attribué au livre**.
+
+`extract_public_identifiers` isole désormais les textes visibles **après
+un seul `h1` produit**, en exigeant un marqueur « Détails » dans une
+fenêtre bornée, et en séparant deux zones :
+- la description du livre, limitée par le début du guide des formats ;
+- le bloc « Détails », limité par les titres « Auteur(s) du livre »,
+  « Avis clients », « Suggestions personnalisées », etc.
+
+Le parseur ignore en outre `script/style/form/template/nav/header/footer/`
+`aside/dialog/iframe`; il refuse les pages à titres `h1` multiples,
+les marqueurs manquants et les blocs de taille excessive. Un ISBN
+papetier/numérique explicitement écrit dans le résumé reste admissible
+**uniquement avant le guide**, tandis que l'EAN EPUB explicitement étiqueté
+dans « Informations ebook » reste admissible dans « Détails ».
+
+Chaque preuve porte désormais
+`observation_scope=bounded_product_body_or_details`, revalidé par les
+deux chemins d'enrichissement avant propagation. Une ancienne preuve sans
+cette portée ne peut pas être promue en ISBN de fichier possédé, ce qui
+reste interdit indépendamment de la version.
+
+**Qualification externe limitée** : le texte accessible des fiches
+[Blackbone](https://www.numilog.com/1171334/blackbone--coltan-song-tome-1--des-15-ans.ebook)
+et [Sainte-Soline](https://www.numilog.com/1956345/le-piege-de-sainte-soline--megabassines--la-lutte-pour-l-eau.ebook)
+montre les labels et leur ordre, mais le HTML brut n'a pas été obtenu dans
+l'environnement de recette. Tous les nouveaux tests DOM sont **synthétiques** :
+cette version améliore l'isolement et **ne constitue toujours pas une
+homologation de scraping Numilog en production**. L'activation automatique
+du singleton public reste désactivée. Aucune requête supplémentaire à la
+sélection/synchronisation ni aucune preuve de possession n'est ajoutée.
