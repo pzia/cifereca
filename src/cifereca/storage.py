@@ -2020,6 +2020,31 @@ class Storage:
         rows = self.acquisitions(acquisition_id=acquisition_id)
         return rows[0] if rows else None
 
+    def numilog_purchase_has_local_conflict(
+        self, *, credential_id: str, item_id: str,
+    ) -> bool:
+        """Conservatively block duplicate/partial acquisitions for one edition.
+
+        Exact stable account-scoped item ID only. No global acquisition scan,
+        raw ledger payload, path or title leaves SQLite.
+        """
+        from .core.numilog_manifest_rights import _scoped_record_id
+        if (_scoped_record_id(item_id, credential_id) is None):
+            raise ValueError("invalid_numilog_purchase")
+        with self._lock, self._connect() as db:
+            return (
+                db.execute(
+                    "SELECT 1 FROM acquisition_ledger WHERE provider_id='numilog' "
+                    "AND credential_id=? AND item_id=? LIMIT 1",
+                    (credential_id, item_id),
+                ).fetchone() is not None
+                or db.execute(
+                    "SELECT 1 FROM placements WHERE provider_id='numilog' "
+                    "AND source_item_id=? LIMIT 1",
+                    (item_id,),
+                ).fetchone() is not None
+            )
+
     def source_materialization_evidence(
         self, *, provider_id: str, credential_id: str, account_id: str,
         identity_id: str, max_rows: int = 100_000,
