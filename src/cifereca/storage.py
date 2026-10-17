@@ -1905,7 +1905,7 @@ class Storage:
         """
         scope = (identity_id, credential_id, account_id)
         if (not all(type(value) is str and 0 < len(value) <= 1024
-                    and not any(ch in value for ch in "\\0\\r\\n")
+                    and not any(ch in value for ch in "\0\r\n")
                     for value in scope)
                 or type(candidate_ids) is not tuple
                 or len(candidate_ids) > 200_000
