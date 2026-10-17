@@ -1519,6 +1519,10 @@ def main() -> int:
             scroll = scroll.get_parent()
         f["sync_scroll"] = scroll
         f["sync_original_font"] = Gtk.Settings.get_default().get_property("gtk-font-name")
+        long_name_row = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
+        f["sync_long_name_row"] = long_name_row
+        f["sync_original_title"] = long_name_row.get_title()
+        long_name_row.set_title("Compte familial de démonstration — plusieurs éditions homonymes et un nom volontairement long")
         w.set_default_size(760, 780)
         later(350, lambda: sync_narrow_allocations(False))
 
@@ -1564,6 +1568,7 @@ def main() -> int:
             later(350, lambda: sync_narrow_allocations(True))
             return
         Gtk.Settings.get_default().set_property("gtk-font-name", f["sync_original_font"])
+        f["sync_long_name_row"].set_title(f["sync_original_title"])
         w.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
         later(350, begin_numilog_inventory_acceptance)
 

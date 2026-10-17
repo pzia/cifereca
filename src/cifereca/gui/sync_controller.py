@@ -13,7 +13,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib, Pango
 
 from ..plugin_api import SyncRequest
-from .action_widgets import AdaptiveActionBar, add_css, clear_box
+from .action_widgets import add_css, clear_box
 from .sync_view import (
     sync_identity_action_label, sync_source_presentation,
     sync_source_row_labels,
@@ -34,17 +34,18 @@ def _build_sync_page(self):
     outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
     for edge in ("top", "bottom", "start", "end"):
         getattr(outer, "set_margin_" + edge)(20)
-    heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    heading = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
     title = Gtk.Label(label="Synchronisation", xalign=0); title.set_hexpand(True); add_css(title, "page-title")
     title.set_wrap(True)
     title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
     title.set_width_chars(1)
-    actions = AdaptiveActionBar(source=heading)
     refresh = self.action_button("Actualiser", "view-refresh-symbolic")
     all_now = self.action_button("Synchroniser les sources", "emblem-synchronizing-symbolic", suggested=True)
     self._sync_all_button = all_now
-    actions.append(refresh); actions.append(all_now)
-    heading.append(title); heading.append(actions); outer.append(heading)
+    heading.append(title)
+    add_sync_action(heading, refresh)
+    add_sync_action(heading, all_now)
+    outer.append(sync_action_row(heading))
     scope_note = Gtk.Label(
         label="Actualiser les sources met à jour les notices et droits en ligne. "
         "Ce bouton ne télécharge aucun ebook. L’acquisition locale Kobo est "
