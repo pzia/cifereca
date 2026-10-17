@@ -33,7 +33,7 @@ def test_manifest_installs_independent_opt_in_singleton_without_brokers():
     manifest = json.loads(
         (Path(__file__).parents[1] / "cifereca-plugin.json").read_text()
     )
-    assert manifest["package"]["version"] == PRIVATE_VERSION == "0.1.26"
+    assert manifest["package"]["version"] == PRIVATE_VERSION == "0.1.27"
     owned, catalogue = manifest["plugins"]
     assert owned["id"] == "provider.numilog"
     assert catalogue["id"] == "provider.numilog.catalog"
@@ -41,7 +41,7 @@ def test_manifest_installs_independent_opt_in_singleton_without_brokers():
     assert catalogue["instantiation"] == "singleton_public"
     assert catalogue["enabled_by_default"] is False
     assert catalogue["requires_brokers"] == []
-    assert catalogue["capabilities"] == ["catalog.search"]
+    assert catalogue["capabilities"] == ["catalog.search", "catalog.detail"]
     assert catalogue["version"] == owned["version"] == PRIVATE_VERSION
 
 
@@ -57,6 +57,7 @@ def test_connect_is_anonymous_without_remote_probe_or_fake_account(monkeypatch):
     assert session.provider_id == "numilog-catalog"
     assert session.credential_id == "__public__"
     assert session.capabilities.search is True
+    assert session.capabilities.holdings is True
     assert session.capabilities.personal_library is False
     assert session.capabilities.direct_download is False
     assert session.descriptor.credential_fields == ()
