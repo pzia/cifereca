@@ -2720,9 +2720,19 @@ class LibraryService:
                     target_dir = self.library_identity_provider_dir(
                         identity.identity_id, "numilog",
                     )
-                    path, _private_url = pinned_session.download_direct(
-                        item, target_dir,
-                    )
+                    try:
+                        path, _private_url = pinned_session.download_direct(
+                            item, target_dir,
+                        )
+                    except Exception as exc:
+                        from .plugin_api import Cancelled
+                        if isinstance(exc, Cancelled):
+                            raise
+                        # A provider exception can contain a signed ACSM link
+                        # or order/cookie data. Never relay its raw message.
+                        raise ProviderConfigurationError(
+                            "Numilog : livraison indisponible ; réessayer manuellement"
+                        ) from None
                     # The provider may release its per-session lock before
                     # returning. A reconnect/rebind during HTTP or ADEPT must
                     # not be committed under a different identity.
