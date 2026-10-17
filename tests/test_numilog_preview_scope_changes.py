@@ -68,14 +68,14 @@ def test_scope_changes_discard_preview_and_stop_subsequent_file_reads(
 
         monkeypatch.setattr(numilog_local_preview, "_read_hash_within", hash_then_change)
         if boundary == "storage":
-            real_artifacts = service.storage.artifacts
+            real_evidence = service.storage.source_materialization_evidence
 
-            def artifacts_then_change():
-                rows = real_artifacts()
+            def evidence_then_change(**scope):
+                rows = real_evidence(**scope)
                 mutate()
                 return rows
 
-            monkeypatch.setattr(service.storage, "artifacts", artifacts_then_change)
+            monkeypatch.setattr(service.storage, "source_materialization_evidence", evidence_then_change)
         outcome = _preview(broker, sid, verify=True)
         assert not outcome.ok
         assert outcome.changed == 0
@@ -95,14 +95,14 @@ def test_directory_change_invalidates_even_an_empty_preview(tmp_path, monkeypatc
     try:
         account, _, calls = _connect(service, number=0)
         broker, sid = _broker(service, account)
-        real_artifacts = service.storage.artifacts
+        real_evidence = service.storage.source_materialization_evidence
 
-        def artifacts_then_change_root():
-            rows = real_artifacts()
+        def evidence_then_change_root(**scope):
+            rows = real_evidence(**scope)
             service.config.set("library.directory", str(tmp_path / "new-root"))
             return rows
 
-        monkeypatch.setattr(service.storage, "artifacts", artifacts_then_change_root)
+        monkeypatch.setattr(service.storage, "source_materialization_evidence", evidence_then_change_root)
         result = _preview(broker, sid, verify=verify)
         assert not result.ok
         assert result.facts["status"] == "source_changed"
@@ -123,17 +123,17 @@ def test_replacement_account_cannot_validate_a_whitespace_distinct_scope(
         item, eid = _owned(service, account)
         _ledger(service, account, item, eid)
         broker, sid = _broker(service, account)
-        real_artifacts = service.storage.artifacts
+        real_evidence = service.storage.source_materialization_evidence
 
-        def artifacts_then_replace():
-            rows = real_artifacts()
+        def evidence_then_replace(**scope):
+            rows = real_evidence(**scope)
             # The broker still holds the old mutable object, while the
             # live account now has a whitespace-distinct account ID. Source
             # IDs strip whitespace, so their hash alone is insufficient.
             service.accounts[0] = replace(account, unique_id=" account ")
             return rows
 
-        monkeypatch.setattr(service.storage, "artifacts", artifacts_then_replace)
+        monkeypatch.setattr(service.storage, "source_materialization_evidence", evidence_then_replace)
         result = _preview(broker, sid, verify=verify)
         assert not result.ok
         assert result.facts["status"] == "source_changed"

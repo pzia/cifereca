@@ -1968,6 +1968,81 @@ class Storage:
         rows = self.acquisitions(acquisition_id=acquisition_id)
         return rows[0] if rows else None
 
+    def source_materialization_evidence(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        identity_id: str, max_rows: int = 100_000,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Bounded read snapshot for one account's active owned purchases.
+
+        This is evidence, never authorization to acquire. Keep conflicting
+        ledger owners for the SAME credential/item: dropping them would turn
+        ambiguous acquisitions into apparently missing books. Placements are
+        restricted to the requested identity/provider/purchase/artifact, and
+        only referenced artifacts are loaded. No global list or per-item SQL.
+        """
+        if (not all(type(value) is str and value and len(value) <= 1024
+                    and not any(c in value for c in "\0\r\n")
+                    for value in (provider_id, credential_id, account_id, identity_id))
+                or type(max_rows) is not int or not 1 <= max_rows <= 100_000):
+            raise ValueError("invalid_evidence_scope")
+        cte = (
+            "WITH rights AS (SELECT * FROM entitlements WHERE provider_id=? "
+            "AND credential_id=? AND account_id=? AND identity_id=? "
+            "AND entitlement_type='owned' AND state='active'), "
+            "ledger AS (SELECT a.* FROM acquisition_ledger AS a WHERE "
+            "a.provider_id=? AND a.credential_id=? AND EXISTS "
+            "(SELECT 1 FROM rights AS r WHERE r.item_id=a.item_id)) "
+        )
+        args = (provider_id, credential_id, account_id, identity_id,
+                provider_id, credential_id)
+        queries = {
+            "entitlements": (
+                "SELECT entitlement_id,provider_id,credential_id,account_id,"
+                "item_id,identity_id,entitlement_type,state,loan_id,expires_at,"
+                "metadata_json FROM rights", (),
+            ),
+            "acquisitions": (
+                "SELECT acquisition_id,entitlement_id,provider_id,credential_id,"
+                "account_id,item_id,identity_id,status,artifact_id FROM ledger", (),
+            ),
+            "placements": (
+                "SELECT DISTINCT p.placement_id,p.artifact_id,p.path,p.identity_id,"
+                "p.provider_id,p.source_item_id,p.state FROM ledger AS a "
+                "JOIN placements AS p ON p.artifact_id=a.artifact_id "
+                "AND p.source_item_id=a.item_id "
+                "WHERE p.identity_id=? AND p.provider_id=?", (identity_id, provider_id),
+            ),
+            "artifacts": (
+                "SELECT DISTINCT f.artifact_id,f.sha256,f.size,f.media_format,"
+                "f.metadata_json FROM ledger AS a JOIN artifacts AS f "
+                "ON f.artifact_id=a.artifact_id", (),
+            ),
+        }
+        result = {}
+        with self._lock, self._connect() as db:
+            # A Python lock alone does not protect against another process.
+            # The read transaction keeps all four tables at one SQLite view.
+            db.execute("SAVEPOINT materialization_evidence")
+            try:
+                for name, (query, extra) in queries.items():
+                    cursor = db.execute(cte + query + " LIMIT ?", (*args, *extra, max_rows + 1))
+                    columns = [column[0] for column in cursor.description]
+                    values = cursor.fetchall()
+                    if len(values) > max_rows:
+                        raise ValueError("evidence_budget_exhausted")
+                    rows = []
+                    for record in values:
+                        row = dict(zip(columns, record))
+                        if "metadata_json" in row:
+                            row["metadata"] = self._json_load(row.pop("metadata_json"))
+                        if name == "artifacts":
+                            row = self._artifact_row_with_kind(row)
+                        rows.append(row)
+                    result[name] = rows
+            finally:
+                db.execute("RELEASE SAVEPOINT materialization_evidence")
+        return result
+
     def acquisitions(
         self, *, acquisition_id: str | None = None, provider_id: str | None = None, status: str | None = None
     ) -> list[dict[str, Any]]:
