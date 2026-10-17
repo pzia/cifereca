@@ -18,6 +18,7 @@ from .sync_view import (
     sync_identity_action_label, sync_source_presentation,
     sync_source_row_labels,
     sync_local_preflight_presentation, sync_local_reconciliation_presentation,
+    sync_numilog_local_preview_presentation,
 )
 from .task_runner import TaskPriority
 from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
@@ -728,6 +729,51 @@ def _refresh_sync_page(self) -> None:
 
         else:
             group.add(row)
+
+        if source.provider_id == "numilog":
+            # Offline evidence only, including disconnected accounts. Neither
+            # rendering nor a preview grants acquisition/scheduler consent.
+            local_row = Adw.ActionRow()
+            local_row.set_title("Aperçu local des achats Numilog")
+            local_row.set_subtitle("Non consulté · aucun téléchargement ni actualisation distante")
+            local_row.set_subtitle_lines(0)
+            supported = callable(getattr(broker, "preview_local_materialization", None))
+            allowed = bool(source.enabled and supported)
+            local_state = {"serial": 0}
+            for verify, label in ((False, "Aperçu local…"), (True, "Vérifier les fichiers…")):
+                button = self.action_button(label, "document-properties-symbolic")
+                button.set_sensitive(allowed)
+                button.set_valign(Gtk.Align.CENTER)
+                button.set_tooltip_text(
+                    "Vérifier les empreintes SHA de ce compte, hors réseau et en lecture seule"
+                    if verify else "Consulter les liens de ce compte sans lire les fichiers ni accéder au réseau"
+                )
+                def preview_numilog(
+                    control, sid=source.source_id, output=local_row,
+                    verify_files=verify, permitted=allowed, captured_scope=scope,
+                    state=local_state,
+                ):
+                    if not permitted or not sync_action_scope_current(self, captured_scope):
+                        return
+                    state["serial"] += 1
+                    serial = state["serial"]
+                    output.set_subtitle("Inspection locale en cours (lecture seule)…")
+                    def completed(result):
+                        if state["serial"] == serial and sync_action_scope_current(self, captured_scope):
+                            output.set_subtitle(sync_numilog_local_preview_presentation(result))
+                    def failed(_error):
+                        if state["serial"] == serial and sync_action_scope_current(self, captured_scope):
+                            output.set_subtitle("Aperçu local indisponible. Aucun téléchargement autorisé.")
+                    self.runner.submit(
+                        "Vérification locale Numilog…" if verify_files else "Aperçu local Numilog…",
+                        lambda: broker.preview_local_materialization(sid, verify_local_files=verify_files)
+                        if sync_action_scope_current(self, captured_scope) else None,
+                        completed, failed, control=control,
+                        priority=TaskPriority.USER_ACTION, kind="sync-preflight",
+                    )
+                button.connect("clicked", preview_numilog)
+                local_row.add_suffix(button)
+            group.add(local_row)
 
         if source.provider_id in {"kobo", "numilog"}:
             # Inventory consent is separate from local materialization.
