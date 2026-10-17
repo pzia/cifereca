@@ -160,12 +160,14 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
 
     try:
         storage = broker.service.storage
-        rights = storage.entitlements(provider_id="numilog")
-        ledger = storage.acquisitions(provider_id="numilog")
-        placements = storage.placements()
-        artifacts = storage.artifacts()
-        if any(len(rows) > _MAX_ROWS for rows in (rights, ledger, placements, artifacts)):
-            return _refused("evidence_budget_exhausted")
+        evidence = storage.source_materialization_evidence(
+            provider_id="numilog", credential_id=credential,
+            account_id=account_id, identity_id=identity, max_rows=_MAX_ROWS,
+        )
+        rights = evidence["entitlements"]
+        ledger = evidence["acquisitions"]
+        placements = evidence["placements"]
+        artifacts = evidence["artifacts"]
         if not scope_current():
             return _refused("source_changed")
 
@@ -299,5 +301,9 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
             "known_item_count": counts["owned_purchases"],
             "counts": counts,
         })
+    except ValueError as exc:
+        if str(exc) == "evidence_budget_exhausted":
+            return _refused("evidence_budget_exhausted")
+        return _refused("preview_unavailable")
     except Exception:
         return _refused("preview_unavailable")
