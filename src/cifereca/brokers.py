@@ -675,6 +675,24 @@ class SynchronizationBrokerImpl:
         self._notify()
         return mode
 
+    def preflight_numilog_purchase(
+        self, source_id: str, item_id: str,
+    ) -> SyncResult:
+        """Offline preflight for ONE Numilog edition; never an acquire call.
+
+        The opaque scoped item ID is input only, never returned or logged.
+        Explicit materialization consent, a fresh private manifest and ADEPT
+        handling are separate future execution gates (#1905).
+        """
+        from .core.numilog_purchase_preflight import preflight, _response
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            return _response("invalid_source")
+        if getattr(account, "provider_id", None) != "numilog":
+            return _response("not_supported")
+        return preflight(self, account, source_id, item_id)
+
     def preview_local_materialization(
         self, source_id: str, *, verify_local_files: bool = False,
     ) -> SyncResult:
