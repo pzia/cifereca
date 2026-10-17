@@ -137,3 +137,13 @@ def test_spoofed_field_provenance_cannot_be_published():
     detail["field_evidence"]["title"]["edition_proven"] = True
     with pytest.raises(ProviderCapabilityError, match="detail_evidence_conflict"):
         merge_public_detail(item, detail)
+
+
+def test_mismatched_title_does_not_fill_missing_details():
+    item = replace(catalogue_item(), author=None, publisher=None, description=None)
+    detail = book_detail(item, name="Different book")
+    merged = merge_public_detail(item, detail)
+    assert merged.author is None and merged.publisher is None
+    assert merged.description is None and merged.title == item.title
+    assert "title" in merged.metadata["public_detail"]["listing_conflicts"]
+    assert merged.owned is False
