@@ -6,6 +6,7 @@ JSON-LD offers as acquisition rights. Callers must attest the HTML provenance.
 from __future__ import annotations
 
 from html.parser import HTMLParser
+from datetime import date
 import json
 import re
 import unicodedata
@@ -40,7 +41,8 @@ class _Scripts(HTMLParser):
         if tag != "script":
             return
         attributes = dict(attrs)
-        kind = attributes.get("type", "").split(";", 1)[0].strip().lower()
+        declared = attributes.get("type")
+        kind = (declared or "").split(";", 1)[0].strip().lower() if isinstance(declared, (str, type(None))) else ""
         if kind == "application/ld+json":
             if self.active or len(self.scripts) >= MAX_SCRIPTS:
                 raise PublicDetailError("too_many_jsonld_scripts")
@@ -120,7 +122,7 @@ def parse_public_detail_jsonld(html, product_url):
     for script in reader.scripts:
         try:
             parsed = json.loads(script)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, RecursionError):
             raise PublicDetailError("invalid_jsonld") from None
         for node in _nodes(parsed):
             if not _book_type(node):
@@ -139,6 +141,16 @@ def parse_public_detail_jsonld(html, product_url):
         if _valid_text(value, limit):
             fields[{"name": "title", "inLanguage": "language",
                     "datePublished": "published_at"}.get(key, key)] = value.strip()
+    # Normalized release dates must be valid; never persist arbitrary strings
+    # from an unqualified JSON-LD field into public catalogue dates.
+    release_date = fields.get("published_at")
+    if release_date:
+        try:
+            if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", release_date):
+                raise ValueError
+            date.fromisoformat(release_date)
+        except ValueError:
+            fields.pop("published_at")
     observed_isbn = _isbn(node.get("isbn"))
     if observed_isbn:
         fields["isbn_edition_unspecified"] = observed_isbn
@@ -259,6 +271,10 @@ def merge_public_detail(item, detail):
             projection[target] = value
     if fields.get("title") and fields["title"].strip() != item.title.strip():
         conflicts.append("title")
+    # A page declaring a different book at the same URL cannot safely fill
+    # missing listing fields; expose conflict without projecting new values.
+    if "title" in conflicts:
+        projection.clear()
     next_meta = dict(metadata)
     next_meta["public_detail"] = {
         "status": "observed_jsonld",
