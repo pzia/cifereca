@@ -156,6 +156,7 @@ def test_merge_owned_keeps_format_and_rights_from_account_only():
     {"owned_format_proven": True},
     {"public_offer_format": "epub"},
     {"public_offer_drm_label": "avec_drm"},
+    {"observation_scope": "whole_page_unqualified"},
 ])
 def test_forged_paper_evidence_rejected_before_merge(change):
     row = replace(SEARCH.items[0], source_provider="numilog-catalog")

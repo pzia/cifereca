@@ -51,14 +51,20 @@ def _isbn13(value: str) -> str | None:
 
 
 class _VisibleLabels(HTMLParser):
-    """Collect bounded visible text; exclude scripts, forms and templates."""
+    """Bounded visible text with a product-title anchor, never whole-page EANs."""
 
-    _IGNORED = frozenset({"script", "style", "template", "noscript", "form", "iframe"})
+    _IGNORED = frozenset({
+        "script", "style", "template", "noscript", "form", "iframe",
+        "nav", "footer", "header", "aside", "dialog", "svg", "button",
+    })
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.tokens: list[str] = []
         self.ignored: list[str] = []
+        self._h1_depth = 0
+        self.title_end: int | None = None
+        self.h1_count = 0
 
     def handle_starttag(self, tag, attrs):
         if self.ignored:
@@ -67,10 +73,19 @@ class _VisibleLabels(HTMLParser):
             return
         if tag in self._IGNORED:
             self.ignored.append(tag)
+            return
+        if tag == "h1":
+            self.h1_count += 1
+            self._h1_depth += 1
 
     def handle_endtag(self, tag):
-        if self.ignored and tag == self.ignored[-1]:
-            self.ignored.pop()
+        if self.ignored:
+            if tag == self.ignored[-1]:
+                self.ignored.pop()
+            return
+        if tag == "h1" and self._h1_depth:
+            self._h1_depth -= 1
+            self.title_end = len(self.tokens)
 
     def handle_data(self, data):
         if self.ignored:
@@ -84,6 +99,51 @@ class _VisibleLabels(HTMLParser):
             if len(self.tokens) >= _MAX_VISIBLE_TOKENS:
                 raise PublicIdentifierError("visible_text_too_large")
             self.tokens.append(value)
+
+
+# Headings identify the product text area on the observed public pages.
+# Generic device/DRM help and recommendations are NOT product evidence.
+_STOP_HEADINGS = frozenset({
+    "guide des formats", "auteur(s) du livre", "avis clients",
+    "suggestions personnalisees", "restez informe(e)",
+    "details sur l'accessibilite", "details sur l accessibilite",
+})
+_MAX_PRODUCT_TOKENS = 320
+_MAX_DETAIL_TOKENS = 96
+
+
+def _product_tokens(reader: _VisibleLabels) -> list[str]:
+    """Two bounded areas: product description and the explicit Détails block.
+
+    The HTML layout itself is NOT yet production-qualified. This conservative
+    anchor deliberately returns empty for unrecognized markup, rather than
+    searching the whole page and mislabelling related titles or generic help.
+    """
+    if reader.h1_count != 1 or reader.title_end is None:
+        return []
+    start = reader.title_end
+    tokens = reader.tokens
+    if start >= len(tokens):
+        return []
+    limit = min(len(tokens), start + _MAX_PRODUCT_TOKENS)
+    detail_index = next(
+        (i for i in range(start, limit)
+         if _fold(tokens[i]).strip(" :") == "details"),
+        None,
+    )
+    if detail_index is None:
+        return []
+    summary_end = next(
+        (i for i in range(start, detail_index)
+         if _fold(tokens[i]).strip(" :") in _STOP_HEADINGS),
+        detail_index,
+    )
+    details_end = next(
+        (i for i in range(detail_index + 1, min(limit, detail_index + _MAX_DETAIL_TOKENS))
+         if _fold(tokens[i]).strip(" :") in _STOP_HEADINGS),
+        min(limit, detail_index + _MAX_DETAIL_TOKENS),
+    )
+    return tokens[start:summary_end] + tokens[detail_index:details_end]
 
 
 def _role(label: str) -> tuple[str, str | None] | None:
@@ -119,14 +179,12 @@ def extract_public_identifiers(html: str, product_url: str) -> dict:
     reader = _VisibleLabels()
     reader.feed(html)
     reader.close()
-    # A generic footer can mention an ISBN, but absent the product-detail
-    # heading there is no safe basis for claiming this is a product field.
-    if not any(_fold(token).strip(":") == "details" for token in reader.tokens):
-        return {"product_url": product_url, "identifiers": {}, "identifier_evidence": {}}
+    # Only an unambiguous, bounded product region can supply identifiers;
+    # a generic footer/sidebar or another product's recommendation cannot.
     identifiers: dict[str, str] = {}
     evidence: dict[str, dict] = {}
     count = 0
-    tokens = reader.tokens
+    tokens = _product_tokens(reader)
     for index, text in enumerate(tokens):
         candidate = _fold(text)
         inline = _INLINE.fullmatch(candidate)
@@ -158,6 +216,7 @@ def extract_public_identifiers(html: str, product_url: str) -> dict:
             "kind": "observed_public_label",
             "label": " ".join(label.split()),
             "source_url": product_url,
+            "observation_scope": "bounded_product_body_or_details",
             "public_offer_format": role if role in {"epub", "pdf"} else None,
             "public_offer_drm_label": drm,
             "owned_format_proven": False,
@@ -192,6 +251,7 @@ def validated_public_identifiers(detail: dict, product_url: str) -> tuple[dict, 
         if (assigned is None or assigned[0] != role
                 or proof.get("kind") != "observed_public_label"
                 or proof.get("source_url") != product_url
+                or proof.get("observation_scope") != "bounded_product_body_or_details"
                 or proof.get("public_offer_format") != (role if role in {"epub", "pdf"} else None)
                 or proof.get("public_offer_drm_label") != assigned[1]
                 or proof.get("owned_format_proven") is not False):
@@ -201,6 +261,7 @@ def validated_public_identifiers(detail: dict, product_url: str) -> tuple[dict, 
             "kind": "observed_public_label",
             "label": " ".join(label.split()),
             "source_url": product_url,
+            "observation_scope": "bounded_product_body_or_details",
             "public_offer_format": proof["public_offer_format"],
             "public_offer_drm_label": proof["public_offer_drm_label"],
             "owned_format_proven": False,
