@@ -2790,7 +2790,12 @@ class LibraryService:
         try:
             identity_id = self.identity_for_connection(item.source_provider, item.source_credential).identity_id
         except Exception:
-            identity_id = self.current_identity.identity_id if self.current_identity else None
+            # A detached Numilog credential must not be attributed to an
+            # unrelated GTK-selected identity in the action audit stream.
+            identity_id = (
+                None if item.source_provider == "numilog"
+                else self.current_identity.identity_id if self.current_identity else None
+            )
         try:
             result = (self._acquire_direct_item_impl(item, _admission=_admission) if _admission is not None
                       else self._acquire_direct_item_impl(item))
