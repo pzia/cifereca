@@ -59,6 +59,7 @@ def assert_private_data_absent(diagnostics):
         assert set(detail) <= {
             "action", "source", "phase", "code", "hops",
             "http_status", "mime", "html_kind", "origin_kind", "path_kind", "candidates",
+            "connected_initial",
         }
         assert set(detail) >= {"action", "source", "phase", "code"}
         assert len(detail["action"]) == 12
@@ -152,7 +153,7 @@ def test_http_denials_have_stable_public_codes(tmp_path, status, expected):
 
 
 @pytest.mark.parametrize("html,expected", (
-    ('<input type="password" value="PRIVATE_HTML"/>', "session_expired_confirmed"),
+    ('<input type="password" value="PRIVATE_HTML"/>', "login_form_detected"),
     ("<h1>Erreur</h1><div>PRIVATE_HTML</div>", "html_error"),
     ("<html><body>PRIVATE_HTML without delivery</body></html>", "html_delivery_link_missing"),
     (f'<a href="{SIGNED}">Link A</a><a href="{SIGNED}&extra=1">Link B</a>',

@@ -267,7 +267,7 @@ def test_scoped_signed_failure_is_explicit_safe_and_leaves_no_temps(tmp_path, fa
         if failure == "410":
             assert "expiré" in str(exc.value)
         if failure == "login":
-            assert "session" in str(exc.value)
+            assert "formulaire de connexion" in str(exc.value)
         if failure == "xml-non-acsm":
             assert "XML non ACSM" in str(exc.value)
         assert requested == [LIBRARY, LIBRARY, SIGNED]
@@ -280,7 +280,7 @@ def test_scoped_signed_failure_is_explicit_safe_and_leaves_no_temps(tmp_path, fa
 
 
 @pytest.mark.parametrize(("failure", "part"), [
-    ("login", "session de connexion expirée"),
+    ("login", "formulaire de connexion"),
     ("ambiguous", "plusieurs liens de livraison"),
     ("error-html", "page d’erreur"),
     (None, "lien de livraison absent"),
