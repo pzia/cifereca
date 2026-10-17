@@ -497,6 +497,12 @@ def main() -> int:
         report["pointer_actions"].append(device[0].click_widget(w.nav_rows["library"]))
         await_route("library", library_open)
 
+    def home_summary_acceptance():
+        from home_summary_acceptance import check_home_summary
+        check_home_summary(
+            window[0], later=later, capture=capture, report=report, done=initial,
+        )
+
     def library_open():
         w = window[0]
         selected = w.nav_list.get_selected_row()
@@ -2780,7 +2786,7 @@ def main() -> int:
                 w._rebuild_plugin_pages()
                 w.present()
                 device[0] = X11Input()
-                later(500, initial)
+                later(500, home_summary_acceptance if args.window_baseline else initial)
             except Exception as exc:
                 fail(f"Activation MainWindow: {type(exc).__name__}: {exc}")
 
