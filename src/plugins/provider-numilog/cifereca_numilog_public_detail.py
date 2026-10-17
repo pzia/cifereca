@@ -174,16 +174,8 @@ def parse_public_detail_jsonld(html, product_url):
     }
 
 
-def merge_public_detail(item, detail):
-    """Opt-in projection onto an attested *public catalogue* SearchResult.
-
-    Never use this function for a purchased/private Numilog row. The Book
-    JSON-LD may contain a generic ISBN: keep it edition-unspecified even when
-    the listing identifies an EPUB. Offers cannot prove entitlement.
-    Existing card values win; disagreements are signalled, not overwritten.
-    """
-    from dataclasses import replace
-
+def validate_public_detail_item(item):
+    """Check source, account boundary, product identity and search provenance."""
     from cifereca.plugin_api import ProviderCapabilityError
     from cifereca_numilog_public import _query
 
@@ -208,7 +200,21 @@ def merge_public_detail(item, detail):
         _query(metadata.get("source_url"))
     except Exception:
         raise ProviderCapabilityError(error) from None
+    return url
 
+
+def merge_public_detail(item, detail):
+    """Opt-in projection of a public Book JSON-LD onto a catalogue result.
+
+    Never use for purchased rows. Existing card values take precedence and
+    disagreements remain visible. ISBN is never promoted to a digital ISBN.
+    """
+    from dataclasses import replace
+    from cifereca.plugin_api import ProviderCapabilityError
+
+    error = "Numilog public : detail_evidence_conflict"
+    url = validate_public_detail_item(item)
+    metadata = item.metadata
     if (type(detail) is not dict or detail.get("product_url") != url
             or detail.get("owned") is not False
             or detail.get("downloadable") is not False
