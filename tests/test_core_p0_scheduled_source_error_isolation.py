@@ -7,30 +7,29 @@ import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.models import Account
-from tests.test_core_p0_1346_inventory_refresh_broker import _rig
 from tests.test_core_p0_1905_numilog_inventory_schedule import _numilog
 
 
-@pytest.mark.parametrize("provider", ["kobo", "numilog"])
+@pytest.mark.parametrize("second_provider", ["kobo", "numilog"])
 def test_scheduled_inventory_state_write_exception_is_scoped_to_one_account(
-    tmp_path, monkeypatch, provider,
+    tmp_path, monkeypatch, second_provider,
 ):
-    service, _account, _session, calls = (
-        _rig(tmp_path) if provider == "kobo" else _numilog(tmp_path)
-    )
+    # The storage model intentionally permits only one Kobo account per
+    # identity. Exercise legal Numilog+Kobo and Numilog+Numilog batches.
+    service, _account, _session, calls = _numilog(tmp_path)
     try:
         other = Account(
             display_name="Private store second", unique_id="alice-second",
-            provider_id=provider, credential_id="vault-second",
-            provider_label=provider.title(), identity_id="alice",
+            provider_id=second_provider, credential_id="vault-second",
+            provider_label=second_provider.title(), identity_id="alice",
         )
         service.accounts.append(other)
-        service._sessions[provider + "::vault-second"] = NS(
-            provider_id=provider, credential_id="vault-second",
+        service._sessions[second_provider + "::vault-second"] = NS(
+            provider_id=second_provider, credential_id="vault-second",
             connected=True, capabilities=NS(personal_library=True, backup=False),
         )
         service.storage.provider_connection_put({
-            "identity_id": "alice", "provider_id": provider,
+            "identity_id": "alice", "provider_id": second_provider,
             "credential_id": "vault-second", "enabled": True,
         })
         broker = SynchronizationBrokerImpl(service)
