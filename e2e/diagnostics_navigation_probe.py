@@ -491,6 +491,11 @@ def main() -> int:
         w = window[0]
         assert "library" in w.nav_rows and "diagnostics" in w.nav_rows
         assert w.view_stack.get_visible_child_name() == "dashboard"
+        minimum = w.shell_header.measure(Gtk.Orientation.HORIZONTAL, -1)[0]
+        assert minimum <= 760, ("Header prevents supported narrow window", minimum)
+        assert "prêts de bibliothèque" in w.statistics_button.get_label()
+        report["checks"]["P1_2008_header_counter_shrinks_without_semantic_abbreviation"] = True
+        report["header_minimum_width"] = minimum
         assert not w.nav_rows["diagnostics"].get_mapped(), "Configuration doit être repliée"
         report["checks"]["real_mainwindow_and_plugin_contribution"] = True
         capture("00-real-cifereca-shell")
