@@ -2807,18 +2807,20 @@ class LibraryService:
 
     def acquire_direct_item(self, item: SearchResult, *, _admission=None) -> Acquisition:
         identity_id = None
-        try:
-            identity_id = self.identity_for_connection(item.source_provider, item.source_credential).identity_id
-        except Exception:
-            # A detached Numilog credential must not be attributed to an
-            # unrelated GTK-selected identity in the action audit stream.
-            identity_id = (
-                None if item.source_provider == "numilog"
-                else self.current_identity.identity_id if self.current_identity else None
-            )
+        # Do not trust a persisted connection owner to attribute private
+        # Numilog activity before the locked source admission succeeds.
+        if item.source_provider != "numilog":
+            try:
+                identity_id = self.identity_for_connection(
+                    item.source_provider, item.source_credential,
+                ).identity_id
+            except Exception:
+                identity_id = self.current_identity.identity_id if self.current_identity else None
         try:
             result = (self._acquire_direct_item_impl(item, _admission=_admission) if _admission is not None
                       else self._acquire_direct_item_impl(item))
+            if item.source_provider == "numilog":
+                identity_id = result.metadata.get("identity_id")
             safe_facts = ({"private_item": True} if item.source_provider == "numilog"
                           else {"record_id": item.record_id})
             self._record_action(identity_id, "acquisition", "success",
