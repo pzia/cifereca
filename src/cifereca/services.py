@@ -2713,7 +2713,7 @@ class LibraryService:
             from .core.numilog_manual_acquisition import require_source
             try:
                 with InterProcessLock(acquisition_lock_file()):
-                    identity, pinned_session = require_source(
+                    identity, pinned_session, pinned_account_id = require_source(
                         self, item, session=session,
                     )
                     if self.storage.numilog_purchase_has_local_conflict(
@@ -2760,7 +2760,12 @@ class LibraryService:
                     # The provider may release its per-session lock before
                     # returning. A reconnect/rebind during HTTP or ADEPT must
                     # not be committed under a different identity.
-                    require_source(self, item, session=pinned_session)
+                    refreshed = require_source(self, item, session=pinned_session)
+                    if (refreshed[0].identity_id != identity.identity_id
+                            or refreshed[2] != pinned_account_id):
+                        raise ProviderConfigurationError(
+                            "Numilog : rattachement du compte modifié"
+                        )
                     from .core.numilog_manual_acquisition import require_local_artifact
                     require_local_artifact(path, target_dir)
                     from dataclasses import replace
@@ -2775,24 +2780,23 @@ class LibraryService:
                     self.acquisition.run_post_download(
                         clean_item, path, "", target_dir,
                     )
-                    require_source(self, item, session=pinned_session)
+                    refreshed = require_source(self, item, session=pinned_session)
+                    if (refreshed[0].identity_id != identity.identity_id
+                            or refreshed[2] != pinned_account_id):
+                        raise ProviderConfigurationError(
+                            "Numilog : rattachement du compte modifié"
+                        )
                     # A provider-returned URL may contain single-use ACSM
                     # signatures. Never persist it as Acquisition.source_url.
                     result = self.acquisition.acquisition_from_direct(
                         clean_item, path=path, url="", target_dir=target_dir,
                         action="download",
                     )
-                    owner = next(
-                        a for a in self.accounts
-                        if a.provider_id == "numilog"
-                        and a.credential_id == item.source_credential
-                        and a.identity_id == identity.identity_id
-                    )
                     # The generic direct adapter historically dropped the
-                    # account ID. Preserve the exact attested purchase owner.
-                    from dataclasses import replace
+                    # account ID. Persist the source's originally pinned owner,
+                    # not a later enumeration of possibly mutated accounts.
                     return replace(
-                        result, account_id=owner.unique_id,
+                        result, account_id=pinned_account_id,
                         metadata={**result.metadata,
                                   "identity_id": identity.identity_id},
                     )
