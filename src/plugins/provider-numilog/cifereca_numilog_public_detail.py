@@ -106,7 +106,8 @@ def _isbn(value):
 def parse_public_detail_jsonld(html, product_url):
     """Return observed field values and evidence, without guessing edition rights.
 
-    The JSON-LD Book must explicitly point to the exact supplied canonical
+    The JSON-LD Book (or observed Product explicitly typed Book with matching
+    sku) must explicitly point to the exact supplied canonical
     product URL; ambiguity and any conflicting Book nodes fail closed.
     ISBN is kept as an *unspecified edition* identifier until independently
     proven digital; it MUST NOT be used to match purchased digital editions.
@@ -135,7 +136,21 @@ def parse_public_detail_jsonld(html, product_url):
             raise PublicDetailError("invalid_jsonld") from None
         for node in _nodes(parsed):
             if not _book_type(node):
-                continue
+                # Observed anonymous Numilog pages describe a Product whose
+                # additionalType is Book. A generic Product is insufficient;
+                # require its explicit book type and exact canonical product ID.
+                product_id = urlsplit(product_url).path.split('/')[1]
+                if not (
+                    node.get('@type') == 'Product'
+                    and re.fullmatch(r'[0-9]{1,20}', product_id) is not None
+                    and type(node.get('additionalType')) is str
+                    and node['additionalType'] in {
+                        'Book', 'https://schema.org/Book', 'http://schema.org/Book',
+                    }
+                    and type(node.get('sku')) is str
+                    and node['sku'] == product_id
+                ):
+                    continue
             raw_url = node.get("url")
             if not _valid_text(raw_url, 512) or raw_url != product_url:
                 continue
@@ -194,7 +209,8 @@ def parse_public_detail_jsonld(html, product_url):
         "identifier_evidence": typed_identifiers["identifier_evidence"],
         "fields": fields,
         "field_evidence": {
-            key: {"source": "public_product_jsonld_Book", "source_url": product_url,
+            key: {"source": ("public_product_jsonld_Book" if _book_type(node)
+                             else "public_product_jsonld_Product_Book"), "source_url": product_url,
                   "kind": "observed_public_jsonld", "edition_proven": False}
             for key in fields
         },
