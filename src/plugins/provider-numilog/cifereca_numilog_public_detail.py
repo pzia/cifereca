@@ -172,8 +172,17 @@ def parse_public_detail_jsonld(html, product_url):
         publisher = publisher.get("name")
     if _valid_text(publisher, 256):
         fields["publisher"] = publisher.strip()
+    from cifereca_numilog_public_identifiers import (
+        PublicIdentifierError, extract_public_identifiers,
+    )
+    try:
+        typed_identifiers = extract_public_identifiers(html, product_url)
+    except PublicIdentifierError:
+        raise PublicDetailError("public_identifier_evidence_unverified") from None
     return {
         "product_url": product_url,
+        "public_identifiers": typed_identifiers["identifiers"],
+        "identifier_evidence": typed_identifiers["identifier_evidence"],
         "fields": fields,
         "field_evidence": {
             key: {"source": "public_product_jsonld_Book", "source_url": product_url,
@@ -236,6 +245,13 @@ def merge_public_detail(item, detail):
         raise ProviderCapabilityError(error)
     fields = detail["fields"]
     evidence = detail["field_evidence"]
+    from cifereca_numilog_public_identifiers import (
+        PublicIdentifierError, validated_public_identifiers,
+    )
+    try:
+        public_ids, public_id_evidence = validated_public_identifiers(detail, url)
+    except PublicIdentifierError:
+        raise ProviderCapabilityError(error) from None
     allowed = {
         "title", "description", "language", "published_at",
         "isbn_edition_unspecified", "authors", "publisher",
@@ -284,5 +300,8 @@ def merge_public_detail(item, detail):
         "listing_conflicts": tuple(conflicts),
         "edition_match": "canonical_product_url_only",
         "rights_proven": False,
+        "public_identifiers": public_ids,
+        "identifier_evidence": public_id_evidence,
+        "format_edition_proven": False,
     }
     return replace(item, metadata=next_meta, **projection)
