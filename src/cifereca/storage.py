@@ -2032,18 +2032,23 @@ class Storage:
         if (_scoped_record_id(item_id, credential_id) is None):
             raise ValueError("invalid_numilog_purchase")
         with self._lock, self._connect() as db:
-            return (
-                db.execute(
+            # A consistent SQLite snapshot prevents a concurrent writer
+            # from making the two evidence tables disagree mid-preflight.
+            db.execute("SAVEPOINT numilog_manual_acquire")
+            try:
+                ledger = db.execute(
                     "SELECT 1 FROM acquisition_ledger WHERE provider_id='numilog' "
                     "AND credential_id=? AND item_id=? LIMIT 1",
                     (credential_id, item_id),
-                ).fetchone() is not None
-                or db.execute(
+                ).fetchone()
+                placement = db.execute(
                     "SELECT 1 FROM placements WHERE provider_id='numilog' "
                     "AND source_item_id=? LIMIT 1",
                     (item_id,),
-                ).fetchone() is not None
-            )
+                ).fetchone()
+                return ledger is not None or placement is not None
+            finally:
+                db.execute("RELEASE SAVEPOINT numilog_manual_acquire")
 
     def source_materialization_evidence(
         self, *, provider_id: str, credential_id: str, account_id: str,
