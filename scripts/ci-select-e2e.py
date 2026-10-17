@@ -16,6 +16,7 @@ SYNC_PRODUCERS = frozenset((
     "src/cifereca/core/sync_coordination.py",
 ))
 BOOK_DETAIL = ("book-detail-1366", "book-detail-1600")
+HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
 CORE = ("search-filter-p0",) + BOOK_DETAIL + ("mainwindow-baseline-1366",
         "mainwindow-baseline-1600", "startup", "core-navigation") + LLM + MAINT
 DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
@@ -113,6 +114,8 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             return ALL  # unknown or shared E2E helper
         elif path.startswith("src/plugins/diagnostics-page/"):
             selected.update(DIAG)
+        elif path.startswith("src/plugins/home-page/"):
+            selected.update(HOME)
         elif path.startswith("src/plugins/constellations/"):
             selected.update(CONSTELLATIONS)
         elif path.startswith("src/plugins/recommendations/"):
