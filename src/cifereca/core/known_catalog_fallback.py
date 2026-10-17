@@ -7,12 +7,10 @@ from __future__ import annotations
 
 import time
 from typing import Any
-from xml.etree.ElementTree import ParseError
-
-import httpx
 
 from ..core.search import filter_loaded_results
 from ..models import SearchResult
+from ..search_failures import search_failure_code
 
 _MAX_CATALOG_ROWS = 10000
 _MAX_RESULTS = 50
@@ -26,18 +24,7 @@ _PUBLIC_META = frozenset({
 
 def public_service_unavailable(exc: BaseException) -> bool:
     """A remote transport/protocol outage, never an auth or rights refusal."""
-    seen: set[int] = set()
-    while exc is not None and id(exc) not in seen:
-        seen.add(id(exc))
-        if getattr(exc, "code", None) == "search_temporarily_unavailable":
-            return True
-        if isinstance(exc, (httpx.TransportError, ParseError)):
-            return True
-        if isinstance(exc, httpx.HTTPStatusError):
-            code = exc.response.status_code
-            return code == 429 or code >= 500
-        exc = exc.__cause__ or exc.__context__
-    return False
+    return search_failure_code(exc) == "SearchTemporarilyUnavailable"
 
 
 def known_public_fallback(
