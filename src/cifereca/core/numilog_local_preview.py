@@ -265,6 +265,11 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
                     # ACSM, HTML, unknown blobs and bundles are not readable
                     # local books, even with an exact SHA and a completed ledger.
                     or artifact.get("kind") != "file"
+                    # Storage can normalize malformed persisted kind metadata
+                    # into "file" for legacy readers. Never treat an explicit
+                    # invalid artifact_kind as verified local ebook evidence.
+                    or ("artifact_kind" in artifact.get("metadata", {})
+                        and artifact["metadata"]["artifact_kind"] != "file")
                     or type(artifact.get("media_format")) is not str
                     or artifact["media_format"].casefold() not in {"epub", "kepub", "pdf"}
                     or type(size) is not int or size <= 0):
