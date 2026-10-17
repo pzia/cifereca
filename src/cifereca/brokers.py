@@ -602,6 +602,12 @@ class SynchronizationBrokerImpl:
                 result = self.synchronize_source(
                     source_id, SyncRequest(identity_id=identity_id), control,
                 )
+            except Exception:
+                # A source may fail before synchronize_source's provider
+                # exception handler (e.g. persisting its running state).
+                # Do not abandon later accounts or echo private exceptions.
+                failed += 1
+                continue
             finally:
                 with self._scheduled_inventory_lock:
                     self._scheduled_inventory_running.discard(source_id)
