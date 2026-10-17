@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.24, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.25, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.24'
+VERSION = '0.1.25'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -367,6 +367,11 @@ class NumilogSession(ProviderSession):
             rows = self._rows()
             self._diag('bibliothèque',items=len(rows))
             return [self._normalize(row) for row in rows]
+
+    def public_product_detail(self, product_url):
+        """Explicit anonymous metadata read; never invoked by sync or purchase flows."""
+        from cifereca_numilog_public_client import fetch_public_detail
+        return fetch_public_detail(product_url)
 
     def search_public(self, query, *, page=0, field='all'):
         """Explicit public-catalogue lookup with no private-session I/O.

@@ -191,3 +191,41 @@ des erreurs publiques typées, sans repli sur le client authentifié.
 Reste à livrer : action UI explicite, fiche produit HTML réellement
 qualifiée, ISBN numérique/PDF distingué, cache et politique TTL vérifiés,
 puis recette réelle autorisée. Ce jalon ne clôture pas #1072.
+
+
+## Fiches commerciales publiques explicites (#1886 / #1072, 0.1.25)
+
+La consultation de **fiches produit publiques** reste expérimentale, désactivée
+dans les parcours automatiques et distincte de `Mes achats` :
+
+- `cifereca_numilog_public_detail.parse_public_detail_jsonld(html, url)`
+  extrait hors réseau un seul objet JSON-LD `Book` dont l'URL correspond
+  exactement à l'URL canonique de produit Numilog. Titres, auteurs, éditeur,
+  description, langue, date et ISBN sont copiés seulement si présents et
+  qualifiés. Une page sans objet univoque échoue explicitement.
+- `fetch_public_detail(url)` effectue **un GET HTTPS anonyme à la demande** :
+  nouveau client, aucun cookie/broker privé, aucune redirection, MIME HTML,
+  timeout et limite 1 Mio, codes publics expurgés (401/403, 429, 5xx, DOM).
+- `NumilogSession.public_product_detail(url)` donne accès au résultat
+  structuré **sur demande explicite** dans le provider privé, sans
+  enrichissement automatique d'achat.
+- `NumilogPublicSession.enrich_public_detail(item)` valide avant tout GET
+  que le résultat provient du catalogue public `numilog-catalog`,
+  `__public__`, `public_catalog`, sans droits de possession ni URL
+  d'acquisition, puis fusionne les seuls champs manquants dans une nouvelle
+  notice. Les divergences entre carte et fiche sont consignées ; la carte
+  d'origine reste intacte.
+
+Le JSON-LD `isbn` est conservé sous **`isbn_edition_unspecified`** :
+ni l'EAN de l'EPUB, ni celui du PDF, ni une édition effectivement achetée ne
+peuvent être déduits de ce champ. Offres, prix privés, liens d'acquisition,
+DRM et droits de possession ne sont jamais projetés. Aucune modification du
+chemin de synchronisation ou téléchargement, aucun `GET` par résultat de
+recherche, aucun hook UI automatique. Le provider public reste
+`enabled_by_default=false`.
+
+**Limites** : les tests JSON-LD et HTTP sont synthétiques et déterministes ;
+les pages produit réelles et leurs JSON-LD, la seconde page commerciale et
+les conditions d'accès live restent à qualifier. Le contrat Core `holdings`
+et l'action UI ne sont pas branchés dans cet incrément. Il n'existe donc
+aucune garantie d'extraction de champs JSON-LD présents sur les pages réelles.
