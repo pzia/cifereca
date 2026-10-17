@@ -865,6 +865,7 @@ def _numilog_public_catalog_url(value: Any, *, cover: bool = False) -> str | Non
             if parsed.hostname not in {
                 "www.numilog.com", "services.numilog.com",
                 "www.edenlivres.fr", "storage.googleapis.com",
+                "couverture.numilog.com",
             } or parsed.query:
                 return None
         else:
