@@ -100,7 +100,7 @@ class UiPerfMonitor:
         self._events_dropped = 0
         self._invalid_samples = 0
         self._gc_samples_dropped = 0
-        self._active_gc_probes: set[tuple[int, str]] = set()
+        self._active_gc_probes: set[tuple[int, str, int]] = set()
         self._clock = clock or time.monotonic
         self._started_at = self._clock()
         self._resource_reader = resource_reader or _process_resource_sample
@@ -176,8 +176,13 @@ class UiPerfMonitor:
         operation_id: int | None = None,
         trigger: str = "unspecified", outcome: str = "unknown",
         observed_at_ms: float | None = None,
+        capture_generation: int | None = None,
     ) -> bool:
-        """Store observed elapsed time only; reject raw private metadata."""
+        """Store elapsed time; optional epoch limits detailed timeline delivery.
+
+        Passive statistics remain process-wide. Buffered samples from an old
+        opt-in probe must not enter a new capture's detailed timeline.
+        """
         try:
             # bool is an int subclass but never a measured duration.
             elapsed = float(duration_ms) if type(duration_ms) is not bool else float("nan")
@@ -213,7 +218,10 @@ class UiPerfMonitor:
         key = f"{category}.{phase}"
         with self._lock:
             self._phase_samples[key].append(elapsed)
-            if self._detailed_capture:
+            if self._detailed_capture and (
+                capture_generation is None
+                or capture_generation == self._capture_generation
+            ):
                 if len(self._phase_events) == self._max_events:
                     self._events_dropped += 1
                 self._phase_events.append({
@@ -251,8 +259,9 @@ class UiPerfMonitor:
             else "other"
         )
         owner = threading.get_ident()
-        key = (owner, category)
         with self._lock:
+            capture_generation = self._capture_generation
+            key = (owner, category, capture_generation)
             if key in self._active_gc_probes:
                 # A re-entrant GTK update is already covered by the outer
                 # interval; recording both would double count its GC pause.
@@ -273,7 +282,8 @@ class UiPerfMonitor:
             nonlocal dropped
             # Keep the global GC callback allocation-free on unrelated
             # threads and avoid acquiring the monitor lock inside GC.
-            if threading.get_ident() != owner or not self._detailed_capture:
+            if (threading.get_ident() != owner or not self._detailed_capture
+                    or self._capture_generation != capture_generation):
                 return
             generation = info.get("generation") if isinstance(info, dict) else None
             if type(generation) is not int or generation not in (0, 1, 2):
@@ -308,13 +318,19 @@ class UiPerfMonitor:
                     pass
             with self._lock:
                 self._active_gc_probes.discard(key)
-                self._gc_samples_dropped += dropped
+                # A stop alone still describes this capture, but a restart
+                # resets its counters. An older probe cannot refill them.
+                if (self._capture_generation == capture_generation
+                        or (not self._detailed_capture
+                            and self._capture_generation == capture_generation + 1)):
+                    self._gc_samples_dropped += dropped
             # No record_phase/lock/JSON allocation inside a GC callback.
             # Flush after the GTK operation to avoid callback re-entrancy.
             for generation, elapsed_ms, observed_at_ms in samples:
                 self.record_phase(
                     category, f"gc_gen{generation}", elapsed_ms,
                     trigger="navigation", observed_at_ms=observed_at_ms,
+                    capture_generation=capture_generation,
                 )
 
     def performance_report(self) -> dict[str, object]:
