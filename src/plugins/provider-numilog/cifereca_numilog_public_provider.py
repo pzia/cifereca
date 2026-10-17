@@ -10,7 +10,7 @@ from dataclasses import replace
 
 from cifereca.plugin_api import (
     ProviderCapabilities, ProviderCapabilityError, ProviderDescriptor,
-    ProviderError, ProviderPlugin, ProviderSearchCapabilities, ProviderSession,
+    ItemDetail, ProviderError, ProviderPlugin, ProviderSearchCapabilities, ProviderSession,
 )
 from cifereca_numilog_public_client import fetch_public_search
 
@@ -20,7 +20,7 @@ DESCRIPTOR = ProviderDescriptor(
     display_name="Numilog — Catalogue public",
     description="Catalogue commercial Numilog anonyme, distinct des livres achetés.",
     state="ready",
-    capabilities=ProviderCapabilities(search=True),
+    capabilities=ProviderCapabilities(search=True, holdings=True),
     search_capabilities=ProviderSearchCapabilities(
         fields=("all",),
         scopes=("all", "digital"),
@@ -55,6 +55,37 @@ class NumilogPublicSession(ProviderSession):
     def close(self):
         self.connected = False
         self._accounts = []
+
+    def holdings(self, item, search_terms=""):
+        """Display an already-retrieved public listing without ANY network I/O.
+
+        Core may call holdings automatically when a search row is selected.
+        Product enrichment remains a separately requested operation: no N+1,
+        login, cookies, purchase lookup, fulfillment or implied ownership.
+        """
+        if not self.connected:
+            raise ProviderError("Numilog public : catalogue non connecté")
+        from cifereca_numilog_public_detail import validate_public_detail_item
+        validate_public_detail_item(item)
+        if (getattr(item, "scenario", None) != "NUMILOG_PUBLIC"
+                or getattr(item, "docbase", None) != "NUMILOG"
+                or type(getattr(item, "title", None)) is not str
+                or not item.title.strip()):
+            raise ProviderCapabilityError("Numilog public : detail_evidence_conflict")
+        return ItemDetail(
+            record_id=item.record_id,
+            docbase="NUMILOG",
+            title=item.title,
+            author=item.author,
+            type=item.type,
+            year=item.published_at,
+            thumbnail_url=item.thumbnail_url,
+            availability_status="unknown",
+            availability_label="Catalogue Numilog — achat non attesté",
+            holdings=[],
+            source_provider=self.provider_id,
+            source_credential=self.credential_id,
+        )
 
     def enrich_public_detail(self, item):
         """Explicit detail request only, not part of connect/search/sync."""
