@@ -216,6 +216,7 @@ def extract_public_identifiers(html: str, product_url: str) -> dict:
             "kind": "observed_public_label",
             "label": " ".join(label.split()),
             "source_url": product_url,
+            "observation_scope": "bounded_product_body_or_details",
             "public_offer_format": role if role in {"epub", "pdf"} else None,
             "public_offer_drm_label": drm,
             "owned_format_proven": False,
@@ -250,6 +251,7 @@ def validated_public_identifiers(detail: dict, product_url: str) -> tuple[dict, 
         if (assigned is None or assigned[0] != role
                 or proof.get("kind") != "observed_public_label"
                 or proof.get("source_url") != product_url
+                or proof.get("observation_scope") != "bounded_product_body_or_details"
                 or proof.get("public_offer_format") != (role if role in {"epub", "pdf"} else None)
                 or proof.get("public_offer_drm_label") != assigned[1]
                 or proof.get("owned_format_proven") is not False):
@@ -259,6 +261,7 @@ def validated_public_identifiers(detail: dict, product_url: str) -> tuple[dict, 
             "kind": "observed_public_label",
             "label": " ".join(label.split()),
             "source_url": product_url,
+            "observation_scope": "bounded_product_body_or_details",
             "public_offer_format": proof["public_offer_format"],
             "public_offer_drm_label": proof["public_offer_drm_label"],
             "owned_format_proven": False,
