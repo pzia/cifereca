@@ -10,7 +10,6 @@ from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.models import Account
 from cifereca.providers import ProviderConfigurationError
 from tests.test_core_p0_1862_numilog_store_mirror import _connect, _row
-from tests.test_core_p0_1905_numilog_offline_preview import _ledger, _owned
 from tests.test_sync_state_contract import _service
 
 
@@ -40,11 +39,19 @@ def _rig(tmp_path, monkeypatch):
 def test_manual_numilog_acquire_locks_source_and_discards_signed_url(tmp_path, monkeypatch):
     service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
     try:
+        item.thumbnail_url = "https://private.invalid/cover.png?token=SIGNED_SECRET"
+        item.friendly_url = "https://private.invalid/detail?auth=SIGNED_SECRET"
+        item.download_url = "https://private.invalid/direct?auth=SIGNED_SECRET"
+        item.metadata = {"private_url": "https://private.invalid?token=SIGNED_SECRET"}
         acquired = service.acquire_direct_item(item)
         assert acquired.provider_id == "numilog"
         assert acquired.credential_id == account.credential_id
         assert acquired.item_id == item.record_id
+        assert acquired.account_id == account.unique_id
+        assert acquired.metadata["identity_id"] == account.identity_id
+        assert acquired.metadata["cover_url"] is None
         assert acquired.source_url is None
+        assert "SIGNED_SECRET" not in repr(acquired)
         assert acquired.local_path.is_file()
         assert calls == [item.record_id, "post_download"]
         assert all("SIGNED_SECRET" not in repr(record) for record in records)
@@ -133,8 +140,6 @@ def test_numilog_manual_acquire_blocks_existing_or_ambiguous_local_evidence(
         else:
             # A provenance-linked placement is enough to require local
             # reconciliation, even if an acquisition row was lost.
-            _item, entitlement = _owned(service, account, lid="lid0",
-                                        variant=item.record_id.rsplit(":", 1)[-1])
             service.storage.placement_put({
                 "placement_id": "orphan-local-file",
                 "artifact_id": None, "path": str(tmp_path / "fake.epub"),
@@ -217,5 +222,25 @@ def test_numilog_busy_global_acquisition_lock_does_not_call_provider(
         with pytest.raises(ProviderConfigurationError, match="déjà en cours"):
             service.acquire_direct_item(item)
         assert calls == []
+    finally:
+        service.close()
+
+def test_numilog_detached_source_action_is_never_attributed_to_selected_identity(
+    tmp_path, monkeypatch,
+):
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        service.current_identity = service.identity_by_id("alex")
+        service.storage.provider_connection_put({
+            "identity_id": "unconfigured-credential-owner",
+            "provider_id": "numilog",
+            "credential_id": account.credential_id, "enabled": True,
+        })
+        with pytest.raises(ProviderConfigurationError):
+            service.acquire_direct_item(item)
+        assert calls == []
+        assert records and records[-1][0][0] is None
+        assert records[-1][1]["facts"]["private_item"] is True
+        assert item.record_id not in repr(records)
     finally:
         service.close()
