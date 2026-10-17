@@ -244,3 +244,21 @@ def test_numilog_detached_source_action_is_never_attributed_to_selected_identity
         assert item.record_id not in repr(records)
     finally:
         service.close()
+
+
+def test_numilog_cooperative_cancellation_propagates_without_registration(
+    tmp_path, monkeypatch,
+):
+    from cifereca.plugin_api import Cancelled
+    service, account, session, item, calls, records = _rig(tmp_path, monkeypatch)
+    try:
+        def cancel(*_args):
+            raise Cancelled("cancelled")
+        session.download_direct = cancel
+        with pytest.raises(Cancelled):
+            service.acquire_direct_item(item)
+        assert calls == []
+        assert records[-1][1]["facts"]["private_item"] is True
+        assert records[-1][1]["facts"]["error"] == "Cancelled"
+    finally:
+        service.close()
