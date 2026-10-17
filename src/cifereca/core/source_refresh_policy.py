@@ -120,7 +120,8 @@ def source_refresh_due(
         or type(connected) is not bool or connected is not True
         or type(capable) is not bool or capable is not True
         or type(already_requested_this_startup) is not bool
-        or type(phase_status) is not str or phase_status == "running"
+        or type(phase_status) is not str
+        or phase_status not in {"idle", "success", "partial", "failed"}
         or type(trigger) is not str
         or not isinstance(policy, SourceRefreshSchedule)
         or not isinstance(now, datetime) or now.tzinfo is None
