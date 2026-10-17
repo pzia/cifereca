@@ -7,6 +7,7 @@ import hashlib
 import pytest
 
 from cifereca.acquisition_engine import Entitlement, SourceIdentity, stable_id
+from cifereca.core import numilog_manifest_rights
 from cifereca.core.numilog_manifest_rights import mirror_numilog_manifest_rights
 from cifereca.storage import Storage
 from tests.test_core_p0_1862_numilog_store_mirror import _connect, _row
@@ -178,3 +179,21 @@ def test_numilog_scope_index_rejects_invalid_inputs_without_sql(tmp_path, invali
         assert seen == []
     finally:
         storage.close()
+
+
+def test_overbudget_numilog_manifest_is_error_not_fake_empty_success(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        account, _session, calls = _connect(service, number=0)
+        monkeypatch.setattr(numilog_manifest_rights, "_MAX_NUMILOG_MIRROR_ROWS", 2)
+        with pytest.raises(ValueError, match="^numilog_rights_budget_exhausted$"):
+            mirror_numilog_manifest_rights(
+                service, (_row(account.credential_id, i) for i in range(3)),
+                identity_id=account.identity_id,
+                credential_id=account.credential_id,
+                account_id=account.unique_id,
+            )
+        assert service.storage.entitlements(provider_id="numilog") == []
+        assert calls == []
+    finally:
+        service.close()
