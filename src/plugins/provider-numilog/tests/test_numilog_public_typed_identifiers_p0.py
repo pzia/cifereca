@@ -115,7 +115,9 @@ def test_merge_public_listing_retains_typed_identifiers_as_commercial_only():
     assert merged.metadata["public_detail"]["public_identifiers"]["paper"] == "9782092591086"
     assert merged.metadata["public_detail"]["public_identifiers"]["epub"] == "9782092591093"
     assert merged.metadata["public_detail"]["format_edition_proven"] is False
-    assert "isbn_digital" not in merged.metadata
+    # The public-search fixture already declares an unknown (None) ISBN key.
+    # Detail evidence must not promote that unknown into a proven digital ISBN.
+    assert merged.metadata.get("isbn_digital") == row.metadata.get("isbn_digital") is None
 
 
 def test_merge_owned_keeps_format_and_rights_from_account_only():
