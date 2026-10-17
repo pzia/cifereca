@@ -17,6 +17,7 @@ from ..models import SearchResult
 _MAX_CATALOG_ROWS = 10000
 _MAX_RESULTS = 50
 _MAX_AGE_SECONDS = 90 * 86400
+_PUBLIC_COLLECTIONS = frozenset({"catalog", "public", "public_catalog"})
 _PUBLIC_META = frozenset({
     "subjects", "subject", "series", "collection", "publisher", "languages",
     "language", "isbn", "isbns", "authors", "contributors", "genre",
@@ -72,10 +73,12 @@ def known_public_fallback(
         meta = entry.get("metadata")
         if not isinstance(meta, dict):
             continue
-        # Authenticated libraries and signed source links never become public.
-        if str(meta.get("source_collection") or "").casefold() in {
-            "library", "personal", "owned", "loans",
-        }:
+        # State/absence of ownership alone cannot attest public visibility.
+        # Legacy labels, missing provenance and private collections stay out
+        # rather than being relabelled as public by this offline projection.
+        collection = meta.get("source_collection")
+        if (type(collection) is not str
+                or collection.strip().casefold() not in _PUBLIC_COLLECTIONS):
             continue
         mirrored = meta.get("mirrored_at")
         if (type(mirrored) is not int or mirrored > current
