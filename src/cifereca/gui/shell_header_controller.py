@@ -80,6 +80,15 @@ def create_shell_header(window, *, Gtk, Adw, Gio, Pango):
     # One ordered box makes the menu the rightmost application control.
     controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     window.statistics_button=Gtk.Button(label="— livres · — prêts")
+    # Full semantic text remains the accessible label and opens the same
+    # dialog, but must not impose its natural width on the entire window.
+    shrink = getattr(window.statistics_button, "set_can_shrink", None)
+    if callable(shrink):
+        shrink(True)
+    else:
+        label = window.statistics_button.get_child()
+        if label is not None:
+            label.set_ellipsize(Pango.EllipsizeMode.END)
     window.statistics_button.add_css_class('flat')
     window.statistics_button.set_tooltip_text("Statistiques de l’identité : inventaire local et derniers prêts connus")
     window.statistics_button.connect('clicked',lambda _b:window._show_statistics())
