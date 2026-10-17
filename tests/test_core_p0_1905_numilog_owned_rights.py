@@ -323,3 +323,75 @@ def test_numilog_entitlement_helper_is_inert_without_authenticated_owner(tmp_pat
         assert service.storage.entitlements(provider_id="numilog") == []
     finally:
         service.close()
+
+
+def test_numilog_owned_digital_cover_is_visible_without_local_file(tmp_path):
+    """Three private rights remain visible with the default Digital filter."""
+    from cifereca.core.search import filter_loaded_results, support_kind
+
+    service = _service(tmp_path)
+    try:
+        account, session, calls = _connect(service, number=0)
+        covers = [
+            f"https://couverture.numilog.com/978207524202{i}_GRANDE.jpg"
+            for i in range(3)
+        ]
+        session.library = lambda: (
+            calls.append("library") or [
+                replace(_row(account.credential_id, i), thumbnail_url=covers[i])
+                for i in range(3)
+            ]
+        )
+        assert service.mirror_personal_libraries() == {"numilog:numilog-private": 3}
+        assert calls == ["library"]
+
+        rights = service.storage.entitlements(provider_id="numilog")
+        assert len(rights) == 3
+        assert {r["metadata"]["cover_url"] for r in rights} == set(covers)
+        assert all(r["metadata"]["medium"] == "digital" for r in rights)
+        assert all(r["metadata"]["media_format"] is None for r in rights)
+
+        entries = [
+            row for row in service.library_entries(identity_id="default")
+            if row["provider_id"] == "numilog"
+        ]
+        assert len(entries) == 3
+        assert len(filter_loaded_results(entries, scope="digital")) == 3
+        assert all(support_kind(row) == "digital" for row in entries)
+        assert {row["thumbnail_url"] for row in entries} == set(covers)
+        assert all(row["state"] == "remote_owned" and not row["local"]
+                   and row["media_format"] is None for row in entries)
+        assert not list((tmp_path / "EBooks").rglob("*.epub"))
+        assert not list((tmp_path / "EBooks").rglob("*.acsm"))
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("untrusted_cover", [
+    "https://couverture.numilog.com/9782075242028_GRANDE.jpg?auth=SECRET_SIGNATURE",
+    "https://couverture.numilog.com/9782075242028_GRANDE.jpg#private",
+    "https://user:secret@couverture.numilog.com/9782075242028_GRANDE.jpg",
+    "https://couverture.numilog.com:8443/9782075242028_GRANDE.jpg",
+    "http://couverture.numilog.com/9782075242028_GRANDE.jpg",
+    "https://evil.example/9782075242028_GRANDE.jpg",
+])
+def test_numilog_untrusted_cover_never_persists_in_rights_or_catalogue(
+    tmp_path, untrusted_cover,
+):
+    service = _service(tmp_path)
+    try:
+        account, session, _calls = _connect(service, number=0)
+        session.library = lambda: [
+            replace(_row(account.credential_id, 0), thumbnail_url=untrusted_cover)
+        ]
+        assert service.mirror_personal_libraries() == {"numilog:numilog-private": 1}
+        rights = service.storage.entitlements(provider_id="numilog")
+        assert len(rights) == 1
+        assert rights[0]["metadata"]["cover_url"] is None
+        entries = service.library_entries(identity_id="default")
+        assert len(entries) == 1
+        assert entries[0]["thumbnail_url"] is None
+        assert untrusted_cover not in json.dumps(rights)
+        assert untrusted_cover not in json.dumps(service.storage.catalog_entries())
+    finally:
+        service.close()
