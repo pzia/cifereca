@@ -16,6 +16,8 @@ from ..acquisition_engine import Entitlement, SourceIdentity, stable_id
 from ..models import SearchResult
 from .search_orchestration import _numilog_public_catalog_url
 
+_MAX_NUMILOG_MIRROR_ROWS = 100_000
+
 
 def numilog_inventory_binding_valid(service: Any, account: Any, *, session: Any) -> bool:
     """Refuse ambiguous, detached or disabled owned-store source requests.
@@ -155,7 +157,7 @@ def mirror_numilog_manifest_rights(
         if item_id is None or item_id in staged:
             continue
         staged[item_id] = row
-        if len(staged) > 100_000:
+        if len(staged) > _MAX_NUMILOG_MIRROR_ROWS:
             # Over budget is a failure, never a false "zero owned purchases"
             # success or a partial batch of persisted rights.
             raise ValueError("numilog_rights_budget_exhausted")
