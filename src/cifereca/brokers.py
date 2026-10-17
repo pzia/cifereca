@@ -504,6 +504,7 @@ class SynchronizationBrokerImpl:
             inventory_source_eligible, load_source_refresh_schedule,
             source_refresh_due,
         )
+        from .plugin_api import Cancelled
         if type(identity_id) is not str or not identity_id:
             return SyncResult(False, facts={"reason": "identity_required"})
         # A syntactically nonempty input is not proof of a configured
@@ -528,6 +529,9 @@ class SynchronizationBrokerImpl:
             self.service.accounts_for_identity(identity_id),
             key=self._source_id,
         ):
+            # A cancelled batch must not start work for another account.
+            if control is not None and callable(getattr(control, "check_cancelled", None)):
+                control.check_cancelled()
             if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
                 continue
             source_id = self._source_id(account)
@@ -602,6 +606,9 @@ class SynchronizationBrokerImpl:
                 result = self.synchronize_source(
                     source_id, SyncRequest(identity_id=identity_id), control,
                 )
+            except Cancelled:
+                # Cancellation is a lifecycle signal, not a provider fault.
+                raise
             except Exception:
                 # A source may fail before synchronize_source's provider
                 # exception handler (e.g. persisting its running state).
@@ -611,6 +618,11 @@ class SynchronizationBrokerImpl:
             finally:
                 with self._scheduled_inventory_lock:
                     self._scheduled_inventory_running.discard(source_id)
+            # synchronize_source may have converted a cancellation thrown
+            # inside a provider into a failed SyncResult; observe the control
+            # again before returning a misleading normal batch completion.
+            if control is not None and callable(getattr(control, "check_cancelled", None)):
+                control.check_cancelled()
             total += result.changed
             if not result.ok:
                 failed += 1
