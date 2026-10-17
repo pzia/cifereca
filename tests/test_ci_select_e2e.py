@@ -62,6 +62,16 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(mod.select(["e2e/diagnostics_volume_probe.py"]),
                          ("diagnostics-volume-1366",))
 
+    def test_home_plugin_changes_select_existing_native_baselines_at_both_widths(self):
+        for path in ("src/plugins/home-page/cifereca_home.py",
+                     "src/plugins/home-page/cifereca-plugin.json",
+                     "src/plugins/home-page/tests/test_owned_loan_summary_1867.py"):
+            self.assertEqual(mod.select([path]), mod.HOME, path)
+        self.assertEqual(set(mod.HOME), {
+            "mainwindow-baseline-1366", "mainwindow-baseline-1600",
+        })
+        self.assertTrue(set(mod.HOME).issubset(set(mod.ALL)))
+
     def test_diagnostics_all_seven(self):
         self.assertEqual(set(mod.select(["src/plugins/diagnostics-page/page.py"])),
                          set(mod.DIAG))
