@@ -222,3 +222,27 @@ def test_ordinary_inventory_search_and_holdings_never_trigger_product_get(monkey
         assert s.holdings(row).availability_status == "owned"
     finally:
         s.close()
+
+
+def test_merger_rejects_missing_private_library_link_or_public_identity():
+    s = session()
+    try:
+        item = s._normalize(owned_row())
+        confirmed = replace(item, metadata={**item.metadata, "public_enrichment": {
+            "status": "attested_listing_match",
+            "scope": "public_listing_only",
+            "product_url": URL,
+            "source_url": GOLDEN["source_url"],
+            "field_evidence": {},
+        }})
+        forged_url_proof = replace(confirmed, metadata={
+            **confirmed.metadata, "public_url_evidence": "invented",
+        })
+        with pytest.raises(ProviderCapabilityError, match="evidence_conflict"):
+            merge_attested_owned_public_detail(forged_url_proof, detail())
+        with pytest.raises(ProviderCapabilityError, match="evidence_conflict"):
+            merge_attested_owned_public_detail(
+                replace(confirmed, source_credential="__public__"), detail(),
+            )
+    finally:
+        s.close()
