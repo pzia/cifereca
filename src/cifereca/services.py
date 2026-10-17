@@ -2726,6 +2726,12 @@ class LibraryService:
                     target_dir = self.library_identity_provider_dir(
                         identity.identity_id, "numilog",
                     )
+                    if (target_dir.is_symlink()
+                            or target_dir.parent.is_symlink()
+                            or not target_dir.is_dir()):
+                        raise ProviderConfigurationError(
+                            "Numilog : répertoire identité non attesté"
+                        )
                     # Numilog's explicit direct adapter uses a stable hashed
                     # filename. A local orphan, broken symlink or pre-existing
                     # file with no ledger is still a conflict, never an
