@@ -14,7 +14,8 @@ from cifereca.task_queue import TaskPriority
 
 def add_numilog_enrichment_action(host, selected_id, item, detail, context, *,
                                   button_factory) -> bool:
-    if (not can_enrich_numilog_result(item)
+    if (not isinstance(context, tuple) or len(context) != 4
+            or not can_enrich_numilog_result(item)
             or not host._search_detail_context_current(selected_id, context)):
         return False
     button = button_factory("Enrichir depuis Numilog", "view-refresh-symbolic")
