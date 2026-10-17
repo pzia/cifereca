@@ -158,6 +158,13 @@ def merge_attested_owned_public_detail(owned, detail):
         raise ProviderCapabilityError(error)
     fields = detail["fields"]
     evidence = detail["field_evidence"]
+    from cifereca_numilog_public_identifiers import (
+        PublicIdentifierError, validated_public_identifiers,
+    )
+    try:
+        typed_ids, typed_proof = validated_public_identifiers(detail, url)
+    except PublicIdentifierError:
+        raise ProviderCapabilityError(error) from None
     allowed = {"title", "authors", "publisher", "published_at",
                "description", "language", "isbn_edition_unspecified"}
     if not set(fields).issubset(allowed) or set(fields) != set(evidence):
@@ -215,6 +222,10 @@ def merge_attested_owned_public_detail(owned, detail):
         "rights_proven_by_public_detail": False,
         "field_evidence": copied_evidence,
         "listing_conflicts": tuple(conflicts),
+        # Public offers describe formats on the commercial product page, not
+        # which variant this account bought. Keep typed ids isolated.
+        "public_identifiers": typed_ids,
+        "identifier_evidence": typed_proof,
     }
     if "language" in fields:
         if type(fields["language"]) is not str:
