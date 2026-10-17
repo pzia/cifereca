@@ -371,3 +371,21 @@ cette version améliore l'isolement et **ne constitue toujours pas une
 homologation de scraping Numilog en production**. L'activation automatique
 du singleton public reste désactivée. Aucune requête supplémentaire à la
 sélection/synchronisation ni aucune preuve de possession n'est ajoutée.
+
+## Livraison refusée avec formulaire de connexion (#1884 / #2024, 0.1.30)
+
+`login_form_detected` signifie seulement qu'un champ HTML de mot de passe a
+été reçu à la place du fichier. Cela ne prouve ni expiration du cookie, ni
+refus serveur précis. Le provider suspend la session et demande une reconnexion
+explicite, sans retry ni modification des règles de cookies ou des origines.
+`connected_initial` conserve le booléen initial de la tentative ; la transition
+`delivery_login_form_detected` expose ensuite `connected=False`. Aucun cookie,
+URL, HTML ou identifiant n'est exporté. Le code historique
+`session_expired_confirmed` reste accepté pour la lecture d'anciennes traces.
+
+Tests MockTransport : connexion réussie puis readBook 302 / HTML login 200,
+absence de fichier, nouvelle tentative après reconnexion explicite, cookies
+fictifs Domain/Path/Secure/expiration. HTTPX conserve SameSite mais ne dispose
+pas du contexte de navigation d'un navigateur pour l'appliquer : ces tests
+ne prouvent pas une politique navigateur ni la cause du refus Numilog réel.
+La recette fournisseur du même achat demeure non vérifiée.
