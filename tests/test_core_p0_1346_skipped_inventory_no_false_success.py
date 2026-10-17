@@ -10,8 +10,9 @@ from tests.test_core_p0_1905_numilog_inventory_schedule import _numilog
 
 @pytest.mark.parametrize("provider", ["kobo", "numilog"])
 @pytest.mark.parametrize("prior_success", [False, True])
+@pytest.mark.parametrize("skip_status", ["skipped", "Skipped", "SKIPPED"])
 def test_skipped_provider_result_never_advances_private_inventory_evidence(
-    tmp_path, provider, prior_success,
+    tmp_path, provider, prior_success, skip_status,
 ):
     service, account, _session, calls = (
         _rig(tmp_path) if provider == "kobo" else _numilog(tmp_path)
@@ -31,7 +32,7 @@ def test_skipped_provider_result_never_advances_private_inventory_evidence(
         def revoked(_account, **_kwargs):
             service.storage.metadata_set("sync.source.enabled." + sid, "0")
             return {
-                "status": "skipped", "reason": "source_disabled",
+                "status": skip_status, "reason": "source_disabled",
                 "library": 49,  # A contradictory private payload is not success.
                 "owned_rights": 47,
                 "provider": "PRIVATE_CREDENTIAL_SHOULD_NOT_LEAK",
