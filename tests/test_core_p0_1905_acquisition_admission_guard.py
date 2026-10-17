@@ -71,12 +71,17 @@ def test_unscoped_legacy_numilog_download_api_not_switched_off_by_guard(
         reached = []
         def expected_fictitious_provider_call(*_args):
             reached.append("explicit_direct")
-            raise RuntimeError("fictional download callback, no external request")
+            raise RuntimeError("fictional download callback ?auth=PRIVATE_PROVIDER_SECRET")
         monkeypatch.setattr(session, "download_direct", expected_fictitious_provider_call)
         # The P0 guard does not widen or disable the existing explicitly
         # requested provider API. This test invokes only a local fake callback.
-        with pytest.raises(RuntimeError, match="fictional download"):
+        with pytest.raises(ProviderConfigurationError, match="livraison indisponible") as error:
             service._acquire_direct_item_impl(item)
         assert reached == ["explicit_direct"]
+        # Reaching the explicit API does not permit reflecting a private
+        # provider failure into logs or a GTK error message.
+        assert str(error.value) == "Numilog : livraison indisponible ; réessayer manuellement"
+        assert "PRIVATE_PROVIDER_SECRET" not in str(error.value)
+        assert "fictional download" not in str(error.value)
     finally:
         service.close()

@@ -2648,7 +2648,13 @@ class LibraryService:
             raise ProviderConfigurationError(
                 "Acquisition ciblée indisponible : autorisation du compte non vérifiable"
             )
-        session = self._session_for_source(item.source_provider, item.source_credential)
+        # Numilog's account/credential is untrusted until the dedicated
+        # source guard validates its persistent owner under the global lock.
+        # Do not look up the session using an untrusted credential first.
+        session = (
+            None if item.source_provider == "numilog"
+            else self._session_for_source(item.source_provider, item.source_credential)
+        )
         content_type = self.acquisition.content_type_for(item)
 
         if item.source_provider == "kobo":
@@ -2707,6 +2713,108 @@ class LibraryService:
                     "Une synchronisation locale est déjà en cours dans une autre instance de cifereca"
                 ) from exc
 
+        if item.source_provider == "numilog":
+            # Even an explicit UI click is not permission to download from a
+            # detached account or to race an existing manual/materialize run.
+            # Numilog resolves delivery URLs afresh *inside* download_direct.
+            from .core.numilog_manual_acquisition import require_source
+            try:
+                with InterProcessLock(acquisition_lock_file()):
+                    identity, pinned_session, pinned_account_id = require_source(
+                        self, item, session=session,
+                    )
+                    if self.storage.numilog_purchase_has_local_conflict(
+                        credential_id=item.source_credential,
+                        item_id=item.record_id,
+                    ):
+                        raise ProviderConfigurationError(
+                            "Numilog : acquisition existante ; rapprochement local requis"
+                        )
+                    target_dir = self.library_identity_provider_dir(
+                        identity.identity_id, "numilog",
+                    )
+                    if (target_dir.is_symlink()
+                            or target_dir.parent.is_symlink()
+                            or not target_dir.is_dir()):
+                        raise ProviderConfigurationError(
+                            "Numilog : répertoire identité non attesté"
+                        )
+                    # Numilog's explicit direct adapter uses a stable hashed
+                    # filename. A local orphan, broken symlink or pre-existing
+                    # file with no ledger is still a conflict, never an
+                    # invitation to overwrite it on another manual click.
+                    expected_name = "numilog-" + hashlib.sha256(
+                        item.record_id.encode("utf-8"),
+                    ).hexdigest()[:32] + ".epub"
+                    expected_path = target_dir / expected_name
+                    if expected_path.exists() or expected_path.is_symlink():
+                        raise ProviderConfigurationError(
+                            "Numilog : fichier local candidat ; rapprochement requis"
+                        )
+                    try:
+                        path, _private_url = pinned_session.download_direct(
+                            item, target_dir,
+                        )
+                    except Exception as exc:
+                        from .plugin_api import Cancelled
+                        if isinstance(exc, Cancelled):
+                            raise
+                        # A provider exception can contain a signed ACSM link
+                        # or order/cookie data. Never relay its raw message.
+                        raise ProviderConfigurationError(
+                            "Numilog : livraison indisponible ; réessayer manuellement"
+                        ) from None
+                    # The provider may release its per-session lock before
+                    # returning. A reconnect/rebind during HTTP or ADEPT must
+                    # not be committed under a different identity.
+                    refreshed = require_source(self, item, session=pinned_session)
+                    if (refreshed[0].identity_id != identity.identity_id
+                            or refreshed[2] != pinned_account_id):
+                        raise ProviderConfigurationError(
+                            "Numilog : rattachement du compte modifié"
+                        )
+                    from .core.numilog_manual_acquisition import require_local_artifact
+                    require_local_artifact(path, target_dir)
+                    from dataclasses import replace
+                    # Never pass unverified private cover/link metadata to
+                    # post-download hooks or the persisted Acquisition object.
+                    # The original item is used only by the provider's
+                    # exact owned-library resolver, inside the source lock.
+                    clean_item = replace(
+                        item, thumbnail_url=None, friendly_url=None,
+                        download_url=None, metadata={},
+                    )
+                    self.acquisition.run_post_download(
+                        clean_item, path, "", target_dir,
+                    )
+                    refreshed = require_source(self, item, session=pinned_session)
+                    if (refreshed[0].identity_id != identity.identity_id
+                            or refreshed[2] != pinned_account_id):
+                        raise ProviderConfigurationError(
+                            "Numilog : rattachement du compte modifié"
+                        )
+                    # Post-download hooks may remove or replace the file.
+                    # Attest the final artifact, not just its pre-hook path.
+                    require_local_artifact(path, target_dir)
+                    # A provider-returned URL may contain single-use ACSM
+                    # signatures. Never persist it as Acquisition.source_url.
+                    result = self.acquisition.acquisition_from_direct(
+                        clean_item, path=path, url="", target_dir=target_dir,
+                        action="download",
+                    )
+                    # The generic direct adapter historically dropped the
+                    # account ID. Persist the source's originally pinned owner,
+                    # not a later enumeration of possibly mutated accounts.
+                    return replace(
+                        result, account_id=pinned_account_id,
+                        metadata={**result.metadata,
+                                  "identity_id": identity.identity_id},
+                    )
+            except LockBusyError:
+                raise ProviderConfigurationError(
+                    "Numilog : acquisition locale déjà en cours"
+                ) from None
+
         identity = self.identity_for_connection(item.source_provider, item.source_credential)
         target_dir = (
             self.library_identity_provider_dir(identity.identity_id, item.source_provider)
@@ -2733,17 +2841,31 @@ class LibraryService:
 
     def acquire_direct_item(self, item: SearchResult, *, _admission=None) -> Acquisition:
         identity_id = None
-        try:
-            identity_id = self.identity_for_connection(item.source_provider, item.source_credential).identity_id
-        except Exception:
-            identity_id = self.current_identity.identity_id if self.current_identity else None
+        # Do not trust a persisted connection owner to attribute private
+        # Numilog activity before the locked source admission succeeds.
+        if item.source_provider != "numilog":
+            try:
+                identity_id = self.identity_for_connection(
+                    item.source_provider, item.source_credential,
+                ).identity_id
+            except Exception:
+                identity_id = self.current_identity.identity_id if self.current_identity else None
         try:
             result = (self._acquire_direct_item_impl(item, _admission=_admission) if _admission is not None
                       else self._acquire_direct_item_impl(item))
-            self._record_action(identity_id, "acquisition", "success", provider_id=item.source_provider, facts={"record_id": item.record_id})
+            if item.source_provider == "numilog":
+                identity_id = result.metadata.get("identity_id")
+            safe_facts = ({"private_item": True} if item.source_provider == "numilog"
+                          else {"record_id": item.record_id})
+            self._record_action(identity_id, "acquisition", "success",
+                                provider_id=item.source_provider, facts=safe_facts)
             return result
         except Exception as exc:
-            self._record_action(identity_id, "acquisition", "failed", provider_id=item.source_provider, facts={"record_id": item.record_id, "error": type(exc).__name__})
+            safe_facts = ({"private_item": True, "error": type(exc).__name__}
+                          if item.source_provider == "numilog"
+                          else {"record_id": item.record_id, "error": type(exc).__name__})
+            self._record_action(identity_id, "acquisition", "failed",
+                                provider_id=item.source_provider, facts=safe_facts)
             raise
 
     def obtain_search_item(self, item: SearchResult):
