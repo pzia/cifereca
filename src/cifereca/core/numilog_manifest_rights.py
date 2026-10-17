@@ -14,6 +14,7 @@ from typing import Any
 
 from ..acquisition_engine import Entitlement, SourceIdentity, stable_id
 from ..models import SearchResult
+from .search_orchestration import _numilog_public_catalog_url
 
 
 def numilog_inventory_binding_valid(service: Any, account: Any, *, session: Any) -> bool:
@@ -194,6 +195,14 @@ def mirror_numilog_manifest_rights(
                 "title": _safe_metadata_text(row.title),
                 "author": _safe_metadata_text(row.author),
                 "media_format": _safe_metadata_text(row.format),
+                # A Numilog purchase is an ebook even when EPUB/PDF is still
+                # unverified. Preserve support without inventing a format.
+                "medium": "digital" if row.medium == "digital" else None,
+                # Only a query-free public image URL may cross the private
+                # account boundary. Never persist signed delivery links.
+                "cover_url": _numilog_public_catalog_url(
+                    row.thumbnail_url, cover=True,
+                ),
             },
         })
         reserved[entitlement_id] = key
