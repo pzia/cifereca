@@ -28,7 +28,7 @@ def _scope(service, item: SearchResult, expected_identity_id: str) -> str:
                 or item.source_collection != "library"
                 or type(item.source_credential) is not str
                 or not item.source_credential
-                or item.source_credential in {"legacy", "__public__"}
+                or item.source_credential in {"__public__"}
                 or item.download_url is not None):
             raise ProviderCapabilityError(_ERROR)
         # A private Numilog result is legal only if its exact source connection
@@ -59,7 +59,7 @@ def can_enrich_numilog_result(item: object) -> bool:
     if item.source_provider == "numilog":
         return (item.owned is True
                 and item.source_collection == "library"
-                and item.source_credential not in {"", "legacy", "__public__"}
+                and item.source_credential not in {"", "__public__"}
                 and item.download_url is None)
     return (item.source_provider == "numilog-catalog"
             and item.source_credential == "__public__"
