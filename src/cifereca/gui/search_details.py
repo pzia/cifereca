@@ -134,6 +134,10 @@ def _apply_search_detail(
     self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
     self._add_local_book_actions(self.search_page.detail, result_row(item))
     self._request_cached_book_details("search", item.id, result_row(item))
+    add_numilog_enrichment_action(
+        self, selected_id, item, detail, context,
+        button_factory=self.search_page.detail.window.action_button,
+    )
 
 
 def _search_detail_error(
