@@ -167,3 +167,42 @@ def extract_public_identifiers(html: str, product_url: str) -> dict:
         "identifiers": identifiers,
         "identifier_evidence": evidence,
     }
+
+
+def validated_public_identifiers(detail: dict, product_url: str) -> tuple[dict, dict]:
+    """Validate evidence again before merging externally supplied detail data."""
+    if type(detail) is not dict:
+        raise PublicIdentifierError("evidence_conflict")
+    identifiers = detail.get("public_identifiers", {})
+    evidence = detail.get("identifier_evidence", {})
+    allowed = {"paper", "epub", "pdf", "digital_unspecified"}
+    if (type(identifiers) is not dict or type(evidence) is not dict
+            or set(identifiers) != set(evidence)
+            or not set(identifiers).issubset(allowed)):
+        raise PublicIdentifierError("evidence_conflict")
+    normalized, normalized_evidence = {}, {}
+    for role, value in identifiers.items():
+        if type(value) is not str or _isbn13(value) != value:
+            raise PublicIdentifierError("evidence_conflict")
+        proof = evidence[role]
+        if type(proof) is not dict:
+            raise PublicIdentifierError("evidence_conflict")
+        label = proof.get("label")
+        assigned = _role(label) if type(label) is str else None
+        if (assigned is None or assigned[0] != role
+                or proof.get("kind") != "observed_public_label"
+                or proof.get("source_url") != product_url
+                or proof.get("public_offer_format") != (role if role in {"epub", "pdf"} else None)
+                or proof.get("public_offer_drm_label") != assigned[1]
+                or proof.get("owned_format_proven") is not False):
+            raise PublicIdentifierError("evidence_conflict")
+        normalized[role] = value
+        normalized_evidence[role] = {
+            "kind": "observed_public_label",
+            "label": " ".join(label.split()),
+            "source_url": product_url,
+            "public_offer_format": proof["public_offer_format"],
+            "public_offer_drm_label": proof["public_offer_drm_label"],
+            "owned_format_proven": False,
+        }
+    return normalized, normalized_evidence
