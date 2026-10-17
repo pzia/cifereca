@@ -433,6 +433,25 @@ class NumilogSession(ProviderSession):
             )
             return enriched
 
+    def enrich_owned_public_detail(self, item):
+        """Explicit attested purchase -> listing -> public Book enrichment.
+
+        The owned inventory is refreshed by enrich_owned_public_listing before
+        any public product GET. A missing/ambiguous listing is NOT permission
+        to query an unverified product URL. Neither search nor sync calls this.
+        """
+        with self.lock:
+            owned = self.enrich_owned_public_listing(item)
+            attestation = (owned.metadata or {}).get('public_enrichment')
+            if (type(attestation) is not dict
+                    or attestation.get('status') != 'attested_listing_match'):
+                # No product detail was qualified on the FIRST listing page.
+                return owned
+            from cifereca_numilog_public_client import fetch_public_detail
+            from cifereca_numilog_enrichment import merge_attested_owned_public_detail
+            detail = fetch_public_detail(owned.friendly_url)
+            return merge_attested_owned_public_detail(owned, detail)
+
     def holdings(self,item,search_terms=''):
         self._canonical_item(item)
         return ItemDetail(record_id=item.record_id,docbase='NUMILOG',title=item.title,author=item.author,
