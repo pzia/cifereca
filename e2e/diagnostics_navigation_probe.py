@@ -1397,7 +1397,7 @@ def main() -> int:
         assert "Connexion : Déconnectée" in offline.get_subtitle()
         assert any(isinstance(node, Gtk.Button) and not node.get_sensitive()
                    and node.get_tooltip_text() == "Reconnectez ce compte avant de synchroniser."
-                   for node in walk(offline))
+                   for node in walk(sync_action_row(offline)))
         assert w._sync_all_button.get_sensitive()
         assert f["source_queries"] and not f["mutations"]
         assert w.service.current_identity.identity_id == "camille"
@@ -1433,7 +1433,7 @@ def main() -> int:
                             if row.get_title() == "Téléchargement automatique de ce compte")
         assert "Planification indisponible" in schedule_row.get_subtitle()
         assert not any(isinstance(node, Gtk.Button) and node.get_sensitive()
-                       for node in walk(schedule_row))
+                       for node in walk(sync_action_row(schedule_row)))
         acquisition_row = next(row for row in rows
                                if row.get_title() == "Téléchargement local · confirmation obligatoire")
         assert "Non préparé" in acquisition_row.get_subtitle()

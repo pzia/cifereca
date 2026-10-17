@@ -5,15 +5,20 @@ from gi.repository import Gtk
 
 
 def sync_action_row(row):
-    """Return the row with its own action area, or an actionless row unchanged."""
-    return getattr(row, "_cifereca_action_container", row)
+    """Use uniform containers so PreferencesGroup preserves metadata/action order."""
+    container = getattr(row, "_cifereca_action_container", None)
+    if container is None:
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        container.append(row)
+        row._cifereca_action_container = container
+    return container
 
 
 def add_sync_action(row, button):
     """Retain the original button/callback while allowing rows at 760px."""
     flow = getattr(row, "_cifereca_action_flow", None)
     if flow is None:
-        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        container = sync_action_row(row)
         flow = Gtk.FlowBox()
         flow.set_selection_mode(Gtk.SelectionMode.NONE)
         flow.set_homogeneous(False)
@@ -25,9 +30,7 @@ def add_sync_action(row, button):
         flow.set_margin_start(10)
         flow.set_margin_end(10)
         flow.set_margin_bottom(10)
-        container.append(row)
         container.append(flow)
-        row._cifereca_action_container = container
         row._cifereca_action_flow = flow
     button.set_valign(Gtk.Align.CENTER)
     # Large fonts must wrap the caption rather than impose a new minimum

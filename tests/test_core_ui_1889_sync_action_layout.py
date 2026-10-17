@@ -50,7 +50,7 @@ def methods():
 def test_buttons_are_same_objects_below_full_width_description_and_keep_callbacks():
     add, composed = methods()
     row = Widget(title="Compte au nom long", subtitle="Long état de plusieurs lignes")
-    assert composed(row) is row
+    assert composed(row).children == [row]
     buttons = [Widget(sensitive=enabled, tooltip="Portée du compte") for enabled in (True, False)]
     events = []
     buttons[0].clicked = lambda: events.append("same callback")
