@@ -139,6 +139,24 @@ repli à une recherche publique indisponible.
 robots/CGU n'a été établie à ce stade. La mise en service réelle reste
 conditionnée à cette vérification ; les tests sont déterministes et hors réseau.
 
+## Propriétaire stable pendant une livraison (#1905, 0.1.24)
+
+Le compte lié au broker public `identities` est capturé avant la lecture
+privée de livraison. Son propriétaire doit rester identique après cette
+lecture, avant chaque saut HTTP, après lecture du corps et avant publication
+EPUB ou import ACSM. Une liaison disparue, ambiguë, réattribuée ou devenue
+illisible arrête le parcours avec un message fixe, sans identité ni erreur
+brute dans les diagnostics. L'import reçoit toujours l'identité capturée.
+Les appels EPUB historiques sans broker conservent leur contrat ; le package
+installé exige les brokers `identities` et `acquisition`, et aucun ACSM ne
+peut être consommé sans propriétaire résolu.
+
+Un changement pendant un appel au broker déjà démarré ne peut pas annuler
+ce fulfillment : le contrôle au retour refuse de revendiquer un succès et
+conserve l'artefact éventuel du propriétaire initial. Aucune suppression ou
+reprise automatique. Cette garde ne fournit ni lease transactionnelle Core,
+ni ledger d'achat/variante, ni autorisation de sauvegarde automatique.
+
 ## Enrichissement explicite des achats par carte publique (#1072, 0.1.23)
 
 `NumilogSession.enrich_owned_public_listing(owned_item)` est une opération
