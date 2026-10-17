@@ -60,3 +60,36 @@ def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any
         # Private provider arguments, user title, credentials, signed links
         # and upstream database exceptions never reach logs or the GTK UI.
         raise ProviderConfigurationError(refused) from None
+
+
+
+def require_local_artifact(path: Any, target_dir: Any) -> None:
+    """Only accept a regular file physically inside its identity/provider root.
+
+    ADEPT may return a nested `acsm-<digest>/book.epub`, but a provider or
+    altered library tree must never register someone else's path, a symlink
+    or a work/staging file outside the exact owner's identity directory.
+    """
+    from pathlib import Path
+    try:
+        if (not isinstance(path, Path) or not isinstance(target_dir, Path)
+                or target_dir.is_symlink() or target_dir.parent.is_symlink()
+                or not target_dir.is_dir()
+                or path.is_symlink() or not path.is_file()):
+            raise ValueError("not_a_local_artifact")
+        root = target_dir.resolve(strict=True)
+        current = path.parent
+        if not path.resolve(strict=True).is_relative_to(root):
+            raise ValueError("outside_identity")
+        # Reject symlinks in every intermediate directory. Resolving alone
+        # would accept an alias into a different identity's real tree.
+        while current != target_dir:
+            if current.is_symlink() or current == current.parent:
+                raise ValueError("symlink_or_outside")
+            current = current.parent
+        if path.suffix.casefold() not in {".epub", ".pdf", ".kepub"}:
+            raise ValueError("not_readable_book_format")
+    except Exception:
+        raise ProviderConfigurationError(
+            "Numilog : artefact local non attesté ; rapprochement requis"
+        ) from None
