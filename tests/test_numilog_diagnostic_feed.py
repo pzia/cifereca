@@ -50,7 +50,7 @@ def test_real_delivery_producer_to_public_broker_keeps_cause_correlation_and_bou
 
 
 @pytest.mark.parametrize('code', ['http_forbidden', 'http_rate_limited',
-    'session_expired_confirmed', 'html_delivery_ambiguous', 'adept_attention_required',
+    'session_expired_confirmed', 'login_form_detected', 'html_delivery_ambiguous', 'adept_attention_required',
     'acsm_complete', 'epub_complete'])
 def test_public_outcomes_do_not_collapse_to_generic_acquisition(tmp_path, code):
     event = feed(tmp_path, [row({'action':'012345abcdef', 'phase':'completed', 'code':code})])['events'][0]
@@ -67,6 +67,8 @@ def test_public_outcomes_do_not_collapse_to_generic_acquisition(tmp_path, code):
     ('candidates', -1), ('candidates', 10001), ('hops', 13), ('hops', False),
     ('duration_ms', 600001), ('duration_ms', 1.2),
     ('reason','PRIVATE'), ('connected', 'True'),
+    ('connected_initial', 'True'), ('connected_initial', 1),
+    ('connected_initial', {}),
 ])
 def test_unknown_values_never_cross_public_boundary(tmp_path, key, value):
     operation = 'session_state' if key in {'reason','connected'} else 'acquisition_delivery'
@@ -123,7 +125,7 @@ def test_all_bounded_delivery_fields_fit_existing_message_export(tmp_path):
     detail = dict(action='012345abcdef', source='owned_card', phase='artifact_validation',
         code='session_expired_confirmed', mime='acsm_xml', html_kind='intermediate',
         origin_kind='acsm_fulfillment', path_kind='personal_library',
-        http_status=599, candidates=10000, hops=12)
+        http_status=599, candidates=10000, hops=12, connected_initial=True)
     event = feed(tmp_path, [row(detail, duration_ms=600000)])['events'][0]
     assert event['detail'] == dict(detail, duration_ms=600000)
     assert len(event['message']) <= 500
@@ -133,3 +135,36 @@ def test_all_bounded_delivery_fields_fit_existing_message_export(tmp_path):
     result = query_diagnostic_events(SimpleNamespace(snapshot=lambda:[row(detail)]),
         log_path=tmp_path/'absent', source='core_events', module='NUMILOG')
     assert result['total'] == 1
+
+
+@pytest.mark.parametrize('connected', [True, False])
+def test_login_form_evidence_preserves_initial_state_without_expiry_inference(tmp_path, connected):
+    events = feed(tmp_path, [
+        row(dict(action='012345abcdef', phase='start', code='started', connected_initial=connected)),
+        row(dict(action='012345abcdef', phase='html_selection', code='login_form_detected',
+                 connected_initial=connected, html_kind='login', hops=2)),
+        row(dict(reason='delivery_login_form_detected', connected=False), 'session_state'),
+        row(dict(action='012345abcdef', phase='completed', code='login_form_detected',
+                 connected_initial=connected, hops=2), duration_ms=792),
+    ])['events']
+    delivery = [e for e in events if 'action' in e.get('detail', {})]
+    assert len(delivery) == 3
+    assert all(e['detail']['connected_initial'] is connected for e in delivery)
+    assert all(f'connected_initial={connected}' in e['message'] for e in delivery)
+    assert len({e['detail']['action'] for e in delivery}) == 1
+    terminal = next(e for e in delivery if e['detail']['phase'] == 'completed')
+    assert terminal['detail']['code'] == 'login_form_detected'
+    assert terminal['detail']['hops'] == 2 and terminal['detail']['duration_ms'] == 792
+    suspension = next(e for e in events if 'reason' in e.get('detail', {}))
+    assert suspension['detail'] == dict(reason='delivery_login_form_detected', connected=False)
+    assert 'session_expired_confirmed' not in json.dumps(events)
+
+
+def test_delivery_suspension_fixed_log_survives_without_collector(tmp_path):
+    path = tmp_path/'application.log'
+    path.write_text('2026-10-17 19:21:03,410 WARNING cifereca_numilog [MainThread] '
+                    'TRACE numilog session connected=False reason=delivery_login_form_detected\n')
+    events = query_diagnostic_events(SimpleNamespace(snapshot=lambda: []),
+                                     source='app_log', log_path=path)['events']
+    assert len(events) == 1
+    assert 'reason=delivery_login_form_detected' in events[0]['message']

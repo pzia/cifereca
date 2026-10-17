@@ -146,3 +146,13 @@ Les événements hors worker restent sans `task_ref` : aucune corrélation
 n'est déduite du seul horodatage, thread, texte ou identité. Un collecteur
 Numilog désactivé/filtré ne produit donc pas cette corrélation ; les raisons
 fixes de session du journal restent consultables selon le contrat précédent.
+
+
+### Preuve de formulaire de connexion (#1884 / #2024)
+
+La projection accepte `login_form_detected` sans inférer une expiration du
+cookie. `connected_initial` est exportable seulement comme booléen exact ;
+la raison fixe `delivery_login_form_detected` conserve ensuite la suspension
+`connected=False`, y compris via la trace de log strictement validée. Le code
+historique `session_expired_confirmed` reste lisible pour les anciens exports.
+Aucune URL, donnée de cookie ou réponse HTML n'est ajoutée au contrat.

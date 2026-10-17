@@ -10,6 +10,7 @@ _SESSION_REASONS = frozenset({
     'connect_started', 'connect_succeeded', 'credentials_missing',
     'connect_failed', 'session_closed', 'not_connected',
     'library_redirect', 'library_invalid', 'library_http_error', 'unknown',
+    'delivery_login_form_detected',
 })
 _DELIVERY_VALUES = {
     'source': frozenset({'readbook', 'owned_card', 'direct_url'}),
@@ -18,7 +19,7 @@ _DELIVERY_VALUES = {
     'code': frozenset({
         'started', 'redirect', 'http_ok', 'single_allowed_candidate',
         'html_delivery_link_missing', 'html_delivery_ambiguous',
-        'session_expired_confirmed', 'html_error', 'html_invalid',
+        'session_expired_confirmed', 'login_form_detected', 'html_error', 'html_invalid',
         'http_forbidden', 'http_unauthorized', 'http_rate_limited',
         'link_expired', 'http_error', 'origin_rejected', 'redirect_loop',
         'redirect_limit', 'mime_unexpected', 'download_oversize',
@@ -52,6 +53,9 @@ def public_numilog_fields(operation: str, detail: object, duration: object = Non
             value = detail.get(key)
             if type(value) is int and low <= value <= high:
                 fields[key] = value
+        connected_initial = detail.get('connected_initial')
+        if type(connected_initial) is bool:
+            fields['connected_initial'] = connected_initial
         if type(duration) is int and 0 <= duration <= 600_000:
             fields['duration_ms'] = duration
     elif operation == 'session_state':
