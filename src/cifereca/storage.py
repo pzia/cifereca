@@ -1892,6 +1892,58 @@ class Storage:
             )
         return str(row["entitlement_id"])
 
+    def numilog_entitlement_reservations(
+        self, *, identity_id: str, credential_id: str, account_id: str,
+        candidate_ids: tuple[str, ...],
+    ) -> list[dict[str, str]]:
+        """Identifiers needed for one authenticated Numilog purchase mirror.
+
+        Fetch the current account's historical owned keys, plus *only*
+        conflicting global IDs that its candidate writes might overwrite.
+        Do not load other accounts' book metadata or enumerate their rights.
+        Keep all lookups in one SQLite read snapshot.
+        """
+        scope = (identity_id, credential_id, account_id)
+        if (not all(type(value) is str and 0 < len(value) <= 1024
+                    and not any(ch in value for ch in "\0\r\n")
+                    for value in scope)
+                or type(candidate_ids) is not tuple
+                or len(candidate_ids) > 200_000
+                or any(type(value) is not str or not 1 <= len(value) <= 128
+                       for value in candidate_ids)):
+            raise ValueError("invalid_numilog_entitlement_scope")
+        selected = (
+            "entitlement_id,identity_id,credential_id,account_id,item_id,entitlement_type"
+        )
+        rows: dict[str, dict[str, str]] = {}
+        with self._lock, self._connect() as db:
+            db.execute("SAVEPOINT numilog_rights_index")
+            try:
+                own = db.execute(
+                    f"SELECT {selected} FROM entitlements WHERE provider_id='numilog' "
+                    "AND identity_id=? AND credential_id=? AND account_id=? "
+                    "AND entitlement_type='owned' LIMIT 100001", scope,
+                ).fetchall()
+                if len(own) > 100_000:
+                    raise ValueError("numilog_rights_budget_exhausted")
+                # IN is bounded to 300 PK lookups (safe on older SQLite).
+                # The candidate identifiers contain no book metadata.
+                ids = tuple(dict.fromkeys(candidate_ids))
+                for start in range(0, len(ids), 300):
+                    batch = ids[start:start + 300]
+                    placeholders = ",".join("?" for _ in batch)
+                    for row in db.execute(
+                        f"SELECT {selected} FROM entitlements "
+                        f"WHERE provider_id='numilog' AND entitlement_id IN ({placeholders})",
+                        batch,
+                    ):
+                        rows[row[0]] = dict(zip(selected.split(","), row))
+                for row in own:
+                    rows[row[0]] = dict(zip(selected.split(","), row))
+            finally:
+                db.execute("RELEASE SAVEPOINT numilog_rights_index")
+        return list(rows.values())
+
     def entitlements(self, *, provider_id: str | None = None, state: str | None = None) -> list[dict[str, Any]]:
         columns = [
             "entitlement_id", "provider_id", "credential_id", "account_id", "item_id", "revision_id", "identity_id",
