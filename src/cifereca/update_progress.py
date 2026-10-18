@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from time import monotonic
+from threading import Event, RLock, Thread
 from typing import Callable, Iterator, TextIO
 import secrets
 import sys
@@ -57,6 +58,7 @@ class UpdateProgress:
         callback: EventCallback | None = None,
         stream: TextIO | None = None,
         clock: Callable[[], float] = monotonic,
+        heartbeat_seconds: float = 10.0,
     ) -> None:
         if method not in METHODS:
             raise ValueError("invalid_update_method")
@@ -66,6 +68,40 @@ class UpdateProgress:
         self.stream = stream
         self.clock = clock
         self.started = clock()
+        # Only one ticker per opted-in installation; phases themselves run on
+        # the caller thread. Nested phases keep the innermost active stage.
+        self.heartbeat_seconds = max(0.005, float(heartbeat_seconds))
+        self._stage_lock = RLock()
+        self._stage_stack: list[tuple[str, float]] = []
+        self._stop_heartbeat = Event()
+        self._heartbeat: Thread | None = None
+
+    def start_heartbeat(self) -> None:
+        if self.callback is None and self.stream is None:
+            return
+        self._heartbeat = Thread(
+            target=self._heartbeat_loop,
+            name="cifereca-update-progress",
+            daemon=True,
+        )
+        self._heartbeat.start()
+
+    def stop_heartbeat(self) -> None:
+        self._stop_heartbeat.set()
+        if self._heartbeat is not None:
+            # Event.wait() stops immediately when signaled. Never let
+            # observability block a failed rollback or a CLI interruption.
+            self._heartbeat.join(timeout=0.25)
+
+    def _heartbeat_loop(self) -> None:
+        while not self._stop_heartbeat.wait(self.heartbeat_seconds):
+            with self._stage_lock:
+                if self._stage_stack and not self._stop_heartbeat.is_set():
+                    stage, started = self._stage_stack[-1]
+                    # Periodic RUNNING means only "still in stage": never
+                    # claim a measured percent, a complete subprocess or
+                    # a count of successfully installed plugins.
+                    self.emit(stage, "RUNNING", since=started)
 
     def emit(self, stage: str, status: str, *, since: float | None = None,
              outcome: str | None = None, reason_code: str | None = None,
@@ -130,38 +166,52 @@ class UpdateProgress:
             raise ValueError("invalid_update_stage")
         started = self.clock()
         ordinal = {"plugin_index": plugin_index, "plugin_total": plugin_total}
-        self.emit(stage, "ROLLBACK" if stage == "rollback" else "RUNNING", **ordinal)
+        with self._stage_lock:
+            self._stage_stack.append((stage, started))
+            self.emit(stage, "ROLLBACK" if stage == "rollback" else "RUNNING", **ordinal)
         try:
             yield
         except BaseException as exc:
-            self.emit(stage, "ERROR", since=started, reason_code=failure_code(exc), **ordinal)
+            with self._stage_lock:
+                self._stage_stack.pop()
+                self.emit(stage, "ERROR", since=started, reason_code=failure_code(exc), **ordinal)
             raise
         else:
-            self.emit(stage, "OK", since=started, **ordinal)
+            with self._stage_lock:
+                self._stage_stack.pop()
+                self.emit(stage, "OK", since=started, **ordinal)
 
 
 @contextmanager
 def update_operation(
     method: str, *, callback: EventCallback | None = None,
     stream: TextIO | None = None,
+    heartbeat_seconds: float = 10.0,
 ) -> Iterator[UpdateProgress]:
     """Opt-in scoped instrumentation, compatible with a future UI callback.
 
     ContextVar keeps nested updater calls on one opaque operation ref and
     allows concurrent callers without a module-global mutable transaction.
     """
-    progress = UpdateProgress(method, callback=callback, stream=stream)
+    progress = UpdateProgress(
+        method, callback=callback, stream=stream,
+        heartbeat_seconds=heartbeat_seconds,
+    )
     token = _CURRENT.set(progress)
     progress.emit("operation", "START")
+    progress.start_heartbeat()
     try:
         yield progress
     except BaseException as exc:
+        progress.stop_heartbeat()
         progress.emit("operation", "ERROR", reason_code=failure_code(exc))
         progress.emit("operation", "DONE", outcome="failed")
         raise
     else:
+        progress.stop_heartbeat()
         progress.emit("operation", "DONE", outcome="success")
     finally:
+        progress.stop_heartbeat()
         _CURRENT.reset(token)
 
 
@@ -185,3 +235,13 @@ def step(stage: str, operation: Callable, *args, **kwargs):
     """Execute the exact original callable once; never replay on failure."""
     with update_phase(stage):
         return operation(*args, **kwargs)
+
+
+def skip_update_phase(stage: str) -> None:
+    """Record a deliberately *unexecuted* stage of an opted-in operation.
+
+    Unlike update_phase/step, this performs no work and never reports OK.
+    """
+    progress = _CURRENT.get()
+    if progress is not None:
+        progress.emit(stage, "SKIPPED")

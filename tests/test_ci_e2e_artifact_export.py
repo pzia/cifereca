@@ -127,6 +127,46 @@ class SafeFailureDiagnosisTests(unittest.TestCase):
                 'duration_seconds':50.12,'failure_kind':'scenario_timeout'})
             self.assertNotIn('PRIVATE', repr(result))
 
+    def test_exact_failure_line_is_source_validated_without_traceback_or_payload(self):
+        import ast
+        module = _module()
+        path = ROOT / "e2e/diagnostics_navigation_probe.py"
+        probe = ast.parse(path.read_text())
+        helper = next(n for n in probe.body
+                      if isinstance(n, ast.FunctionDef) and n.name == "probe_failure_line")
+        namespace = {"__file__": str(path)}
+        exec(compile(ast.Module(body=[helper], type_ignores=[]), str(path), "exec"), namespace)
+        # A scheduled lambda calls a deeper probe function; the checkpoint
+        # must not hide the assertion's actual source line.
+        line = next(n.lineno for n in ast.walk(probe) if isinstance(n, ast.Assert))
+        code = "\n" * (line - 2) + 'def nested():\n    assert False, "PRIVATE-TOKEN"\n'
+        exec(compile(code, str(path), "exec"), namespace)
+        try:
+            (lambda: namespace["nested"]())()
+        except AssertionError as exc:
+            self.assertEqual(namespace["probe_failure_line"](exc), line)
+            failure_line = namespace["probe_failure_line"](exc)
+        try:
+            raise RuntimeError("PRIVATE-EXTERNAL-URL")
+        except RuntimeError as exc:
+            self.assertIsNone(namespace["probe_failure_line"](exc))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = "mainwindow-baseline-1366"
+            report = root / scenario / scenario / "screen.json"
+            report.parent.mkdir(parents=True)
+            source = root / "summary.json"
+            source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+            for candidate in (failure_line, True, str(line), -1, 999999, helper.lineno):
+                report.write_text(json.dumps({"failure_line": candidate,
+                    "error": "PRIVATE-TOKEN", "traceback": "PRIVATE-EXTERNAL-URL"}))
+                result = module.safe_summary(source)["results"][0]
+                if type(candidate) is int and candidate == failure_line:
+                    self.assertEqual(result["failure_line"], failure_line)
+                else:
+                    self.assertNotIn("failure_line", result)
+                self.assertNotIn("PRIVATE", repr(result))
+
     def test_numilog_pointer_dialog_phase_verdict_is_bounded_and_privacy_safe(self):
         module = _module()
         stages = (
@@ -162,6 +202,84 @@ class SafeFailureDiagnosisTests(unittest.TestCase):
                 assert published["results"][0]["failure_kind"] == "assertion_or_runtime"
                 assert "PRIVATE" not in repr(published)
                 assert "<account-private>" not in repr(published)
+
+    def test_narrow_failure_categories_never_export_geometry_or_labels(self):
+        module = _module()
+        stages = (
+            "P0_2027_narrow_header_minimum", "P0_2027_narrow_source_minimum",
+            "P0_2027_narrow_scroll_minimum", "P0_2027_narrow_window_minimum",
+            "P0_2027_narrow_allocation_pending",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = "mainwindow-baseline-1366"
+            report = root / scenario / scenario / "screen.json"
+            report.parent.mkdir(parents=True)
+            source = root / "summary.json"
+            source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+            for stage in stages:
+                report.write_text(json.dumps({"stage": stage,
+                    "sync_minimum_width_geometry": {"PRIVATE-ACCOUNT": 123456},
+                    "error": "PRIVATE-TOKEN"}))
+                row = module.safe_summary(source)["results"][0]
+                self.assertEqual(row["last_stage"], stage)
+                self.assertEqual(row["status"], "FAIL")
+                self.assertNotIn("PRIVATE", repr(row))
+                self.assertNotIn("123456", repr(row))
+
+    def test_resize_wait_requires_actual_width_and_preserves_deadline_failure(self):
+        import ast
+        from types import SimpleNamespace
+        path = ROOT / "e2e/diagnostics_navigation_probe.py"
+        probe = ast.parse(path.read_text())
+        node = next(n for n in ast.walk(probe)
+                    if isinstance(n, ast.FunctionDef) and n.name == "wait_sync_narrow")
+        width, now, pending, checked = [1280], [0.0], [], []
+        def strict_allocations(large_font):
+            checked.append(large_font)
+            assert width[0] <= 760, "width assertion still enforced"
+        namespace = {
+            "w": SimpleNamespace(get_width=lambda: width[0]),
+            "deadline": 4.0, "monotonic": lambda: now[0],
+            "sync_narrow_allocations": strict_allocations,
+            "later": lambda ms, callback: pending.append((ms, callback)),
+        }
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
+        wait = namespace["wait_sync_narrow"]
+        wait()
+        self.assertEqual(checked, [])
+        self.assertEqual(pending[0][0], 80)
+        now[0] = 0.8
+        pending.pop()[1]()
+        self.assertEqual(checked, [])
+        width[0] = 760
+        pending.pop()[1]()
+        self.assertEqual(checked, [False])
+        width[0], now[0] = 1280, 4.0
+        with self.assertRaisesRegex(AssertionError, "width assertion still enforced"):
+            wait()
+        self.assertEqual(pending, [])
+
+    def test_only_reviewed_watchdog_budgets_are_classified_as_timeouts(self):
+        module = _module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = "mainwindow-baseline-1366"
+            report = root / scenario / scenario / "screen.json"
+            report.parent.mkdir(parents=True)
+            source = root / "summary.json"
+            source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+            for text, expected in (
+                ("Timeout Diagnostics navigation 50s", "scenario_timeout"),
+                ("Timeout Diagnostics navigation 75s", "scenario_timeout"),
+                ("Timeout Diagnostics navigation PRIVATE", "assertion_or_runtime"),
+                ({"token": "PRIVATE"}, "assertion_or_runtime"),
+                (["PRIVATE"], "assertion_or_runtime"),
+            ):
+                report.write_text(json.dumps({"error": text}))
+                row = module.safe_summary(source)["results"][0]
+                self.assertEqual(row["failure_kind"], expected)
+                self.assertNotIn("PRIVATE", repr(row))
 
     def test_unknown_strings_nonfinite_numbers_boolean_line_and_report_path_are_not_exported(self):
         module = _module()

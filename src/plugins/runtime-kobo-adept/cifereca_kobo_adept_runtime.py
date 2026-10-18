@@ -39,6 +39,11 @@ _KNOWN_NON_ACSM_ERRORS = {
     'invalid_profile': 'Profil Kobo-Adept invalide.',
 }
 
+# This bound applies to *every* JSON command, not only loan inventory reads.
+# subprocess.run still captures process output before this check; it prevents
+# unbounded UTF-8 decoding, JSON parsing and returning oversized vendor data.
+_MAX_JSON_RESPONSE_BYTES = 4 * 1024 * 1024
+
 
 def classified_adept_failure(error, exit_code):
     """Classify a FAILED, proven ACSM download request only.
@@ -97,7 +102,10 @@ class KoboAdeptRuntime:
             # Diagnostics must never alter the runtime operation.
             logger = getattr(self.context, "logger", None)
             if logger is not None:
-                logger.debug("Kobo-Adept diagnostic reporter unavailable", exc_info=True)
+                # A failing diagnostic callback may embed a signed URL,
+                # certificate or private profile in its exception message.
+                # Do not attach its traceback or exception representation.
+                logger.debug("Kobo-Adept diagnostic reporter unavailable")
 
     @property
     def command(self):
@@ -112,6 +120,15 @@ class KoboAdeptRuntime:
     def run_json(self, args, *, payload=None, timeout=60, max_output_bytes=None):
         started = time.monotonic()
         self.last_run_diagnostic = {'operation': operation_family(args)}
+        if max_output_bytes is None:
+            output_limit = _MAX_JSON_RESPONSE_BYTES
+        elif (type(max_output_bytes) is not int
+              or not 1 <= max_output_bytes <= _MAX_JSON_RESPONSE_BYTES):
+            # Reject invalid budgets before starting a subprocess, even if
+            # a caller tries to disable the cap with a huge value or bool.
+            raise ValueError("invalid Kobo-Adept JSON response limit")
+        else:
+            output_limit = max_output_bytes
 
         def statistics(stdout, stderr, returncode=None):
             out, err = output_bytes(stdout), output_bytes(stderr)
@@ -151,7 +168,7 @@ class KoboAdeptRuntime:
             fail('Kobo-Adept ne peut pas être exécuté.', 'kobo_adept_launch_error')
 
         out, err = statistics(proc.stdout, proc.stderr, proc.returncode)
-        if max_output_bytes is not None and len(out) > max_output_bytes:
+        if len(out) > output_limit:
             self.last_run_diagnostic.update(stdout_mode='oversized', stdout_summary='sortie trop volumineuse')
             fail('La réponse Kobo-Adept dépasse la limite de lecture.', 'kobo_adept_output_too_large', returncode=proc.returncode)
         try:
@@ -173,6 +190,19 @@ class KoboAdeptRuntime:
             self.last_run_diagnostic.update(stdout_mode='unexpected_json_type', stdout_summary='JSON de type inattendu')
             fail('Kobo-Adept a renvoyé un document inattendu.', 'kobo_adept_invalid_response', returncode=proc.returncode)
         self.last_run_diagnostic.update(stdout_mode='json', stdout_summary='objet JSON')
+        # The public CLI contract is an explicit boolean acknowledgement.
+        # Exit 0 on its own is not evidence that a profile was created, an
+        # ACSM was fulfilled or a loan was returned. Never interpret missing,
+        # null, integer or string "ok" as a successful command.
+        if proc.returncode == 0 and value.get('ok') is not True and value.get('ok') is not False:
+            fail('Kobo-Adept n’a pas confirmé le résultat de la commande.',
+                 'kobo_adept_invalid_response', returncode=proc.returncode)
+        # A payload reporting both success and a vendor error is contradictory.
+        # Reject it without forwarding the vendor's potentially private error
+        # object through Core or through the diagnostic reporter.
+        if proc.returncode == 0 and value.get('ok') is True and value.get('error') is not None:
+            fail('Kobo-Adept a renvoyé un résultat contradictoire.',
+                 'kobo_adept_invalid_response', returncode=proc.returncode)
         if proc.returncode != 0 or value.get('ok') is False:
             error = value.get('error') if isinstance(value.get('error'), dict) else {}
             acsm_request = (
@@ -400,22 +430,84 @@ class KoboAdeptRuntime:
         finally:
             self._return_diagnostic['duration_ms'] = int((time.monotonic()-started)*1000)
 
+    @staticmethod
+    def _qualified_reference(value):
+        """Keep only bounded, typed ADEPT profile/loan identifiers."""
+        if value is None:
+            return None
+        if (type(value) is not str or not 1 <= len(value) <= 256
+                or value != value.strip() or value.startswith('-')
+                or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+            raise KoboAdeptError(
+                'Identifiant ADEPT non qualifié dans le résultat.',
+                code='kobo_adept_invalid_response',
+            )
+        return value
+
     def execute(self, request):
         payload = self._request_dict(request)
         op = str(payload.get('operation') or '').casefold()
         if op == 'return':
             loan, name = self._return_binding(payload)
             value = self.return_loan(loan, name)
-            return DrmMutationResult(ok=True,operation='return',metadata={
-                'runtime_result': value, 'adept_loan_id': loan, 'adept_profile_name': name,
-                'loan_state': 'returned', 'artifact_preserved': True})
+            # The return path has already confirmed the exact local registry.
+            # Only these four receipt fields are used by the Core to perform
+            # its own fresh post-return inventory verification. An arbitrary
+            # successful vendor JSON may contain secrets/credential objects.
+            if (type(value) is not dict or value.get('ok') is not True
+                    or value.get('operation') != 'loan_return'
+                    or value.get('loan_id') != loan or value.get('profile') != name):
+                raise KoboAdeptError(
+                    'Résultat de restitution ADEPT incohérent.',
+                    code='kobo_adept_invalid_response',
+                )
+            return DrmMutationResult(ok=True, operation='return', metadata={
+                'runtime_result': {
+                    'ok': True, 'operation': 'loan_return',
+                    'loan_id': loan, 'profile': name,
+                },
+                'adept_loan_id': loan, 'adept_profile_name': name,
+                'loan_state': 'returned', 'artifact_preserved': True,
+            })
         if op == 'fulfill':
             value = self.download_request(self._fulfill_payload(payload))
-            artifact = value['artifact']
-            return DrmMutationResult(ok=True,operation='fulfill',artifact=ArtifactInput(
-                path=Path(artifact['path']),format=artifact.get('format',''),sha256=artifact.get('sha256','')),
-                metadata={'runtime_result':value,'adept_loan_id':value.get('loan_id'),
-                          'adept_profile_name':value.get('profile')})
+            if type(value) is not dict or value.get('ok') is not True:
+                raise KoboAdeptError(
+                    'Résultat de téléchargement ADEPT non confirmé.',
+                    code='kobo_adept_invalid_response',
+                )
+            artifact = value.get('artifact')
+            if type(artifact) is not dict or type(artifact.get('path')) is not str:
+                raise KoboAdeptError(
+                    'Artefact ADEPT non qualifié.',
+                    code='kobo_adept_invalid_response',
+                )
+            # Format and content hash are public artifact descriptors, not
+            # arbitrary vendor labels. An unknown value must not turn a
+            # private token into a Core metadata attribute.
+            media_format = artifact.get('format') or ''
+            sha256 = artifact.get('sha256') or ''
+            if (type(media_format) is not str
+                    or media_format.casefold() not in ('', 'epub', 'pdf', 'kepub')
+                    or type(sha256) is not str
+                    or (sha256 and (len(sha256) != 64
+                        or any(c not in '0123456789abcdefABCDEF' for c in sha256)))):
+                raise KoboAdeptError(
+                    'Descripteurs de l’artefact ADEPT non qualifiés.',
+                    code='kobo_adept_invalid_response',
+                )
+            loan = self._qualified_reference(value.get('loan_id'))
+            name = self._qualified_reference(value.get('profile'))
+            # ArtifactInput owns the validated destination, hash and format.
+            # Do not also publish the entire CLI result in metadata: it may
+            # include license XML, activation keys or signed delivery URLs.
+            return DrmMutationResult(ok=True, operation='fulfill', artifact=ArtifactInput(
+                path=Path(artifact['path']), format=media_format.casefold(),
+                sha256=sha256.lower(),
+            ), metadata={
+                'runtime_result': {'ok': True, 'loan_id': loan, 'profile': name},
+                'adept_loan_id': loan, 'adept_profile_name': name,
+            })
         raise AttentionRequired('Opération DRM non publiée par Kobo-Adept.',code='kobo_adept_drm_mutation_unsupported')
 
     def download_request(self, request):

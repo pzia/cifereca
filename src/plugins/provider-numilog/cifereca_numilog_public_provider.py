@@ -201,6 +201,18 @@ class NumilogPublicSession(ProviderSession):
         page_result = self._get_page(query, page, field, url)
         return self._register_public_page(page_result, epoch)
 
+    def refine_loaded_page(self, page, **filters):
+        """Explicit local refinement of a previously loaded public page.
+
+        No server-side field filter, extra HTTP or global filtered total.
+        Missing published evidence is counted as uncertain, never discarded
+        as a proven negative. Page/filters remain separate from account rights.
+        """
+        if not self.connected:
+            raise ProviderError("Numilog public : catalogue non connecté")
+        from cifereca_numilog_public_local_filter import refine_loaded_public_page
+        return refine_loaded_public_page(page, **filters)
+
     def follow_public_link(self, url):
         """Follow ONLY an unexpired facet/pager link returned by browse/follow.
 
