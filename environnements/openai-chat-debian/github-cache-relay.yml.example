@@ -1,76 +1,65 @@
-# Template de relais réseau pour construire le cache GTK Debian 13.
-#
-# Ce fichier n'est PAS un workflow actif. Pour l'utiliser :
-# 1. créer une branche technique temporaire ;
-# 2. copier ce fichier vers .github/workflows/gtk-deb-cache-relay.yml ;
-# 3. remplacer BRANCH_TEMPORAIRE ci-dessous par le nom de la branche ;
-# 4. pousser le workflow sur cette branche ;
-# 5. récupérer l'artefact puis supprimer/fermer la branche.
-#
-# Ne pas merger ce workflow uniquement pour fabriquer un cache ponctuel.
-
-name: GTK Debian 13 cache relay
+# INACTIVE example only. Prefer the reviewed, temporary
+# .github/workflows/gtk-e2e-on-approval.yml after explicit authorization.
+# Never publish packages-lock.json, a raw cache folder or checkout tarball.
+# Remove the temporary workflow after the #1011 local GTK qualification.
+name: GTK Debian 13 dependency relay (example)
 
 on:
-  push:
-    branches:
-      - BRANCH_TEMPORAIRE
-    paths:
-      - ".github/workflows/gtk-deb-cache-relay.yml"
+  workflow_dispatch:
+    inputs:
+      confirm_relay:
+        description: "I explicitly authorize a bounded Debian GTK dependency download"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
   build-cache:
+    if: inputs.confirm_relay == true
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Build Debian 13 GTK4 deb cache
+      - name: Build Debian 13 signed APT cache
         shell: bash
         run: |
-          set -euxo pipefail
-          rm -rf .gtk-deb-cache
+          set -euo pipefail
           mkdir -p .gtk-deb-cache
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/work" \
             -w /work/environnements/openai-chat-debian \
             debian:trixie \
             bash -lc '
-              set -eux
-              apt-get update
+              set -euo pipefail
+              apt-get update -o APT::Update::Error-Mode=any
               apt-get install -y --no-install-recommends \
                 python3 ca-certificates debian-archive-keyring apt-utils dpkg tar xz-utils
               python3 bootstrap.py \
                 --download-only \
                 --deb-cache /work/.gtk-deb-cache
             '
-
-          # APT crée partial/ avec des droits root dans le conteneur.
           sudo chown -R "$(id -u):$(id -g)" .gtk-deb-cache
-          rm -rf .gtk-deb-cache/partial
+          # Fail closed if anything else landed in the cache.
+          python3 scripts/ci-validate-gtk-relay-cache.py \
+            --cache "$GITHUB_WORKSPACE/.gtk-deb-cache" \
+            --output "$RUNNER_TEMP/gtk4-deb-cache-debian13-trixie-amd64.tar.gz"
+          (cd "$RUNNER_TEMP" && sha256sum gtk4-deb-cache-debian13-trixie-amd64.tar.gz > SHA256SUMS)
 
-          tar -C "$GITHUB_WORKSPACE" \
-            -czf gtk4-deb-cache-debian13-trixie-amd64.tar.gz \
-            .gtk-deb-cache
-          cp environnements/openai-chat-debian/packages-lock.json \
-            packages-lock.debian13.json
-
-          echo "deb_count=$(find .gtk-deb-cache -maxdepth 1 -name '*.deb' | wc -l)" \
-            >> "$GITHUB_STEP_SUMMARY"
-          du -sh .gtk-deb-cache gtk4-deb-cache-debian13-trixie-amd64.tar.gz \
-            >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload cache artifact
+      - name: Upload allowlisted packages only
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: gtk4-deb-cache-debian13-trixie-amd64
           path: |
-            gtk4-deb-cache-debian13-trixie-amd64.tar.gz
-            packages-lock.debian13.json
+            ${{ runner.temp }}/gtk4-deb-cache-debian13-trixie-amd64.tar.gz
+            ${{ runner.temp }}/SHA256SUMS
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 2
           compression-level: 0

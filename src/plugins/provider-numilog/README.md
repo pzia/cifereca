@@ -1,5 +1,22 @@
 # Numilog — provenance des URL de livres (0.1.16)
 
+## 0.1.55 — navigation facettes sans perte silencieuse (#1886)
+
+La navigation GET de la recherche publique `brSimple` conserve chaque
+facette **déjà appliquée**, à l'exception de l'unique facette
+explicitement remplacée par le lien observé. Un lien thème/prix/langue/
+éditeur qui retire implicitement une autre sélection, change plusieurs
+filtres à la fois ou impose `GRID_PAGE > 0` au moment du filtrage est
+refusé par code fixe `invalid_facets`. Les transitions qui défiltrent
+une dimension ne sont pas devinées sans preuve du parcours amont.
+
+La sélection d'un filtre repart de la première page ; la pagination
+normale conserve ses paramètres comme avant. Les tests sont offline,
+sur cartes publiques expurgées et liens synthétiques, sans nouveau
+transport, cookie, achat, accès privé ou preuve de disponibilité live.
+Les options serveur auteur, ISBN et recherche avancée restent non attestées.
+
+
 ## 0.1.51 — achats sans lecture en ligne : confirmation ACSM
 
 Certaines éditions achetées ne disposent **pas** d'un lien
@@ -1142,7 +1159,7 @@ externe, URLs signées et séparation papier/EPUB. Disponibilité live,
 conditions robots/CGU et moteur multi-attributs serveur restent à qualifier.
 
 
-## Numilog 0.1.55 — EAN dans la fiche canonique uniquement (#1072)
+## Numilog 0.1.56 — EAN dans la fiche canonique uniquement (#1072)
 
 Les identifiants publics typés `paper`, `epub`, `pdf` et
 `digital_unspecified` ne sont désormais retenus par

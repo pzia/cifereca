@@ -13,9 +13,23 @@ SENSITIVE_KEYS = re.compile(r"pass|password|cookie|token|secret|readerid|barcode
 
 
 def redact_text(text: str) -> str:
-    # Delivery URLs can hide tokens in paths (PNB LOAN), fragments or queries.
-    # Keep the origin only; never attempt to guess which query keys are safe.
+    # The redactor is a last-resort guard for free-text coming from providers,
+    # exceptions or plugin logs. It cannot replace typed, closed diagnostics.
+    # Never print signed URLs, private filesystem locations or email addresses.
     text = re.sub(r"https?://[^\s<>\"']+", lambda m: _redact_url(m.group()), text, flags=re.I)
+    text = re.sub(r"(?i)file://[^\s<>\"']+", "<redacted-path>", text)
+    text = re.sub(
+        r"(?i)(?<![\w:/])/(?:home|users|root|tmp|var|mnt|media|run)/[^\s,;:\"'<>)}\]]+",
+        "<redacted-path>", text,
+    )
+    text = re.sub(
+        r"(?i)\b[a-z]:[\\/](?:[^\s,;:\"'<>)}\]]+)",
+        "<redacted-path>", text,
+    )
+    text = re.sub(
+        r"(?i)(?<![\w.+-])[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}(?![\w.-])",
+        "<redacted-email>", text,
+    )
     text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <redacted>", text)
     text = re.sub(r"(?i)\b(password|cookie|token|secret|authorization|session|barcode|readerid)\b\s*[:=]\s*[^\s,;]+", r"\1=<redacted>", text)
     text = re.sub(r"(?i)([\"']?(?:password|cookie|token|secret|authorization|session|barcode|readerid)[\"']?\s*[:=]\s*)(?:[\"'][^\"']*[\"']|[^\s,;}]+)", r"\1<redacted>", text)
@@ -26,7 +40,13 @@ def _redact_url(url):
     from urllib.parse import urlsplit
     try:
         parsed = urlsplit(url)
-        if parsed.query or parsed.fragment or parsed.username or re.search(r"(?i)/(?:LOAN|URLLink\.acsm)(?:/|$)", parsed.path):
+        # Preserve non-sensitive public URLs (historical Plugin API contract)
+        # while hiding known borrower/account routes even without a query.
+        private_route = re.search(
+            r"(?i)/(?:LOAN|reader|account|users?|private(?:[-_][^/]+)?|orders?|borrow|fulfil(?:l)?ment|acquisition|URLLink\.acsm)(?:/|$)",
+            parsed.path,
+        )
+        if parsed.query or parsed.fragment or parsed.username or private_route:
             return f"{parsed.scheme}://{parsed.hostname}/<redacted>"
         return url
     except ValueError:

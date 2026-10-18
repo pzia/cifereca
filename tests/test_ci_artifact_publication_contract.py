@@ -21,7 +21,6 @@ PUBLIC_ARTIFACT_PATHS = {
     ),
     "gtk-e2e-on-approval.yml": (
         "/tmp/gtk4-debian13-rootless-offline.tar.gz",
-        "/tmp/cifereca-gtk-source.tar.gz",
         "/tmp/SHA256SUMS",
     ),
     "package-plugins.yml": (
