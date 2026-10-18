@@ -93,3 +93,67 @@ def test_closed_owner_refuses_refresh_before_service_or_runner_access(kind, with
         result = library_refresh.refresh_recent(host, control=control)
     assert result is None
     assert vars(host) == {"_closed": True}
+
+
+def test_new_local_artifact_during_inflight_refresh_gets_fresh_snapshot_once():
+    """A completed ACSM/indexing task must not lose its no-scan GUI refresh."""
+    host = _harness()
+    documents = [{"key": "existing", "identity_id": "alice"}]
+    calls = []
+
+    def entries(*, identity_id, scan):
+        calls.append((identity_id, scan))
+        return [dict(row) for row in documents]
+
+    host.service.library_entries = entries
+    host.refresh_library(False)
+    in_flight = host.runner.requests[-1]
+    stale = in_flight.work()
+    assert [r["key"] for r in stale] == ["existing"]
+
+    documents.append({"key": "new-acsm-book", "identity_id": "alice"})
+    # The indexed book is now committed; several observers request refresh.
+    host.refresh_library(False)
+    host.refresh_library(False)
+    assert len(host.runner.requests) == 1
+
+    in_flight.ok(stale)
+    assert host.library_shown == []  # old snapshot must not overwrite new state
+    assert len(host.runner.requests) == 2
+    fresh = host.runner.requests[-1]
+    latest = fresh.work()
+    assert [r["key"] for r in latest] == ["existing", "new-acsm-book"]
+    fresh.ok(latest)
+    assert host.library_shown == [latest]
+    assert calls == [("alice", False), ("alice", False)]
+    assert host._library_refresh_pending is False
+
+
+def test_coalesced_library_refresh_retries_after_obsolete_error():
+    host = _harness()
+    host.refresh_library(False)
+    old = host.runner.requests[-1]
+    host.refresh_library(False)
+    old.err(RuntimeError("PRIVATE_OLD_SNAPSHOT_ERROR"))
+    assert len(host.runner.requests) == 2
+    assert host.library_shown == []
+    fresh = host.runner.requests[-1]
+    fresh.ok(fresh.work())
+    assert host.library_shown == [[{"identity_id": "alice"}]]
+    assert host._library_refresh_pending is False
+
+
+def test_explicit_refresh_supersedes_background_followup_without_third_fetch():
+    host = _harness()
+    host.refresh_library(False)
+    background = host.runner.requests[-1]
+    host.refresh_library(False)  # pending follow-up
+    host.refresh_library(True, control=object())  # now the authoritative work
+    assert len(host.runner.requests) == 2
+    manual = host.runner.requests[-1]
+    assert background.work() == []  # superseded before any source IO
+    background.ok([])
+    manual.ok(manual.work())
+    assert host.library_shown == [[{"identity_id": "alice"}]]
+    assert len(host.runner.requests) == 2
+    assert host._library_refresh_pending is False
