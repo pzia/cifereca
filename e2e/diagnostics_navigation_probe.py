@@ -1562,6 +1562,8 @@ def main() -> int:
                 ok and widget.get_mapped()
                 and bounds.get_y() < scroll.get_height()
                 and bounds.get_y() + bounds.get_height() > 0
+                and bounds.get_x() < scroll.get_width()
+                and bounds.get_x() + bounds.get_width() > 0
             )
 
         first_actions = []
@@ -1586,7 +1588,7 @@ def main() -> int:
             "source_status_rows": len(source_rows),
             "detail_rows": len(rows) - len(source_rows),
             "source_summary_lines": sum(
-                (row.get_subtitle() or "").count("\\n") + 1
+                (row.get_subtitle() or "").count("\n") + 1
                 for row in source_rows
             ),
             "action_buttons": len(all_actions),
