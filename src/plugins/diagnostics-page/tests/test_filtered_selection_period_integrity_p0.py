@@ -147,3 +147,13 @@ def test_empty_broker_batch_keeps_explicit_period_with_no_false_error():
     assert result.count == 0
     assert result.inspected == 0
     assert {c["since"] for c in broker.calls} == {"2026-09-18T12:00:00+00:00"}
+
+
+def test_gtk_has_explicit_safe_error_labels_for_time_and_scope_conflicts():
+    from pathlib import Path
+    source = (
+        Path(__file__).parents[1] / "cifereca_diagnostics_page.py"
+    ).read_text()
+    assert '"diagnostic selection contains out-of-period events",' in source
+    assert '"diagnostic selection contains out-of-scope events",' in source
+    assert 'fixed if fixed in safe else "Sélection indisponible' in source
