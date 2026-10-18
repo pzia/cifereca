@@ -93,3 +93,39 @@ def require_local_artifact(path: Any, target_dir: Any) -> None:
         raise ProviderConfigurationError(
             "Numilog : artefact local non attesté ; rapprochement requis"
         ) from None
+
+
+
+def admission_scope(item: SearchResult) -> tuple:
+    """Snapshot only the dispatch coordinates; never retain mutable metadata."""
+    return tuple(getattr(item, name, None) for name in (
+        "source_provider", "source_credential", "id", "record_id",
+        "source_collection", "scenario", "revision_id", "format", "content_type",
+    ))
+
+
+def require_admission(service, item, admission, *, pinned_scope, session,
+                      identity_id, account_id):
+    """Replay an optional caller's rights check without permitting retargeting.
+
+    Called exclusively under the acquisition lock. The provider still resolves
+    its exact fresh authenticated purchase row before using any delivery link.
+    This callback alone is not an entitlement or automatic-backup consent.
+    """
+    if admission is None:
+        return item
+    from ..plugin_api import Cancelled
+    try:
+        candidate = admission()
+        if type(candidate) is not SearchResult or admission_scope(candidate) != pinned_scope:
+            raise ValueError("changed_purchase")
+        owner, _session, account = require_source(service, candidate, session=session)
+        if owner.identity_id != identity_id or account != account_id:
+            raise ValueError("changed_owner")
+        return candidate
+    except Cancelled:
+        raise
+    except Exception:
+        raise ProviderConfigurationError(
+            "Numilog : autorisation ciblée modifiée ou indisponible"
+        ) from None

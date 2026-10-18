@@ -2639,12 +2639,11 @@ class LibraryService:
             raise ProviderConfigurationError(
                 "Résultat connu hors ligne : acquisition indisponible"
             )
-        # An admission callback is part of the security contract: silently
-        # ignoring it would turn an attested per-account Numilog Library action
-        # into an unrestricted direct download. Only Kobo currently rechecks
-        # that callback INSIDE its acquisition lock. Fail closed for every
-        # other provider until an equally scoped, locked executor is ready.
-        if _admission is not None and item.source_provider != "kobo":
+        # Every supported targeted admission is replayed under the same lock
+        # as its provider I/O. Unknown providers must never silently ignore it.
+        if _admission is not None and (
+            not callable(_admission) or item.source_provider not in {"kobo", "numilog"}
+        ):
             raise ProviderConfigurationError(
                 "Acquisition ciblée indisponible : autorisation du compte non vérifiable"
             )
@@ -2723,6 +2722,20 @@ class LibraryService:
                     identity, pinned_session, pinned_account_id = require_source(
                         self, item, session=session,
                     )
+                    # The caller's exact immutable purchase target is checked
+                    # before I/O and again before/after hooks. A refreshed item
+                    # cannot switch credential, purchase, variant or revision.
+                    from .core.numilog_manual_acquisition import admission_scope, require_admission
+                    pinned_scope = admission_scope(item)
+
+                    def readmit():
+                        return require_admission(
+                            self, item, _admission, pinned_scope=pinned_scope,
+                            session=pinned_session, identity_id=identity.identity_id,
+                            account_id=pinned_account_id,
+                        )
+
+                    item = readmit()
                     if self.storage.numilog_purchase_has_local_conflict(
                         credential_id=item.source_credential,
                         item_id=item.record_id,
@@ -2767,6 +2780,7 @@ class LibraryService:
                     # The provider may release its per-session lock before
                     # returning. A reconnect/rebind during HTTP or ADEPT must
                     # not be committed under a different identity.
+                    readmit()
                     refreshed = require_source(self, item, session=pinned_session)
                     if (refreshed[0].identity_id != identity.identity_id
                             or refreshed[2] != pinned_account_id):
@@ -2787,6 +2801,7 @@ class LibraryService:
                     self.acquisition.run_post_download(
                         clean_item, path, "", target_dir,
                     )
+                    readmit()
                     refreshed = require_source(self, item, session=pinned_session)
                     if (refreshed[0].identity_id != identity.identity_id
                             or refreshed[2] != pinned_account_id):
