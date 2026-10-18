@@ -165,3 +165,34 @@ pas borner la mémoire maximale du processus enfant ou du tampon de
 capture ; cette garantie demanderait un transport incrémental supervisé
 et une évolution séparée. Les tests sont synthétiques, hors ligne et
 ne prouvent pas de nouveau contrat CLI amont ou de cause Adobe détaillée.
+
+
+## 1.2.22 — schéma minimal de l'inventaire des prêts
+
+La lecture `loans list/expired` ne relaie plus des objets fournisseur
+`devices` imbriqués, ni les dates incidentes `fetched_at` et
+`returned_at`, dont aucune n'est utilisée par le Core pour autoriser
+une restitution ou choisir un prêt. Ces champs peuvent contenir des
+objets de fournisseur, identifiants de terminal et secrets non typés ;
+ils sont donc omis avant la frontière Core.
+
+Le `loan.id` reste disponible **uniquement** s'il est de type texte,
+non vide, de longueur maximale 256, sans espace aux extrémités, sans
+caractère de contrôle et sans préfixe `-`. Les doublons dans un même
+profil rendent l'inventaire ambigu : refus complet par code fixe
+`kobo_adept_invalid_loan_inventory`. Un ID identique dans **deux
+profils distincts** reste autorisé : l'origine du prêt demeure scindée
+par profil.
+
+Seuls `expired`, `returned`, `token_present` (booléens exacts),
+ainsi que les informations optionnelles effectivement consommées par
+le Core (`title` textuel borné, `validity` date ISO vérifiable et
+`local_book` chemin absolu sans caractères de contrôle) sont projetés.
+Les facultatifs incorrects sont omis, pas convertis en preuves
+d'expiration/possession. Le chemin local exact reste disponible pour
+un rapprochement explicite par le Core, jamais pour un diagnostic
+public. Aucun renouvellement, restitution ni acquisition automatique.
+
+Tests déterministes hors ligne avec données et secrets synthétiques.
+Le contrat externe de codes ADEPT/libgourou et la validation sur une
+machine réelle restent à établir sous #979.
