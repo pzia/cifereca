@@ -392,3 +392,57 @@ def test_crash_after_atomic_acsm_adoption_resumes_index_only_without_http(
     assert storage.acquisition_get(receipt_id)["status"] == "complete"
     assert storage.placement_for_path(path)["source_item_id"] == case.item.record_id
     assert len(case.deliveries) == 1
+
+
+@pytest.mark.parametrize("mutation", [
+    "missing_broker_receipt", "incomplete_broker_receipt",
+    "foreign_broker_owner", "wrong_broker_artifact", "wrong_acsm_sha",
+])
+def test_publication_guard_does_not_trust_unattested_existing_acsm_file(
+    acsm_case, mutation,
+):
+    case = acsm_case
+    service = case.service
+    storage = service.storage
+    root = service.library_identity_provider_dir(case.account.identity_id, "numilog")
+    path, _link = case.session.download_direct(case.item, root)
+    assert path.is_file() and len(case.deliveries) == 1
+    if mutation == "missing_broker_receipt":
+        with storage._connect() as db:
+            db.execute(
+                "DELETE FROM acquisition_ledger WHERE acquisition_id=?",
+                (case.manual_id,),
+            )
+    elif mutation == "incomplete_broker_receipt":
+        storage.acquisition_update_state(case.manual_id, "retryable_error")
+    elif mutation == "foreign_broker_owner":
+        with storage._connect() as db:
+            db.execute(
+                "UPDATE acquisition_ledger SET identity_id='another' "
+                "WHERE acquisition_id=?", (case.manual_id,),
+            )
+    elif mutation == "wrong_broker_artifact":
+        with storage._connect() as db:
+            db.execute(
+                "UPDATE acquisition_ledger SET artifact_id='sha256:wrong' "
+                "WHERE acquisition_id=?", (case.manual_id,),
+            )
+    else:
+        storage.acquisition_update_state(
+            case.manual_id, "complete",
+            metadata={"source_acsm_sha256": "f" * 64},
+        )
+    # A publication merely named acsm-<sha> must not pass the Core guard.
+    # No second provider I/O, no file rewrite, and no Numilog owned receipt.
+    original = path.read_bytes()
+    case.session.download_direct = lambda *_args: pytest.fail(
+        "unproven pre-existing ACSM cannot trigger provider I/O"
+    )
+    with pytest.raises(ProviderConfigurationError, match="fichiers locaux non attestés"):
+        service.acquire_direct_item(case.item)
+    assert path.read_bytes() == original
+    assert len(case.deliveries) == 1
+    assert not any(
+        r["item_id"] == case.item.record_id
+        for r in storage.acquisitions(provider_id="numilog")
+    )
