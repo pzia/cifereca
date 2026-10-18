@@ -163,3 +163,143 @@ def test_confirmation_requires_exact_modal_copy_and_fresh_readbook_before_signed
         _assert_clean(tmp_path)
     finally:
         session.close()
+
+
+def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_path):
+    """A site-wide login widget is not itself evidence of expired access.
+
+    Only the already qualified confirmation card+ModalDownload+fresh readBook
+    may select a signed ACSM, with no change to account authority.
+    """
+    visited = []
+    confirmation = FIXTURE.read_text().replace(
+        '<form method="post"', '<input type="password" name="loginWidget" value="PRIVATE_HTML" />'
+        '<form method="post"', 1,
+    )
+    assert html_response_kind(confirmation) == 'login'
+
+    def handler(request):
+        url = str(request.url)
+        visited.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=INVENTORY,
+                                  headers={'content-type': 'text/html'})
+        if url == READ_12:
+            return httpx.Response(302, headers={'location': CONFIRMATION})
+        if url == CONFIRMATION:
+            return httpx.Response(200, text=confirmation,
+                                  headers={'content-type': 'text/html'})
+        if url == SIGNED:
+            return httpx.Response(200, content=ACSM, headers={
+                'content-type': 'application/vnd.adobe.adept+xml',
+            })
+        pytest.fail('Unexpected network request on bound confirmation flow')
+
+    session, diagnostics, importer = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        item = session.library()[0]
+        path, origin = session.download_direct(item, tmp_path)
+        assert path.is_file() and origin == LIBRARY
+        assert visited == [LIBRARY, LIBRARY, READ_12, CONFIRMATION, SIGNED]
+        assert session.connected is True and len(importer.calls) == 1
+        assert diagnostics.events
+        assert all(marker not in repr(diagnostics.events) for marker in (
+            'PRIVATE_HTML', 'FICTIONAL_LCP', 'SYNTHETIC_NOT_A_CREDENTIAL',
+            'orderid=', 'rights=', 'auth=',
+        ))
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize('mutation', (
+    'different_product', 'different_copy', 'different_readbook',
+    'missing_modal', 'duplicate_signed', 'unqualified_landing',
+))
+def test_shared_login_widget_confirmation_refuses_unbound_acsm(tmp_path, mutation):
+    """A login form plus ONE plausible signed link is never enough."""
+    from tests.test_numilog_owned_js_delivery_p0 import SECOND
+
+    html = FIXTURE.read_text().replace(
+        '<form method="post"', '<input type="password" name="loginWidget" />'
+        '<form method="post"', 1,
+    )
+    if mutation == 'different_product':
+        html = html.replace('ModalDownload(9001, 1)', 'ModalDownload(9002, 1)')
+    elif mutation == 'different_copy':
+        html = html.replace('ModalDownload(9001, 1)', 'ModalDownload(9001, 2)')
+    elif mutation == 'different_readbook':
+        html = html.replace('lid=12', 'lid=34')
+    elif mutation == 'missing_modal':
+        html = html.replace('ModalDownload(9001, 1)', 'UnrelatedAction(9001, 1)')
+    elif mutation == 'duplicate_signed':
+        html = html.replace('</body>', '<script>const extra = "' + SECOND + '";</script></body>')
+    landing = (
+        'https://www.numilog.com/Pages/Compte/Landing.aspx'
+        if mutation == 'unqualified_landing' else CONFIRMATION
+    )
+    visited = []
+
+    def handler(request):
+        url = str(request.url)
+        visited.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=INVENTORY,
+                                  headers={'content-type': 'text/html'})
+        if url == READ_12:
+            return httpx.Response(302, headers={'location': landing})
+        assert url == landing, 'Unbound or hostile signed URL must never be consumed'
+        return httpx.Response(200, text=html,
+                              headers={'content-type': 'text/html'})
+
+    session, diagnostics, importer = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        item = session.library()[0]
+        with pytest.raises(ProviderError, match='session non invalidée'):
+            session.download_direct(item, tmp_path)
+        assert visited == [LIBRARY, LIBRARY, READ_12, landing]
+        assert not importer.calls
+        assert session.connected is True
+        assert diagnostics.events
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostics.events)
+        assert diagnostics.events[-1]
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+def test_actual_login_endpoint_refuses_even_a_bound_confirmation_layout(tmp_path):
+    """No exception to the exact auth endpoint, even if HTML mimics a card."""
+    login = 'https://www.numilog.com/Login.Aspx'
+    confirmation = FIXTURE.read_text().replace(
+        '<form method="post"', '<input type="password" name="loginWidget" />'
+        '<form method="post"', 1,
+    )
+    visited = []
+
+    def handler(request):
+        url = str(request.url)
+        visited.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=INVENTORY)
+        if url == READ_12:
+            return httpx.Response(302, headers={'location': login})
+        assert url == login
+        return httpx.Response(200, text=confirmation,
+                              headers={'content-type': 'text/html'})
+
+    session, diagnostics, importer = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        item = session.library()[0]
+        with pytest.raises(ProviderError, match='reconnecter le compte'):
+            session.download_direct(item, tmp_path)
+        assert visited == [LIBRARY, LIBRARY, READ_12, login]
+        assert session.connected is False
+        assert not importer.calls
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostics.events)
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
