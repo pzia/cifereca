@@ -2213,133 +2213,15 @@ class LibraryService:
                 ) from exc
 
         if item.source_provider == "numilog":
-            # Even an explicit UI click is not permission to download from a
-            # detached account or to race an existing manual/materialize run.
-            # Numilog resolves delivery URLs afresh *inside* download_direct.
-            from .core.numilog_manual_acquisition import require_source
-            try:
-                with InterProcessLock(acquisition_lock_file()):
-                    identity, pinned_session, pinned_account_id = require_source(
-                        self, item, session=session,
-                    )
-                    # The caller's exact immutable purchase target is checked
-                    # before I/O and again before/after hooks. A refreshed item
-                    # cannot switch credential, purchase, variant or revision.
-                    from .core.numilog_manual_acquisition import admission_scope, require_admission
-                    pinned_scope = admission_scope(item)
-
-                    def readmit():
-                        return require_admission(
-                            self, item, _admission, pinned_scope=pinned_scope,
-                            session=pinned_session, identity_id=identity.identity_id,
-                            account_id=pinned_account_id,
-                        )
-
-                    if self.storage.numilog_purchase_has_local_conflict(
-                        credential_id=item.source_credential,
-                        item_id=item.record_id,
-                    ):
-                        raise ProviderConfigurationError(
-                            "Numilog : acquisition existante ; rapprochement local requis"
-                        )
-                    target_dir = self.library_identity_provider_dir(
-                        identity.identity_id, "numilog",
-                    )
-                    if (target_dir.is_symlink()
-                            or target_dir.parent.is_symlink()
-                            or not target_dir.is_dir()):
-                        raise ProviderConfigurationError(
-                            "Numilog : répertoire identité non attesté"
-                        )
-                    # Numilog's explicit direct adapter uses a stable hashed
-                    # filename. A local orphan, broken symlink or pre-existing
-                    # file with no ledger is still a conflict, never an
-                    # invitation to overwrite it on another manual click.
-                    expected_name = "numilog-" + hashlib.sha256(
-                        item.record_id.encode("utf-8"),
-                    ).hexdigest()[:32] + ".epub"
-                    expected_path = target_dir / expected_name
-                    if expected_path.exists() or expected_path.is_symlink():
-                        raise ProviderConfigurationError(
-                            "Numilog : fichier local candidat ; rapprochement requis"
-                        )
-                    from .core.numilog_publication_guard import require_tracked_publications
-                    require_tracked_publications(self, identity.identity_id, target_dir)
-                    # Recheck the exact caller/source after bounded filesystem
-                    # inspection and immediately before any provider I/O.
-                    item = readmit()
-                    try:
-                        path, _private_url = pinned_session.download_direct(
-                            item, target_dir,
-                        )
-                    except Exception as exc:
-                        from .plugin_api import Cancelled
-                        if isinstance(exc, Cancelled):
-                            raise
-                        # A provider exception can contain a signed ACSM link
-                        # or order/cookie data. Never relay its raw message.
-                        raise ProviderConfigurationError(
-                            "Numilog : livraison indisponible ; réessayer manuellement"
-                        ) from None
-                    # The provider may release its per-session lock before
-                    # returning. A reconnect/rebind during HTTP or ADEPT must
-                    # not be committed under a different identity.
-                    readmit()
-                    refreshed = require_source(self, item, session=pinned_session)
-                    if (refreshed[0].identity_id != identity.identity_id
-                            or refreshed[2] != pinned_account_id):
-                        raise ProviderConfigurationError(
-                            "Numilog : rattachement du compte modifié"
-                        )
-                    from .core.numilog_manual_acquisition import require_local_artifact
-                    require_local_artifact(path, target_dir)
-                    from dataclasses import replace
-                    # Never pass unverified private cover/link metadata to
-                    # post-download hooks or the persisted Acquisition object.
-                    # The original item is used only by the provider's
-                    # exact owned-library resolver, inside the source lock.
-                    clean_item = replace(
-                        item, thumbnail_url=None, friendly_url=None,
-                        download_url=None, metadata={},
-                    )
-                    self.acquisition.run_post_download(
-                        clean_item, path, "", target_dir,
-                    )
-                    def final_admission():
-                        readmit()
-                        refreshed = require_source(self, item, session=pinned_session)
-                        if (refreshed[0].identity_id != identity.identity_id
-                                or refreshed[2] != pinned_account_id):
-                            raise ProviderConfigurationError(
-                                "Numilog : rattachement du compte modifié"
-                            )
-                    # Post-download hooks may remove or replace the file.
-                    # Attest the final artifact, not just its pre-hook path.
-                    require_local_artifact(path, target_dir)
-                    from .core.numilog_materialization_checkpoint import record
-                    checkpoint_id = record(
-                        self, item, path, target_dir, identity.identity_id, pinned_account_id,
-                        validate=final_admission,
-                    )
-                    # A provider-returned URL may contain single-use ACSM
-                    # signatures. Never persist it as Acquisition.source_url.
-                    result = self.acquisition.acquisition_from_direct(
-                        clean_item, path=path, url="", target_dir=target_dir,
-                        action="download",
-                    )
-                    # The generic direct adapter historically dropped the
-                    # account ID. Persist the source's originally pinned owner,
-                    # not a later enumeration of possibly mutated accounts.
-                    return replace(
-                        result, account_id=pinned_account_id,
-                        metadata={**result.metadata,
-                                  "identity_id": identity.identity_id,
-                                  "numilog_checkpoint_id": checkpoint_id},
-                    )
-            except LockBusyError:
-                raise ProviderConfigurationError(
-                    "Numilog : acquisition locale déjà en cours"
-                ) from None
+            from .core.numilog_direct_acquisition import acquire_numilog_direct
+            return acquire_numilog_direct(
+                self, item, _admission=_admission, session=session,
+                InterProcessLock=InterProcessLock,
+                acquisition_lock_file=acquisition_lock_file,
+                LockBusyError=LockBusyError,
+                ProviderConfigurationError=ProviderConfigurationError,
+                hashlib=hashlib,
+            )
 
         identity = self.identity_for_connection(item.source_provider, item.source_credential)
         target_dir = (
