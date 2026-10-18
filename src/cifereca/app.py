@@ -9,10 +9,10 @@ from .core import CiferecaCore
 
 
 def _gtk_import_error(exc: BaseException) -> int:
-    message = f"""
+    message = """
 cifereca nécessite GTK 4, libadwaita et PyGObject.
 
-Erreur: {exc}
+Erreur: dépendances graphiques indisponibles
 
 Sous Debian/Ubuntu :
   sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
@@ -54,7 +54,7 @@ def main() -> int:
     sys.argv = cleaned
     logger = configure_logging(verbose=verbose)
     t0 = time.monotonic()
-    logger.info("TRACE startup begin version=%s verbose=%s no_plugins=%s force_plugins=%s", __version__, verbose, no_plugins, force_plugins)
+    logger.info("TRACE startup begin version=%s verbose=%s no_plugins=%s forced_plugin_count=%s", __version__, verbose, no_plugins, len(force_plugins))
     try:
         import gi
         gi.require_version("Gtk", "4.0")
@@ -74,9 +74,8 @@ def main() -> int:
     config, service, diagnostics = core.config, core.library, core.diagnostics
     set_diagnostics_level("trace" if verbose else diagnostics.level)
     logger.info(
-        "TRACE startup core-open end schema=%s identity=%s dt=%.3fs",
-        core.storage.schema_version(), getattr(getattr(service, "current_identity", None), "identity_id", None),
-        time.monotonic()-t0,
+        "TRACE startup core-open end schema=%s dt=%.3fs",
+        core.storage.schema_version(), time.monotonic()-t0,
     )
 
     class CiferecaApplication(Adw.Application):
@@ -120,5 +119,7 @@ def main() -> int:
         logger.info("TRACE shutdown app.run end rc=%s dt=%.3fs", rc, time.monotonic()-t0)
         return rc
     except Exception:
-        logger.exception("Fatal GTK GUI error")
+        # GTK/plugin tracebacks may include signed loan URLs, local paths or
+        # credentials. Never forward an untrusted exception to application logs.
+        logger.error("Fatal GTK GUI error code=gtk_runtime_failed")
         return 1
