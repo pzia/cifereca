@@ -21,7 +21,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from . import updater
-from .update_progress import step, update_phase, update_operation
+from .update_progress import step, update_phase, update_operation, skip_update_phase
 from .paths import data_dir, state_dir
 from .install_paths import ArchiveNotFoundError, resolve_archive
 
@@ -495,6 +495,16 @@ def apply_snapshot(
         if dry_run:
             result['core'] = updater.install_archive(core_zip, python=python, keep=keep, dry_run=True) if core_zip else None
             result['core_changed'] = core_zip is not None
+            # The manifest/index, optional trusted digest and (when present)
+            # Core dry-run were checked; no plugin backup or installation,
+            # validation of the installed runtime, smoke or restart occurred.
+            if core_zip is None:
+                skip_update_phase("core_activation")
+            for skipped_stage in (
+                "plugin_backup", "plugin_install", "plugin_verification",
+                "smoke", "restart",
+            ):
+                skip_update_phase(skipped_stage)
             return result
 
         # Manifest ids are labels, never filesystem paths. Keep previous backups.
@@ -522,7 +532,9 @@ def apply_snapshot(
             if require_plugins_only:
                 step("plugin_verification", _verify_strict_installed_packages, strict_packages)
             smoke = step("smoke", _smoke_plugins, package_ids)
-        except Exception as exc:
+        except (Exception, KeyboardInterrupt) as exc:
+            # A cooperative Ctrl-C must restore the pre-update plugin state,
+            # even when the interrupted installation already changed Core.
             restoration_errors = []
             try:
                 step("rollback", _restore_plugins, package_ids, backup_plugins)
@@ -541,7 +553,9 @@ def apply_snapshot(
         if restart:
             app = updater._command_path(updater.install_root() / "current", "cifereca")
             try:
-                subprocess.Popen([str(app)], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # Success attests process launch only, not GTK readiness.
+                step("restart", subprocess.Popen, [str(app)], start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 result["restarted"] = True
             except Exception as exc:
                 result["restarted"] = False
@@ -583,6 +597,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         _print(result, args.json)
         return 0
+    except KeyboardInterrupt:
+        _print({"ok": False, "error": {"code": "interrupted",
+               "message": "Mise à jour interrompue"}}, args.json)
+        return 130
     except TimeoutError:
         _print({"ok": False, "error": {"code": "dev_update_error",
                "message": "Délai dépassé pour un sous-processus de mise à jour"}}, args.json)

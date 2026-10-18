@@ -41,6 +41,18 @@ from diagnostics_states_probe import StateTasks
 from x11_input import X11Input
 
 
+
+def probe_failure_line(exc):
+    """Return only the deepest line in this probe, never exception data."""
+    line = None
+    trace = exc.__traceback__
+    while trace is not None:
+        if trace.tb_frame.f_code.co_filename == __file__:
+            line = trace.tb_lineno
+        trace = trace.tb_next
+    return line
+
+
 def walk(widget):
     yield widget
     child = widget.get_first_child()
@@ -461,6 +473,7 @@ def main() -> int:
                     report["checkpoint_line"] = code.co_firstlineno
                 callback()
             except Exception as exc:
+                report["failure_line"] = probe_failure_line(exc)
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(delay_ms, call)
@@ -1643,7 +1656,18 @@ def main() -> int:
             "gtk-font-name", f["sync_original_font"]
         )
         w.set_default_size(760, 780)
-        later(350, lambda: sync_narrow_allocations(False))
+        deadline = monotonic() + 4
+
+        def wait_sync_narrow():
+            # set_default_size queues an asynchronous toplevel allocation.
+            # #2203 observed width >760 despite all GTK minima <=760 after
+            # the fixed 350ms delay. Wait for the requested width, as D16
+            # already does; on deadline run the unchanged strict assertions.
+            if w.get_width() <= 760 or monotonic() >= deadline:
+                sync_narrow_allocations(False)
+            else:
+                later(80, wait_sync_narrow)
+        later(80, wait_sync_narrow)
 
     def sync_narrow_allocations(large_font):
         w = window[0]
@@ -1660,6 +1684,20 @@ def main() -> int:
             ],
         }
         report["sync_minimum_width_geometry"] = geometry
+        if w.get_width() > 760:
+            # Closed failure categories only: distinguish a real minimum
+            # request from an outstanding allocation, without publishing
+            # account labels, widget dumps or native coordinates.
+            if geometry["header_min"] > 760:
+                report["stage"] = "P0_2027_narrow_header_minimum"
+            elif geometry["sources_min"] > 760:
+                report["stage"] = "P0_2027_narrow_source_minimum"
+            elif geometry["scroll_min"] > 760:
+                report["stage"] = "P0_2027_narrow_scroll_minimum"
+            elif w.measure(Gtk.Orientation.HORIZONTAL, -1)[0] > 760:
+                report["stage"] = "P0_2027_narrow_window_minimum"
+            else:
+                report["stage"] = "P0_2027_narrow_allocation_pending"
         assert w.get_width() <= 760, ("Synchronisation minimum window width", geometry)
         assert scroll.get_width() > 0
         allocations = []
@@ -3099,8 +3137,15 @@ def main() -> int:
             Gio.Application.do_shutdown(self)
 
     app = Application()
+    # The full baseline additionally runs 563-row render comparisons, sync
+    # consent, Settings and three identity changes with their own deadlines.
+    # Its old shared 50s watchdog expired during active profile selection
+    # (#2203), after all 760px assertions passed. Keep a finite suite budget;
+    # individual operation/geometry assertions retain their original bounds.
+    watchdog_seconds = 75 if args.window_baseline else 50
     GLib.timeout_add_seconds(
-        50, lambda: (fail("Timeout Diagnostics navigation 50s"), False)[1]
+        watchdog_seconds,
+        lambda: (fail(f"Timeout Diagnostics navigation {watchdog_seconds}s"), False)[1]
         if report["status"] == "RUNNING" else False,
     )
     app.run([sys.argv[0]])
