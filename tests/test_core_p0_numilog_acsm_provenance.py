@@ -361,3 +361,34 @@ def test_real_core_acsm_import_complete_or_unchanged_reconciles_private_purchase
             for p in local[0]["possessions"]
         )
     assert len(drm_calls) == len(download_calls) == 1
+
+
+def test_crash_after_atomic_acsm_adoption_resumes_index_only_without_http(
+    acsm_case, monkeypatch,
+):
+    case = acsm_case
+    acquired, receipt_id, path = _delivered(case)
+    service = case.service
+    storage = service.storage
+    original_index = service.catalog_index_path
+
+    def interrupted_after_sql(*_args, **_kwargs):
+        raise RuntimeError("synthetic interruption after atomic adoption")
+
+    monkeypatch.setattr(service, "catalog_index_path", interrupted_after_sql)
+    with pytest.raises(ProviderConfigurationError):
+        service.resume_numilog_materialization(receipt_id)
+    placement = storage.placement_for_path(path)
+    assert placement["source_item_id"] == case.item.record_id
+    linked = [row for row in storage.catalog_entries()
+              if row["placement_id"] == placement["placement_id"]]
+    assert len(linked) == 1 and linked[0]["item_id"] == case.item.record_id
+    assert storage.acquisition_get(receipt_id)["status"] == "attention_required"
+    assert len(case.deliveries) == 1
+
+    monkeypatch.setattr(service, "catalog_index_path", original_index)
+    completed = service.resume_numilog_materialization(receipt_id)
+    assert completed.indexed["status"] == "indexed"
+    assert storage.acquisition_get(receipt_id)["status"] == "complete"
+    assert storage.placement_for_path(path)["source_item_id"] == case.item.record_id
+    assert len(case.deliveries) == 1
