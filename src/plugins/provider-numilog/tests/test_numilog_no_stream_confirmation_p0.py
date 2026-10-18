@@ -92,8 +92,8 @@ def test_owned_readbook_302_without_streaming_imports_only_selected_adobe(
 
 
 @pytest.mark.parametrize('mutation', (
-    'another-card', 'another-modal', 'foreign-readbook', 'foreign-lcp',
-    'contradictory-ref', 'another-adobe',
+    'another-card', 'another-modal', 'foreign-readbook', 'malformed-readbook',
+    'foreign-lcp', 'contradictory-ref', 'another-adobe',
 ))
 def test_missing_stream_never_bypasses_single_purchase_binding(mutation):
     html = confirmation_without_stream()
@@ -109,6 +109,11 @@ def test_missing_stream_never_bypasses_single_purchase_binding(mutation):
         html = html.replace(
             '</form>',
             '<a href="/Pages/Compte/readBook.ashx?lid=34&amp;m=stream">Other</a></form>',
+        )
+    elif mutation == 'malformed-readbook':
+        html = html.replace(
+            '</form>',
+            '<a href="/Pages/Compte/readBook.ashx?lid=NOT_A_NUMBER">Other</a></form>',
         )
     elif mutation == 'foreign-lcp':
         html = html.replace(
@@ -177,7 +182,8 @@ def test_no_stream_two_hop_redirect_does_not_reuse_stale_source_proof(tmp_path):
         if url == waypoint:
             return httpx.Response(302, headers={'location': LANDING})
         if url == LANDING:
-            return httpx.Response(200, text=html)
+            return httpx.Response(200, text=html,
+                                  headers={'content-type': 'text/html'})
         pytest.fail('No ACSM should be requested without direct attestation')
 
     session, _, importer = setup(tmp_path, handler)
