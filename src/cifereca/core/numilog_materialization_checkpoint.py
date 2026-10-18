@@ -4,7 +4,9 @@ Created under the acquisition lock, before returning the provider's file.
 No receipt is a new download permission. Recovery only indexes the exact
 original bytes in their pinned owner's current provider root, without HTTP.
 """
+from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 import re
 import time
 
@@ -99,7 +101,7 @@ def record(service, item, path, target_dir, identity_id, account_id, *, validate
         raise ProviderConfigurationError(_ERROR) from None
 
 
-def _checked_receipt(service, acquisition_id, *, expected=None, selected=False):
+def _checked_receipt(service, acquisition_id, *, expected=None, selected=False, verify_file=True):
     _require(type(acquisition_id) is str and re.fullmatch(r'numilog-materialization:[0-9a-f]{32}', acquisition_id))
     row = service.storage.acquisition_get(acquisition_id)
     _require(type(row) is dict and row.get('provider_id') == 'numilog')
@@ -136,19 +138,25 @@ def _checked_receipt(service, acquisition_id, *, expected=None, selected=False):
              and metadata.get('phase') in {_PENDING, 'indexed'}
              and metadata.get('root') == str(root)
              and row.get('status') in {'acquiring', 'retryable_error', 'attention_required', 'complete'})
-    fingerprint = _read_hash_within(metadata.get('path'), (root,))
-    _require(fingerprint is not None and fingerprint ==
-             (metadata.get('sha256'), metadata.get('size'), metadata.get('path')))
-    _require(type(metadata.get('size')) is int and metadata['size'] > 0)
+    _require(type(metadata.get('path')) is str and bool(metadata['path'])
+             and type(metadata.get('sha256')) is str
+             and re.fullmatch(r'[0-9a-f]{64}', metadata['sha256'])
+             and type(metadata.get('size')) is int and metadata['size'] > 0)
+    if verify_file:
+        fingerprint = _read_hash_within(metadata['path'], (root,))
+        _require(fingerprint is not None and fingerprint ==
+                 (metadata['sha256'], metadata['size'], metadata['path']))
     return row, Path(metadata['path'])
 
 
-def index_delivered(service, acquisition, *, title=None, selected=False):
+def index_delivered(service, acquisition, *, title=None, selected=False, expected_receipt=None):
     """Index only the verified receipt; keep it pending on any failure/crash."""
     try:
         acquisition_id = acquisition.metadata.get('numilog_checkpoint_id')
         with InterProcessLock(acquisition_lock_file()):
             row, path = _checked_receipt(service, acquisition_id, expected=acquisition, selected=selected)
+            if expected_receipt is not None:
+                _require(_resume_target(row) == expected_receipt)
             _require(acquisition.path == path)
             placement = service.storage.placement_for_path(path)
             _require(placement is None or (placement.get('identity_id') == row['identity_id']
@@ -178,7 +186,7 @@ def index_delivered(service, acquisition, *, title=None, selected=False):
         raise ProviderConfigurationError(_ERROR) from None
 
 
-def resume(service, acquisition_id):
+def resume(service, acquisition_id, *, expected_receipt=None):
     """Explicit offline recovery API; never an automatic acquisition retry."""
     try:
         row, path = _checked_receipt(service, acquisition_id, selected=True)
@@ -188,8 +196,56 @@ def resume(service, acquisition_id):
             local_path=path, artifact_path=path, target_dir=path.parent, mime_type=None, drm='unknown',
             metadata={'identity_id': row['identity_id'], 'numilog_checkpoint_id': acquisition_id},
         )
-        return index_delivered(service, acquisition, selected=True)
+        return index_delivered(service, acquisition, selected=True, expected_receipt=expected_receipt)
     except Cancelled:
         raise
     except Exception:
         raise ProviderConfigurationError(_ERROR) from None
+
+
+@dataclass(frozen=True, repr=False)
+class NumilogIndexResumeTarget:
+    provider_id: ClassVar[str] = 'numilog'
+    operation: ClassVar[str] = 'resume_index'
+    identity_id: str
+    item_id: str
+    acquisition_id: str
+    scope: tuple
+
+
+def _resume_target(row):
+    meta = row['metadata']
+    return NumilogIndexResumeTarget(row['identity_id'], row['item_id'], row['acquisition_id'],
+        tuple(row[k] for k in ('credential_id', 'account_id', 'status')) +
+        tuple(meta[k] for k in ('kind', 'phase', 'path', 'root', 'sha256', 'size')))
+
+
+def target_for_entry(service, entry):
+    """SQL/configuration only; never hash, scan, create directories or use HTTP."""
+    try:
+        owner = getattr(service.current_identity, 'identity_id', None)
+        possessions = entry.get('possessions')
+        _require(type(possessions) in (list, tuple) and owner is not None)
+        candidates = [p for p in possessions if type(p) is dict
+                      and p.get('identity_id') == owner and p.get('kind') == 'owned'
+                      and p.get('state') == 'active' and p.get('provider_id') in {'kobo', 'numilog'}]
+        _require(len(candidates) == 1 and candidates[0].get('provider_id') == 'numilog')
+        possession = candidates[0]
+        rights = [r for r in service.storage.entitlements(provider_id='numilog', state='active')
+                  if r.get('identity_id') == owner and r.get('item_id') == possession.get('item_id')
+                  and r.get('entitlement_id') == possession.get('entitlement_id')
+                  and r.get('entitlement_type') == 'owned']
+        _require(len(rights) == 1)
+        right = rights[0]
+        evidence = service.storage.numilog_purchase_preflight_evidence(
+            identity_id=owner, credential_id=right['credential_id'],
+            account_id=right['account_id'], item_id=right['item_id'])
+        _require(len(evidence['entitlements']) == 1
+                 and right.get('metadata', {}).get('source') == 'numilog.authenticated_library')
+        aid = stable_id('numilog-materialization', owner, right['credential_id'],
+                        right['account_id'], right['item_id'])
+        row, _path = _checked_receipt(service, aid, selected=True, verify_file=False)
+        _require(row['status'] == 'attention_required' and row['metadata']['phase'] == _PENDING)
+        return _resume_target(row)
+    except Exception:
+        return None

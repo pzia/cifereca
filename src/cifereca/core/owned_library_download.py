@@ -93,6 +93,10 @@ def owned_library_download_target(service, entry):
                       and p.get("kind") == "owned" and p.get("provider_id") in {"kobo", "numilog"}]
         if len(candidates) > 1:
             return None
+    from .numilog_materialization_checkpoint import target_for_entry as resume_target
+    pending = resume_target(service, entry)
+    if pending is not None:
+        return pending
     from .numilog_owned_download import target_for_entry
     numilog = target_for_entry(service, entry)
     if numilog is not None:
@@ -117,6 +121,9 @@ def owned_library_download_target(service, entry):
 
 def obtain_owned_library_item(service, target):
     """Recheck at dispatch and again *inside* the direct-acquisition lock."""
+    from .numilog_materialization_checkpoint import NumilogIndexResumeTarget, resume
+    if type(target) is NumilogIndexResumeTarget:
+        return resume(service, target.acquisition_id, expected_receipt=target)
     from .numilog_owned_download import NumilogOwnedDownloadTarget, obtain
     if type(target) is NumilogOwnedDownloadTarget:
         return obtain(service, target)

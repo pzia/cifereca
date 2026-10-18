@@ -7,10 +7,10 @@ from cifereca.gui.local_book_action_controller import add_local_book_actions
 from tests.test_core_ui_1129_local_book_actions import _environment
 
 
-def setup_action(provider="kobo"):
+def setup_action(provider="kobo", operation=None):
     window, entry, detail, actions, events, submissions, launched, deps = _environment(
         item={"provider_id": "kobo", "item_id": "book", "possessions": []}, local=False)
-    target = NS(identity_id="alice", provider_id=provider)
+    target = NS(identity_id="alice", provider_id=provider, operation=operation)
     window.service.owned_library_download_target = lambda entry: target
     calls = []
     window.service.obtain_owned_library_item = lambda requested: calls.append(requested) or NS(path="fake-path")
@@ -82,3 +82,37 @@ def test_numilog_stale_identity_never_submits_acquisition():
     window._identity_context_generation = 2
     actions[0].click()
     assert calls == [] and submissions == []
+
+
+def test_resume_action_only_explicit_click_indexes_without_claiming_download():
+    window, actions, calls, submissions, target = setup_action('numilog', 'resume_index')
+    button = actions[0]
+    assert button._cifereca_action_id == 'resume-index-numilog'
+    assert 'indexation' in button.label and 'sans téléchargement' in button.tooltip
+    assert not calls and not submissions
+    button.click()
+    args, kwargs = submissions[0]
+    args[2](args[1]())
+    assert calls == [target] and kwargs['kind'] == 'index'
+
+
+@pytest.mark.parametrize('mutation', ['identity', 'generation', 'hidden', 'detached', 'closed'])
+def test_resume_action_never_submits_stale_or_hidden_context(mutation):
+    window, actions, calls, submissions, target = setup_action('numilog', 'resume_index')
+    if mutation == 'identity':window.service.current_identity = NS(identity_id='bob')
+    if mutation == 'generation':window._identity_context_generation = 1
+    if mutation == 'hidden':actions[0].get_mapped = lambda:False
+    if mutation == 'detached':actions[0].get_root = lambda:None
+    if mutation == 'closed':window._closed = True
+    actions[0].click()
+    assert not calls and not submissions
+
+
+def test_resume_worker_preserves_cancellation_without_success_callback():
+    from cifereca.plugin_api import Cancelled
+    window, actions, calls, submissions, target = setup_action('numilog', 'resume_index')
+    def cancelled(_target):raise Cancelled()
+    window.service.obtain_owned_library_item = cancelled
+    actions[0].click()
+    with pytest.raises(Cancelled):submissions[0][0][1]()
+    assert not calls

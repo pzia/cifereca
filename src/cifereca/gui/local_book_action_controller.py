@@ -5,6 +5,8 @@ widgets and TaskRunner remain owned by the MainWindow facade (#1129).
 """
 from __future__ import annotations
 
+from ..plugin_api import Cancelled
+
 
 def _add_owned_download(window, detail, item, TaskPriority):
     resolve = getattr(window.service, 'owned_library_download_target', None)
@@ -17,9 +19,14 @@ def _add_owned_download(window, detail, item, TaskPriority):
     if provider not in {'kobo', 'numilog'}:
         return
     label = 'Numilog' if provider == 'numilog' else 'Kobo'
-    button = window.action_button(f'Télécharger ce livre {label}', 'folder-download-symbolic')
-    button._cifereca_action_id = 'download-owned-' + provider
-    button.set_tooltip_text('Télécharger uniquement ce livre possédé, pour son compte et son identité. Aucun lot global.')
+    resume = provider == 'numilog' and getattr(target, 'operation', None) == 'resume_index'
+    button = window.action_button('Reprendre l’indexation Numilog' if resume else f'Télécharger ce livre {label}',
+                                  'view-refresh-symbolic' if resume else 'folder-download-symbolic')
+    button._cifereca_action_id = 'resume-index-numilog' if resume else 'download-owned-' + provider
+    button.set_tooltip_text('Indexer le fichier déjà livré, sans téléchargement ni réseau.' if resume else
+                            'Télécharger uniquement ce livre possédé, pour son compte et son identité. Aucun lot global.')
+    failure = ('Reprise d’indexation indisponible. Vérifiez le fichier livré et son identité.' if resume else
+               'Téléchargement ciblé indisponible. Actualisez les droits et vérifiez les fichiers locaux.')
     generation = getattr(window, '_identity_context_generation', None)
     def current():
         return (not getattr(window, '_closed', False)
@@ -39,19 +46,21 @@ def _add_owned_download(window, detail, item, TaskPriority):
                 raise RuntimeError('Le contexte du téléchargement a changé.')
             try:
                 return window.service.obtain_owned_library_item(target)
+            except Cancelled:
+                raise
             except Exception:
-                raise RuntimeError('Téléchargement ciblé indisponible. Actualisez les droits et vérifiez les fichiers locaux.') from None
+                raise RuntimeError(failure) from None
         def done(result):
             if current() and getattr(result, 'path', None) is not None:
-                window._activity_result('Livre téléchargé dans la Bibliothèque.')
+                window._activity_result('Indexation Numilog terminée.' if resume else 'Livre téléchargé dans la Bibliothèque.')
                 window.refresh_library(False)
                 window.refresh_recent()
         def failed(_exc):
             if current():
-                window.show_error('Téléchargement ciblé indisponible. Actualisez les droits et vérifiez les fichiers locaux.',
-                                  'Téléchargement du livre possédé')
-        window.runner.submit(f'Téléchargement du livre {label} possédé…', work, done, failed,
-                             control=_button, priority=TaskPriority.USER_ACTION, kind='obtain')
+                window.show_error(failure, 'Reprise d’indexation Numilog' if resume else 'Téléchargement du livre possédé')
+        window.runner.submit('Reprise d’indexation Numilog…' if resume else f'Téléchargement du livre {label} possédé…',
+                             work, done, failed, control=_button, priority=TaskPriority.USER_ACTION,
+                             kind='index' if resume else 'obtain')
     button.connect('clicked', clicked)
     detail.add_actions([button])
 
