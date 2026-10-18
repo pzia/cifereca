@@ -38,6 +38,10 @@ def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
            or data[key] > (2048 if key == "skipped" else 8)
            for key in counts):
         return "Dernier bilan indisponible."
+    if (data["downloaded"] > data["attempted"]
+            or data["failed"] > data["attempted"] + 1):
+        # Never display internally contradictory counters as attested facts.
+        return "Dernier bilan indisponible."
     if (started is not None and (type(started) is not int
             or not 1_000_000_000 <= started <= 9_999_999_999)
             or due is not None and (type(due) is not int
