@@ -13,6 +13,7 @@ from time import monotonic
 from threading import Event, RLock, Thread
 from typing import Callable, Iterator, TextIO
 import secrets
+import json
 import sys
 
 STAGES = frozenset({
@@ -245,3 +246,45 @@ def skip_update_phase(stage: str) -> None:
     progress = _CURRENT.get()
     if progress is not None:
         progress.emit(stage, "SKIPPED")
+
+
+def jsonl_progress_writer(stream: TextIO) -> EventCallback:
+    """Internal child capability: only collector-built events, one flush each."""
+    def write(event: dict[str, object]) -> None:
+        stream.write(json.dumps(event, ensure_ascii=True, separators=(",", ":")) + "\n")
+        stream.flush()
+    return write
+
+
+def child_progress_receiver() -> Callable[[bytes], None]:
+    """Capture the parent context; never trust child metadata or raw logs.
+
+    Child operation completion cannot complete the parent's transaction. Only
+    closed phase/status fields and bounded factual ordinals cross the boundary.
+    """
+    progress = _CURRENT.get()
+    def receive(line: bytes) -> None:
+        if progress is None:
+            return
+        try:
+            value = json.loads(line)
+        except (ValueError, UnicodeError, RecursionError):
+            return
+        if type(value) is not dict or value.get("schema") != "cifereca.update.progress/1":
+            return
+        stage, status = value.get("stage"), value.get("status")
+        if (type(stage) is not str or stage not in STAGES or stage == "operation"
+                or type(status) is not str
+                or status not in {"RUNNING", "OK", "ERROR", "SKIPPED", "ROLLBACK"}):
+            return
+        reason = value.get("reason_code")
+        if type(reason) is not str or reason not in FAILURE_CODES:
+            reason = None
+        duration = value.get("duration_ms")
+        since = (progress.clock() - duration / 1000
+                 if type(duration) is int and 0 <= duration <= 86_400_000 else None)
+        with progress._stage_lock:
+            progress.emit(stage, status, since=since, reason_code=reason,
+                          plugin_index=value.get("plugin_index"),
+                          plugin_total=value.get("plugin_total"))
+    return receive

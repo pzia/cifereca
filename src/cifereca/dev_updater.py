@@ -21,7 +21,8 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from . import updater
-from .update_progress import step, update_phase, update_operation, skip_update_phase
+from .update_progress import step, update_phase, update_operation, skip_update_phase, jsonl_progress_writer
+from .update_child import PROGRESS_ENV
 from .paths import data_dir, state_dir
 from .install_paths import ArchiveNotFoundError, resolve_archive
 
@@ -584,10 +585,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.snapshot:
         parser.error("snapshot ZIP requis")
+    child_progress = os.environ.get(PROGRESS_ENV) == "1"
     try:
         with update_operation(
             "dev_plugins_only" if args.require_plugins_only else "dev_snapshot",
-            stream=sys.stderr,
+            stream=None if child_progress else sys.stderr,
+            callback=jsonl_progress_writer(sys.stderr) if child_progress else None,
         ):
             result = apply_snapshot(
                 args.snapshot, python=args.python, keep=args.keep,

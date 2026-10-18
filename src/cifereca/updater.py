@@ -20,7 +20,8 @@ from urllib.parse import quote
 
 from .install_paths import ArchiveNotFoundError, resolve_archive
 from .paths import config_dir, data_dir, database_file, state_dir
-from .update_progress import step, update_phase, update_operation, skip_update_phase
+from .update_progress import step, update_phase, update_operation, skip_update_phase, child_progress_receiver
+from .update_child import run_plugin_child, ChildOutputError
 
 PROJECT_NAME = "cifereca"
 PROJECT_DIR_NAME = "cifereca"
@@ -724,16 +725,21 @@ def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, A
     command = _command_path(release, DEV_COMMAND)
     if not command.is_file():
         raise UpdateError("cifereca-update-dev absent du nouveau runtime")
-    proc = _run_bounded_process(
-        [str(command), str(snapshot), "--json"],
-        text=True, capture_output=True, timeout=300, check=False,
-    )
+    try:
+        proc = run_plugin_child(
+            [str(command), str(snapshot), "--json"],
+            timeout=300, on_line=child_progress_receiver(),
+        )
+    except TimeoutError:
+        raise TimeoutError("Délai dépassé pour un sous-processus de mise à jour") from None
+    except (OSError, ChildOutputError, UnicodeError):
+        raise UpdateError("Sous-processus plugins de mise à jour indisponible") from None
     if proc.returncode != 0:
         raise UpdateError("Upgrade des plugins de release échoué")
     try:
         value = json.loads(proc.stdout)
-    except Exception as exc:
-        raise UpdateError("Upgrade des plugins de release: sortie JSON invalide") from exc
+    except (ValueError, RecursionError):
+        raise UpdateError("Upgrade des plugins de release: sortie JSON invalide") from None
     if not isinstance(value, dict) or not value.get("ok"):
         raise UpdateError("Upgrade des plugins de release non confirmé")
     return value
