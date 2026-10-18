@@ -370,13 +370,18 @@ def test_actual_login_endpoint_refuses_even_a_bound_confirmation_layout(tmp_path
         session.close()
 
 
-@pytest.mark.parametrize('html', (
-    '<a class="download" href="' + SIGNED + '">Télécharger</a>',
-    '<script>window.location = "' + SIGNED + '";</script>',
-    '<script>const Links = [{ProductId: 9001, IndexExemplaire: 1, '
-    + 'DrmTechnlology: "ADOBE", link: "' + SIGNED + '"}];</script>',
+@pytest.mark.parametrize('html,error_label,error_code', (
+    ('<a class="download" href="' + SIGNED + '">Télécharger</a>',
+     'lien de livraison absent', 'html_delivery_link_missing'),
+    ('<script>window.location = "' + SIGNED + '";</script>',
+     'lien de livraison absent', 'html_delivery_link_missing'),
+    ('<script>const Links = [{ProductId: 9001, IndexExemplaire: 1, '
+     + 'DrmTechnlology: "ADOBE", link: "' + SIGNED + '"}];</script>',
+     'plusieurs liens', 'html_delivery_ambiguous'),
 ))
-def test_confirmation_without_login_never_consumes_unbound_signed_acsm(tmp_path, html):
+def test_confirmation_without_login_never_consumes_unbound_signed_acsm(
+    tmp_path, html, error_label, error_code,
+):
     """Even a harmless template can advertise another order's signed URL.
 
     The confirmation route is ALWAYS scoped to the exact current purchase,
@@ -401,7 +406,7 @@ def test_confirmation_without_login_never_consumes_unbound_signed_acsm(tmp_path,
     session.connected = True
     try:
         book = session.library()[0]
-        with pytest.raises(ProviderError, match='lien de livraison absent'):
+        with pytest.raises(ProviderError, match=error_label):
             session.download_direct(book, tmp_path)
         assert visited == [LIBRARY, LIBRARY, READ_12, landing]
         assert session.connected is True
@@ -410,9 +415,8 @@ def test_confirmation_without_login_never_consumes_unbound_signed_acsm(tmp_path,
             kwargs['detail'] for args, kwargs in diagnostics.events
             if args[:2] == ('NUMILOG', 'acquisition_delivery')
         ]
-        assert any(event.get('code') == 'html_delivery_link_missing'
-                   for event in events)
-        assert events[-1]['code'] == 'html_delivery_link_missing'
+        assert any(event.get('code') == error_code for event in events)
+        assert events[-1]['code'] == error_code
         assert 'FICTIONAL' not in repr(diagnostics.events)
         assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostics.events)
         _assert_clean(tmp_path)
