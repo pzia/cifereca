@@ -196,3 +196,41 @@ public. Aucun renouvellement, restitution ni acquisition automatique.
 Tests déterministes hors ligne avec données et secrets synthétiques.
 Le contrat externe de codes ADEPT/libgourou et la validation sur une
 machine réelle restent à établir sous #979.
+
+
+## 1.2.23 — probe Core fondé sur des faits typés seulement
+
+`probe_core()` ne retourne plus les documents JSON arbitraires
+`contract` et `capabilities` fournis par le binaire Kobo-ADEPT.
+La réponse au Core est reconstruite dans une table de champs fermée,
+sans conserver des certificats, identités, noms de profil, URLs de
+fulfillment, chemins de configuration ou clés privées éventuellement
+ajoutés par un programme externe. Les indications réellement lues
+par `LibraryService.kobo_adept_state` sont conservées :
+
+- nom fixe, version numérique du contrat, version logicielle structurée
+  et quatre identifiants de capacités machine exacts ;
+- disponibilités booléennes strictes des transferts HTTP, ACSM et Kobo,
+  formats EPUB/PDF/KEPUB publiés, et indicateurs de DRM KDRM ;
+- état de restitution ADEPT (disponibilité), en conservant uniquement
+  un booléen ;
+- `resolved_executable` **booléen** et non plus chemin absolu pouvant
+  révéler le répertoire personnel.
+
+Les valeurs texte non typées ou inconnues ne sont pas transformées en
+capacités positives. `contract()` et `capabilities()` continuent de
+servir au runtime lui-même pour contrôler les actions explicites ; seul
+le **probe de diagnostic publié à Core** est minimisé. Les suites hors
+ligne vérifient la couverture des indicateurs Core et l'absence de
+jetons, e-mails, XML, URLs et chemins dans le reçu public.
+
+Ce changement n'est pas une preuve supplémentaire de codes d'erreur
+Adobe détaillés dans une CLI réelle. #979 reste conditionné à la
+qualification amont.
+
+La projection conserve également **l’absence** d’une sous-preuve KDRM
+quand aucune map n’est publiée : le consommateur Core garde alors son
+fallback historique `pinned_delivery_candidate` +
+`separate_content_keys_replay`. Une map explicite, même vide ou portant
+`available=false`, reste prioritaire et n’est jamais remplacée par ce
+fallback. Tests de la projection suivie du véritable consommateur Core.
