@@ -260,7 +260,8 @@ def test_github_dry_run_accepts_tags(tmp_path, monkeypatch, ref, api_ref):
 
     assert result["github_ref"] == ref
     assert result["github_commit"] == "b" * 40
-    assert result["provenance"]["ref"] == ref\n    assert result["provenance"]["commit"] == "b" * 40
+    assert result["provenance"]["ref"] == ref
+    assert result["provenance"]["commit"] == "b" * 40
     assert not target.exists()
 
 
