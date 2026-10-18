@@ -174,3 +174,25 @@ def test_install_source_dry_run_reports_checks_and_does_not_mutate(monkeypatch, 
     ]
     assert events[-1]["outcome"] == "success"
     assert not (tmp_path / "installed").exists()
+
+
+def test_github_failed_subprocess_marks_error_without_exposing_private_stderr(
+    monkeypatch, tmp_path,
+):
+    private = "https://private.invalid/?auth=DO_NOT_LOG"
+    monkeypatch.setattr(updater.shutil, "which", lambda name: "/bin/" + name)
+    monkeypatch.setattr(
+        updater.subprocess, "run",
+        lambda *_a, **_kw: NS(returncode=1, stdout="", stderr=private),
+    )
+    stream, events = FlushingStream(), []
+    with pytest.raises(updater.UpdateError, match="introuvable"):
+        with update_operation("github", stream=stream, callback=events.append):
+            updater._github_checkout("pzia/cifereca", "main", tmp_path)
+    assert [event["stage"] for event in events if event["status"] == "ERROR"] == [
+        "resolve_github", "operation",
+    ]
+    assert not any(event["stage"] == "clone" for event in events)
+    assert events[-1]["outcome"] == "failed"
+    assert "DO_NOT_LOG" not in stream.getvalue()
+    assert "DO_NOT_LOG" not in repr(events)
