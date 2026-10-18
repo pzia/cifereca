@@ -961,6 +961,40 @@ class DiagnosticsPagePlugin:
             "next_offset": None,
         }
         selected_event_ids: set[str] = set()
+        selection_json: str | None = None
+        selection_note = ""
+        selection_generation = 0
+        selection_busy = False
+
+        def update_selected_status() -> None:
+            if selection_busy:
+                journals_selection.set_text("Sélection filtrée multi-page en cours…")
+            elif selection_json is not None:
+                journals_selection.set_text(
+                    f"{len(selected_event_ids)} sélectionné(s) · portée : "
+                    f"ensemble filtré consultable (multi-page) · {selection_note}"
+                )
+            else:
+                journals_selection.set_text(
+                    f"{len(selected_event_ids)} sélectionné(s) · portée : page courante"
+                    + (f" · {selection_note}" if selection_note else "")
+                )
+            journals_copy.set_sensitive(bool(selected_event_ids) and not selection_busy)
+            journals_select_errors.set_sensitive(not selection_busy)
+            journals_select_all.set_sensitive(not selection_busy)
+            journals_invert.set_sensitive(not selection_busy)
+            journals_preview_text.get_buffer().set_text(selection_json or "")
+
+        def invalidate_selection(message="Sélection effacée après changement de filtres") -> None:
+            nonlocal selection_json, selection_note, selection_generation, selection_busy
+            selection_generation += 1
+            if self._selection_handle is not None and not self._selection_handle.done():
+                self._selection_handle.cancel()
+            selection_busy = False
+            selected_event_ids.clear()
+            selection_json = None
+            selection_note = message
+            update_selected_status()
 
         def display_events() -> None:
             clear_container(journals_box)
@@ -970,7 +1004,8 @@ class DiagnosticsPagePlugin:
                 include_detail=True,
             )
             valid_ids = selectable_event_ids(rows)
-            selected_event_ids.intersection_update(valid_ids)
+            if selection_json is None:
+                selected_event_ids.intersection_update(valid_ids)
             states = source_summaries(current_page)
             if states:
                 journals_sources.set_text("  ·  ".join(
@@ -1006,13 +1041,22 @@ class DiagnosticsPagePlugin:
                     select.set_active(event_id in valid_ids and event_id in selected_event_ids)
 
                     def on_select(button, event_ref=event_id):
-                        if event_ref not in valid_ids:
+                        nonlocal selection_json, selection_note
+                        if event_ref not in valid_ids or selection_busy:
                             return
+                        if selection_json is not None:
+                            # One page edit replaces, but cannot mutate, the
+                            # frozen multi-page selection.
+                            selected_event_ids.clear()
+                            selection_json = None
+                            selection_note = "Sélection multi-page remplacée par la page courante"
                         if button.get_active():
                             selected_event_ids.add(event_ref)
                         else:
                             selected_event_ids.discard(event_ref)
-                        journals_copy.set_sensitive(bool(selected_event_ids))
+                        update_selected_status()
+                        if selection_note:
+                            display_events()
 
                     select.connect("toggled", on_select)
                     first_line.append(select)
@@ -1060,13 +1104,14 @@ class DiagnosticsPagePlugin:
             journals_next.set_sensitive(
                 next_page_offset(current_page, current_offset=page_offset) is not None
             )
-            journals_copy.set_sensitive(bool(selected_event_ids))
+            update_selected_status()
 
-        def load_events(*_args) -> None:
+        def load_events(*_args, keep_bulk=False) -> None:
             nonlocal page_generation, current_page
             page_generation += 1
             generation = page_generation
-            selected_event_ids.clear()
+            if not (keep_bulk and selection_json is not None):
+                invalidate_selection("Sélection effacée après actualisation ou navigation")
             # Invalidate the previous snapshot immediately, including when
             # a local search change happens while the new query is pending.
             current_page = {
@@ -1146,7 +1191,7 @@ class DiagnosticsPagePlugin:
         def previous_events(_button) -> None:
             nonlocal page_offset
             page_offset = max(0, page_offset - PAGE_SIZE)
-            load_events()
+            load_events(keep_bulk=True)
 
         def next_events(_button) -> None:
             nonlocal page_offset
@@ -1154,9 +1199,19 @@ class DiagnosticsPagePlugin:
             if next_offset is None:
                 return
             page_offset = next_offset
-            load_events()
+            load_events(keep_bulk=True)
 
         def copy_selected(_button) -> None:
+            if selection_busy:
+                return
+            if selection_json is not None:
+                display = Gdk.Display.get_default()
+                if display is None:
+                    host.toast("Presse-papiers indisponible")
+                    return
+                display.get_clipboard().set(selection_json)
+                host.toast("Sélection multi-page expurgée copiée (non atomique)")
+                return
             rows = sanitized_rows(
                 current_page, search=search_filter.get_text().strip(),
                 newest_first=sort_latest.get_active(),
