@@ -1713,10 +1713,15 @@ def main() -> int:
         assert bounds.get_y() + bounds.get_height() <= viewport_height, (
             "P0_1905: planning button outside viewport after scroll", click_geometry,
         )
+        # Closed diagnostic phases only: distinguish geometry, pointer dispatch
+        # and dialog realization without exporting GTK text or coordinates.
+        report["stage"] = "P0_1905_numilog_inventory_pointer_dispatch"
         report["pointer_actions"].append(device[0].click_widget(button))
+        report["stage"] = "P0_1905_numilog_inventory_dialog_wait"
         later(250, numilog_inventory_schedule_dialog)
 
     def numilog_inventory_schedule_dialog():
+        report["stage"] = "P0_1905_numilog_inventory_dialog_preflight"
         f = loan_sync_fixture
         dialogs = [node for node in Gtk.Window.list_toplevels()
                    if isinstance(node, Adw.MessageDialog) and node.get_visible()
@@ -1728,6 +1733,7 @@ def main() -> int:
         assert not f["materialize_calls"] and not f["source_sync_calls"]
         button = next(node for node in walk(dialog) if isinstance(node, Gtk.Button)
                       and str(node.get_label()).replace("_", "") == "Périodique")
+        report["stage"] = "P0_1905_numilog_inventory_dialog_ready"
         capture("03i1-numilog-inventory-consent")
         report["pointer_actions"].append(device[0].click_widget(button))
         later(300, numilog_inventory_schedule_revoke)

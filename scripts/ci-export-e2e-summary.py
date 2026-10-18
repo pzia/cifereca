@@ -33,6 +33,10 @@ _DIAGNOSTIC_STAGES = frozenset({
     "D16_full_mainwindow_restored", "P1_1889_sync_760_post_capture_normal_font",
     "P1_1889_sync_760_post_capture_large_font", "P0_1905_numilog_inventory_preflight",
     "P0_1905_numilog_inventory_click",
+    "P0_1905_numilog_inventory_pointer_dispatch",
+    "P0_1905_numilog_inventory_dialog_wait",
+    "P0_1905_numilog_inventory_dialog_preflight",
+    "P0_1905_numilog_inventory_dialog_ready",
 })
 
 
