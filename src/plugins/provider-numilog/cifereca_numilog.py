@@ -149,6 +149,10 @@ class NumilogSession(ProviderSession):
         self.client = httpx.Client(timeout=timeout,follow_redirects=False,trust_env=False,
             headers={'User-Agent':'Cifereca-Numilog/'+VERSION,'Accept-Language':'fr-FR,fr;q=0.9'})
         self.lock = threading.RLock()
+        # Only public anonymous responses are cached; owned rights are always
+        # reloaded from the authenticated inventory on each explicit request.
+        from cifereca_numilog_public_cache import PublicCatalogueCache
+        self._owned_public_cache = PublicCatalogueCache()
 
     def _diag(self,operation,**detail):
         if self.diagnostics is None:
@@ -238,6 +242,7 @@ class NumilogSession(ProviderSession):
 
     def connect(self):
         with self.lock:
+            self._owned_public_cache.clear()
             self.connected = False
             self._session_event('connect_started')
             self._accounts = []
@@ -279,6 +284,7 @@ class NumilogSession(ProviderSession):
 
     def close(self):
         with self.lock:
+            self._owned_public_cache.clear()
             self.client.cookies.clear()
             self.client.close()
             self.connected = False
@@ -449,12 +455,17 @@ class NumilogSession(ProviderSession):
             owned = self._normalize(matches[0])
             if owned.friendly_url is None:
                 return owned
-            from cifereca_numilog_public_client import fetch_public_search
+            from cifereca_numilog_public_client import fetch_public_search, public_search_url
             from cifereca_numilog_enrichment import merge_attested_public_listing
             # One bounded anonymous public query, no second-page scan, no
-            # private cookie or automatic re-try. The title is search text
-            # only: the edition match must be the explicit identical URL.
-            public_page = fetch_public_search(matches[0]['title'], page=0, field='all')
+            # private cookie or automatic re-try. Only this anonymous response
+            # is cacheable; the fresh purchased book above is NEVER cached.
+            title = matches[0]['title']
+            public_url = public_search_url(title, 0)
+            public_page = self._owned_public_cache.get(
+                ('search', public_url),
+                lambda: fetch_public_search(title, page=0, field='all'),
+            )
             enriched, _status = merge_attested_public_listing(
                 owned, public_page.items,
             )
@@ -476,7 +487,12 @@ class NumilogSession(ProviderSession):
                 return owned
             from cifereca_numilog_public_client import fetch_public_detail
             from cifereca_numilog_enrichment import merge_attested_owned_public_detail
-            detail = fetch_public_detail(owned.friendly_url)
+            # Anonymous product metadata is reusable for 60 seconds, not the
+            # account-scoped proof of ownership or private inventory.
+            detail = self._owned_public_cache.get(
+                ('detail', owned.friendly_url),
+                lambda: fetch_public_detail(owned.friendly_url),
+            )
             return merge_attested_owned_public_detail(owned, detail)
 
     def holdings(self,item,search_terms=''):
