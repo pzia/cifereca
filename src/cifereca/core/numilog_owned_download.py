@@ -9,7 +9,6 @@ from typing import ClassVar
 
 from ..models import SearchResult
 from ..plugin_api import Cancelled
-from .materialization import MaterializationCoordinator
 from .numilog_manifest_rights import _scoped_record_id
 from .numilog_manual_acquisition import require_source
 from .numilog_local_preview import _identity_root
@@ -116,11 +115,9 @@ def obtain(service, target):
         item = admission()
         owner = service.identity_by_id(target.identity_id)
         _require(owner is not None)
-        return MaterializationCoordinator(
-            acquire=lambda selected: service.acquire_direct_item(selected, _admission=admission),
-            index_path=service.catalog_index_path,
-            resolve_identity=lambda *_args: owner,
-        ).obtain(item)
+        from .numilog_materialization_checkpoint import index_delivered
+        acquired = service.acquire_direct_item(item, _admission=admission)
+        return index_delivered(service, acquired, title=item.title)
     except Cancelled:
         raise
     except Exception:

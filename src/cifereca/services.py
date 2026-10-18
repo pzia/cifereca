@@ -2801,16 +2801,22 @@ class LibraryService:
                     self.acquisition.run_post_download(
                         clean_item, path, "", target_dir,
                     )
-                    readmit()
-                    refreshed = require_source(self, item, session=pinned_session)
-                    if (refreshed[0].identity_id != identity.identity_id
-                            or refreshed[2] != pinned_account_id):
-                        raise ProviderConfigurationError(
-                            "Numilog : rattachement du compte modifié"
-                        )
+                    def final_admission():
+                        readmit()
+                        refreshed = require_source(self, item, session=pinned_session)
+                        if (refreshed[0].identity_id != identity.identity_id
+                                or refreshed[2] != pinned_account_id):
+                            raise ProviderConfigurationError(
+                                "Numilog : rattachement du compte modifié"
+                            )
                     # Post-download hooks may remove or replace the file.
                     # Attest the final artifact, not just its pre-hook path.
                     require_local_artifact(path, target_dir)
+                    from .core.numilog_materialization_checkpoint import record
+                    checkpoint_id = record(
+                        self, item, path, target_dir, identity.identity_id, pinned_account_id,
+                        validate=final_admission,
+                    )
                     # A provider-returned URL may contain single-use ACSM
                     # signatures. Never persist it as Acquisition.source_url.
                     result = self.acquisition.acquisition_from_direct(
@@ -2823,7 +2829,8 @@ class LibraryService:
                     return replace(
                         result, account_id=pinned_account_id,
                         metadata={**result.metadata,
-                                  "identity_id": identity.identity_id},
+                                  "identity_id": identity.identity_id,
+                                  "numilog_checkpoint_id": checkpoint_id},
                     )
             except LockBusyError:
                 raise ProviderConfigurationError(
@@ -2886,6 +2893,9 @@ class LibraryService:
     def obtain_search_item(self, item: SearchResult):
         from .core.materialization import MaterializationCoordinator
 
+        if item.source_provider == "numilog":
+            from .core.numilog_materialization_checkpoint import index_delivered
+            return index_delivered(self, self.acquire_direct_item(item), title=item.title)
         return MaterializationCoordinator(
             acquire=self.acquire_direct_item,
             index_path=self.catalog_index_path,
@@ -2899,6 +2909,11 @@ class LibraryService:
     def obtain_owned_library_item(self, target):
         from .core.owned_library_download import obtain_owned_library_item
         return obtain_owned_library_item(self, target)
+
+    def resume_numilog_materialization(self, acquisition_id: str):
+        """Explicitly resume indexing a delivered Numilog file, with zero HTTP."""
+        from .core.numilog_materialization_checkpoint import resume
+        return resume(self, acquisition_id)
 
     def prepare_direct_download(self, item: SearchResult) -> tuple[Path, str]:
         """Compatibility wrapper around the normalized direct acquisition."""
