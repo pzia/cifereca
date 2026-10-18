@@ -126,3 +126,24 @@ def test_full_sru_zero_is_not_confused_with_an_outage():
         assert session.last_search_warnings == []
     finally:
         session.close()
+
+
+
+def test_invalid_page_clears_stale_partial_warning_without_network():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, content=EMPTY_SRU)
+
+    session, _ = _session(handler)
+    try:
+        session.search("Doyle", scope="physical")
+        assert session.last_search_warnings
+        calls.clear()
+        with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+            session.search("Doyle", scope="physical", page=-1)
+        assert calls == []
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
