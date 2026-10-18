@@ -57,9 +57,11 @@ def _binding(broker: Any, source_id: str):
 
 def mode(broker: Any, source_id: str) -> str:
     try:
+        # The configured consent must remain visible and revocable while
+        # disconnected. Eligibility for I/O separately requires _binding().
         return ("on_start" if broker.service.storage.metadata_get(
             policy_key(source_id),
-        ) == _ACTIVE and _binding(broker, source_id) is not None else "manual")
+        ) == _ACTIVE else "manual")
     except Exception:
         return "manual"
 
