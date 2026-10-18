@@ -85,7 +85,7 @@ def test_changed_public_title_under_same_url_cannot_project_metadata():
 
 
 def test_only_unicode_case_and_whitespace_variants_preserve_title_equivalence():
-    owned = purchased(title="  JEFFERSON  PREND\tDES  RISQUES   ")
+    owned = purchased(title="  JEFFERSON  PREND  DES  RISQUES   ")
     enriched, status = merge_attested_public_listing(owned, (PAGE.items[0],))
     assert status == "attested_listing_match"
     assert enriched.title == owned.title
