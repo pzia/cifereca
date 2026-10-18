@@ -31,9 +31,9 @@ def owned_row():
             "cover": None, "public_url": URL}
 
 
-def session():
+def session(account="fictional-alice"):
     instance = NumilogSession(
-        credential_id="fictional-alice", label="Numilog", credentials={},
+        credential_id=account, label="Numilog", credentials={},
         options={}, config={}, diagnostics=None,
     )
     instance.connected = True
@@ -134,8 +134,7 @@ def test_anonymous_budget_survives_invalidation_and_never_retries(monkeypatch):
 
 
 def test_public_cache_not_shared_between_numilog_accounts(monkeypatch):
-    sessions = [session(), session()]
-    sessions[1].credential_id = "fictional-bob"
+    sessions = [session("fictional-alice"), session("fictional-bob")]
     visits = []
     monkeypatch.setattr(
         client, "fetch_public_search",
