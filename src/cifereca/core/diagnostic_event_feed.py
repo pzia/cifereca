@@ -283,7 +283,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 operation, row.get("detail"), row.get("duration_ms"),
             )
             task_ref = row.get("task_ref")
-            if (operation in {"acquisition_delivery", "session_state"}
+            if (operation in {"acquisition_delivery", "session_state", "startup_materialization"}
                     and type(task_ref) is str and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
                 public_detail["task_ref"] = task_ref
             message = public_numilog_message(operation, public_detail) or "[opération masquée]"
