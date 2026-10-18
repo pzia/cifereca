@@ -983,7 +983,22 @@ class DiagnosticsPagePlugin:
             journals_select_errors.set_sensitive(not selection_busy)
             journals_select_all.set_sensitive(not selection_busy)
             journals_invert.set_sensitive(not selection_busy)
-            journals_preview_text.get_buffer().set_text(selection_json or "")
+            # Page-only selections also get a live, already-redacted preview.
+            # This remains local to the loaded page (no broker I/O).
+            preview = selection_json or ""
+            if selection_json is None and selected_event_ids:
+                page_rows = sanitized_rows(
+                    current_page, search=search_filter.get_text().strip(),
+                    newest_first=sort_latest.get_active(),
+                )
+                visible_ids = selectable_event_ids(page_rows)
+                try:
+                    preview = export_selected_events(
+                        page_rows, selected_event_ids.intersection(visible_ids),
+                    )
+                except ValueError:
+                    preview = "Export trop volumineux : réduire la sélection"
+            journals_preview_text.get_buffer().set_text(preview)
 
         def invalidate_selection(message="Sélection effacée après changement de filtres") -> None:
             nonlocal selection_json, selection_note, selection_generation, selection_busy
