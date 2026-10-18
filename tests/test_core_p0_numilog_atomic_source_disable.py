@@ -132,3 +132,73 @@ def test_atomic_disable_rejects_invalid_source_without_any_metadata_change(
         assert calls == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("disabled_flag", ["0", "corrupt", "-1"])
+def test_reenabling_legacy_disabled_source_cannot_resurrect_active_backup(
+    tmp_path, disabled_flag,
+):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        broker.set_enabled(sid, True)
+        _authorize(broker, sid)
+        before = service.storage.numilog_materialization_consent_revision(sid)
+        # Simulate the historical non-atomic disable, whose second write
+        # never happened: source disabled, backup grant still on_start:v1.
+        service.storage.metadata_set("sync.source.enabled." + sid, disabled_flag)
+        assert service.storage.metadata_get(policy_key(sid)) == "on_start:v1"
+
+        broker.set_enabled(sid, True)
+        assert service.storage.metadata_get("sync.source.enabled." + sid) == "1"
+        assert service.storage.metadata_get(policy_key(sid)) == "manual"
+        assert service.storage.numilog_materialization_consent_revision(sid) != before
+        assert broker.numilog_materialization_schedule(sid) == "manual"
+        assert calls == []
+    finally:
+        service.close()
+
+
+def test_enabling_already_enabled_source_does_not_cancel_a_confirmed_backup(
+    tmp_path,
+):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        broker.set_enabled(sid, True)
+        _authorize(broker, sid)
+        before = service.storage.numilog_materialization_consent_revision(sid)
+        broker.set_enabled(sid, True)
+        assert service.storage.metadata_get(policy_key(sid)) == "on_start:v1"
+        assert service.storage.numilog_materialization_consent_revision(sid) == before
+        assert calls == []
+    finally:
+        service.close()
+
+
+def test_legacy_reenable_failure_rolls_back_consent_reset_and_source_switch(
+    tmp_path,
+):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        broker.set_enabled(sid, True)
+        _authorize(broker, sid)
+        service.storage.metadata_set("sync.source.enabled." + sid, "0")
+        before = service.storage.numilog_materialization_consent_revision(sid)
+        with service.storage._connect() as db:
+            db.execute(
+                "CREATE TRIGGER deny_legacy_numilog_reenable BEFORE UPDATE OF value "
+                "ON metadata WHEN NEW.key='sync.source.enabled."
+                + sid +
+                "' BEGIN SELECT RAISE(ABORT, 'no_partial_reenable'); END"
+            )
+        with pytest.raises(sqlite3.DatabaseError):
+            broker.set_enabled(sid, True)
+        assert service.storage.metadata_get("sync.source.enabled." + sid) == "0"
+        assert service.storage.metadata_get(policy_key(sid)) == "on_start:v1"
+        assert service.storage.numilog_materialization_consent_revision(sid) == before
+        with service.storage._connect() as db:
+            db.execute("DROP TRIGGER deny_legacy_numilog_reenable")
+        broker.set_enabled(sid, True)
+        assert service.storage.metadata_get(policy_key(sid)) == "manual"
+        assert calls == []
+    finally:
+        service.close()
