@@ -25,11 +25,11 @@ class Dialog:
         self.handlers["response"](self, choice)
 
 
-def _ui(*, initial="manual", malformed=False):
+def _ui(*, initial="manual", malformed=False, disconnected=False):
     sources = [
         _source(identity_id="alice", source_id="numilog-consent-one",
                 provider_id="numilog", label="Boutique Numilog",
-                enabled=True, connected=True, sync_capable=True,
+                enabled=True, connected=not disconnected, sync_capable=True,
                 sync_capabilities=("remote_inventory",)),
     ]
     w, broker, calls, build, _page = _fixture(sources=sources)
@@ -138,7 +138,7 @@ def test_corrupt_confirmation_token_fails_closed_without_dialog():
 
 
 def test_disconnect_can_still_revoke_durable_source_policy():
-    w, broker, calls, dialogs, state, row = _ui(initial="on_start")
+    w, broker, calls, dialogs, state, row = _ui(initial="on_start", disconnected=True)
     assert "Autorisé" in row().subtitle
     row().suffixes[0].click()
     assert len(dialogs) == 1
