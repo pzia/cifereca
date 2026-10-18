@@ -621,3 +621,16 @@ def test_mismatched_confirmation_form_reference_blocks_acsm_http(
         _assert_clean(tmp_path)
     finally:
         session.close()
+
+
+def test_form_pointing_to_confirmation_on_other_html_is_not_a_ref_mismatch():
+    """A landing URL has no ref to compare: preserve the historical route.
+
+    This test is only about lack of contradictory GET evidence, not permission
+    to follow a login-shaped page or a new issuer endpoint.
+    """
+    landing = 'https://www.numilog.com/Pages/Compte/Landing.aspx'
+    assert delivery_url(
+        FIXTURE.read_text(), landing, allowed_origins=ALLOWED,
+        expected_readbook=READ_12,
+    ) == SIGNED
