@@ -211,7 +211,7 @@ def test_github_dry_run_resolves_sha_without_mutating_runtime(tmp_path, monkeypa
     def fake_run(command, **kwargs):
         command = [str(x) for x in command]
         if command[1:3] == ["api", "repos/pzia/cifereca/commits/main"]:
-            return SimpleNamespace(returncode=0, stdout="abc123\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="a" * 40 + "\n", stderr="")
         if command[1:3] == ["repo", "clone"]:
             source = Path(command[4])
             _mini_project(source, "9.9.9")
@@ -224,7 +224,7 @@ def test_github_dry_run_resolves_sha_without_mutating_runtime(tmp_path, monkeypa
     result = updater.install_github("main", dry_run=True, python=os.sys.executable)
 
     assert result["dry_run"] is True
-    assert result["github_commit"] == "abc123"
+    assert result["github_commit"] == "a" * 40
     assert result["github_repository"] == "pzia/cifereca"
     assert result["provenance"]["ref"] == "main"
     assert not target.exists()
@@ -246,7 +246,7 @@ def test_github_dry_run_accepts_tags(tmp_path, monkeypatch, ref, api_ref):
     def fake_run(command, **kwargs):
         command = [str(x) for x in command]
         if command[1:3] == ["api", f"repos/pzia/cifereca/commits/{api_ref}"]:
-            return SimpleNamespace(returncode=0, stdout="tagged123\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="b" * 40 + "\n", stderr="")
         if command[1:3] == ["repo", "clone"]:
             source = Path(command[4])
             _mini_project(source, "9.9.9")
@@ -259,8 +259,8 @@ def test_github_dry_run_accepts_tags(tmp_path, monkeypatch, ref, api_ref):
     result = updater.install_github(ref, dry_run=True, python=os.sys.executable)
 
     assert result["github_ref"] == ref
-    assert result["github_commit"] == "tagged123"
-    assert result["provenance"]["ref"] == ref
+    assert result["github_commit"] == "b" * 40
+    assert result["provenance"]["ref"] == ref\n    assert result["provenance"]["commit"] == "b" * 40
     assert not target.exists()
 
 
