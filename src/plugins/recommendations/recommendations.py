@@ -260,14 +260,28 @@ def _external_book_url(value: Any) -> str | None:
     return None
 
 
+def _public_external_field(item: Any, name: str) -> str | None:
+    """Isolate one untrusted provider URL accessor from independent fallbacks.
+
+    A faulty first property/mapping getter must never hide an independently
+    attested notice or cover. Neither exceptions nor rejected values escape
+    into the public UI model or diagnostics.
+    """
+    try:
+        value = get_field(item, name, None)
+    except Exception:
+        return None
+    return _external_book_url(value)
+
+
 def _public_recommendation_notice(item: Any) -> str | None:
     """Prefer a validated friendly page, then an independent public notice.
 
     Never use download or acquisition coordinates as a fallback.
     """
     return (
-        _external_book_url(get_field(item, "friendly_url", ""))
-        or _external_book_url(get_field(item, "notice_url", ""))
+        _public_external_field(item, "friendly_url")
+        or _public_external_field(item, "notice_url")
     )
 
 
@@ -279,7 +293,7 @@ def _public_cover_url(item: Any) -> str | None:
     receives the image URL. Try the second declared image if the first fails.
     """
     for field in ("thumbnail_url", "cover_url"):
-        url = _external_book_url(get_field(item, field, None))
+        url = _public_external_field(item, field)
         if url:
             return url
     return None
