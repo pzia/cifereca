@@ -366,13 +366,31 @@ def provider_descriptors(self):
 
 
 def provider_diagnostic_state(self) -> dict[str, Any]:
+    """Expose typed session state, never call an untrusted plugin's serializer.
+
+    A plugin diagnostic_state() can contain arbitrary account identifiers,
+    tokens, paths or URLs. Only Core-observed booleans and counts are needed
+    for the overview. Fine-grained redacted logs belong to Diagnostics.
+    """
     try:
         adept = self.kobo_adept_state()
-    except Exception as exc:
+    except Exception:
         adept = {"available": False, "error": "ADEPT indisponible"}
+    sessions = []
+    for session in self._sessions.values():
+        try:
+            if getattr(session, "credential_id", None) == "legacy":
+                continue
+            accounts = getattr(session, "_accounts", None)
+            sessions.append({
+                "connected": getattr(session, "connected", None) is True,
+                "accounts": min(10000, len(accounts)) if type(accounts) in (list, tuple) else 0,
+            })
+        except Exception:
+            sessions.append({"connected": False, "accounts": 0})
     return {
         "plugins": self.registry.diagnostic_state(),
-        "sessions": [session.diagnostic_state() for session in self._sessions.values() if session.credential_id != "legacy"],
+        "sessions": sessions,
         "errors": {"connect_failed": min(10000, len(self._session_errors))},
         "kobo_adept": adept,
     }
