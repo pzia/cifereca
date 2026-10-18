@@ -119,6 +119,18 @@ class GTKRelayArtifactTests(unittest.TestCase):
         self.assertIn("retention-days: 2", workflow)
         self.assertIn("persist-credentials: false", workflow)
 
+    def test_inactive_example_cannot_start_on_push_or_upload_raw_cache(self):
+        example = (ROOT / "environnements/openai-chat-debian/github-cache-relay.yml.example").read_text(
+            encoding="utf-8")
+        self.assertIn("workflow_dispatch:", example)
+        self.assertIn("if: inputs.confirm_relay == true", example)
+        self.assertNotIn("  push:", example)
+        self.assertIn("scripts/ci-validate-gtk-relay-cache.py", example)
+        self.assertNotIn("packages-lock.debian13.json", example)
+        self.assertNotIn("tar -C", example)
+        self.assertIn("retention-days: 2", example)
+
+
 
 if __name__ == "__main__":
     unittest.main()
