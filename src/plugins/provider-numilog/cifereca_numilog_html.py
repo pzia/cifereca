@@ -744,6 +744,7 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
         if matched_readbook:
             require(len(readbooks) == 1)
         elif not readbooks and allow_missing_readbook and allow_stream_identity:
+            require(dict(expected[1]).get('m') == ('dwld',))
             # Some purchases have NO streaming capability and therefore no
             # readBook link on the confirmation card. The caller may assert
             # this fallback ONLY after a direct, checked HTTP 302 from this
