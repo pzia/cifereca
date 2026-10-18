@@ -90,10 +90,8 @@ def dispatch_after_opening(window: Any) -> bool:
     # with only Numilog backup consent must not depend on an inventory opt-in.
     from .numilog_materialization_startup import dispatch_after_opening as materialize
     backup_queued = materialize(window)
-    if (
-        getattr(window, "_source_inventory_startup_dispatched", False)
-    ):
-        return False
+    if getattr(window, "_source_inventory_startup_dispatched", False):
+        return backup_queued
     broker = _broker(window)
     if broker is None:
         return backup_queued
@@ -136,5 +134,5 @@ def dispatch_after_opening(window: Any) -> bool:
         )
     except Exception:
         window._source_inventory_startup_dispatched = False
-        return False
+        return backup_queued
     return True
