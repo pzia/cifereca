@@ -1113,3 +1113,30 @@ association de titre approximative, projection d'ISBN papier en EPUB,
 ni changement Core/UI. Tests offline : résumés complets, divergences,
 métadonnées publiques, deux homonymes PDF/EPUB, preuves manquantes
 et données falsifiées. La qualification des achats réels reste ouverte.
+
+
+## 0.1.54 — Offre commerciale et couverture JSON-LD qualifiées (#1886)
+
+`parse_public_detail_jsonld` conserve désormais la seule offre Product/Book
+de type `Offer` avec prix **décimal EUR affiché**, disponibilité Schema.org
+explicitement publiée (`in_stock`, `out_of_stock`, `pre_order`)
+et URL de couverture canonique `couverture.numilog.com`, si elles sont
+strictement validées. Ces attributs restent isolés dans
+`public_commercial.fields` et `field_evidence` avec provenance exacte
+`Product.offers.*` / `Product.image`, source de fiche et indicateurs
+`edition_proven=false` / `rights_proven=false`. Une image dont le nom
+contient l'EAN papier n'établit **pas** l'EAN EPUB.
+
+Le provider catalogue et l'enrichissement explicite des achats conservent
+cette section dans les métadonnées de la **fiche publique** seulement.
+Les prix déjà présents dans les résultats de recherche et les prix
+historiques d'achat ne changent pas ; aucune disponibilité marchande
+n'est interprétée comme un droit à télécharger. Aucun URL d'offre
+(même présent dans le JSON-LD), vendeur, jeton ou lien d'acquisition
+n'est repris. Une offre multiple/ambiguë ou non qualifiée ne fournit
+aucun prix. Cette extraction n'ajoute aucun appel HTTP ni N+1.
+
+Preuves : capture publique expurgée Blackbone du 17 octobre 2026 et
+tests déterministes d'offres invalides, provenance falsifiée, couverture
+externe, URLs signées et séparation papier/EPUB. Disponibilité live,
+conditions robots/CGU et moteur multi-attributs serveur restent à qualifier.
