@@ -261,6 +261,63 @@ def validate_public_detail_item(item):
     return url
 
 
+def validated_public_jsonld_fields(detail, product_url):
+    """Re-qualify every JSON-LD field at the Core/catalogue merge boundary.
+
+    A parsed object may pass through a cache, plugin extension or caller before
+    merging. Never copy arbitrary nested vendor values or trust a spoofed
+    source label merely because its URL, kind and edition flag look correct.
+    """
+    if (type(detail) is not dict or type(detail.get("fields")) is not dict
+            or type(detail.get("field_evidence")) is not dict):
+        raise PublicDetailError("public_jsonld_evidence_unverified")
+    fields = detail["fields"]
+    evidence = detail["field_evidence"]
+    allowed = {
+        "title": 512, "description": 16000, "language": 80,
+        "published_at": 32, "isbn_edition_unspecified": 32,
+        "authors": 32, "publisher": 256,
+    }
+    if (not set(fields).issubset(allowed)
+            or set(fields) != set(evidence)):
+        raise PublicDetailError("public_jsonld_evidence_unverified")
+    result, proofs = {}, {}
+    for key, value in fields.items():
+        if key == "authors":
+            if (type(value) is not list or not 1 <= len(value) <= 32
+                    or any(not _valid_text(name, 256) for name in value)):
+                raise PublicDetailError("public_jsonld_evidence_unverified")
+            qualified = list(value)
+        elif key == "isbn_edition_unspecified":
+            if type(value) is not str or _isbn(value) != value:
+                raise PublicDetailError("public_jsonld_evidence_unverified")
+            qualified = value
+        else:
+            if not _valid_text(value, allowed[key]):
+                raise PublicDetailError("public_jsonld_evidence_unverified")
+            qualified = value
+            if key == "published_at":
+                try:
+                    if (not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value)
+                            or date.fromisoformat(value).isoformat() != value):
+                        raise ValueError
+                except ValueError:
+                    raise PublicDetailError("public_jsonld_evidence_unverified") from None
+        proof = evidence[key]
+        if (type(proof) is not dict or proof not in (
+                {"source": "public_product_jsonld_Book",
+                 "source_url": product_url, "kind": "observed_public_jsonld",
+                 "edition_proven": False},
+                {"source": "public_product_jsonld_Product_Book",
+                 "source_url": product_url, "kind": "observed_public_jsonld",
+                 "edition_proven": False},
+        )):
+            raise PublicDetailError("public_jsonld_evidence_unverified")
+        result[key] = qualified
+        proofs[key] = dict(proof)
+    return result, proofs
+
+
 def merge_public_detail(item, detail):
     """Opt-in projection of a public Book JSON-LD onto a catalogue result.
 
@@ -280,28 +337,14 @@ def merge_public_detail(item, detail):
             or type(detail.get("fields")) is not dict
             or type(detail.get("field_evidence")) is not dict):
         raise ProviderCapabilityError(error)
-    fields = detail["fields"]
-    evidence = detail["field_evidence"]
     from cifereca_numilog_public_identifiers import (
         PublicIdentifierError, validated_public_identifiers,
     )
     try:
+        fields, evidence = validated_public_jsonld_fields(detail, url)
         public_ids, public_id_evidence = validated_public_identifiers(detail, url)
-    except PublicIdentifierError:
+    except (PublicDetailError, PublicIdentifierError):
         raise ProviderCapabilityError(error) from None
-    allowed = {
-        "title", "description", "language", "published_at",
-        "isbn_edition_unspecified", "authors", "publisher",
-    }
-    if not set(fields).issubset(allowed) or set(evidence) != set(fields):
-        raise ProviderCapabilityError(error)
-    for key in fields:
-        proof = evidence[key]
-        if (type(proof) is not dict
-                or proof.get("source_url") != url
-                or proof.get("kind") != "observed_public_jsonld"
-                or proof.get("edition_proven") is not False):
-            raise ProviderCapabilityError(error)
 
     projection = {}
     conflicts = []
