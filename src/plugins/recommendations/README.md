@@ -167,3 +167,23 @@ continuent de fonctionner **sans aucun service IA**.
 **Limite :** le ticket Core #778 reste ouvert. Sans configuration du
 service public `llm` dans le Core, le bouton explique que le service
 est indisponible. Aucun backend n'est simulé dans le produit.
+
+## Fiches Recommandations : isolation des URLs publiques — #1599 (0.2.28)
+
+Dans la liste et la fiche détail, une propriété `thumbnail_url` peut
+provenir d'une ancienne notice fournisseur ou d'un cache partiellement
+malformé. Un accesseur qui lève une exception ne doit pas faire disparaître
+une `cover_url` indépendante et publiquement sûre ; la même règle
+s'applique à `friendly_url` puis `notice_url`.
+
+Chaque accès à l'un de ces quatre champs est maintenant isolé. Toute valeur
+retenue traverse toujours le même filtre strict `_external_book_url`
+(origine publique, sans query privée, identifiants, lien de livraison ou
+fichier local). Une erreur du champ prioritaire déclenche **uniquement**
+le repli vers un autre champ attesté, sans exposer l'exception, son texte,
+une URL signée, ni déclencher une nouvelle requête réseau.
+
+Les tests headless couvrent les quatre getter défaillants, repli vers la
+notice et couverture alternatives, absence de toute URL publique,
+égalité des couvertures en liste/détail et maintien des droits/actions
+inchangés. La recette GTK intégrée #1599/#1598 reste distincte.
