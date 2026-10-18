@@ -25,14 +25,14 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.48'
+VERSION = '0.1.49'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
         search=True,holdings=True,personal_library=True,direct_download=True),
     search_capabilities=ProviderSearchCapabilities(
         fields=('all','title'), scopes=('all','digital','catalog'),
-        pagination='page', page_size=50,
+        pagination='page', page_size=50, max_pages=101,
         notes=(
             'scope=catalog : recherche anonyme brSimple, champ all seulement, pages de 20 observées dans la fixture ; aucun droit de possession.',
             'scopes all/digital : recherche historique limitée aux titres achetés ; title est un post-filtre local, pas un filtre serveur public.',
@@ -384,6 +384,10 @@ class NumilogSession(ProviderSession):
         return list(fetch_public_search(query, page=page, field=field).items)
 
     def search(self,query,scope='all',page=0,field='all'):
+        # Do not silently coerce or clamp untrusted page selectors. Validate
+        # before private library I/O or public HTTP, for every search scope.
+        if type(page) is not int or not 0 <= page <= 100:
+            raise ProviderCapabilityError('Numilog : invalid_page')
         if scope == 'catalog':
             # Strictly separate public commercial results from purchased books.
             # No _rows(), authentication cookies, or ACSM acquisition here.
@@ -396,7 +400,7 @@ class NumilogSession(ProviderSession):
             return ''.join(c for c in unicodedata.normalize('NFKD',value.casefold()) if not unicodedata.combining(c))
         terms = fold(query).split()
         matches = [row for row in self.library() if all(t in fold(row.title) for t in terms)]
-        start = max(0,int(page))*50
+        start = page*50
         return matches[start:start+50]
 
     def enrich_owned_public_listing(self, item):
