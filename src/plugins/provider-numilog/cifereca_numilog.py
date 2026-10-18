@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.45, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.46, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.45'
+VERSION = '0.1.46'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -666,7 +666,7 @@ class NumilogSession(ProviderSession):
                             # card. A mere link or login-shaped page cannot
                             # bypass the normal fail-closed login handling.
                             if (
-                                source == 'readbook'
+                                source in {'readbook', 'owned_card'}
                                 and page_path == '/pages/commande/confirmationpaiement.aspx'
                                 and url_origin(str(r.url)) == url_origin(self.library_url)
                             ):
@@ -880,8 +880,17 @@ class NumilogSession(ProviderSession):
                     else:
                         start = row['href']
                         self._diag('livraison ACSM',phase='readbook',kind='scoped_link',result='fallback')
+                # This fixed source enum is projected unchanged by the
+                # Core. An explicit confirmation href from an owned card
+                # is a DIFFERENT first navigation from a readBook 302.
+                # Path/cookie/reference metadata remain redacted and
+                # the same fresh owned edition is still bound to the ACSM.
+                entry_from_owned_card = (
+                    isinstance(evidence, OwnedDelivery)
+                    or type(row.get('confirmation')) is str
+                )
                 return self._download(start,directory/name,title=row['title'],author=item.author,
-                    book_id=self._id(row),source='owned_card' if isinstance(evidence, OwnedDelivery) else 'readbook',
+                    book_id=self._id(row),source='owned_card' if entry_from_owned_card else 'readbook',
                     identity_id=owner,expected_readbook_url=row['href'])
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
