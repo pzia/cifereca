@@ -24,16 +24,25 @@ class KoboAdeptError(UserFacingError):
         self.details = dict(details or {})
 
 
-def classified_adept_failure(error, exit_code):
-    """Project only structured ACSM codes, never vendor message or stderr.
+_ACSM_CODES = frozenset({
+    'E_LIC_ALREADY_FULFILLED_BY_ANOTHER_USER',
+    'adept_license_already_fulfilled_by_another_user',
+    'adept_error',
+})
 
-    0.13.6 returns opaque adept_error / exit 10. An explicit libgourou
-    license enum, if exported as JSON by a future CLI, can be translated
-    without inspecting private XML, URLs or process logs.
+
+def classified_adept_failure(error, exit_code):
+    """Classify a FAILED, proven ACSM download request only.
+
+    Caller must independently establish that payload.source.type == 'acsm'
+    on the download/request operation. Do not use exit code 10, vendor
+    messages or libgourou stderr to *infer* which operation failed.
+    Unknown/legacy ACSM failures are fixed and non-retryable; an exact
+    machine-readable license enum is the sole more specific diagnosis.
     """
     if not isinstance(error, dict):
         error = {}
-    code = error.get('code')
+    code = error.get('code') if type(error.get('code')) is str else None
     if code in {
         'E_LIC_ALREADY_FULFILLED_BY_ANOTHER_USER',
         'adept_license_already_fulfilled_by_another_user',
@@ -43,13 +52,13 @@ def classified_adept_failure(error, exit_code):
             "Le prêt ACSM est déjà associé à une autre identité Adobe. Vérifiez l'identité d'origine.",
             False,
         )
-    if code == 'adept_error' or exit_code == 10:
-        return (
-            'adept_error',
-            "Échec de l'activation ACSM ; la cause Adobe n'est pas confirmée. Vérifiez le profil d'origine.",
-            False,
-        )
-    return None
+    # Never relay unknown vendor fields, raw XML or a potentially sensitive
+    # message. Even exit 1 / unknown code is an opaque ACSM error.
+    return (
+        'adept_error',
+        "Échec de l'activation ACSM ; la cause Adobe n'est pas confirmée. Vérifiez le profil d'origine.",
+        False,
+    )
 
 
 class KoboAdeptRuntime:
@@ -157,13 +166,30 @@ class KoboAdeptRuntime:
         self.last_run_diagnostic.update(stdout_mode='json', stdout_summary='objet JSON')
         if proc.returncode != 0 or value.get('ok') is False:
             error = value.get('error') if isinstance(value.get('error'), dict) else {}
-            # A few older CLI versions expose the same fields at the top level.
-            if not error and (proc.returncode == 10 or value.get('code') == 'adept_error'):
-                error = value
-            classified = classified_adept_failure(error, proc.returncode)
-            if classified is not None:
-                code, public_message, retryable = classified
+            acsm_request = (
+                len(args) >= 2 and args[0] == 'download' and args[1] == 'request'
+                and isinstance(payload, dict)
+                and isinstance(payload.get('source'), dict)
+                and payload['source'].get('type') == 'acsm'
+            )
+            # Legacy 0.13.6 may publish code/message at the JSON root.
+            # Only a PROVEN ACSM request can interpret these as an ADEPT
+            # failure. Never classify unrelated commands by exit 10 alone.
+            if acsm_request:
+                if not error and isinstance(value.get('code'), str):
+                    error = value
+                code, public_message, retryable = classified_adept_failure(
+                    error, proc.returncode,
+                )
                 fail(public_message, code, returncode=proc.returncode, retryable=retryable)
+            # An Adobe-specific enum from a non-ACSM command is contradictory.
+            # Exit 10 also has no certified meaning for other operations.
+            # Neither case is permission to echo opaque vendor messages.
+            if (proc.returncode == 10
+                    or (type(error.get('code')) is str
+                        and error['code'] in _ACSM_CODES)):
+                fail('Échec Kobo-Adept ; cause non qualifiée pour cette opération.',
+                     'kobo_adept_failed', returncode=proc.returncode)
             fail(safe_message(error.get('message') or 'Échec Kobo-Adept'),
                 str(error.get('code') or 'kobo_adept_failed'),
                 returncode=proc.returncode, retryable=error.get('retryable') is True)
