@@ -394,6 +394,26 @@ URL is added to these counters or feedback labels. The acceptance test reproduce
 four missing borrower bindings followed by four cross-identity refusals with real
 Core guards/local SQLite and synthetic inventory, with zero ACSM/fulfillment calls.
 
+## Initial automatic-loan admission boundary (#1120)
+
+`core/loan_acquisition_admission.py` resolves the existing persisted connection
+owner, borrower refusal, cross-identity acquisition/active-right conflicts and
+local entitlement selection before the automatic handler inspects artifacts.
+A private frozen context returns either the original public refusal dictionary,
+or the same identity object and entitlement ID previously held in local variables.
+This context is not an acquisition grant; later artifact/retry/DRM checks remain
+in the guarded handler under its original locks.
+
+Conditions, source reads, logs and refusal values are AST-identical after
+unwrapping the private result envelope. The rest of the handler is unchanged,
+including the separate borrower revalidation immediately before ADEPT. Its
+branch-local borrower code is reinitialized there; the historical `locals()`
+seams concern only profile/destination and are untouched. No provider call,
+artifact inspection, profile selection or ledger/catalog write occurs in this
+phase. It never falls back to the current UI identity. Tests cover 0/1/N rights,
+unbound/linked borrowers and cross-identity evidence from both ledger and rights,
+with the real caller bridge preserving refusals and leaving state unchanged.
+
 ## Read-only ADEPT borrower boundary
 
 `core/adept_borrower.py` resolves the proven Paris borrower/account context and
