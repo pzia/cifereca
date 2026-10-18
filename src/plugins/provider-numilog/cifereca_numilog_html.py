@@ -639,7 +639,14 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed):
                     form_parts = urlsplit(form_url)
                     if (origin(form_url) == origin(base_url)
                             and form_parts.path.casefold()
+                            == '/pages/commande/confirmationpaiement.aspx'
+                            and page_parts.path.casefold()
                             == '/pages/commande/confirmationpaiement.aspx'):
+                        # A different HTML intermediary may include a form
+                        # *linking* to a confirmation. It has no GET order
+                        # ref of its own to compare, so it cannot attest
+                        # either a match or a contradiction. Preserve the
+                        # legacy intermediary selection contract.
                         form_refs = parse_qs(
                             form_parts.query, keep_blank_values=True,
                             strict_parsing=True, max_num_fields=32,
