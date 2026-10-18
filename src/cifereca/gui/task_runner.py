@@ -253,7 +253,10 @@ class TaskRunner:
                     remaining,
                     label,
                     kind_outcome == "ok",
-                    None if kind_outcome == "ok" else str(payload),
+                    None if kind_outcome == "ok" else (
+                        payload.user_message if isinstance(payload, UserFacingError)
+                        else "Traitement indisponible"
+                    ),
                 )
                 if kind_outcome == "ok":
                     if ok:
@@ -302,15 +305,17 @@ class TaskRunner:
     def present_error(self, payload: BaseException) -> None:
         if isinstance(payload, AttentionRequired):
             _TRACE_LOG.warning(
-                "TRACE attention-required code=%s technical_detail=%s",
-                payload.code, payload.technical_detail,
+                "TRACE attention-required status=attention detail_present=%s",
+                bool(payload.technical_detail),
             )
             self.window.show_attention(payload.user_message, code=payload.code)
         elif isinstance(payload, UserFacingError):
             _TRACE_LOG.warning(
-                "TRACE user-facing-error code=%s technical_detail=%s",
-                payload.code, payload.technical_detail,
+                "TRACE user-facing-error status=error detail_present=%s",
+                bool(payload.technical_detail),
             )
             self.window.show_error(payload.user_message)
         else:
-            self.window.show_error(str(payload))
+            # Untyped exceptions often contain URLs, file paths, headers or
+            # raw provider responses. Their text must never reach GTK feedback.
+            self.window.show_error("Traitement indisponible")
