@@ -887,7 +887,7 @@ def _refresh_sync_page(self) -> None:
                             return
                         output.set_subtitle("Révocation de la sauvegarde en cours…")
                         def work():
-                            return consent_revoke(sid)
+                            return consent_revoke(sid) if current() else None
                         def done(result):
                             if current() and result == "manual":
                                 self._refresh_sync_page()
@@ -964,7 +964,7 @@ def _refresh_sync_page(self) -> None:
                             return
                         output.set_subtitle("Enregistrement du consentement Numilog…")
                         def work():
-                            return consent_confirm(sid, token, mode="on_start")
+                            return consent_confirm(sid, token, mode="on_start") if current() else None
                         def failed(_error):
                             if current():
                                 output.set_subtitle("Consentement indisponible. Aucun nouveau téléchargement autorisé.")
@@ -982,7 +982,7 @@ def _refresh_sync_page(self) -> None:
                         output.set_subtitle("Préparation indisponible. Aucun nouveau téléchargement autorisé.")
                 self.runner.submit(
                     "Préparation du consentement Numilog…",
-                    lambda: consent_prepare(sid),
+                    lambda: consent_prepare(sid) if current() else None,
                     prepared, failed, control=button,
                     priority=TaskPriority.USER_ACTION, kind="sync-preflight",
                 )
