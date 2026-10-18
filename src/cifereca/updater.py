@@ -865,31 +865,35 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
         raise UpdateError("git absent du PATH")
     commitish = _github_commitish(ref)
     endpoint = f"repos/{repository}/commits/{quote(commitish, safe='')}"
-    resolved = step("resolve_github", subprocess.run,
-        [gh, "api", endpoint, "--jq", ".sha"],
-        text=True, capture_output=True, timeout=30, check=False,
-    )
-    if resolved.returncode != 0 or not resolved.stdout.strip():
-        raise UpdateError("Branche, tag ou commit GitHub introuvable ou accès refusé")
+    with update_phase("resolve_github"):
+        resolved = subprocess.run(
+            [gh, "api", endpoint, "--jq", ".sha"],
+            text=True, capture_output=True, timeout=30, check=False,
+        )
+        if resolved.returncode != 0 or not resolved.stdout.strip():
+            raise UpdateError("Branche, tag ou commit GitHub introuvable ou accès refusé")
     sha = resolved.stdout.strip().splitlines()[-1]
-    clone = step("clone", subprocess.run,
-        [gh, "repo", "clone", repository, str(destination), "--", "--filter=blob:none", "--no-checkout"],
-        text=True, capture_output=True, timeout=180, check=False,
-    )
-    if clone.returncode != 0:
-        raise UpdateError("Clone GitHub impossible")
-    fetched = step("fetch", subprocess.run,
-        [git, "-C", str(destination), "fetch", "--depth", "1", "origin", sha],
-        text=True, capture_output=True, timeout=180, check=False,
-    )
-    if fetched.returncode != 0:
-        raise UpdateError("Fetch GitHub impossible")
-    checkout = step("checkout", subprocess.run,
-        [git, "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"],
-        text=True, capture_output=True, timeout=60, check=False,
-    )
-    if checkout.returncode != 0:
-        raise UpdateError("Checkout GitHub impossible")
+    with update_phase("clone"):
+        clone = subprocess.run(
+            [gh, "repo", "clone", repository, str(destination), "--", "--filter=blob:none", "--no-checkout"],
+            text=True, capture_output=True, timeout=180, check=False,
+        )
+        if clone.returncode != 0:
+            raise UpdateError("Clone GitHub impossible")
+    with update_phase("fetch"):
+        fetched = subprocess.run(
+            [git, "-C", str(destination), "fetch", "--depth", "1", "origin", sha],
+            text=True, capture_output=True, timeout=180, check=False,
+        )
+        if fetched.returncode != 0:
+            raise UpdateError("Fetch GitHub impossible")
+    with update_phase("checkout"):
+        checkout = subprocess.run(
+            [git, "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"],
+            text=True, capture_output=True, timeout=60, check=False,
+        )
+        if checkout.returncode != 0:
+            raise UpdateError("Checkout GitHub impossible")
     return sha
 
 
