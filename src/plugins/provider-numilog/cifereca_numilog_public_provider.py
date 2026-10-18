@@ -26,6 +26,7 @@ DESCRIPTOR = ProviderDescriptor(
         scopes=("all", "digital"),
         pagination="page",
         page_size=20,
+        max_pages=101,
         notes=(
             "Recherche anonyme publique brSimple : seule la recherche textuelle générale est attestée.",
             "Pagination GET GRID_PAGE observée sur une capture, pages suivantes non vérifiées en direct.",
