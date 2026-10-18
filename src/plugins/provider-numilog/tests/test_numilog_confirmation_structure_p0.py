@@ -52,8 +52,11 @@ def test_global_lcp_and_adobe_for_same_copy_select_only_unique_allowed_acsm():
     assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(evidence)
 
 
-def test_fresh_owned_readbook_redirect_confirmation_imports_one_acsm(tmp_path):
+@pytest.mark.parametrize('disp', ('1', 'simple'))
+def test_fresh_owned_readbook_redirect_confirmation_imports_one_acsm(tmp_path, disp):
+    landing = landing.replace("disp=1", "disp=" + disp)
     requested = []
+    html = FIXTURE.read_text().replace('disp=1', 'disp=' + disp)
 
     def handler(request):
         url = str(request.url)
@@ -61,9 +64,9 @@ def test_fresh_owned_readbook_redirect_confirmation_imports_one_acsm(tmp_path):
         if url == LIBRARY:
             return httpx.Response(200, text=INVENTORY, headers={'content-type': 'text/html'})
         if url == READ_12:
-            return httpx.Response(302, headers={'location': CONFIRMATION})
-        if url == CONFIRMATION:
-            return httpx.Response(200, text=FIXTURE.read_text(), headers={'content-type': 'text/html'})
+            return httpx.Response(302, headers={'location': landing})
+        if url == landing:
+            return httpx.Response(200, text=html, headers={'content-type': 'text/html'})
         if url == SIGNED:
             return httpx.Response(200, content=ACSM, headers={'content-type': 'application/vnd.adobe.adept+xml'})
         pytest.fail('No LCP, navigation, other purchase or unowned request is permitted')
@@ -76,8 +79,25 @@ def test_fresh_owned_readbook_redirect_confirmation_imports_one_acsm(tmp_path):
         assert all(book.download_url is None for book in books)
         path, origin = session.download_direct(books[0], tmp_path)
         assert path.is_file() and origin == LIBRARY
-        assert requested == [LIBRARY, LIBRARY, READ_12, CONFIRMATION, SIGNED]
+        assert requested == [LIBRARY, LIBRARY, READ_12, landing, SIGNED]
         assert len(importer.calls) == 1
+        # No signed ref or display value is echoed; route and query shape
+        # are fixed enums/booleans on BOTH the 302 and confirmation 200.
+        delivery_http = [
+            kw['detail'] for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+            and kw['detail'].get('phase') == 'delivery_http'
+        ]
+        assert [row['path_kind'] for row in delivery_http] == [
+            'readbook', 'confirmation_page', 'acsm_fulfillment',
+        ]
+        assert delivery_http[0]['redirect_target_kind'] == 'confirmation_page'
+        assert delivery_http[0]['redirect_confirmation_ref_present'] is True
+        assert delivery_http[0]['redirect_confirmation_disp_simple'] is (disp == 'simple')
+        assert delivery_http[1]['confirmation_ref_present'] is True
+        assert delivery_http[1]['confirmation_disp_simple'] is (disp == 'simple')
+        assert 'ref=' not in repr(diagnostics.events)
+        assert 'disp=' not in repr(diagnostics.events)
         assert importer.calls[0][1]['identity_id'] == 'fictional-reader'
         assert all(marker not in repr(diagnostics.events) for marker in (
             'SYNTHETIC_NOT_A_CREDENTIAL', 'FICTIONAL_LCP', 'orderid=', 'auth=',
@@ -165,14 +185,16 @@ def test_confirmation_requires_exact_modal_copy_and_fresh_readbook_before_signed
         session.close()
 
 
-def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_path):
+@pytest.mark.parametrize('disp', ('1', 'simple'))
+def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_path, disp):
+    landing = landing.replace("disp=1", "disp=" + disp)
     """A site-wide login widget is not itself evidence of expired access.
 
     Only the already qualified confirmation card+ModalDownload+fresh readBook
     may select a signed ACSM, with no change to account authority.
     """
     visited = []
-    confirmation = FIXTURE.read_text().replace(
+    confirmation = FIXTURE.read_text().replace('disp=1', 'disp=' + disp).replace(
         '<form method="post"', '<input type="password" name="loginWidget" value="PRIVATE_HTML" />'
         '<form method="post"', 1,
     )
@@ -185,8 +207,8 @@ def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_pa
             return httpx.Response(200, text=INVENTORY,
                                   headers={'content-type': 'text/html'})
         if url == READ_12:
-            return httpx.Response(302, headers={'location': CONFIRMATION})
-        if url == CONFIRMATION:
+            return httpx.Response(302, headers={'location': landing})
+        if url == landing:
             return httpx.Response(200, text=confirmation,
                                   headers={'content-type': 'text/html'})
         if url == SIGNED:
@@ -201,8 +223,25 @@ def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_pa
         item = session.library()[0]
         path, origin = session.download_direct(item, tmp_path)
         assert path.is_file() and origin == LIBRARY
-        assert visited == [LIBRARY, LIBRARY, READ_12, CONFIRMATION, SIGNED]
+        assert visited == [LIBRARY, LIBRARY, READ_12, landing, SIGNED]
         assert session.connected is True and len(importer.calls) == 1
+        # No signed ref or display value is echoed; route and query shape
+        # are fixed enums/booleans on BOTH the 302 and confirmation 200.
+        delivery_http = [
+            kw['detail'] for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+            and kw['detail'].get('phase') == 'delivery_http'
+        ]
+        assert [row['path_kind'] for row in delivery_http] == [
+            'readbook', 'confirmation_page', 'acsm_fulfillment',
+        ]
+        assert delivery_http[0]['redirect_target_kind'] == 'confirmation_page'
+        assert delivery_http[0]['redirect_confirmation_ref_present'] is True
+        assert delivery_http[0]['redirect_confirmation_disp_simple'] is (disp == 'simple')
+        assert delivery_http[1]['confirmation_ref_present'] is True
+        assert delivery_http[1]['confirmation_disp_simple'] is (disp == 'simple')
+        assert 'ref=' not in repr(diagnostics.events)
+        assert 'disp=' not in repr(diagnostics.events)
         assert diagnostics.events
         assert all(marker not in repr(diagnostics.events) for marker in (
             'PRIVATE_HTML', 'FICTIONAL_LCP', 'SYNTHETIC_NOT_A_CREDENTIAL',
