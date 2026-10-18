@@ -353,5 +353,5 @@ def export_selected_events(
     except UnicodeError as exc:
         raise ValueError("diagnostic export contains invalid Unicode") from exc
     if size > max_bytes:
-        raise ValueError("diagnostic export exceeds the byte limit")
+        raise ValueError(f"diagnostic export exceeds the {max_bytes // 1000} KB limit")
     return result
