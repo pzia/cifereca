@@ -1140,3 +1140,32 @@ Preuves : capture publique expurgée Blackbone du 17 octobre 2026 et
 tests déterministes d'offres invalides, provenance falsifiée, couverture
 externe, URLs signées et séparation papier/EPUB. Disponibilité live,
 conditions robots/CGU et moteur multi-attributs serveur restent à qualifier.
+
+
+## 0.1.57 — preuve de concordance achat / fiche publique (#1072)
+
+Le rapprochement explicite entre une ligne fraîche **Mes Livres** et une
+carte commerciale du même identifiant/URL Numilog exige désormais aussi un
+titre identique après normalisation Unicode NFKC, espaces et casse. Une
+fiche publique dont le titre diffère provoque
+`public_edition_title_conflict` **avant toute projection** d'auteur,
+éditeur, résumé, date, couverture, collection ou prix. Une édition homonyme
+située sous une autre URL conserve sa séparation, même si son titre est
+identique. Le titre privé provenant du compte ne peut jamais être remplacé
+par celui d'une fiche publique.
+
+Les sélecteurs de provenance de chacun de ces champs sont exacts, et pas
+simplement un champ `kind=observed_public_html` accompagné d'une URL.
+Le prix commercial doit être cohérent avec les morceaux de prix observés,
+sa devise EUR, sa valeur numérique et ses sélecteurs exacts. La projection
+conserve uniquement montant, centimes, devise et portée de l'offre
+**publique**, jamais les valeurs brutes d'une carte non qualifiée, et ne
+modifie ni prix historique d'achat, ni format, ni propriété, ni droit
+d'acquisition.
+
+Cette vérification hors réseau ne remplace **pas** la preuve manquante
+d'association authentifiée entre une édition EPUB/PDF achetée et la
+référence numérique de la fiche. Tests entièrement synthétiques utilisant
+la capture publique expurgée Jefferson ; aucune nouvelle requête, aucun
+ACSM ni récupération de contenu privé. La version 0.1.57 suit les
+branches 0.1.55/0.1.56 actuellement soumises à l'intégration CI/CD.
