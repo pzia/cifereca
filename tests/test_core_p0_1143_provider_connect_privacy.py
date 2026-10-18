@@ -126,3 +126,33 @@ def test_adept_diagnostic_exception_and_error_map_keys_are_not_exported():
     assert result["errors"] == {"connect_failed": 1}
     assert SECRET not in json.dumps(result)
     assert "SECRET_TOKEN" not in json.dumps(result)
+
+
+def test_provider_diagnostics_never_invokes_plugin_supplied_serializer():
+    state, _session, _plugin = _rig()
+    def dangerous():
+        raise AssertionError("Plugin diagnostic_state() cannot be trusted")
+    state._sessions = {
+        "provider.test:" + SECRET: NS(
+            credential_id=SECRET, connected=True,
+            _accounts=[NS(email=SECRET), NS(email=SIGNED)],
+            diagnostic_state=dangerous,
+        ),
+    }
+    output = provider_sessions.provider_diagnostic_state(state)
+    assert output["sessions"] == [{"connected": True, "accounts": 2}]
+    assert SECRET not in json.dumps(output)
+    assert "private.invalid" not in json.dumps(output)
+
+
+def test_provider_diagnostics_discard_malformed_account_structures():
+    state, _session, _plugin = _rig()
+    state._sessions = {
+        "a": NS(credential_id="non-legacy", connected="true",
+                _accounts={"secret": SIGNED}),
+        "b": NS(credential_id="legacy", connected=True,
+                _accounts=[SIGNED]),
+    }
+    report = provider_sessions.provider_diagnostic_state(state)
+    assert report["sessions"] == [{"connected": False, "accounts": 0}]
+    assert SIGNED not in json.dumps(report)
