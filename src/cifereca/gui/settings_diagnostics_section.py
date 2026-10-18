@@ -23,6 +23,7 @@ class DiagnosticSettingsWidgets:
     performance_capture: Any
     performance_export: Any
     performance_status: Any
+    open_page: Any
 
 
 def build_settings_diagnostics_section(
@@ -65,6 +66,14 @@ def build_settings_diagnostics_section(
     diag_scroll.set_child(diag_text)
     diag_scroll.set_visible(False)
     diag_group.add(diag_scroll)
+
+    # Transitional entry point: Settings retains a Core fallback when the
+    # optional Diagnostics page is not installed or is disabled.
+    open_page = action_button("Ouvrir Diagnostics", "go-next-symbolic")
+    open_page.set_tooltip_text(
+        "Accéder aux journaux et rapports dans la page Diagnostics"
+    )
+    diag_group.add(open_page)
 
     # A separate, explicitly opted-in UI performance observer. The monitor
     # already exists on MainWindow; opening Settings never starts capture.
@@ -112,4 +121,5 @@ def build_settings_diagnostics_section(
         performance_capture=performance_capture,
         performance_export=performance_export,
         performance_status=performance_status,
+        open_page=open_page,
     )
