@@ -400,22 +400,65 @@ class KoboAdeptRuntime:
         finally:
             self._return_diagnostic['duration_ms'] = int((time.monotonic()-started)*1000)
 
+    @staticmethod
+    def _qualified_reference(value):
+        """Keep only bounded, typed ADEPT profile/loan identifiers."""
+        if value is None:
+            return None
+        if (type(value) is not str or not 1 <= len(value) <= 256
+                or value != value.strip() or value.startswith('-')
+                or any(ord(char) < 32 or ord(char) == 127 for char in value)):
+            raise KoboAdeptError(
+                'Identifiant ADEPT non qualifié dans le résultat.',
+                code='kobo_adept_invalid_response',
+            )
+        return value
+
     def execute(self, request):
         payload = self._request_dict(request)
         op = str(payload.get('operation') or '').casefold()
         if op == 'return':
             loan, name = self._return_binding(payload)
             value = self.return_loan(loan, name)
-            return DrmMutationResult(ok=True,operation='return',metadata={
-                'runtime_result': value, 'adept_loan_id': loan, 'adept_profile_name': name,
-                'loan_state': 'returned', 'artifact_preserved': True})
+            # The return path has already confirmed the exact local registry.
+            # Only these four receipt fields are used by the Core to perform
+            # its own fresh post-return inventory verification. An arbitrary
+            # successful vendor JSON may contain secrets/credential objects.
+            if (type(value) is not dict or value.get('ok') is not True
+                    or value.get('operation') != 'loan_return'
+                    or value.get('loan_id') != loan or value.get('profile') != name):
+                raise KoboAdeptError(
+                    'Résultat de restitution ADEPT incohérent.',
+                    code='kobo_adept_invalid_response',
+                )
+            return DrmMutationResult(ok=True, operation='return', metadata={
+                'runtime_result': {
+                    'ok': True, 'operation': 'loan_return',
+                    'loan_id': loan, 'profile': name,
+                },
+                'adept_loan_id': loan, 'adept_profile_name': name,
+                'loan_state': 'returned', 'artifact_preserved': True,
+            })
         if op == 'fulfill':
             value = self.download_request(self._fulfill_payload(payload))
+            if type(value) is not dict or value.get('ok') is not True:
+                raise KoboAdeptError(
+                    'Résultat de téléchargement ADEPT non confirmé.',
+                    code='kobo_adept_invalid_response',
+                )
             artifact = value['artifact']
-            return DrmMutationResult(ok=True,operation='fulfill',artifact=ArtifactInput(
-                path=Path(artifact['path']),format=artifact.get('format',''),sha256=artifact.get('sha256','')),
-                metadata={'runtime_result':value,'adept_loan_id':value.get('loan_id'),
-                          'adept_profile_name':value.get('profile')})
+            loan = self._qualified_reference(value.get('loan_id'))
+            name = self._qualified_reference(value.get('profile'))
+            # ArtifactInput owns the validated destination, hash and format.
+            # Do not also publish the entire CLI result in metadata: it may
+            # include license XML, activation keys or signed delivery URLs.
+            return DrmMutationResult(ok=True, operation='fulfill', artifact=ArtifactInput(
+                path=Path(artifact['path']), format=artifact.get('format', ''),
+                sha256=artifact.get('sha256', ''),
+            ), metadata={
+                'runtime_result': {'ok': True, 'loan_id': loan, 'profile': name},
+                'adept_loan_id': loan, 'adept_profile_name': name,
+            })
         raise AttentionRequired('Opération DRM non publiée par Kobo-Adept.',code='kobo_adept_drm_mutation_unsupported')
 
     def download_request(self, request):
