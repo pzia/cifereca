@@ -31,6 +31,7 @@ class SelectionTests(unittest.TestCase):
             "src/cifereca/core/source_materialization.py",
             "src/cifereca/core/numilog_materialization_startup.py",
             "src/cifereca/core/numilog_materialization_checkpoint.py",
+            "src/cifereca/core/numilog_direct_acquisition.py",
             "src/cifereca/core/sync_coordination.py",
         ):
             self.assertEqual(mod.select([path]), mod.SYNC_CORE, path)
