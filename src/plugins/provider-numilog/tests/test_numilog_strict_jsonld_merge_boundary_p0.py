@@ -107,6 +107,8 @@ def test_unvalidated_optional_jsonld_fields_not_stored(key, bad_value):
 @pytest.mark.parametrize(("key", "bad_value"), [
     ("kind", "observed_public_html"),
     ("edition_proven", True),
+    ("edition_proven", 0),
+    ("edition_proven", 0.0),
     ("source_url", SECRET),
     ("extra", {"secret": MARKER}),
 ])

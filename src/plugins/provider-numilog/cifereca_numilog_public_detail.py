@@ -304,7 +304,8 @@ def validated_public_jsonld_fields(detail, product_url):
                 except ValueError:
                     raise PublicDetailError("public_jsonld_evidence_unverified") from None
         proof = evidence[key]
-        if (type(proof) is not dict or proof not in (
+        if (type(proof) is not dict or proof.get("edition_proven") is not False
+                or proof not in (
                 {"source": "public_product_jsonld_Book",
                  "source_url": product_url, "kind": "observed_public_jsonld",
                  "edition_proven": False},
