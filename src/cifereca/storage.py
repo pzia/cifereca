@@ -2237,7 +2237,8 @@ class Storage:
                 or type(status) is not str
                 or status not in {"complete", "partial", "failed", "blocked"}
                 or any(type(value) is not int or not 0 <= value <= 8
-                       for value in (attempted, downloaded, skipped, failed))
+                       for value in (attempted, downloaded, failed))
+                or type(skipped) is not int or not 0 <= skipped <= 2048
                 or downloaded > attempted
                 or failed > attempted + 1):
             raise ValueError("invalid_numilog_materialization_receipt")
@@ -2322,7 +2323,8 @@ class Storage:
                 or result["status"] not in {
                     "running", "complete", "partial", "failed", "blocked",
                 } or any(type(result.get(key)) is not int
-                         or not 0 <= result[key] <= 8 for key in counts)
+                         or not 0 <= result[key] <= (2048 if key == "skipped" else 8)
+                         for key in counts)
                 or result["downloaded"] > result["attempted"]):
             return empty
         return {
