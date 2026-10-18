@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 
 from ..task_queue import TaskPriority
+from ..plugin_api import UserFacingError
 
 if TYPE_CHECKING:
     from gi.repository import Gtk
@@ -95,9 +96,12 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
         if not self._identity_request_current(identity_id, generation):
             self.refresh_library(False)
             return
-        self.diagnostics.add("UI", "library refresh", "error", detail={"error": type(exc).__name__, "message": str(exc)})
+        self.diagnostics.add("UI", "library refresh", "error", detail={"code": "library_refresh_failed"})
         if control is not None:
-            self.show_error(str(exc), "Actualisation de la bibliothèque impossible")
+            self.show_error(
+                exc.user_message if isinstance(exc, UserFacingError) else "Traitement indisponible",
+                "Actualisation de la bibliothèque impossible",
+            )
     self.runner.submit(
         "Actualisation de la bibliothèque…", work, ok, err, control=control,
         priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL,
@@ -142,9 +146,12 @@ def refresh_recent(self, control: Gtk.Widget | None = None) -> None:
         if not self._identity_request_current(identity_id, generation):
             self.refresh_recent()
             return
-        self.diagnostics.add("UI", "recent refresh", "error", detail={"error": type(exc).__name__, "message": str(exc)})
+        self.diagnostics.add("UI", "recent refresh", "error", detail={"code": "recent_refresh_failed"})
         if control is not None:
-            self.show_error(str(exc), "Actualisation des récupérations impossible")
+            self.show_error(
+                exc.user_message if isinstance(exc, UserFacingError) else "Traitement indisponible",
+                "Actualisation des récupérations impossible",
+            )
     self.runner.submit(
         "Actualisation des récupérations récentes…", work, ok, err, control=control,
         priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL,
