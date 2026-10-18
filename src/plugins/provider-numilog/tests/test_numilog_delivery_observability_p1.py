@@ -59,7 +59,7 @@ def assert_private_data_absent(diagnostics):
         assert set(detail) <= {
             "action", "source", "phase", "code", "hops",
             "http_status", "mime", "html_kind", "origin_kind", "path_kind", "candidates",
-            "connected_initial",
+            "connected_initial", "cookie_header_present",
         }
         assert set(detail) >= {"action", "source", "phase", "code"}
         assert len(detail["action"]) == 12
@@ -281,12 +281,14 @@ def test_unknown_provider_values_never_escape_trace_schema():
                 "delivery_http", "http_ok", status="PRIVATE_ACCOUNT",
                 mime="application/private; secret=PRIVATE_ACCOUNT",
                 html_kind="PRIVATE_ACCOUNT", hops=222,
+                cookie_header_present="PRIVATE_ACCOUNT",
             )
             trace.fail("PRIVATE_ACCOUNT")
             raise ValueError("PRIVATE_HTML")
     assert perf_counter() - start < 5
     assert diag.completed()[0][1]["detail"]["code"] == "unclassified_error"
     assert diag.completed()[0][1]["detail"]["source"] == "direct_url"
+    assert all("cookie_header_present" not in kw["detail"] for _, kw in diag.acquisition())
     assert_private_data_absent(diag)
     assert mime_group("application/xml; charset=PRIVATE_ACCOUNT") == "xml"
     assert public_http_code(401) == "http_unauthorized"
@@ -338,3 +340,15 @@ def test_legacy_http_diagnostics_never_export_user_configured_base_hostname(tmp_
         assert_private_data_absent(diag)
     finally:
         session.close()
+
+
+@pytest.mark.parametrize('cookie_header_present', [True, False])
+def test_cookie_header_evidence_is_strict_boolean_only(cookie_header_present):
+    diag = Capture()
+    with DeliveryTrace(diag) as trace:
+        trace.event('delivery_http', 'http_ok', cookie_header_present=cookie_header_present)
+    details = [kw['detail'] for _, kw in diag.acquisition()]
+    assert details[1]['cookie_header_present'] is cookie_header_present
+    assert 'cookie_header_present' not in details[0]
+    assert 'cookie_header_present' not in details[-1]
+    assert_private_data_absent(diag)
