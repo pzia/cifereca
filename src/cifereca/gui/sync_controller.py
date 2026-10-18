@@ -814,22 +814,23 @@ def _refresh_sync_page(self) -> None:
             consent_row.set_title("Sauvegarde automatique des achats Numilog")
             consent_row.set_subtitle_lines(0)
             if consent_mode == "on_start":
-                consent_row.set_subtitle(
+                consent_subtitle = (
                     "Autorisé pour ce compte au prochain démarrage : jusqu’à "
                     "8 livres par ouverture, espacées d’au moins 60 minutes. "
                     "Les droits et fichiers sont revérifiés avant téléchargement."
                 )
             elif consent_mode == "manual":
-                consent_row.set_subtitle(
+                consent_subtitle = (
                     "Mode manuel (par défaut). Aucun téléchargement automatique. "
                     "Consentement distinct de l’actualisation des notices."
                 )
             else:
-                consent_row.set_subtitle(
+                consent_subtitle = (
                     "Sauvegarde planifiée indisponible. Aucun téléchargement automatique."
                 )
-            if consent_history:
-                consent_row.set_subtitle(consent_row.get_subtitle() + " " + consent_history)
+            consent_row.set_subtitle(
+                consent_subtitle + (" " + consent_history if consent_history else "")
+            )
             consent_button = self.action_button(
                 "Désactiver la sauvegarde" if consent_mode == "on_start"
                 else "Activer au démarrage…",
