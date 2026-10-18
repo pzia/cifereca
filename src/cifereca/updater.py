@@ -832,7 +832,7 @@ def install_source(
                 _replace_symlink(root / "current", release)
                 switched = True
                 launchers = _write_launchers(root)
-                _gc(root, keep)
+                step("cleanup", _gc, root, keep)
             if plugin_snapshot is not None:
                 plugins_result = step("plugin_activation", _apply_release_plugin_snapshot, release, plugin_snapshot)
             for package_id, row in transaction["packages"].items():
