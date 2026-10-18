@@ -77,7 +77,8 @@ def test_real_orchestration_keeps_outcomes_files_and_requests_but_not_private_tr
             assert source.exists()
         assert len(requests) == (1 if scenario in {'success','adept_failure'} else 0)
         records = [r for r in caplog.records
-                   if r.funcName == '_acquire_active_loan_automatically_guarded']
+                   if r.funcName == '_acquire_active_loan_automatically_guarded'
+                   or (r.funcName == 'fulfill' and Path(r.pathname).name == 'loan_adept_fulfillment.py')]
         assert records
         for record in records:
             assert PRIVATE not in record.getMessage() + repr(record.args)

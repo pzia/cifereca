@@ -57,7 +57,7 @@ from .core.adept_retry_guard import blocked_automatic_adept_retry, adept_attenti
 from .core.loan_safe_trace import loan_trace_ref, trace_integer, trace_duration_ms
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
-from .core import loan_accounts, loan_download_projection
+from .core import loan_accounts, loan_download_projection, loan_adept_fulfillment
 from .providers import ProviderConfigurationError, ProviderRegistry, ProviderSearchCapabilities, ProviderSession
 from .plugin_api import AttentionRequired, BundleError, DrmMutationRequest, UserFacingError, load_bundle_manifest, ProviderSearchEvent, ProviderSearchStream
 from .storage import Storage
@@ -2873,20 +2873,11 @@ class LibraryService:
                     title=loan.title,
                     loan_id=loan.id,
                 )
-                _TRACE_LOG.info(
-                    "TRACE download adept begin loan_ref=%s",
-                    trace_ref,
-                )
-                adept_started = time.monotonic()
-                originating_profile_id = self._originating_adept_profile_id(adept_borrower_identity_id, profile_name)
-                result = self.execute_acquisition_request(request)
-                from .adept_binding import capture_binding
-                adept_binding = capture_binding(result, profile_name=profile_name, profile_id=originating_profile_id)
-                diag = self.runtime_diagnostic("runtime.kobo-adept")
-                _TRACE_LOG.info(
-                    "TRACE download adept end loan_ref=%s returncode=%s duration_ms=%s dt=%.3fs",
-                    trace_ref, trace_integer(diag.get("returncode"), minimum=-255, maximum=255),
-                    trace_integer(diag.get("duration_ms"), minimum=0, maximum=86_400_000), time.monotonic()-adept_started,
+                result, adept_binding = loan_adept_fulfillment.fulfill(
+                    self, request, profile_name=profile_name,
+                    adept_borrower_identity_id=adept_borrower_identity_id,
+                    trace_ref=trace_ref, time=time, _TRACE_LOG=_TRACE_LOG,
+                    trace_integer=trace_integer,
                 )
                 final_path, artifact_drm, artifact_format, artifact_protected, hook_info = adept_artifact_publication.publish(
                     result=result, adept_destination=adept_destination, identity_id=identity.identity_id,
