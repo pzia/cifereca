@@ -536,8 +536,11 @@ class GallicaSession(ProviderSession):
             return []
         requested = {str(value).lower() for value in content_types}
         # Core passes file formats; legacy media categories remain supported.
+        audio_formats = {"audiobook", "mp3", "m4a", "ogg", "opus", "flac", "wav"}
+        audio_explicit = bool(requested & audio_formats)
+        skipped_audio = audio_explicit and not self.include_audio
         ebooks = not requested or bool(requested & {"ebook", "epub", "pdf", "kepub"})
-        audio = self.include_audio and (not requested or bool(requested & {"audiobook", "mp3", "m4a", "ogg", "opus", "flac", "wav"}))
+        audio = self.include_audio and (not requested or audio_explicit)
         branches = []
         if ebooks:
             branches.append(("OPDS", "catalogue livres numériques temporairement indisponible", self._search_ebooks))
@@ -582,6 +585,14 @@ class GallicaSession(ProviderSession):
             ("partial_results : " if successful_branches else "") + "Gallica : " + message
             for message in errors
         ]
+        if skipped_audio and successful_branches:
+            # Explicitly requested audio was not searched. An eligible EPUB
+            # branch is not evidence that the combined query was exhaustive.
+            # Default searches with include_audio=False are not warned:
+            # no audio format was explicitly requested by the caller.
+            self.last_search_warnings.append(
+                "partial_results : Gallica : branche audio désactivée par configuration"
+            )
         rows = list({item.id: item for item in rows}.values())
         if errors and not successful_branches:
             error = ProviderError("Gallica : " + " ; ".join(errors))
