@@ -23,20 +23,27 @@ de `main`. Le workflow PR, qui ne publie rien, teste toujours le Core
 de la branche en préparation. Une version textuellement identique ne
 suffit plus à autoriser la publication.
 
-Pour `0.9.44+dev.12` : publier et vérifier explicitement la release
-Core correspondante **avant** toute nouvelle publication plugins-only.
-Ne jamais réécrire le tag ni les assets de `v0.9.44+dev.11`.
+La release Core `v0.9.44+dev.12` est publiée depuis le 09/10/2026,
+mais cela ne prouve pas son installation chez l'utilisateur : le workflow
+doit toujours en télécharger et vérifier le **wheel exact** avant toute
+nouvelle publication plugins-only. Ne jamais réécrire une release publiée
+ni son tag, notamment `v0.9.44+dev.11` et `v0.9.44+dev.12`.
 
 ## Signature et confidentialité
 
-Le dépôt `pzia/cifereca` est privé et appartient à un compte GitHub personnel.
-GitHub Artifact Attestations refuse les dépôts privés de ce type ; `actions/attest`
-ne peut donc pas être la preuve de publication. Le workflow utilise **Cosign
-keyless** (Sigstore) : certificat émis sur l'identité OIDC du workflow GitHub
-sur `main`, preuve de transparence publique, bundle de signature
-`<tag>.zip.sigstore.json`. L'archive ZIP reste privée dans la GitHub Release ;
-**son empreinte, l'identité du signataire et les métadonnées de transparence
-peuvent être visibles publiquement via Sigstore/Rekor.**
+**Le dépôt `pzia/cifereca` est public. Les releases et leurs assets ZIP
+sont accessibles publiquement ; aucune archive, fixture, capture, URL signée,
+donnée XDG ou profil utilisateur réel ne doit y être déposé.** Les archives
+de prévisualisation Actions suivent aussi une liste positive de chemins et
+une rétention courte (voir #1143).
+
+Le workflow officiel utilise **Cosign keyless** (Sigstore) : certificat émis
+sur l'identité OIDC du workflow GitHub sur `main`, preuve de transparence
+publique et bundle de signature `<tag>.zip.sigstore.json`. Ce mécanisme
+reste indépendant d'une éventuelle GitHub Artifact Attestation : seul un
+contrôle cryptographique des octets du ZIP, des claims OIDC et du SHA exact
+constitue la preuve acceptée par l'updater. L'empreinte, l'identité du
+signataire et les métadonnées Sigstore/Rekor peuvent aussi être publiques.
 
 Le SHA-256 sidecar seul ne constitue **pas** une signature. La vérification Cosign
 contrôle l'identité exacte du workflow, le dépôt, la branche `main` et le SHA de
@@ -59,7 +66,7 @@ ne peuvent pas être remplacés par un rerun ; utiliser un nouveau tag.
 
 ## Vérification par le destinataire
 
-Prérequis : `gh` authentifié avec accès à la release privée, `cosign` récent,
+Prérequis : `gh` pouvant accéder à la release publique, `cosign` récent,
 `sha256sum`, `cifereca-update-dev` disposant du mode strict.
 
 ```bash
