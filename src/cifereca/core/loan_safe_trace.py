@@ -42,3 +42,13 @@ def loan_trace_ref(loan: Any, identity_id: str | None) -> str:
 def trace_integer(value: Any, *, minimum: int, maximum: int) -> int | None:
     """Allow only bounded exact integers in runtime TRACE facts (not bool)."""
     return value if type(value) is int and minimum <= value <= maximum else None
+
+
+def unbound_loan_trace_ref(loan_id: Any) -> str:
+    """Compatibility hooks lack owner coordinates: never imply owner proof.
+
+    The reference joins only these loan-ID-only hooks in this process. It is
+    not interchangeable with the fully scoped loan_ref in the orchestrator.
+    """
+    from types import SimpleNamespace
+    return loan_trace_ref(SimpleNamespace(id=loan_id), None)

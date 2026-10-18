@@ -2367,11 +2367,12 @@ class LibraryService:
         return None
 
     def _diagnose_adept_binding(self, binding, *, provider_loan_id):
-        detail = {"provider_loan_id": provider_loan_id,
+        from .core.loan_safe_trace import unbound_loan_trace_ref
+        detail = {"request_ref": unbound_loan_trace_ref(provider_loan_id),
                   "adept_loan_id_present": bool(binding.get("adept_loan_id")),
                   "origin_profile_id_present": bool(binding.get("adept_profile_id")),
                   "return_available": bool(binding.get("return_available"))}
-        _TRACE_LOG.info("TRACE adept binding provider_loan_id=%s adept_loan_id_present=%s origin_profile_id_present=%s return_available=%s", *detail.values())
+        _TRACE_LOG.info("TRACE adept binding request_ref=%s adept_loan_id_present=%s origin_profile_id_present=%s return_available=%s", *detail.values())
         self.diagnostics.add("ADEPT", "loan binding", "ok" if detail["return_available"] else "warning", detail=detail, level="normal")
 
     def adept_return_status_for_loan(self, loan: Loan) -> dict[str, Any]:

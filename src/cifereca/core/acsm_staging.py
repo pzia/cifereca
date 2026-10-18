@@ -5,6 +5,9 @@ and retention configuration. This boundary creates staging directories and
 removes transient ACSM inputs only when explicitly invoked by that service.
 Injected cache, clock, logger and sanitizer preserve facade monkeypatches.
 """
+from .loan_safe_trace import unbound_loan_trace_ref
+
+
 def acquisition_work_dir(storage_path, identity_id, provider_id, loan_id=None, *, component_name):
     """Return a mutable staging directory outside the user library tree."""
     base = (storage_path.parent / 'acquisition-work'
@@ -22,7 +25,7 @@ def cleanup_acsm_after_success(path, *, loan_id, forget, logger):
     try:
         path.unlink(missing_ok=True)
         forget(path)
-        logger.info('TRACE download acsm cleanup loan_id=%s action=deleted file=%s', loan_id, path)
+        logger.info('TRACE download acsm cleanup request_ref=%s action=deleted', unbound_loan_trace_ref(loan_id))
         # Remove only the now-empty directory containing the input.
         parent = path.parent
         try:
@@ -30,7 +33,7 @@ def cleanup_acsm_after_success(path, *, loan_id, forget, logger):
         except OSError:
             pass
     except OSError as exc:
-        logger.warning('TRACE download acsm cleanup loan_id=%s action=keep reason=delete_failed error=%s file=%s', loan_id, type(exc).__name__, path)
+        logger.warning('TRACE download acsm cleanup request_ref=%s action=keep reason=delete_failed', unbound_loan_trace_ref(loan_id))
 
 
 def cleanup_old_acsm_work(storage_path, *, max_age_seconds=None, config_get, clock, forget, logger):
