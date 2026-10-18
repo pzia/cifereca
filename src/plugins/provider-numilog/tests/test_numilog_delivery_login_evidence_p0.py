@@ -136,3 +136,88 @@ def test_only_exact_numilog_login_paths_get_a_public_login_category():
         'numilog_site', 'other')
     assert destination_category('https://other.invalid/Login.Aspx') == (
         'other', 'other')
+
+
+
+@pytest.mark.parametrize('final_path', [
+    READ, '/Pages/Compte/Landing.aspx',
+])
+def test_login_widget_off_login_route_keeps_session_but_never_follows_link(
+    tmp_path, caplog, final_path,
+):
+    """A password input on a site template does not prove session expiry.
+
+    Even a signed-looking ACSM link must *not* be followed while the HTML
+    contains an auth form: this is a diagnostic distinction, not a bypass.
+    """
+    from tests.test_entrepot2r_fulfillment_mock_p0 import SIGNED
+    requests = []
+    diag = Capture()
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path == '/' :
+            return httpx.Response(200, text='Home')
+        if request.url.path == '/Login.Aspx/AuthUser':
+            return httpx.Response(200, json={'d': {'AuthSuccess': True}})
+        if request.url.path == LIBRARY:
+            return httpx.Response(200, text=HTML)
+        if request.url.path == READ:
+            if final_path == READ:
+                return httpx.Response(200, headers={'content-type': 'text/html'},
+                    text='<input type="password" />'
+                         + '<a href="' + SIGNED + '">Synthetic delivery</a>')
+            return httpx.Response(302, headers={'location': final_path})
+        assert request.url.path == final_path
+        return httpx.Response(200, headers={'content-type': 'text/html'},
+            text='<div>Public page template</div><input type="password" />'
+                 + '<a href="' + SIGNED + '">Synthetic delivery</a>')
+
+    caplog.set_level(logging.INFO, logger='cifereca_numilog')
+    session = session_for(handler, diagnostics=diag)
+    try:
+        session.connect()
+        item = session.library()[0]
+        with pytest.raises(ProviderError, match='session non invalidée') as error:
+            session.download_direct(item, tmp_path)
+        assert session.connected is True
+        assert 'expir' not in str(error.value)
+        assert 'delivery_login_form_detected' not in caplog.text
+        assert [r.url.path for r in requests] == (
+            ['/', '/Login.Aspx/AuthUser', LIBRARY, LIBRARY, LIBRARY, READ]
+            + ([] if final_path == READ else [final_path])
+        )
+        assert all(str(r.url) != SIGNED for r in requests)
+        assert list(tmp_path.iterdir()) == []
+        result = diag.completed()[0][1]['detail']
+        assert result['code'] == 'login_form_detected'
+        assert result['connected_initial'] is True
+        emitted = json.dumps(diag.events) + caplog.text + str(error.value)
+        assert SIGNED not in emitted and SECRET not in emitted
+        assert_private_data_absent(diag)
+    finally:
+        session.close()
+
+
+def test_unrelated_host_login_path_does_not_deauthenticate_numilog_session(tmp_path):
+    diag = Capture()
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        return httpx.Response(200, headers={'content-type': 'text/html'},
+                              text='<input type="password"/>')
+
+    session = session_for(handler, diagnostics=diag)
+    session.connected = True
+    try:
+        with pytest.raises(ProviderError, match='session non invalidée'):
+            session._download(
+                'https://services.numilog.com/Login.Aspx',
+                tmp_path / 'target.epub',
+            )
+        assert len(calls) == 1 and session.connected is True
+        assert diag.completed()[0][1]['detail']['code'] == 'login_form_detected'
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
