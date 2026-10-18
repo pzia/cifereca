@@ -84,3 +84,48 @@ def test_partial_upstream_errors_are_counted_without_exporting_raw_error_fields(
                    if "TRACE loans sync" in line)
     finally:
         service.close()
+
+
+def test_adept_profile_read_failure_is_a_closed_diagnostic(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        def fail_lookup():
+            raise RuntimeError(PRIVATE)
+        monkeypatch.setattr(service, "_kobo_adapter",
+                            lambda: NS(available=fail_lookup))
+        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
+        result = service.opening_sync()
+        assert result["identities"]
+        rows = [
+            row for row in service.diagnostics.snapshot()
+            if row["operation"] == "profile list for dashboard"
+        ]
+        assert len(rows) == 1
+        assert rows[0]["detail"] == {"code": "adept_profile_lookup_failed"}
+        assert PRIVATE not in service.diagnostics.text("test")
+    finally:
+        service.close()
+
+
+def test_identity_level_failure_keeps_safe_persistent_cause_and_other_identity(
+    tmp_path, monkeypatch,
+):
+    service = _service(tmp_path)
+    try:
+        original = service._persist_active_loans
+        def failure_for_first(identity_id, loans):
+            if identity_id == "default":
+                raise OSError(PRIVATE)
+            return original(identity_id, loans)
+        monkeypatch.setattr(service, "_persist_active_loans", failure_for_first)
+        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
+        result = service.opening_sync()
+        by_identity = {row["identity_id"]: row for row in result["identities"]}
+        assert by_identity["default"]["status"] == "failed"
+        assert by_identity["default"]["error"] == "opening_sync_failed"
+        assert by_identity["alex"]["status"] == "success"
+        row = service.storage.latest_sync_run("default")
+        assert row["detail"]["error"] == "opening_sync_failed"
+        assert PRIVATE not in json.dumps(row) + json.dumps(result)
+    finally:
+        service.close()
