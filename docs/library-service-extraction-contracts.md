@@ -439,3 +439,21 @@ No acquisition, profile creation, retry policy, provider payload or return rule 
 changed. The automatic-loan acquisition handler and the Paris return orchestrator
 remain at their existing boundaries. Validation uses synthetic registry/runtime
 responses and real local SQLite; it does not attest a real Adobe/Paris return.
+
+## Local automatic-loan preparation (#1120)
+
+`core/loan_local_preparation.py` orchestrates the bounded local phase before
+provider acquisition: candidate inspection, invalidation in original order,
+exact prior-ledger classification, optional catalog relinking, reuse and
+persisted ADEPT retry refusal. `loan_artifact_state` remains read-only.
+The facade retains both locks, the original exception boundary (this phase
+precedes the acquisition try), source admission and all provider/ADEPT work.
+
+A private immutable context carries the original previous state, decision and
+optional public early outcome. Executable phase statements are AST-identical
+after unwrapping that outcome; subsequent acquisition and failure handling
+retain previous metadata/path, legacy mode and decision. Inspector, policy,
+retry guard, clock and logger are injected from services at call time to
+preserve historical monkeypatches. No rules, payloads or new permissions change.
+Tests exercise synthetic local files and storage; real Adobe/Paris remains
+unvalidated.
