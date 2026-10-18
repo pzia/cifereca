@@ -118,13 +118,16 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             trace.fail("consent_revoked")
             source_results.append(trace.finish("failed"))
             continue
-        if control is not None and callable(getattr(control, "check_cancelled", None)):
-            control.check_cancelled()
         # Counters and receipts are per source, not leaked across accounts.
         started_at = None
         manifest_ready = False
         interrupted = False
         try:
+            # The pre-claim cancellation check must share the same diagnostic
+            # finalization as every later check. Otherwise a cancelled startup
+            # has no phase/cause at all, even though admission was entered.
+            if control is not None and callable(getattr(control, "check_cancelled", None)):
+                control.check_cancelled()
             # Claim and 'running' receipt are written in the same SQLite
             # transaction, before any network I/O or ADEPT. No blind retry.
             observe("durable_claim")
