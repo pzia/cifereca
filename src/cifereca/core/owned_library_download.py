@@ -85,6 +85,18 @@ def _resolve(service, entitlement_id, identity_id):
 
 def owned_library_download_target(service, entry):
     """Passive admission for a single unambiguous possession in the current row."""
+    # Never choose implicitly between two actionable source possessions.
+    if isinstance(entry, dict) and isinstance(entry.get("possessions"), (list, tuple)):
+        current = getattr(service.current_identity, "identity_id", None)
+        candidates = [p for p in entry["possessions"] if isinstance(p, dict)
+                      and p.get("identity_id") == current and p.get("state") == "active"
+                      and p.get("kind") == "owned" and p.get("provider_id") in {"kobo", "numilog"}]
+        if len(candidates) > 1:
+            return None
+    from .numilog_owned_download import target_for_entry
+    numilog = target_for_entry(service, entry)
+    if numilog is not None:
+        return numilog
     try:
         _require(isinstance(entry, dict) and not entry.get("local") and not entry.get("placement_id")
                  and not entry.get("local_path"))
@@ -105,6 +117,9 @@ def owned_library_download_target(service, entry):
 
 def obtain_owned_library_item(service, target):
     """Recheck at dispatch and again *inside* the direct-acquisition lock."""
+    from .numilog_owned_download import NumilogOwnedDownloadTarget, obtain
+    if type(target) is NumilogOwnedDownloadTarget:
+        return obtain(service, target)
     try:
         _require(type(target) is OwnedDownloadTarget)
         current, item = _resolve(service, target.entitlement_id, target.identity_id)

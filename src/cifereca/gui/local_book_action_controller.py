@@ -13,8 +13,12 @@ def _add_owned_download(window, detail, item, TaskPriority):
     target = resolve(item)
     if target is None:
         return
-    button = window.action_button('Télécharger ce livre Kobo', 'folder-download-symbolic')
-    button._cifereca_action_id = 'download-owned-kobo'
+    provider = getattr(target, 'provider_id', 'kobo')
+    if provider not in {'kobo', 'numilog'}:
+        return
+    label = 'Numilog' if provider == 'numilog' else 'Kobo'
+    button = window.action_button(f'Télécharger ce livre {label}', 'folder-download-symbolic')
+    button._cifereca_action_id = 'download-owned-' + provider
     button.set_tooltip_text('Télécharger uniquement ce livre possédé, pour son compte et son identité. Aucun lot global.')
     generation = getattr(window, '_identity_context_generation', None)
     def current():
@@ -46,7 +50,7 @@ def _add_owned_download(window, detail, item, TaskPriority):
             if current():
                 window.show_error('Téléchargement ciblé indisponible. Actualisez les droits et vérifiez les fichiers locaux.',
                                   'Téléchargement du livre possédé')
-        window.runner.submit('Téléchargement du livre Kobo possédé…', work, done, failed,
+        window.runner.submit(f'Téléchargement du livre {label} possédé…', work, done, failed,
                              control=_button, priority=TaskPriority.USER_ACTION, kind='obtain')
     button.connect('clicked', clicked)
     detail.add_actions([button])

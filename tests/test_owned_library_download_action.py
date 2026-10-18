@@ -7,10 +7,10 @@ from cifereca.gui.local_book_action_controller import add_local_book_actions
 from tests.test_core_ui_1129_local_book_actions import _environment
 
 
-def setup_action():
+def setup_action(provider="kobo"):
     window, entry, detail, actions, events, submissions, launched, deps = _environment(
         item={"provider_id": "kobo", "item_id": "book", "possessions": []}, local=False)
-    target = NS(identity_id="alice")
+    target = NS(identity_id="alice", provider_id=provider)
     window.service.owned_library_download_target = lambda entry: target
     calls = []
     window.service.obtain_owned_library_item = lambda requested: calls.append(requested) or NS(path="fake-path")
@@ -62,3 +62,23 @@ def test_worker_and_failure_callback_never_publish_private_provider_errors():
     with pytest.raises(RuntimeError) as caught:
         args[1]()
     assert "PRIVATE" not in str(caught.value)
+
+
+
+def test_numilog_action_is_passive_until_explicit_click_and_keeps_exact_target():
+    window, actions, calls, submissions, target = setup_action('numilog')
+    assert len(actions) == 1 and actions[0]._cifereca_action_id == 'download-owned-numilog'
+    assert calls == [] and submissions == []
+    actions[0].click()
+    args, kwargs = submissions[0]
+    result = args[1]()
+    args[2](result)
+    assert calls == [target] and kwargs['kind'] == 'obtain'
+    assert 'Numilog' in args[0]
+
+
+def test_numilog_stale_identity_never_submits_acquisition():
+    window, actions, calls, submissions, target = setup_action('numilog')
+    window._identity_context_generation = 2
+    actions[0].click()
+    assert calls == [] and submissions == []
