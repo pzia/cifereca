@@ -24,6 +24,8 @@ def invalidate_library(self) -> None:
     """
     if getattr(self, "_closed", False):
         return
+    from .search_snapshot_refresh import invalidate_search_snapshot
+    invalidate_search_snapshot(self)
     if getattr(self, "_library_refresh_pending", False):
         self._library_refresh_dirty = True
         return
