@@ -37,3 +37,8 @@ def loan_trace_ref(loan: Any, identity_id: str | None) -> str:
     return hmac.new(
         _PROCESS_KEY, b"".join(pieces), hashlib.sha256,
     ).hexdigest()[:20]
+
+
+def trace_integer(value: Any, *, minimum: int, maximum: int) -> int | None:
+    """Allow only bounded exact integers in runtime TRACE facts (not bool)."""
+    return value if type(value) is int and minimum <= value <= maximum else None

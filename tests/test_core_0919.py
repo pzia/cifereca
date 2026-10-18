@@ -96,7 +96,7 @@ class Core0919(unittest.TestCase):
  def test_no_acquisition_is_explicit(self):self.assertEqual(self.service.adept_return_status_for_loan(self.loan)['status'],'no_acquisition')
  def test_binding_log_distinguishes_provider_id_and_adept_presence(self):
   with self.assertLogs('cifereca',level='INFO') as logs:self.initial()
-  text='\n'.join(logs.output);self.assertIn('adept begin provider_loan_id=paris-loan',text)
+  text='\n'.join(logs.output);self.assertRegex(text,r'adept begin loan_ref=[0-9a-f]{20}')
   self.assertIn('adept_loan_id_present=True',text);self.assertIn('origin_profile_id_present=True',text)
  def test_title_collision_preserves_unrelated_file(self):
   path=self.service.library_identity_provider_dir('default','paris')/'Livre.epub';self.book(path,b'unrelated');before=path.read_bytes()
