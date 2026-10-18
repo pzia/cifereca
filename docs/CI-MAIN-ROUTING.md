@@ -3,7 +3,11 @@
 Les workflows `Test Core`, `Test plugins` et `Validate installed Core` gardent
 `workflow_dispatch` pour une recette complète manuelle. Leur trigger
 `push` sur `main` utilise désormais les chemins dépendants (`paths`).
-Le gate PR `PR CI` est séparé et inchangé.
+Le gate PR `PR CI` est séparé et **toujours déclenché** pour chaque PR,
+sans `pull_request.paths` : son job émet un contexte stable même pour une PR
+purement documentaire. La sélection interne n'installe aucune dépendance
+Python sur un changement sans impact ; `README.md` déclenche en revanche
+le contrôle du wheel, car sa description entre dans les métadonnées du paquet.
 
 | Changement de fichiers | Core | Plugins | Wheel installée |
 | --- | :---: | :---: | :---: |
@@ -35,8 +39,10 @@ Modifier le YAML de l'un de ces workflows déclenche sa propre suite.
   lancer manuellement les **trois** workflows avec `workflow_dispatch`.
   Les filtres GitHub ne remplacent pas la recette exhaustive pré-release.
 - Ne pas utiliser `paths` pour des checks obligatoires de PR sans job
-  sentinelle stable : un check filtré peut rester `pending`. Ces trois jobs
-  sont des validations de push ; `PR CI` et les releases restent inchangés.
+  sentinelle stable : un check filtré peut rester `pending`. Les trois workflows
+  lourds restent filtrés sur **push main**, tandis que `PR CI / PR CI` produit
+  un verdict sur **toutes** les PR. Configurer cette vérification comme
+  obligatoire dans la protection de `main` (action administrateur #2147).
 - Ne pas déclencher de release pour prouver une règle de sélection.
 - Relever les vrais runs avant/après sur des commits docs, plugin, Core
   et mixtes avant de chiffrer les économies ; aucun pourcentage supposé.
