@@ -206,3 +206,21 @@ def test_malformed_browser_anchor_is_skipped_without_serializing_private_ref():
     )
     assert len(rows) == 2
     assert 'confirmation' not in rows[0]
+
+
+def test_oversized_owned_confirmation_href_is_not_sent_or_saved():
+    # A huge opaque ref is not a reason to retain it, attempt a GET, or
+    # allow a malformed direct route to override the original readBook.
+    huge_ref = 'PRIVATE_BUT_SYNTHETIC_' + 'X' * 4200
+    inventory = inventory_with_first_card_link(
+        '<a href="/Pages/Commande/ConfirmationPaiement.aspx?ref='
+        + huge_ref + '&amp;disp=simple">Oversized</a>',
+    )
+    rows, _ = parse_library_page(
+        inventory, delivery_evidence=True,
+        delivery_selector=lambda row: row['lid'] == '12',
+    )
+    assert len(rows) == 2
+    assert rows[0]['href'] == READ_12
+    assert 'confirmation' not in rows[0]
+    assert huge_ref not in repr(rows)

@@ -212,12 +212,20 @@ def _scoped_confirmation_href(card, links, base_url):
         if node.tag != 'a':
             continue
         raw = node.attrs.get('href')
-        if not _raw_delivery_url_safe(raw) or chr(92) in raw:
+        if (
+            not _raw_delivery_url_safe(raw) or chr(92) in raw
+            or len(raw) > 4096
+        ):
+            # An opaque order reference is not a license to navigate a
+            # multi-megabyte link from a page. The signed ACSM parser already
+            # applies the same small, fixed URL budget.
             continue
         try:
             if any(segment in ('.', '..') for segment in urlsplit(raw).path.split('/')):
                 continue
             full = urljoin(base_url, raw)
+            if len(full) > 4096:
+                continue
             parsed = urlsplit(full)
             if (origin(full) != ('https', 'www.numilog.com', 443)
                     or origin(full) != origin(base_url)
@@ -628,7 +636,6 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed):
         # with the actual GET/302 confirmation URL. Never log or return it,
         # and never assume a ProductId/readBook lid equals an order ref.
         page_parts = urlsplit(base_url)
-        page_ref = parse_qs(page_parts.query, keep_blank_values=True).get('ref', [])
         ancestor = parents.get(id(card))
         while ancestor is not None:
             if ancestor.tag == 'form' and ancestor.attrs.get('action'):
@@ -647,6 +654,10 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed):
                         # ref of its own to compare, so it cannot attest
                         # either a match or a contradiction. Preserve the
                         # legacy intermediary selection contract.
+                        page_ref = parse_qs(
+                            page_parts.query, keep_blank_values=True,
+                            strict_parsing=True, max_num_fields=32,
+                        ).get('ref', [])
                         form_refs = parse_qs(
                             form_parts.query, keep_blank_values=True,
                             strict_parsing=True, max_num_fields=32,
