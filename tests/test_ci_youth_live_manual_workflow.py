@@ -37,4 +37,4 @@ def test_live_workflow_is_bounded_and_keeps_nonpass_evidence():
     assert 'safe.get("qualified_notice_count", 0) < 1' in source
     assert source.count("if: always()") == 2
     assert "actions/upload-artifact@v4" in source
-    assert "retention-days: 7" in source
+    assert "retention-days: 2" in source

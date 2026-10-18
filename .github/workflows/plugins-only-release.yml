@@ -360,10 +360,10 @@ jobs:
         with:
           cosign-release: "v3.0.6"
 
-      # Private personal GitHub repositories cannot use GitHub-hosted
-      # Artifact Attestations. Cosign signs exact ZIP bytes with GitHub OIDC.
-      # The public Sigstore transparency log records provenance metadata,
-      # NOT the private archive bytes.
+      # The repository and GitHub Release assets are PUBLIC. Never sign or
+      # publish user profiles, private account data, signed URLs or raw logs.
+      # Cosign signs the selected ZIP bytes with GitHub OIDC; transparency
+      # records provenance, not archive contents.
       - name: Sign plugins-only ZIP with Sigstore keyless
         shell: bash
         run: |

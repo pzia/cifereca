@@ -21,12 +21,12 @@ def test_manual_package_zip_has_short_explicit_retention():
     source = _workflow("package-plugins.yml")
     assert "workflow_dispatch:" in source
     assert "name: cifereca-plugin-packages" in source
-    assert "retention-days: 7" in source
+    assert "retention-days: 2" in source
 
 
 def test_plugins_preview_zip_has_short_explicit_retention():
     source = _workflow("plugins-only-preview.yml")
     assert "workflow_dispatch:" in source
     assert "cifereca-plugins-only-preview" in source
-    assert "retention-days: 7" in source
+    assert "retention-days: 2" in source
     assert "retention-days: 14" not in source
