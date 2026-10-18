@@ -83,18 +83,23 @@ def due_startup_identities(window: Any, broker: Any) -> tuple[str, ...]:
 
 
 def dispatch_after_opening(window: Any) -> bool:
-    """Queue a single bounded post-opening worker; never block GTK."""
+    """Queue separate bounded inventory and consented backup workers."""
+    if getattr(window, "_closed", False):
+        return False
+    # Separate trigger, independent opt-in and queue coalescing; a source
+    # with only Numilog backup consent must not depend on an inventory opt-in.
+    from .numilog_materialization_startup import dispatch_after_opening as materialize
+    backup_queued = materialize(window)
     if (
-        getattr(window, "_closed", False)
-        or getattr(window, "_source_inventory_startup_dispatched", False)
+        getattr(window, "_source_inventory_startup_dispatched", False)
     ):
         return False
     broker = _broker(window)
     if broker is None:
-        return False
+        return backup_queued
     identities = due_startup_identities(window, broker)
     if not identities:
-        return False
+        return backup_queued
     window._source_inventory_startup_dispatched = True
 
     def work():
