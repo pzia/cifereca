@@ -14,6 +14,7 @@ from diagnostics_explorer import (
     next_page_offset, selectable_event_ids, export_selected_events,
     empty_observation,
 )
+from diagnostics_selection import collect_filtered_selection, page_selection_ids
 from diagnostics_support import (
     SupportReportExport, diagnostic_json_bytes, preserve_report_selection,
 )
@@ -467,6 +468,7 @@ class DiagnosticsPagePlugin:
         self.tasks = None
         self._check_handle = None
         self._ai_handle = None
+        self._selection_handle = None
         self.llm = None
 
     def activate(self, context):
@@ -605,6 +607,52 @@ class DiagnosticsPagePlugin:
         journals_actions.append(journals_next)
         journals_actions.append(journals_copy)
         outer.append(journals_actions)
+
+        # FlowBox wraps four actions even in narrow 760px windows.
+        journals_select_actions = Gtk.FlowBox()
+        journals_select_actions.set_selection_mode(Gtk.SelectionMode.NONE)
+        journals_select_actions.set_min_children_per_line(1)
+        journals_select_actions.set_max_children_per_line(4)
+        journals_select_actions.set_column_spacing(6)
+        journals_select_actions.set_row_spacing(6)
+        journals_select_errors = Gtk.Button(label="Erreurs + critiques (filtres)")
+        journals_select_all = Gtk.Button(label="Tout sélectionner (filtres)")
+        journals_invert = Gtk.Button(label="Inverser cette page")
+        journals_clear = Gtk.Button(label="Effacer la sélection")
+        for button in (journals_select_errors, journals_select_all,
+                       journals_invert, journals_clear):
+            journals_select_actions.insert(button, -1)
+        journals_select_errors.set_tooltip_text(
+            "Erreurs/critiques sur toutes les pages : source, module, période "
+            "et recherche texte ; remplace uniquement le filtre de niveau"
+        )
+        journals_select_all.set_tooltip_text(
+            "Toutes les pages du périmètre filtré, dans les limites sûres d'export"
+        )
+        outer.append(journals_select_actions)
+        journals_selection = Gtk.Label(label="0 sélectionné · portée : cette page", xalign=0)
+        journals_selection.set_wrap(True)
+        journals_selection.add_css_class("dim-label")
+        outer.append(journals_selection)
+        journals_preview = Gtk.Expander(label="Aperçu des événements expurgés sélectionnés")
+        journals_preview_scroll = Gtk.ScrolledWindow()
+        journals_preview_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        journals_preview_scroll.set_size_request(-1, 145)
+        journals_preview_text = Gtk.TextView()
+        journals_preview_text.set_editable(False)
+        journals_preview_text.set_monospace(True)
+        journals_preview_text.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        journals_preview_scroll.set_child(journals_preview_text)
+        journals_preview.set_child(journals_preview_scroll)
+        outer.append(journals_preview)
+        journals_limits = Gtk.Label(
+            label="Export : 50 événements et 24 Ko maximum, 8 pages par niveau. "
+                  "Consultation multi-page non atomique, sources parfois partielles ; "
+                  "champs expurgés et résumés à 500 caractères.", xalign=0,
+        )
+        journals_limits.set_wrap(True)
+        journals_limits.add_css_class("dim-label")
+        outer.append(journals_limits)
 
         journals_sources = Gtk.Label(label="Sources non alimentées", xalign=0)
         journals_sources.set_wrap(True)
@@ -913,6 +961,55 @@ class DiagnosticsPagePlugin:
             "next_offset": None,
         }
         selected_event_ids: set[str] = set()
+        selection_json: str | None = None
+        selection_note = ""
+        selection_generation = 0
+        selection_busy = False
+
+        def update_selected_status() -> None:
+            if selection_busy:
+                journals_selection.set_text("Sélection filtrée multi-page en cours…")
+            elif selection_json is not None:
+                journals_selection.set_text(
+                    f"{len(selected_event_ids)} sélectionné(s) · portée : "
+                    f"ensemble filtré consultable (multi-page) · {selection_note}"
+                )
+            else:
+                journals_selection.set_text(
+                    f"{len(selected_event_ids)} sélectionné(s) · portée : page courante"
+                    + (f" · {selection_note}" if selection_note else "")
+                )
+            journals_copy.set_sensitive(bool(selected_event_ids) and not selection_busy)
+            journals_select_errors.set_sensitive(not selection_busy)
+            journals_select_all.set_sensitive(not selection_busy)
+            journals_invert.set_sensitive(not selection_busy)
+            # Page-only selections also get a live, already-redacted preview.
+            # This remains local to the loaded page (no broker I/O).
+            preview = selection_json or ""
+            if selection_json is None and selected_event_ids:
+                page_rows = sanitized_rows(
+                    current_page, search=search_filter.get_text().strip(),
+                    newest_first=sort_latest.get_active(),
+                )
+                visible_ids = selectable_event_ids(page_rows)
+                try:
+                    preview = export_selected_events(
+                        page_rows, selected_event_ids.intersection(visible_ids),
+                    )
+                except ValueError:
+                    preview = "Export trop volumineux : réduire la sélection"
+            journals_preview_text.get_buffer().set_text(preview)
+
+        def invalidate_selection(message="Sélection effacée après changement de filtres") -> None:
+            nonlocal selection_json, selection_note, selection_generation, selection_busy
+            selection_generation += 1
+            if self._selection_handle is not None and not self._selection_handle.done():
+                self._selection_handle.cancel()
+            selection_busy = False
+            selected_event_ids.clear()
+            selection_json = None
+            selection_note = message
+            update_selected_status()
 
         def display_events() -> None:
             clear_container(journals_box)
@@ -922,7 +1019,8 @@ class DiagnosticsPagePlugin:
                 include_detail=True,
             )
             valid_ids = selectable_event_ids(rows)
-            selected_event_ids.intersection_update(valid_ids)
+            if selection_json is None:
+                selected_event_ids.intersection_update(valid_ids)
             states = source_summaries(current_page)
             if states:
                 journals_sources.set_text("  ·  ".join(
@@ -958,13 +1056,26 @@ class DiagnosticsPagePlugin:
                     select.set_active(event_id in valid_ids and event_id in selected_event_ids)
 
                     def on_select(button, event_ref=event_id):
-                        if event_ref not in valid_ids:
+                        nonlocal selection_json, selection_note
+                        if event_ref not in valid_ids or selection_busy:
                             return
+                        replace_batch = selection_json is not None
+                        if replace_batch:
+                            # One page edit replaces, but cannot mutate, the
+                            # frozen multi-page selection.
+                            selected_event_ids.clear()
+                            selection_json = None
+                            selection_note = "Sélection multi-page remplacée par la page courante"
                         if button.get_active():
                             selected_event_ids.add(event_ref)
                         else:
                             selected_event_ids.discard(event_ref)
-                        journals_copy.set_sensitive(bool(selected_event_ids))
+                        update_selected_status()
+                        if replace_batch:
+                            # Only a batch-to-page switch requires refreshing
+                            # other checkboxes. Ordinary toggles must not
+                            # unparent the GTK row receiving the click.
+                            display_events()
 
                     select.connect("toggled", on_select)
                     first_line.append(select)
@@ -1012,13 +1123,14 @@ class DiagnosticsPagePlugin:
             journals_next.set_sensitive(
                 next_page_offset(current_page, current_offset=page_offset) is not None
             )
-            journals_copy.set_sensitive(bool(selected_event_ids))
+            update_selected_status()
 
-        def load_events(*_args) -> None:
+        def load_events(*_args, keep_bulk=False) -> None:
             nonlocal page_generation, current_page
             page_generation += 1
             generation = page_generation
-            selected_event_ids.clear()
+            if not (keep_bulk and selection_json is not None):
+                invalidate_selection("Sélection effacée après actualisation ou navigation")
             # Invalidate the previous snapshot immediately, including when
             # a local search change happens while the new query is pending.
             current_page = {
@@ -1098,7 +1210,7 @@ class DiagnosticsPagePlugin:
         def previous_events(_button) -> None:
             nonlocal page_offset
             page_offset = max(0, page_offset - PAGE_SIZE)
-            load_events()
+            load_events(keep_bulk=True)
 
         def next_events(_button) -> None:
             nonlocal page_offset
@@ -1106,9 +1218,19 @@ class DiagnosticsPagePlugin:
             if next_offset is None:
                 return
             page_offset = next_offset
-            load_events()
+            load_events(keep_bulk=True)
 
         def copy_selected(_button) -> None:
+            if selection_busy:
+                return
+            if selection_json is not None:
+                display = Gdk.Display.get_default()
+                if display is None:
+                    host.toast("Presse-papiers indisponible")
+                    return
+                display.get_clipboard().set(selection_json)
+                host.toast("Sélection multi-page expurgée copiée (non atomique)")
+                return
             rows = sanitized_rows(
                 current_page, search=search_filter.get_text().strip(),
                 newest_first=sort_latest.get_active(),
@@ -1130,6 +1252,104 @@ class DiagnosticsPagePlugin:
             display.get_clipboard().set(exported)
             host.toast("Sélection expurgée copiée")
 
+        def select_on_page(action):
+            nonlocal selection_json, selection_note
+            if selection_busy:
+                return
+            rows = sanitized_rows(
+                current_page, search=search_filter.get_text().strip(),
+                newest_first=sort_latest.get_active(),
+            )
+            previous = selected_event_ids if selection_json is None else set()
+            next_ids = page_selection_ids(rows, set(previous), action)
+            selected_event_ids.clear()
+            selected_event_ids.update(next_ids)
+            selection_json = None
+            selection_note = "Inversion limitée à cette page"
+            display_events()
+
+        def select_filtered(mode):
+            nonlocal selection_json, selection_note, selection_generation, selection_busy
+            if selection_busy:
+                return
+            invalidate_selection("")
+            selection_generation += 1
+            token = selection_generation
+            start_generation = page_generation
+            query = {
+                "source": SOURCES[int(source_selector.get_selected())],
+                "module": module_filter.get_text(),
+                "severity": SEVERITIES[int(severity_selector.get_selected())],
+                "period": PERIODS[int(period_selector.get_selected())],
+                "search": search_filter.get_text().strip(),
+                "mode": mode,
+            }
+            selection_busy = True
+            update_selected_status()
+
+            def scan(control):
+                return collect_filtered_selection(
+                    broker, cancelled=control.cancelled, **query,
+                )
+
+            try:
+                handle = self.tasks.submit(
+                    scan, label="Sélection expurgée des journaux", kind="diagnostics",
+                )
+            except Exception:
+                selection_busy = False
+                selection_note = "Sélection indisponible (traitement non démarré)"
+                update_selected_status()
+                return
+            self._selection_handle = handle
+
+            def finish(token_result, page_token, selected, failure):
+                nonlocal selection_json, selection_note, selection_busy
+                if token_result != selection_generation or page_token != page_generation:
+                    return False
+                selection_busy = False
+                selected_event_ids.clear()
+                if failure is not None:
+                    selection_json = None
+                    selection_note = failure
+                else:
+                    selection_json = selected.export_json
+                    selected_event_ids.update(selected.event_ids)
+                    selection_note = (
+                        f"{selected.inspected} examinés · premier lot revérifié · "
+                        "pas d’instantané Core atomique"
+                        + (" · sources incomplètes possibles" if selected.partial_sources else "")
+                    )
+                display_events()
+                if selection_json is not None:
+                    journals_preview.set_expanded(True)
+                return False
+
+            def done(done_handle):
+                from gi.repository import GLib
+                try:
+                    selected = done_handle.result()
+                except Exception as exc:
+                    fixed = str(exc) if type(exc) is ValueError else ""
+                    safe = {
+                        "diagnostic selection changed during pagination",
+                        "diagnostic selection contains ambiguous event IDs",
+                        "diagnostic selection contains duplicate event IDs",
+                        "diagnostic selection is incomplete",
+                        "diagnostic selection has missing rows",
+                        "diagnostic selection exceeds the safe page limit",
+                        "diagnostic selection exceeds 50 events",
+                        "diagnostic selection exceeds 24 KB",
+                        "diagnostic selection cancelled",
+                        "diagnostic selection contains invalid Unicode",
+                    }
+                    reason = fixed if fixed in safe else "Sélection indisponible : source ou export non qualifié"
+                    GLib.idle_add(finish, token, start_generation, None, reason)
+                else:
+                    GLib.idle_add(finish, token, start_generation, selected, None)
+
+            handle.add_done_callback(done)
+
         # An explicit refresh changes the underlying evidence. Any old AI
         # preview or consent must be revoked *before* starting broker I/O.
         def refresh_journals(_button):
@@ -1140,11 +1360,15 @@ class DiagnosticsPagePlugin:
         journals_previous.connect("clicked", previous_events)
         journals_next.connect("clicked", next_events)
         journals_copy.connect("clicked", copy_selected)
+        journals_select_errors.connect("clicked", lambda *_: select_filtered("errors"))
+        journals_select_all.connect("clicked", lambda *_: select_filtered("all"))
+        journals_invert.connect("clicked", lambda *_: select_on_page("invert"))
+        journals_clear.connect("clicked", lambda *_: (invalidate_selection("Sélection effacée"), display_events()))
         source_selector.connect("notify::selected", reset_events)
         severity_selector.connect("notify::selected", reset_events)
         period_selector.connect("notify::selected", reset_events)
         module_filter.connect("activate", reset_events)
-        search_filter.connect("changed", lambda *_: display_events())
+        search_filter.connect("changed", lambda *_: (invalidate_selection(), display_events()))
         sort_latest.connect("toggled", lambda *_: display_events())
         journals_copy.set_sensitive(False)
         journals_previous.set_sensitive(False)
@@ -1607,6 +1831,12 @@ class DiagnosticsPagePlugin:
             except Exception:
                 pass
         self._event_handle = None
+        if getattr(self, "_selection_handle", None) is not None:
+            try:
+                self._selection_handle.cancel()
+            except Exception:
+                pass
+        self._selection_handle = None
         if getattr(self, "_ai_handle", None) is not None:
             try:
                 self._ai_handle.cancel()

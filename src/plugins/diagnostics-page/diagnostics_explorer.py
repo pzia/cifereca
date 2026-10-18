@@ -80,6 +80,7 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
 def fetch_explorer_page(
     broker: Any, *, source: str = "all", module: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
+    reference_time: datetime | None = None,
 ) -> dict[str, Any]:
     """Only public diagnostics.events; never a path or arbitrary log query."""
     if not isinstance(source, str) or not isinstance(severity, str) or not isinstance(period, str):
@@ -92,7 +93,7 @@ def fetch_explorer_page(
         raise ValueError("invalid diagnostics offset")
     return broker.events(
         source=source, module=module.strip()[:90],
-        severity=severity, since=explorer_since(period), until=None,
+        severity=severity, since=explorer_since(period, now=reference_time), until=None,
         limit=PAGE_SIZE, offset=offset,
     )
 

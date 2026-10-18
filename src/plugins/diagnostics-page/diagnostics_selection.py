@@ -1,0 +1,178 @@
+"""Bounded, fail-closed multi-page selection of *redacted* Core diagnostics.
+
+No filesystem access, private provider state, tokens or synchronous GTK work.
+Until Core exposes an atomic paginated snapshot, repeat the first-page
+fingerprint and label the result as a non-atomic view of published events.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
+
+from cifereca.plugin_api import ProviderError
+from diagnostics_explorer import (
+    PAGE_SIZE, PERIODS, SEVERITIES, SOURCES, export_selected_events,
+    fetch_explorer_page, next_page_offset, sanitized_rows, selectable_event_ids,
+    source_summaries,
+)
+
+MAX_SELECTED = 50
+MAX_SCAN_PAGES = 8
+MAX_EXPORT_BYTES = 24_000
+
+
+@dataclass(frozen=True)
+class FilteredSelection:
+    """A frozen, expurgated export, never a cache of private account rights."""
+
+    event_ids: frozenset[str]
+    export_json: str
+    count: int
+    inspected: int
+    partial_sources: bool
+
+
+def page_selection_ids(rows: list[dict], previous: set[str], action: str) -> set[str]:
+    """Quick operations apply ONLY to uniquely identified visible rows."""
+    if action not in {"errors", "all", "invert", "clear"}:
+        raise ValueError("invalid selection action")
+    valid = selectable_event_ids(rows)
+    checked = previous & valid
+    if action == "clear":
+        return set()
+    if action == "all":
+        return valid
+    if action == "invert":
+        return valid - checked
+    return {row["event_id"] for row in rows
+            if row.get("event_id") in valid
+            and row.get("severity") in ("error", "critical")}
+
+
+def _checked_page(payload: Mapping, offset: int, expected_total: int | None):
+    if not isinstance(payload, Mapping):
+        raise ValueError("diagnostic selection unavailable")
+    total = payload.get("total")
+    received = payload.get("offset")
+    items = payload.get("events")
+    if (type(total) is not int or not 0 <= total <= 10000
+            or type(received) is not int or received != offset
+            or not isinstance(items, (list, tuple)) or len(items) > PAGE_SIZE
+            or (expected_total is not None and total != expected_total)):
+        raise ValueError("diagnostic selection changed during pagination")
+    rows = sanitized_rows(payload)
+    if len(rows) != len(items) or len(selectable_event_ids(rows)) != len(rows):
+        raise ValueError("diagnostic selection contains ambiguous event IDs")
+    following = next_page_offset(payload, current_offset=offset)
+    if following is None:
+        if offset + len(items) != total:
+            raise ValueError("diagnostic selection is incomplete")
+    elif following != offset + len(items):
+        raise ValueError("diagnostic selection has missing rows")
+    return rows, total, following
+
+
+def collect_filtered_selection(
+    broker, *, source="all", module="", severity="", period="day", search="",
+    mode="errors", cancelled: Callable[[], bool] | None = None,
+    max_pages=MAX_SCAN_PAGES,
+) -> FilteredSelection:
+    """Scan available filtered Core events in background, or refuse atomically.
+
+    Error selection queries the two *server-side* severity feeds regardless
+    of the current severity dropdown. It still applies source, module, period
+    and the local text search to each page. "Tout" follows the current
+    severity dropdown. 50 events / 24 KB / 8 pages per feed are hard caps;
+    an incomplete scan is NEVER returned as a complete selection.
+    """
+    if mode not in {"errors", "all"}:
+        raise ValueError("invalid diagnostic selection mode")
+    if (source not in SOURCES or severity not in SEVERITIES
+            or period not in PERIODS or type(module) is not str
+            or len(module) > 90 or type(search) is not str
+            or len(search) > 500 or type(max_pages) is not int
+            or not 1 <= max_pages <= MAX_SCAN_PAGES):
+        raise ValueError("invalid diagnostic selection filters")
+    levels = ("error", "critical") if mode == "errors" else (severity,)
+    # Capture the relative-period boundary for ALL requests in this scan.
+    reference_time = datetime.now(timezone.utc)
+    results: list[dict[str, str]] = []
+    seen: set[str] = set()
+    inspected = 0
+    partial = False
+    for level in levels:
+        offset = 0
+        total_expected = None
+        first_page_ids = None
+        pages = 0
+        while True:
+            if cancelled is not None and cancelled():
+                raise ValueError("diagnostic selection cancelled")
+            if pages >= max_pages:
+                raise ValueError("diagnostic selection exceeds the safe page limit")
+            page = fetch_explorer_page(
+                broker, source=source, module=module, severity=level,
+                period=period, offset=offset, reference_time=reference_time,
+            )
+            rows, total, following = _checked_page(page, offset, total_expected)
+            total_expected = total
+            if first_page_ids is None:
+                first_page_ids = tuple(row["event_id"] for row in rows)
+            pages += 1
+            inspected += len(rows)
+            statuses = source_summaries(page)
+            if not statuses or any(s["status"] not in {"available", "empty"} for s in statuses):
+                partial = True
+            for row in rows:
+                event_id = row["event_id"]
+                if event_id in seen:
+                    raise ValueError("diagnostic selection contains duplicate event IDs")
+                seen.add(event_id)
+                if search and search.casefold() not in " ".join(
+                    row[key] for key in
+                    ("timestamp", "source", "module", "severity", "message", "status")
+                ).casefold():
+                    continue
+                results.append(row)
+                if len(results) > MAX_SELECTED:
+                    raise ValueError("diagnostic selection exceeds 50 events")
+            if following is None:
+                break
+            offset = following
+
+        # Offset pagination is not atomic in Core. Recheck the leading page to
+        # detect rotation/reordering instead of silently exporting a mixed feed.
+        if cancelled is not None and cancelled():
+            raise ValueError("diagnostic selection cancelled")
+        current = fetch_explorer_page(
+            broker, source=source, module=module, severity=level,
+            period=period, offset=0, reference_time=reference_time,
+        )
+        reread, _total, _next = _checked_page(current, 0, total_expected)
+        if tuple(row["event_id"] for row in reread) != first_page_ids:
+            raise ValueError("diagnostic selection changed during pagination")
+
+    event_ids = frozenset(row["event_id"] for row in results)
+    # Uses the existing redacted-export contract, including 24 KB limit.
+    packed = json.loads(export_selected_events(results, set(event_ids)))
+    packed["selection"] = {
+        "scope": "all_accessible_filtered_pages",
+        "event_count": len(results),
+        "inspected_count": inspected,
+        "source_filter": source,
+        "severity_filter": "error_and_critical" if mode == "errors" else (severity or "all"),
+        "period": period,
+        "local_text_search_applied": bool(search),
+        "pagination_consistency": "first_page_rechecked_non_atomic",
+        "sources_partial_or_unavailable": partial,
+        "details": "Published redacted summaries; 500 characters maximum per field",
+    }
+    result = json.dumps(packed, ensure_ascii=False, indent=2, allow_nan=False)
+    try:
+        if len(result.encode("utf-8")) > MAX_EXPORT_BYTES:
+            raise ValueError("diagnostic selection exceeds 24 KB")
+    except UnicodeError:
+        raise ValueError("diagnostic selection contains invalid Unicode") from None
+    return FilteredSelection(event_ids, result, len(results), inspected, partial)

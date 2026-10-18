@@ -32,7 +32,7 @@ class Widget:
     def set_sensitive(self, sensitive): self.sensitive = sensitive
     def set_subtitle(self, text): self.subtitle = text
     def set_label(self, label): self.label = label
-    def set_tooltip_text(self, tooltip): self.tooltip = tooltip
+    def set_tooltip_text(self, text): self.tooltip = text
 
 
 @pytest.mark.parametrize('standalone', [False, True])
@@ -165,7 +165,8 @@ def test_diagnostic_factory_binds_controls_and_keeps_late_refresh_inert(monkeypa
     monkeypatch.setattr(settings_diagnostics_actions.settings_diagnostics_refresh_controller, 'refresh_settings_diagnostics', refresh)
     refresh_text = settings_diagnostics_actions.bind_settings_diagnostics(host, page_lifetime=lifetime, diagnostic_ui=ui, application_ui=app, Gtk=NS(), Adw=NS(), Gdk=NS(), clear_box=Mock())
     assert refresh.call_count == 1
-    assert ui.open_page.sensitive is False
+    assert ui.open_page.sensitive is False  # Optional page is absent in this fixture.
+    assert 'indisponible' in ui.open_page.tooltip
     ui.open_page.emit('clicked')
     host.navigate.assert_not_called()
     host._pages['diagnostics'] = object()

@@ -13,7 +13,7 @@ def test_journals_explorer_is_inside_existing_diagnostics_page():
     assert '["Tous niveaux", "Debug", "Info", "Avertissements", "Erreurs", "Critiques"]' in source
     assert '["Toutes périodes", "Dernière heure", "24 heures", "7 jours", "30 jours"]' in source
     assert "module_filter.connect(\"activate\", reset_events)" in source
-    assert 'search_filter.connect("changed", lambda *_: display_events())' in source
+    assert 'search_filter.connect("changed", lambda *_: (invalidate_selection(), display_events()))' in source
     assert "sort_latest.connect(\"toggled\", lambda *_: display_events())" in source
 
 
@@ -41,7 +41,7 @@ def test_module_groups_event_ids_and_states_are_explicit_not_claimed_correlation
     assert "Sources non alimentées ou indisponibles" in src
     assert "Actualisation en cours" in src
     assert "Données indisponibles" in src
-    assert 'journals_copy.set_sensitive(bool(selected_event_ids))' in src
+    assert 'journals_copy.set_sensitive(bool(selected_event_ids) and not selection_busy)' in src
 
 
 def test_pagination_search_and_copy_never_request_raw_logs():

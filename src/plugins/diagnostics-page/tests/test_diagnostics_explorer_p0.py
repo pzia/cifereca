@@ -284,7 +284,7 @@ def test_refresh_invalidates_previous_page_before_async_request():
     ui = (Path(__file__).resolve().parents[1] /
           "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
     refresh = ui.split("        def load_events(", 1)[1].split("        def reset_events(", 1)[0]
-    clear = refresh.index('            selected_event_ids.clear()')
+    clear = refresh.index('                invalidate_selection("Sélection effacée après actualisation ou navigation")')
     blank = refresh.index('            current_page = {', clear)
     rerender = refresh.index('            display_events()', blank)
     submit = refresh.index('                handle = self.tasks.submit(', rerender)
