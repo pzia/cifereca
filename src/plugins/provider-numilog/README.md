@@ -593,3 +593,23 @@ Aucun nouveau GET, retry, cookie, connexion ou droit n'est ajouté.
 Cela corrige un écart client/navigateur plausible, **pas** une preuve que
 Numilog rejette l'ancien en-tête : seule une recette authentifiée du
 même achat permet de déclarer #2024 effectivement réparé.
+
+## Formulaires de connexion intégrés aux pages Numilog (#1884/#2024, 0.1.39)
+
+Un champ HTML `input[type=password]` peut appartenir au gabarit général
+(les pages publiques Numilog incluent un bloc « Je me connecte »).
+Un tel champ ne suffit donc pas à conclure que la session HTTP
+authentifiée a expiré.
+
+Désormais **tout HTML avec formulaire de connexion bloque toujours le
+téléchargement**, y compris lorsqu'il contient un lien de livraison
+plausible. La session est suspendue (`connected=False`) uniquement
+lorsque la réponse vient de la route de connexion `/Login.Aspx` sur
+l'**origine configurée exacte** ; sur les autres pages, le diagnostic
+`login_form_detected` est conservé, mais l'état de session n'est pas
+invalidé à tort. Aucun GET ACSM n'est effectué sur la seule base d'un
+lien entouré d'un formulaire de connexion ; aucun retry ni reconnexion
+automatique n'est introduit.
+
+Cela ne prouve ni l'authentification acceptée par le serveur, ni un
+téléchargement fonctionnel. La recette réelle #2024 reste indispensable.
