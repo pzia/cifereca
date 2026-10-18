@@ -95,9 +95,9 @@ def dispatch_after_opening(window: Any) -> bool:
         )
         if type(identity) is not str or identity not in affected_identities:
             return
-        refresh = getattr(window, "refresh_library", None)
-        if callable(refresh):
-            refresh(False)
+        if callable(getattr(window, "refresh_library", None)):
+            from .library_refresh import invalidate_library
+            invalidate_library(window)
 
     def failed(error):
         # A partial batch can have indexed valid books before another
