@@ -1538,6 +1538,74 @@ def main() -> int:
         while not isinstance(scroll, Gtk.ScrolledWindow):
             scroll = scroll.get_parent()
         f["sync_scroll"] = scroll
+        # UX #2141: observation du premier écran de la vraie fenêtre GTK.
+        # Métriques agrégées sans nom de compte, URL ni texte de fournisseur.
+        # Ce relevé ne vaut pas validation de la lisibilité : pas de seuil PASS.
+        source_groups = []
+        group_child = w._sync_sources_box.get_first_child()
+        while group_child is not None:
+            if isinstance(group_child, Adw.PreferencesGroup):
+                source_groups.append(group_child)
+            group_child = group_child.get_next_sibling()
+        source_rows = []
+        for group in source_groups:
+            first_row = next(
+                (node for node in walk(group) if isinstance(node, Adw.ActionRow)),
+                None,
+            )
+            if first_row is not None:
+                source_rows.append(first_row)
+
+        def in_first_view(widget):
+            ok, bounds = widget.compute_bounds(scroll)
+            return bool(
+                ok and widget.get_mapped()
+                and bounds.get_y() < scroll.get_height()
+                and bounds.get_y() + bounds.get_height() > 0
+            )
+
+        first_actions = []
+        all_actions = []
+        for row in rows:
+            buttons = [
+                node for node in walk(sync_action_row(row))
+                if isinstance(node, Gtk.Button)
+            ]
+            all_actions.extend(buttons)
+            if row in source_rows and buttons:
+                first_actions.append(buttons[0])
+        adjustment = scroll.get_vadjustment()
+        viewport = max(1.0, float(adjustment.get_page_size()))
+        total_height = float(adjustment.get_upper())
+        report["sync_first_fold_ux"] = {
+            "viewport_width": int(scroll.get_width()),
+            "viewport_height": int(scroll.get_height()),
+            "window_width": int(w.get_width()),
+            "window_height": int(w.get_height()),
+            "source_cards": len(source_groups),
+            "source_status_rows": len(source_rows),
+            "detail_rows": len(rows) - len(source_rows),
+            "source_summary_lines": sum(
+                (row.get_subtitle() or "").count("\\n") + 1
+                for row in source_rows
+            ),
+            "action_buttons": len(all_actions),
+            "primary_source_actions": len(first_actions),
+            "visible_source_status_rows": sum(
+                in_first_view(row) for row in source_rows
+            ),
+            "visible_primary_source_actions": sum(
+                in_first_view(button) for button in first_actions
+            ),
+            "visible_action_buttons": sum(
+                in_first_view(button) for button in all_actions
+            ),
+            "global_action_visible": in_first_view(w._sync_all_button),
+            "scroll_content_height": round(total_height, 1),
+            "scroll_extent_viewports": round(
+                max(0.0, total_height - viewport) / viewport, 2
+            ),
+        }
         f["sync_original_font"] = Gtk.Settings.get_default().get_property("gtk-font-name")
         long_name_row = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
         f["sync_long_name_row"] = long_name_row
