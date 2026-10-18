@@ -92,3 +92,20 @@ hors limite sont refusés avant tout GET/POST avec le code public
 `invalid_page`, au lieu de réinterpréter la demande en page zéro.
 Les avertissements de recherche sont réinitialisés pour les requêtes
 refusées ; aucun scan des pages suivantes n'est déclenché.
+
+
+## Valeurs globales des sélecteurs (#1917, 0.1.15)
+
+Les choix par défaut du formulaire HTML (`id_auteur=0`,
+`id_categorie=1`, `id_genre=1`) signifient **Tous/Toutes**, et ne sont
+pas des valeurs attestant un auteur, une catégorie ou un genre. Leur
+libellé ne participe plus à la résolution d'une recherche spécialisée :
+la requête `author=Tous` ne lance plus une recherche globale présentée
+comme filtrée. Un sélecteur ne contenant que cette option de défaut
+est traité comme `field_route_unavailable`, et non comme un résultat
+vide obtenu par interrogation réelle d'un champ. Aucun appel HTTP
+supplémentaire ni changement d'acquisition n'est introduit.
+
+Tests offline : refus des trois valeurs globales et des sélecteurs
+contenant seulement un choix par défaut. Les identifiants sont ceux
+observés par l'adaptateur actuel, sans hypothèse sur de futurs schémas.
