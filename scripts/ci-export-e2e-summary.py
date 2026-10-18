@@ -67,6 +67,14 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
                          if isinstance(n, (ast.FunctionDef, ast.Lambda))}
         if type(line) is int and line in allowed_lines:
             result["checkpoint_line"] = line
+        # A callback checkpoint may be a lambda calling another function.
+        # Publish the actual failure location only when it is a reviewed
+        # assertion/raise statement in this exact probe, never traceback text.
+        failure_line = data.get("failure_line")
+        assertion_lines = {n.lineno for n in ast.walk(probe)
+                           if isinstance(n, (ast.Assert, ast.Raise))}
+        if type(failure_line) is int and failure_line in assertion_lines:
+            result["failure_line"] = failure_line
         duration = data.get("duration_seconds")
         if type(duration) in (int, float) and math.isfinite(duration) and 0 <= duration <= 3600:
             result["duration_seconds"] = round(duration, 2)

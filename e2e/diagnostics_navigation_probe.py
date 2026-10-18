@@ -41,6 +41,18 @@ from diagnostics_states_probe import StateTasks
 from x11_input import X11Input
 
 
+
+def probe_failure_line(exc):
+    """Return only the deepest line in this probe, never exception data."""
+    line = None
+    trace = exc.__traceback__
+    while trace is not None:
+        if trace.tb_frame.f_code.co_filename == __file__:
+            line = trace.tb_lineno
+        trace = trace.tb_next
+    return line
+
+
 def walk(widget):
     yield widget
     child = widget.get_first_child()
@@ -461,6 +473,7 @@ def main() -> int:
                     report["checkpoint_line"] = code.co_firstlineno
                 callback()
             except Exception as exc:
+                report["failure_line"] = probe_failure_line(exc)
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(delay_ms, call)
