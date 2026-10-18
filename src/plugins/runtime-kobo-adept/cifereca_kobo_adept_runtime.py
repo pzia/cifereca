@@ -42,7 +42,7 @@ def classified_adept_failure(error, exit_code):
     """
     if not isinstance(error, dict):
         error = {}
-    code = error.get('code')
+    code = error.get('code') if type(error.get('code')) is str else None
     if code in {
         'E_LIC_ALREADY_FULFILLED_BY_ANOTHER_USER',
         'adept_license_already_fulfilled_by_another_user',
@@ -185,7 +185,9 @@ class KoboAdeptRuntime:
             # An Adobe-specific enum from a non-ACSM command is contradictory.
             # Exit 10 also has no certified meaning for other operations.
             # Neither case is permission to echo opaque vendor messages.
-            if proc.returncode == 10 or error.get('code') in _ACSM_CODES:
+            if (proc.returncode == 10
+                    or (type(error.get('code')) is str
+                        and error['code'] in _ACSM_CODES)):
                 fail('Échec Kobo-Adept ; cause non qualifiée pour cette opération.',
                      'kobo_adept_failed', returncode=proc.returncode)
             fail(safe_message(error.get('message') or 'Échec Kobo-Adept'),
