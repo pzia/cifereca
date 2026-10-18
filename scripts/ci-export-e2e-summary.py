@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import json
 import math
@@ -23,6 +24,55 @@ def _allowed_scenarios() -> set[str]:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return set(module.SCENARIOS)
+
+
+
+# Closed labels from the in-repository diagnostic probe, never exception text.
+_DIAGNOSTIC_STAGES = frozenset({
+    "D16_full_mainwindow_native", "D16_full_mainwindow_narrow",
+    "D16_full_mainwindow_restored", "P1_1889_sync_760_post_capture_normal_font",
+    "P1_1889_sync_760_post_capture_large_font", "P0_1905_numilog_inventory_preflight",
+    "P0_1905_numilog_inventory_click",
+})
+
+
+def _failed_diagnostic(source: Path, scenario: str) -> dict:
+    if scenario not in {"mainwindow-baseline-1366", "mainwindow-baseline-1600"}:
+        return {}
+    # Workflow --out/scenario + runner's own scenario directory. Never follow
+    # a path supplied by summary.json, a symlink or a large/unreadable report.
+    root = source.resolve().parent
+    directory = root / scenario
+    nested = directory / scenario
+    report = nested / "screen.json"
+    try:
+        if any(p.is_symlink() for p in (directory, nested, report)):
+            return {}
+        if not report.is_file() or report.stat().st_size > MAX_BYTES:
+            return {}
+        data = json.loads(report.read_text(encoding="utf-8"))
+        if type(data) is not dict:
+            return {}
+        result = {}
+        stage = data.get("stage")
+        if type(stage) is str and stage in _DIAGNOSTIC_STAGES:
+            result["last_stage"] = stage
+        line = data.get("checkpoint_line")
+        probe = ast.parse((ROOT / "e2e/diagnostics_navigation_probe.py").read_text())
+        allowed_lines = {n.lineno for n in ast.walk(probe)
+                         if isinstance(n, (ast.FunctionDef, ast.Lambda))}
+        if type(line) is int and line in allowed_lines:
+            result["checkpoint_line"] = line
+        duration = data.get("duration_seconds")
+        if type(duration) in (int, float) and math.isfinite(duration) and 0 <= duration <= 3600:
+            result["duration_seconds"] = round(duration, 2)
+        # Equality against one fixed harness message; never publish its text.
+        result["failure_kind"] = (
+            "scenario_timeout" if data.get("error") == "Timeout Diagnostics navigation 50s"
+            else "assertion_or_runtime")
+        return result
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        return {}
 
 
 def safe_summary(source: Path) -> dict:
@@ -53,6 +103,8 @@ def safe_summary(source: Path) -> dict:
             row["visual_change_ratio"] = round(ratio, 6)
         # Deliberately discard every other field, including raw assertion
         # messages, personal paths, URLs, JSON/JSONL, logs, pixels and images.
+        if code != 0:
+            row.update(_failed_diagnostic(source, scenario))
         rows.append(row)
     return {"schema": "cifereca-e2e-public-verdict/v1", "results": rows}
 

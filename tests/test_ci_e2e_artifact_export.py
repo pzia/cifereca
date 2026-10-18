@@ -105,5 +105,55 @@ class SafeE2EExportTests(unittest.TestCase):
         self.assertNotIn("name: e2e-core-debug", content)
 
 
+class SafeFailureDiagnosisTests(unittest.TestCase):
+    def test_failed_baseline_exports_only_closed_stage_valid_line_and_bounded_duration(self):
+        import ast
+        module = _module()
+        probe = ast.parse((ROOT / 'e2e/diagnostics_navigation_probe.py').read_text())
+        line = next(n.lineno for n in ast.walk(probe) if isinstance(n, ast.FunctionDef) and n.name == 'later')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = 'mainwindow-baseline-1600'
+            report = root / scenario / scenario / 'screen.json'
+            report.parent.mkdir(parents=True)
+            report.write_text(json.dumps({'stage':'P0_1905_numilog_inventory_click',
+                'checkpoint_line':line, 'duration_seconds':50.1234,
+                'error':'Timeout Diagnostics navigation 50s', 'cookie':'PRIVATE', 'path':'/home/PRIVATE'}))
+            source = root / 'summary.json'
+            source.write_text(json.dumps([{'scenario':scenario,'returncode':1,'report':'/home/PRIVATE'}]))
+            result = module.safe_summary(source)['results'][0]
+            self.assertEqual(result, {'scenario':scenario,'status':'FAIL','returncode':1,
+                'last_stage':'P0_1905_numilog_inventory_click','checkpoint_line':line,
+                'duration_seconds':50.12,'failure_kind':'scenario_timeout'})
+            self.assertNotIn('PRIVATE', repr(result))
+
+    def test_unknown_strings_nonfinite_numbers_boolean_line_and_report_path_are_not_exported(self):
+        module = _module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); scenario = 'mainwindow-baseline-1600'
+            report = root / scenario / scenario / 'screen.json'; report.parent.mkdir(parents=True)
+            report.write_text(json.dumps({'stage':'PRIVATE','checkpoint_line':True,
+                'duration_seconds':float('inf'),'error':'PRIVATE'}))
+            source = root / 'summary.json'; source.write_text(json.dumps([{'scenario':scenario,'returncode':1}]))
+            result = module.safe_summary(source)['results'][0]
+            self.assertEqual(result, {'scenario':scenario,'status':'FAIL','returncode':1,
+                                      'failure_kind':'assertion_or_runtime'})
+            report.unlink(); outside = root / 'outside.json'; outside.write_text('{"stage":"PRIVATE"}')
+            report.symlink_to(outside)
+            self.assertEqual(module.safe_summary(source)['results'][0],
+                             {'scenario':scenario,'status':'FAIL','returncode':1})
+
+    def test_missing_oversized_or_broken_report_does_not_hide_failure_or_publish_error(self):
+        module = _module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); scenario = 'mainwindow-baseline-1600'
+            source = root / 'summary.json'; source.write_text(json.dumps([{'scenario':scenario,'returncode':1}]))
+            report = root / scenario / scenario / 'screen.json'; report.parent.mkdir(parents=True)
+            expected = {'scenario':scenario,'status':'FAIL','returncode':1}
+            self.assertEqual(module.safe_summary(source)['results'][0], expected)
+            for content in ('PRIVATE', 'P' * (module.MAX_BYTES + 1)):
+                report.write_text(content)
+                self.assertEqual(module.safe_summary(source)['results'][0], expected)
+
 if __name__ == "__main__":
     unittest.main()
