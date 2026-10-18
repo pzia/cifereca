@@ -203,7 +203,13 @@ def parse_public_detail_jsonld(html, product_url):
         typed_identifiers = extract_public_identifiers(html, product_url)
     except PublicIdentifierError:
         raise PublicDetailError("public_identifier_evidence_unverified") from None
+    from cifereca_numilog_public_metadata import extract_public_metadata, PublicMetadataError
+    try:
+        visible_metadata = extract_public_metadata(html, product_url, fields.get("title"))
+    except PublicMetadataError:
+        raise PublicDetailError("public_metadata_evidence_unverified") from None
     return {
+        "public_html_metadata": visible_metadata,
         "product_url": product_url,
         "public_identifiers": typed_identifiers["identifiers"],
         "identifier_evidence": typed_identifiers["identifier_evidence"],
@@ -316,6 +322,11 @@ def merge_public_detail(item, detail):
     # missing listing fields; expose conflict without projecting new values.
     if "title" in conflicts:
         projection.clear()
+    from cifereca_numilog_public_metadata import validated_public_metadata, PublicMetadataError
+    try:
+        html_metadata = validated_public_metadata(detail, url)
+    except PublicMetadataError:
+        raise ProviderCapabilityError(error) from None
     next_meta = dict(metadata)
     next_meta["public_detail"] = {
         "status": "observed_jsonld",
@@ -329,4 +340,7 @@ def merge_public_detail(item, detail):
         "identifier_evidence": public_id_evidence,
         "format_edition_proven": False,
     }
+    if html_metadata is not None:
+        next_meta["public_detail"]["public_html_metadata"] = html_metadata
+        next_meta["public_product_metadata"] = dict(html_metadata["fields"])
     return replace(item, metadata=next_meta, **projection)
