@@ -195,6 +195,50 @@ def _js_delivery_shape_count(script):
     ))
 
 
+def _scoped_confirmation_href(card, base_url):
+    """A link literally present in ONE fresh owned card, never a guessed order.
+
+    The card must already have a unique scoped readBook and title. Only its
+    own explicit HTML anchor on Numilog's exact HTTPS confirmation route
+    can provide a direct navigation; opaque ref remains private and transient.
+    Duplicate conflicting links are unsafe rather than a guessed choice.
+    """
+    chosen = set()
+    for node in card.walk():
+        if node.tag != 'a':
+            continue
+        raw = node.attrs.get('href')
+        if (
+            not _raw_delivery_url_safe(raw) or chr(92) in raw
+            or any(segment in ('.', '..') for segment in urlsplit(raw).path.split('/'))
+        ):
+            continue
+        try:
+            full = urljoin(base_url, raw)
+            parsed = urlsplit(full)
+            if (origin(full) != ('https', 'www.numilog.com', 443)
+                    or origin(full) != origin(base_url)
+                    or parsed.username or parsed.password or parsed.fragment
+                    or parsed.path.casefold() != '/pages/commande/confirmationpaiement.aspx'):
+                continue
+            query = parse_qs(
+                parsed.query, keep_blank_values=True,
+                strict_parsing=True, max_num_fields=32,
+            )
+            if (
+                set(query) != {'ref', 'disp'}
+                or len(query['ref']) != 1 or not query['ref'][0].strip()
+                or query['disp'] != ['simple']
+            ):
+                continue
+            chosen.add(full)
+        except (TypeError, ValueError, AttributeError):
+            continue
+    if len(chosen) > 1:
+        raise ParseError('Liens de confirmation concurrents : téléchargement arrêté')
+    return next(iter(chosen)) if chosen else None
+
+
 def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None, delivery_selector=None, strict_public_enrichment_selector=None):
     root = Parser(text).root
     tables = [n for n in root.walk() if n.attrs.get('id') == 'myTable']
@@ -294,6 +338,12 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                     cover = None
             row = {'lid':lid[0],'variant':repr(key[1]),'title':titles[0] if titles else 'Livre Numilog '+lid[0], 'cover':cover, 'href':href, 'public_url':public_url}
             if delivery_evidence and (delivery_selector is None or delivery_selector(row)):
+                # Never retain order refs in search or background sync.
+                # The only eligible direct URL is an actual HTML href under
+                # this one freshly selected and uniquely identified card.
+                confirmation_href = _scoped_confirmation_href(card, base_url)
+                if confirmation_href is not None:
+                    row['confirmation'] = confirmation_href  # transient only
                 # An ambiguous card (multiple links, products, or revisions)
                 # never yields an attested ACSM. Never equate ProductId to lid.
                 delivery = _card_delivery(
