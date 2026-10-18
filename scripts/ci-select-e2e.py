@@ -13,6 +13,8 @@ SYNC_CORE = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
 SYNC_PRODUCERS = frozenset((
     "src/cifereca/brokers.py",
     "src/cifereca/core/source_materialization.py",
+    "src/cifereca/core/numilog_materialization_startup.py",
+    "src/cifereca/core/numilog_materialization_checkpoint.py",
     "src/cifereca/core/sync_coordination.py",
 ))
 BOOK_DETAIL = ("book-detail-1366", "book-detail-1600")
