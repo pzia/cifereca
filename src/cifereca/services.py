@@ -54,7 +54,7 @@ from .library_files import safe_library_component, sha256_file, try_sha256_file
 from .artifact_inspection import detect_acsm_format, inspect_artifact
 from .core.acquisition_decision import decide_artifact_reuse
 from .core.adept_retry_guard import blocked_automatic_adept_retry, adept_attention_code
-from .core.loan_safe_trace import loan_trace_ref, trace_integer
+from .core.loan_safe_trace import loan_trace_ref, trace_integer, trace_duration_ms
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from .core import loan_accounts, loan_download_projection
@@ -3228,24 +3228,29 @@ class LibraryService:
         # empty upstream UID, but only at the HTTP boundary.
         account_key = str(loan.source_account_id or account.unique_id or "primary")
         _TRACE_LOG.info(
-            "TRACE download acquire provider-session loan_id=%s provider=%s credential=%s account_key=%s upstream_uid_present=%s",
-            loan.id, session.provider_id, loan.source_credential, account_key, bool(account.unique_id),
+            "TRACE download acquire provider-session request_ref=%s upstream_uid_present=%s",
+            loan_trace_ref(loan, None), bool(account.unique_id),
         )
         # Digital provider payloads are staged outside ~/EBooks. In particular,
         # ACSM files are transient inputs and must not become user-library items.
         identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
+        trace_ref = loan_trace_ref(loan, identity.identity_id)
+        _TRACE_LOG.info("TRACE download acquire admitted request_ref=%s loan_ref=%s",
+                        loan_trace_ref(loan, None), trace_ref)
         library_target_dir = self.library_identity_provider_dir(identity.identity_id, loan.source_provider)
         target_dir = self._acquisition_work_dir(identity.identity_id, loan.source_provider, loan.id)
         cached = None if force_refresh else acsm_cache.reuse(target_dir, loan, identity.identity_id, account_key)
         if cached is not None:
             path, url = cached, loan.ebook_url or ""
-            self.diagnostics.add("PNB", "reuse artifact", detail={"provider": session.provider_id, "file": path.name})
+            self.diagnostics.add("PNB", "reuse artifact", detail={"loan_ref": trace_ref, "cached": True})
         else:
-            _TRACE_LOG.info("TRACE download provider-download begin loan_id=%s staging_dir=%s", loan.id, target_dir)
+            _TRACE_LOG.info("TRACE download provider-download begin loan_ref=%s", trace_ref)
             path, url = session.download_digital(loan, account, target_dir)
         _TRACE_LOG.info(
-            "TRACE download provider-download end loan_id=%s file=%s suffix=%s bytes=%s dt=%.3fs",
-            loan.id, path.name, path.suffix, path.stat().st_size if path.is_file() else 0, time.monotonic()-started,
+            "TRACE download provider-download end loan_ref=%s suffix=%s bytes=%s duration_ms=%s",
+            trace_ref, path.suffix.casefold() if path.suffix.casefold() in {".acsm", ".epub", ".pdf"} else "unknown",
+            trace_integer(path.stat().st_size if path.is_file() else 0, minimum=0, maximum=2**63-1),
+            trace_duration_ms(time.monotonic()-started),
         )
         hook_item = loan_download_projection.build_hook_item(
             loan, url, result_factory=SearchResult,
@@ -3268,7 +3273,7 @@ class LibraryService:
             size = 0
         self.diagnostics.add(
             "PNB", "download artifact",
-            detail={"provider": session.provider_id, "file": path.name, "bytes": size},
+            detail={"loan_ref": trace_ref, "bytes": trace_integer(size, minimum=0, maximum=2**63-1)},
         )
         return loan_download_projection.build_acquisition(
             loan, account_key=account_key, path=path, url=url,

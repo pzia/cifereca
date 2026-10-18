@@ -52,3 +52,11 @@ def unbound_loan_trace_ref(loan_id: Any) -> str:
     """
     from types import SimpleNamespace
     return loan_trace_ref(SimpleNamespace(id=loan_id), None)
+
+
+def trace_duration_ms(value: Any) -> int | None:
+    """Only finite nonnegative durations up to one day; no coercion."""
+    import math
+    if type(value) in {int, float} and 0 <= value <= 86400 and math.isfinite(value):
+        return int(value * 1000)
+    return None
