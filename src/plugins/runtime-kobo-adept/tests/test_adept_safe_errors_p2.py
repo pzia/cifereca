@@ -13,7 +13,8 @@ PRIVATE = "https://licenses.example.org/fulfill?token=PRIVATE_SESSION"
 XML = "<fulfillmentToken>PRIVATE_ADOBE_TOKEN</fulfillmentToken>"
 
 
-def run_failure(monkeypatch, payload, *, exit_code=10):
+def run_failure(monkeypatch, payload, *, exit_code=10,
+                source_type="acsm", args=None):
     events = []
     context = SimpleNamespace(
         config={"command": ["kobo-adept"]},
@@ -31,7 +32,10 @@ def run_failure(monkeypatch, payload, *, exit_code=10):
         ),
     )
     with pytest.raises(KoboAdeptError) as raised:
-        runtime.run_json(["download", "request", "-", "--json"], payload={"source": {"type": "acsm"}})
+        runtime.run_json(
+            args if args is not None else ["download", "request", "-", "--json"],
+            payload={"source": {"type": source_type}},
+        )
     error = raised.value
     public = str(error) + repr(error.details) + error.technical_detail + repr(events)
     for forbidden in (SECRET, PRIVATE, "PRIVATE_SESSION", "PRIVATE_ADOBE_TOKEN", "fulfillmentToken"):
@@ -90,6 +94,81 @@ def test_non_acsm_error_code_preserves_legacy_contract(monkeypatch):
     error = run_failure(monkeypatch, {
         "ok": False,
         "error": {"code": "profile_missing", "message": "profil absent", "retryable": True},
-    }, exit_code=1)
+    }, exit_code=1, source_type="http")
     assert error.code == "profile_missing"
     assert error.retryable is True
+
+
+@pytest.mark.parametrize("source_type", ["http", "kobo"])
+@pytest.mark.parametrize("payload", [
+    {"ok": False, "error": {
+        "code": "E_LIC_ALREADY_FULFILLED_BY_ANOTHER_USER",
+        "message": PRIVATE + " " + SECRET + " " + XML,
+        "retryable": True,
+    }},
+    {"ok": False, "error": {
+        "code": "adept_error", "message": PRIVATE + " " + SECRET + " " + XML,
+        "retryable": True,
+    }},
+    {"ok": False, "code": "adept_error",
+     "message": PRIVATE + " " + SECRET + " " + XML},
+])
+def test_non_acsm_download_cannot_be_misclassified_as_adobe_license(
+        monkeypatch, source_type, payload):
+    err = run_failure(monkeypatch, payload, source_type=source_type)
+    assert err.code == "kobo_adept_failed"
+    assert err.retryable is False
+    assert "identité Adobe" not in str(err)
+    assert "activation ACSM" not in str(err)
+
+
+@pytest.mark.parametrize("args", [
+    ["acsm", "return", "loan-id", "--json"],
+    ["profile", "list", "--json"],
+    ["loans", "list", "--json"],
+    ["contract", "--json"],
+])
+def test_exit_10_on_other_operations_never_proves_fulfillment_failure(monkeypatch, args):
+    err = run_failure(monkeypatch, {
+        "ok": False, "error": {
+            "code": "E_LIC_ALREADY_FULFILLED_BY_ANOTHER_USER",
+            "message": PRIVATE + " " + SECRET + " " + XML,
+            "retryable": True,
+        },
+    }, args=args)
+    assert err.code == "kobo_adept_failed" and err.retryable is False
+
+
+@pytest.mark.parametrize("exit_code", [1, 10])
+@pytest.mark.parametrize("payload", [
+    {"ok": False, "error": {
+        "code": "UNKNOWN_VENDOR_ERROR",
+        "message": PRIVATE + " " + SECRET + " " + XML,
+        "retryable": True,
+    }},
+    {"ok": False, "error": {
+        "code": "profile_missing",
+        "message": PRIVATE + " " + SECRET + " " + XML,
+        "retryable": True,
+    }},
+    {"ok": False},
+])
+def test_unknown_acsm_failure_never_forwards_vendor_message_or_retryable(
+        monkeypatch, exit_code, payload):
+    err = run_failure(monkeypatch, payload, exit_code=exit_code)
+    assert err.code == "adept_error"
+    assert err.retryable is False
+    assert "cause Adobe n'est pas confirmée" in str(err)
+
+
+def test_top_level_exact_enum_is_mapped_only_for_acsm_request(monkeypatch):
+    payload = {
+        "ok": False,
+        "code": "E_LIC_ALREADY_FULFILLED_BY_ANOTHER_USER",
+        "message": PRIVATE + " " + SECRET + " " + XML,
+    }
+    classified = run_failure(monkeypatch, payload, exit_code=1)
+    assert classified.code == "adept_license_already_fulfilled_by_another_user"
+    unrelated = run_failure(monkeypatch, payload, exit_code=10,
+                            args=["acsm", "return", "loan-id", "--json"])
+    assert unrelated.code == "kobo_adept_failed"
