@@ -8,10 +8,14 @@ def _workflow(filename: str) -> str:
     return (ROOT / filename).read_text(encoding="utf-8")
 
 
-def test_debian_gtk_relay_archives_only_version_controlled_files():
+def test_debian_gtk_relay_never_archives_checkout_or_unreviewed_cache():
     source = _workflow("gtk-e2e-on-approval.yml")
-    assert "git archive --format=tar.gz --output=/tmp/cifereca-gtk-source.tar.gz HEAD" in source
-    assert "tar --exclude=.git" not in source
+    assert "scripts/ci-validate-gtk-relay-cache.py" in source
+    assert "git archive --format=tar.gz" not in source
+    assert "tar -czf" not in source
+    assert "/tmp/cifereca-gtk-source.tar.gz" not in source
+    assert ".github/gtk-e2e-run-request.txt" in source
+    assert "types: [synchronize]" in source
     assert "persist-credentials: false" in source
     assert "retention-days: 2" in source
     assert "workflow_dispatch:" not in source
