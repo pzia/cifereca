@@ -107,7 +107,7 @@ def test_relinked_local_artifact_path_is_not_traced(
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(
         facade, "inspect_artifact",
-        lambda _path: NS(valid=True, protected=False),
+        lambda _path, _expected=None: NS(valid=True, protected=False),
     )
     monkeypatch.setattr(
         svc, "catalog_index_path",
