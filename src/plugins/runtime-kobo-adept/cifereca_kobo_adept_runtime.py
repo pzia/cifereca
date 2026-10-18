@@ -624,9 +624,17 @@ class KoboAdeptRuntime:
         return result
 
     def probe_core(self):
-        return {'contract':self.contract(),'capabilities':self.capabilities(),
-            'resolved_executable':shutil.which(self.command[0]),'probe_timings_ms':{}}
-    def probe(self): return self.probe_core()
+        # Core/Diagnostics require capability flags, not the raw vendor JSON
+        # or an executable path that can disclose the user's home directory.
+        from cifereca_runtime_probe_safe import public_core_probe
+        contract = self.contract()
+        capabilities = self.capabilities()
+        return public_core_probe(
+            contract, capabilities, bool(shutil.which(self.command[0])),
+        )
+
+    def probe(self):
+        return self.probe_core()
     @staticmethod
     def _profile_name(name):
         value=str(name or '').strip()
