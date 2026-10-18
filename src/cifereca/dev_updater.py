@@ -509,8 +509,16 @@ def apply_snapshot(
             if core_zip is not None:
                 core_result = step("core_activation", updater.install_archive, core_zip, python=python, keep=max(keep, 3), dry_run=False)
                 core_installed = True
-            for plugin_zip, activate in plugin_archives:
-                step("plugin_install", _install_plugin_replace, plugin_zip, activate=activate)
+            # The manifest is fully validated before mutation. The ordinal
+            # marks the plugin currently attempted, NOT the number installed:
+            # a failure at 2/N must never display 2 successful plugins.
+            plugin_total = len(plugin_archives)
+            for plugin_index, (plugin_zip, activate) in enumerate(plugin_archives, 1):
+                with update_phase(
+                    "plugin_install", plugin_index=plugin_index,
+                    plugin_total=plugin_total,
+                ):
+                    _install_plugin_replace(plugin_zip, activate=activate)
             if require_plugins_only:
                 step("plugin_verification", _verify_strict_installed_packages, strict_packages)
             smoke = step("smoke", _smoke_plugins, package_ids)
