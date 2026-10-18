@@ -60,11 +60,15 @@ class PublicCatalogueCache:
             value = load()  # No cache mutex held across HTTP.
             snapshot = deepcopy(value)
             with self._lock:
-                if self._epoch == epoch:
-                    self._entries[key] = (self._clock() + TTL_SECONDS, snapshot)
-                    self._entries.move_to_end(key)
-                    while len(self._entries) > MAX_ENTRIES:
-                        self._entries.popitem(last=False)
+                if self._epoch != epoch:
+                    # A close/reconnect invalidates the *response*, not just
+                    # its cache entry. A late callback must not display rows
+                    # from the session that initiated this HTTP request.
+                    raise ProviderError('Numilog : public_catalog_request_invalidated')
+                self._entries[key] = (self._clock() + TTL_SECONDS, snapshot)
+                self._entries.move_to_end(key)
+                while len(self._entries) > MAX_ENTRIES:
+                    self._entries.popitem(last=False)
             return value
         except ProviderError as exc:
             if str(exc) in {'Numilog : public_catalog_rate_limited',
