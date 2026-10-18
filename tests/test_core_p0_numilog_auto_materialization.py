@@ -547,3 +547,44 @@ def test_startup_claim_rechecks_owner_before_first_private_library_request(
         assert calls == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("private_owned", [False, True])
+def test_first_seen_purchase_is_mirrored_only_from_authenticated_numilog_library(
+    tmp_path, monkeypatch, private_owned,
+):
+    from dataclasses import replace
+
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        actual = _row(account.credential_id, 0)
+        item = actual if private_owned else replace(
+            actual, source_collection="public_catalog",
+            scenario="NUMILOG_PUBLIC", owned=False,
+        )
+        session.library = lambda: [item]
+        assert service.storage.entitlements(provider_id="numilog") == []
+        acquired = []
+        def acquire(row, *, _admission=None):
+            assert row.record_id == actual.record_id
+            assert _admission() is row
+            acquired.append(row.record_id)
+            return NS(metadata={"numilog_checkpoint_id": "FICTIONAL"})
+        monkeypatch.setattr(service, "acquire_direct_item", acquire)
+        monkeypatch.setattr(
+            "cifereca.core.numilog_materialization_startup.index_delivered",
+            lambda *_args, **_kwargs: None,
+        )
+        result = execute(broker, account.identity_id, "startup")
+        assert result.ok
+        assert result.changed == int(private_owned)
+        assert len(acquired) == int(private_owned)
+        rights = service.storage.entitlements(provider_id="numilog")
+        assert len(rights) == int(private_owned)
+        if private_owned:
+            assert rights[0]["item_id"] == actual.record_id
+            assert rights[0]["metadata"]["source"] == "numilog.authenticated_library"
+        assert calls == []
+    finally:
+        service.close()
