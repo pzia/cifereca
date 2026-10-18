@@ -6,13 +6,24 @@ cookies, infers ownership, or implements artifact acquisition.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import replace
+import threading
+import time
 
 from cifereca.plugin_api import (
     ProviderCapabilities, ProviderCapabilityError, ProviderDescriptor,
     ItemDetail, ProviderError, ProviderPlugin, ProviderSearchCapabilities, ProviderSession,
 )
-from cifereca_numilog_public_client import fetch_public_search
+from cifereca_numilog_public_client import (
+    fetch_public_search, fetch_public_search_url, public_search_url,
+)
+from cifereca_numilog_public import PublicSearchPage, PublicSearchParseError, _query
+
+# Navigation URLs are server-attested capability links: they are not arbitrary
+# user-provided endpoints or unchecked faceted query parameters.
+_NAVIGATION_TTL_SECONDS = 60.0
+_MAX_NAVIGATION_LINKS = 512
 
 
 DESCRIPTOR = ProviderDescriptor(
@@ -29,7 +40,7 @@ DESCRIPTOR = ProviderDescriptor(
         max_pages=101,
         notes=(
             "Recherche anonyme publique brSimple : seule la recherche textuelle générale est attestée.",
-            "Pagination GET GRID_PAGE observée sur une capture, pages suivantes non vérifiées en direct.",
+            "Pagination GET GRID_PAGE et facettes publiques observées ; navigation explicite sur liens attestés seulement.",
             "Les résultats sont des offres commerciales ; aucun achat, droit, fichier ni disponibilité de téléchargement n'est déduit.",
         ),
     ),
@@ -46,19 +57,29 @@ class NumilogPublicSession(ProviderSession):
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
         from cifereca_numilog_public_cache import PublicCatalogueCache
         self._public_cache = PublicCatalogueCache()
+        self._navigation_lock = threading.Lock()
+        self._navigation_epoch = 0
+        self._navigation_urls = OrderedDict()
         if self.credentials:
             raise ProviderCapabilityError("Numilog public : credentials_forbidden")
+
+    def _reset_navigation(self):
+        with self._navigation_lock:
+            self._navigation_epoch += 1
+            self._navigation_urls.clear()
 
     def connect(self):
         # A public provider has no account and no network handshake.
         self._public_cache.clear()
+        self._reset_navigation()
         self.connected = True
         self._accounts = []
         return []
 
     def close(self):
-        self._public_cache.clear()
         self.connected = False
+        self._public_cache.clear()
+        self._reset_navigation()
         self._accounts = []
 
     def holdings(self, item, search_terms=""):
@@ -104,27 +125,103 @@ class NumilogPublicSession(ProviderSession):
         detail = self._public_cache.get(("detail", url), lambda: fetch_public_detail(url))
         return merge_public_detail(item, detail)
 
-    def search(self, query, scope="all", page=0, field="all"):
+    def _validate_search(self, query, page, field, scope):
         if type(field) is not str or field != "all":
             raise ProviderCapabilityError("Numilog public : unsupported_field")
         if type(scope) is not str or scope not in {"all", "digital"}:
             raise ProviderCapabilityError("Numilog public : unsupported_scope")
         if not self.connected:
             raise ProviderError("Numilog public : catalogue non connecté")
-        from cifereca_numilog_public_client import public_search_url
-        url = public_search_url(query, page)  # Validate before touching cache/budget.
-        rows = self._public_cache.get(
+        return public_search_url(query, page)  # Before cache, broker or HTTP.
+
+    def _get_page(self, query, page, field, url):
+        return self._public_cache.get(
             ("search", url, field),
             lambda: fetch_public_search(query, page=page, field=field),
-        ).items
-        # Different provider identity is essential: the private provider may
-        # acquire owned books, this singleton must never be selected for it.
-        return [
-            replace(row, source_provider=self.provider_id, source_credential="__public__",
-                    source_collection="public_catalog", owned=False,
-                    downloadable=False, download_url=None)
+        )
+
+    def _public_rows(self, rows):
+        # A public result can never be passed into an owned download session.
+        return tuple(
+            replace(row, source_provider=self.provider_id,
+                    source_credential="__public__", source_collection="public_catalog",
+                    owned=False, downloadable=False, download_url=None)
             for row in rows
-        ]
+        )
+
+    def search(self, query, scope="all", page=0, field="all"):
+        url = self._validate_search(query, page, field, scope)
+        return list(self._public_rows(self._get_page(query, page, field, url).items))
+
+    def _navigation_epoch_snapshot(self):
+        with self._navigation_lock:
+            return self._navigation_epoch
+
+    def _register_public_page(self, page, epoch):
+        """Expose a verified page and short-lived server-issued facet/pager links."""
+        if type(page) is not PublicSearchPage:
+            raise ProviderError("Numilog public : unverified_page")
+        links = ([page.next_url] if page.next_url else [])
+        links.extend(p.get("url") for p in page.pagination_links)
+        links.extend(f.get("url") for f in page.facets)
+        if len(links) > _MAX_NAVIGATION_LINKS:
+            raise ProviderError("Numilog public : navigation_too_large")
+        # Parser-validated page links must still respect the LIVE request budget
+        # (<= 100 pages, <= 200 chars query), regardless of parser's wider bounds.
+        try:
+            for url in links:
+                parsed = _query(url)
+                public_search_url(parsed["query"], int(parsed.get("GRID_PAGE", "0")))
+        except (PublicSearchParseError, ProviderCapabilityError, ValueError, TypeError):
+            raise ProviderError("Numilog public : unverified_navigation") from None
+        result = replace(page, items=self._public_rows(page.items))
+        with self._navigation_lock:
+            if not self.connected or self._navigation_epoch != epoch:
+                raise ProviderError("Numilog public : navigation_invalidated")
+            now = time.monotonic()
+            for expired in [k for k, deadline in self._navigation_urls.items()
+                            if deadline <= now]:
+                del self._navigation_urls[expired]
+            for url in links:
+                self._navigation_urls[url] = now + _NAVIGATION_TTL_SECONDS
+                self._navigation_urls.move_to_end(url)
+            while len(self._navigation_urls) > _MAX_NAVIGATION_LINKS:
+                self._navigation_urls.popitem(last=False)
+        return result
+
+    def browse_public_search(self, query, *, page=0, field="all", scope="all"):
+        """Explicit search with actual total/facets/pager, not a fake local filter.
+
+        The generic Core search() still yields list[SearchResult]. This
+        opt-in method gives a UI/plugin caller the source-attested navigation
+        links without claiming server search-by-author/ISBN.
+        """
+        url = self._validate_search(query, page, field, scope)
+        epoch = self._navigation_epoch_snapshot()
+        page_result = self._get_page(query, page, field, url)
+        return self._register_public_page(page_result, epoch)
+
+    def follow_public_link(self, url):
+        """Follow ONLY an unexpired facet/pager link returned by browse/follow.
+
+        This never accepts an arbitrary URL, a handcrafted filter value, a
+        purchase link, an authenticated endpoint or a signed download link.
+        Every request passes through the same anonymous cache and budget.
+        """
+        if not self.connected:
+            raise ProviderError("Numilog public : catalogue non connecté")
+        if type(url) is not str or len(url) > 4096:
+            raise ProviderCapabilityError("Numilog public : unverified_navigation")
+        with self._navigation_lock:
+            epoch = self._navigation_epoch
+            expires = self._navigation_urls.get(url)
+            if expires is None or expires <= time.monotonic():
+                raise ProviderCapabilityError("Numilog public : unverified_navigation")
+        page_result = self._public_cache.get(
+            ("search-url", url, "all"),
+            lambda: fetch_public_search_url(url),
+        )
+        return self._register_public_page(page_result, epoch)
 
 
 class NumilogPublicPlugin(ProviderPlugin):
