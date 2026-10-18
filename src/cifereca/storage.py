@@ -2240,7 +2240,11 @@ class Storage:
                        for value in (attempted, downloaded, failed))
                 or type(skipped) is not int or not 0 <= skipped <= 2048
                 or downloaded > attempted
-                or failed > attempted + 1):
+                or failed > attempted + 1
+                or (status == "complete" and failed != 0)
+                or (status == "partial" and downloaded == 0)
+                or (status == "failed" and failed == 0)
+                or (status == "blocked" and (downloaded != 0 or failed != 0))):
             raise ValueError("invalid_numilog_materialization_receipt")
         clock_key = "sync.source.numilog.materialization.last_start.v1." + source_id
         result_key = "sync.source.numilog.materialization.result.v1." + source_id
@@ -2325,7 +2329,16 @@ class Storage:
                 } or any(type(result.get(key)) is not int
                          or not 0 <= result[key] <= (2048 if key == "skipped" else 8)
                          for key in counts)
-                or result["downloaded"] > result["attempted"]):
+                or result["downloaded"] > result["attempted"]
+                or (result["status"] == "complete" and result["failed"] != 0)
+                or (result["status"] == "partial" and result["downloaded"] == 0)
+                or (result["status"] == "failed" and result["failed"] == 0)
+                or (result["status"] == "blocked" and (
+                    result["downloaded"] != 0 or result["failed"] != 0
+                ))
+                or (result["status"] == "running" and any(
+                    result[key] != 0 for key in counts
+                ))):
             return empty
         return {
             "status": result["status"], "started_at": started,
