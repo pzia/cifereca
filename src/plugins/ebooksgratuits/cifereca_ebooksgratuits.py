@@ -3,7 +3,7 @@ import hashlib, html, re, unicodedata
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urljoin, quote_plus, urlsplit
+from urllib.parse import urljoin, quote_plus, urlsplit, parse_qsl
 import httpx
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
@@ -29,6 +29,48 @@ def _rights_warning_attested(value):
     return bool(_RESTRICTION_RE.search(value[:_MAX_CARD_PLAINTEXT]))
 
 
+def _safe_catalog_link(base_url, raw_href, kind):
+    """Only publish same-origin, structurally identified catalogue links.
+
+    No redirects are followed here; an untrusted HTML card or persisted item
+    must not choose an arbitrary transport destination or Referer.
+    """
+    if (type(raw_href) is not str or not raw_href or len(raw_href) > 4096
+            or any(ch.isspace() or unicodedata.category(ch) in {'Cc', 'Cf', 'Cs'}
+                   for ch in raw_href)):
+        return None
+    try:
+        base = urlsplit(base_url)
+        target = urlsplit(urljoin(base_url, raw_href))
+        def origin(parts):
+            return (parts.scheme.casefold(), (parts.hostname or '').casefold(),
+                    parts.port if parts.port is not None
+                    else 443 if parts.scheme == 'https' else 80 if parts.scheme == 'http' else None)
+        if (origin(base) != origin(target) or target.scheme not in {'http', 'https'}
+                or base.username or base.password or target.username or target.password
+                or target.fragment):
+            return None
+        path = target.path.casefold()
+        if kind == 'detail':
+            if not path.endswith('/details.php'):
+                return None
+        elif kind == 'epub':
+            if not path.endswith('.epub'):
+                if not path.endswith('/newsendbook.php'):
+                    return None
+                pairs = parse_qsl(target.query, keep_blank_values=True,
+                                  strict_parsing=True, max_num_fields=32)
+                if sum(k.casefold() == 'format' and v.casefold() == 'epub'
+                       for k, v in pairs) != 1 or sum(k.casefold() == 'format'
+                                                       for k, _ in pairs) != 1:
+                    return None
+        else:
+            return None
+        return target.geturl()
+    except ValueError:
+        return None
+
+
 DESCRIPTOR=ProviderDescriptor(id='ebooksgratuits',display_name='Ebooks libres et gratuits',description='Catalogue public francophone et téléchargement EPUB.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all','title','author','subject','category','genre'),scopes=('all','digital'),pagination='page',page_size=50,max_pages=MAX_REQUESTED_PAGES,notes=('all/title : formulaire public de recherche par texte titre ; pas une recherche serveur exacte multi-attributs.','author/category/genre : choix dans les sélecteurs HTML publics ; subject : catégorie ou genre disponible, pas un index de sujets exhaustif.','Une valeur sans option correspondante donne zéro parmi les sélecteurs publiés, pas une preuve d’absence dans tout le catalogue.',)),homepage=BASE,notes=('Source publique sans authentification.','Recherche par titre, auteur, catégorie et genre.'))
 class Parser(HTMLParser):
     """Small structured parser for catalog <li> cards; no regex-based DOM slicing."""
@@ -48,8 +90,12 @@ class Parser(HTMLParser):
         if tag=='a':
             href=a.get('href','')
             low=href.casefold()
-            if 'details.php' in low: self._card['detail']=urljoin(self.base_url,href)
-            if ('newsendbook.php' in low and 'format=epub' in low) or low.endswith('.epub'): self._card['epub']=urljoin(self.base_url,href)
+            if 'details.php' in low:
+                verified=_safe_catalog_link(self.base_url,href,'detail')
+                if verified: self._card['detail']=verified
+            if 'newsendbook.php' in low or low.endswith('.epub'):
+                verified=_safe_catalog_link(self.base_url,href,'epub')
+                if verified: self._card['epub']=verified
         elif tag=='img' and not self._card['image']:
             src=a.get('src','').strip()
             if src: self._card['image']=urljoin(self.base_url,src)
@@ -161,7 +207,7 @@ def _public_search_error(exc):
 
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.15','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.16','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Catalogue public',unique_id='ebooksgratuits',provider_id='ebooksgratuits',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close(); self.connected=False; self._accounts=[]
@@ -257,6 +303,11 @@ class EbooksSession(ProviderSession):
     def holdings(self,item,search_terms=''): return ItemDetail(record_id=item.record_id,docbase='EBOOKSGRATUITS',title=item.title,author=item.author,type=item.type,year=None,thumbnail_url=item.thumbnail_url,availability_status='available',availability_label='Téléchargement public EPUB',holdings=[],source_provider=self.provider_id,source_credential=self.credential_id)
     def download_direct(self,item,target_dir):
         if item.source_provider!=self.provider_id or not item.download_url: raise ProviderError('Ebooks libres et gratuits : offre inconnue')
+        # A forged or stale record cannot redirect the broker to a foreign host.
+        epub=_safe_catalog_link(self.base_url,item.download_url,'epub')
+        detail=_safe_catalog_link(self.base_url,item.friendly_url,'detail') if item.friendly_url else None
+        if epub != item.download_url or (item.friendly_url and detail != item.friendly_url):
+            raise ProviderCapabilityError('Ebooks libres et gratuits : invalid_catalog_link')
         if self.transport is None: raise ProviderError('Ebooks libres et gratuits : transport.http indisponible')
         d=Path(target_dir); d.mkdir(parents=True,exist_ok=True); dest=d/((re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub')
         source={
