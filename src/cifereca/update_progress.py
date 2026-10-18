@@ -185,3 +185,13 @@ def step(stage: str, operation: Callable, *args, **kwargs):
     """Execute the exact original callable once; never replay on failure."""
     with update_phase(stage):
         return operation(*args, **kwargs)
+
+
+def skip_update_phase(stage: str) -> None:
+    """Record a deliberately *unexecuted* stage of an opted-in operation.
+
+    Unlike update_phase/step, this performs no work and never reports OK.
+    """
+    progress = _CURRENT.get()
+    if progress is not None:
+        progress.emit(stage, "SKIPPED")

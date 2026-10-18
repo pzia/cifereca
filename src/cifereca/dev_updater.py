@@ -21,7 +21,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from . import updater
-from .update_progress import step, update_phase, update_operation
+from .update_progress import step, update_phase, update_operation, skip_update_phase
 from .paths import data_dir, state_dir
 from .install_paths import ArchiveNotFoundError, resolve_archive
 
@@ -495,6 +495,16 @@ def apply_snapshot(
         if dry_run:
             result['core'] = updater.install_archive(core_zip, python=python, keep=keep, dry_run=True) if core_zip else None
             result['core_changed'] = core_zip is not None
+            # The manifest/index, optional trusted digest and (when present)
+            # Core dry-run were checked; no plugin backup or installation,
+            # validation of the installed runtime, smoke or restart occurred.
+            if core_zip is None:
+                skip_update_phase("core_activation")
+            for skipped_stage in (
+                "plugin_backup", "plugin_install", "plugin_verification",
+                "smoke", "restart",
+            ):
+                skip_update_phase(skipped_stage)
             return result
 
         # Manifest ids are labels, never filesystem paths. Keep previous backups.

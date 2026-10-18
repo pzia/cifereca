@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sqlite3
 import os
 import shutil
@@ -19,7 +20,7 @@ from urllib.parse import quote
 
 from .install_paths import ArchiveNotFoundError, resolve_archive
 from .paths import config_dir, data_dir, database_file, state_dir
-from .update_progress import step, update_phase, update_operation
+from .update_progress import step, update_phase, update_operation, skip_update_phase
 
 PROJECT_NAME = "cifereca"
 PROJECT_DIR_NAME = "cifereca"
@@ -774,6 +775,15 @@ def install_source(
     if provenance:
         result["provenance"] = dict(provenance)
     if dry_run:
+        # A dry-run only checks metadata and Python selection. Explicitly
+        # distinguish unexecuted stages from actual validated success,
+        # without allocating a runtime tree or contacting plugin services.
+        for skipped_stage in (
+            "recover", "source_copy", "venv", "smoke", "backup",
+            "plugin_snapshot", "transaction_prepare", "core_activation",
+            "plugin_activation", "transaction_finalize", "cleanup",
+        ):
+            skip_update_phase(skipped_stage)
         return result
     recovered = step("recover", _recover_incomplete_transactions, root)
     if recovered:
@@ -890,7 +900,14 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
         )
         if resolved.returncode != 0 or not resolved.stdout.strip():
             raise UpdateError("Branche, tag ou commit GitHub introuvable ou accès refusé")
-    sha = resolved.stdout.strip().splitlines()[-1]
+        # gh's response is untrusted until it matches the *entire* expected
+        # commit object ID. Do not allow an extra line, git option, refspec,
+        # truncated hash or arbitrary process output to reach 'git fetch'.
+        # Reject it before clone, staging or mutation, even during dry-run.
+        sha = resolved.stdout.strip()
+        if re.fullmatch(r"[0-9a-fA-F]{40}", sha) is None:
+            raise UpdateError("Référence GitHub résolue sans SHA de commit valide")
+        sha = sha.lower()
     with update_phase("clone"):
         clone = _run_bounded_process(
             [gh, "repo", "clone", repository, str(destination), "--", "--filter=blob:none", "--no-checkout"],

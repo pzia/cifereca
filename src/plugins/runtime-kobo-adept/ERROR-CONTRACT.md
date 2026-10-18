@@ -100,3 +100,31 @@ ou de succès commercial n'est inférée. Les tests reproduisent le
 contrat v8 de la simulation externe avec `ok:true` et des réponses
 hostiles synthétiques. L'émission du code Adobe détaillé et la
 version minimale réelle de `kobo-adept-next` restent à qualifier.
+
+
+## 1.2.19 — callback de diagnostic et enveloppe JSON par défaut
+
+Le runtime évite dorénavant `exc_info=True` sur une exception émise
+par `PluginContext.report_diagnostic`. Le message ou la traceback du
+callback peut contenir un jeton, le contenu XML d'un ACSM, une URL de
+session ou une identité. L'échec du reporter est signalé exclusivement
+par le libellé fixe `Kobo-Adept diagnostic reporter unavailable` ;
+il ne transforme ni une réussite ni un échec de la CLI en une autre
+opération.
+
+Chaque appel `run_json()`, y compris `contract`, `capabilities`,
+`profile list/show`, `download request` et `acsm return`, possède
+désormais une borne **de décodage et d'analyse JSON** de **4 Mio** par
+défaut. Les budgets explicites doivent être un entier positif
+inférieur ou égal à 4 Mio ; ceux dépassant cette borne ou mal formés
+sont refusés **avant invocation du processus**. Le chemin historique
+`loans list/expired` conserve son budget explicite de 4 Mio.
+Un dépassement renvoie `kobo_adept_output_too_large`, des comptes
+d'octets et une étiquette d'erreur fixe, sans inclure les flux bruts.
+
+**Limite technique explicite** : `subprocess.run(capture_output=True)`
+a déjà capturé les octets avant la vérification. Cette version ne prétend
+pas borner la mémoire maximale du processus enfant ou du tampon de
+capture ; cette garantie demanderait un transport incrémental supervisé
+et une évolution séparée. Les tests sont synthétiques, hors ligne et
+ne prouvent pas de nouveau contrat CLI amont ou de cause Adobe détaillée.
