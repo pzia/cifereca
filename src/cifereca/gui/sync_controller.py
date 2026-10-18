@@ -801,7 +801,9 @@ def _refresh_sync_page(self) -> None:
                     pass
             # Read only local scoped state; never fetch the provider,
             # hash files or resolve ADEPT merely to render a page.
-            from .numilog_materialization_status import describe_run
+            # This controller is also executed by the headless GTK harness;
+            # absolute import avoids an unbound __package__ in that runner.
+            from cifereca.gui.numilog_materialization_status import describe_run
             consent_history = ""
             status_reader = getattr(broker, "numilog_materialization_run_status", None)
             if callable(status_reader):
