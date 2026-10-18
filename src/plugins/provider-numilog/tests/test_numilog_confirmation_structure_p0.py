@@ -92,6 +92,19 @@ def test_fresh_owned_readbook_redirect_confirmation_imports_one_acsm(tmp_path, d
         assert [row['path_kind'] for row in delivery_http] == [
             'readbook', 'confirmation_page', 'acsm_fulfillment',
         ]
+        # This entry really sent a GET readBook before the 302. It is not
+        # a direct owned-card href; Core can distinguish both using its
+        # existing fixed and private-safe source enum.
+        assert len({
+            kw['detail']['source']
+            for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+        }) == 1
+        assert all(
+            kw['detail']['source'] == 'readbook'
+            for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+        )
         assert delivery_http[0]['redirect_target_kind'] == 'confirmation_page'
         assert delivery_http[0]['redirect_confirmation_ref_present'] is True
         assert delivery_http[0]['redirect_confirmation_disp_simple'] is (disp == 'simple')
@@ -236,6 +249,19 @@ def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_pa
         assert [row['path_kind'] for row in delivery_http] == [
             'readbook', 'confirmation_page', 'acsm_fulfillment',
         ]
+        # This entry really sent a GET readBook before the 302. It is not
+        # a direct owned-card href; Core can distinguish both using its
+        # existing fixed and private-safe source enum.
+        assert len({
+            kw['detail']['source']
+            for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+        }) == 1
+        assert all(
+            kw['detail']['source'] == 'readbook'
+            for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+        )
         assert delivery_http[0]['redirect_target_kind'] == 'confirmation_page'
         assert delivery_http[0]['redirect_confirmation_ref_present'] is True
         assert delivery_http[0]['redirect_confirmation_disp_simple'] is (disp == 'simple')
