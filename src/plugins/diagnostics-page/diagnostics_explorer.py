@@ -295,10 +295,16 @@ def next_page_offset(payload: Mapping[str, Any], *, current_offset: int) -> int 
     return None
 
 
-def selectable_event_ids(rows: list[dict[str, str]]) -> set[str]:
-    """Only distinct, nonempty event references identify a selectable row."""
+def selectable_event_ids(rows: list[dict[str, str]], *, max_rows: int = PAGE_SIZE) -> set[str]:
+    """Only distinct, nonempty event references identify a selectable row.
+
+    Ordinary GTK page operations stay at 50. The explicit, background-only
+    filtered selection can validate at most 200 redacted rows separately.
+    """
+    if type(max_rows) is not int or not PAGE_SIZE <= max_rows <= 200:
+        raise ValueError("invalid diagnostics selection limit")
     counts: dict[str, int] = {}
-    for row in rows[:PAGE_SIZE]:
+    for row in rows[:max_rows]:
         if not isinstance(row, dict):
             continue
         event_id = row.get("event_id")
@@ -307,12 +313,23 @@ def selectable_event_ids(rows: list[dict[str, str]]) -> set[str]:
     return {event_id for event_id, count in counts.items() if count == 1}
 
 
-def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> str:
-    """Export the COMPLETE selected page or fail explicitly; never truncate."""
+def export_selected_events(
+    rows: list[dict[str, str]], event_ids: set[str], *,
+    max_events: int = PAGE_SIZE, max_bytes: int = 24_000,
+) -> str:
+    """Export the COMPLETE, redacted selection or fail, never truncate.
+
+    Defaults preserve the 50-row / 24 KB GTK page contract. Only the
+    background filtered scan opts into the 200-row / 96 KB batch budget.
+    The caller cannot raise either budget above those hard safety caps.
+    """
     from cifereca_diagnostics_page import redacted_detail
-    if len(event_ids) > PAGE_SIZE:
+    if (type(max_events) is not int or not PAGE_SIZE <= max_events <= 200
+            or type(max_bytes) is not int or not 1 <= max_bytes <= 96_000):
+        raise ValueError("invalid diagnostic export budget")
+    if len(event_ids) > max_events or len(rows) > max_events:
         raise ValueError("too many selected events for one export")
-    if not event_ids.issubset(selectable_event_ids(rows)):
+    if not event_ids.issubset(selectable_event_ids(rows, max_rows=max_events)):
         raise ValueError("ambiguous or unidentified event selection")
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
     selected = [
@@ -325,7 +342,7 @@ def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> s
         if isinstance(row, dict) and isinstance(row.get("event_id"), str)
         and row["event_id"] in event_ids
     ]
-    if len(selected) > PAGE_SIZE:
+    if len(selected) > max_events:
         raise ValueError("too many selected events for one export")
     result = json.dumps({
         "notice": "Événements expurgés du Core ; pas de corrélation de tâches prouvée",
@@ -335,6 +352,6 @@ def export_selected_events(rows: list[dict[str, str]], event_ids: set[str]) -> s
         size = len(result.encode("utf-8"))
     except UnicodeError as exc:
         raise ValueError("diagnostic export contains invalid Unicode") from exc
-    if size > 24_000:
-        raise ValueError("diagnostic export exceeds the 24 KB limit")
+    if size > max_bytes:
+        raise ValueError("diagnostic export exceeds the byte limit")
     return result
