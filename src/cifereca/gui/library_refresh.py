@@ -15,15 +15,28 @@ if TYPE_CHECKING:
     from gi.repository import Gtk
 
 
+def invalidate_library(self) -> None:
+    """Signal newly indexed bytes, unlike ordinary coalesced background refresh.
+
+    The existing user-triggered refresh retains priority. Its already-read
+    snapshot might predate the acquisition, so re-read once on GTK completion.
+    This function is only called from TaskRunner's GTK completion callbacks.
+    """
+    if getattr(self, "_closed", False):
+        return
+    if getattr(self, "_library_refresh_pending", False):
+        self._library_refresh_dirty = True
+        return
+    refresh = getattr(self, "refresh_library", None)
+    if callable(refresh):
+        refresh(False)
+
+
 def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None, *, refresh_covers: bool = False) -> None:
     # A delayed request can be emitted after MainWindow's runner/service close.
     if getattr(self, "_closed", False):
         return
     if self._library_refresh_pending and control is None:
-        # An automatic index may finish while a previous Library query is
-        # still in flight. Never discard that invalidation: the older query
-        # could otherwise overwrite the freshly indexed local projection.
-        self._library_refresh_dirty = True
         return
     self._library_refresh_pending = True
     self._library_refresh_generation = getattr(self, "_library_refresh_generation", 0) + 1
