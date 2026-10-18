@@ -173,6 +173,19 @@ class KoboAdeptRuntime:
             self.last_run_diagnostic.update(stdout_mode='unexpected_json_type', stdout_summary='JSON de type inattendu')
             fail('Kobo-Adept a renvoyé un document inattendu.', 'kobo_adept_invalid_response', returncode=proc.returncode)
         self.last_run_diagnostic.update(stdout_mode='json', stdout_summary='objet JSON')
+        # The public CLI contract is an explicit boolean acknowledgement.
+        # Exit 0 on its own is not evidence that a profile was created, an
+        # ACSM was fulfilled or a loan was returned. Never interpret missing,
+        # null, integer or string "ok" as a successful command.
+        if proc.returncode == 0 and value.get('ok') is not True and value.get('ok') is not False:
+            fail('Kobo-Adept n’a pas confirmé le résultat de la commande.',
+                 'kobo_adept_invalid_response', returncode=proc.returncode)
+        # A payload reporting both success and a vendor error is contradictory.
+        # Reject it without forwarding the vendor's potentially private error
+        # object through Core or through the diagnostic reporter.
+        if proc.returncode == 0 and value.get('ok') is True and value.get('error') is not None:
+            fail('Kobo-Adept a renvoyé un résultat contradictoire.',
+                 'kobo_adept_invalid_response', returncode=proc.returncode)
         if proc.returncode != 0 or value.get('ok') is False:
             error = value.get('error') if isinstance(value.get('error'), dict) else {}
             acsm_request = (
