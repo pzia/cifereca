@@ -54,6 +54,7 @@ from .library_files import safe_library_component, sha256_file, try_sha256_file
 from .artifact_inspection import detect_acsm_format, inspect_artifact
 from .core.acquisition_decision import decide_artifact_reuse
 from .core.adept_retry_guard import blocked_automatic_adept_retry, adept_attention_code
+from .core.loan_safe_trace import loan_trace_ref, trace_integer
 from .paths import acquisition_lock_file, data_dir
 from .models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from .core import loan_accounts, loan_download_projection
@@ -2715,9 +2716,10 @@ class LibraryService:
         leaks into Paris.
         """
         started = time.monotonic()
+        trace_ref = loan_trace_ref(loan, None)
         _TRACE_LOG.info(
-            "TRACE download loan_auto begin loan_id=%s item_id=%s title=%r provider=%s credential=%s account=%s direct_url_present=%s",
-            loan.id, loan.record_id, loan.title, loan.source_provider, loan.source_credential, loan.source_account_id, bool(loan.ebook_url),
+            "TRACE download loan_auto begin request_ref=%s direct_url_present=%s",
+            trace_ref, bool(loan.ebook_url),
         )
         # DRM must never inherit the currently selected identity when a provider
         # connection has no persisted owner. Keep this fail-closed at the
@@ -2727,6 +2729,7 @@ class LibraryService:
         if admission.refusal is not None:
             return admission.refusal
         identity, entitlement_id = admission.identity, admission.entitlement_id
+        trace_ref = loan_trace_ref(loan, identity.identity_id)
         local = loan_local_preparation.prepare(
             self, loan, identity=identity, entitlement_id=entitlement_id,
             force_refresh=force_refresh, started=started,
@@ -2756,7 +2759,7 @@ class LibraryService:
             "executor": "provider",
             "metadata": {**previous_meta, "provider_loan_id": loan.id},
         })
-        _TRACE_LOG.info("TRACE download ledger acquiring loan_id=%s item_id=%s", loan.id, ledger_base["item_id"])
+        _TRACE_LOG.info("TRACE download ledger acquiring loan_ref=%s", trace_ref)
         retained_acsm: Path | None = None
         failure_executor = "provider"
         try:
@@ -2790,8 +2793,8 @@ class LibraryService:
                                      "acsm_staging_path": str(retained_acsm)},
                     })
                     _TRACE_LOG.warning(
-                        "TRACE download loan_auto blocked reason=ambiguous_borrower_account provider=%s",
-                        loan.source_provider,
+                        "TRACE download loan_auto blocked reason=ambiguous_borrower_account loan_ref=%s",
+                        trace_ref,
                     )
                     return {
                         "status": "attention_required", "loan_id": loan.id,
@@ -2807,13 +2810,13 @@ class LibraryService:
                                      "acsm_staging_path": str(retained_acsm)},
                     })
                     _TRACE_LOG.info(
-                        "TRACE download acsm cleanup loan_id=%s action=keep reason=%s file=%s",
-                        loan.id, exc.code, retained_acsm,
+                        "TRACE download acsm cleanup loan_ref=%s action=keep reason=profile_unresolved",
+                        trace_ref,
                     )
                     return {"status": "attention_required", "loan_id": loan.id, "code": exc.code, "error": str(exc)}
                 _TRACE_LOG.info(
-                    "TRACE download adept profile-resolved loan_id=%s connection_identity=%s borrower_identity=%s profile=%s source=%s",
-                    loan.id, identity.identity_id, adept_borrower_identity_id, profile_name, profile_source,
+                    "TRACE download adept profile-resolved loan_ref=%s",
+                    trace_ref,
                 )
                 # 0.13.3+ distinguishes a reader-backed profile from one that
                 # can actually execute ACSM/libgourou operations. Only block
@@ -2836,8 +2839,8 @@ class LibraryService:
                                          "adept_attempt_profile": profile_name},
                         })
                         _TRACE_LOG.info(
-                            "TRACE download acsm cleanup loan_id=%s action=keep reason=%s profile=%s file=%s",
-                            loan.id, code, profile_name, retained_acsm,
+                            "TRACE download acsm cleanup loan_ref=%s action=keep reason=profile_not_ready",
+                            trace_ref,
                         )
                         return {"status": "attention_required", "loan_id": loan.id, "code": code, "error": message}
 
@@ -2866,8 +2869,8 @@ class LibraryService:
                     loan_id=loan.id,
                 )
                 _TRACE_LOG.info(
-                    "TRACE download adept begin provider_loan_id=%s profile=%s source_file=%s destination=%s format=%s format_source=%s",
-                    loan.id, profile_name, acquisition.acsm_path.name, adept_destination, acsm_format, format_source,
+                    "TRACE download adept begin loan_ref=%s",
+                    trace_ref,
                 )
                 adept_started = time.monotonic()
                 originating_profile_id = self._originating_adept_profile_id(adept_borrower_identity_id, profile_name)
@@ -2876,8 +2879,9 @@ class LibraryService:
                 adept_binding = capture_binding(result, profile_name=profile_name, profile_id=originating_profile_id)
                 diag = self.runtime_diagnostic("runtime.kobo-adept")
                 _TRACE_LOG.info(
-                    "TRACE download adept end provider_loan_id=%s returncode=%s duration_ms=%s stdout_mode=%s dt=%.3fs",
-                    loan.id, diag.get("returncode"), diag.get("duration_ms"), diag.get("stdout_mode"), time.monotonic()-adept_started,
+                    "TRACE download adept end loan_ref=%s returncode=%s duration_ms=%s dt=%.3fs",
+                    trace_ref, trace_integer(diag.get("returncode"), minimum=-255, maximum=255),
+                    trace_integer(diag.get("duration_ms"), minimum=0, maximum=86_400_000), time.monotonic()-adept_started,
                 )
                 final_path, artifact_drm, artifact_format, artifact_protected, hook_info = adept_artifact_publication.publish(
                     result=result, adept_destination=adept_destination, identity_id=identity.identity_id,
@@ -2915,7 +2919,7 @@ class LibraryService:
                 retained_acsm = None
             if acquisition.kind == "acsm":
                 self._diagnose_adept_binding(adept_binding, provider_loan_id=loan.id)
-            _TRACE_LOG.info("TRACE download loan_auto complete provider_loan_id=%s path=%s dt=%.3fs", loan.id, final_path, time.monotonic()-started)
+            _TRACE_LOG.info("TRACE download loan_auto complete loan_ref=%s dt=%.3fs", trace_ref, time.monotonic()-started)
             return {
                 "status": "complete",
                 "loan_id": loan.id,
@@ -2927,7 +2931,7 @@ class LibraryService:
             }
         except (KoboAdeptError, UserFacingError) as exc:
             if retained_acsm is not None and retained_acsm.exists():
-                _TRACE_LOG.info("TRACE download acsm cleanup loan_id=%s action=keep reason=adept_error file=%s", loan.id, retained_acsm)
+                _TRACE_LOG.info("TRACE download acsm cleanup loan_ref=%s action=keep reason=adept_error", trace_ref)
             code = str(getattr(exc, "code", "") or "adept_error")
             process = {}
             if failure_executor == "kobo-adept":
@@ -2958,8 +2962,10 @@ class LibraryService:
                 "kobo_adept_invalid_json",
             }
             _TRACE_LOG.warning(
-                "Acquisition failed loan_id=%s executor=%s code=%s retryable=%s exit_code=%s message=%s dt=%.3fs process=%s",
-                loan.id, failure_executor, code, retryable, getattr(exc, "exit_code", None), str(exc), time.monotonic()-started, process,
+                "Acquisition failed loan_ref=%s executor=%s retryable=%s exit_code=%s dt=%.3fs process_present=%s",
+                trace_ref, failure_executor, retryable,
+                trace_integer(getattr(exc, "exit_code", None), minimum=-255, maximum=255),
+                time.monotonic()-started, bool(process),
             )
             status = "retryable_error" if retryable else "attention_required"
             attention_code = adept_attention_code(code, message, executor=failure_executor)
@@ -2980,10 +2986,10 @@ class LibraryService:
             }
         except Exception as exc:
             if retained_acsm is not None and retained_acsm.exists():
-                _TRACE_LOG.info("TRACE download acsm cleanup loan_id=%s action=keep reason=acquisition_error file=%s", loan.id, retained_acsm)
+                _TRACE_LOG.info("TRACE download acsm cleanup loan_ref=%s action=keep reason=acquisition_error", trace_ref)
             _TRACE_LOG.warning(
-                "TRACE download provider error loan_id=%s error=%s message=%s dt=%.3fs",
-                loan.id, type(exc).__name__, str(exc), time.monotonic()-started,
+                "TRACE download provider error loan_ref=%s reason=provider_or_artifact_failure dt=%.3fs",
+                trace_ref, time.monotonic()-started,
             )
             attention_code = self._provider_attention_code(exc)
             # "Quota dépassé" from DownloadDigitalDocument is not a reliable
