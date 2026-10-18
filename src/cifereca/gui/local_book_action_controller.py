@@ -5,7 +5,7 @@ widgets and TaskRunner remain owned by the MainWindow facade (#1129).
 """
 from __future__ import annotations
 
-from ..plugin_api import Cancelled
+from ..plugin_api import Cancelled, UserFacingError
 
 
 def _add_owned_download(window, detail, item, TaskPriority):
@@ -102,7 +102,10 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
             # Recheck existence and identity at activation, then launch without a shell.
             uri=window.service.local_book_path(placement_id,identity_id=identity_id).as_uri()
             Gio.AppInfo.launch_default_for_uri(uri,None)
-        except Exception as exc:window.show_error(str(exc),'Ouverture du livre impossible')
+        except Exception:
+            if not getattr(window, '_closed', False):
+                # Launchers may return private file paths or command details.
+                window.show_error('Ouverture locale indisponible', 'Ouverture du livre impossible')
     opening.connect('clicked',open_book)
     buttons=[opening]
     source_provider = str(item.get('provider_id') or item.get('source_provider') or 'local')
@@ -117,10 +120,10 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
             if logical is None and item.get('artifact_id'):
                 logical = library_read.for_artifact(str(item.get('artifact_id')))
             known_possessions = tuple(logical.possessions) if logical is not None else ()
-        except Exception as exc:
+        except Exception:
             window.diagnostics.add(
                 'UI', 'read known possessions', 'error',
-                detail={'error': type(exc).__name__, 'message': str(exc)},
+                detail={'code': 'known_possessions_unavailable'},
             )
     for target in window.service.identities:
         if target.identity_id==identity_id:continue
@@ -164,9 +167,12 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
         try:
             route_request = ArtifactRouteRequest(context.artifact, identity_id=identity_id or None)
             route_targets = tuple(routing.targets(route_request))
-        except Exception as exc:
+        except Exception:
             route_targets = ()
-            window.diagnostics.add('UI','artifact routing targets','error',detail={'error':type(exc).__name__,'message':str(exc)})
+            window.diagnostics.add(
+                'UI', 'artifact routing targets', 'error',
+                detail={'code': 'artifact_targets_unavailable'},
+            )
         if route_targets:
             menu = Gtk.MenuButton(label='Envoyer vers…')
             menu._cifereca_action_id = 'artifact-routing'
@@ -184,9 +190,16 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
                     def work():
                         plan = routing.plan(request)
                         return routing.transfer(plan)
+                    def failed(exc):
+                        if getattr(window, '_closed', False):
+                            return
+                        # Only explicit user-facing errors have a safe message.
+                        message = (exc.user_message if isinstance(exc, UserFacingError)
+                                   else 'Envoi vers le stockage indisponible')
+                        window.show_error(message, 'Envoi impossible')
                     window.runner.submit('Envoi vers le stockage…', work,
                         lambda _result:(window._activity_result('Livre envoyé'), window.refresh_library(False), window.refresh_recent()),
-                        lambda exc:window.show_error(str(exc),'Envoi impossible'), control=_button,
+                        failed, control=_button,
                         priority=TaskPriority.USER_ACTION, kind='artifact-route')
                 target_button.connect('clicked', route); box.append(target_button)
             popover.set_child(box); menu.set_popover(popover); buttons.append(menu)
