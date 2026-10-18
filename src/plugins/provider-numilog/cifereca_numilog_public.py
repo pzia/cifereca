@@ -317,8 +317,19 @@ def parse_public_search(text, source_url):
         if len(facets) >= 200 or link.tag != 'a':
             _fail('invalid_facets')
         url, target = _search_link(link.attrs.get('href'), source_url)
-        changed = [key for key in target if key in _FILTERS and target.get(key) != query.get(key)]
-        if len(changed) != 1 or target.get('mode') != query['mode'] or target.get('query') != query['query']:
+        # Facet navigation must preserve every *other* active filter.
+        # Looking only at keys in the target silently accepts links which
+        # remove an existing filter (e.g. dropping selected language when
+        # following a price facet). That would misrepresent a narrowed
+        # search as remaining narrowed, so deny the entire transition.
+        changed = [key for key in _FILTERS if target.get(key) != query.get(key)]
+        if (len(changed) != 1
+                or changed[0] not in target
+                or target.get('mode') != query['mode']
+                or target.get('query') != query['query']
+                # The observed facet URL resets pagination; a facet link
+                # that also jumps to an arbitrary result page is unproven.
+                or target.get('GRID_PAGE', '0') != '0'):
             _fail('invalid_facets')
         key = changed[0]
         label = link.text()

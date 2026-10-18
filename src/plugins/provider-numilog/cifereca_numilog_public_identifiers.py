@@ -63,11 +63,14 @@ class _VisibleLabels(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.product_path = urlsplit(product_url).path
         self.product_form_seen = False
+        self.product_form_open = False
+        self.product_form_closed = False
         self.tokens: list[str] = []
         self.ignored: list[str] = []
         self._h1_depth = 0
         self.title_end: int | None = None
         self.h1_count = 0
+        self.title_parts: list[str] = []
 
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
@@ -84,10 +87,22 @@ class _VisibleLabels(HTMLParser):
             if self.product_form_seen:
                 raise PublicIdentifierError('ambiguous_product_form')
             self.product_form_seen = True
+            self.product_form_open = True
+            # Earlier page chrome must not be joined with the product data.
+            self.tokens.clear()
+            self.title_parts.clear()
+            self.h1_count = 0
+            self._h1_depth = 0
+            self.title_end = None
             return
         if self.ignored:
             if tag in self._IGNORED:
                 self.ignored.append(tag)
+            return
+        # After the canonical form closes, no footer/recommendation can
+        # append another ISBN; direct parser snippets without a form retain
+        # the original conservative legacy behavior.
+        if self.product_form_seen and not self.product_form_open:
             return
         if tag in self._IGNORED:
             self.ignored.append(tag)
@@ -101,12 +116,18 @@ class _VisibleLabels(HTMLParser):
             if tag == self.ignored[-1]:
                 self.ignored.pop()
             return
+        if tag == 'form' and self.product_form_open:
+            self.product_form_open = False
+            self.product_form_closed = True
+            return
+        if self.product_form_seen and not self.product_form_open:
+            return
         if tag == "h1" and self._h1_depth:
             self._h1_depth -= 1
             self.title_end = len(self.tokens)
 
     def handle_data(self, data):
-        if self.ignored:
+        if self.ignored or (self.product_form_seen and not self.product_form_open):
             return
         for raw in data.splitlines():
             value = " ".join(raw.split())
@@ -117,6 +138,8 @@ class _VisibleLabels(HTMLParser):
             if len(self.tokens) >= _MAX_VISIBLE_TOKENS:
                 raise PublicIdentifierError("visible_text_too_large")
             self.tokens.append(value)
+            if self._h1_depth:
+                self.title_parts.append(value)
 
 
 # Headings identify the product text area on the observed public pages.
@@ -182,7 +205,10 @@ def _role(label: str) -> tuple[str, str | None] | None:
     return role, drm.replace(" ", "_") if drm else None
 
 
-def extract_public_identifiers(html: str, product_url: str) -> dict:
+def extract_public_identifiers(
+    html: str, product_url: str, *,
+    expected_title: str | None = None, require_product_form: bool = False,
+) -> dict:
     """Extract only explicit label/valid EAN pairs, never inferred format rights.
 
     This is a conservative *candidate* parser: two upstream public excerpts
@@ -198,6 +224,20 @@ def extract_public_identifiers(html: str, product_url: str) -> dict:
     reader = _VisibleLabels(product_url)
     reader.feed(html)
     reader.close()
+    # Every production JSON-LD detail read requires the exact, closed public
+    # WebForms product wrapper and an h1 agreeing with the selected Book.
+    # Direct extraction without that strict flag remains usable by legacy
+    # synthetic test callers, but cannot establish published edition proofs.
+    if require_product_form:
+        if (not reader.product_form_seen or not reader.product_form_closed
+                or type(expected_title) is not str or not expected_title.strip()):
+            return {"product_url": product_url, "identifiers": {}, "identifier_evidence": {}}
+    if expected_title is not None:
+        visible_title = " ".join(reader.title_parts)
+        normalized = lambda x: " ".join(unicodedata.normalize("NFKC", x).split()).casefold()
+        if (type(expected_title) is not str or not visible_title
+                or normalized(visible_title) != normalized(expected_title)):
+            return {"product_url": product_url, "identifiers": {}, "identifier_evidence": {}}
     # Only an unambiguous, bounded product region can supply identifiers;
     # a generic footer/sidebar or another product's recommendation cannot.
     identifiers: dict[str, str] = {}
