@@ -47,17 +47,22 @@ def eligible_source_ids(broker: Any, identity_id: str) -> tuple[str, ...]:
             return ()
         ids = []
         for account in accounts:
-            sid = broker._source_id(account)
-            if (mode(broker, sid) == "on_start"
-                    and _binding(broker, sid) is not None):
-                ids.append(sid)
+            try:
+                sid = broker._source_id(account)
+                if (mode(broker, sid) == "on_start"
+                        and _binding(broker, sid) is not None):
+                    ids.append(sid)
+            except Exception:
+                # A corrupt sibling must not suppress other source-specific
+                # consents for this identity. No provider request is made.
+                continue
         return tuple(ids)
     except Exception:
         return ()
 
 
 def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) -> SyncResult:
-    """At most 8 exact purchases per source; each failure stops the batch."""
+    """At most eight attempts *per source*; failures never starve siblings."""
     if trigger != "startup" or type(identity_id) is not str:
         return _result("invalid_trigger")
     total = attempts = skipped = failures = 0
@@ -109,7 +114,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             # Bound memory without blocking ordinary 300+ book libraries.
             if type(raw) not in {list, tuple} or len(raw) > 2048:
                 failures += 1
-                break
+                continue
             manifest_ready = True
             if (_binding(broker, source_id) is None
                     or _binding(broker, source_id)[1] is not session
@@ -118,7 +123,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         source_id,
                     ) != consent_revision):
                 failures += 1
-                break
+                continue
             # Freshly purchased editions may have no cached local right yet.
             # Mirror only attested purchases from THIS authenticated library;
             # the generic public catalogue never enters this path. The mirror
@@ -142,7 +147,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 ) != consent_revision
             ):
                 failures += 1
-                break
+                continue
             # Duplicate editions on a private provider page are ambiguous.
             count = Counter(
                 row.record_id for row in raw
@@ -161,7 +166,10 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 and count[row.record_id] == 1
             ]
             for row in candidates:
-                if attempts >= _MAX_ITEMS_PER_OPENING:
+                # The total is only for the aggregate receipt. The consent
+                # and durable claim are per account, so the download quota
+                # must reset for each independently opted-in account.
+                if attempts - previous[1] >= _MAX_ITEMS_PER_OPENING:
                     break
                 if control is not None and callable(getattr(control, "check_cancelled", None)):
                     control.check_cancelled()
@@ -210,8 +218,11 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             interrupted = True
             raise
         except Exception:
+            # One source's private manifest/ACSM/index failure cannot deny
+            # another independently confirmed account its startup attempt.
+            # Its receipt is finalized in the finally block below.
             failures += 1
-            break
+            continue
         finally:
             if started_at is not None:
                 own_downloaded = total - previous[0]
@@ -236,8 +247,6 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     # metadata, or mask a cooperative cancellation. The
                     # existing durable "running" receipt remains truthful.
                     pass
-        if failures:
-            break
     return _result(
         "partial" if failures and total else "failed" if failures else "complete",
         ok=failures == 0, downloaded=total, attempted=attempts,
