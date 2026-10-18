@@ -32,6 +32,7 @@ class Widget:
     def set_sensitive(self, sensitive): self.sensitive = sensitive
     def set_subtitle(self, text): self.subtitle = text
     def set_label(self, label): self.label = label
+    def set_tooltip_text(self, text): self.tooltip = text
 
 
 @pytest.mark.parametrize('standalone', [False, True])
@@ -155,7 +156,7 @@ def test_editor_loading_keeps_bound_ids_and_choosers_read_current_directory(monk
 
 
 def test_diagnostic_factory_binds_controls_and_keeps_late_refresh_inert(monkeypatch):
-    ui = NS(**{name: Widget() for name in ('summary', 'filter', 'issues_box', 'details_toggle', 'text', 'scroll', 'refresh', 'copy', 'export', 'clear', 'performance_capture', 'performance_export', 'performance_status')})
+    ui = NS(**{name: Widget() for name in ('summary', 'filter', 'issues_box', 'details_toggle', 'text', 'scroll', 'refresh', 'copy', 'export', 'clear', 'performance_capture', 'performance_export', 'performance_status', 'open_page')})
     app = NS(level_dropdown=Widget(), diagnostics_switch=Widget(), levels=['normal'])
     host, lifetime = NS(_closed=False), SettingsPageLifetime()
     callbacks = tuple(Mock() for _ in range(4))
@@ -164,6 +165,8 @@ def test_diagnostic_factory_binds_controls_and_keeps_late_refresh_inert(monkeypa
     monkeypatch.setattr(settings_diagnostics_actions.settings_diagnostics_refresh_controller, 'refresh_settings_diagnostics', refresh)
     refresh_text = settings_diagnostics_actions.bind_settings_diagnostics(host, page_lifetime=lifetime, diagnostic_ui=ui, application_ui=app, Gtk=NS(), Adw=NS(), Gdk=NS(), clear_box=Mock())
     assert refresh.call_count == 1
+    assert ui.open_page.sensitive is False  # Optional page is absent in this fixture.
+    assert 'indisponible' in ui.open_page.tooltip
     ui.refresh.emit('clicked'); ui.filter.emit('notify::selected')
     assert refresh.call_count == 3
     ui.copy.emit('clicked'); ui.export.emit('clicked'); ui.clear.emit('clicked')
