@@ -298,6 +298,21 @@ be retried explicitly; an output published before an indexing interruption is
 preserved and blocks a second fulfillment. Tests use synthetic ACSM/runtime data
 and local SQLite, not a real Adobe account or fulfillment.
 
+### Adobe-first Paris return orchestration (#1120)
+
+`core/return_adept_orchestrator.py` now also executes the existing guarded
+Adobe-first/Paris-verification body. Both `LibraryService` signatures and the
+shared cross-channel loan lock remain unchanged. The facade retains its late
+UUID/public-helper imports at the same execution point and injects those bindings,
+its exception class and logger; the remaining executable AST is identical.
+
+Prior PNB requests still prevent an Adobe mutation. The durable Adobe claim is
+written before the call; repeated clicks, uncertainty and restart recover from
+inventories only. Paris inventory confirmation remains distinct from Adobe return,
+and a PNB POST still requires its separate explicit action. No profile, token,
+retry, provider payload or cleanup rule is changed. Existing synthetic concurrency,
+crash/restart and provenance suites validate the boundary without a real return.
+
 ### Synchronization boundaries
 
 `core/sync_coordination.py` orchestrates explicit account/opening synchronization
