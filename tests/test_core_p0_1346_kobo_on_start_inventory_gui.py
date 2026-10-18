@@ -316,3 +316,51 @@ def test_failed_first_account_is_redacted_and_second_account_still_runs():
         ("attempt", "alice", "startup"),
         ("attempt", "bob", "startup"),
     ]
+
+
+@pytest.mark.parametrize("corruption", [
+    "unhashable_provider", "unhashable_inventory_status",
+    "policy_exception", "bad_phase_accessor",
+])
+def test_bad_first_source_does_not_starve_same_identity_on_start_inventory(
+    corruption,
+):
+    bad = NS(
+        identity_id="alice", source_id="sync:" + "b" * 24,
+        provider_id="numilog", enabled=True, connected=True, sync_capable=True,
+        status="idle", last_attempt="", phase_states=(_phase(),),
+    )
+    healthy = NS(
+        identity_id="alice", source_id="sync:" + "c" * 24,
+        provider_id="numilog", enabled=True, connected=True, sync_capable=True,
+        status="idle", last_attempt="", phase_states=(_phase(),),
+    )
+    r = _rig(accounts=[bad, healthy])
+    if corruption == "unhashable_provider":
+        bad.provider_id = {"error": "NEVER_ECHO_PRIVATE"}
+    elif corruption == "unhashable_inventory_status":
+        bad.phase_states = (_phase(status=["NEVER_ECHO_PRIVATE"]),)
+    elif corruption == "policy_exception":
+        original = r.broker.inventory_refresh_schedule
+        def fail_one(sid):
+            if sid == bad.source_id:
+                raise RuntimeError(
+                    "https://private.invalid/?auth=NEVER_ECHO_PRIVATE"
+                )
+            return original(sid)
+        r.broker.inventory_refresh_schedule = fail_one
+    else:
+        class InvalidPhase:
+            @property
+            def phase(self):
+                raise RuntimeError("NEVER_ECHO_PRIVATE")
+        bad.phase_states = (InvalidPhase(),)
+
+    assert startup.due_startup_identities(r.window, r.broker) == ("alice",)
+    assert startup.dispatch_after_opening(r.window) is True
+    assert len(r.jobs) == 1
+    assert r.jobs[0].options["kind"] == "source-sync"
+    assert not any(entry[0] == "dispatch" for entry in r.records["calls"])
+    r.jobs[0].work()
+    assert ("dispatch", "alice", "startup") in r.records["calls"]
+    assert "NEVER_ECHO_PRIVATE" not in repr(r.jobs)

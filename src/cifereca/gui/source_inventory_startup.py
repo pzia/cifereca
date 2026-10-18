@@ -30,53 +30,58 @@ def due_startup_identities(window: Any, broker: Any) -> tuple[str, ...]:
             if not isinstance(sources, (tuple, list)) or len(sources) > _MAX_SOURCES:
                 continue
             for source in sources:
-                if (
-                    getattr(source, "identity_id", None) != identity
-                    or getattr(source, "provider_id", None) not in {"kobo", "numilog"}
-                    or getattr(source, "enabled", None) is not True
-                    or getattr(source, "connected", None) is not True
-                    or getattr(source, "sync_capable", None) is not True
-                ):
+                try:
+                    if (
+                        getattr(source, "identity_id", None) != identity
+                        or getattr(source, "provider_id", None) not in {"kobo", "numilog"}
+                        or getattr(source, "enabled", None) is not True
+                        or getattr(source, "connected", None) is not True
+                        or getattr(source, "sync_capable", None) is not True
+                    ):
+                        continue
+                    source_id = getattr(source, "source_id", None)
+                    if type(source_id) is not str or not source_id.startswith("sync:"):
+                        continue
+                    policy = _policy(broker.inventory_refresh_schedule(source_id))
+                    if policy is None or policy.mode != "on_start":
+                        continue
+                    # A generic source status can describe only opening loans.
+                    # Phase-less or malformed inventory evidence cannot authorize
+                    # a second automatic provider request.
+                    phases = getattr(source, "phase_states", ())
+                    if not isinstance(phases, (tuple, list)) or not 1 <= len(phases) <= 8:
+                        continue
+                    inventory = [
+                        phase for phase in phases
+                        if getattr(phase, "phase", None) == "discover_rights"
+                    ]
+                    if len(inventory) != 1:
+                        continue
+                    phase = inventory[0]
+                    status = getattr(phase, "status", None)
+                    last_attempt = getattr(phase, "last_attempt", None)
+                    if (
+                        type(last_attempt) is not str
+                        or status not in {
+                            "idle", "running", "success", "partial", "failed",
+                        }
+                    ):
+                        continue
+                    # The opening worker should have completed, but a manual
+                    # second sync may have started between the two callbacks.
+                    if getattr(source, "status", "") == "running":
+                        continue
+                    if source_refresh_due(
+                        policy, trigger="startup", now=now,
+                        last_attempt=last_attempt, phase_status=status,
+                        enabled=True, connected=True, capable=True,
+                    ):
+                        due.append(identity)
+                        break  # the broker performs per-source admission
+                except Exception:
+                    # A corrupt source cannot suppress another opted-in source
+                    # under the same identity or leak private provider errors.
                     continue
-                source_id = getattr(source, "source_id", None)
-                if type(source_id) is not str or not source_id.startswith("sync:"):
-                    continue
-                policy = _policy(broker.inventory_refresh_schedule(source_id))
-                if policy is None or policy.mode != "on_start":
-                    continue
-                # A generic source status can describe only opening loans.
-                # Phase-less or malformed inventory evidence cannot authorize
-                # a second automatic provider request.
-                phases = getattr(source, "phase_states", ())
-                if not isinstance(phases, (tuple, list)) or not 1 <= len(phases) <= 8:
-                    continue
-                inventory = [
-                    phase for phase in phases
-                    if getattr(phase, "phase", None) == "discover_rights"
-                ]
-                if len(inventory) != 1:
-                    continue
-                phase = inventory[0]
-                status = getattr(phase, "status", None)
-                last_attempt = getattr(phase, "last_attempt", None)
-                if (
-                    type(last_attempt) is not str
-                    or status not in {
-                        "idle", "running", "success", "partial", "failed",
-                    }
-                ):
-                    continue
-                # The opening worker should have completed, but a manual
-                # second sync may have started between the two callbacks.
-                if getattr(source, "status", "") == "running":
-                    continue
-                if source_refresh_due(
-                    policy, trigger="startup", now=now,
-                    last_attempt=last_attempt, phase_status=status,
-                    enabled=True, connected=True, capable=True,
-                ):
-                    due.append(identity)
-                    break  # the broker performs per-source admission
         except Exception:
             continue
     return tuple(due[:_MAX_STARTUP_IDENTITIES])
