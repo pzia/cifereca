@@ -5,6 +5,7 @@ Only a bounded directory/SQLite inspection happens on explicit acquisition;
 no hashing, adoption, deletion or global catalogue scan happens here.
 """
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -40,7 +41,8 @@ def _known_paths(storage, identity_id, root):
                 (identity_id, MAX_ENTRIES + 1),
             ).fetchall()
             receipts = db.execute(
-                "SELECT credential_id,account_id,item_id,status,substr(metadata_json,1,8193) "
+                "SELECT acquisition_id,credential_id,account_id,item_id,status,"
+                "artifact_id,substr(metadata_json,1,8193) "
                 "FROM acquisition_ledger WHERE identity_id=? AND provider_id='numilog' LIMIT ?",
                 (identity_id, MAX_ENTRIES + 1),
             ).fetchall()
@@ -48,23 +50,56 @@ def _known_paths(storage, identity_id, root):
             db.execute('RELEASE SAVEPOINT numilog_publications')
     _require(len(placements) <= MAX_ENTRIES and len(receipts) <= MAX_ENTRIES)
     known = set()
+    # An ACSM imported by the *Core ADEPT broker* has a different source
+    # key (sha256 of the ACSM) from its eventual Numilog purchased edition.
+    # Treat that existing file as tracked publication, NOT an owned right,
+    # only if the original manual-acsm ledger + placement + artifact agree.
+    # A directory name, title, or raw ACSM hash alone is never enough.
+    manual_candidates = {}
     for path, item, aid, sha, size, fmt in placements:
-        if (type(path) is str and len(path) <= 4096 and _path_in_identity(path, (root,))
-                and type(item) is str and _ITEM.fullmatch(item)
-                and type(sha) is str and _SHA.fullmatch(sha) and aid == 'sha256:' + sha
-                and type(size) is int and size > 0 and fmt in {'epub', 'kepub', 'pdf'}):
+        if not (type(path) is str and len(path) <= 4096
+                and _path_in_identity(path, (root,))
+                and type(sha) is str and _SHA.fullmatch(sha)
+                and aid == 'sha256:' + sha
+                and type(size) is int and size > 0
+                and fmt in {'epub', 'kepub', 'pdf'}):
+            continue
+        if type(item) is str and _ITEM.fullmatch(item):
             known.add(path)
-    for credential, account, item, status, raw in receipts:
-        if (type(credential) is not str or not credential or type(account) is not str or not account
-                or _scoped_record_id(item, credential) is None
-                or status not in {'attention_required', 'complete'}
-                or type(raw) is not str or len(raw) > 8192):
+        elif (type(item) is str and _SHA.fullmatch(item)
+              and Path(path).parent.parent == root
+              and Path(path).parent.name == 'acsm-' + item):
+            manual_candidates[path] = (item, aid)
+    for acquisition_id, credential, account, item, status, artifact_id, raw in receipts:
+        if type(raw) is not str or len(raw) > 8192:
             continue
         try:
             meta = json.loads(raw)
         except (ValueError, RecursionError):
             continue
-        if (type(meta) is dict and meta.get('kind') == 'numilog_delivered_artifact_v1'
+        if type(meta) is not dict:
+            continue
+        if credential == 'manual':
+            # Only an original successful same-identity broker import may
+            # justify a pre-existing nested ACSM file during an explicit GET.
+            # It cannot authorize linking that file to a purchase; the
+            # receipt/adoption path checks ownership and hashes separately.
+            if (type(item) is str and _SHA.fullmatch(item)
+                    and acquisition_id == 'manual-acsm:' + hashlib.sha256(
+                        (identity_id + ':' + item).encode(),
+                    ).hexdigest()[:32]
+                    and status == 'complete'
+                    and meta.get('source_acsm_sha256') == item
+                    and type(meta.get('path')) is str
+                    and manual_candidates.get(meta['path']) == (item, artifact_id)):
+                known.add(meta['path'])
+            continue
+        if (type(credential) is not str or not credential
+                or type(account) is not str or not account
+                or _scoped_record_id(item, credential) is None
+                or status not in {'attention_required', 'complete'}):
+            continue
+        if (meta.get('kind') == 'numilog_delivered_artifact_v1'
                 and meta.get('phase') in {'index_pending', 'indexed'} and meta.get('root') == str(root)
                 and _path_in_identity(meta.get('path'), (root,))
                 and type(meta.get('sha256')) is str and _SHA.fullmatch(meta['sha256'])
