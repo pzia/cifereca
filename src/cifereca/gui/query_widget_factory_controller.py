@@ -21,9 +21,12 @@ def build_query_controls(window, changed, activate, *, library=False, QueryContr
     if callable(factory):
         try:
             controls = factory(providers, changed, activate, library=library)
-        except Exception as exc:
+        except Exception:
+            # A plugin factory may include private search URLs or settings
+            # in its exception. The stable code is enough for Diagnostics.
             window.diagnostics.add(
-                "PLUGIN", "query widget", "error", detail={"error": str(exc)},
+                "PLUGIN", "query widget", "error",
+                detail={"code": "query_widget_factory_failed"},
             )
     if controls is None:
         controls = QueryControls(providers, changed, activate, library=library)
