@@ -72,4 +72,4 @@ jobs:
             dist/cifereca-plugins-only-preview-*.zip
             dist/cifereca-plugins-only-preview-*.zip.sha256
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
