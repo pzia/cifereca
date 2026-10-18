@@ -908,3 +908,53 @@ sans HTTP supplémentaire ni URL de commande, cookie ou `ref`
 dans les logs. Cette correction renseigne la provenance de la
 navigation, **pas la validité d'une session réelle** ni le succès
 d'acquisition sur le serveur Numilog.
+
+
+## Numilog 0.1.47 — liaison réelle `m=dwld` / `m=stream` (#2024)
+
+Une contre-épreuve du 18/10/2026 a identifié **le même `lid`** dans
+deux ancres de **fonctions différentes** :
+
+- `MesLivres.aspx` : `readBook.ashx?lid=<PRIVÉ>&m=dwld` — le lien
+  de l'achat fraîchement possédé, utilisé au clic pour accéder à la
+  livraison.
+- `ConfirmationPaiement.aspx?ref=<PRIVÉ>&disp=simple` :
+  `readBook.ashx?lid=<MÊME_LID_PRIVÉ>&m=stream` —
+  l'ancre **« Lire en ligne (Streaming) »** dans la carte commerciale
+  comportant le bouton `ModalDownload(ProductId, IndexExemplaire)`.
+
+Le comparateur historique de `_confirmation_delivery` exigeait
+l'égalité totale des paramètres GET, dont `m`, ce qui rejetait
+systématiquement cette liaison `dwld != stream` comme ambiguë.
+**Seule la liaison d'identité dans la confirmation canonique HTTPS
+Numilog** tolère désormais le changement *directionnel*
+`m=('dwld',)` sur le lien *MesLivres* → `m=('stream',)` sur l'ancre
+de la carte de confirmation. Le `lid` numérique doit être identique
+et **tous les autres paramètres**, clés, valeurs et répétitions
+incluses, doivent correspondre exactement. L'ancienne égalité
+stricte reste inchangée partout ailleurs (autres pages, catalogues,
+livraisons directes, autres modes).
+
+**Le lien `m=stream` n'est jamais téléchargé** : c'est seulement
+un indice de rattachement à la carte. Le fichier est obtenu via
+l'**unique** objet `Links` Adobe signé, après vérification du
+`ModalDownload` constant (produit + index d'exemplaire), de la
+carte unique, du `readBook` frais et de la référence `ref`
+cohérente. Les alternatives LCP présentes dans `Links` ne sont
+ni consommées ni traitées comme un second ACSM.
+
+Tests HTTPX **sans compte réel** : les deux entrées `readBook 302`
+et href direct d'achat, avec et sans widget login ; succès ACSM
+fictif (broker appelé une fois) ; absence totale de GET
+`m=stream` ; refus `lid` différent, mauvais mode, double mode,
+paramètre supplémentaire, ordre des valeurs répétées différent,
+streaming hors carte ou dupliqué, produit/copie/ref discordants,
+route non canonique ou origin hostile. Les traces restent
+expurgées (`lid`, `ref`, `orderid`, `resid`, `auth`, cookies,
+URL ACSM, HTML et titres privés jamais exportés).
+
+**Limite de preuve** : la présence et la position dans le DOM réel
+du lien streaming ainsi que les droits/fichiers ADEPT de l'utilisateur
+ne sont pas accessibles au test. Le ticket P0 #2024 reste ouvert
+jusqu'à un ACSM véritablement récupéré puis validé par le broker
+avec la version **réellement installée**, distincte du Core.
