@@ -67,10 +67,10 @@ def _safe_member(info: zipfile.ZipInfo) -> PurePosixPath:
     p = PurePosixPath(name)
     wp = PureWindowsPath(name)
     if p.is_absolute() or wp.is_absolute() or bool(wp.drive) or ".." in p.parts or not p.parts:
-        raise UpdateError(f"Chemin interdit dans l'archive: {info.filename}")
+        raise UpdateError("Chemin interdit dans l'archive")
     mode = info.external_attr >> 16
     if stat.S_ISLNK(mode):
-        raise UpdateError(f"Symlink ZIP interdit: {info.filename}")
+        raise UpdateError("Symlink ZIP interdit dans l'archive")
     return p
 
 
@@ -543,7 +543,7 @@ def _create_update_transaction(
         shutil.rmtree(tmp, ignore_errors=True)
         if isinstance(exc, UpdateError):
             raise
-        raise UpdateError(f"Snapshot transactionnel des plugins impossible: {exc}") from exc
+        raise UpdateError("Snapshot transactionnel des plugins impossible") from exc
 
 
 def _restore_transaction_packages(path: Path, transaction: dict[str, Any]) -> None:
@@ -575,8 +575,7 @@ def _smoke_restored_plugins(release: Path, transaction: dict[str, Any]) -> dict[
         [str(cli), "plugin", "list"], text=True, capture_output=True, timeout=120, check=False,
     )
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise UpdateError(f"Validation des plugins restaurés échouée: {detail[-1200:]}")
+        raise UpdateError("Validation des plugins restaurés échouée")
     try:
         rows = json.loads(proc.stdout)
     except Exception as exc:
@@ -636,7 +635,7 @@ def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str,
     try:
         _restore_transaction_packages(path, transaction)
     except Exception as exc:
-        errors.append(f"plugins: {exc}")
+        errors.append("plugins")
     core = transaction.get("core") if isinstance(transaction.get("core"), dict) else {}
     try:
         _restore_release_links(
@@ -653,11 +652,11 @@ def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str,
             for command in (*PUBLIC_COMMANDS, DEV_COMMAND):
                 (bin_dir() / command).unlink(missing_ok=True)
     except Exception as exc:
-        errors.append(f"Core: {exc}")
+        errors.append("core")
     if errors:
         transaction["restoration_errors"] = errors
         _save_transaction(path, transaction, "restoration_incomplete")
-        raise UpdateError("Restauration transactionnelle incomplète: " + "; ".join(errors))
+        raise UpdateError("Restauration transactionnelle incomplète: " + ", ".join(errors))
     transaction.pop("restoration_errors", None)
     _save_transaction(path, transaction, "rolled_back" if state == "rolling_back" else "update_failed_restored")
 
@@ -697,8 +696,7 @@ def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | N
     ]
     proc = subprocess.run(command, text=True, capture_output=True, timeout=180, check=False)
     if proc.returncode != 0 or not snapshot.is_file():
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise UpdateError(f"Construction du snapshot plugins impossible: {detail[-1200:]}")
+        raise UpdateError("Construction du snapshot plugins impossible")
     return snapshot
 
 
@@ -711,8 +709,7 @@ def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, A
         text=True, capture_output=True, timeout=300, check=False,
     )
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise UpdateError(f"Upgrade des plugins de release échoué: {detail[-1600:]}")
+        raise UpdateError("Upgrade des plugins de release échoué")
     try:
         value = json.loads(proc.stdout)
     except Exception as exc:
@@ -818,14 +815,14 @@ def install_source(
                 step("rollback", _complete_transaction_restore, root, transaction_path, transaction, "restoring")
             except Exception as rollback_exc:
                 raise UpdateError(
-                    f"Mise à jour échouée ({update_exc}) et restauration incomplète: {rollback_exc}"
+                    "Mise à jour échouée et restauration transactionnelle incomplète"
                 ) from rollback_exc
         elif switched:
             try:
                 step("rollback", _restore_release_links, root, old_current, old_previous)
             except Exception as rollback_exc:
                 raise UpdateError(
-                    f"Mise à jour échouée et rollback Core impossible: {rollback_exc}"
+                    "Mise à jour échouée et rollback Core impossible"
                 ) from rollback_exc
         current = _symlink_target(root / "current")
         if current is None or current.resolve() != release.resolve():
