@@ -298,30 +298,26 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     detail["providers"].append(provider)
                 try:
                     loan_started = time.monotonic()
-                    logger.info(
-                        "TRACE loans sync begin identity=%s provider=%s credential=%s account=%s",
-                        identity.identity_id, provider, account.credential_id, account.unique_id or "primary",
-                    )
+                    logger.info("TRACE loans sync begin")
                     account_loans = self._loans_for_account(account, force=True)
                     logger.info(
-                        "TRACE loans sync end identity=%s provider=%s credential=%s account=%s count=%s dt=%.3fs",
-                        identity.identity_id, provider, account.credential_id, account.unique_id or "primary",
+                        "TRACE loans sync end count=%s dt=%.3fs",
                         len(account_loans), time.monotonic() - loan_started,
                     )
                     session = self._sessions.get(self._session_key(account.provider_id, account.credential_id))
                     partial_errors = list(getattr(session, "last_loan_errors", []) or []) if session is not None else []
                     if partial_errors:
                         errors += len(partial_errors)
-                        for part in partial_errors:
-                            provider_errors.append({
-                                "provider": provider, "credential_id": account.credential_id,
-                                "account_id": account.unique_id,
-                                "upstream": str(part.get("upstream") or ""),
-                                "error": str(part.get("error") or ""),
-                            })
+                        # Provider partial errors are untrusted data (potentially
+                        # a signed URL, account ID or HTTP body). Persist only
+                        # closed event codes, preserving the exact failure count.
+                        provider_errors.extend(
+                            {"code": "loan_partial_failure"}
+                            for _ in partial_errors
+                        )
                         logger.warning(
-                            "TRACE loans sync partial identity=%s provider=%s credential=%s account=%s errors=%s",
-                            identity.identity_id, provider, account.credential_id, account.unique_id or "primary", partial_errors,
+                            "TRACE loans sync partial code=loan_partial_failure count=%s",
+                            len(partial_errors),
                         )
                     source_outcomes[source_id] = (
                         "partial" if partial_errors else "success"
@@ -330,13 +326,12 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         key = (loan.source_provider, loan.source_credential, str(loan.source_account_id or ""), loan.id)
                         if key not in seen_loans:
                             seen_loans.add(key); loans.append(loan)
-                except Exception as exc:
+                except Exception:
                     errors += 1
-                    provider_errors.append({"provider": provider, "credential_id": account.credential_id, "account_id": account.unique_id, "error": str(exc)})
-                    logger.exception(
-                        "TRACE loans sync error identity=%s provider=%s credential=%s account=%s",
-                        identity.identity_id, provider, account.credential_id, account.unique_id or "primary",
-                    )
+                    provider_errors.append({"code": "loan_source_failed"})
+                    # logger.exception would serialize a provider-controlled
+                    # traceback, including credentials or a signed ACSM URL.
+                    logger.warning("TRACE loans sync error code=loan_source_failed")
             loans.sort(key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
             all_loans.extend(loans)
             detail["loans"] = len(loans)
