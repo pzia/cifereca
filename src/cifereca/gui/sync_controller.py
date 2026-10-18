@@ -1198,11 +1198,25 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
         acquisitions = sum(int(x.get("new_acquisitions") or 0) for x in summary.get("identities", []))
         attention = sum(int(x.get("attention_required") or 0) for x in summary.get("identities", []))
         errors = sum(int(x.get("errors") or 0) for x in summary.get("identities", []))
-        if acquisitions or attention or errors:
+        def guard_count(key: str) -> int:
+            values = [row.get(key) for row in summary.get("identities", [])]
+            return sum(value for value in values
+                       if type(value) is int and 0 <= value <= 1_000_000)
+
+        borrower = guard_count("skipped_borrower_binding")
+        cross_identity = guard_count("skipped_cross_identity")
+        if acquisitions or attention or errors or borrower or cross_identity:
+            message = f"Synchronisation : {acquisitions} acquisition(s), {attention} action(s), {errors} erreur(s)"
+            reasons = []
+            if borrower:
+                reasons.append(f"{borrower} association(s) emprunteur à configurer")
+            if cross_identity:
+                reasons.append(f"{cross_identity} conflit(s) entre identités")
+            if reasons:
+                message += " · " + ", ".join(reasons)
+            needs_attention = bool(attention or errors or borrower or cross_identity)
             self._activity_result(
-                f"Synchronisation : {acquisitions} acquisition(s), {attention} action(s), {errors} erreur(s)",
-                success=not bool(attention or errors),
-                persistent=bool(attention or errors),
+                message, success=not needs_attention, persistent=needs_attention,
             )
         # The global opening worker has finished and released its process
         # acquisition lock. Only now may opted-in Kobo inventory sources
