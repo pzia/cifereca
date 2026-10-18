@@ -39,6 +39,11 @@ _KNOWN_NON_ACSM_ERRORS = {
     'invalid_profile': 'Profil Kobo-Adept invalide.',
 }
 
+# This bound applies to *every* JSON command, not only loan inventory reads.
+# subprocess.run still captures process output before this check; it prevents
+# unbounded UTF-8 decoding, JSON parsing and returning oversized vendor data.
+_MAX_JSON_RESPONSE_BYTES = 4 * 1024 * 1024
+
 
 def classified_adept_failure(error, exit_code):
     """Classify a FAILED, proven ACSM download request only.
@@ -97,7 +102,10 @@ class KoboAdeptRuntime:
             # Diagnostics must never alter the runtime operation.
             logger = getattr(self.context, "logger", None)
             if logger is not None:
-                logger.debug("Kobo-Adept diagnostic reporter unavailable", exc_info=True)
+                # A failing diagnostic callback may embed a signed URL,
+                # certificate or private profile in its exception message.
+                # Do not attach its traceback or exception representation.
+                logger.debug("Kobo-Adept diagnostic reporter unavailable")
 
     @property
     def command(self):
@@ -112,6 +120,15 @@ class KoboAdeptRuntime:
     def run_json(self, args, *, payload=None, timeout=60, max_output_bytes=None):
         started = time.monotonic()
         self.last_run_diagnostic = {'operation': operation_family(args)}
+        if max_output_bytes is None:
+            output_limit = _MAX_JSON_RESPONSE_BYTES
+        elif (type(max_output_bytes) is not int
+              or not 1 <= max_output_bytes <= _MAX_JSON_RESPONSE_BYTES):
+            # Reject invalid budgets before starting a subprocess, even if
+            # a caller tries to disable the cap with a huge value or bool.
+            raise ValueError("invalid Kobo-Adept JSON response limit")
+        else:
+            output_limit = max_output_bytes
 
         def statistics(stdout, stderr, returncode=None):
             out, err = output_bytes(stdout), output_bytes(stderr)
@@ -151,7 +168,7 @@ class KoboAdeptRuntime:
             fail('Kobo-Adept ne peut pas être exécuté.', 'kobo_adept_launch_error')
 
         out, err = statistics(proc.stdout, proc.stderr, proc.returncode)
-        if max_output_bytes is not None and len(out) > max_output_bytes:
+        if len(out) > output_limit:
             self.last_run_diagnostic.update(stdout_mode='oversized', stdout_summary='sortie trop volumineuse')
             fail('La réponse Kobo-Adept dépasse la limite de lecture.', 'kobo_adept_output_too_large', returncode=proc.returncode)
         try:
@@ -173,6 +190,19 @@ class KoboAdeptRuntime:
             self.last_run_diagnostic.update(stdout_mode='unexpected_json_type', stdout_summary='JSON de type inattendu')
             fail('Kobo-Adept a renvoyé un document inattendu.', 'kobo_adept_invalid_response', returncode=proc.returncode)
         self.last_run_diagnostic.update(stdout_mode='json', stdout_summary='objet JSON')
+        # The public CLI contract is an explicit boolean acknowledgement.
+        # Exit 0 on its own is not evidence that a profile was created, an
+        # ACSM was fulfilled or a loan was returned. Never interpret missing,
+        # null, integer or string "ok" as a successful command.
+        if proc.returncode == 0 and value.get('ok') is not True and value.get('ok') is not False:
+            fail('Kobo-Adept n’a pas confirmé le résultat de la commande.',
+                 'kobo_adept_invalid_response', returncode=proc.returncode)
+        # A payload reporting both success and a vendor error is contradictory.
+        # Reject it without forwarding the vendor's potentially private error
+        # object through Core or through the diagnostic reporter.
+        if proc.returncode == 0 and value.get('ok') is True and value.get('error') is not None:
+            fail('Kobo-Adept a renvoyé un résultat contradictoire.',
+                 'kobo_adept_invalid_response', returncode=proc.returncode)
         if proc.returncode != 0 or value.get('ok') is False:
             error = value.get('error') if isinstance(value.get('error'), dict) else {}
             acsm_request = (
