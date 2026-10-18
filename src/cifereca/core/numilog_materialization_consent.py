@@ -105,8 +105,11 @@ def prepare(broker: Any, source_id: str) -> SyncResult:
         # Exact session and library configuration are kept only in memory.
         scope = (source_id, account.identity_id, account.credential_id,
                  account.unique_id)
+        revision = broker.service.storage.numilog_materialization_consent_revision(
+            source_id,
+        )
         snapshot = (id(session), tuple(str(root) for root in roots),
-                    tuple(sorted(counts.items())))
+                    tuple(sorted(counts.items())), revision)
         token = broker._numilog_consent_plans.put(scope, snapshot, (session,))
         return _receipt(
             "confirmation_required", ok=True,
@@ -139,10 +142,13 @@ def confirm(broker: Any, source_id: str, token: str, *, mode: str) -> SyncResult
                     tuple(sorted(counts.items()))) if type(counts) is dict else None
         if (preview.ok is not True
                 or preview.facts.get("files_verified") is not True
-                or evidence != row[2] or row[3][0] is not session
+                or evidence != row[2][:3] or row[3][0] is not session
                 or _binding(broker, source_id) is None):
             return _receipt("preview_changed")
-        broker.service.storage.metadata_set(policy_key(source_id), _ACTIVE)
+        if not broker.service.storage.numilog_materialization_change_consent(
+            source_id, activate=True, expected_revision=row[2][3],
+        ):
+            return _receipt("consent_changed")
         broker._notify()
         return _receipt("on_start", ok=True, mode="on_start",
                         next_trigger="next_opening", schedule_available=True)
@@ -160,7 +166,9 @@ def revoke(broker: Any, source_id: str) -> str:
     ]
     if len(rows) != 1:
         raise ValueError("unknown_numilog_source")
-    broker.service.storage.metadata_set(policy_key(source_id), _MANUAL)
+    broker.service.storage.numilog_materialization_change_consent(
+        source_id, activate=False,
+    )
     with broker._numilog_consent_plans.lock:
         broker._numilog_consent_plans.entries.clear()
     broker._notify()
