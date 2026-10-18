@@ -8,6 +8,7 @@ import httpx
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
 BASE='https://www.ebooksgratuits.com/'
+MAX_REQUESTED_PAGES = 101  # Pages 0..100, not an unbounded upstream scan.
 _RELEASE_RE = re.compile(r'\bParution\s+le\s+([0-3][0-9]/[01][0-9]/[0-9]{4})\b', re.I)
 _RESTRICTION_RE = re.compile(r'téléchargement\s+non\s+autorisé\s+dans\s+certains\s+pays', re.I)
 _MAX_CARD_PLAINTEXT = 12_000
@@ -28,7 +29,7 @@ def _rights_warning_attested(value):
     return bool(_RESTRICTION_RE.search(value[:_MAX_CARD_PLAINTEXT]))
 
 
-DESCRIPTOR=ProviderDescriptor(id='ebooksgratuits',display_name='Ebooks libres et gratuits',description='Catalogue public francophone et téléchargement EPUB.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all','title','author','subject','category','genre'),scopes=('all','digital'),pagination='page',page_size=50,notes=('all/title : formulaire public de recherche par texte titre ; pas une recherche serveur exacte multi-attributs.','author/category/genre : choix dans les sélecteurs HTML publics ; subject : catégorie ou genre disponible, pas un index de sujets exhaustif.','Une valeur sans option correspondante donne zéro parmi les sélecteurs publiés, pas une preuve d’absence dans tout le catalogue.',)),homepage=BASE,notes=('Source publique sans authentification.','Recherche par titre, auteur, catégorie et genre.'))
+DESCRIPTOR=ProviderDescriptor(id='ebooksgratuits',display_name='Ebooks libres et gratuits',description='Catalogue public francophone et téléchargement EPUB.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all','title','author','subject','category','genre'),scopes=('all','digital'),pagination='page',page_size=50,max_pages=MAX_REQUESTED_PAGES,notes=('all/title : formulaire public de recherche par texte titre ; pas une recherche serveur exacte multi-attributs.','author/category/genre : choix dans les sélecteurs HTML publics ; subject : catégorie ou genre disponible, pas un index de sujets exhaustif.','Une valeur sans option correspondante donne zéro parmi les sélecteurs publiés, pas une preuve d’absence dans tout le catalogue.',)),homepage=BASE,notes=('Source publique sans authentification.','Recherche par titre, auteur, catégorie et genre.'))
 class Parser(HTMLParser):
     """Small structured parser for catalog <li> cards; no regex-based DOM slicing."""
     def __init__(self, base_url=BASE):
@@ -155,7 +156,7 @@ def _public_search_error(exc):
 
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.13','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.14','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Catalogue public',unique_id='ebooksgratuits',provider_id='ebooksgratuits',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close(); self.connected=False; self._accounts=[]
@@ -164,7 +165,7 @@ class EbooksSession(ProviderSession):
         except httpx.HTTPError as e: raise _public_search_error(e) from e
     @staticmethod
     def _search_payload(query,page,page_size=50):
-        return {'titre':str(query or '').strip(),'offset':str(max(0,int(page))*int(page_size)),'Submit':'Rechercher'}
+        return {'titre':str(query or '').strip(),'offset':str(page*page_size),'Submit':'Rechercher'}
     def search(self,query,scope='all',page=0,field='all'):
         self.last_search_warnings = []
         # Unimplemented fields/scopes must never masquerade as zero matches.
@@ -173,7 +174,11 @@ class EbooksSession(ProviderSession):
         if type(scope) is not str or scope.strip().casefold() not in DESCRIPTOR.search_capabilities.scopes:
             raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_scope')
         if not self.connected: raise ProviderError('Ebooks libres et gratuits : connecter le catalogue')
-        page=max(0,int(page)); field=field.strip().casefold(); attested_metadata={}
+        if type(page) is not int or not 0 <= page < MAX_REQUESTED_PAGES:
+            # Invalid pages must never mean a successful page-zero search,
+            # nor send a malformed offset to the public server.
+            raise ProviderCapabilityError('Ebooks libres et gratuits : invalid_page')
+        field=field.strip().casefold(); attested_metadata={}
         if field in {'author','subject','category','genre'}:
             if not str(query or '').strip():
                 return []
