@@ -2761,7 +2761,7 @@ class LibraryService:
         failure_executor = "provider"
         try:
             acquisition = loan_provider_delivery.acquire_provider_loan(
-                self, loan, force_refresh=force_refresh,
+                self, loan, force_refresh=force_refresh, identity_id=identity.identity_id,
                 time=time, _TRACE_LOG=_TRACE_LOG,
             )
             final_path = acquisition.path
@@ -2880,7 +2880,7 @@ class LibraryService:
                     loan.id, diag.get("returncode"), diag.get("duration_ms"), diag.get("stdout_mode"), time.monotonic()-adept_started,
                 )
                 final_path, artifact_drm, artifact_format, artifact_protected, hook_info = adept_artifact_publication.publish(
-                    result=result, adept_destination=adept_destination,
+                    result=result, adept_destination=adept_destination, identity_id=identity.identity_id,
                     acsm_format=acsm_format, loan=loan, repair_mode=repair_mode,
                     destination=destination, previous_path=previous_path,
                     Path=Path, ProviderConfigurationError=ProviderConfigurationError,
