@@ -2945,8 +2945,9 @@ class LibraryService:
                     raw, exc=exc,
                     candidate=locals().get("adept_destination"), path_type=Path,
                 )
+                from .core.loan_failure_diagnostics import failure_fields
                 self.diagnostics.add("KOBO-ADEPT", "acquisition failed", "error",
-                    detail={"code": code, "message": str(exc), **process}, level="errors")
+                    detail=failure_fields(code=code, process=process, loan_ref=trace_ref), level="errors")
             message = str(exc)
             if code == "pnb_redirect_refused":
                 plugin_version = "inconnue"
@@ -2956,7 +2957,7 @@ class LibraryService:
                     except KeyError:
                         pass
                 message += f" (Plugin {loan.source_provider} {plugin_version} ; consulter les traces PNB target_scheme / target_port pour distinguer protocole, port et hôte.)"
-                self.diagnostics.add("PNB", "redirect refused", "warning", detail={"provider_loan_id": loan.id, "provider": loan.source_provider, "plugin_version": plugin_version}, level="errors")
+                self.diagnostics.add("PNB", "redirect refused", "warning", detail={"loan_ref": trace_ref, "code": "pnb_redirect_refused"}, level="errors")
             if process:
                 facts = ", ".join(f"{key}={value}" for key, value in process.items())
                 message += f" ({facts})"
