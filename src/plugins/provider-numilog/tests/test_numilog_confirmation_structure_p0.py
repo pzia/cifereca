@@ -634,3 +634,20 @@ def test_form_pointing_to_confirmation_on_other_html_is_not_a_ref_mismatch():
         FIXTURE.read_text(), landing, allowed_origins=ALLOWED,
         expected_readbook=READ_12,
     ) == SIGNED
+
+
+@pytest.mark.parametrize('bad_query', (
+    'ref=FICTIONAL&ref=SECOND_PRIVATE&disp=simple',
+    'ref=FICTIONAL&disp=simple&unparsed',
+    'ref=FICTIONAL&disp=simple&' + '&'.join(f'x{i}=v' for i in range(40)),
+))
+def test_confirmation_get_query_ambiguity_rejects_even_matching_html_form(bad_query):
+    """Bounds/strict parsing apply to the actual GET, not only form action."""
+    url = 'https://www.numilog.com/Pages/Commande/ConfirmationPaiement.aspx?' + bad_query
+    with pytest.raises(DeliverySelectionError, match='ambiguous') as exc:
+        delivery_url(
+            FIXTURE.read_text(), url, allowed_origins=ALLOWED,
+            expected_readbook=READ_12, require_bound_confirmation=True,
+        )
+    assert 'SECOND_PRIVATE' not in str(exc.value)
+    assert 'FICTIONAL' not in str(exc.value)
