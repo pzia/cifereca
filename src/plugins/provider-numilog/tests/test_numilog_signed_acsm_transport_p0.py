@@ -479,7 +479,9 @@ def test_acsm_broker_returns_nested_identity_artifact_without_flattening_or_inde
         ]
         assert events[-1]["phase"] == "completed"
         assert events[-1]["code"] == "acsm_complete"
-        assert events[-1]["status"] == "ok"
+        # The terminal success is the diagnostics.add status argument,
+        # NOT a claim that Core has completed the purchase-specific index.
+        assert diag.events[-1][0][:3] == ("NUMILOG", "acquisition_delivery", "ok")
         assert not any(event.get("phase") == "core_index_complete" for event in events)
         for sensitive in (
             "FICTIONAL_SOURCE_SHA", "PRIVATE_BOOK_TITLE",
