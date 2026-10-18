@@ -15,8 +15,11 @@ def plugins_changed(window) -> None:
         return
     try:
         window.service.attach_plugin_manager(window.plugin_manager)
-    except Exception as exc:
-        window.diagnostics.add("PLUGIN", "provider refresh after plugin change", "error", detail={"error": str(exc)}, level="detailed")
+    except Exception:
+        window.diagnostics.add(
+            "PLUGIN", "provider refresh after plugin change", "error",
+            detail={"code": "provider_refresh_failed"}, level="detailed",
+        )
     # A plugin hook may synchronously dispose the window while attaching or
     # rebuilding its pages. Do not resume touching detached GTK widgets.
     if getattr(window, "_closed", False):
