@@ -20,7 +20,7 @@ from urllib.parse import quote
 
 from .install_paths import ArchiveNotFoundError, resolve_archive
 from .paths import config_dir, data_dir, database_file, state_dir
-from .update_progress import step, update_phase, update_operation
+from .update_progress import step, update_phase, update_operation, skip_update_phase
 
 PROJECT_NAME = "cifereca"
 PROJECT_DIR_NAME = "cifereca"
@@ -775,6 +775,15 @@ def install_source(
     if provenance:
         result["provenance"] = dict(provenance)
     if dry_run:
+        # A dry-run only checks metadata and Python selection. Explicitly
+        # distinguish unexecuted stages from actual validated success,
+        # without allocating a runtime tree or contacting plugin services.
+        for skipped_stage in (
+            "recover", "source_copy", "venv", "smoke", "backup",
+            "plugin_snapshot", "transaction_prepare", "core_activation",
+            "plugin_activation", "transaction_finalize", "cleanup",
+        ):
+            skip_update_phase(skipped_stage)
         return result
     recovered = step("recover", _recover_incomplete_transactions, root)
     if recovered:
