@@ -856,3 +856,30 @@ La comparaison est en mémoire seulement, sans exposer l'un ou l'autre
 `ref` dans la trace, l'erreur ou le Core. Tests offline avec formulaire
 cohérent, référence contradictoire, vide/dupliquée et widget login
 présent/absent : le refus n'envoie jamais l'ACSM.
+
+
+## Numilog 0.1.45 — bornes sur la confirmation, sans effet sur les autres pages
+
+La référence de commande du **GET réellement arrivé sur
+`ConfirmationPaiement.aspx`** n'est interprétée qu'au moment où un
+formulaire *englobant la carte de livraison* cible aussi cette route.
+Le parsing des paramètres de **cette** URL est strict et limité à
+32 champs : doublons, fragments de query incomplets et requêtes trop
+complexes provoquent `html_delivery_ambiguous` avant toute récupération
+d'ACSM. Les valeurs de référence ne sortent jamais de la comparaison
+en mémoire. Une page intermédiaire distincte dont le formulaire pointe
+simplement vers la confirmation n'a pas de référence GET à comparer et
+conserve son traitement historique.
+
+Un `href` direct de confirmation dans la carte MesLivres est en outre
+limité à **4096 caractères** avant résolution et après `urljoin`. Une
+référence anormalement longue est ignorée au profit du `readBook` de
+l'édition fraîche ; aucun long URL de commande n'est transmis au
+serveur ou sérialisé dans les objets du catalogue. Les limites ne
+touchent pas au compte, aux droits, au courtage ADEPT ou à d'autres
+endpoints Numilog.
+
+Tests synthétiques : duplicats/paramètres invalides et surcharge
+de champs côté GET, compatibilité des pages Landing, lien direct
+de plusieurs milliers de caractères rejeté hors réseau. Aucun compte
+réel n'a été utilisé ; #2024 exige toujours une livraison ACSM réelle.
