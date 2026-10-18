@@ -29,6 +29,7 @@ OPENSEARCH = "http://a9.com/-/spec/opensearch/1.1/"
 DCTERMS = "http://purl.org/dc/terms/"
 DC = "http://purl.org/dc/elements/1.1/"
 EPUB_SEARCH = "https://gallica.bnf.fr/services/engine/search/opds"
+MAX_REQUESTED_PAGES = 101  # Zero-based, bound both SRU and OPDS offsets.
 EBOOK_FORMAT_CQL = '((dc.formatspecific all "epub") or (dc.formatspecific all "pdf"))'
 
 
@@ -67,6 +68,7 @@ DESCRIPTOR = ProviderDescriptor(
         scopes=("all", "digital"),
         pagination="page",
         page_size=50,
+        max_pages=MAX_REQUESTED_PAGES,
         notes=(
             "all utilise OpenSearch/OPDS pour les livres EPUB ; les champs title/author/subject/isbn utilisent les index SRU EPUB.",
             "Audio SRU indépendant, optionnel ; les défaillances de branche donnent des résultats partiels explicitement signalés.",
@@ -525,6 +527,10 @@ class GallicaSession(ProviderSession):
             raise ProviderCapabilityError("Gallica : unsupported_field")
         if type(scope) is not str or scope not in DESCRIPTOR.search_capabilities.scopes:
             raise ProviderCapabilityError("Gallica : unsupported_scope")
+        if type(page) is not int or not 0 <= page < MAX_REQUESTED_PAGES:
+            # A negative, boolean or non-integer page cannot be treated as
+            # page zero or reach either independent Gallica branch.
+            raise ProviderCapabilityError("Gallica : invalid_page")
         query = str(query or "").strip()
         if len(query) < 2:
             return []
