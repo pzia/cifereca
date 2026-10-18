@@ -100,7 +100,8 @@ obsolète ne peut indexer un autre achat ou un reçu modifié.
 Ce reçu couvre la fenêtre livraison validée → indexation. Il ne qualifie pas
 un crash pendant le téléchargement ou avant l'écriture du reçu, et ne constitue
 ni consentement à une sauvegarde automatique ni preuve fournisseur réelle.
-Le parent #1905 reste ouvert.
+Le consentement de sauvegarde au démarrage est décrit dans
+[CORE-P0-1346-SOURCE-REFRESH-POLICY.md](CORE-P0-1346-SOURCE-REFRESH-POLICY.md).
 
 ## Fichier Numilog publié sans reçu (#1905)
 
@@ -122,6 +123,15 @@ Les droits et la connexion sont rejoués après l'inspection, juste avant HTTP.
 
 Après un crash avant le reçu, le fichier reste à rapprocher et un nouvel essai
 ne retélécharge pas silencieusement le livre. Ce garde ne fournit pas la preuve
-d'édition nécessaire à une adoption automatique ; cette reprise des orphelins
-et le contrat complet du parent #1905 restent à livrer. Les fichiers partiels
-non lisibles et les modifications externes après inspection restent hors preuve.
+d'édition nécessaire à une adoption automatique : une publication sans reçu ni
+origine broker attestée reste bloquée, jamais associée par nom ou titre. Les
+fichiers partiels non lisibles et les modifications externes après inspection
+restent hors preuve.
+
+Pour le cas distinct d'un fichier déjà indexé par le broker ACSM Core, #2117
+permet une adoption atomique vers l'achat exact seulement si le registre
+`manual-acsm`, l'origine canonique, le reçu privé, le propriétaire et les octets
+concordent. Un ACSM autonome n'est pas une preuve de possession Numilog.
+Deux rescans conservent la provenance ; une reprise avant/après adoption ne
+refait aucun GET. Cette exception attestée n'adopte pas un fichier orphelin
+arbitraire et ne crée aucun consentement automatique.
