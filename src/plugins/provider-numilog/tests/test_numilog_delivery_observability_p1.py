@@ -60,6 +60,7 @@ def assert_private_data_absent(diagnostics):
             "action", "source", "phase", "code", "hops",
             "http_status", "mime", "html_kind", "origin_kind", "path_kind", "candidates",
             "connected_initial", "cookie_header_present",
+            "redirect_target_origin_kind", "redirect_target_kind",
         }
         assert set(detail) >= {"action", "source", "phase", "code"}
         assert len(detail["action"]) == 12
@@ -109,6 +110,11 @@ def test_fictional_acsm_delivery_events_share_one_ephemeral_action(tmp_path, via
         assert any(x[1]["detail"].get("origin_kind") == "acsm_fulfillment"
                    and x[1]["detail"].get("path_kind") == "acsm_fulfillment"
                    for x in events)
+        if not via_html:
+            redirect = next(kw["detail"] for _, kw in events
+                            if kw["detail"].get("http_status") == 302)
+            assert redirect["redirect_target_kind"] == "acsm_fulfillment"
+            assert redirect["redirect_target_origin_kind"] == "acsm_fulfillment"
         assert not list(tmp_path.glob(".numilog-*"))
         assert_private_data_absent(diag)
     finally:
@@ -246,6 +252,10 @@ def test_redirected_untrusted_origin_is_blocked_before_fetch(tmp_path):
         assert seen == [SIGNED]
         assert broker.calls == []
         assert diag.completed()[0][1]["detail"]["code"] == "origin_rejected"
+        redirect = next(kw["detail"] for _, kw in diag.acquisition()
+                        if kw["detail"].get("http_status") == 302)
+        assert "redirect_target_kind" not in redirect
+        assert "redirect_target_origin_kind" not in redirect
         assert_private_data_absent(diag)
     finally:
         session.close()
@@ -351,4 +361,18 @@ def test_cookie_header_evidence_is_strict_boolean_only(cookie_header_present):
     assert details[1]['cookie_header_present'] is cookie_header_present
     assert 'cookie_header_present' not in details[0]
     assert 'cookie_header_present' not in details[-1]
+    assert_private_data_absent(diag)
+
+def test_redirect_target_is_only_fixed_enums_and_requires_a_string():
+    diag = Capture()
+    with DeliveryTrace(diag) as trace:
+        trace.event("delivery_http", "redirect",
+                    destination="https://www.numilog.com/Pages/Compte/readBook.ashx?auth=PRIVATE_ACCOUNT",
+                    redirect_target="https://www.numilog.com/Login.Aspx?orderid=PRIVATE_ACCOUNT")
+        trace.event("delivery_http", "redirect", redirect_target={"url": "PRIVATE_ACCOUNT"})
+    details = [kw["detail"] for _, kw in diag.acquisition()]
+    assert details[1]["redirect_target_origin_kind"] == "numilog_site"
+    assert details[1]["redirect_target_kind"] == "login_page"
+    assert "redirect_target_kind" not in details[2]
+    assert "redirect_target_origin_kind" not in details[2]
     assert_private_data_absent(diag)
