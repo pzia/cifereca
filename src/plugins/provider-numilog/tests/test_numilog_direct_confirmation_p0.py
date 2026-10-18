@@ -87,7 +87,12 @@ def test_owned_direct_confirmation_href_selects_only_fresh_matching_acsm(
             'confirmation_page', 'acsm_fulfillment',
         ]
         assert details[-1]['code'] == 'acsm_complete'
-        assert details[-1]['source'] == 'readbook'
+        # Source names the route ACTUALLY selected at user click, not the
+        # readBook evidence retained only for ownership/binding validation.
+        assert details[-1]['source'] == 'owned_card'
+        assert details[0]['phase'] == 'start'
+        assert details[0]['source'] == 'owned_card'
+        assert all(d['source'] == 'owned_card' for d in details)
         assert all(token not in repr(diag.events) for token in (
             'PRIVATE_ORDER', 'PRIVATE_HTML', 'FICTIONAL_LCP',
             'SYNTHETIC_NOT_A_CREDENTIAL', 'ref=', 'disp=',
