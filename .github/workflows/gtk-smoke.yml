@@ -48,14 +48,35 @@ jobs:
             -- \
             environnements/chatgpt-work/run-cifereca --no-plugins --verbose
 
-      - name: Upload GTK evidence
+      # Untrusted pixels, GTK reports and full Xvfb/DBus logs remain inside
+      # this ephemeral runner. Only constants and existence booleans leave it.
+      - name: Generate bounded GTK smoke verdict
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          artifacts = Path("environnements/chatgpt-work/evidence")
+          output = Path(os.environ["RUNNER_TEMP"]) / "gtk-smoke-public"
+          output.mkdir(parents=True, exist_ok=False)
+          facts = {
+              "schema": "cifereca-gtk-smoke-verdict/v1",
+              "scenario": "core-no-plugins",
+              "capture_generated": (artifacts / "core-smoke.png").is_file(),
+              "report_generated": (artifacts / "core-smoke.json").is_file(),
+          }
+          (output / "result.json").write_text(
+              json.dumps(facts, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - name: Upload GTK smoke verdict only
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gtk-smoke-evidence
-          path: |
-            environnements/chatgpt-work/evidence/core-smoke.png
-            environnements/chatgpt-work/evidence/core-smoke.json
-            environnements/chatgpt-work/evidence/xvfb.log
-            environnements/chatgpt-work/evidence/dbus.log
-          if-no-files-found: warn
+          name: gtk-smoke-verdict
+          path: ${{ runner.temp }}/gtk-smoke-public/result.json
+          if-no-files-found: ignore
+          retention-days: 2
