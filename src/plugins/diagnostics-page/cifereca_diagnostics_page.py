@@ -1059,7 +1059,8 @@ class DiagnosticsPagePlugin:
                         nonlocal selection_json, selection_note
                         if event_ref not in valid_ids or selection_busy:
                             return
-                        if selection_json is not None:
+                        replace_batch = selection_json is not None
+                        if replace_batch:
                             # One page edit replaces, but cannot mutate, the
                             # frozen multi-page selection.
                             selected_event_ids.clear()
@@ -1070,7 +1071,10 @@ class DiagnosticsPagePlugin:
                         else:
                             selected_event_ids.discard(event_ref)
                         update_selected_status()
-                        if selection_note:
+                        if replace_batch:
+                            # Only a batch-to-page switch requires refreshing
+                            # other checkboxes. Ordinary toggles must not
+                            # unparent the GTK row receiving the click.
                             display_events()
 
                     select.connect("toggled", on_select)
