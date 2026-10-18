@@ -1576,43 +1576,72 @@ def main() -> int:
             all_actions.extend(buttons)
             if row in source_rows and buttons:
                 first_actions.append(buttons[0])
-        adjustment = scroll.get_vadjustment()
-        viewport = max(1.0, float(adjustment.get_page_size()))
-        total_height = float(adjustment.get_upper())
-        report["sync_first_fold_ux"] = {
-            "viewport_width": int(scroll.get_width()),
-            "viewport_height": int(scroll.get_height()),
-            "window_width": int(w.get_width()),
-            "window_height": int(w.get_height()),
-            "source_cards": len(source_groups),
-            "source_status_rows": len(source_rows),
-            "detail_rows": len(rows) - len(source_rows),
-            "source_summary_lines": sum(
-                (row.get_subtitle() or "").count("\n") + 1
-                for row in source_rows
-            ),
-            "action_buttons": len(all_actions),
-            "primary_source_actions": len(first_actions),
-            "visible_source_status_rows": sum(
-                in_first_view(row) for row in source_rows
-            ),
-            "visible_primary_source_actions": sum(
-                in_first_view(button) for button in first_actions
-            ),
-            "visible_action_buttons": sum(
-                in_first_view(button) for button in all_actions
-            ),
-            "global_action_visible": in_first_view(w._sync_all_button),
-            "scroll_content_height": round(total_height, 1),
-            "scroll_extent_viewports": round(
-                max(0.0, total_height - viewport) / viewport, 2
-            ),
-        }
+
+        def sample_first_fold():
+            # Recompute dimensions after every GTK reflow; 1366/1600 is
+            # not evidence for 1280 or enlarged typography.
+            adjustment = scroll.get_vadjustment()
+            viewport = max(1.0, float(adjustment.get_page_size()))
+            total_height = float(adjustment.get_upper())
+            return {
+                "viewport_width": int(scroll.get_width()),
+                "viewport_height": int(scroll.get_height()),
+                "window_width": int(w.get_width()),
+                "window_height": int(w.get_height()),
+                "source_cards": len(source_groups),
+                "source_status_rows": len(source_rows),
+                "detail_rows": len(rows) - len(source_rows),
+                "source_summary_lines": sum(
+                    (row.get_subtitle() or "").count("\n") + 1
+                    for row in source_rows
+                ),
+                "action_buttons": len(all_actions),
+                "primary_source_actions": len(first_actions),
+                "visible_source_status_rows": sum(
+                    in_first_view(row) for row in source_rows
+                ),
+                "visible_primary_source_actions": sum(
+                    in_first_view(button) for button in first_actions
+                ),
+                "visible_action_buttons": sum(
+                    in_first_view(button) for button in all_actions
+                ),
+                "global_action_visible": in_first_view(w._sync_all_button),
+                "scroll_content_height": round(total_height, 1),
+                "scroll_extent_viewports": round(
+                    max(0.0, total_height - viewport) / viewport, 2
+                ),
+            }
+        f["sync_first_fold_sample"] = sample_first_fold
+        report["sync_first_fold_ux"] = sample_first_fold()
         f["sync_original_font"] = Gtk.Settings.get_default().get_property("gtk-font-name")
         long_name_row = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
         f["sync_long_name_row"] = long_name_row
         f["sync_original_title"] = long_name_row.get_title()
         long_name_row.set_title("Compte familial de démonstration — plusieurs éditions homonymes et un nom volontairement long")
+        # Keep the existing 760px assertions; collect UX evidence at the
+        # product's target 1280px *before* shrinking further.
+        w.set_default_size(1280, 850)
+        later(350, lambda: sync_desktop_first_fold(False))
+
+    def sync_desktop_first_fold(large_font):
+        w = window[0]
+        f = loan_sync_fixture
+        key = "large_font" if large_font else "normal_font"
+        sample = f["sync_first_fold_sample"]()
+        sample["requested_width"] = 1280
+        sample["enlarged_font"] = large_font
+        report.setdefault("sync_1280_first_fold_ux", {})[key] = sample
+        # Screenshots are local/private E2E proof; only existing allowlisted
+        # PASS/FAIL verdicts are published by the CI pipeline.
+        capture("03i-sync-1280-" + key)
+        if not large_font:
+            Gtk.Settings.get_default().set_property("gtk-font-name", "Sans 12")
+            later(350, lambda: sync_desktop_first_fold(True))
+            return
+        Gtk.Settings.get_default().set_property(
+            "gtk-font-name", f["sync_original_font"]
+        )
         w.set_default_size(760, 780)
         later(350, lambda: sync_narrow_allocations(False))
 
