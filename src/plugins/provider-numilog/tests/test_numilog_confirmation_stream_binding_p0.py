@@ -188,19 +188,20 @@ def test_reject_streaming_edition_mismatch_without_any_signed_get(
     elif variation == 'double_stream_mode':
         html = html.replace('m=stream', 'm=stream&amp;m=stream')
     elif variation == 'double_stream_anchor':
-        html = html.replace('</div>\n    </div></div>',
-                            '<a href="/Pages/Compte/readBook.ashx?lid=12&amp;m=stream">Extra</a>'
-                            '</div>\n    </div></div>', 1)
+        stream = '<a href="/Pages/Compte/readBook.ashx?lid=12&amp;m=stream">Extra</a>'
+        marker = '</div>\n    </div></div>'
+        assert marker in html
+        html = html.replace(marker, stream + marker, 1)
     elif variation == 'stream_outside_card':
-        anchor = '<a class="btn btn-option buttonlog btn-block" '
-        pos = html.find('<a ', html.find('id="ctl02_CentrePage'))
-        # Move just the original streaming anchor to a sibling after card.
+        # Move the sole streaming identity link out of the owning .card.
         import re
         match = re.search(r'<a [^>]*HyperLinkStreamingConfirmation[^>]*>.*?</a>', html)
         assert match is not None
         original = match.group(0)
         html = html[:match.start()] + html[match.end():]
-        html = html.replace('</div></div>\n    <a href=', '</div></div>' + original + '\n    <a href=', 1)
+        marker = '</div></div>\n    <a href='
+        assert marker in html
+        html = html.replace(marker, '</div></div>' + original + '\n    <a href=', 1)
     elif variation == 'wrong_product':
         html = html.replace('ModalDownload(9001, 1)', 'ModalDownload(9002, 1)')
     elif variation == 'wrong_copy':
@@ -250,5 +251,22 @@ def test_streaming_link_never_licenses_a_download_without_modal_and_links():
     with pytest.raises(DeliverySelectionError, match='ambiguous'):
         delivery_url(
             html, CONFIRM_SIMPLE, allowed_origins=ALLOWED,
+            expected_readbook=READ_DWLD, require_bound_confirmation=True,
+        )
+
+
+@pytest.mark.parametrize('url', (
+    'https://www.numilog.com/Pages/Compte/Landing.aspx',
+    'https://www.numilog.com/Pages/Commande/Other.aspx?ref=FICTIONAL&disp=simple',
+    'https://evil.invalid/Pages/Commande/ConfirmationPaiement.aspx?ref=FICTIONAL&disp=simple',
+    'http://www.numilog.com/Pages/Commande/ConfirmationPaiement.aspx?ref=FICTIONAL&disp=simple',
+))
+def test_dwld_stream_equivalence_is_not_accepted_on_noncanonical_page(url):
+    # A global Links array on a landing page does not confer the stricter
+    # Numilog confirmation-only edition-binding exception.
+    html = _html_stream()
+    with pytest.raises(DeliverySelectionError, match='ambiguous'):
+        delivery_url(
+            html, url, allowed_origins=ALLOWED,
             expected_readbook=READ_DWLD, require_bound_confirmation=True,
         )
