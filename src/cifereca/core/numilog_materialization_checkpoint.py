@@ -159,6 +159,18 @@ def index_delivered(service, acquisition, *, title=None, selected=False, expecte
                 _require(_resume_target(row) == expected_receipt)
             _require(acquisition.path == path)
             placement = service.storage.placement_for_path(path)
+            if (placement is not None
+                    and placement.get('identity_id') == row['identity_id']
+                    and placement.get('provider_id') == 'numilog'
+                    and placement.get('source_item_id') != row['item_id']):
+                # ADEPT imported the original ACSM first, keyed by its sha.
+                # Upgrade only if the verified owned receipt AND the original
+                # same-owner manual-acsm ledger and local artifact all agree.
+                # Never infer provenance from the folder name or a title.
+                _require(service.storage.numilog_checkpoint_adopt_acsm_placement(
+                    acquisition_id, expected_path=str(path),
+                ))
+                placement = service.storage.placement_for_path(path)
             _require(placement is None or (placement.get('identity_id') == row['identity_id']
                      and placement.get('provider_id') == 'numilog'
                      and placement.get('source_item_id') == row['item_id']))
