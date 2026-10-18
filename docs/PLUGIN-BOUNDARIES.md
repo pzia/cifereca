@@ -80,3 +80,22 @@ Avant d'ajouter du code à un plugin :
 5. ajouter un test de contrat plugin si une nouvelle primitive Core est destinée aux plugins.
 
 Voir également [ARCHITECTURE.md](ARCHITECTURE.md) et [TEST-ORGANIZATION.md](TEST-ORGANIZATION.md).
+
+
+### Déclarations du produit commercial en détail (#1886)
+
+Un provider peut fournir `SearchResult.metadata.public_product_metadata` pour
+les libellés **effectivement publiés** d'un produit commercial. Le Core affiche
+uniquement `brand`, `collection`, `publication_date`, `pagination_label`,
+`language_label` et `selected_format_label`, sous le préfixe « Fiche publique ».
+Les valeurs restent bornées et filtrées comme les autres métadonnées ; leurs
+actions permettent uniquement la copie. Aucun droit, identifiant, format de
+l'achat ou âge ne se déduit de ce namespace. Les champs inconnus et les
+structures internes ne sont pas affichés. La pagination conserve la mention
+« support non précisé » et le format la mention « commercial sélectionné ».
+
+Le plugin possède la validation de sa source et conserve sa provenance exacte
+séparément ; le Core ne lit ni HTML ni preuve spécifique au fournisseur et
+n'effectue aucun réseau pour présenter ces valeurs. Cette projection n'active
+ni enrichissement, ni source, ni acquisition et n'écrase pas les métadonnées
+privées/EPUB. Un plugin peut laisser le namespace absent si la preuve manque.

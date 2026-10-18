@@ -80,6 +80,19 @@ def canonical_book_isbn(value: object) -> str:
     return raw if expected == int(raw[-1]) else ""
 
 
+# Commercial declarations remain separate from a purchased/local edition.
+# No right, identifier or file-format key can cross this namespace. Values
+# are copy-only so a commercial label cannot become a typed edition search.
+_PUBLIC_PRODUCT_FIELDS = (
+    ("brand", "Marque"),
+    ("collection", "Collection déclarée"),
+    ("publication_date", "Parution du produit"),
+    ("pagination_label", "Pagination déclarée (support non précisé)"),
+    ("language_label", "Langue déclarée"),
+    ("selected_format_label", "Format commercial sélectionné"),
+)
+
+
 # Limits are visible when reached, never a silent [:N] truncation.
 _MAX_ROWS = 200
 _MAX_VALUE_LENGTH = 4096
@@ -217,23 +230,24 @@ def detail_metadata_items(metadata: object) -> tuple[tuple[str, str, str], ...]:
     rows: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str]] = set()
     omitted = 0
-    for prefix, data in (
-        ("", metadata),
-        ("Catalogue · ", metadata.get("catalogue_metadata")),
-        ("EPUB · ", metadata.get("epub_metadata")),
+    for prefix, data, public_product in (
+        ("", metadata, False),
+        ("Catalogue · ", metadata.get("catalogue_metadata"), False),
+        ("EPUB · ", metadata.get("epub_metadata"), False),
+        ("Fiche publique · ", metadata.get("public_product_metadata"), True),
     ):
         if not isinstance(data, Mapping):
             continue
         known = (
-            (label, value, _FIELD_KIND.get(
+            (label, value, "copy" if public_product else _FIELD_KIND.get(
                 key, "copy" if key in _COPY_ONLY else "all",
             ))
-            for key, label in _FIELDS
+            for key, label in (_PUBLIC_PRODUCT_FIELDS if public_product else _FIELDS)
             for value in _values(data.get(key), key)
         )
         for label, value, kind in chain(
-            known, _identifier_items(data.get("identifiers")),
-            _youth_age_items(data.get("youth_age_ranges")),
+            known, () if public_product else _identifier_items(data.get("identifiers")),
+            () if public_product else _youth_age_items(data.get("youth_age_ranges")),
         ):
             actual_label = prefix + label
             if kind == "isbn":
