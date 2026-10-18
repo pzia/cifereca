@@ -79,7 +79,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             if mode(broker, source_id) != "on_start":
                 continue
             raw = session.library()
-            if type(raw) not in {list, tuple} or len(raw) > 256:
+            # The private catalogue can contain hundreds of purchases.
+            # Bound memory without blocking ordinary 300+ book libraries.
+            if type(raw) not in {list, tuple} or len(raw) > 2048:
                 failures += 1
                 break
             if (_binding(broker, source_id) is None
