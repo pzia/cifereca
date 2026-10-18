@@ -106,7 +106,10 @@ def test_signed_302_reaches_real_acsm_inspection_and_single_account_broker(tmp_p
         url = str(request.url)
         requested.append(url)
         assert request.method == "GET"
-        assert request.headers.get("referer") == "https://www.numilog.com/"
+        assert request.headers.get("referer") == (
+            "https://www.numilog.com/Pages/Compte/MesLivres.aspx"
+            if url == READ_BOOK else "https://www.numilog.com/"
+        )
         if url == READ_BOOK:
             return httpx.Response(302, headers={"location": SIGNED})
         if url == SIGNED:
@@ -331,5 +334,64 @@ def test_stream_body_limit_is_enforced_even_if_content_length_is_falsely_small(t
         assert seen == [READ_BOOK, SIGNED]
         assert acquisition.calls == []
         _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+
+def test_owned_readbook_uses_fixed_library_referrer_only_on_first_hop(tmp_path):
+    """The referrer never includes a private lid, signature or redirect target."""
+    login = "https://www.numilog.com/Login.Aspx?auth=PRIVATE_REFERRER_MARKER"
+    seen = []
+
+    def handler(request):
+        seen.append((str(request.url), request.headers.get("referer")))
+        if str(request.url) == READ_BOOK:
+            return httpx.Response(302, headers={"location": login})
+        if str(request.url) == login:
+            return httpx.Response(
+                200, headers={"content-type": "text/html"},
+                text='<form><input type="password" /></form>',
+            )
+        raise AssertionError("unexpected network request")
+
+    session, diag, acquisition = setup(tmp_path, handler)
+    try:
+        with pytest.raises(ProviderError, match="formulaire de connexion"):
+            session._download(READ_BOOK, tmp_path / "file.epub", source="readbook")
+        assert seen == [
+            (READ_BOOK, session.library_url),
+            (login, session.base_url),
+        ]
+        assert acquisition.calls == []
+        assert not (tmp_path / "file.epub").exists()
+        # No queried referrer, URL, purchase ID or private landing page
+        # should ever be serialized to diagnostics or error text.
+        exported = repr(diag.events)
+        assert "PRIVATE_REFERRER_MARKER" not in exported
+        assert "fictional" not in exported
+        assert "?lid=" not in exported
+    finally:
+        session.close()
+
+
+def test_other_allowed_readbook_origin_cannot_claim_private_library_referrer(tmp_path):
+    foreign_readbook = (
+        "https://services.numilog.com/Pages/Compte/readBook.ashx"
+        "?lid=PRIVATE_REFERRER_MARKER"
+    )
+    seen = []
+
+    def handler(request):
+        seen.append((str(request.url), request.headers.get("referer")))
+        return httpx.Response(403)
+
+    session, diag, acquisition = setup(tmp_path, handler)
+    try:
+        with pytest.raises(ProviderError):
+            session._download(foreign_readbook, tmp_path / "file.epub")
+        assert seen == [(foreign_readbook, session.base_url)]
+        assert acquisition.calls == []
+        assert "PRIVATE_REFERRER_MARKER" not in repr(diag.events)
     finally:
         session.close()

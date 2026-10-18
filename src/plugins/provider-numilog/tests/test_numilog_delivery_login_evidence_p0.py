@@ -62,6 +62,8 @@ def test_recent_success_then_login_form_reports_evidence_not_expiry(tmp_path, ca
         assert [r.url.path for r in requests] == [
             '/', '/Login.Aspx/AuthUser', LIBRARY, LIBRARY, LIBRARY, READ, LOGIN]
         read_request = next(r for r in requests if r.url.path == READ)
+        assert read_request.headers.get('referer') == session.library_url
+        assert requests[-1].headers.get('referer') == session.base_url
         assert ('fixture='+SECRET in read_request.headers.get('cookie', '')) is sent
         expected_redirect_cookie = sent and 'Path=/Pages/Compte' not in attributes
         assert ('fixture='+SECRET in requests[-1].headers.get('cookie', '')) is expected_redirect_cookie
