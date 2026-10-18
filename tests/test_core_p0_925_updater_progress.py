@@ -269,3 +269,39 @@ def test_heartbeat_stops_on_error_without_late_progress_event():
         "ERROR", "ERROR", "DONE",
     ]
     assert "SECRET_FILE_NAME" not in repr(events)
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (KeyboardInterrupt(), "interrupted"),
+        (SystemExit(2), "interrupted"),
+        (TimeoutError("private endpoint"), "timeout"),
+        (updater.UpdateError("secret archive path"), "update_error"),
+        (dev_updater.DevUpdateError("secret plugin path"), "update_error"),
+        (RuntimeError("secret token"), "internal_error"),
+    ],
+)
+def test_failure_reason_is_closed_and_no_exception_text_leaks(error, expected):
+    from cifereca.update_progress import failure_code
+    stream, events = FlushingStream(), []
+    with pytest.raises(type(error)):
+        with update_operation("archive", callback=events.append, stream=stream):
+            with update_phase("venv"):
+                raise error
+    assert failure_code(error) == expected
+    assert [event["reason_code"] for event in events if event["status"] == "ERROR"] == [
+        expected, expected,
+    ]
+    assert events[-1]["outcome"] == "failed"
+    assert "secret" not in stream.getvalue()
+    assert "private" not in stream.getvalue()
+    assert "reason=" + expected in stream.getvalue()
+
+
+def test_unknown_failure_reason_is_never_logged():
+    stream, events = FlushingStream(), []
+    with update_operation("archive", callback=events.append, stream=stream) as progress:
+        progress.emit("venv", "ERROR", reason_code="secret-password")
+    assert "secret-password" not in stream.getvalue()
+    assert "secret-password" not in repr(events)

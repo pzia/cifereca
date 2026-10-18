@@ -46,7 +46,7 @@ def _process_resource_sample() -> dict[str, float | int | None]:
 
 # Only enumerated public operation labels may enter a performance export.
 _PERF_CATEGORIES = frozenset({
-    "task", "opening-sync", "deep-sync", "source-sync", "sync-preflight",
+    "task", "opening-sync", "deep-sync", "source-sync", "source-materialize", "sync-preflight",
     "kobo-acquisition", "maintenance", "library", "recent", "search", "plugin", "other",
 })
 _PERF_PHASES = frozenset({

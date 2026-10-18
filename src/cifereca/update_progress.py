@@ -29,6 +29,21 @@ METHODS = frozenset({
     "dev_plugins_only",
 })
 STATES = frozenset({"START", "RUNNING", "OK", "ERROR", "SKIPPED", "ROLLBACK", "DONE"})
+FAILURE_CODES = frozenset({"interrupted", "timeout", "update_error", "internal_error"})
+
+
+def failure_code(exc: BaseException) -> str:
+    """Classify by exception type only; never stringify arbitrary exceptions."""
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        return "interrupted"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if type(exc).__name__ in {"UpdateError", "DevUpdateError"} and type(exc).__module__ in {
+        "cifereca.updater", "cifereca.dev_updater",
+    }:
+        return "update_error"
+    return "internal_error"
+
 EventCallback = Callable[[dict[str, object]], None]
 _CURRENT: ContextVar["UpdateProgress | None"] = ContextVar(
     "cifereca_update_progress", default=None,
@@ -89,7 +104,8 @@ class UpdateProgress:
                     self.emit(stage, "RUNNING", since=started)
 
     def emit(self, stage: str, status: str, *, since: float | None = None,
-             outcome: str | None = None) -> None:
+             outcome: str | None = None, reason_code: str | None = None,
+             plugin_index: int | None = None, plugin_total: int | None = None) -> None:
         if stage not in STAGES or status not in STATES:
             raise ValueError("invalid_update_event")
         now = self.clock()
@@ -106,6 +122,15 @@ class UpdateProgress:
                 if since is not None else 0
             ),
         }
+        if status == "ERROR" and reason_code in FAILURE_CODES:
+            event["reason_code"] = reason_code
+        # The ordinal is a *position*, not an installed count or a guessed
+        # percent. Accept only bounded exact ints, never plugin names/paths.
+        if (stage == "plugin_install"
+                and type(plugin_index) is int and type(plugin_total) is int
+                and 1 <= plugin_index <= plugin_total <= 2048):
+            event["plugin_index"] = plugin_index
+            event["plugin_total"] = plugin_total
         if outcome in {"success", "failed"} and status == "DONE":
             event["outcome"] = outcome
         # Observability must not change the installation's outcome. A GUI
@@ -123,6 +148,9 @@ class UpdateProgress:
                     f"elapsed={event['elapsed_ms']}ms "
                     f"duration={event['duration_ms']}ms"
                     + (f" outcome={event['outcome']}" if "outcome" in event else "")
+                    + (f" reason={event['reason_code']}" if "reason_code" in event else "")
+                    + (f" plugin={event['plugin_index']}/{event['plugin_total']}"
+                       if "plugin_index" in event else "")
                     + "\n"
                 )
                 self.stream.flush()
@@ -130,24 +158,28 @@ class UpdateProgress:
                 pass
 
     @contextmanager
-    def phase(self, stage: str) -> Iterator[None]:
+    def phase(
+        self, stage: str, *, plugin_index: int | None = None,
+        plugin_total: int | None = None,
+    ) -> Iterator[None]:
         if stage not in STAGES:
             raise ValueError("invalid_update_stage")
         started = self.clock()
+        ordinal = {"plugin_index": plugin_index, "plugin_total": plugin_total}
         with self._stage_lock:
             self._stage_stack.append((stage, started))
-            self.emit(stage, "ROLLBACK" if stage == "rollback" else "RUNNING")
+            self.emit(stage, "ROLLBACK" if stage == "rollback" else "RUNNING", **ordinal)
         try:
             yield
-        except BaseException:
+        except BaseException as exc:
             with self._stage_lock:
                 self._stage_stack.pop()
-                self.emit(stage, "ERROR", since=started)
+                self.emit(stage, "ERROR", since=started, reason_code=failure_code(exc), **ordinal)
             raise
         else:
             with self._stage_lock:
                 self._stage_stack.pop()
-                self.emit(stage, "OK", since=started)
+                self.emit(stage, "OK", since=started, **ordinal)
 
 
 @contextmanager
@@ -170,9 +202,9 @@ def update_operation(
     progress.start_heartbeat()
     try:
         yield progress
-    except BaseException:
+    except BaseException as exc:
         progress.stop_heartbeat()
-        progress.emit("operation", "ERROR")
+        progress.emit("operation", "ERROR", reason_code=failure_code(exc))
         progress.emit("operation", "DONE", outcome="failed")
         raise
     else:
@@ -184,13 +216,18 @@ def update_operation(
 
 
 @contextmanager
-def update_phase(stage: str) -> Iterator[None]:
+def update_phase(
+    stage: str, *, plugin_index: int | None = None,
+    plugin_total: int | None = None,
+) -> Iterator[None]:
     """Zero-I/O in API calls which did not opt in to progress reporting."""
     current = _CURRENT.get()
     if current is None:
         yield
     else:
-        with current.phase(stage):
+        with current.phase(
+            stage, plugin_index=plugin_index, plugin_total=plugin_total,
+        ):
             yield
 
 
@@ -198,3 +235,13 @@ def step(stage: str, operation: Callable, *args, **kwargs):
     """Execute the exact original callable once; never replay on failure."""
     with update_phase(stage):
         return operation(*args, **kwargs)
+
+
+def skip_update_phase(stage: str) -> None:
+    """Record a deliberately *unexecuted* stage of an opted-in operation.
+
+    Unlike update_phase/step, this performs no work and never reports OK.
+    """
+    progress = _CURRENT.get()
+    if progress is not None:
+        progress.emit(stage, "SKIPPED")

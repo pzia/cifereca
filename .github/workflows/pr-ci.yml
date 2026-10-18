@@ -1,37 +1,9 @@
 name: PR CI
 
+# Stable required PR CI context even for docs-only or governance-only PRs.
+# Expensive validation remains change-scoped inside Select validation scopes.
 on:
   pull_request:
-    paths:
-      - "src/cifereca/**"
-      - "src/plugins/**"
-      - "tests/**"
-      - "simulation/**"
-      - "e2e/**"
-      - "environnements/chatgpt-work/**"
-      - "environnements/openai-chat-debian/capture_app.py"
-      - "pyproject.toml"
-      - "VERSION"
-      - "scripts/ci-run-plugin-tests.sh"
-      - "scripts/ci-select-core-tests.py"
-      - "scripts/ci_select_plugin_tests.py"
-      - ".github/plugin-test-dependencies.json"
-      - "scripts/check_release_inventory.py"
-      - "scripts/ci-install-gtk-e2e-runtime.sh"
-      - "scripts/ci-smoke-installed-wheel.sh"
-      - "scripts/ci-plugins-only-runtime-gate.sh"
-      - "scripts/ci-plugins-only-historical-core-gate.sh"
-      - "scripts/ci_core_release_preflight.py"
-      - "scripts/ci_plugins_release_target.py"
-      - "scripts/ci-full-release-install-gate.py"
-      - "scripts/plugin_packaging.py"
-      - "scripts/test_plugin_packaging.py"
-      - "scripts/verify-packaging.py"
-      - "scripts/package-all-in-one.py"
-      - "scripts/package-dev-snapshot.py"
-      - "scripts/package_partial_plugins.py"
-      - "scripts/test_partial_plugin_release.py"
-      - ".github/workflows/**"
   workflow_dispatch:
 
 permissions:
@@ -114,7 +86,7 @@ jobs:
             plugins=true
           fi
 
-          if matches '^(pyproject\.toml$|VERSION$|scripts/ci-smoke-installed-wheel\.sh$|src/cifereca/(__init__\.py|__main__\.py|cli\.py|updater\.py|dev_updater\.py|plugin_test_runner\.py)$|src/cifereca/builtin_ui/)'; then
+          if matches '^(README\.md$|pyproject\.toml$|VERSION$|scripts/ci-smoke-installed-wheel\.sh$|src/cifereca/(__init__\.py|__main__\.py|cli\.py|updater\.py|dev_updater\.py|plugin_test_runner\.py)$|src/cifereca/builtin_ui/)'; then
             install=true
           fi
 

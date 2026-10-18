@@ -345,8 +345,11 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 concrete = getattr(session, "client", None)
                 partial_failure = False
                 for source in (session, concrete):
-                    for warning in list(getattr(source, "last_search_warnings", []) or []):
-                        warnings.append(f"{session.descriptor.display_name}: {warning}")
+                    for _warning in list(getattr(source, "last_search_warnings", []) or []):
+                        # A provider warning is untrusted: it may carry signed
+                        # URLs, credentials, account IDs or a private title.
+                        # Mirror the progressive path: export only a constant.
+                        warnings.append(f"{session.descriptor.display_name}: résultats partiels")
                         partial_failure = True
                 if partial_failure:
                     break
@@ -501,7 +504,7 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
             # Provider exceptions can include signed URLs, account IDs and
             # personal search terms. Neither the result batch nor diagnostics
             # may carry their raw message.
-            failure_code = search_failure_code(exc) or type(exc).__name__
+            failure_code = search_failure_code(exc) or "ProviderSearchFailed"
             if attempt == 0 or len(variants) == 1:
                 terminal_error_code = failure_code
                 terminal_error_message = "Recherche en ligne indisponible"
@@ -624,7 +627,12 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         if on_batch is None or request_cancelled(): return
         try: on_batch(batch)
         except Exception as exc:
-            self.diagnostics.add("SEARCH", "progress callback", "error", detail={"error": type(exc).__name__, "message": str(exc)})
+            # A callback can fail with an exception containing UI text,
+            # query terms, personal paths or a signed link. No raw text.
+            self.diagnostics.add(
+                "SEARCH", "progress callback", "error",
+                detail={"error": "CallbackFailed", "message": "search_progress_callback_failed"},
+            )
 
     if not force:
         cached = self.storage.cache_get("search", cache_key)

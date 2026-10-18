@@ -21,7 +21,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from . import updater
-from .update_progress import step, update_phase, update_operation
+from .update_progress import step, update_phase, update_operation, skip_update_phase
 from .paths import data_dir, state_dir
 from .install_paths import ArchiveNotFoundError, resolve_archive
 
@@ -44,9 +44,9 @@ def _safe_member(info: zipfile.ZipInfo) -> PurePosixPath:
     wp = PureWindowsPath(name)
     mode = (info.external_attr >> 16) & 0xFFFF
     if not name or p.is_absolute() or wp.is_absolute() or bool(wp.drive) or ".." in p.parts:
-        raise DevUpdateError(f"chemin interdit dans le snapshot dev: {info.filename}")
+        raise DevUpdateError("chemin interdit dans le snapshot dev")
     if stat.S_ISLNK(mode):
-        raise DevUpdateError(f"symlink ZIP interdit dans le snapshot dev: {info.filename}")
+        raise DevUpdateError("symlink ZIP interdit dans le snapshot dev")
     return p
 
 
@@ -63,10 +63,10 @@ def _read_plugin_package_id(archive: Path) -> tuple[str, str]:
         with zipfile.ZipFile(archive, "r") as z:
             raw = json.loads(z.read(PLUGIN_MANIFEST).decode("utf-8"))
     except Exception as exc:
-        raise DevUpdateError(f"plugin ZIP invalide: {archive.name}: {exc}") from exc
+        raise DevUpdateError("plugin ZIP invalide") from exc
     package = raw.get("package") if isinstance(raw, dict) else None
     if not isinstance(package, dict) or not package.get("id") or not package.get("version"):
-        raise DevUpdateError(f"manifest plugin incomplet: {archive.name}")
+        raise DevUpdateError("manifest plugin incomplet")
     package_id = str(package['id'])
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', package_id):
         raise DevUpdateError('identifiant package plugin invalide')
@@ -75,7 +75,7 @@ def _read_plugin_package_id(archive: Path) -> tuple[str, str]:
         from .plugins.manifest import parse_manifest
         parse_manifest(raw)
     except Exception as exc:
-        raise DevUpdateError(f'manifest plugin invalide: {archive.name}') from exc
+        raise DevUpdateError('manifest plugin invalide') from exc
     return package_id, str(package['version'])
 
 
@@ -171,7 +171,7 @@ def _install_plugin_replace(archive: Path, *, activate: bool) -> None:
     command = [str(cli), "plugin", "install", str(archive), "--replace"]
     if not activate:
         command.append("--no-activate")
-    proc = subprocess.run(
+    proc = updater._run_bounded_process(
         command,
         text=True, capture_output=True, timeout=120, check=False,
     )
@@ -181,7 +181,7 @@ def _install_plugin_replace(archive: Path, *, activate: bool) -> None:
 
 def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
     cli = _new_cli()
-    proc = subprocess.run(
+    proc = updater._run_bounded_process(
         [str(cli), "plugin", "list"], text=True, capture_output=True, timeout=120, check=False,
     )
     if proc.returncode != 0:
@@ -196,7 +196,7 @@ def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
         and (package_ids is None or row.get('package_id') in package_ids)
         and row.get('state') in {'error', 'incompatible'}]
     if failed:
-        raise DevUpdateError('smoke plugins: erreur des contributions installées: ' + ', '.join(map(str, failed)))
+        raise DevUpdateError('smoke plugins: contributions installées en erreur')
     if package_ids is not None:
         # An install command may return success while its package is absent
         # from the runtime inventory (e.g. broken activation/discovery).
@@ -455,13 +455,13 @@ def apply_snapshot(
             rel = str(item.get("path") if isinstance(item, dict) else item)
             plugin_zip = (root / rel).resolve()
             if not plugin_zip.is_file() or root.resolve() not in plugin_zip.parents:
-                raise DevUpdateError(f"plugin absent ou hors snapshot: {rel}")
+                raise DevUpdateError("plugin absent ou hors snapshot")
             package_id, package_version = step("manifest_validation", _read_plugin_package_id, plugin_zip)
             if package_id in package_ids:
-                raise DevUpdateError(f"package plugin dupliqué dans snapshot: {package_id}")
+                raise DevUpdateError("package plugin dupliqué dans snapshot")
             expected_sha = str(item.get("sha256") or "") if isinstance(item, dict) else ""
             if expected_sha and _sha256(plugin_zip) != expected_sha:
-                raise DevUpdateError(f"SHA-256 plugin invalide: {rel}")
+                raise DevUpdateError("SHA-256 plugin invalide")
             installed_active = _package_is_active(package_id)
             requested_activate = bool(item.get("activate", True)) if isinstance(item, dict) else True
             activate = requested_activate if installed_active is None else installed_active
@@ -495,6 +495,16 @@ def apply_snapshot(
         if dry_run:
             result['core'] = updater.install_archive(core_zip, python=python, keep=keep, dry_run=True) if core_zip else None
             result['core_changed'] = core_zip is not None
+            # The manifest/index, optional trusted digest and (when present)
+            # Core dry-run were checked; no plugin backup or installation,
+            # validation of the installed runtime, smoke or restart occurred.
+            if core_zip is None:
+                skip_update_phase("core_activation")
+            for skipped_stage in (
+                "plugin_backup", "plugin_install", "plugin_verification",
+                "smoke", "restart",
+            ):
+                skip_update_phase(skipped_stage)
             return result
 
         # Manifest ids are labels, never filesystem paths. Keep previous backups.
@@ -509,12 +519,22 @@ def apply_snapshot(
             if core_zip is not None:
                 core_result = step("core_activation", updater.install_archive, core_zip, python=python, keep=max(keep, 3), dry_run=False)
                 core_installed = True
-            for plugin_zip, activate in plugin_archives:
-                step("plugin_install", _install_plugin_replace, plugin_zip, activate=activate)
+            # The manifest is fully validated before mutation. The ordinal
+            # marks the plugin currently attempted, NOT the number installed:
+            # a failure at 2/N must never display 2 successful plugins.
+            plugin_total = len(plugin_archives)
+            for plugin_index, (plugin_zip, activate) in enumerate(plugin_archives, 1):
+                with update_phase(
+                    "plugin_install", plugin_index=plugin_index,
+                    plugin_total=plugin_total,
+                ):
+                    _install_plugin_replace(plugin_zip, activate=activate)
             if require_plugins_only:
                 step("plugin_verification", _verify_strict_installed_packages, strict_packages)
             smoke = step("smoke", _smoke_plugins, package_ids)
-        except Exception as exc:
+        except (Exception, KeyboardInterrupt) as exc:
+            # A cooperative Ctrl-C must restore the pre-update plugin state,
+            # even when the interrupted installation already changed Core.
             restoration_errors = []
             try:
                 step("rollback", _restore_plugins, package_ids, backup_plugins)
@@ -537,7 +557,7 @@ def apply_snapshot(
                 result["restarted"] = True
             except Exception as exc:
                 result["restarted"] = False
-                result["restart_error"] = str(exc)
+                result["restart_error"] = "redemarrage_impossible"
         return result
 
 
@@ -575,6 +595,14 @@ def main(argv: list[str] | None = None) -> int:
             )
         _print(result, args.json)
         return 0
+    except KeyboardInterrupt:
+        _print({"ok": False, "error": {"code": "interrupted",
+               "message": "Mise à jour interrompue"}}, args.json)
+        return 130
+    except TimeoutError:
+        _print({"ok": False, "error": {"code": "dev_update_error",
+               "message": "Délai dépassé pour un sous-processus de mise à jour"}}, args.json)
+        return 1
     except (DevUpdateError, updater.UpdateError) as exc:
         _print({"ok": False, "error": {"code": "dev_update_error", "message": str(exc)}}, args.json)
         return 1

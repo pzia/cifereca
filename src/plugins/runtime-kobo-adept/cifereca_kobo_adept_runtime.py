@@ -24,16 +24,39 @@ class KoboAdeptError(UserFacingError):
         self.details = dict(details or {})
 
 
-def classified_adept_failure(error, exit_code):
-    """Project only structured ACSM codes, never vendor message or stderr.
+_ACSM_CODES = frozenset({
+    'E_LIC_ALREADY_FULFILLED_BY_ANOTHER_USER',
+    'adept_license_already_fulfilled_by_another_user',
+    'adept_error',
+})
 
-    0.13.6 returns opaque adept_error / exit 10. An explicit libgourou
-    license enum, if exported as JSON by a future CLI, can be translated
-    without inspecting private XML, URLs or process logs.
+# The external CLI is a process boundary, not a trusted message formatter.
+# Only these *observed in the local contract simulator* profile errors have
+# safe, stable semantics. All other codes and messages stay opaque until
+# explicitly qualified with the upstream CLI contract.
+_KNOWN_NON_ACSM_ERRORS = {
+    'profile_missing': 'Profil Kobo-Adept introuvable.',
+    'invalid_profile': 'Profil Kobo-Adept invalide.',
+}
+
+# This bound applies to *every* JSON command, not only loan inventory reads.
+# subprocess.run still captures process output before this check; it prevents
+# unbounded UTF-8 decoding, JSON parsing and returning oversized vendor data.
+_MAX_JSON_RESPONSE_BYTES = 4 * 1024 * 1024
+
+
+def classified_adept_failure(error, exit_code):
+    """Classify a FAILED, proven ACSM download request only.
+
+    Caller must independently establish that payload.source.type == 'acsm'
+    on the download/request operation. Do not use exit code 10, vendor
+    messages or libgourou stderr to *infer* which operation failed.
+    Unknown/legacy ACSM failures are fixed and non-retryable; an exact
+    machine-readable license enum is the sole more specific diagnosis.
     """
     if not isinstance(error, dict):
         error = {}
-    code = error.get('code')
+    code = error.get('code') if type(error.get('code')) is str else None
     if code in {
         'E_LIC_ALREADY_FULFILLED_BY_ANOTHER_USER',
         'adept_license_already_fulfilled_by_another_user',
@@ -43,13 +66,13 @@ def classified_adept_failure(error, exit_code):
             "Le prêt ACSM est déjà associé à une autre identité Adobe. Vérifiez l'identité d'origine.",
             False,
         )
-    if code == 'adept_error' or exit_code == 10:
-        return (
-            'adept_error',
-            "Échec de l'activation ACSM ; la cause Adobe n'est pas confirmée. Vérifiez le profil d'origine.",
-            False,
-        )
-    return None
+    # Never relay unknown vendor fields, raw XML or a potentially sensitive
+    # message. Even exit 1 / unknown code is an opaque ACSM error.
+    return (
+        'adept_error',
+        "Échec de l'activation ACSM ; la cause Adobe n'est pas confirmée. Vérifiez le profil d'origine.",
+        False,
+    )
 
 
 class KoboAdeptRuntime:
@@ -79,7 +102,10 @@ class KoboAdeptRuntime:
             # Diagnostics must never alter the runtime operation.
             logger = getattr(self.context, "logger", None)
             if logger is not None:
-                logger.debug("Kobo-Adept diagnostic reporter unavailable", exc_info=True)
+                # A failing diagnostic callback may embed a signed URL,
+                # certificate or private profile in its exception message.
+                # Do not attach its traceback or exception representation.
+                logger.debug("Kobo-Adept diagnostic reporter unavailable")
 
     @property
     def command(self):
@@ -94,6 +120,15 @@ class KoboAdeptRuntime:
     def run_json(self, args, *, payload=None, timeout=60, max_output_bytes=None):
         started = time.monotonic()
         self.last_run_diagnostic = {'operation': operation_family(args)}
+        if max_output_bytes is None:
+            output_limit = _MAX_JSON_RESPONSE_BYTES
+        elif (type(max_output_bytes) is not int
+              or not 1 <= max_output_bytes <= _MAX_JSON_RESPONSE_BYTES):
+            # Reject invalid budgets before starting a subprocess, even if
+            # a caller tries to disable the cap with a huge value or bool.
+            raise ValueError("invalid Kobo-Adept JSON response limit")
+        else:
+            output_limit = max_output_bytes
 
         def statistics(stdout, stderr, returncode=None):
             out, err = output_bytes(stdout), output_bytes(stderr)
@@ -133,7 +168,7 @@ class KoboAdeptRuntime:
             fail('Kobo-Adept ne peut pas être exécuté.', 'kobo_adept_launch_error')
 
         out, err = statistics(proc.stdout, proc.stderr, proc.returncode)
-        if max_output_bytes is not None and len(out) > max_output_bytes:
+        if len(out) > output_limit:
             self.last_run_diagnostic.update(stdout_mode='oversized', stdout_summary='sortie trop volumineuse')
             fail('La réponse Kobo-Adept dépasse la limite de lecture.', 'kobo_adept_output_too_large', returncode=proc.returncode)
         try:
@@ -157,16 +192,43 @@ class KoboAdeptRuntime:
         self.last_run_diagnostic.update(stdout_mode='json', stdout_summary='objet JSON')
         if proc.returncode != 0 or value.get('ok') is False:
             error = value.get('error') if isinstance(value.get('error'), dict) else {}
-            # A few older CLI versions expose the same fields at the top level.
-            if not error and (proc.returncode == 10 or value.get('code') == 'adept_error'):
-                error = value
-            classified = classified_adept_failure(error, proc.returncode)
-            if classified is not None:
-                code, public_message, retryable = classified
+            acsm_request = (
+                len(args) >= 2 and args[0] == 'download' and args[1] == 'request'
+                and isinstance(payload, dict)
+                and isinstance(payload.get('source'), dict)
+                and payload['source'].get('type') == 'acsm'
+            )
+            # Legacy 0.13.6 may publish code/message at the JSON root.
+            # Only a PROVEN ACSM request can interpret these as an ADEPT
+            # failure. Never classify unrelated commands by exit 10 alone.
+            if acsm_request:
+                if not error and isinstance(value.get('code'), str):
+                    error = value
+                code, public_message, retryable = classified_adept_failure(
+                    error, proc.returncode,
+                )
                 fail(public_message, code, returncode=proc.returncode, retryable=retryable)
-            fail(safe_message(error.get('message') or 'Échec Kobo-Adept'),
-                str(error.get('code') or 'kobo_adept_failed'),
-                returncode=proc.returncode, retryable=error.get('retryable') is True)
+            # An Adobe-specific enum from a non-ACSM command is contradictory.
+            # Exit 10 also has no certified meaning for other operations.
+            # Neither case is permission to echo opaque vendor messages.
+            if (proc.returncode == 10
+                    or (type(error.get('code')) is str
+                        and error['code'] in _ACSM_CODES)):
+                fail('Échec Kobo-Adept ; cause non qualifiée pour cette opération.',
+                     'kobo_adept_failed', returncode=proc.returncode)
+            # An unrecognized structured `error.code` may itself contain
+            # private URLs, XML, tokens or human-readable identities. Neither
+            # that raw key nor the vendor message crosses the Core boundary.
+            # Preserve existing machine-readable profile_missing semantics
+            # without trusting vendor wording or invented retry semantics for
+            # unknown failures.
+            vendor_code = error.get('code')
+            if type(vendor_code) is str and vendor_code in _KNOWN_NON_ACSM_ERRORS:
+                fail(_KNOWN_NON_ACSM_ERRORS[vendor_code], vendor_code,
+                     returncode=proc.returncode,
+                     retryable=error.get('retryable') is True)
+            fail('Échec Kobo-Adept ; code fournisseur non qualifié.',
+                 'kobo_adept_failed', returncode=proc.returncode)
         self._report(f"Kobo-Adept {self.last_run_diagnostic.get('operation') or 'operation'}", "ok")
         return value
 

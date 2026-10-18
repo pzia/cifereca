@@ -88,7 +88,7 @@ class SearchRegression(unittest.TestCase):
         row=SearchResult('id','id','GALLICA','digital','Other',None,None,'EPUB',None,None,'Summary',None,None,'OPDS',source_provider='gallica')
         self.search.side_effect=None;self.search.return_value=[row];self.session.last_search_warnings=['Audio temporarily unavailable']
         self.assertEqual(self.service.search('original'),[row]);self.assertEqual(self.search.call_count,1)
-        self.assertIn('Audio',self.service.last_search_warnings[0])
+        self.assertEqual(self.service.last_search_warnings, ['Gallica: résultats partiels'])
         self.service.search('original');self.assertEqual(self.search.call_count,2)
     def test_valid_empty_result_is_cached(self):
         self.search.side_effect=None;self.search.return_value=[]

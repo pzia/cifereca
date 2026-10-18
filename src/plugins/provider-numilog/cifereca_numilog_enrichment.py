@@ -169,12 +169,35 @@ def merge_attested_owned_public_detail(owned, detail):
                "description", "language", "isbn_edition_unspecified"}
     if not set(fields).issubset(allowed) or set(fields) != set(evidence):
         raise ProviderCapabilityError(error)
+    from cifereca_numilog_public_detail import _valid_text, _isbn
+    from datetime import date
+
     for key, proof in evidence.items():
         if (type(proof) is not dict
                 or proof.get("kind") != "observed_public_jsonld"
                 or proof.get("source_url") != url
                 or proof.get("edition_proven") is not False):
             raise ProviderCapabilityError(error)
+        value = fields[key]
+        if key == "authors":
+            if (type(value) is not list or not 0 < len(value) <= 32
+                    or any(not _valid_text(author, 256) for author in value)):
+                raise ProviderCapabilityError(error)
+        elif key == "isbn_edition_unspecified":
+            if type(value) is not str or _isbn(value) != value:
+                raise ProviderCapabilityError(error)
+        elif not _valid_text(value, {
+                "title": 512, "description": 16000, "publisher": 256,
+                "published_at": 32, "language": 80,
+            }[key]):
+            raise ProviderCapabilityError(error)
+        if key == "published_at":
+            try:
+                if len(value) != 10 or date.fromisoformat(value).isoformat() != value:
+                    raise ValueError
+            except ValueError:
+                raise ProviderCapabilityError(error) from None
+
     def comparable(value):
         if type(value) is not str:
             return ""
@@ -188,31 +211,51 @@ def merge_attested_owned_public_detail(owned, detail):
         raise ProviderCapabilityError("Numilog : public_detail_title_conflict")
 
     projection, copied_evidence, conflicts = {}, {}, []
+    listing_excerpt = None
     for source_field, destination in (
         ("authors", "author"), ("publisher", "publisher"),
         ("published_at", "published_at"), ("description", "description"),
     ):
         value = fields.get(source_field)
         if source_field == "authors" and isinstance(value, list):
-            if (not value or any(type(x) is not str or not x for x in value)):
-                raise ProviderCapabilityError(error)
             value = " ; ".join(value)
         if value is None:
             continue
-        if type(value) is not str or not value.strip():
-            raise ProviderCapabilityError(error)
         current = getattr(owned, destination, None)
-        if current:
-            if comparable(current) != comparable(value):
+        if current and comparable(current) != comparable(value):
+            # The search listing exposes an excerpt, not a definitive full
+            # description. Upgrade ONLY if the full Book description really
+            # extends that exact, provenance-attested excerpt. Otherwise keep
+            # the purchased row's existing text and surface both versions.
+            listing_proof = listing["field_evidence"].get("description")
+            may_upgrade = (
+                source_field == "description"
+                and type(current) is str and _valid_text(current, 16000)
+                and type(listing_proof) is dict
+                and listing_proof.get("kind") == "numilog.public_search_listing"
+                and listing_proof.get("source_url") == listing["source_url"]
+                and listing_proof.get("selector") == "p.list-group-item-text"
+                and comparable(value).startswith(comparable(current))
+                and len(comparable(value)) > len(comparable(current))
+            )
+            if may_upgrade:
+                projection[destination] = value
+                listing_excerpt = current
+            else:
                 conflicts.append(source_field)
-        else:
+                continue
+        elif not current:
             projection[destination] = value
-            copied_evidence[destination] = {
-                "kind": "numilog.public_product_jsonld",
-                "source_url": url, "field": source_field,
-            }
-    # Data absent from SearchResult's contract remains only in the
-    # provenance subdocument, with explicit unresolved-edition semantics.
+        else:
+            continue
+        copied_evidence[destination] = {
+            "kind": "numilog.public_product_jsonld",
+            "source_url": url, "field": source_field,
+        }
+    # Preserve EVERY validated public JSON-LD value and its per-field
+    # provenance even when the listing projection wins or fields are not
+    # supported on SearchResult. This is commercial metadata only: neither
+    # a verified purchased format nor a proof of entitlement.
     next_metadata = dict(metadata)
     detail_summary = {
         "status": "attested_public_product",
@@ -222,24 +265,36 @@ def merge_attested_owned_public_detail(owned, detail):
         "rights_proven_by_public_detail": False,
         "field_evidence": copied_evidence,
         "listing_conflicts": tuple(conflicts),
+        "public_jsonld": {
+            "fields": dict(fields),
+            "field_evidence": {key: dict(proof) for key, proof in evidence.items()},
+            "edition_proven": False,
+            "rights_proven": False,
+        },
         # Public offers describe formats on the commercial product page, not
         # which variant this account bought. Keep typed ids isolated.
         "public_identifiers": typed_ids,
         "identifier_evidence": typed_proof,
     }
+    if listing_excerpt is not None:
+        detail_summary["replaced_listing_excerpt"] = listing_excerpt
     if "language" in fields:
-        if type(fields["language"]) is not str:
-            raise ProviderCapabilityError(error)
         detail_summary["language"] = fields["language"]
     if "isbn_edition_unspecified" in fields:
-        if type(fields["isbn_edition_unspecified"]) is not str:
-            raise ProviderCapabilityError(error)
         detail_summary["isbn_edition_unspecified"] = fields["isbn_edition_unspecified"]
     from cifereca_numilog_public_metadata import validated_public_metadata, PublicMetadataError
+    from cifereca_numilog_public_commercial import (
+        validated_public_commercial, PublicCommercialError,
+    )
     try:
         html_metadata = validated_public_metadata(detail, url)
-    except PublicMetadataError:
+        commercial = validated_public_commercial(detail, url)
+    except (PublicMetadataError, PublicCommercialError):
         raise ProviderCapabilityError(error) from None
+    if commercial is not None:
+        # Observed public shelf price/availability/image are NOT evidence of
+        # purchased EPUB/PDF format, title, artifact, right or historical price.
+        detail_summary["public_commercial"] = commercial
     if html_metadata is not None:
         detail_summary["public_html_metadata"] = html_metadata
         next_metadata["public_product_metadata"] = dict(html_metadata["fields"])

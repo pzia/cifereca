@@ -62,7 +62,8 @@ def test_release_preflight_changes_are_never_skipped_by_pr_ci():
     from pathlib import Path
     workflow = (Path(__file__).resolve().parents[1]
                 / ".github/workflows/pr-ci.yml").read_text(encoding="utf-8")
-    assert '      - "scripts/ci_core_release_preflight.py"' in workflow
+    # Required PR CI must always be triggered, even if the event has no path filter.
+    assert "  pull_request:\n  workflow_dispatch:" in workflow
     assert r"scripts/ci_core_release_preflight\.py$" in workflow
 
 
