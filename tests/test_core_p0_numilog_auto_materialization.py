@@ -267,3 +267,80 @@ def test_revocation_inside_locked_admission_stops_without_indexing(
         assert calls == []
     finally:
         service.close()
+
+
+def test_numilog_startup_queue_is_independent_of_inventory_schedule(
+    tmp_path,
+):
+    from cifereca.gui.source_inventory_startup import dispatch_after_opening
+
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    tasks = []
+    window = NS(
+        service=service,
+        plugin_manager=NS(broker=lambda _name: broker),
+        runner=NS(submit=lambda *args, **kwargs: tasks.append((args, kwargs))),
+        _closed=False,
+    )
+    try:
+        assert dispatch_after_opening(window) is False
+        assert tasks == []
+        _authorize(broker, sid)
+        session.library = lambda: []
+        assert dispatch_after_opening(window) is True
+        assert len(tasks) == 1
+        assert tasks[0][1]["kind"] == "source-materialize"
+        assert tasks[0][1]["origin"] == "automatic"
+        assert tasks[0][1]["coalesce_key"] == "source:numilog:materialize:startup"
+        # The inventory policy was never enabled.
+        assert broker.inventory_refresh_schedule(sid)["mode"] == "manual"
+        work = tasks[0][0][1]
+        assert callable(work)
+        work()
+        assert service.storage.metadata_get(
+            "sync.source.numilog.materialization.last_start.v1." + sid,
+        ) is not None
+        assert dispatch_after_opening(window) is False
+        assert len(tasks) == 1
+        assert calls == []
+    finally:
+        service.close()
+
+
+def test_numilog_revoked_while_startup_task_queued_skips_all_provider_io(tmp_path):
+    from cifereca.gui.source_inventory_startup import dispatch_after_opening
+
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    tasks = []
+    window = NS(
+        service=service,
+        plugin_manager=NS(broker=lambda _name: broker),
+        runner=NS(submit=lambda *args, **kwargs: tasks.append((args, kwargs))),
+        _closed=False,
+    )
+    try:
+        _authorize(broker, sid)
+        session.library = lambda: pytest.fail("revoked scheduled work")
+        assert dispatch_after_opening(window)
+        assert len(tasks) == 1
+        broker.revoke_numilog_materialization_consent(sid)
+        tasks[0][0][1]()
+        assert service.storage.metadata_get(
+            "sync.source.numilog.materialization.last_start.v1." + sid,
+        ) is None
+        assert calls == []
+    finally:
+        service.close()
+
+
+def test_numilog_startup_does_not_run_for_other_identity(tmp_path):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        session.library = lambda: pytest.fail("wrong owner")
+        assert eligible_source_ids(broker, "alex") == ()
+        assert execute(broker, "alex", "startup").ok
+        assert execute(broker, account.identity_id, "periodic").ok is False
+        assert calls == []
+    finally:
+        service.close()
