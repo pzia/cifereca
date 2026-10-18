@@ -591,6 +591,40 @@ def _readbook_coordinates(value, base_url):
         return None
 
 
+
+def _confirmation_readbook_binding(observed, expected):
+    """Prove one owned edition across download and streaming *link labels*.
+
+    Numilog's purchased MesLivres card may advertise
+    readBook?lid=N&m=dwld, while the SAME confirmation card exposes only
+    'Lire en ligne (Streaming)' as readBook?lid=N&m=stream. The streaming
+    href is evidence of the card's lid, NEVER a fulfillment URL.
+
+    Preserve the previous exact comparison first. The only relaxation is
+    a directional dwld -> stream mode switch on the same readBook origin,
+    path, lid and *all* other query keys/values/multiplicities. Any other
+    mode or copy/edition variance fails closed.
+    """
+    if observed is None or expected is None:
+        return False
+    if observed == expected:
+        return True
+    observed_lid, observed_query = observed
+    expected_lid, expected_query = expected
+    if observed_lid != expected_lid:
+        return False
+    observed_fields = dict(observed_query)
+    expected_fields = dict(expected_query)
+    if (expected_fields.get('m') != ('dwld',)
+            or observed_fields.get('m') != ('stream',)):
+        return False
+    # Keys include lid; repeated non-mode values remain ordered tuples.
+    # Drop ONLY the attested single 'm' mode, never a copy/edition field.
+    observed_fields.pop('m')
+    expected_fields.pop('m')
+    return observed_fields == expected_fields
+
+
 def _confirmation_delivery(root, base_url, expected_readbook, allowed):
     """Bind the observed global Links array to ONE explicitly selected card.
 
@@ -621,6 +655,16 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed):
     candidate = candidates[0]
     expected = _readbook_coordinates(expected_readbook, base_url)
     require(expected is not None)
+    # Never extend the streaming equivalence to arbitrary HTML landings:
+    # the extra identity proof exists ONLY on the observed canonical
+    # Numilog confirmation page, after the HTTPS/origin check.
+    page = urlsplit(base_url)
+    allow_stream_identity = (
+        origin(base_url) == ('https', 'www.numilog.com', 443)
+        and page.path.casefold() == '/pages/commande/confirmationpaiement.aspx'
+        and page.username is None and page.password is None
+        and not page.fragment
+    )
     parents = {id(child): node for node in root.walk() for child in node.children}
     bindings = []
     for action in root.walk():
@@ -673,7 +717,19 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed):
             ancestor = parents.get(id(ancestor))
         readbooks = [n for n in card.walk() if n.tag == 'a'
                      and _readbook_coordinates(n.attrs.get('href', ''), base_url) is not None]
-        if not any(_readbook_coordinates(n.attrs['href'], base_url) == expected for n in readbooks):
+        # A confirmation's readBook can be a streaming-only *identity
+        # link*. Numilog's actual Adobe download remains the unique signed
+        # Links/ModalDownload candidate; never navigate readBook m=stream.
+        # The comparison changes ONLY here, inside the already verified
+        # exact confirmation layout and owning card.
+        if not any(
+            (
+                _confirmation_readbook_binding(
+                    _readbook_coordinates(n.attrs['href'], base_url), expected,
+                ) if allow_stream_identity
+                else _readbook_coordinates(n.attrs['href'], base_url) == expected
+            ) for n in readbooks
+        ):
             continue
         require(len(readbooks) == 1)
         require(sum(bool(re.search(r'\bModalDownload\s*\(', n.attrs.get('onclick', '')))
