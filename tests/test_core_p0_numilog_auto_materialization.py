@@ -212,7 +212,10 @@ def test_startup_keeps_max_eight_fresh_downloads_and_skips_reconciliations(
             status = "needs_reconciliation" if item == books[0].record_id else "candidate_unverified"
             return SyncResult(ok=status == "candidate_unverified",
                               facts={"status": status})
-        broker.preflight_numilog_purchase = preflight
+        monkeypatch.setattr(
+            SynchronizationBrokerImpl, "preflight_numilog_purchase",
+            lambda self, _sid, item: preflight(_sid, item),
+        )
         def acquire(row, *, _admission=None):
             assert _admission() is row
             seen.append(row.record_id)
@@ -240,8 +243,11 @@ def test_revocation_inside_locked_admission_stops_without_indexing(
         _authorize(broker, sid)
         book = _row(account.credential_id, 0)
         session.library = lambda: [book]
-        broker.preflight_numilog_purchase = lambda *_args: SyncResult(
-            ok=True, facts={"status":"candidate_unverified"},
+        monkeypatch.setattr(
+            SynchronizationBrokerImpl, "preflight_numilog_purchase",
+            lambda *_args: SyncResult(
+                ok=True, facts={"status": "candidate_unverified"},
+            ),
         )
         indexed = []
         monkeypatch.setattr(
