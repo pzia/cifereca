@@ -22,12 +22,38 @@ def policy_key(source_id: str) -> str:
     return _PREFIX + source_id
 
 
+def _source_accounts(broker: Any, source_id: str) -> list[Any]:
+    """Isolate malformed *other* account rows before source-specific actions.
+
+    The matched account still goes through _valid_binding and persistent
+    credential/session ownership checks. Never use this as an authorization
+    shortcut or infer identity from the selected GUI profile.
+    """
+    import re
+    if (type(source_id) is not str
+            or re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is None):
+        return []
+    try:
+        accounts = broker.service.accounts
+        if type(accounts) not in {list, tuple} or len(accounts) > 256:
+            return []
+        found = []
+        for account in accounts:
+            try:
+                if (getattr(account, "provider_id", None) == "numilog"
+                        and broker._source_id(account) == source_id):
+                    found.append(account)
+            except Exception:
+                # One corrupt unrelated row cannot withhold consent
+                # revocation or safe startup eligibility from its siblings.
+                continue
+        return found
+    except Exception:
+        return []
+
+
 def _binding(broker: Any, source_id: str):
-    rows = [
-        row for row in broker.service.accounts
-        if getattr(row, "provider_id", None) == "numilog"
-        and broker._source_id(row) == source_id
-    ]
+    rows = _source_accounts(broker, source_id)
     if len(rows) != 1:
         return None
     account = rows[0]
@@ -165,11 +191,7 @@ def confirm(broker: Any, source_id: str, token: str, *, mode: str) -> SyncResult
 def revoke(broker: Any, source_id: str) -> str:
     # Revocation must work even after a session disconnects or a source is
     # disabled. A source unknown to this installation cannot be fabricated.
-    rows = [
-        row for row in broker.service.accounts
-        if getattr(row, "provider_id", None) == "numilog"
-        and broker._source_id(row) == source_id
-    ]
+    rows = _source_accounts(broker, source_id)
     if len(rows) != 1:
         raise ValueError("unknown_numilog_source")
     broker.service.storage.numilog_materialization_change_consent(
