@@ -66,8 +66,8 @@ def build_main_shell(window, *, Gtk, add_css, version):
     window.activity_history_button.set_popover(history_popover)
     busy.append(window.activity_history_button)
 
-    window.activity_dismiss = Gtk.Button.new_from_icon_name("window-close-symbolic")
-    window.activity_dismiss.set_tooltip_text("Acquitter le résultat courant")
+    window.activity_dismiss = Gtk.Button(label="Acquitter")
+    window.activity_dismiss.set_tooltip_text("Acquitter les erreurs affichées (historique conservé)")
     window.activity_dismiss.set_visible(False)
     window.activity_dismiss.connect("clicked", lambda _button: window._dismiss_activity_feedback())
     busy.append(window.activity_dismiss)

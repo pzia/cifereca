@@ -341,8 +341,14 @@ class LibraryService:
         identity = self.identity_by_id(identity_id)
         if identity is None:
             raise ProviderConfigurationError(f"Identité inconnue: {identity_id}")
-        self.current_identity = identity
-        self._account_context_epoch += 1
+        # Revoke in-flight progressive searches, including an Alice→Bob→Alice
+        # round trip. Serialize snapshot publication with this transition.
+        with self._search_generation_lock:
+            self.current_identity = identity
+            self._account_context_epoch += 1
+            self._search_generation += 1
+            self.last_search = []
+            self.last_search_warnings = []
         # History and bookings are identity-scoped snapshots. Invalidate them
         # at the service boundary so non-UI callers cannot observe data that
         # belonged to the previously selected identity.
@@ -1043,6 +1049,46 @@ class LibraryService:
                             "provider=numilog reason=invalid_private_rows"
                         )
                         continue
+                if provider_id == "kobo":
+                    # A source may be disabled/rebound or replaced while
+                    # library() fetches remote pages. Never project the stale
+                    # response into entitlements or the catalog (#1346).
+                    current_accounts = [
+                        a for a in self.accounts
+                        if a.provider_id == "kobo"
+                        and a.credential_id == credential_id
+                    ]
+                    current_identity = self.storage.identity_for_connection(
+                        "kobo", credential_id,
+                    )
+                    current_connections = (
+                        self.storage.provider_connections(identity_id=current_identity)
+                        if current_identity else []
+                    )
+                    if (
+                        len(current_accounts) != 1
+                        or account is None
+                        or current_accounts[0].identity_id != identity.identity_id
+                        or current_accounts[0].unique_id != account.unique_id
+                        or current_identity != identity.identity_id
+                        or sum(
+                            row.get("provider_id") == "kobo"
+                            and row.get("credential_id") == credential_id
+                            and row.get("enabled") is True
+                            for row in current_connections
+                        ) != 1
+                        or not self.sync_source_enabled(current_accounts[0])
+                        or self._sessions.get(
+                            self._session_key("kobo", credential_id)
+                        ) is not session
+                        or session.connected is not True
+                    ):
+                        result.blocked_sources += 1
+                        _TRACE_LOG.warning(
+                            "TRACE catalog personal-library inventory skipped "
+                            "provider=kobo reason=source_binding_changed"
+                        )
+                        continue
                 if provider_id == "kobo" and account is not None:
                     from .core.kobo_manifest_rights import mirror_kobo_manifest_rights
                     mirror_kobo_manifest_rights(
@@ -1122,6 +1168,13 @@ class LibraryService:
         proportional to the entire library size.
         """
         return library_mutation.materialize_to_identity(self, placement_id, target_identity_id)
+
+    def enrich_numilog_search_result(self, item: SearchResult, *, expected_identity_id: str) -> SearchResult:
+        """User-triggered metadata-only Numilog enrichment; never auto-sync."""
+        from .core.numilog_explicit_enrichment import enrich_numilog_result_once
+        return enrich_numilog_result_once(
+            self, item, expected_identity_id=expected_identity_id,
+        )
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
         key = f"{item.source_provider}:{item.source_credential}:{item.scenario}:{item.docbase}:{item.record_id}"
@@ -2074,8 +2127,12 @@ class LibraryService:
         work = data_dir() / "acquisition-work" / identity.identity_id / "manual" / source_sha[:16]
         work.mkdir(parents=True, exist_ok=True)
         staged = work / "source.acsm"
+        if work.is_symlink() or staged.is_symlink():
+            raise ProviderConfigurationError("Zone de reprise ACSM ambiguë")
         if not staged.exists() or sha256_file(staged) != source_sha:
             shutil.copy2(source, staged)
+        if sha256_file(staged) != source_sha:
+            raise ProviderConfigurationError("Le fichier ACSM a changé pendant l’import")
         self.storage.acquisition_put({
             "acquisition_id": acquisition_id, "provider_id": provider_id, "credential_id": "manual",
             "identity_id": identity.identity_id, "item_id": source_sha, "title": title or source.stem,
@@ -2085,7 +2142,17 @@ class LibraryService:
         try:
             media_format = detect_acsm_format(staged) or "epub"
             suffix = ".pdf" if media_format == "pdf" else ".epub"
-            destination = self.library_identity_provider_dir(identity.identity_id, provider_id) / self._loan_destination_name(title or source.stem, suffix)
+            # A title is presentation, never an artifact identity. Keep each
+            # ACSM's outputs in its own namespace and refuse unindexed residue.
+            root = self.library_identity_provider_dir(identity.identity_id, provider_id)
+            destination_dir = root / ("acsm-" + source_sha)
+            if destination_dir.is_symlink() or (destination_dir.exists() and not destination_dir.is_dir()):
+                raise ProviderConfigurationError("Dossier d’import ACSM ambigu")
+            destination_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            filename = self._loan_destination_name(title or source.stem, suffix)
+            destination = destination_dir / filename
+            if any(destination_dir.iterdir()):
+                raise ProviderConfigurationError("Un artefact ACSM non attesté existe déjà ; réconciliation nécessaire")
             try:
                 profile_name, _profile_source = self.resolve_adept_profile_for_identity(identity.identity_id)
             except AdeptProfileResolutionError as exc:
@@ -2107,7 +2174,7 @@ class LibraryService:
             adept_binding = capture_binding(result, profile_name=profile_name, profile_id=originating_profile_id)
             artifact = result.get("artifact") if isinstance(result, dict) else None
             produced = Path(str((artifact or {}).get("path") or destination))
-            if produced.resolve() != destination.resolve():
+            if produced.is_symlink() or produced.resolve() != destination.resolve():
                 raise ProviderConfigurationError("Chemin d’artefact ADEPT inattendu")
             if not produced.is_file():
                 raise ProviderConfigurationError("Le runtime DRM n'a produit aucun Artifact")
@@ -2117,8 +2184,10 @@ class LibraryService:
             expected_suffix = ".pdf" if inspected.media_format == "pdf" else ".epub"
             if produced.suffix.casefold() != expected_suffix:
                 corrected = produced.with_suffix(expected_suffix)
-                corrected.unlink(missing_ok=True)
-                produced.replace(corrected)
+                # link() atomically refuses any existing destination, including
+                # a dangling symlink. Never unlink another local document.
+                os.link(produced, corrected)
+                produced.unlink()
                 produced = corrected
             indexed = self.catalog_index_path(
                 produced, title=title or source.stem, item_id=source_sha,
@@ -2152,7 +2221,16 @@ class LibraryService:
         identity = self.identity_by_id(identity_id) if identity_id else self.current_identity
         iid = identity.identity_id if identity else identity_id
         try:
-            result = self._import_acsm_impl(source, identity_id=identity_id, provider_id=provider_id, title=title)
+            # One dedicated import lock also covers two paths containing the
+            # same ACSM, and avoids re-entering the global acquisition lock
+            # when a provider delegates fulfillment to this public broker.
+            if identity is None:
+                raise ProviderConfigurationError("Aucune Identity active pour l'import ACSM")
+            try:
+                with InterProcessLock(acquisition_lock_file().with_name("manual-acsm.lock")):
+                    result = self._import_acsm_impl(source, identity_id=iid, provider_id=provider_id, title=title)
+            except LockBusyError:
+                raise ProviderConfigurationError("Un import ACSM est déjà en cours") from None
             outcome = "success" if result.get("status") in {"complete", "unchanged"} else "failed"
             self._record_action(iid, "import", outcome, provider_id=provider_id, facts={"status": result.get("status", "")})
             return result
@@ -2349,6 +2427,8 @@ class LibraryService:
 
     def can_direct_download(self, item: SearchResult) -> bool:
         """Whether Paris can execute an acquisition with the published contracts."""
+        if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
+            return False
         try:
             session = self._session_for_source(item.source_provider, item.source_credential)
             if item.source_provider == "kobo":
@@ -2555,7 +2635,25 @@ class LibraryService:
         return kobo_backup._execute_kobo_acquisition(self, item, target_dir)
 
     def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None) -> Acquisition:
-        session = self._session_for_source(item.source_provider, item.source_credential)
+        if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
+            raise ProviderConfigurationError(
+                "Résultat connu hors ligne : acquisition indisponible"
+            )
+        # Every supported targeted admission is replayed under the same lock
+        # as its provider I/O. Unknown providers must never silently ignore it.
+        if _admission is not None and (
+            not callable(_admission) or item.source_provider not in {"kobo", "numilog"}
+        ):
+            raise ProviderConfigurationError(
+                "Acquisition ciblée indisponible : autorisation du compte non vérifiable"
+            )
+        # Numilog's account/credential is untrusted until the dedicated
+        # source guard validates its persistent owner under the global lock.
+        # Do not look up the session using an untrusted credential first.
+        session = (
+            None if item.source_provider == "numilog"
+            else self._session_for_source(item.source_provider, item.source_credential)
+        )
         content_type = self.acquisition.content_type_for(item)
 
         if item.source_provider == "kobo":
@@ -2614,6 +2712,131 @@ class LibraryService:
                     "Une synchronisation locale est déjà en cours dans une autre instance de cifereca"
                 ) from exc
 
+        if item.source_provider == "numilog":
+            # Even an explicit UI click is not permission to download from a
+            # detached account or to race an existing manual/materialize run.
+            # Numilog resolves delivery URLs afresh *inside* download_direct.
+            from .core.numilog_manual_acquisition import require_source
+            try:
+                with InterProcessLock(acquisition_lock_file()):
+                    identity, pinned_session, pinned_account_id = require_source(
+                        self, item, session=session,
+                    )
+                    # The caller's exact immutable purchase target is checked
+                    # before I/O and again before/after hooks. A refreshed item
+                    # cannot switch credential, purchase, variant or revision.
+                    from .core.numilog_manual_acquisition import admission_scope, require_admission
+                    pinned_scope = admission_scope(item)
+
+                    def readmit():
+                        return require_admission(
+                            self, item, _admission, pinned_scope=pinned_scope,
+                            session=pinned_session, identity_id=identity.identity_id,
+                            account_id=pinned_account_id,
+                        )
+
+                    item = readmit()
+                    if self.storage.numilog_purchase_has_local_conflict(
+                        credential_id=item.source_credential,
+                        item_id=item.record_id,
+                    ):
+                        raise ProviderConfigurationError(
+                            "Numilog : acquisition existante ; rapprochement local requis"
+                        )
+                    target_dir = self.library_identity_provider_dir(
+                        identity.identity_id, "numilog",
+                    )
+                    if (target_dir.is_symlink()
+                            or target_dir.parent.is_symlink()
+                            or not target_dir.is_dir()):
+                        raise ProviderConfigurationError(
+                            "Numilog : répertoire identité non attesté"
+                        )
+                    # Numilog's explicit direct adapter uses a stable hashed
+                    # filename. A local orphan, broken symlink or pre-existing
+                    # file with no ledger is still a conflict, never an
+                    # invitation to overwrite it on another manual click.
+                    expected_name = "numilog-" + hashlib.sha256(
+                        item.record_id.encode("utf-8"),
+                    ).hexdigest()[:32] + ".epub"
+                    expected_path = target_dir / expected_name
+                    if expected_path.exists() or expected_path.is_symlink():
+                        raise ProviderConfigurationError(
+                            "Numilog : fichier local candidat ; rapprochement requis"
+                        )
+                    try:
+                        path, _private_url = pinned_session.download_direct(
+                            item, target_dir,
+                        )
+                    except Exception as exc:
+                        from .plugin_api import Cancelled
+                        if isinstance(exc, Cancelled):
+                            raise
+                        # A provider exception can contain a signed ACSM link
+                        # or order/cookie data. Never relay its raw message.
+                        raise ProviderConfigurationError(
+                            "Numilog : livraison indisponible ; réessayer manuellement"
+                        ) from None
+                    # The provider may release its per-session lock before
+                    # returning. A reconnect/rebind during HTTP or ADEPT must
+                    # not be committed under a different identity.
+                    readmit()
+                    refreshed = require_source(self, item, session=pinned_session)
+                    if (refreshed[0].identity_id != identity.identity_id
+                            or refreshed[2] != pinned_account_id):
+                        raise ProviderConfigurationError(
+                            "Numilog : rattachement du compte modifié"
+                        )
+                    from .core.numilog_manual_acquisition import require_local_artifact
+                    require_local_artifact(path, target_dir)
+                    from dataclasses import replace
+                    # Never pass unverified private cover/link metadata to
+                    # post-download hooks or the persisted Acquisition object.
+                    # The original item is used only by the provider's
+                    # exact owned-library resolver, inside the source lock.
+                    clean_item = replace(
+                        item, thumbnail_url=None, friendly_url=None,
+                        download_url=None, metadata={},
+                    )
+                    self.acquisition.run_post_download(
+                        clean_item, path, "", target_dir,
+                    )
+                    def final_admission():
+                        readmit()
+                        refreshed = require_source(self, item, session=pinned_session)
+                        if (refreshed[0].identity_id != identity.identity_id
+                                or refreshed[2] != pinned_account_id):
+                            raise ProviderConfigurationError(
+                                "Numilog : rattachement du compte modifié"
+                            )
+                    # Post-download hooks may remove or replace the file.
+                    # Attest the final artifact, not just its pre-hook path.
+                    require_local_artifact(path, target_dir)
+                    from .core.numilog_materialization_checkpoint import record
+                    checkpoint_id = record(
+                        self, item, path, target_dir, identity.identity_id, pinned_account_id,
+                        validate=final_admission,
+                    )
+                    # A provider-returned URL may contain single-use ACSM
+                    # signatures. Never persist it as Acquisition.source_url.
+                    result = self.acquisition.acquisition_from_direct(
+                        clean_item, path=path, url="", target_dir=target_dir,
+                        action="download",
+                    )
+                    # The generic direct adapter historically dropped the
+                    # account ID. Persist the source's originally pinned owner,
+                    # not a later enumeration of possibly mutated accounts.
+                    return replace(
+                        result, account_id=pinned_account_id,
+                        metadata={**result.metadata,
+                                  "identity_id": identity.identity_id,
+                                  "numilog_checkpoint_id": checkpoint_id},
+                    )
+            except LockBusyError:
+                raise ProviderConfigurationError(
+                    "Numilog : acquisition locale déjà en cours"
+                ) from None
+
         identity = self.identity_for_connection(item.source_provider, item.source_credential)
         target_dir = (
             self.library_identity_provider_dir(identity.identity_id, item.source_provider)
@@ -2640,22 +2863,39 @@ class LibraryService:
 
     def acquire_direct_item(self, item: SearchResult, *, _admission=None) -> Acquisition:
         identity_id = None
-        try:
-            identity_id = self.identity_for_connection(item.source_provider, item.source_credential).identity_id
-        except Exception:
-            identity_id = self.current_identity.identity_id if self.current_identity else None
+        # Do not trust a persisted connection owner to attribute private
+        # Numilog activity before the locked source admission succeeds.
+        if item.source_provider != "numilog":
+            try:
+                identity_id = self.identity_for_connection(
+                    item.source_provider, item.source_credential,
+                ).identity_id
+            except Exception:
+                identity_id = self.current_identity.identity_id if self.current_identity else None
         try:
             result = (self._acquire_direct_item_impl(item, _admission=_admission) if _admission is not None
                       else self._acquire_direct_item_impl(item))
-            self._record_action(identity_id, "acquisition", "success", provider_id=item.source_provider, facts={"record_id": item.record_id})
+            if item.source_provider == "numilog":
+                identity_id = result.metadata.get("identity_id")
+            safe_facts = ({"private_item": True} if item.source_provider == "numilog"
+                          else {"record_id": item.record_id})
+            self._record_action(identity_id, "acquisition", "success",
+                                provider_id=item.source_provider, facts=safe_facts)
             return result
         except Exception as exc:
-            self._record_action(identity_id, "acquisition", "failed", provider_id=item.source_provider, facts={"record_id": item.record_id, "error": type(exc).__name__})
+            safe_facts = ({"private_item": True, "error": type(exc).__name__}
+                          if item.source_provider == "numilog"
+                          else {"record_id": item.record_id, "error": type(exc).__name__})
+            self._record_action(identity_id, "acquisition", "failed",
+                                provider_id=item.source_provider, facts=safe_facts)
             raise
 
     def obtain_search_item(self, item: SearchResult):
         from .core.materialization import MaterializationCoordinator
 
+        if item.source_provider == "numilog":
+            from .core.numilog_materialization_checkpoint import index_delivered
+            return index_delivered(self, self.acquire_direct_item(item), title=item.title)
         return MaterializationCoordinator(
             acquire=self.acquire_direct_item,
             index_path=self.catalog_index_path,
@@ -2669,6 +2909,11 @@ class LibraryService:
     def obtain_owned_library_item(self, target):
         from .core.owned_library_download import obtain_owned_library_item
         return obtain_owned_library_item(self, target)
+
+    def resume_numilog_materialization(self, acquisition_id: str):
+        """Explicitly resume indexing a delivered Numilog file, with zero HTTP."""
+        from .core.numilog_materialization_checkpoint import resume
+        return resume(self, acquisition_id)
 
     def prepare_direct_download(self, item: SearchResult) -> tuple[Path, str]:
         """Compatibility wrapper around the normalized direct acquisition."""

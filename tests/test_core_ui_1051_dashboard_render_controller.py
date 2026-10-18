@@ -247,6 +247,7 @@ def test_stats_provenance_and_derived_actions_preserve_counts_and_zero():
     render()
     labels = _descendant_labels(window.dashboard_cards.children[0])
     assert "10 livres locaux · 0 prêts de bibliothèque connus" in labels
+    assert "— droits d’achat distants · fichier local non présumé" in labels
     assert "Actions (30 j) : 5 réussies · 5 échouées" in labels
     assert "Sources : Paris, Librairie (à connecter)" in labels
     assert "Profil Adobe : Lié" in labels
@@ -463,3 +464,44 @@ def test_only_active_callback_identity_survives_equals_implementation():
     window._overview_listeners = [swap, old]
     render()
     assert events == ["statistics", "snapshot"]
+
+
+def test_store_only_dashboard_separates_owned_rights_from_real_loans_and_files():
+    card = _card(statistics={
+        "local_books": 0, "known_loans": 0, "remote_owned_rights": 5,
+    })
+    window, events, diagnostics, styles, render = _window([card])
+    render()
+    labels = _descendant_labels(window.dashboard_cards.children[0])
+    assert "0 livres locaux · 0 prêts de bibliothèque connus" in labels
+    assert "5 droits d’achat distants · fichier local non présumé" in labels
+    assert not any("5 prêts" in value or "5 livres locaux" in value for value in labels)
+    assert events == ["statistics", "snapshot"]
+    assert diagnostics == []
+
+
+def test_dashboard_missing_counts_are_unknown_not_false_zero():
+    card = _card(statistics={
+        "known_loans": None, "remote_owned_rights": None,
+    })
+    window, _events, _diagnostics, _styles, render = _window([card])
+    render()
+    labels = _descendant_labels(window.dashboard_cards.children[0])
+    assert "— livres locaux · — prêts de bibliothèque connus" in labels
+    assert "— droits d’achat distants · fichier local non présumé" in labels
+    assert not any("0 droits" in value for value in labels)
+
+
+def test_dashboard_invalid_counts_never_leak_private_data_or_create_fake_ownership():
+    card = _card(statistics={
+        "local_books": True,
+        "known_loans": "https://personal.example/?token=SECRET",
+        "remote_owned_rights": -7,
+    })
+    window, _events, _diagnostics, _styles, render = _window([card])
+    render()
+    labels = _descendant_labels(window.dashboard_cards.children[0])
+    assert "— livres locaux · — prêts de bibliothèque connus" in labels
+    assert "— droits d’achat distants · fichier local non présumé" in labels
+    assert "SECRET" not in repr(labels)
+    assert "-7" not in repr(labels)

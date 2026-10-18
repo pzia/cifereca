@@ -114,3 +114,30 @@ def test_upstream_failure_is_not_misreported_as_empty_result():
         assert client.calls == [("Doyle", "all", 0)]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("invalid", (
+    {"field": "author"}, {"field": "isbn"},
+    {"scope": "PRIVATE_SIGNED_URL"}, {"scope": "unknown"},
+))
+def test_rejected_search_revokes_previous_partial_branch_warning(invalid):
+    client = FakeClient()
+    session = make_session(client)
+    try:
+        assert session.search("Doyle", scope="all", field="all") == []
+        assert session.last_search_warnings == [
+            "Catalogue physique momentanément indisponible",
+        ]
+        client.calls.clear()
+        with pytest.raises(ProviderCapabilityError, match="unsupported_") as caught:
+            session.search("Doyle", **invalid)
+        assert client.calls == []
+        assert session.last_search_warnings == []
+        assert "PRIVATE_" not in str(caught.value)
+        # A valid search still conveys the real branch warning normally.
+        session.search("Doyle", scope="all")
+        assert session.last_search_warnings == [
+            "Catalogue physique momentanément indisponible",
+        ]
+    finally:
+        session.close()

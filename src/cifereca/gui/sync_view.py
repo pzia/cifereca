@@ -97,6 +97,57 @@ def sync_local_preflight_presentation(result: object) -> str:
         "aucun téléchargement autorisé depuis cet aperçu."
     )
 
+def sync_numilog_local_preview_presentation(result: object) -> str:
+    """Project only the offline Numilog broker's bounded, read-only facts."""
+    unavailable = "Aperçu local indisponible. Aucun téléchargement autorisé."
+    facts = getattr(result, "facts", None)
+    if not isinstance(facts, Mapping) or getattr(result, "ok", None) is not True:
+        return unavailable
+    if (
+        facts.get("status") != "preview_only"
+        or facts.get("phase") != "local_materialization"
+        or facts.get("read_only") is not True
+        or facts.get("offline") is not True
+        or facts.get("acquisition_authorized") is not False
+        or facts.get("confirmation_available") is not False
+        or facts.get("schedule_available") is not False
+        or facts.get("manifest_refreshed") is not False
+        or facts.get("requires_manifest_validation") is not True
+        or type(facts.get("files_verified")) is not bool
+    ):
+        return unavailable
+    counts = facts.get("counts")
+    required = (
+        "owned_purchases", "already_local_linked", "already_local_verified",
+        "needs_file_verification", "potentially_missing", "candidate_unverified",
+        "needs_reconciliation", "attention_required", "not_downloadable",
+        "ignored_unattested_rights",
+    )
+    if (not isinstance(counts, Mapping)
+            or any(type(counts.get(key)) is not int
+                   or not 0 <= counts[key] <= 1_000_000 for key in required)
+            or type(facts.get("known_item_count")) is not int
+            or facts["known_item_count"] != counts["owned_purchases"]):
+        return unavailable
+    evidence = (
+        "Vérification SHA demandée"
+        if facts["files_verified"] else "Sans lecture ni vérification SHA des fichiers"
+    )
+    return (
+        f"Achats connus : {counts['owned_purchases']} · "
+        f"liens locaux : {counts['already_local_linked']} · "
+        f"fichiers vérifiés : {counts['already_local_verified']} · "
+        f"à vérifier : {counts['needs_file_verification']} · "
+        f"potentiellement manquants : {counts['potentially_missing']} · "
+        f"candidats incertains : {counts['candidate_unverified']} · "
+        f"à rapprocher : {counts['needs_reconciliation']} · "
+        f"actions requises : {counts['attention_required']} · "
+        f"non téléchargeables : {counts['not_downloadable']}.\n"
+        f"{evidence}. Inventaire distant non actualisé ; "
+        "aucun téléchargement autorisé depuis cet aperçu."
+    )
+
+
 def sync_local_reconciliation_presentation(result: object) -> str:
     """Safe UI text derived only from fixed, bounded audit counters.
 

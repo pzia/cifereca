@@ -267,7 +267,7 @@ def test_scoped_signed_failure_is_explicit_safe_and_leaves_no_temps(tmp_path, fa
         if failure == "410":
             assert "expiré" in str(exc.value)
         if failure == "login":
-            assert "session" in str(exc.value)
+            assert "formulaire de connexion" in str(exc.value)
         if failure == "xml-non-acsm":
             assert "XML non ACSM" in str(exc.value)
         assert requested == [LIBRARY, LIBRARY, SIGNED]
@@ -280,7 +280,7 @@ def test_scoped_signed_failure_is_explicit_safe_and_leaves_no_temps(tmp_path, fa
 
 
 @pytest.mark.parametrize(("failure", "part"), [
-    ("login", "session de connexion expirée"),
+    ("login", "formulaire de connexion"),
     ("ambiguous", "plusieurs liens de livraison"),
     ("error-html", "page d’erreur"),
     (None, "lien de livraison absent"),
@@ -410,7 +410,7 @@ def test_owner_resolution_is_required_before_signed_acsm_get(tmp_path, identitie
         book = session.library()[0]
         with pytest.raises(ProviderCapabilityError, match="identité propriétaire"):
             session.download_direct(book, tmp_path)
-        assert requested == [LIBRARY, LIBRARY]
+        assert requested == [LIBRARY]  # refuse before the fresh private read
         assert broker.calls == []
         _assert_no_stage(tmp_path)
     finally:
@@ -608,7 +608,7 @@ def test_legacy_readbook_signed_redirect_also_checks_owner_before_get(
         book = session.library()[0]
         with pytest.raises(ProviderCapabilityError, match='identité propriétaire'):
             session.download_direct(book, tmp_path)
-        assert requested == [LIBRARY, LIBRARY, READ_12]
+        assert requested == [LIBRARY]  # ownership is now checked before any delivery I/O
         assert broker.calls == []
         assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diag.events)
         _assert_no_stage(tmp_path)

@@ -77,12 +77,47 @@ SCENARIOS = {
         "description": "P0 #1358: vérification de la confirmation et refus des suppressions GTK 1600.",
         "runner": "gtk-maintenance", "width": 1600,
     },
+    "recommendations-detail-1366": {
+        "plugin": "ui.page.recommendations",
+        "fixture": "search-filters",
+        "description": "P1 #1599 : vrai Recommandations GTK/XTEST 1366, 0/1/N, sélection et ISBN local.",
+        "runner": "gtk-recommendations",
+        "width": 1366,
+    },
+    "recommendations-detail-1600": {
+        "plugin": "ui.page.recommendations",
+        "fixture": "search-filters",
+        "description": "P1 #1599 : vrai Recommandations GTK/XTEST 1600, changement de profil et action périmée.",
+        "runner": "gtk-recommendations",
+        "width": 1600,
+    },
+    "constellations-detail-1366": {
+        "plugin": "ui.page.constellations",
+        "fixture": "search-filters",
+        "description": "P1 #1599 : vrai plugin Constellations, hôte public et navigation GTK/XTEST 1366.",
+        "runner": "gtk-constellations",
+        "width": 1366,
+    },
+    "constellations-detail-1600": {
+        "plugin": "ui.page.constellations",
+        "fixture": "search-filters",
+        "description": "P1 #1599 : même vrai GTK/XTEST à 1600, identités et actions périmées.",
+        "runner": "gtk-constellations",
+        "width": 1600,
+    },
     "youth-1366": {
         "plugin": "catalog.youth",
         "fixture": "search-filters",
         "description": "P1 #758 : page Jeunesse GTK réelle, XTEST, 1366px, âges, identité, provenance.",
         "runner": "gtk-youth",
         "width": 1366,
+    },
+    "youth-1600": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "Plugins P1 #1599 : vraie page Jeunesse GTK/XTEST 1600px ; détails, identités, retour et sélection.",
+        "runner": "gtk-youth",
+        "width": 1600,
     },
     "youth-filter-help-1366": {
         "plugin": "catalog.youth",
@@ -108,6 +143,14 @@ SCENARIOS = {
         "width": 1366,
         "editions": True,
     },
+    "youth-editions-1600": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #1599 : deux éditions, ISBN distincts et âges par provenance dans le vrai détail GTK 1600.",
+        "runner": "gtk-youth",
+        "width": 1600,
+        "editions": True,
+    },
     "youth-focus-return-1366": {
         "plugin": "catalog.youth",
         "fixture": "search-filters",
@@ -123,6 +166,14 @@ SCENARIOS = {
         "description": "P0 #906 UX : Jeunesse -> Recherche connue -> Retour par vraie GTK/XTEST 1366.",
         "runner": "gtk-youth",
         "width": 1366,
+        "library_search": True,
+    },
+    "youth-library-search-1600": {
+        "plugin": "catalog.youth",
+        "fixture": "search-filters",
+        "description": "P1 #1599 : Jeunesse -> Recherche connue -> Retour, sélection et clavier XTEST 1600.",
+        "runner": "gtk-youth",
+        "width": 1600,
         "library_search": True,
     },
     "diagnostics-1366": {
@@ -305,7 +356,21 @@ def main() -> int:
             stderr_path = scenario_dir / "stderr.log"
             trace_path = scenario_dir / "trace.jsonl"
             _event(trace_path, name, "scenario_start", plugin=scenario["plugin"])
-            if scenario.get("runner") == "gtk-youth":
+            if scenario.get("runner") == "gtk-recommendations":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
+                    args.python, str(ROOT / "e2e/recommendations_detail_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
+            elif scenario.get("runner") == "gtk-constellations":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
+                    args.python, str(ROOT / "e2e/constellations_detail_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
+            elif scenario.get("runner") == "gtk-youth":
                 width = scenario["width"]
                 command = [
                     xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
@@ -424,7 +489,7 @@ def main() -> int:
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") in {"gtk-probe", "gtk-youth", "gtk-diagnostics", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance"} and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-youth", "gtk-diagnostics", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")

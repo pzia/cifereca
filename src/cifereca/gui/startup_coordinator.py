@@ -10,7 +10,9 @@ from .startup_lifecycle import once_while_open
 _TRACE_LOG = logging.getLogger("cifereca")
 
 
-def connect_configured_sources(window, *, idle_add) -> bool:
+def connect_configured_sources(
+    window, *, idle_add, timeout_add_seconds=None, source_remove=None,
+) -> bool:
     if getattr(window, "_closed", False):
         return False
     _TRACE_LOG.info("TRACE gui connect-configured-sources begin")
@@ -44,7 +46,34 @@ def connect_configured_sources(window, *, idle_add) -> bool:
         window._render_dashboard()
         # A close can happen after the connection callback but before GTK
         # dispatches this idle source. Never start sync on a dead window.
-        idle_add(once_while_open(window, window.run_opening_sync))
+        def initial_opening_sync():
+            # A one-shot marker, consumed synchronously by run_opening_sync.
+            # A later user command with control=None must never inherit
+            # startup-only consent from this particular connection callback.
+            window._source_inventory_startup_pending = True
+            try:
+                window.run_opening_sync()
+            finally:
+                window._source_inventory_startup_pending = False
+        if not getattr(window, "_source_inventory_startup_connection_seen", False):
+            window._source_inventory_startup_connection_seen = True
+            idle_add(once_while_open(window, initial_opening_sync))
+        else:
+            # A user-triggered reconnect is not an application startup, even
+            # when no source happened to be due on the first connection.
+            idle_add(once_while_open(window, window.run_opening_sync))
+        # No periodic poll is registered unless a Kobo source has a strict
+        # per-source inventory opt-in. This is separate from startup backup
+        # and does not mutate the legacy global acquisition timer.
+        if timeout_add_seconds is not None and source_remove is not None:
+            from . import source_inventory_timer
+            def schedule_inventory_timer():
+                source_inventory_timer.configure(
+                    window, idle_add=idle_add,
+                    timeout_add_seconds=timeout_add_seconds,
+                    source_remove=source_remove,
+                )
+            idle_add(once_while_open(window, schedule_inventory_timer))
 
     def err(exc: BaseException) -> None:
         if getattr(window, "_closed", False):

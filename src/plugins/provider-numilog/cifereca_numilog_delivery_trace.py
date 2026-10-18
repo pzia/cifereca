@@ -19,7 +19,7 @@ _PUBLIC_MIME = frozenset({"html", "acsm_xml", "xml", "epub", "binary", "other"})
 _PUBLIC_CODES = frozenset({
     "started", "redirect", "http_ok", "single_allowed_candidate",
     "html_delivery_link_missing", "html_delivery_ambiguous",
-    "session_expired_confirmed", "html_error", "html_invalid",
+    "session_expired_confirmed", "login_form_detected", "html_error", "html_invalid",
     "http_forbidden", "http_unauthorized", "http_rate_limited",
     "link_expired", "http_error", "origin_rejected", "redirect_loop",
     "redirect_limit", "mime_unexpected", "download_oversize",
@@ -93,8 +93,10 @@ class DeliveryTrace:
     preserving normal-operation overhead and confidentiality.
     """
 
-    def __init__(self, diagnostics, *, source: str = "direct_url"):
+    def __init__(self, diagnostics, *, source: str = "direct_url", connected_initial: object = None):
         self._diagnostics = diagnostics
+        self._connection = ({"connected_initial": connected_initial}
+                            if type(connected_initial) is bool else {})
         self._source = source if type(source) is str and source in _PUBLIC_SOURCES else "direct_url"
         self._token = token_hex(6)  # random, non-reversible; never an account/item ID
         self._started = perf_counter()
@@ -115,6 +117,7 @@ class DeliveryTrace:
         detail: dict[str, object] = {
             "action": self._token, "source": self._source,
             "phase": phase, "code": code,
+            **self._connection,
         }
         if type(status) is int and 100 <= status <= 599:
             detail["http_status"] = status
@@ -165,6 +168,7 @@ class DeliveryTrace:
                 "phase": "completed",
                 "code": self._success_code if successful else self._error_code,
                 "hops": self._hops,
+                **self._connection,
             },
             level="normal",
             status="ok" if successful else "error",

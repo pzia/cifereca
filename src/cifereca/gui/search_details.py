@@ -80,6 +80,12 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
     item = self.search_objects.get(row.key)
     if not item: return
     self._selected_search_id = item.id
+    if (getattr(item, "metadata", None) or {}).get("search_provenance") == "known_catalog_stale":
+        # The stale catalogue is read-only evidence. Merely selecting it must
+        # not start a holdings/authentication request to a provider in outage.
+        self.search_page.detail.show_search(item, loading=False)
+        self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
+        return
     self.search_page.detail.show_search(item, loading=True)
     self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
     self._add_local_book_actions(self.search_page.detail,result_row(item))
@@ -127,6 +133,14 @@ def _apply_search_detail(
     self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
     self._add_local_book_actions(self.search_page.detail, result_row(item))
     self._request_cached_book_details("search", item.id, result_row(item))
+    # Keep unrelated provider callbacks (and AST-isolated host tests)
+    # independent of the optional Numilog UI adapter.
+    if getattr(item, "source_provider", None) in {"numilog", "numilog-catalog"}:
+        from .numilog_enrichment_action import add_numilog_enrichment_action
+        add_numilog_enrichment_action(
+            self, selected_id, item, detail, context,
+            button_factory=self.search_page.detail.window.action_button,
+        )
 
 
 def _search_detail_error(

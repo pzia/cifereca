@@ -64,6 +64,9 @@ class Widget:
     def set_label(self, value):
         self.props["label"] = value
 
+    def set_can_shrink(self, value):
+        self.props["can_shrink"] = value
+
     def set_child(self, value):
         self.child = value
 
@@ -138,6 +141,33 @@ def _window(plugin_manager=None):
 
 def _build(window):
     return create_shell_header(window, Gtk=GTK, Adw=ADW, Gio=GIO, Pango=PANGO)
+
+
+def test_statistics_counter_can_shrink_without_changing_text_tooltip_or_action():
+    window, events = _window()
+    _build(window)
+    button = window.statistics_button
+    assert button.props["can_shrink"] is True
+    caption = "9999 livres · 8888 prêts de bibliothèque"
+    button.set_label(caption)
+    assert button.props["label"] == caption
+    assert "Statistiques de l’identité" in button.tooltip
+    button.click()
+    assert ("stats",) in events
+
+
+def test_statistics_counter_older_gtk_ellipsizes_existing_label(monkeypatch):
+    monkeypatch.setattr(Widget, "set_can_shrink", None)
+    def button(**kwargs):
+        widget = Widget(**kwargs)
+        widget.child = Widget(label=kwargs.get("label", ""))
+        return widget
+    monkeypatch.setattr(GTK, "Button", button)
+    window, events = _window()
+    _build(window)
+    assert window.statistics_button.child.props["ellipsize"] == "end"
+    window.statistics_button.click()
+    assert ("stats",) in events
 
 
 def test_gtk_independent_controller_and_mainwindow_facade_contract():

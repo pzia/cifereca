@@ -44,6 +44,8 @@ class DummyTool:
     def __init__(self):
         self.plan_calls = 0
         self.run_calls = 0
+        self.tool_id = "core.cache.cleanup"
+        self.result_ok = True
         self.plan_started = threading.Event()
         self.version = 0
         self.delay = 0.65
@@ -53,10 +55,16 @@ class DummyTool:
         self.worker_threads = []
 
     def describe(self):
+        titles = {
+            "core.cache.cleanup": "Nettoyage test sans suppression",
+            "library.naming.repair": "Renormaliser les noms de fichiers",
+            "library.duplicates.cleanup": "Nettoyer les doublons physiques",
+        }
         return SimpleNamespace(
-            id="core.cache.cleanup",
-            title="Nettoyage test sans suppression", description="Simulation locale",
-            supports_dry_run=True, cancellable=True, scope="identity", danger_level="destructive",
+            id=self.tool_id,
+            title=titles[self.tool_id], description="Simulation locale",
+            supports_dry_run=True, cancellable=True, scope="identity",
+            danger_level="repair" if self.tool_id == "library.naming.repair" else "destructive",
             icon_name="edit-delete-symbolic",
         )
 
@@ -65,7 +73,7 @@ class DummyTool:
         self.plan_started.set()
         time.sleep(self.delay)  # an intentionally slow scan, never on GTK
         return SimpleNamespace(
-            tool_id="core.cache.cleanup",
+            tool_id=self.tool_id,
             summary="Aucune suppression réelle",
             changes=tuple(
                 f"fichier témoin simulé {i:02d} /chemin/long/vers/la/bibliothèque/romans/doublons/exemple.epub"
@@ -88,7 +96,7 @@ class DummyTool:
             # repaint the detached row or the replacement row.
             control.report(current=1, total=1, message="Retour tardif")
             control.check_cancelled()
-            return SimpleNamespace(ok=True, summary="Simulation confirmée")
+            return SimpleNamespace(ok=self.result_ok, summary="Simulation confirmée")
         finally:
             self.run_finished.set()
 
@@ -288,7 +296,13 @@ def main():
         errors.clear()
         tool.plan_started.clear()
         physical(preview_button[0])
-        until(lambda: tool.plan_started.is_set(), preview_pending)
+        # The worker event is raised off-thread before GLib has necessarily
+        # delivered the row's queued "Analyse…" state. Wait for both
+        # independent observations, without weakening the busy/spinner check.
+        until(
+            lambda: tool.plan_started.is_set() and line_is("Analyse…"),
+            preview_pending,
+        )
 
     def heartbeat_tick():
         heartbeat[0] += 1
@@ -476,8 +490,127 @@ def main():
             assert tool.run_calls == 2
             report["checks"]["refresh_cancels_worker_and_discards_late_progress"] = True
             capture("04-refresh-discards-late-worker")
-            finish()
+            verify_p1_tool_rows()
         later(verify, 250)
+
+    # #1497/#1498: exercise the real GTK allocation and initial progress row
+    # with a fake service. All destructive operations remain completely inert.
+    p1_variants = [
+        ("library.naming.repair", "Renormaliser les noms de fichiers", "1497-naming"),
+        ("library.duplicates.cleanup", "Nettoyer les doublons physiques", "1498-duplicates"),
+    ]
+    p1_index = [0]
+    p1_runs = [0]
+    p1_modes = ("success", "partial", "cancelled")
+    p1_mode_index = [0]
+
+    def verify_p1_tool_rows():
+        if p1_index[0] >= len(p1_variants):
+            finish()
+            return
+        tool_id, title, label = p1_variants[p1_index[0]]
+        tool.tool_id = tool_id
+        p1_runs[0] = tool.run_calls
+        p1_mode_index[0] = 0
+        tool.delay = 0.65
+        window[0]._refresh_tools_page()
+        later(verify_p1_allocation, 220)
+
+    def verify_p1_allocation():
+        tool_id, title, label = p1_variants[p1_index[0]]
+        row, status, spinner, bar = line_widgets()
+        assert row.get_title() == title, (tool_id, row.get_title())
+        assert row.get_mapped() and status.get_mapped()
+        assert row.get_width() > 0 and row.get_height() > 0
+        assert status.get_text() == "Au repos"
+        assert not spinner.get_visible() and not bar.get_visible()
+        assert tool.run_calls == p1_runs[0], "Rendering must never execute a tool"
+        report["checks"][f"P1_{label}_real_gtk_idle_line"] = True
+        report.setdefault("p1_tool_allocations", []).append({
+            "tool": tool_id, "row_width": row.get_width(),
+            "row_height": row.get_height(),
+            "status_width": status.get_width(),
+            "status_height": status.get_height(),
+        })
+        capture(f"05-p1-{label}-idle")
+        preview_button[0] = next(node for node in walk(window[0]._tools_box)
+            if isinstance(node, Gtk.Button)
+            and getattr(node, "_cifereca_action_label", "") == "Prévisualiser…")
+        tool.plan_started.clear()
+        physical(preview_button[0])
+        until(lambda: tool.plan_started.is_set() and line_is("Analyse…"), p1_analysis)
+
+    def p1_analysis():
+        assert_line("Analyse…", busy=True)
+        assert tool.run_calls == p1_runs[0]
+        assert modal() is None
+        report["checks"][f"P1_{p1_variants[p1_index[0]][2]}_analysis_indeterminate"] = True
+        until(lambda: modal() is not None and line_is("Confirmation attendue"), p1_cancel_preview)
+
+    def p1_cancel_preview():
+        assert_line("Confirmation attendue")
+        respond(modal(), "Annuler", lambda: until(
+            lambda: modal() is None and line_is("Annulé") and preview_button[0].get_sensitive(),
+            p1_preview_cancelled,
+        ))
+
+    def p1_preview_cancelled():
+        assert_line("Annulé")
+        assert tool.run_calls == p1_runs[0]
+        report["checks"][f"P1_{p1_variants[p1_index[0]][2]}_preview_cancel_no_run"] = True
+        p1_begin_run()
+
+    def p1_begin_run():
+        mode = p1_modes[p1_mode_index[0]]
+        tool.result_ok = mode != "partial"
+        tool.progress_sent.clear()
+        tool.release_run.clear()
+        tool.run_finished.clear()
+        physical(preview_button[0])
+        until(lambda: modal() is not None and line_is("Confirmation attendue"), p1_confirm_run)
+
+    def p1_confirm_run():
+        assert tool.run_calls == p1_runs[0] + p1_mode_index[0]
+        assert_line("Confirmation attendue")
+        respond(modal(), "Exécuter", lambda: until(
+            lambda: tool.progress_sent.is_set() and line_is(p1_progress_text()),
+            p1_progress,
+        ))
+
+    def p1_progress_text():
+        activity = ("Renormalisation des noms" if p1_index[0] == 0 else "Nettoyage des doublons")
+        return activity + " en cours · 99 %"
+
+    def p1_progress():
+        assert_line(p1_progress_text(), fraction=.99)
+        assert not tool.run_finished.is_set()
+        assert tool.worker_threads[-1] != gtk_thread
+        mode = p1_modes[p1_mode_index[0]]
+        label = p1_variants[p1_index[0]][2]
+        report["checks"][f"P1_{label}_{mode}_worker_progress_before_terminal"] = True
+        capture(f"06-p1-{label}-{mode}-99")
+        if mode == "cancelled":
+            cancel = next(node for node in walk(window[0]._tools_box)
+                          if isinstance(node, Gtk.Button) and node.get_label() == "Annuler")
+            physical(cancel)
+        tool.release_run.set()
+        expected = {"success": "Terminé · 100 %", "partial": "Échec", "cancelled": "Annulé"}[mode]
+        until(lambda: tool.run_finished.is_set() and line_is(expected), p1_terminal)
+
+    def p1_terminal():
+        mode = p1_modes[p1_mode_index[0]]
+        expected = {"success": "Terminé · 100 %", "partial": "Échec", "cancelled": "Annulé"}[mode]
+        assert_line(expected, fraction=1.0 if mode == "success" else None)
+        assert tool.run_calls == p1_runs[0] + p1_mode_index[0] + 1
+        label = p1_variants[p1_index[0]][2]
+        report["checks"][f"P1_{label}_{mode}_terminal_on_own_line"] = True
+        capture(f"07-p1-{label}-{mode}-terminal")
+        p1_mode_index[0] += 1
+        if p1_mode_index[0] < len(p1_modes):
+            until(lambda: preview_button[0].get_sensitive() and modal() is None, p1_begin_run)
+            return
+        p1_index[0] += 1
+        verify_p1_tool_rows()
 
     def finish():
         report["status"] = "PASS"

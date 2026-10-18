@@ -7,6 +7,7 @@ Everything returned to the broker consists of bounded counters and fixed codes.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 import hashlib
 import os
@@ -26,6 +27,16 @@ _COUNT_NAMES = (
     "needs_reconciliation", "attention_required", "not_downloadable",
     "ignored_unattested_rights",
 )
+
+
+@dataclass(frozen=True)
+class _Binding:
+    """Capture the caller's scope before DB/file reads can change accounts."""
+
+    provider_id: str
+    identity_id: str
+    credential_id: str
+    unique_id: str
 
 
 def _refused(code: str) -> SyncResult:
@@ -53,7 +64,11 @@ def _valid_binding(broker: Any, account: Any, source_id: str) -> bool:
             if getattr(row, "provider_id", None) == "numilog"
             and getattr(row, "credential_id", None) == credential
         ]
-        if len(matches) != 1 or broker._source_id(matches[0]) != source_id:
+        if (len(matches) != 1
+                or matches[0].identity_id != identity
+                or matches[0].unique_id != account_id
+                or broker._source_id(matches[0]) != source_id
+                or broker._source_id(account) != source_id):
             return False
         storage = broker.service.storage
         if storage.identity_for_connection("numilog", credential) != identity:
@@ -119,6 +134,12 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
     """Only examine SQLite and (if explicitly asked) hash known local files."""
     if type(verify_local_files) is not bool:
         return _refused("invalid_options")
+    account = _Binding(
+        getattr(account, "provider_id", None),
+        getattr(account, "identity_id", None),
+        getattr(account, "credential_id", None),
+        getattr(account, "unique_id", None),
+    )
     if not _valid_binding(broker, account, source_id):
         return _refused("invalid_source")
 
@@ -129,14 +150,26 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
     if not roots:
         return _refused("invalid_directory")
 
+    def scope_current() -> bool:
+        # Directory ownership/configuration can change independently of the
+        # connection. A verified file under an old root is not current proof.
+        return (
+            _valid_binding(broker, account, source_id)
+            and _identity_root(broker.service, identity) == roots
+        )
+
     try:
         storage = broker.service.storage
-        rights = storage.entitlements(provider_id="numilog")
-        ledger = storage.acquisitions(provider_id="numilog")
-        placements = storage.placements()
-        artifacts = storage.artifacts()
-        if any(len(rows) > _MAX_ROWS for rows in (rights, ledger, placements, artifacts)):
-            return _refused("evidence_budget_exhausted")
+        evidence = storage.source_materialization_evidence(
+            provider_id="numilog", credential_id=credential,
+            account_id=account_id, identity_id=identity, max_rows=_MAX_ROWS,
+        )
+        rights = evidence["entitlements"]
+        ledger = evidence["acquisitions"]
+        placements = evidence["placements"]
+        artifacts = evidence["artifacts"]
+        if not scope_current():
+            return _refused("source_changed")
 
         counts = dict.fromkeys(_COUNT_NAMES, 0)
         scoped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -163,11 +196,17 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
                     and _item_id(row.get("item_id"), credential)):
                 acquired[str(row["item_id"])].append(row)
 
-        linked: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        # A content-addressed artifact may legitimately have placements
+        # for several identities, accounts or purchases. Only placements
+        # attested for this exact purchase can resolve its local copy.
+        linked: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
         for row in placements:
-            artifact_id = row.get("artifact_id")
-            if type(artifact_id) is str and artifact_id:
-                linked[artifact_id].append(row)
+            values = (
+                row.get("artifact_id"), row.get("identity_id"),
+                row.get("provider_id"), row.get("source_item_id"),
+            )
+            if all(type(value) is str and value for value in values):
+                linked[values].append(row)
         artifact_by_id = {
             row.get("artifact_id"): row for row in artifacts
             if type(row.get("artifact_id")) is str
@@ -207,7 +246,7 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
                 continue
 
             artifact_id = acquisition.get("artifact_id")
-            matched = linked.get(artifact_id, [])
+            matched = linked.get((artifact_id, identity, "numilog", item_id), [])
             artifact = artifact_by_id.get(artifact_id)
             if (type(artifact_id) is not str or len(matched) != 1
                     or not isinstance(artifact, dict)):
@@ -226,6 +265,11 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
                     # ACSM, HTML, unknown blobs and bundles are not readable
                     # local books, even with an exact SHA and a completed ledger.
                     or artifact.get("kind") != "file"
+                    # Storage can normalize malformed persisted kind metadata
+                    # into "file" for legacy readers. Never treat an explicit
+                    # invalid artifact_kind as verified local ebook evidence.
+                    or ("artifact_kind" in artifact.get("metadata", {})
+                        and artifact["metadata"]["artifact_kind"] != "file")
                     or type(artifact.get("media_format")) is not str
                     or artifact["media_format"].casefold() not in {"epub", "kepub", "pdf"}
                     or type(size) is not int or size <= 0):
@@ -236,6 +280,12 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
             if not verify_local_files:
                 counts["needs_file_verification"] += 1
                 continue
+            # Stop at the next file boundary after a reassignment/revocation;
+            # do not continue reading a former owner's entire library only
+            # to discard the result at the end. An in-flight hash is not a
+            # transaction lease: its result is rejected at the next check.
+            if not scope_current():
+                return _refused("source_changed")
             observed = _read_hash_within(placement.get("path"), roots)
             if observed is None or observed[:2] != (sha, size):
                 counts["already_local_linked"] -= 1
@@ -245,7 +295,7 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
 
         # If a source was disabled/reassigned during DB reads, no preview can
         # be considered scoped, even though nothing was downloaded or stored.
-        if not _valid_binding(broker, account, source_id):
+        if not scope_current():
             return _refused("source_changed")
         return SyncResult(ok=True, changed=0, facts={
             "phase": "local_materialization", "status": "preview_only",
@@ -256,5 +306,9 @@ def preview(broker: Any, account: Any, source_id: str, *, verify_local_files: bo
             "known_item_count": counts["owned_purchases"],
             "counts": counts,
         })
+    except ValueError as exc:
+        if str(exc) == "evidence_budget_exhausted":
+            return _refused("evidence_budget_exhausted")
+        return _refused("preview_unavailable")
     except Exception:
         return _refused("preview_unavailable")

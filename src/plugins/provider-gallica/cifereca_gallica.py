@@ -539,13 +539,19 @@ class GallicaSession(ProviderSession):
         rows: list[SearchResult] = []
         errors: list[str] = []
         causes = []
+        successful_branches = 0
         # Independent services run concurrently; an audio timeout does not add
         # another complete timeout after the EPUB branch has finished.
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="gallica-search") as pool:
             tasks = [(label, message, pool.submit(fn, query, page, field)) for label, message, fn in branches]
             for label, message, task in tasks:
                 try:
-                    rows.extend(task.result())
+                    branch_rows = task.result()
+                    # Even an empty successful branch proves the route was
+                    # available. A failure in the other branch must not turn
+                    # this valid zero into total service_unavailable.
+                    successful_branches += 1
+                    rows.extend(branch_rows)
                 except Exception as exc:
                     errors.append(message)
                     causes.append(exc)
@@ -558,11 +564,11 @@ class GallicaSession(ProviderSession):
                             "http_status": status if type(status) is int and 100 <= status <= 599 else None,
                         })
         self.last_search_warnings = [
-            ("partial_results : " if rows else "") + "Gallica : " + message
+            ("partial_results : " if successful_branches else "") + "Gallica : " + message
             for message in errors
         ]
         rows = list({item.id: item for item in rows}.values())
-        if not rows and errors:
+        if errors and not successful_branches:
             error = ProviderError("Gallica : " + " ; ".join(errors))
             error.code = "search_temporarily_unavailable"
             error.retryable = True

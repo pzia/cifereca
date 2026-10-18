@@ -172,3 +172,36 @@ def test_private_service_failures_are_not_downgraded_to_partial_success(status):
         assert session.last_search_warnings == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("invalid", (
+    {"field": "author"}, {"field": "isbn"}, {"scope": "physical"},
+))
+def test_rejected_request_clears_previous_private_denial_warning(invalid):
+    session, paths = _case(library_status=403)
+    try:
+        session.search("book", scope="all", field="all")
+        assert session.last_search_warnings
+        paths.clear()
+        with pytest.raises(ProviderCapabilityError, match="unsupported_"):
+            session.search("book", **invalid)
+        assert paths == []
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+def test_invalid_scope_also_revokes_previous_partial_warning():
+    from cifereca.plugin_api import ProviderError
+
+    session, paths = _case(library_status=401)
+    try:
+        session.search("book", scope="all")
+        assert session.last_search_warnings
+        paths.clear()
+        with pytest.raises(ProviderError, match="portée de recherche invalide"):
+            session.search("book", scope="PRIVATE_ACCOUNT_SIGNED_TOKEN")
+        assert paths == []
+        assert session.last_search_warnings == []
+    finally:
+        session.close()

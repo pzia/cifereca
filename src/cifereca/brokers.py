@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -130,6 +131,9 @@ class SynchronizationBrokerImpl:
     service: Any
     _subscribers: list[Callable[[], None]] | None = None
     _materialization_plans: MaterializationPlans = field(default_factory=MaterializationPlans, repr=False)
+    _scheduled_inventory_requested: set[str] = field(default_factory=set, repr=False)
+    _scheduled_inventory_running: set[str] = field(default_factory=set, repr=False)
+    _scheduled_inventory_lock: Any = field(default_factory=threading.Lock, repr=False)
 
     def __post_init__(self) -> None:
         if self._subscribers is None:
@@ -180,6 +184,7 @@ class SynchronizationBrokerImpl:
         state = {
             key: value[key] for key in (
                 "last_attempt", "last_success", "status", "error", "scope", "identity_id",
+                "inventory_last_attempt", "inventory_last_success", "inventory_status",
             ) if key in value and isinstance(value[key], str)
         }
         # Historical state could contain raw exception strings with URLs,
@@ -187,6 +192,28 @@ class SynchronizationBrokerImpl:
         # those values via the public SyncSourceRef or the GTK page.
         if state.get("error", "") not in _SYNC_PUBLIC_ERRORS:
             state["error"] = _SYNC_PUBLIC_FAILURE
+        # The legacy database also held free-form *status* and timestamps.
+        # Never relay a signed provider URL or private path under another
+        # public field merely because the error field was redacted.
+        if state.get("status", "") not in (
+            _SYNC_PUBLIC_STATUSES | {"", "idle", "running", "cancelled", "interrupted"}
+        ):
+            state["status"] = "unknown"
+        for name in ("last_attempt", "last_success",
+                     "inventory_last_attempt", "inventory_last_success"):
+            if name in state:
+                sanitized = self._safe_phase_timestamp(state[name])
+                if name.startswith("inventory_") and state[name] and not sanitized:
+                    # A damaged discover/rights clock must never authorize
+                    # another unattended provider request.
+                    state["inventory_status"] = "unknown"
+                state[name] = sanitized
+        if state.get("inventory_status", "") not in {
+            "", "running", "success", "partial", "failed", "unknown",
+        }:
+            state["inventory_status"] = "unknown"
+        if state.get("scope", "") not in {"", "manual", "opening", "scheduled"}:
+            state["scope"] = ""
         if legacy:
             self._set_state(source_id, state)
         return state
@@ -253,11 +280,24 @@ class SynchronizationBrokerImpl:
             "running": "running", "partial": "partial",
             "error": "failed", "failed": "failed",
         }.get(raw_status, "idle")
+        if (
+            getattr(account, "provider_id", None) in {"kobo", "numilog"}
+            and "remote_inventory" in sync_caps
+        ):
+            # Opening sync may refresh loans, without reading the private
+            # store inventory. It cannot attest discover/rights freshness.
+            inventory_status = state.get("inventory_status", "idle") or "idle"
+            inventory_attempt = state.get("inventory_last_attempt")
+            inventory_success = state.get("inventory_last_success")
+        else:
+            inventory_attempt = state.get("last_attempt")
+            inventory_success = state.get("last_success")
         inventory = SyncPhaseState(
             phase="discover_rights", status=inventory_status,
-            last_attempt=self._safe_phase_timestamp(state.get("last_attempt")),
-            last_success=self._safe_phase_timestamp(state.get("last_success")),
+            last_attempt=self._safe_phase_timestamp(inventory_attempt),
+            last_success=self._safe_phase_timestamp(inventory_success),
         )
+        binding_valid = False
         if "local_materialization" not in sync_caps:
             materialization = SyncPhaseState("materialize", "not_supported")
         else:
@@ -268,7 +308,8 @@ class SynchronizationBrokerImpl:
                 bound = self.service.storage.identity_for_connection("kobo", credential)
             except (AttributeError, TypeError, ValueError, KeyError):
                 bound = None
-            if not identity or not credential or bound != identity:
+            binding_valid = bool(identity and credential and bound == identity)
+            if not binding_valid:
                 materialization = SyncPhaseState("materialize", "unknown")
             else:
                 from .core.kobo_backup import _kobo_checkpoint_for
@@ -301,7 +342,8 @@ class SynchronizationBrokerImpl:
                         last_success=when if status == "success" else "",
                     )
         explicit = self._materialization_state(self._source_id(account))
-        if explicit and "local_materialization" in sync_caps:
+        # A stale explicit result cannot override a revoked or rebound source.
+        if explicit and "local_materialization" in sync_caps and binding_valid:
             status = explicit.get("status")
             if status == "running":
                 from .core.source_materialization import process_owner
@@ -359,8 +401,6 @@ class SynchronizationBrokerImpl:
         # The service owns this session. Kobo's explicit backup capability
         # alone licenses declaring the *availability* of an opt-in local
         # materialization phase; this metadata read never executes it.
-        # Do NOT announce scheduled_refresh: the current Kobo timer does
-        # not yet implement periodic source refresh (#1346).
         provider_id = account_ref.provider_id
         credential_id = str(getattr(account, "credential_id", "") or "")
         session = getattr(self.service, "_sessions", {}).get(
@@ -371,6 +411,11 @@ class SynchronizationBrokerImpl:
             and bool(getattr(getattr(session, "capabilities", None), "backup", False))
         ):
             declared_sync_caps.append("local_materialization")
+        # Core owns real startup/periodic inventory dispatch for these stores.
+        # Availability is not consent: policies still default to manual and
+        # the scheduler revalidates exact source/account/session before I/O.
+        if provider_id in {"kobo", "numilog"} and "personal_library" in source_caps:
+            declared_sync_caps.append("scheduled_refresh")
         return SyncSourceRef(
             source_id=source_id,
             identity_id=account_ref.identity_id,
@@ -400,6 +445,194 @@ class SynchronizationBrokerImpl:
         self.service.storage.metadata_set(self._preference_key(source_id), "1" if enabled else "0")
         self._notify()
         return self._ref(account)
+
+    def inventory_refresh_schedule(self, source_id: str) -> dict[str, object]:
+        """Read the *discover/rights* opt-in, not the acquisition policy."""
+        from .core.source_refresh_policy import load_source_refresh_schedule
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            raise ValueError("unknown sync source") from None
+        if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
+            raise ValueError("inventory refresh schedule not supported")
+        policy = load_source_refresh_schedule(self.service.storage, source_id)
+        return {"mode": policy.mode, "interval_minutes": policy.interval_minutes}
+
+    def set_inventory_refresh_schedule(
+        self, source_id: str, mode: str, *, interval_minutes: int = 60,
+    ) -> dict[str, object]:
+        """Explicit per-source metadata/rights consent; no provider call.
+
+        Neither this method nor its stored policy authorizes acquisition.
+        Only an exact, enabled, connected Kobo/Numilog source can be opted in.
+        An ineligible source may still have its schedule disabled manually.
+        """
+        from .core.source_refresh_policy import (
+            SourceRefreshSchedule, inventory_source_eligible,
+            save_source_refresh_schedule,
+        )
+        policy = SourceRefreshSchedule(mode=mode, interval_minutes=interval_minutes)
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            raise ValueError("unknown sync source") from None
+        if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
+            raise ValueError("inventory refresh schedule not supported")
+        if policy.mode != "manual" and not inventory_source_eligible(
+            self.service, account,
+        ):
+            raise ValueError("source not eligible for scheduled inventory")
+        saved = save_source_refresh_schedule(
+            self.service.storage, source_id, mode=policy.mode,
+            interval_minutes=policy.interval_minutes,
+        )
+        self._notify()
+        return {"mode": saved.mode, "interval_minutes": saved.interval_minutes}
+
+    def synchronize_scheduled_inventory(
+        self, identity_id: str, trigger: str, *, control: Any = None,
+    ) -> SyncResult:
+        """Dispatch due Kobo/Numilog *inventory* refreshes for one explicit identity.
+
+        A scheduler may call this at startup or on its periodic tick; this
+        method does not install timers or silently enroll any accounts.
+        Permissions and identity bindings are rechecked immediately before
+        each metadata-only `synchronize_source` call. Acquisitions are never
+        executed by this broker path.
+        """
+        from .core.source_refresh_policy import (
+            inventory_source_eligible, load_source_refresh_schedule,
+            source_refresh_due,
+        )
+        from .plugin_api import Cancelled
+        if type(identity_id) is not str or not identity_id:
+            return SyncResult(False, facts={"reason": "identity_required"})
+        # A syntactically nonempty input is not proof of a configured
+        # identity. Do not report a false-success empty scheduled batch for
+        # an unknown profile or arbitrary credential-bearing string.
+        known = getattr(self.service, "identities", None)
+        if known is None:
+            known = getattr(self.service, "accounts", ())
+        if not any(
+            getattr(row, "identity_id", None) == identity_id for row in known
+        ):
+            return SyncResult(False, facts={"reason": "unknown_identity"})
+        if type(trigger) is not str or trigger not in {"startup", "periodic"}:
+            return SyncResult(False, facts={"reason": "invalid_trigger"})
+        # The broker clock is authoritative: plugins must not force a
+        # future timestamp to bypass the persisted retry interval.
+        instant = datetime.now(timezone.utc)
+        total = 0
+        attempted = 0
+        failed = 0
+        for account in sorted(
+            self.service.accounts_for_identity(identity_id),
+            key=self._source_id,
+        ):
+            # A cancelled batch must not start work for another account.
+            if control is not None and callable(getattr(control, "check_cancelled", None)):
+                control.check_cancelled()
+            if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
+                continue
+            source_id = self._source_id(account)
+            # Unknown/duplicate source references and invalid source state
+            # must never become an automatic network retry.
+            try:
+                if self._find_account(source_id) is not account:
+                    continue
+                raw = self.service.storage.metadata_get(
+                    "sync.source.state." + source_id
+                )
+                state = self._state(source_id)
+                if raw and not state:
+                    continue
+                if (
+                    state.get("last_attempt")
+                    and not self._safe_phase_timestamp(state["last_attempt"])
+                ):
+                    continue
+                is_private_inventory = getattr(account, "provider_id", None) in {"kobo", "numilog"}
+                inventory_status = (
+                    state.get("inventory_status", "idle") if is_private_inventory
+                    else state.get("status", "idle")
+                )
+                if inventory_status not in {
+                    "idle", "running", "success", "partial", "failed",
+                    "error", "ok", "",
+                }:
+                    continue
+                # Another active source sync (manual or opening) holds the
+                # global writer lock. Even a due inventory must not race it.
+                if state.get("status") == "running":
+                    inventory_status = "running"
+                inventory_last_attempt = (
+                    state.get("inventory_last_attempt", "") if is_private_inventory
+                    else state.get("last_attempt", "")
+                )
+                policy = load_source_refresh_schedule(
+                    self.service.storage, source_id,
+                )
+                eligible = inventory_source_eligible(self.service, account)
+                if not source_refresh_due(
+                    policy, trigger=trigger, now=instant,
+                    last_attempt=inventory_last_attempt,
+                    phase_status=inventory_status,
+                    enabled=eligible, connected=eligible, capable=eligible,
+                    already_requested_this_startup=(
+                        source_id in self._scheduled_inventory_requested
+                    ),
+                ):
+                    continue
+                # Revalidation is intentional: no cached account choice,
+                # cross-identity batch or stale opt-in can authorize a call.
+                if not inventory_source_eligible(self.service, account):
+                    continue
+            except Exception:
+                continue
+            # Singleflight within this broker: concurrent startup/timer
+            # triggers must never dispatch the same account twice. The
+            # persisted last_attempt additionally throttles new instances.
+            with self._scheduled_inventory_lock:
+                if source_id in self._scheduled_inventory_running:
+                    continue
+                if (trigger == "startup"
+                        and source_id in self._scheduled_inventory_requested):
+                    continue
+                self._scheduled_inventory_running.add(source_id)
+                if trigger == "startup":
+                    self._scheduled_inventory_requested.add(source_id)
+            attempted += 1
+            try:
+                result = self.synchronize_source(
+                    source_id, SyncRequest(identity_id=identity_id), control,
+                )
+            except Cancelled:
+                # Cancellation is a lifecycle signal, not a provider fault.
+                raise
+            except Exception:
+                # A source may fail before synchronize_source's provider
+                # exception handler (e.g. persisting its running state).
+                # Do not abandon later accounts or echo private exceptions.
+                failed += 1
+                continue
+            finally:
+                with self._scheduled_inventory_lock:
+                    self._scheduled_inventory_running.discard(source_id)
+            # synchronize_source may have converted a cancellation thrown
+            # inside a provider into a failed SyncResult; observe the control
+            # again before returning a misleading normal batch completion.
+            if control is not None and callable(getattr(control, "check_cancelled", None)):
+                control.check_cancelled()
+            total += result.changed
+            if not result.ok:
+                failed += 1
+        return SyncResult(
+            ok=failed == 0, changed=total,
+            warnings=("synchronisation planifiée partielle",) if failed else (),
+            facts={"phase": "discover_rights", "trigger": trigger,
+                   "attempted": attempted, "failed": failed,
+                   "acquisition_authorized": False},
+        )
 
     def local_materialization_schedule(self, source_id: str) -> str:
         """Read the *materialize* schedule only; inventory uses its own flow.
@@ -441,6 +674,24 @@ class SynchronizationBrokerImpl:
         )
         self._notify()
         return mode
+
+    def preflight_numilog_purchase(
+        self, source_id: str, item_id: str,
+    ) -> SyncResult:
+        """Offline preflight for ONE Numilog edition; never an acquire call.
+
+        The opaque scoped item ID is input only, never returned or logged.
+        Explicit materialization consent, a fresh private manifest and ADEPT
+        handling are separate future execution gates (#1905).
+        """
+        from .core.numilog_purchase_preflight import preflight, _response
+        try:
+            account = self._find_account(source_id)
+        except (ValueError, TypeError):
+            return _response("invalid_source")
+        if getattr(account, "provider_id", None) != "numilog":
+            return _response("not_supported")
+        return preflight(self, account, source_id, item_id)
 
     def preview_local_materialization(
         self, source_id: str, *, verify_local_files: bool = False,
@@ -680,8 +931,22 @@ class SynchronizationBrokerImpl:
                               facts={"reason": "not_supported"})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         state = self._state(source_id)
+        # Keep the previous private-inventory evidence when a provider
+        # rejects work after the broker's initial enabled/connection check.
+        previous_inventory = {
+            key: state[key] for key in ("inventory_last_attempt", "inventory_status")
+            if key in state
+        }
         state.update(last_attempt=now, status="running", error="", scope="manual",
                      identity_id=str(getattr(account, "identity_id", "") or ""))
+        # Only a real private-store library operation starts this clock. A
+        # generic opening/loan operation must not refresh or throttle it.
+        refreshes_private_inventory = (
+            getattr(account, "provider_id", None) in {"kobo", "numilog"}
+            and "personal_library" in current.capabilities
+        )
+        if refreshes_private_inventory:
+            state.update(inventory_last_attempt=now, inventory_status="running")
         self._set_state(source_id, state); self._notify()
         try:
             result = self.service.synchronize_account_source(
@@ -692,9 +957,28 @@ class SynchronizationBrokerImpl:
             # counters and known status/reason codes to plugins and GTK.
             if not isinstance(result, dict):
                 state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
+                if refreshes_private_inventory:
+                    state["inventory_status"] = "failed"
                 self._set_state(source_id, state); self._notify()
                 return SyncResult(ok=False, warnings=("invalid sync response",),
                                   facts={"reason": "invalid_response"})
+            skip_status = result.get("status")
+            if type(skip_status) is str and skip_status.lower() == "skipped":
+                # The source can be revoked after our local admission check
+                # but before the underlying service starts remote inventory.
+                # Skipped is not proof of a successful refresh and must not
+                # mint last_success or advance the private inventory clock.
+                state.update(status="skipped", error="")
+                if refreshes_private_inventory:
+                    for key in ("inventory_last_attempt", "inventory_status"):
+                        if key in previous_inventory:
+                            state[key] = previous_inventory[key]
+                        else:
+                            state.pop(key, None)
+                self._set_state(source_id, state); self._notify()
+                return SyncResult(ok=True, changed=0, facts={
+                    "status": "skipped", "skipped": True,
+                })
             facts = {
                 name: result[name] for name in _SYNC_PUBLIC_COUNTS
                 if type(result.get(name)) is int and 0 <= result[name] <= 1_000_000
@@ -714,15 +998,23 @@ class SynchronizationBrokerImpl:
             if incomplete:
                 facts["reason"] = "invalid_response" if invalid_status else "source_partial"
                 state.update(status="partial", error="Synchronisation partielle")
+                if refreshes_private_inventory:
+                    state["inventory_status"] = "partial"
                 self._set_state(source_id, state); self._notify()
                 return SyncResult(ok=False, changed=changed,
                                   warnings=("synchronisation partielle",), facts=facts)
-            state.update(last_success=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                         status="ok", error="")
+            success_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            state.update(last_success=success_at, status="ok", error="")
+            if refreshes_private_inventory:
+                state.update(
+                    inventory_last_success=success_at, inventory_status="success",
+                )
             self._set_state(source_id, state); self._notify()
             return SyncResult(ok=True, changed=changed, facts=facts)
         except Exception:
             state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
+            if refreshes_private_inventory:
+                state["inventory_status"] = "failed"
             self._set_state(source_id, state); self._notify()
             return SyncResult(ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
                               facts={"reason": "source_unavailable"})

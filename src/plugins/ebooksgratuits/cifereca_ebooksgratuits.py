@@ -182,6 +182,18 @@ class EbooksSession(ProviderSession):
                     self.last_search_warnings.append('partial_results : un sélecteur catégorie/genre est indisponible')
                 choice=_filter_choice(form.text,names,query)
                 if choice is None: return []
+                if field == 'subject' and len(available) == 2:
+                    # Both independently selectable routes may match the
+                    # query. A single request below then covers just one of
+                    # them, not the union of category and genre hits.
+                    matching_routes = sum(
+                        _filter_choice(form.text, (name,), query) is not None
+                        for name in available
+                    )
+                    if matching_routes > 1:
+                        self.last_search_warnings.append(
+                            'partial_results : catégorie et genre correspondants ; un seul interrogé'
+                        )
                 selected,value,label=choice
                 attested_metadata=_attested_filter_metadata(selected,label)
                 params={'begin':str(page*self.page_size),'offset':str(self.page_size),'option':'search',

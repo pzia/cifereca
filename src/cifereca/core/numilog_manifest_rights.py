@@ -14,6 +14,9 @@ from typing import Any
 
 from ..acquisition_engine import Entitlement, SourceIdentity, stable_id
 from ..models import SearchResult
+from .search_orchestration import _numilog_public_catalog_url
+
+_MAX_NUMILOG_MIRROR_ROWS = 100_000
 
 
 def numilog_inventory_binding_valid(service: Any, account: Any, *, session: Any) -> bool:
@@ -52,6 +55,16 @@ def numilog_inventory_binding_valid(service: Any, account: Any, *, session: Any)
             and row.get("enabled") is True
         ]
         if len(connections) != 1:
+            return False
+        # A login/reconnect can replace a session while library() is
+        # retrieving pages. Never accept an old in-flight session as the
+        # current authority, even if its credential and connected flag match.
+        current_sessions = [
+            active for active in getattr(service, "_sessions", {}).values()
+            if getattr(active, "provider_id", None) == "numilog"
+            and getattr(active, "credential_id", None) == credential
+        ]
+        if len(current_sessions) != 1 or current_sessions[0] is not session:
             return False
         return (
             getattr(session, "provider_id", None) == "numilog"
@@ -124,28 +137,10 @@ def mirror_numilog_manifest_rights(
             return 0
     except Exception:
         return 0
-    existing = service.storage.entitlements(provider_id="numilog")
-    by_scope = {
-        (
-            str(item.get("identity_id") or ""),
-            str(item.get("credential_id") or ""),
-            str(item.get("account_id") or ""),
-            str(item.get("item_id") or ""),
-        ): item
-        for item in existing
-        if item.get("entitlement_type") == "owned"
-    }
-    reserved = {
-        str(item.get("entitlement_id") or ""): (
-            str(item.get("identity_id") or ""),
-            str(item.get("credential_id") or ""),
-            str(item.get("account_id") or ""),
-            str(item.get("item_id") or ""),
-        )
-        for item in existing
-    }
-    seen: set[str] = set()
-    count = 0
+    # Stage at most one attested provider row per exact purchase before
+    # querying SQLite. The existing implementation enumerated and decoded
+    # *all* Numilog entitlements across every other account on each sync.
+    staged: dict[str, SearchResult] = {}
     for row in rows:
         if not isinstance(row, SearchResult):
             continue
@@ -159,18 +154,87 @@ def mirror_numilog_manifest_rights(
         ):
             continue
         item_id = _scoped_record_id(row.record_id, credential_id)
-        if item_id is None or item_id in seen:
+        if item_id is None or item_id in staged:
             continue
-        seen.add(item_id)
+        staged[item_id] = row
+        if len(staged) > _MAX_NUMILOG_MIRROR_ROWS:
+            # Over budget is a failure, never a false "zero owned purchases"
+            # success or a partial batch of persisted rights.
+            raise ValueError("numilog_rights_budget_exhausted")
+    if not staged:
+        return 0
+
+    # A lazy rows generator can change/revoke the current session or account
+    # while yielding pages. Its first successful binding is no authority to
+    # persist later results: re-check immediately before loading/writing.
+    try:
+        matches = [
+            account for account in service.accounts
+            if account.provider_id == "numilog"
+            and account.credential_id == credential_id
+            and account.identity_id == identity_id
+            and account.unique_id == account_id
+        ]
+        sessions = [
+            session for session in service._sessions.values()
+            if getattr(session, "provider_id", None) == "numilog"
+            and getattr(session, "credential_id", None) == credential_id
+        ]
+        if (len(matches) != 1 or len(sessions) != 1
+                or not numilog_inventory_binding_valid(
+                    service, matches[0], session=sessions[0],
+                )):
+            return 0
+    except Exception:
+        return 0
+
+    source = SourceIdentity("numilog", credential_id, account_id, identity_id)
+    candidates: list[str] = []
+    for item_id in staged:
+        key = (identity_id, credential_id, account_id, item_id)
+        candidates.append(Entitlement(source=source, item_id=item_id).entitlement_id)
+        candidates.append(stable_id("numilog-owned-identity", *key))
+    existing = service.storage.numilog_entitlement_reservations(
+        identity_id=identity_id, credential_id=credential_id,
+        account_id=account_id, candidate_ids=tuple(candidates),
+    )
+    by_scope = {
+        (
+            str(item.get("identity_id") or ""),
+            str(item.get("credential_id") or ""),
+            str(item.get("account_id") or ""),
+            str(item.get("item_id") or ""),
+        ): item
+        for item in existing
+        if item.get("entitlement_type") == "owned"
+        and item.get("identity_id") == identity_id
+        and item.get("credential_id") == credential_id
+        and item.get("account_id") == account_id
+    }
+    reserved = {
+        str(item.get("entitlement_id") or ""): (
+            str(item.get("identity_id") or ""),
+            str(item.get("credential_id") or ""),
+            str(item.get("account_id") or ""),
+            str(item.get("item_id") or ""),
+        )
+        for item in existing
+    }
+    count = 0
+    for item_id, row in staged.items():
         key = (identity_id, credential_id, account_id, item_id)
         previous = by_scope.get(key)
-        source = SourceIdentity("numilog", credential_id, account_id, identity_id)
         canonical = Entitlement(source=source, item_id=item_id).entitlement_id
+        fallback = stable_id("numilog-owned-identity", *key)
         entitlement_id = (
             str(previous["entitlement_id"]) if previous else
             canonical if canonical not in reserved or reserved[canonical] == key
-            else stable_id("numilog-owned-identity", *key)
+            else fallback
         )
+        # Never overwrite a different owner's row even when its ID collides
+        # with our account-specific fallback (legacy/corrupt databases).
+        if entitlement_id in reserved and reserved[entitlement_id] != key:
+            continue
         # Do not persist provider HTML, metadata, delivery URLs, signed
         # order/auth/rights query strings or download references.
         service.storage.entitlement_put({
@@ -184,6 +248,14 @@ def mirror_numilog_manifest_rights(
                 "title": _safe_metadata_text(row.title),
                 "author": _safe_metadata_text(row.author),
                 "media_format": _safe_metadata_text(row.format),
+                # A Numilog purchase is an ebook even when EPUB/PDF is still
+                # unverified. Preserve support without inventing a format.
+                "medium": "digital" if row.medium == "digital" else None,
+                # Only a query-free public image URL may cross the private
+                # account boundary. Never persist signed delivery links.
+                "cover_url": _numilog_public_catalog_url(
+                    row.thumbnail_url, cover=True,
+                ),
             },
         })
         reserved[entitlement_id] = key

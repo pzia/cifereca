@@ -37,6 +37,11 @@ METADATA = {
     "publisher": "Éditions UX",
     "catalogue_metadata": {"publishers": ["Maison A", "Maison B"]},
     "access_token": "SECRET_NE_JAMAIS_AFFICHER",
+    "public_product_metadata": {
+        "brand": "Marque commerciale", "pagination_label": "228 pages",
+        "selected_format_label": "PDF sans DRM",
+        "rights": "SECRET_NE_JAMAIS_AFFICHER",
+    },
 }
 
 
@@ -138,7 +143,9 @@ def main():
             if isinstance(x, Adw.ActionRow) and x is not expanded[0]
             and x.get_title() in {"Titre", "Auteur", "Sujet", "ISBN déclaré",
                                  "EAN déclaré", "Identifiant déclaré", "Éditeur",
-                                 "Catalogue · Éditeur"}
+                                 "Catalogue · Éditeur", "Fiche publique · Marque",
+                                 "Fiche publique · Pagination déclarée (support non précisé)",
+                                 "Fiche publique · Format commercial sélectionné"}
         ]
         return expanded[0], rows
 
@@ -213,6 +220,9 @@ def main():
             ("ISBN déclaré", "9780306406157"),
             ("EAN déclaré", "4006381333931"),
             ("Catalogue · Éditeur", "Maison B"),
+            ("Fiche publique · Marque", "Marque commerciale"),
+            ("Fiche publique · Pagination déclarée (support non précisé)", "228 pages"),
+            ("Fiche publique · Format commercial sélectionné", "PDF sans DRM"),
         ):
             assert expected in shown, f"Champ {expected!r} absent du véritable panneau GTK déplié : {shown!r}"
         assert not any("SECRET_NE_JAMAIS_AFFICHER" in v for _, v in shown)
@@ -292,6 +302,7 @@ def main():
         for expected in (
             ("Auteur", "Alice Exemple"), ("Auteur", "Bob Exemple"),
             ("Sujet", "nature"), ("ISBN déclaré", "9780306406157"),
+            ("Fiche publique · Format commercial sélectionné", "PDF sans DRM"),
         ):
             assert expected in shown, f"Bibliothèque n'utilise pas le détail partagé : {shown!r}"
         report["checks"]["library_metadata"] = True
@@ -303,7 +314,7 @@ def main():
 
     owned_action = {}
 
-    def begin_owned_book_action():
+    def begin_owned_book_action(provider="kobo"):
         """#1347: real Library renderer/TaskRunner and physical targeted click.
 
         Ownership/source eligibility uses real Core storage. The acquisition
@@ -315,33 +326,79 @@ def main():
         service = window.service
         owner = service.current_identity.identity_id
         assert owner == "camille"
-        account = Account(display_name="Kobo fictif ciblé", unique_id="gtk-owned-account",
-                          provider_id="kobo", credential_id="gtk-owned-credential", identity_id=owner)
+        label = "Numilog" if provider == "numilog" else "Kobo"
+        product = "gtk-owned-product"
+        if provider == "numilog":
+            scope = hashlib.sha256(b"gtk-owned-credential").hexdigest()[:20]
+            product = "numilog:" + scope + ":fictional:" + "a"*16
+        account = Account(display_name=label + " fictif ciblé", unique_id="gtk-owned-account",
+                          provider_id=provider, credential_id="gtk-owned-credential", identity_id=owner)
         owned_action.update(accounts=list(service.accounts), sessions=dict(service._sessions),
                             obtain=service.obtain_owned_library_item, refresh=window.refresh_library,
-                            recent=window.refresh_recent, calls=[], refreshed=[], recents=[])
-        service.storage.provider_connection_put({"provider_id": "kobo", "credential_id": account.credential_id,
-            "identity_id": owner, "label": "Kobo fictif ciblé"})
-        service.storage.entitlement_put({"entitlement_id": "gtk-owned-right", "provider_id": "kobo",
+                            recent=window.refresh_recent, calls=[], refreshed=[], recents=[],
+                            provider=provider, product=product, resume=False)
+        service.storage.provider_connection_put({"provider_id": provider, "credential_id": account.credential_id,
+            "identity_id": owner, "label": label + " fictif ciblé"})
+        service.storage.entitlement_put({"entitlement_id": "gtk-owned-right", "provider_id": provider,
             "credential_id": account.credential_id, "account_id": account.unique_id, "identity_id": owner,
-            "item_id": "gtk-owned-product", "revision_id": "r1", "entitlement_type": "owned", "state": "active",
-            "metadata": {"title": TITLE, "media_format": "epub"}})
+            "item_id": product, "revision_id": "r1", "entitlement_type": "owned", "state": "active",
+            "metadata": {"title": TITLE, **({"source":"numilog.authenticated_library"}
+                         if provider == "numilog" else {"media_format":"epub"})}})
         service.accounts = [*service.accounts, account]
-        service._sessions[service._session_key("kobo", account.credential_id)] = NS(
-            provider_id="kobo", credential_id=account.credential_id, connected=True,
-            capabilities=NS(backup=True), accounts=[account])
+        service._sessions[service._session_key(provider, account.credential_id)] = NS(
+            provider_id=provider, credential_id=account.credential_id, connected=True,
+            capabilities=NS(backup=True, personal_library=True, direct_download=True), accounts=[account])
         def observe(target):
-            assert target.identity_id == owner and target.item_id == "gtk-owned-product"
+            assert target.identity_id == owner and target.item_id == product
             owned_action["calls"].append((target.identity_id, target.item_id))
             return NS(path=out / "synthetic-boundary-only.epub")
         service.obtain_owned_library_item = observe
         window.refresh_library = lambda *a, **kw: owned_action["refreshed"].append(a)
         window.refresh_recent = lambda *a, **kw: owned_action["recents"].append(a)
-        possession = {"identity_id": owner, "provider_id": "kobo", "item_id": "gtk-owned-product",
+        possession = {"identity_id": owner, "provider_id": provider, "item_id": product,
                       "kind": "owned", "state": "active", "entitlement_id": "gtk-owned-right"}
-        window._library_entries_cache = [dict(entry, key="gtk-owned-row", provider_id="kobo",
-            item_id="gtk-owned-product", local=False, state="remote_owned", source="entitlement",
+        window._library_entries_cache = [dict(entry, key="gtk-owned-row-" + provider, provider_id=provider,
+            item_id=product, local=False, state="remote_owned", source="entitlement",
             entitlement_id="gtk-owned-right", possessions=[possession])]
+        # Different purchases need different canonical GTK row keys; reusing
+        # a key would intentionally exercise the progressive append fast path
+        # and leave the preceding provider's row materialized.
+        assert service.owned_library_download_target(window._library_entries_cache[0]) is not None
+        window._render_library()
+        later(160, owned_book_select)
+
+    def begin_numilog_index_resume():
+        """Real receipt -> GTK/XTEST -> worker -> offline Core index/commit."""
+        from types import SimpleNamespace as NS
+        import zipfile
+        from cifereca.core.numilog_local_preview import _identity_root
+        from cifereca.core.numilog_materialization_checkpoint import record
+        from cifereca.locking import InterProcessLock
+        from cifereca.paths import acquisition_lock_file
+        service = window.service
+        owner = service.current_identity.identity_id
+        root = _identity_root(service, owner)[0] / 'numilog'
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / 'gtk-receipt-fictional.epub'
+        with zipfile.ZipFile(path, 'w') as archive:
+            archive.writestr('mimetype', 'application/epub+zip')
+            archive.writestr('META-INF/container.xml', '<container/>')
+            archive.writestr('content.xhtml', '<html><body>Fictional receipt</body></html>')
+        item = NS(record_id=owned_action['product'], source_credential='gtk-owned-credential')
+        with InterProcessLock(acquisition_lock_file()):
+            aid = record(service, item, path, root, owner, 'gtk-owned-account', validate=lambda:None)
+        owned_action.update(resume=True, calls=[], refreshed=[], recents=[], receipt=aid, path=path)
+        # Resume must work without an online account or provider session.
+        service.accounts = []
+        service._sessions = {}
+        def resume_exact(target):
+            assert target.operation == 'resume_index' and target.acquisition_id == aid
+            owned_action['calls'].append((target.identity_id, target.item_id))
+            return owned_action['obtain'](target)
+        service.obtain_owned_library_item = resume_exact
+        row = window._library_entries_cache[0]
+        window._library_entries_cache = [dict(row, key='gtk-numilog-resume-receipt')]
+        assert service.owned_library_download_target(window._library_entries_cache[0]).operation == 'resume_index'
         window._render_library()
         later(160, owned_book_select)
 
@@ -352,7 +409,7 @@ def main():
 
     def owned_book_action_visible():
         buttons = [node for node in walk(panel("library"))
-                   if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_id", "") == "download-owned-kobo"]
+                   if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_id", "") == ("resume-index-numilog" if owned_action["resume"] else "download-owned-" + owned_action["provider"])]
         assert len(buttons) == 1, "Action individuelle du livre possédé absente"
         button = buttons[0]
         assert button.get_mapped() and button.get_sensitive()
@@ -361,8 +418,8 @@ def main():
         assert 0 <= bounds.get_x() and bounds.get_x() + bounds.get_width() <= window.get_width()
         assert 0 <= bounds.get_y() and bounds.get_y() + bounds.get_height() <= window.get_height()
         assert not owned_action["calls"] and not owned_action["refreshed"]
-        report["checks"]["P0_1347_owned_library_action_passive_until_physical_click"] = True
-        capture("03a-owned-kobo-single-book-action")
+        report["checks"]["P0_1905_numilog_resume_passive_until_physical_click" if owned_action["resume"] else "P0_1347_owned_library_action_passive_until_physical_click" if owned_action["provider"] == "kobo" else "P0_2024_owned_numilog_passive_until_physical_click"] = True
+        capture("03a-owned-" + owned_action["provider"] + ("-resume-index-action" if owned_action["resume"] else "-single-book-action"))
         report.setdefault("pointer_actions", []).append(device.click_widget(button))
         owned_action["deadline"] = monotonic() + 6
         later(100, owned_book_action_completed)
@@ -372,12 +429,24 @@ def main():
             assert monotonic() < owned_action["deadline"], "Action individuelle GTK non terminée"
             later(100, owned_book_action_completed)
             return
-        assert owned_action["calls"] == [("camille", "gtk-owned-product")]
+        assert owned_action["calls"] == [("camille", owned_action["product"])]
         assert len(owned_action["refreshed"]) == len(owned_action["recents"]) == 1
         assert len(report["online_calls"]) == 1, "Téléchargement individuel devenu une recherche distante"
-        report["checks"]["P0_1347_owned_library_XTEST_exact_single_target"] = True
+        if owned_action['resume']:
+            receipt = window.service.storage.acquisition_get(owned_action['receipt'])
+            assert receipt['status'] == 'complete' and receipt['metadata']['phase'] == 'indexed'
+            placement = window.service.storage.placement_for_path(owned_action['path'])
+            assert placement['identity_id'] == 'camille' and placement['source_item_id'] == owned_action['product']
+            assert not window.service.accounts and not window.service._sessions
+            report['checks']['P0_1905_numilog_resume_XTEST_real_offline_index_complete'] = True
+            report['numilog_resume_scope'] = 'synthetic delivered file; real receipt/GTK/XTEST/TaskRunner/index/SQLite, no provider session'
+        else:
+            report["checks"]["P0_1347_owned_library_XTEST_exact_single_target" if owned_action["provider"] == "kobo" else "P0_2024_owned_numilog_XTEST_exact_single_target"] = True
         report["owned_download_scope"] = "real GTK/TaskRunner + stored ownership; acquisition boundary observed, no live provider"
-        capture("03b-owned-kobo-targeted-click-complete")
+        capture("03b-owned-" + owned_action["provider"] + ("-resume-index-complete" if owned_action["resume"] else "-targeted-click-complete"))
+        if owned_action['provider'] == 'numilog' and not owned_action['resume']:
+            later(160, begin_numilog_index_resume)
+            return
         service = window.service
         service.accounts = owned_action["accounts"]
         service._sessions = owned_action["sessions"]
@@ -386,7 +455,10 @@ def main():
         window.refresh_recent = owned_action["recent"]
         with service.storage._lock, service.storage._connect() as db:
             db.execute("DELETE FROM entitlements WHERE entitlement_id='gtk-owned-right'")
-            db.execute("DELETE FROM provider_connections WHERE provider_id='kobo' AND credential_id='gtk-owned-credential'")
+            db.execute("DELETE FROM provider_connections WHERE provider_id=? AND credential_id='gtk-owned-credential'", (owned_action["provider"],))
+        if owned_action["provider"] == "kobo":
+            later(160, lambda: begin_owned_book_action("numilog"))
+            return
         window._library_entries_cache = [dict(entry, key="ux942-library")]
         window._render_library()
         window.library_page.selection.set_selected(0)
@@ -497,6 +569,57 @@ def main():
         )
         report["checks"]["security_detail_visible_counter_942"] = True
         report["checks"]["security_detail_all_private_hidden_942"] = True
+        begin_stale_public_detail()
+
+    def begin_stale_public_detail():
+        from cifereca.models import SearchResult
+        from cifereca.gui.query_model import QueryState
+        from datetime import datetime, timezone
+        service = window.service
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError("Stale public detail requested download, holdings or plugin decoration")
+        # Assert the final GTK detail boundary independently of the Core's own
+        # refusal: no capability lookup/decorator/holdings may be requested.
+        service.can_direct_download = forbidden
+        service.holdings = forbidden
+        panel("search")._decorate = forbidden
+        window.navigate("search")
+        window.search_controls.set_state(QueryState(text="Camille", field="title"), notify=False)
+        item = SearchResult(
+            id="known-stale:fixture", record_id="fixture", docbase="CATALOG",
+            medium="digital", title=TITLE + " connu", author="Autrice fictive",
+            type="Livre numérique", format="epub", publisher=None,
+            published_at=None, description="Notice publique déjà collectée.",
+            thumbnail_url=None, friendly_url=None, scenario="KNOWN_CATALOG_STALE",
+            source_provider="gallica", source_credential="known-public",
+            source_collection="catalog", owned=False, downloadable=False,
+            metadata={"search_provenance": "known_catalog_stale",
+                      "mirrored_at": int(datetime(2026, 10, 16, 12, tzinfo=timezone.utc).timestamp()),
+                      "access_token": "STALE_SECRET_NEVER_DISPLAY"},
+        )
+        window._search_local_objects = {}
+        window._remote_search_results = [item]
+        window._populate_search([item], announce=False)
+        assert window.search_page.store.get_n_items() == 1
+        window.search_page.selection.set_selected(0)
+        later(280, stale_public_detail_rendered)
+
+    def stale_public_detail_rendered():
+        p = panel("search")
+        fields = [(row.get_title(), row.get_subtitle()) for row in walk(p.content)
+                  if isinstance(row, Adw.ActionRow)]
+        assert ("Recherche en ligne", "Indisponible") in fields
+        texts = [node.get_text() for node in walk(p.content) if isinstance(node, Gtk.Label)]
+        assert "Résultat connu · hors ligne" in texts
+        assert not any("STALE_SECRET_NEVER_DISPLAY" in text for text in texts)
+        assert not any(
+            isinstance(node, Gtk.Button)
+            and str(getattr(node, "_cifereca_action_label", "")).startswith(("Télécharger", "Sauvegarder"))
+            for node in walk(p)
+        )
+        assert len(report["online_calls"]) == 1
+        report["checks"]["P1_1916_stale_public_detail_readonly_without_acquisition"] = True
+        capture("06-stale-public-detail-readonly")
         report["status"] = "PASS"
         save()
         rc[0] = 0

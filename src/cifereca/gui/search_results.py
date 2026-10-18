@@ -13,6 +13,28 @@ from .book_widgets import BookListItem
 from .query_model import result_row
 
 
+def _stale_catalog_provenance(metadata: Any) -> tuple[str, ...]:
+    """Explain a cached *public notice* without implying live availability.
+
+    `mirrored_at` is our local index timestamp, not a publication date,
+    download entitlement, or a last-seen-upstream claim.
+    """
+    if not isinstance(metadata, dict) or metadata.get("search_provenance") != "known_catalog_stale":
+        return ()
+    from datetime import datetime, timezone
+
+    labels = ["Résultat connu · hors ligne"]
+    observed = metadata.get("mirrored_at")
+    if type(observed) is int and observed > 0:
+        try:
+            date = datetime.fromtimestamp(observed, tz=timezone.utc).strftime("%d/%m/%Y")
+        except (OverflowError, ValueError, OSError):
+            pass
+        else:
+            labels.append(f"Notice indexée localement le {date} (UTC)")
+    return tuple(labels)
+
+
 def _sync_search_detail_after_results(self) -> None:
     if not hasattr(self, "search_page"):
         return
@@ -43,7 +65,15 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
     # account IDs or local paths) in search warnings. Never echo their text
     # into GTK. The presence of a partial failure is sufficient for UX.
     if getattr(self.service, "last_search_warnings", None):
-        self.toast("Résultats partiels · certaines sources sont indisponibles.", 6)
+        # Read-only fallback rows are not a fresh remote response. Make the
+        # degraded provenance explicit without ever echoing provider errors.
+        if any(
+            (getattr(item, "metadata", None) or {}).get("search_provenance")
+            == "known_catalog_stale" for item in rows
+        ):
+            self.toast("Résultats connus, recherche en ligne indisponible · résultats partiels.", 6)
+        else:
+            self.toast("Résultats partiels · certaines sources sont indisponibles.", 6)
 
 
 def _render_search_results(self) -> int:
@@ -101,8 +131,9 @@ def _render_search_results(self) -> int:
         else:
             medium = "Livre numérique"
         source = self.service.provider_display_name(item.source_provider)
-        extras: list[str] = []
-        if item.source_provider == "kobo":
+        stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
+        extras: list[str] = list(_stale_catalog_provenance(item.metadata)) if stale_known else []
+        if item.source_provider == "kobo" and not stale_known:
             right_state = kobo_rights.get((item.source_credential, item.record_id))
             if right_state == "active":
                 extras.append("Possédé sur Kobo")
@@ -113,8 +144,12 @@ def _render_search_results(self) -> int:
             elif item.price:
                 extras.append(f"{item.price} {item.currency or ''}".strip())
         meta = " · ".join(x for x in [medium, *extras, item.published_at] if x)
-        placement = linked.get((item.source_provider, item.source_credential, item.record_id))
-        direct = self.service.can_direct_download(item)
+        # An offline public result is never evidence of a current entitlement,
+        # a download offer or a verified local placement.
+        placement = None if stale_known else linked.get(
+            (item.source_provider, item.source_credential, item.record_id)
+        )
+        direct = False if stale_known else self.service.can_direct_download(item)
         callback = None
         if placement:
             extras.append('Fichier local disponible')

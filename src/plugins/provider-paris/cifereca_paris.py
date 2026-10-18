@@ -416,6 +416,9 @@ class ParisProviderSession(ProviderSession):
         return self._decorate(self.client.all_bookings(account.unique_id), self.provider_id, self.credential_id)
 
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
+        # An unsupported field/scope is a new failed attempt, not a reason
+        # to keep a previous partial Syracuse branch warning visible.
+        self.last_search_warnings = []
         # Syracuse search is a general text query. Do not advertise an
         # author/ISBN/subject restriction that the upstream client ignores.
         if type(field) is not str or field.strip().casefold() != "all":

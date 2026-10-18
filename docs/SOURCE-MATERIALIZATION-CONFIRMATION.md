@@ -75,3 +75,29 @@ Ce lot fournit le contrat d'exécution Core. La planification/migration par
 source/phase, l'extraction progressive de politique fournisseur et le parcours
 de confirmation CoreUI #1347 restent à livrer ; le parent #1346 reste ouvert.
 Les tests offline ne qualifient pas les comptes ni les runtimes externes réels.
+
+## Reçu de livraison Numilog (#1905)
+
+Une acquisition Numilog manuelle validée conserve désormais un reçu durable
+avant de rendre le fichier à l'appelant. Le reçu lie identité, connexion, compte,
+achat, racine, chemin, taille et SHA-256. Il bloque une seconde acquisition du
+même achat pendant l'indexation et reste `attention_required` si celle-ci échoue.
+Le passage à `complete` vérifie atomiquement le reçu unique, l'artefact et son
+placement exact dans SQLite.
+
+`service.resume_numilog_materialization(acquisition_id)` reprend explicitement
+l'indexation des mêmes octets, sans HTTP ni session fournisseur, y compris après
+redémarrage. L'identité sélectionnée et le propriétaire persistant de la connexion
+doivent toujours correspondre. Un changement de racine, fichier, propriétaire,
+un symlink ou un ledger ambigu bloque cette reprise. L'annulation conserve le
+reçu sans fabriquer un succès. Aucun scan global ni récupération automatique
+n'est déclenché. La fiche Bibliothèque/recherche locale propose
+« Reprendre l’indexation Numilog » pour un reçu en attente lié à son unique
+possession. L'affichage ne lit pas le fichier ; le clic explicite le revalide
+dans une tâche hors GTK, sous verrou, avant l'indexation. Un bouton devenu
+obsolète ne peut indexer un autre achat ou un reçu modifié.
+
+Ce reçu couvre la fenêtre livraison validée → indexation. Il ne qualifie pas
+un crash pendant le téléchargement ou avant l'écriture du reçu, et ne constitue
+ni consentement à une sauvegarde automatique ni preuve fournisseur réelle.
+Le parent #1905 reste ouvert.

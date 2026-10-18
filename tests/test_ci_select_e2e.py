@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 24)
+        self.assertEqual(len(mod.ALL), 31)
 
     def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
         for path in ("src/cifereca/gui/settings_ai_actions.py",
@@ -62,9 +62,42 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(mod.select(["e2e/diagnostics_volume_probe.py"]),
                          ("diagnostics-volume-1366",))
 
+    def test_home_plugin_changes_select_existing_native_baselines_at_both_widths(self):
+        for path in ("src/plugins/home-page/cifereca_home.py",
+                     "src/plugins/home-page/cifereca-plugin.json",
+                     "src/plugins/home-page/tests/test_owned_loan_summary_1867.py"):
+            self.assertEqual(mod.select([path]), mod.HOME, path)
+        self.assertEqual(set(mod.HOME), {
+            "mainwindow-baseline-1366", "mainwindow-baseline-1600",
+        })
+        self.assertTrue(set(mod.HOME).issubset(set(mod.ALL)))
+
     def test_diagnostics_all_seven(self):
         self.assertEqual(set(mod.select(["src/plugins/diagnostics-page/page.py"])),
                          set(mod.DIAG))
+
+    def test_1599_youth_gtk_plugin_real_coverage_at_both_widths(self):
+        assert {"youth-1366", "youth-1600"}.issubset(set(mod.YOUTH))
+        for path in (
+            "src/plugins/youth-catalog/youth_page.py",
+            "src/plugins/youth-detail-enrichment/enrich.py",
+            "e2e/youth_page_probe.py",
+        ):
+            selected = set(mod.select([path]))
+            assert {"youth-1366", "youth-1600"}.issubset(selected), path
+
+    def test_1599_youth_edition_and_library_navigation_1600_are_selected(self):
+        expected = {
+            "youth-editions-1366", "youth-editions-1600",
+            "youth-library-search-1366", "youth-library-search-1600",
+        }
+        assert expected.issubset(set(mod.YOUTH))
+        for path in (
+            "e2e/youth_page_probe.py",
+            "src/plugins/youth-catalog/youth_page.py",
+            "src/plugins/youth-detail-enrichment/enrich.py",
+        ):
+            assert expected.issubset(set(mod.select([path]))), path
 
     def test_youth_and_its_source_adapters(self):
         for path in ("src/plugins/youth-catalog/page.py",
@@ -74,9 +107,22 @@ class SelectionTests(unittest.TestCase):
             self.assertEqual(mod.select([path]), mod.YOUTH, path)
 
     def test_1599_detail_plugin_changes_select_gtk_smoke(self):
-        for path in ("src/plugins/constellations/view_model.py",
-                     "src/plugins/recommendations/page.py"):
-            self.assertEqual(mod.select([path]), mod.DETAIL, path)
+        self.assertEqual(
+            mod.select(["src/plugins/constellations/view_model.py"]),
+            mod.CONSTELLATIONS,
+        )
+        self.assertEqual(
+            mod.select(["src/plugins/recommendations/page.py"]),
+            mod.RECOMMENDATIONS,
+        )
+        self.assertEqual(
+            mod.select(["e2e/constellations_detail_probe.py"]),
+            mod.CONSTELLATIONS_GTK,
+        )
+        self.assertEqual(
+            mod.select(["e2e/recommendations_detail_probe.py"]),
+            mod.RECOMMENDATIONS_GTK,
+        )
         self.assertEqual(
             mod.select(["src/plugins/youth-detail-enrichment/enrich.py"]),
             mod.YOUTH,
@@ -84,7 +130,29 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(mod.select([
             "src/plugins/constellations/view_model.py",
             "src/plugins/youth-detail-enrichment/enrich.py",
-        ])), set(mod.DETAIL + mod.YOUTH))
+        ])), set(mod.CONSTELLATIONS + mod.YOUTH))
+
+    def test_1599_constellations_real_gtk_both_widths(self):
+        assert set(mod.CONSTELLATIONS_GTK) == {
+            "constellations-detail-1366", "constellations-detail-1600",
+        }
+        assert set(mod.CONSTELLATIONS_GTK).issubset(set(mod.CONSTELLATIONS))
+        for path in (
+            "src/plugins/constellations/constellations_page.py",
+            "src/plugins/constellations/constellations.py",
+        ):
+            assert set(mod.CONSTELLATIONS_GTK).issubset(set(mod.select([path])))
+
+    def test_1599_recommendations_gtk_both_widths(self):
+        assert set(mod.RECOMMENDATIONS_GTK) == {
+            "recommendations-detail-1366", "recommendations-detail-1600",
+        }
+        assert set(mod.RECOMMENDATIONS_GTK).issubset(set(mod.RECOMMENDATIONS))
+        for path in (
+            "src/plugins/recommendations/recommendations.py",
+            "src/plugins/recommendations/recommendation_engine.py",
+        ):
+            assert set(mod.RECOMMENDATIONS_GTK).issubset(set(mod.select([path])))
 
     def test_922_filter_ux_in_youth_scope(self):
         self.assertIn("youth-filter-help-1366", mod.select([
@@ -124,7 +192,7 @@ class SelectionTests(unittest.TestCase):
     def test_1269_mainwindow_imports_cover_core_youth_diagnostics_navigation(self):
         selected = mod.select(["src/cifereca/gui/main_window.py"])
         self.assertEqual(set(selected), set(mod.MAINWINDOW))
-        self.assertEqual(len(selected), 19)
+        self.assertEqual(len(selected), 22)
         for name in mod.CORE + mod.YOUTH + (
             "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366"
         ):
@@ -155,6 +223,8 @@ class SelectionTests(unittest.TestCase):
             "gtk-diagnostics-volume": "diagnostics_volume_probe.py",
             "gtk-diagnostics-navigation": "diagnostics_navigation_probe.py",
             "gtk-youth": "youth_page_probe.py",
+            "gtk-constellations": "constellations_detail_probe.py",
+            "gtk-recommendations": "recommendations_detail_probe.py",
         }
         for scenario, descriptor in runner.SCENARIOS.items():
             filename = entrypoints.get(descriptor.get("runner"))

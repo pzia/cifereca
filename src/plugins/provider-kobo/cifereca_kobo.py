@@ -366,6 +366,9 @@ class KoboSession(ProviderSession):
         return self.catalog.normalize_item(item, default_collection=default_collection)
 
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
+        # Each attempt, including a rejected field or scope, supersedes any
+        # earlier partial-results warning from an authenticated Vault search.
+        self.last_search_warnings = []
         # The host uses all/digital/physical; catalog is also exposed for
         # explicitly public discovery. Unknown or malformed scopes must not
         # silently become an authenticated all-sources search and issue a
@@ -395,14 +398,17 @@ class KoboSession(ProviderSession):
             and _strict_account_scope(self._accounts[0].unique_id)
             else None
         )
-        options = {"field": field, "limit": 50, "page": page}
+        # Input validation above accepts harmless casing/outer whitespace,
+        # but the Vault API must always receive the *declared* canonical
+        # general-search value. Passing " ALL " to Vault would be a different
+        # server-side filter and could turn a valid search into a false zero.
+        options = {"field": "all", "limit": 50, "page": page}
         if account_id is None or scope == "catalog":
             options["scope"] = "catalog"
         # Core reads this stable warning channel to distinguish a public-only
         # fallback from a complete authenticated catalogue/library search.
-        # Reset at every attempt: previous credential-denial warnings must
-        # never survive recovery, a public-only query or a failed request.
-        self.last_search_warnings = []
+        # Reset is done before input validation, so even rejected attempts
+        # cannot leave a previous personal-denial warning visible.
         rows = self.catalog.search(query, **options)
         if account_id is not None and scope != "catalog":
             rejections = getattr(self.catalog, "last_search_rejections", ())

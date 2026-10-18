@@ -277,7 +277,25 @@ class TaskRunner:
                         self.present_error(payload)
                 return False
 
-            GLib.idle_add(deliver)
+            # Terminal outcomes are more important than repaint/progress
+            # idle traffic. A default-idle (priority 200) can starve while
+            # GTK has ready events at default priority (0), leaving a
+            # cancelled Kobo task visible as "Annulation demandée" long
+            # after its worker returned. Preserve idle_add's thread-safe
+            # dispatch while elevating only this final receipt.
+            # Keep other providers' UI ordering untouched: only the
+            # explicitly confirmed, cancellable Kobo acquisition benefits
+            # from this expedited terminal receipt.
+            normal_priority = (
+                getattr(GLib, "PRIORITY_DEFAULT", None)
+                if trace_kind == "kobo-acquisition" else None
+            )
+            if normal_priority is None:
+                # Headless adapters implementing the legacy GLib seam keep
+                # their existing scheduling contract.
+                GLib.idle_add(deliver)
+            else:
+                GLib.idle_add(deliver, priority=normal_priority)
 
         future.add_done_callback(done)
 

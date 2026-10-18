@@ -34,6 +34,7 @@ from PIL import ImageGrab
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow, BookListItem, fr_date
 from cifereca.gui.recent_time import format_recent_timestamp
+from cifereca.gui.sync_action_layout import sync_action_row
 from cifereca.builtin_ui.cifereca_builtin_ui import Pages
 from diagnostics_page_probe import Broker, Context, Host, Tasks
 from diagnostics_states_probe import StateTasks
@@ -491,11 +492,22 @@ def main() -> int:
         w = window[0]
         assert "library" in w.nav_rows and "diagnostics" in w.nav_rows
         assert w.view_stack.get_visible_child_name() == "dashboard"
+        minimum = w.shell_header.measure(Gtk.Orientation.HORIZONTAL, -1)[0]
+        assert minimum <= 760, ("Header prevents supported narrow window", minimum)
+        assert "prêts de bibliothèque" in w.statistics_button.get_label()
+        report["checks"]["P1_2008_header_counter_shrinks_without_semantic_abbreviation"] = True
+        report["header_minimum_width"] = minimum
         assert not w.nav_rows["diagnostics"].get_mapped(), "Configuration doit être repliée"
         report["checks"]["real_mainwindow_and_plugin_contribution"] = True
         capture("00-real-cifereca-shell")
         report["pointer_actions"].append(device[0].click_widget(w.nav_rows["library"]))
         await_route("library", library_open)
+
+    def home_summary_acceptance():
+        from home_summary_acceptance import check_home_summary
+        check_home_summary(
+            window[0], later=later, capture=capture, report=report, done=initial,
+        )
 
     def library_open():
         w = window[0]
@@ -749,7 +761,9 @@ def main() -> int:
         assert w.service.current_identity.identity_id == "camille"
         assert w.identity_dropdown.get_model().get_n_items() == 2
         report["window_size"] = [w.get_width(), w.get_height()]
-        begin_library_volume()
+        from activity_feedback_acceptance import exercise
+        exercise(w, Gtk=Gtk, Adw=Adw, walk=walk, device=device[0], report=report,
+                 capture=capture, later=later, done=begin_library_volume)
 
     library_volume = {}
 
@@ -1126,6 +1140,15 @@ def main() -> int:
         def forbidden(*args, **kwargs):
             f["mutations"].append("unexpected operation")
             raise AssertionError("Opération de restitution/synchronisation implicite")
+        # Capture the actual concurrent.futures.Future without changing
+        # the worker or TaskRunner implementation. This distinguishes a
+        # worker still resolving from a GTK idle callback not yet delivered.
+        original_submit = w.runner.pool.submit
+        def trace_submit(priority, operation):
+            future = original_submit(priority, operation)
+            f["latest_task_future"] = future
+            return future
+        override(w.runner.pool, "submit", trace_submit)
         override(w, "_return_loan", forbidden)
         override(w, "_return_loan_pnb", forbidden)
         # Only read-side capabilities are isolated; real renderers, window
@@ -1144,6 +1167,8 @@ def main() -> int:
                 f"fictitious-target-{number}", f"Kobo ciblé {number}",
                 sync_capabilities=("local_materialization",),
             ) for number in (1, 2, 3)],
+            SyncSourceRef("p0-numilog-inventory", "camille", "numilog", "fictitious-numilog",
+                          "Achats Numilog fictifs", sync_capabilities=("remote_inventory", "entitlements")),
             SyncSourceRef("p0-partial", "camille", "paris", "fictif-a", "Source partielle fictive",
                           status="partial", last_attempt="2026-10-11T12:00:00+00:00",
                           last_success="2026-10-10T12:00:00+00:00"),
@@ -1209,6 +1234,9 @@ def main() -> int:
         f["materialize_calls"] = []
         f["download_release"] = Event()
         f["download_started"] = Event()
+        f["cancel_worker_entered"] = Event()
+        f["cancel_worker_woke"] = Event()
+        f["cancel_worker_returning"] = Event()
         def prepare_materialization(source_id):
             assert source_id == "p0-kobo-target-2", "Préparation sur un autre compte"
             f["prepare_calls"].append(source_id)
@@ -1230,13 +1258,53 @@ def main() -> int:
             assert token == f"{len(f['prepare_calls']):064x}"
             f["materialize_calls"].append(source_id)
             if len(f["materialize_calls"]) == 1:
+                # Cross-thread milestones are intentionally enumerated and
+                # contain no account names, paths, tokens or provider data.
+                f["cancel_worker_entered"].set()
                 f["download_started"].set()
-                assert f["download_release"].wait(10), "Annulation GTK absente"
+                was_released = f["download_release"].wait(10)
+                f["cancel_worker_woke"].set()
+                assert was_released, "Annulation GTK absente"
                 assert control.cancelled(), "Le contrôle n'a pas reçu l'annulation"
+                f["cancel_worker_returning"].set()
                 return NS(ok=False, changed=1, facts={"status": "cancelled"})
             assert not control.cancelled()
             return NS(ok=True, changed=1, facts={"status": "success"})
+        f["inventory_policy"] = {"mode": "manual", "interval_minutes": 60}
+        f["inventory_policy_writes"] = []
+        f["numilog_preview_calls"] = []
+        def numilog_preview(source_id, *, verify_local_files=False):
+            assert source_id == "p0-numilog-inventory"
+            f["numilog_preview_calls"].append((source_id, verify_local_files))
+            counts = dict.fromkeys((
+                "owned_purchases", "already_local_linked", "already_local_verified",
+                "needs_file_verification", "potentially_missing", "candidate_unverified",
+                "needs_reconciliation", "attention_required", "not_downloadable",
+                "ignored_unattested_rights",
+            ), 0)
+            counts.update(owned_purchases=3, potentially_missing=2, candidate_unverified=2)
+            return NS(ok=True, facts={
+                "phase": "local_materialization", "status": "preview_only",
+                "read_only": True, "offline": True, "acquisition_authorized": False,
+                "confirmation_available": False, "schedule_available": False,
+                "manifest_refreshed": False, "requires_manifest_validation": True,
+                "files_verified": verify_local_files, "known_item_count": 3,
+                "counts": counts, "private": "PRIVATE_NUMILOG_PREVIEW",
+            })
+        def inventory_policy(source_id):
+            if source_id != "p0-numilog-inventory":
+                raise ValueError("inventory schedule not supported by fixture")
+            return dict(f["inventory_policy"])
+        def set_inventory_policy(source_id, mode, *, interval_minutes):
+            assert source_id == "p0-numilog-inventory"
+            assert mode in {"manual", "periodic"} and interval_minutes == 60
+            f["inventory_policy_writes"].append((source_id, mode))
+            f["inventory_policy"] = {"mode": mode, "interval_minutes": interval_minutes}
+            return dict(f["inventory_policy"])
         sync_broker = NS(
+            preview_local_materialization=numilog_preview,
+            inventory_refresh_schedule=inventory_policy,
+            set_inventory_refresh_schedule=set_inventory_policy,
             sources=read_sources, synchronize=forbidden,
             synchronize_source=synchronize_one, set_enabled=forbidden,
             audit_local_reconciliation=audit_local_reconciliation,
@@ -1334,7 +1402,7 @@ def main() -> int:
         assert "Connexion : Déconnectée" in offline.get_subtitle()
         assert any(isinstance(node, Gtk.Button) and not node.get_sensitive()
                    and node.get_tooltip_text() == "Reconnectez ce compte avant de synchroniser."
-                   for node in walk(offline))
+                   for node in walk(sync_action_row(offline)))
         assert w._sync_all_button.get_sensitive()
         assert f["source_queries"] and not f["mutations"]
         assert w.service.current_identity.identity_id == "camille"
@@ -1344,15 +1412,33 @@ def main() -> int:
         report["checks"]["P0_sync_real_gtk_disconnected_source_action_disabled"] = True
         capture("03i-sync-partial-last-success-and-offline-source")
         # #980 acceptance uses the real MainWindow/controller/widgets and
-        # XTEST, with ten synthetic broker rows; no provider/network/DRM.
-        # Ten sources and four additional rows per Kobo account: preview,
-        # audit, manual confirmation and independent on_start consent.
-        assert len(rows) == 26, ("Unexpected GTK sync action-row count", len(rows))
+        # XTEST, with eleven synthetic broker rows; no provider/network/DRM.
+        # Eleven sources, two Numilog read-only/inventory rows and five additional rows
+        # per Kobo account: preview,
+        # audit, confirmed materialization, independent acquisition startup
+        # consent, and now the separate inventory/rights refresh consent.
+        # The synthetic broker declines Kobo scheduling; those rows remain
+        # inert. Numilog inventory consent is exercised separately below.
+        assert len(rows) == 33, ("Unexpected GTK sync action-row count", len(rows))
+        inventory_schedule_rows = [
+            row for row in rows
+            if row.get_title() == "Actualisation automatique des notices Kobo"
+        ]
+        assert len(inventory_schedule_rows) == 4
+        for inventory_row in inventory_schedule_rows:
+            assert "Planification des notices indisponible" in inventory_row.get_subtitle()
+            assert "Aucune synchronisation automatique" in inventory_row.get_subtitle()
+            assert 0 < inventory_row.get_height() <= 420
+            assert not any(
+                isinstance(node, Gtk.Button) and node.get_sensitive()
+                for node in walk(sync_action_row(inventory_row))
+            )
+        report["checks"]["P0_1346_inventory_schedule_is_separate_and_inert_without_broker"] = True
         schedule_row = next(row for row in rows
                             if row.get_title() == "Téléchargement automatique de ce compte")
         assert "Planification indisponible" in schedule_row.get_subtitle()
         assert not any(isinstance(node, Gtk.Button) and node.get_sensitive()
-                       for node in walk(schedule_row))
+                       for node in walk(sync_action_row(schedule_row)))
         acquisition_row = next(row for row in rows
                                if row.get_title() == "Téléchargement local · confirmation obligatoire")
         assert "Non préparé" in acquisition_row.get_subtitle()
@@ -1369,6 +1455,40 @@ def main() -> int:
             "Kobo confirmation row vertically collapsed by crowded actions",
             acquisition_row.get_height(),
         )
+        # P1 #1889: measure *real* GTK allocations, not only widget properties.
+        # The source subtitles span multiple lines; suffix actions must keep
+        # their natural command height, vertically centered even when disabled.
+        suffix_allocations = []
+        for sync_row in rows:
+            for button in (node for node in walk(sync_action_row(sync_row))
+                           if isinstance(node, Gtk.Button)):
+                assert button.get_valign() == Gtk.Align.CENTER, (
+                    "Uncentered Synchronisation suffix", sync_row.get_title(),
+                    button.get_label(),
+                )
+                button_height = button.get_height()
+                assert 0 < button_height <= 72, (
+                    "Synchronisation suffix stretched to subtitle height",
+                    sync_row.get_title(), button.get_label(),
+                    button_height, sync_row.get_height(),
+                )
+                ok, bounds = button.compute_bounds(sync_action_row(sync_row))
+                assert ok and bounds.get_y() >= 0, (
+                    "Suffix outside ActionRow", sync_row.get_title(),
+                )
+                assert bounds.get_y() + bounds.get_height() <= sync_action_row(sync_row).get_height() + 1
+                suffix_allocations.append({
+                    "row_height": sync_row.get_height(),
+                    "button_height": button_height,
+                    "button_width": button.get_width(),
+                    "valign": "center",
+                })
+        assert len(suffix_allocations) >= 20, (
+            "Missing expected Kobo/Paris/public source suffixes",
+            len(suffix_allocations),
+        )
+        report["sync_suffix_allocations"] = suffix_allocations
+        report["checks"]["P1_1889_gtk_sync_suffix_natural_height_centered"] = True
         report["checks"]["P0_kobo_acquisition_controls_keep_source_row_compact"] = True
         report["checks"]["P0_kobo_acquisition_off_by_default_on_sync_page"] = True
         for provider in ("gutenberg", "gallica"):
@@ -1379,7 +1499,7 @@ def main() -> int:
             assert "Échec" not in row.get_subtitle()
             assert any(isinstance(node, Gtk.Button) and not node.get_sensitive()
                        and "ne fournit pas de synchronisation" in (node.get_tooltip_text() or "")
-                       for node in walk(row))
+                       for node in walk(sync_action_row(row)))
         paris = [next(row for row in rows
                       if row.get_title() == f"Paris homonyme · paris · connexion {i}/2")
                  for i in (1, 2)]
@@ -1398,6 +1518,312 @@ def main() -> int:
         while not isinstance(scroll, Gtk.ScrolledWindow):
             scroll = scroll.get_parent()
         f["sync_scroll"] = scroll
+        f["sync_original_font"] = Gtk.Settings.get_default().get_property("gtk-font-name")
+        long_name_row = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
+        f["sync_long_name_row"] = long_name_row
+        f["sync_original_title"] = long_name_row.get_title()
+        long_name_row.set_title("Compte familial de démonstration — plusieurs éditions homonymes et un nom volontairement long")
+        w.set_default_size(760, 780)
+        later(350, lambda: sync_narrow_allocations(False))
+
+    def sync_narrow_allocations(large_font):
+        w = window[0]
+        f = loan_sync_fixture
+        scroll = f["sync_scroll"]
+        geometry = {
+            "window_width": w.get_width(),
+            "header_min": w.shell_header.measure(Gtk.Orientation.HORIZONTAL, -1)[0],
+            "scroll_min": scroll.measure(Gtk.Orientation.HORIZONTAL, -1)[0],
+            "sources_min": w._sync_sources_box.measure(Gtk.Orientation.HORIZONTAL, -1)[0],
+            "source_rows": [
+                {"title": row.get_title(), "minimum": sync_action_row(row).measure(Gtk.Orientation.HORIZONTAL, -1)[0]}
+                for row in walk(w._sync_sources_box) if isinstance(row, Adw.ActionRow)
+            ],
+        }
+        report["sync_minimum_width_geometry"] = geometry
+        assert w.get_width() <= 760, ("Synchronisation minimum window width", geometry)
+        assert scroll.get_width() > 0
+        allocations = []
+        for row in (node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)):
+            area = sync_action_row(row)
+            assert area.get_width() <= scroll.get_width()
+            assert 0 < row.get_height() <= 420, (row.get_title(), row.get_height())
+            for button in (node for node in walk(area) if isinstance(node, Gtk.Button)):
+                assert button.get_mapped() and 0 < button.get_height() <= 96
+                ok, bounds = button.compute_bounds(area)
+                assert ok and bounds.get_x() >= 0
+                assert bounds.get_x() + bounds.get_width() <= area.get_width() + 1
+                assert bounds.get_y() + bounds.get_height() <= area.get_height() + 1
+                assert button.get_valign() == Gtk.Align.CENTER
+                allocations.append({"row": row.get_title(), "height": button.get_height(),
+                                    "width": button.get_width(), "area_width": area.get_width()})
+        assert len(allocations) >= 20
+        key = "large_font" if large_font else "normal_font"
+        report.setdefault("sync_760_allocations", {})[key] = allocations
+        report["checks"]["P1_1889_sync_760_" + key] = True
+        report["stage"] = "P1_1889_sync_760_post_capture_" + key
+        capture("03i-sync-760-" + key)
+        # The prior failure report only said "AssertionError" after this
+        # screenshot; record which of the strict no-side-effect gates failed.
+        side_effects = {
+            "source_sync_calls": len(f["source_sync_calls"]),
+            "prepare_calls": len(f["prepare_calls"]),
+            "materialize_calls": len(f["materialize_calls"]),
+        }
+        report["sync_760_post_capture"] = side_effects
+        assert not any(side_effects.values()), (
+            "P1_1889: sync layout must not trigger source or acquisition work",
+            side_effects,
+        )
+        if not large_font:
+            Gtk.Settings.get_default().set_property("gtk-font-name", "Sans 12")
+            later(350, lambda: sync_narrow_allocations(True))
+            return
+        Gtk.Settings.get_default().set_property("gtk-font-name", f["sync_original_font"])
+        f["sync_long_name_row"].set_title(f["sync_original_title"])
+        w.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
+        later(350, begin_numilog_inventory_acceptance)
+
+    def begin_numilog_inventory_acceptance():
+        w = window[0]
+        f = loan_sync_fixture
+        scroll = f["sync_scroll"]
+        report["stage"] = "P0_1905_numilog_inventory_preflight"
+        rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
+        # Exercise Numilog's explicit consent with the real GTK dialog before
+        # continuing the existing Paris/Kobo acceptance path. Broker data is
+        # synthetic; policy writes cannot execute inventory or acquisition.
+        inventory_rows = [
+            row for row in rows
+            if row.get_title() == "Actualisation automatique des notices Numilog"
+        ]
+        preflight = {
+            "matching_rows": len(inventory_rows),
+            "window_size": [w.get_width(), w.get_height()],
+            "scroll_size": [scroll.get_width(), scroll.get_height()],
+            "scroll_mapped": bool(scroll.get_mapped()),
+            "scroll_value": round(scroll.get_vadjustment().get_value(), 2),
+            "policy_write_count": len(f["inventory_policy_writes"]),
+        }
+        report["numilog_inventory_preflight"] = preflight
+        assert len(inventory_rows) == 1, (
+            "P0_1905: expected one Numilog inventory row", preflight,
+        )
+        inventory_row = inventory_rows[0]
+        preflight["manual_subtitle"] = "Mode manuel" in (inventory_row.get_subtitle() or "")
+        assert preflight["manual_subtitle"], (
+            "P0_1905: Numilog consent row no longer starts in manual mode", preflight,
+        )
+        buttons = [
+            node for node in walk(sync_action_row(inventory_row))
+            if isinstance(node, Gtk.Button)
+            and getattr(node, "_cifereca_action_label", None) == "Planifier les notices…"
+        ]
+        preflight["matching_buttons"] = len(buttons)
+        assert len(buttons) == 1, (
+            "P0_1905: expected one Numilog planning button", preflight,
+        )
+        button = buttons[0]
+        preflight["button_sensitive"] = bool(button.get_sensitive())
+        preflight["button_mapped"] = bool(button.get_mapped())
+        assert button.get_sensitive() and not f["inventory_policy_writes"], (
+            "P0_1905: planning disabled or consent written before explicit click", preflight,
+        )
+        ok, bounds = button.compute_bounds(scroll)
+        preflight["bounds_available"] = bool(ok)
+        if ok:
+            preflight["button_bounds"] = [
+                round(bounds.get_x(), 2), round(bounds.get_y(), 2),
+                round(bounds.get_width(), 2), round(bounds.get_height(), 2),
+            ]
+        assert ok, ("P0_1905: planning button has no scroll-relative bounds", preflight)
+        adjustment = scroll.get_vadjustment()
+        adjustment.set_value(adjustment.get_value() + bounds.get_y() - 100)
+        later(250, numilog_inventory_schedule_click)
+
+    def numilog_inventory_schedule_click():
+        w = window[0]
+        f = loan_sync_fixture
+        report["stage"] = "P0_1905_numilog_inventory_click"
+        row = next(row for row in walk(w._sync_sources_box)
+                   if isinstance(row, Adw.ActionRow)
+                   and row.get_title() == "Actualisation automatique des notices Numilog")
+        button = next(node for node in walk(sync_action_row(row))
+                      if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_label", None) == "Planifier les notices…")
+        ok, bounds = button.compute_bounds(f["sync_scroll"])
+        click_geometry = {
+            "bounds_available": bool(ok),
+            "scroll_height": f["sync_scroll"].get_height(),
+            "scroll_value": round(f["sync_scroll"].get_vadjustment().get_value(), 2),
+            "button_mapped": bool(button.get_mapped()),
+        }
+        if ok:
+            click_geometry["button_bounds"] = [
+                round(bounds.get_x(), 2), round(bounds.get_y(), 2),
+                round(bounds.get_width(), 2), round(bounds.get_height(), 2),
+            ]
+        report["numilog_inventory_click_geometry"] = click_geometry
+        # GTK can reflow the FlowBox *after* the scrollbar moves: the 760 px
+        # preflight measured y=5395 but a later allocation can move the
+        # button above the viewport (observed y=-593 on CI #2032).
+        # Correct only the viewport and wait for one settled frame. Never
+        # click an invisible widget, skip a validation, or retry a failed run.
+        viewport_height = f["sync_scroll"].get_height()
+        if ok and (
+            bounds.get_y() < 0
+            or bounds.get_y() + bounds.get_height() > viewport_height
+        ):
+            attempts = f.get("numilog_inventory_scroll_corrections", 0) + 1
+            f["numilog_inventory_scroll_corrections"] = attempts
+            click_geometry["correction_attempt"] = attempts
+            report.setdefault("numilog_inventory_scroll_history", []).append(
+                dict(click_geometry)
+            )
+            assert attempts <= 8, (
+                "P0_1905: Numilog planning button never settled in the viewport",
+                report["numilog_inventory_scroll_history"],
+            )
+            adjustment = f["sync_scroll"].get_vadjustment()
+            adjustment.set_value(adjustment.get_value() + bounds.get_y() - 100)
+            later(160, numilog_inventory_schedule_click)
+            return
+        assert ok and bounds.get_y() >= 0, (
+            "P0_1905: planning button lacks visible scroll-relative bounds", click_geometry,
+        )
+        assert bounds.get_y() + bounds.get_height() <= viewport_height, (
+            "P0_1905: planning button outside viewport after scroll", click_geometry,
+        )
+        report["pointer_actions"].append(device[0].click_widget(button))
+        later(250, numilog_inventory_schedule_dialog)
+
+    def numilog_inventory_schedule_dialog():
+        f = loan_sync_fixture
+        dialogs = [node for node in Gtk.Window.list_toplevels()
+                   if isinstance(node, Adw.MessageDialog) and node.get_visible()
+                   and node.get_heading() == "Planifier les notices Numilog ?"]
+        assert len(dialogs) == 1
+        dialog = dialogs[0]
+        assert "sans téléchargement" in dialog.get_body()
+        assert not f["inventory_policy_writes"] and not f["prepare_calls"]
+        assert not f["materialize_calls"] and not f["source_sync_calls"]
+        button = next(node for node in walk(dialog) if isinstance(node, Gtk.Button)
+                      and str(node.get_label()).replace("_", "") == "Périodique")
+        capture("03i1-numilog-inventory-consent")
+        report["pointer_actions"].append(device[0].click_widget(button))
+        later(300, numilog_inventory_schedule_revoke)
+
+    def numilog_inventory_schedule_revoke():
+        w = window[0]
+        f = loan_sync_fixture
+        assert f["inventory_policy_writes"] == [("p0-numilog-inventory", "periodic")]
+        row = next(row for row in walk(w._sync_sources_box)
+                   if isinstance(row, Adw.ActionRow)
+                   and row.get_title() == "Actualisation automatique des notices Numilog")
+        assert "périodique autorisée" in row.get_subtitle()
+        button = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
+                      and getattr(node, "_cifereca_action_label", None) == "Désactiver les actualisations")
+        # A refresh may reset scroll allocation; bring the new button into view.
+        scroll = f["sync_scroll"]
+        ok, bounds = button.compute_bounds(scroll)
+        assert ok
+        adjustment = scroll.get_vadjustment()
+        adjustment.set_value(adjustment.get_value() + bounds.get_y() - 100)
+        f["inventory_revoke_button"] = button
+        later(200, numilog_inventory_revoke_click)
+
+    def numilog_inventory_revoke_click():
+        f = loan_sync_fixture
+        button = f["inventory_revoke_button"]
+        scroll = f["sync_scroll"]
+        ok, bounds = button.compute_bounds(scroll)
+        assert ok, "Numilog revocation action has no viewport bounds"
+        if bounds.get_y() < 0 or bounds.get_y() + bounds.get_height() > scroll.get_height():
+            # Page regeneration resets the adjustment before GTK allocates
+            # the replacement rows. Scroll against the *current* allocation,
+            # then recheck on a later frame before sending a physical click.
+            attempts = f.get("inventory_revoke_scroll_attempts", 0) + 1
+            f["inventory_revoke_scroll_attempts"] = attempts
+            assert attempts <= 6, "Numilog revocation remained outside the viewport"
+            adjustment = scroll.get_vadjustment()
+            adjustment.set_value(adjustment.get_value() + bounds.get_y() - 100)
+            later(180, numilog_inventory_revoke_click)
+            return
+        assert button.get_mapped() and button.get_sensitive()
+        report["pointer_actions"].append(device[0].click_widget(button))
+        later(250, numilog_inventory_schedule_complete)
+
+    def numilog_inventory_schedule_complete():
+        f = loan_sync_fixture
+        assert f["inventory_policy_writes"] == [
+            ("p0-numilog-inventory", "periodic"), ("p0-numilog-inventory", "manual"),
+        ]
+        assert not f["prepare_calls"] and not f["materialize_calls"]
+        assert not f["source_sync_calls"] and not f["mutations"]
+        report["checks"]["P0_1905_Numilog_XTEST_inventory_consent_and_revocation_without_acquisition"] = True
+        assert not f["numilog_preview_calls"], "Rendering/consent must not read local evidence"
+        numilog_preview_click(False)
+
+    def numilog_preview_click(verify):
+        f = loan_sync_fixture
+        row = next(row for row in walk(window[0]._sync_sources_box)
+                   if isinstance(row, Adw.ActionRow)
+                   and row.get_title() == "Aperçu local des achats Numilog")
+        label = "Vérifier les fichiers…" if verify else "Aperçu local…"
+        button = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
+                      and getattr(node, "_cifereca_action_label", None) == label)
+        scroll = f["sync_scroll"]
+        ok, bounds = button.compute_bounds(scroll)
+        assert ok
+        if bounds.get_y() < 0 or bounds.get_y() + bounds.get_height() > scroll.get_height():
+            key = "numilog_preview_scroll_" + str(verify)
+            f[key] = f.get(key, 0) + 1
+            assert f[key] <= 6
+            adjustment = scroll.get_vadjustment()
+            adjustment.set_value(adjustment.get_value() + bounds.get_y() - 100)
+            later(180, lambda: numilog_preview_click(verify))
+            return
+        assert button.get_mapped() and button.get_sensitive()
+        assert row.get_width() <= scroll.get_width()
+        if verify:
+            first = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
+                         and getattr(node, "_cifereca_action_label", None) == "Aperçu local…")
+            first.grab_focus()
+            def tab_to_verify(attempt=0):
+                focus = window[0].get_focus()
+                current = focus
+                while current is not None and current is not button:
+                    current = current.get_parent()
+                if current is button:
+                    device[0].key("space", True); device[0].key("space", False)
+                    report["checks"]["P1_1889_sync_Tab_then_space_preserves_action"] = True
+                    later(300, lambda: numilog_preview_complete(verify, row))
+                    return
+                assert attempt < 6, "Verification action unreachable by Tab"
+                device[0].key("Tab", True); device[0].key("Tab", False)
+                later(80, lambda: tab_to_verify(attempt + 1))
+            tab_to_verify()
+            return
+        report["pointer_actions"].append(device[0].click_widget(button))
+        later(300, lambda: numilog_preview_complete(verify, row))
+
+    def numilog_preview_complete(verify, row):
+        f = loan_sync_fixture
+        expected = [("p0-numilog-inventory", False)]
+        if verify:
+            expected.append(("p0-numilog-inventory", True))
+        assert f["numilog_preview_calls"] == expected
+        subtitle = row.get_subtitle()
+        assert "Achats connus : 3" in subtitle and "aucun téléchargement autorisé" in subtitle
+        assert "PRIVATE" not in subtitle
+        assert ("Vérification SHA demandée" if verify else "Sans lecture ni vérification SHA") in subtitle
+        assert not f["prepare_calls"] and not f["materialize_calls"]
+        assert not f["source_sync_calls"] and not f["mutations"]
+        capture("03i3-numilog-sha-preview" if verify else "03i2-numilog-offline-preview")
+        if not verify:
+            numilog_preview_click(True)
+            return
+        report["checks"]["P0_1905_Numilog_XTEST_preview_then_explicit_SHA_without_acquisition"] = True
+        scroll = f["sync_scroll"]
         adjustment = scroll.get_vadjustment()
         adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
         later(200, sync_homonyms_click)
@@ -1408,7 +1834,7 @@ def main() -> int:
         row = next(row for row in walk(w._sync_sources_box)
                    if isinstance(row, Adw.ActionRow)
                    and row.get_title() == "Paris homonyme · paris · connexion 2/2")
-        button = next(node for node in walk(row) if isinstance(node, Gtk.Button)
+        button = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
                       and node.get_tooltip_text() == "Synchroniser Paris homonyme")
         assert button.get_sensitive() and button.get_mapped()
         ok, bounds = button.compute_bounds(f["sync_scroll"])
@@ -1456,7 +1882,7 @@ def main() -> int:
         kobo = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
         assert "Connexion : Déconnectée" in kobo.get_subtitle()
         audit = next(
-            button for button in walk(kobo)
+            button for button in walk(sync_action_row(kobo))
             if isinstance(button, Gtk.Button)
             and button.get_tooltip_text() == (
                 "Audit SHA local de ce compte (lecture seule, peut être long)"
@@ -1673,6 +2099,8 @@ def main() -> int:
             later(100, kobo_download_running)
             return
         assert f["materialize_calls"] == ["p0-kobo-target-2"]
+        f["cancel_future"] = f.get("latest_task_future")
+        assert f["cancel_future"] is not None
         kobo_click_visible(f["stop_button"], kobo_download_release)
 
     def kobo_download_release():
@@ -1684,14 +2112,32 @@ def main() -> int:
         # Otherwise a slow 1600px layout can time out before GTK processes
         # the worker's terminal result, without actually failing acquisition.
         f["download_release"].set()
-        f["download_deadline"] = monotonic() + 6
+        # A worker has its own strict 10-second wait for the cancellation
+        # event. Allow that bound plus GTK delivery on loaded CI runners;
+        # never declare cancellation without the actual terminal receipt.
+        f["download_deadline"] = monotonic() + 12
         later(120, kobo_download_cancelled)
 
     def kobo_download_cancelled():
         f = loan_sync_fixture
         subtitle = f["download_row"].get_subtitle()
         if not subtitle.startswith("Annulé ·"):
-            assert monotonic() < f["download_deadline"], "Résultat annulé absent"
+            # Explain whether the release event failed, the fake worker did
+            # not return, or TaskRunner/GTK has not rendered completion.
+            # The assertion is intentionally retained and remains fatal.
+            future = f.get("cancel_future")
+            evidence = {
+                "future_running": bool(future is not None and future.running()),
+                "future_done": bool(future is not None and future.done()),
+                "release_set": f["download_release"].is_set(),
+                "worker_entered": f["cancel_worker_entered"].is_set(),
+                "worker_woke": f["cancel_worker_woke"].is_set(),
+                "worker_returning": f["cancel_worker_returning"].is_set(),
+                "task_active": bool(getattr(window[0].runner, "_count", 0)),
+            }
+            assert monotonic() < f["download_deadline"], (
+                f"Résultat annulé absent · {evidence}"
+            )
             later(100, kobo_download_cancelled)
             return
         assert "1 fichier(s) acquis durablement" in subtitle
@@ -2514,7 +2960,7 @@ def main() -> int:
                 w._rebuild_plugin_pages()
                 w.present()
                 device[0] = X11Input()
-                later(500, initial)
+                later(500, home_summary_acceptance if args.window_baseline else initial)
             except Exception as exc:
                 fail(f"Activation MainWindow: {type(exc).__name__}: {exc}")
 

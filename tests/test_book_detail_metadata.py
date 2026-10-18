@@ -157,3 +157,46 @@ def test_youth_age_projection_remains_bounded_and_preserves_provenance_namespace
     assert len(crowded) == 201
     assert any("valeur(s) supplémentaires non affichées" in value
                for _, value, _ in crowded)
+
+
+
+def test_commercial_product_labels_have_a_separate_copy_only_namespace():
+    rows = detail_metadata_items({
+        "format": "epub", "page_count": 200,
+        "public_product_metadata": {
+            "brand": "Maison publique", "collection": "Collection publique",
+            "publication_date": "2026-10-01", "pagination_label": "228 pages",
+            "language_label": "Français", "selected_format_label": "PDF sans DRM",
+            "rights": "downloadable", "format": "pdf", "isbn": "9780306406157",
+            "identifiers": {"isbn":"9780306406157"},
+            "youth_age_ranges": [{"age_kind":"publisher", "age_min":8}],
+            "source_url": "https://example.test/?token=PRIVATE",
+            "private_account": "PRIVATE",
+        },
+    })
+    assert ("Format", "epub", "all") in rows
+    assert ("Pages", "200", "copy") in rows
+    public = [r for r in rows if r[0].startswith("Fiche publique · ")]
+    assert len(public) == 6
+    assert ("Fiche publique · Pagination déclarée (support non précisé)", "228 pages", "copy") in public
+    assert ("Fiche publique · Format commercial sélectionné", "PDF sans DRM", "copy") in public
+    assert all(kind == "copy" for _, _, kind in public)
+    assert "PRIVATE" not in repr(rows) and "downloadable" not in repr(rows)
+    assert "9780306406157" not in repr(rows)
+
+
+def test_commercial_namespace_does_not_stringify_internal_structures_or_urls():
+    assert detail_metadata_items({"public_product_metadata": {
+        "brand": {"secret":"PRIVATE"},
+        "selected_format_label": "https://example.test/?auth=PRIVATE",
+        "pagination_label": "\x00PRIVATE",
+        "language_label": ["Français", "Français"],
+    }}) == (("Fiche publique · Langue déclarée", "Français", "copy"),)
+
+
+def test_commercial_namespace_preserves_existing_limits_and_duplicate_semantics():
+    rows = detail_metadata_items({"public_product_metadata": {
+        "brand": [str(i) for i in range(230)],
+    }})
+    assert len(rows) == 201 and "30 valeur(s)" in rows[-1][1]
+    assert detail_metadata_items({"brand":"No new root key"}) == ()

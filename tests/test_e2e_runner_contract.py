@@ -682,3 +682,83 @@ def test_e2e_workflow_replays_each_selected_scenario_only_once():
     assert 'e2e/run.py --scenario "$scenario"' in workflow
     assert "e2e/run.py --plugin core" not in workflow
     assert "steps.select.outputs.scenarios" in workflow
+
+
+def test_1599_constellations_real_gtk_navigation_and_identity_contract():
+    runner = _module()
+    probe = (ROOT / "e2e/constellations_detail_probe.py").read_text(
+        encoding="utf-8"
+    )
+    for width in (1366, 1600):
+        scenario = runner.SCENARIOS[f"constellations-detail-{width}"]
+        assert scenario["runner"] == "gtk-constellations"
+        assert scenario["plugin"] == "ui.page.constellations"
+        assert scenario["width"] == width
+    for marker in (
+        "ConstellationsPlugin().activate(Context())",
+        "host = _UiHost(window",
+        "PublicBookMasterDetailView",
+        "key_activate(neighbour_button(view, \"Livre C\"))",
+        "key_activate(view.back_button)",
+        "key_activate(view.origin_button)",
+        'state["old_button"].emit("clicked")',
+        'report["checks"]["stale_neighbour_after_identity_change"]',
+        'report["checks"]["stale_neighbour_after_plugin_deactivation"]',
+        'report["status"] = "PASS"',
+    ):
+        assert marker in probe
+
+
+def test_1599_recommendations_real_gtk_identity_and_local_isbn_action():
+    runner = _module()
+    probe = (ROOT / "e2e/recommendations_detail_probe.py").read_text(
+        encoding="utf-8"
+    )
+    for width in (1366, 1600):
+        scenario = runner.SCENARIOS[f"recommendations-detail-{width}"]
+        assert scenario["runner"] == "gtk-recommendations"
+        assert scenario["plugin"] == "ui.page.recommendations"
+        assert scenario["width"] == width
+    for marker in (
+        "RecommendationsPlugin().activate(",
+        "host = _UiHost(window)",
+        "PublicBookMasterDetailView",
+        "view._master._page.selection.set_selected(0)",
+        "activate_key(action)",
+        'view._text.set_text("ABSENT-THIS-TITLE")',
+        "view._identity.set_selected(1)",
+        'state["old_action"].emit("clicked")',
+        'report["checks"]["identity_switch_discards_old_detail"]',
+        'report["status"] = "PASS"',
+    ):
+        assert marker in probe
+
+
+def test_2027_numilog_consent_e2e_failures_have_stage_and_geometry_evidence():
+    """Keep the real GTK assertions; failures must identify their exact gate."""
+    import ast
+
+    probe = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(
+        encoding="utf-8"
+    )
+    ast.parse(probe)
+    for marker in (
+        'report["stage"] = "P1_1889_sync_760_post_capture_" + key',
+        'report["sync_760_post_capture"] = side_effects',
+        'report["stage"] = "P0_1905_numilog_inventory_preflight"',
+        'report["numilog_inventory_preflight"] = preflight',
+        'assert len(inventory_rows) == 1, (',
+        'assert preflight["manual_subtitle"], (',
+        'assert len(buttons) == 1, (',
+        '"P0_1905: planning button has no scroll-relative bounds"',
+        'report["stage"] = "P0_1905_numilog_inventory_click"',
+        'report["numilog_inventory_click_geometry"] = click_geometry',
+        'report.setdefault("numilog_inventory_scroll_history", []).append(',
+        'assert attempts <= 8, (',
+        'later(160, numilog_inventory_schedule_click)',
+        '"P0_1905: planning button outside viewport after scroll"',
+    ):
+        assert marker in probe
+    # No forced focus, synthetic click, skipped gate, or added retry replaces
+    # the physical XTEST action or changes any of the existing UX thresholds.
+    assert 'report["pointer_actions"].append(device[0].click_widget(button))' in probe

@@ -1892,6 +1892,58 @@ class Storage:
             )
         return str(row["entitlement_id"])
 
+    def numilog_entitlement_reservations(
+        self, *, identity_id: str, credential_id: str, account_id: str,
+        candidate_ids: tuple[str, ...],
+    ) -> list[dict[str, str]]:
+        """Identifiers needed for one authenticated Numilog purchase mirror.
+
+        Fetch the current account's historical owned keys, plus *only*
+        conflicting global IDs that its candidate writes might overwrite.
+        Do not load other accounts' book metadata or enumerate their rights.
+        Keep all lookups in one SQLite read snapshot.
+        """
+        scope = (identity_id, credential_id, account_id)
+        if (not all(type(value) is str and 0 < len(value) <= 1024
+                    and not any(ch in value for ch in "\0\r\n")
+                    for value in scope)
+                or type(candidate_ids) is not tuple
+                or len(candidate_ids) > 200_000
+                or any(type(value) is not str or not 1 <= len(value) <= 128
+                       for value in candidate_ids)):
+            raise ValueError("invalid_numilog_entitlement_scope")
+        selected = (
+            "entitlement_id,identity_id,credential_id,account_id,item_id,entitlement_type"
+        )
+        rows: dict[str, dict[str, str]] = {}
+        with self._lock, self._connect() as db:
+            db.execute("SAVEPOINT numilog_rights_index")
+            try:
+                own = db.execute(
+                    f"SELECT {selected} FROM entitlements WHERE provider_id='numilog' "
+                    "AND identity_id=? AND credential_id=? AND account_id=? "
+                    "AND entitlement_type='owned' LIMIT 100001", scope,
+                ).fetchall()
+                if len(own) > 100_000:
+                    raise ValueError("numilog_rights_budget_exhausted")
+                # IN is bounded to 300 PK lookups (safe on older SQLite).
+                # The candidate identifiers contain no book metadata.
+                ids = tuple(dict.fromkeys(candidate_ids))
+                for start in range(0, len(ids), 300):
+                    batch = ids[start:start + 300]
+                    placeholders = ",".join("?" for _ in batch)
+                    for row in db.execute(
+                        f"SELECT {selected} FROM entitlements "
+                        f"WHERE provider_id='numilog' AND entitlement_id IN ({placeholders})",
+                        batch,
+                    ):
+                        rows[row[0]] = dict(zip(selected.split(","), row))
+                for row in own:
+                    rows[row[0]] = dict(zip(selected.split(","), row))
+            finally:
+                db.execute("RELEASE SAVEPOINT numilog_rights_index")
+        return list(rows.values())
+
     def entitlements(self, *, provider_id: str | None = None, state: str | None = None) -> list[dict[str, Any]]:
         columns = [
             "entitlement_id", "provider_id", "credential_id", "account_id", "item_id", "revision_id", "identity_id",
@@ -1968,6 +2020,161 @@ class Storage:
         rows = self.acquisitions(acquisition_id=acquisition_id)
         return rows[0] if rows else None
 
+    def numilog_purchase_has_local_conflict(
+        self, *, credential_id: str, item_id: str,
+    ) -> bool:
+        """Conservatively block duplicate/partial acquisitions for one edition.
+
+        Exact stable account-scoped item ID only. No global acquisition scan,
+        raw ledger payload, path or title leaves SQLite.
+        """
+        from .core.numilog_manifest_rights import _scoped_record_id
+        if (_scoped_record_id(item_id, credential_id) is None):
+            raise ValueError("invalid_numilog_purchase")
+        with self._lock, self._connect() as db:
+            # A consistent SQLite snapshot prevents a concurrent writer
+            # from making the two evidence tables disagree mid-preflight.
+            db.execute("SAVEPOINT numilog_manual_acquire")
+            try:
+                ledger = db.execute(
+                    "SELECT 1 FROM acquisition_ledger WHERE provider_id='numilog' "
+                    "AND credential_id=? AND item_id=? LIMIT 1",
+                    (credential_id, item_id),
+                ).fetchone()
+                placement = db.execute(
+                    "SELECT 1 FROM placements WHERE provider_id='numilog' "
+                    "AND source_item_id=? LIMIT 1",
+                    (item_id,),
+                ).fetchone()
+                return ledger is not None or placement is not None
+            finally:
+                db.execute("RELEASE SAVEPOINT numilog_manual_acquire")
+
+    def numilog_purchase_preflight_evidence(
+        self, *, identity_id: str, credential_id: str, account_id: str,
+        item_id: str,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Read one exact purchase and conflicting ledger owners, atomically.
+
+        This is a local *preflight*, never a download authorization. Other
+        identities' entitlements/metadata are not read. Conflicting ledger
+        rows for the same credential + variant must remain visible even if
+        owned by a different account: never mistake them for a missing book.
+        """
+        from .core.numilog_local_preview import _item_id
+        scope = (identity_id, credential_id, account_id)
+        if (not all(type(v) is str and 0 < len(v) <= 1024
+                    and not any(c in v for c in "\0\r\n") for v in scope)
+                or not _item_id(item_id, credential_id)):
+            raise ValueError("invalid_purchase_scope")
+        with self._lock, self._connect() as db:
+            db.execute("SAVEPOINT numilog_purchase_preflight")
+            try:
+                rights = db.execute(
+                    "SELECT entitlement_id,identity_id,credential_id,account_id,"
+                    "item_id,entitlement_type,state,loan_id,expires_at,metadata_json "
+                    "FROM entitlements WHERE provider_id='numilog' "
+                    "AND identity_id=? AND credential_id=? AND account_id=? "
+                    "AND item_id=? LIMIT 3", (*scope, item_id),
+                ).fetchall()
+                ledgers = db.execute(
+                    "SELECT acquisition_id,entitlement_id,identity_id,account_id,"
+                    "item_id,status FROM acquisition_ledger "
+                    "WHERE provider_id='numilog' AND credential_id=? AND item_id=? "
+                    "LIMIT 3", (credential_id, item_id),
+                ).fetchall()
+            finally:
+                db.execute("RELEASE SAVEPOINT numilog_purchase_preflight")
+        right_keys = ("entitlement_id", "identity_id", "credential_id",
+                      "account_id", "item_id", "entitlement_type", "state",
+                      "loan_id", "expires_at", "metadata_json")
+        ledger_keys = ("acquisition_id", "entitlement_id", "identity_id",
+                       "account_id", "item_id", "status")
+        result = []
+        for values in rights:
+            row = dict(zip(right_keys, values))
+            row["metadata"] = self._json_load(row.pop("metadata_json"))
+            result.append(row)
+        return {
+            "entitlements": result,
+            "acquisitions": [dict(zip(ledger_keys, values)) for values in ledgers],
+        }
+
+    def source_materialization_evidence(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        identity_id: str, max_rows: int = 100_000,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Bounded read snapshot for one account's active owned purchases.
+
+        This is evidence, never authorization to acquire. Keep conflicting
+        ledger owners for the SAME credential/item: dropping them would turn
+        ambiguous acquisitions into apparently missing books. Placements are
+        restricted to the requested identity/provider/purchase/artifact, and
+        only referenced artifacts are loaded. No global list or per-item SQL.
+        """
+        if (not all(type(value) is str and value and len(value) <= 1024
+                    and not any(c in value for c in "\0\r\n")
+                    for value in (provider_id, credential_id, account_id, identity_id))
+                or type(max_rows) is not int or not 1 <= max_rows <= 100_000):
+            raise ValueError("invalid_evidence_scope")
+        cte = (
+            "WITH rights AS (SELECT * FROM entitlements WHERE provider_id=? "
+            "AND credential_id=? AND account_id=? AND identity_id=? "
+            "AND entitlement_type='owned' AND state='active'), "
+            "ledger AS (SELECT a.* FROM acquisition_ledger AS a WHERE "
+            "a.provider_id=? AND a.credential_id=? AND EXISTS "
+            "(SELECT 1 FROM rights AS r WHERE r.item_id=a.item_id)) "
+        )
+        args = (provider_id, credential_id, account_id, identity_id,
+                provider_id, credential_id)
+        queries = {
+            "entitlements": (
+                "SELECT entitlement_id,provider_id,credential_id,account_id,"
+                "item_id,identity_id,entitlement_type,state,loan_id,expires_at,"
+                "metadata_json FROM rights", (),
+            ),
+            "acquisitions": (
+                "SELECT acquisition_id,entitlement_id,provider_id,credential_id,"
+                "account_id,item_id,identity_id,status,artifact_id FROM ledger", (),
+            ),
+            "placements": (
+                "SELECT DISTINCT p.placement_id,p.artifact_id,p.path,p.identity_id,"
+                "p.provider_id,p.source_item_id,p.state FROM ledger AS a "
+                "JOIN placements AS p ON p.artifact_id=a.artifact_id "
+                "AND p.source_item_id=a.item_id "
+                "WHERE p.identity_id=? AND p.provider_id=?", (identity_id, provider_id),
+            ),
+            "artifacts": (
+                "SELECT DISTINCT f.artifact_id,f.sha256,f.size,f.media_format,"
+                "f.metadata_json FROM ledger AS a JOIN artifacts AS f "
+                "ON f.artifact_id=a.artifact_id", (),
+            ),
+        }
+        result = {}
+        with self._lock, self._connect() as db:
+            # A Python lock alone does not protect against another process.
+            # The read transaction keeps all four tables at one SQLite view.
+            db.execute("SAVEPOINT materialization_evidence")
+            try:
+                for name, (query, extra) in queries.items():
+                    cursor = db.execute(cte + query + " LIMIT ?", (*args, *extra, max_rows + 1))
+                    columns = [column[0] for column in cursor.description]
+                    values = cursor.fetchall()
+                    if len(values) > max_rows:
+                        raise ValueError("evidence_budget_exhausted")
+                    rows = []
+                    for record in values:
+                        row = dict(zip(columns, record))
+                        if "metadata_json" in row:
+                            row["metadata"] = self._json_load(row.pop("metadata_json"))
+                        if name == "artifacts":
+                            row = self._artifact_row_with_kind(row)
+                        rows.append(row)
+                    result[name] = rows
+            finally:
+                db.execute("RELEASE SAVEPOINT materialization_evidence")
+        return result
+
     def acquisitions(
         self, *, acquisition_id: str | None = None, provider_id: str | None = None, status: str | None = None
     ) -> list[dict[str, Any]]:
@@ -2030,6 +2237,49 @@ class Storage:
                     error_code, error_message, attention_code, self._json_dump(merged), now, acquisition_id,
                 ),
             )
+
+    def numilog_checkpoint_complete(
+        self, acquisition_id: str, *, identity_id: str, credential_id: str,
+        account_id: str, item_id: str, path: str, sha256: str, size: int, artifact_id: str,
+    ) -> bool:
+        """Finalize only the exact delivered bytes and same-owner placement.
+
+        Receipt, artifact, placement and competing ledger rows are compared
+        within one SQLite write transaction. No URL/title/provider text enters.
+        """
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT acquisition_id,identity_id,account_id,status,metadata_json FROM acquisition_ledger "
+                "WHERE provider_id='numilog' AND credential_id=? AND item_id=? LIMIT 2",
+                (credential_id, item_id),
+            ).fetchall()
+            if len(rows) != 1:
+                return False
+            aid, owner, account, status, raw = rows[0]
+            meta = self._json_load(raw)
+            if (aid != acquisition_id or owner != identity_id or account != account_id
+                    or status not in {'acquiring', 'retryable_error', 'attention_required', 'complete'}
+                    or meta.get('kind') != 'numilog_delivered_artifact_v1'
+                    or meta.get('phase') not in {'index_pending', 'indexed'}
+                    or meta.get('path') != path or meta.get('sha256') != sha256
+                    or type(meta.get('size')) is not int or meta['size'] != size):
+                return False
+            artifact = db.execute("SELECT sha256,size FROM artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+            placement = db.execute(
+                "SELECT artifact_id,identity_id,provider_id,source_item_id,state FROM placements WHERE path=?",
+                (path,),
+            ).fetchone()
+            if (artifact != (sha256, size)
+                    or placement != (artifact_id, identity_id, 'numilog', item_id, 'present')):
+                return False
+            meta['phase'] = 'indexed'
+            db.execute(
+                "UPDATE acquisition_ledger SET status='complete',artifact_id=?,metadata_json=?,"
+                "error_code=NULL,error_message=NULL,attention_code=NULL,updated_at=? WHERE acquisition_id=?",
+                (artifact_id, self._json_dump(meta), int(time.time()), acquisition_id),
+            )
+            return True
 
     def acquisition_recover_interrupted(self) -> int:
         now = int(time.time())
@@ -2301,13 +2551,31 @@ class Storage:
             db.executemany(sql, rows)
         return ids
 
-    def catalog_entries(self, *, state: str | None = None) -> list[dict[str, Any]]:
+    def catalog_entries(
+        self, *, state: str | None = None, identity_id: str | None = None,
+        provider_id: str | None = None, limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read optional exact scopes before loading/decoding catalogue rows."""
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 100_001):
+            raise ValueError("invalid catalogue read limit")
         columns = ["catalog_entry_id", "artifact_id", "placement_id", "title", "author", "media_format", "identity_id", "provider_id", "item_id", "local_state", "metadata_json", "created_at", "updated_at"]
         sql = "SELECT " + ",".join(columns) + " FROM catalog_entries"
-        args: tuple[Any, ...] = ()
-        if state is not None:
-            sql += " WHERE local_state=?"; args = (state,)
+        conditions = []
+        args: list[Any] = []
+        for column, value in (
+            ("local_state", state), ("identity_id", identity_id), ("provider_id", provider_id),
+        ):
+            if value is not None:
+                if type(value) is not str:
+                    raise ValueError("invalid catalogue scope")
+                conditions.append(column + "=?")
+                args.append(value)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY title COLLATE NOCASE, catalog_entry_id"
+        if limit is not None:
+            sql += " LIMIT ?"
+            args.append(limit)
         with self._lock, self._connect() as db:
             values = db.execute(sql, args).fetchall()
         out=[]
