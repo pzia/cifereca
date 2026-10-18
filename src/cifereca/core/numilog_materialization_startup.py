@@ -123,12 +123,15 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 credential_id=account.credential_id,
                 account_id=account.unique_id,
             )
+            refreshed = _binding(broker, source_id)
             if (
-                mode(broker, source_id) != "on_start"
+                refreshed is None or refreshed[1] is not session
+                or refreshed[0].identity_id != identity_id
+                or refreshed[0].unique_id != account.unique_id
+                or mode(broker, source_id) != "on_start"
                 or broker.service.storage.numilog_materialization_consent_revision(
                     source_id,
                 ) != consent_revision
-                or _binding(broker, source_id) is None
             ):
                 failures += 1
                 break
