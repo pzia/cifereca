@@ -195,25 +195,28 @@ def _js_delivery_shape_count(script):
     ))
 
 
-def _scoped_confirmation_href(card, base_url):
+def _scoped_confirmation_href(card, links, base_url):
     """A link literally present in ONE fresh owned card, never a guessed order.
 
-    The card must already have a unique scoped readBook and title. Only its
-    own explicit HTML anchor on Numilog's exact HTTPS confirmation route
-    can provide a direct navigation; opaque ref remains private and transient.
-    Duplicate conflicting links are unsafe rather than a guessed choice.
+    A card with multiple readBook variants does not attest which edition
+    a separate confirmation href applies to. Unknown/dynamic/malformed links
+    are never followed. Opaque order refs remain private and transient.
     """
+    if len(links) != 1 or sum(
+        'pTitle' in classes(node) and bool(node.text())
+        for node in card.walk()
+    ) != 1:
+        return None
     chosen = set()
     for node in card.walk():
         if node.tag != 'a':
             continue
         raw = node.attrs.get('href')
-        if (
-            not _raw_delivery_url_safe(raw) or chr(92) in raw
-            or any(segment in ('.', '..') for segment in urlsplit(raw).path.split('/'))
-        ):
+        if not _raw_delivery_url_safe(raw) or chr(92) in raw:
             continue
         try:
+            if any(segment in ('.', '..') for segment in urlsplit(raw).path.split('/')):
+                continue
             full = urljoin(base_url, raw)
             parsed = urlsplit(full)
             if (origin(full) != ('https', 'www.numilog.com', 443)
@@ -341,7 +344,7 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                 # Never retain order refs in search or background sync.
                 # The only eligible direct URL is an actual HTML href under
                 # this one freshly selected and uniquely identified card.
-                confirmation_href = _scoped_confirmation_href(card, base_url)
+                confirmation_href = _scoped_confirmation_href(card, links, base_url)
                 if confirmation_href is not None:
                     row['confirmation'] = confirmation_href  # transient only
                 # An ambiguous card (multiple links, products, or revisions)
