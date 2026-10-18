@@ -28,6 +28,21 @@ METHODS = frozenset({
     "dev_plugins_only",
 })
 STATES = frozenset({"START", "RUNNING", "OK", "ERROR", "SKIPPED", "ROLLBACK", "DONE"})
+FAILURE_CODES = frozenset({"interrupted", "timeout", "update_error", "internal_error"})
+
+
+def failure_code(exc: BaseException) -> str:
+    """Classify by exception type only; never stringify arbitrary exceptions."""
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        return "interrupted"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if type(exc).__name__ in {"UpdateError", "DevUpdateError"} and type(exc).__module__ in {
+        "cifereca.updater", "cifereca.dev_updater",
+    }:
+        return "update_error"
+    return "internal_error"
+
 EventCallback = Callable[[dict[str, object]], None]
 _CURRENT: ContextVar["UpdateProgress | None"] = ContextVar(
     "cifereca_update_progress", default=None,
@@ -53,7 +68,7 @@ class UpdateProgress:
         self.started = clock()
 
     def emit(self, stage: str, status: str, *, since: float | None = None,
-             outcome: str | None = None) -> None:
+             outcome: str | None = None, reason_code: str | None = None) -> None:
         if stage not in STAGES or status not in STATES:
             raise ValueError("invalid_update_event")
         now = self.clock()
@@ -70,6 +85,8 @@ class UpdateProgress:
                 if since is not None else 0
             ),
         }
+        if status == "ERROR" and reason_code in FAILURE_CODES:
+            event["reason_code"] = reason_code
         if outcome in {"success", "failed"} and status == "DONE":
             event["outcome"] = outcome
         # Observability must not change the installation's outcome. A GUI
@@ -87,6 +104,7 @@ class UpdateProgress:
                     f"elapsed={event['elapsed_ms']}ms "
                     f"duration={event['duration_ms']}ms"
                     + (f" outcome={event['outcome']}" if "outcome" in event else "")
+                    + (f" reason={event['reason_code']}" if "reason_code" in event else "")
                     + "\n"
                 )
                 self.stream.flush()
@@ -101,8 +119,8 @@ class UpdateProgress:
         self.emit(stage, "ROLLBACK" if stage == "rollback" else "RUNNING")
         try:
             yield
-        except BaseException:
-            self.emit(stage, "ERROR", since=started)
+        except BaseException as exc:
+            self.emit(stage, "ERROR", since=started, reason_code=failure_code(exc))
             raise
         else:
             self.emit(stage, "OK", since=started)
@@ -123,8 +141,8 @@ def update_operation(
     progress.emit("operation", "START")
     try:
         yield progress
-    except BaseException:
-        progress.emit("operation", "ERROR")
+    except BaseException as exc:
+        progress.emit("operation", "ERROR", reason_code=failure_code(exc))
         progress.emit("operation", "DONE", outcome="failed")
         raise
     else:
