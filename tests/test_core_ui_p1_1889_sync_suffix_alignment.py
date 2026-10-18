@@ -66,7 +66,12 @@ def test_non_kobo_sources_and_disabled_actions_remain_centered(monkeypatch):
     ]
     window, _broker, _calls, _build, _page = harness._fixture(sources=sources)
     assert [len(g.children[0].suffixes) for g in window._sync_sources_box.children] == [2, 2, 2]
-    assert len(_check_all_suffixes(window)) == 9
+    labels = _check_all_suffixes(window)
+    assert len(labels) == 10
+    # Numilog backup consent is a distinct, centered, default-disabled action.
+    numilog_group = window._sync_sources_box.children[0]
+    assert numilog_group.children[2].title == "Sauvegarde automatique des achats Numilog"
+    assert not numilog_group.children[2].suffixes[0].sensitive
 
 
 def test_refresh_recreates_centered_controls_without_changing_actions(monkeypatch):
