@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import zipfile
@@ -175,8 +176,7 @@ def _install_plugin_replace(archive: Path, *, activate: bool) -> None:
         text=True, capture_output=True, timeout=120, check=False,
     )
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise DevUpdateError(f"installation plugin dev échouée ({archive.name}): {detail[-1200:]}")
+        raise DevUpdateError("installation plugin dev échouée")
 
 
 def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
@@ -185,8 +185,7 @@ def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
         [str(cli), "plugin", "list"], text=True, capture_output=True, timeout=120, check=False,
     )
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise DevUpdateError(f"smoke plugins échoué: {detail[-1200:]}")
+        raise DevUpdateError("smoke plugins échoué")
     try:
         rows = json.loads(proc.stdout)
     except Exception as exc:
@@ -566,7 +565,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with update_operation(
             "dev_plugins_only" if args.require_plugins_only else "dev_snapshot",
-            stream=updater.sys.stderr,
+            stream=sys.stderr,
         ):
             result = apply_snapshot(
                 args.snapshot, python=args.python, keep=args.keep,
