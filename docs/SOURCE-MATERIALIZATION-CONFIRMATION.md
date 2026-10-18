@@ -91,7 +91,11 @@ redémarrage. L'identité sélectionnée et le propriétaire persistant de la co
 doivent toujours correspondre. Un changement de racine, fichier, propriétaire,
 un symlink ou un ledger ambigu bloque cette reprise. L'annulation conserve le
 reçu sans fabriquer un succès. Aucun scan global ni récupération automatique
-n'est déclenché. Cette API Core n'ajoute pas encore de bouton de reprise.
+n'est déclenché. La fiche Bibliothèque/recherche locale propose
+« Reprendre l’indexation Numilog » pour un reçu en attente lié à son unique
+possession. L'affichage ne lit pas le fichier ; le clic explicite le revalide
+dans une tâche hors GTK, sous verrou, avant l'indexation. Un bouton devenu
+obsolète ne peut indexer un autre achat ou un reçu modifié.
 
 Ce reçu couvre la fenêtre livraison validée → indexation. Il ne qualifie pas
 un crash pendant le téléchargement ou avant l'écriture du reçu, et ne constitue
