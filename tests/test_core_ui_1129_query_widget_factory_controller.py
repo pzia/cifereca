@@ -206,7 +206,7 @@ def test_plugin_build_error_is_logged_and_fallback_used():
     assert widget.providers == EXPECTED_PROVIDERS
     assert len(calls) == 1
     assert ("diagnostic", ("PLUGIN", "query widget", "error"),
-            {"detail": {"error": "factory unavailable"}}) in events
+            {"detail": {"code": "query_widget_factory_failed"}}) in events
 
 
 def test_no_capability_setter_is_supported_for_legacy_plugin_widgets():

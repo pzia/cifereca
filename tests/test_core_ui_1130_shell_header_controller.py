@@ -235,7 +235,7 @@ def test_broken_optional_titlebar_falls_back_to_adw_and_records_only_build_error
     if stage in {"build", "wrong-type"}:
         assert len(diagnostic) == 1
         assert diagnostic[0][1][:3] == ("PLUGIN", "titlebar build", "error")
-        assert "error" in diagnostic[0][2]["detail"]
+        assert diagnostic[0][2]["detail"] == {"code": "titlebar_factory_failed"}
     else:
         assert diagnostic == []
     assert info[-1] == ("menu-rightmost",)
