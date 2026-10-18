@@ -51,7 +51,7 @@ def _uploads(source: str) -> tuple[tuple[tuple[str, ...], int], ...]:
     for block in blocks:
         if "actions/upload-artifact@" not in block:
             continue
-        assert re.search(r"(?m)^\s+uses: actions/upload-artifact@v4\s*$", block)
+        assert re.search(r"(?m)^\s*uses: actions/upload-artifact@v4\s*$", block)
         assert block.count("actions/upload-artifact@") == 1
         lines = block.splitlines()
         pos = next(
