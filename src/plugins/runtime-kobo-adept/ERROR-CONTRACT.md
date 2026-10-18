@@ -76,3 +76,40 @@ L'ajout de futurs codes nécessite une preuve du contrat public amont,
 avec message fixe et politique de retry connue, et des tests de fuite.
 Ce travail ne démontre aucune compatibilité nouvelle avec le binaire
 `kobo-adept-next`, ni un diagnostic de la cause Adobe inconnue.
+
+
+## 1.2.21 — reçus de mutation ADEPT minimisés à la frontière Core
+
+Le runtime Kobo-ADEPT traite les réponses JSON positives du processus
+externe comme des **données fournisseur non fiables**, même lorsque
+`ok=true`. Auparavant `DrmMutationResult.metadata.runtime_result`
+transmettait **l'objet JSON entier** à Core, y compris ses champs
+additionnels potentiellement sensibles (certificat, XML de licence,
+identité, lien signé, jeton). Le code transmet désormais seulement :
+
+- **Restitution** : `ok=true`, `operation=loan_return`,
+  `loan_id` et `profile` correspondant exactement à la requête
+  qualifiée et validée par `return_loan` **après confirmation dans
+  l'inventaire**. Core utilise ces quatre champs pour sa vérification
+  indépendante suivante.
+- **Fulfillment** : `ok=true`, référence optionnelle de prêt et
+  profil optionnel qualifiés par type, longueur et absence de caractères
+  de contrôle. L'artefact est transmis via le champ typé
+  `DrmMutationResult.artifact`, et non via un objet JSON arbitraire.
+  Les formats acceptés sont `epub`, `pdf`, `kepub` (ou vide
+  si non renseigné) et l'empreinte optionnelle est un SHA-256
+  hexadécimal valide.
+
+Les champs fournisseur inconnus ne sont jamais copiés dans le reçu
+Core, les réponses contradictoires et descripteurs de fichiers non
+qualifiés sont refusés avec message/code public fixe. **Les références
+de prêt, profil, destination et empreinte de fichier restent des données
+nécessaires au contrat métier** et doivent continuer d'être protégées
+par le Core. Les résultats intermédiaires de `download_request()`
+restent accessibles uniquement au chemin d'exécution de la recette
+contrôlée et nécessitent leurs propres contrôles de publication.
+
+Ce jalon ne confirme pas l'identité Adobe réelle, ne teste pas de
+licence/ACSM authentique et ne dispense pas le Core de sa vérification
+d'inventaire avant de persister la restitution. Intégration CI/CD
+après les versions 1.2.19 et 1.2.20 encore en revue.
