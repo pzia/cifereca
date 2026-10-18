@@ -13,6 +13,7 @@ import pytest
 
 from cifereca.providers import ProviderConfigurationError
 from tests.test_kobo_backup_fault_isolation import _write_epub
+from tests.test_numilog_owned_library_download import case
 
 
 @pytest.fixture
@@ -214,6 +215,9 @@ def test_changed_acsm_output_bytes_or_symlink_never_adopts_purchase(
         path.symlink_to(target)
     with pytest.raises(ProviderConfigurationError):
         case.service.resume_numilog_materialization(receipt_id)
-    assert storage.placement_for_path(path)["source_item_id"] == case.source_sha
+    # After a symlink swap, a path lookup resolves outside the stored key.
+    placed = storage.placements()
+    assert any(p["source_item_id"] == case.source_sha
+               and p["provider_id"] == "numilog" for p in placed)
     assert storage.acquisition_get(receipt_id)["status"] == "attention_required"
     assert len(case.deliveries) == 1
