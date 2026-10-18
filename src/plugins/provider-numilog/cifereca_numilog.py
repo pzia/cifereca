@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.37, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.38, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.37'
+VERSION = '0.1.38'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -572,7 +572,18 @@ class NumilogSession(ProviderSession):
                     raise ProviderError('Numilog : boucle de téléchargement')
                 seen.add(url)
                 trace.fail('unclassified_error')
-                with self.client.stream('GET',url,headers={'Referer':self.base_url}) as r:
+                # A book selected in MesLivres is followed as a same-origin
+                # navigation from that page. Do not use the readBook URL itself
+                # as a referrer: its query identifies a private purchase.
+                # All redirects, intermediary pages and signed ACSM endpoints
+                # retain the public site root, never a private delivery URL.
+                from_library = (
+                    hop == 0
+                    and url_origin(url) == url_origin(self.library_url)
+                    and urlsplit(url).path.casefold() == '/pages/compte/readbook.ashx'
+                )
+                referer = self.library_url if from_library else self.base_url
+                with self.client.stream('GET',url,headers={'Referer':referer}) as r:
                     self._diag('HTTP',method='GET',origin_kind=destination_category(url)[0],status=r.status_code)
                     trace.event('delivery_http',
                         'redirect' if r.status_code in REDIRECTS else
