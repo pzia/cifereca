@@ -13,6 +13,7 @@ from scripts.package_partial_plugins import (
     verify_partial_snapshot,
 )
 from scripts.plugin_packaging import PackagingError, validate_dev_snapshot
+from scripts.ci_plugins_release_target import ReleaseTargetRefused, validate as validate_release_target
 from scripts.test_plugin_packaging import make_plugin
 
 
@@ -208,6 +209,40 @@ class PartialPluginReleaseTests(unittest.TestCase):
             self.assertIn(required, gate)
         self.assertIn('os.environ.get("CIFERECA_P0_CORE_SOURCE")', runtime_gate)
         self.assertNotIn("|| true", gate)
+
+    def test_plugins_only_draft_is_bound_to_exact_source_commit(self) -> None:
+        tag, sha = "plugins-v0.9.44+dev.12-002", "a" * 40
+        exact = {"tag_name": tag, "draft": True, "target_commitish": sha}
+        validate_release_target(exact, tag, sha)
+        for invalid in (
+            dict(exact, target_commitish="b" * 40),
+            dict(exact, tag_name="plugins-v0.9.44+dev.12-001"),
+            dict(exact, draft=False),
+            dict(exact, draft="true"),
+            {},
+            None,
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ReleaseTargetRefused):
+                    validate_release_target(invalid, tag, sha)
+        for bad_tag, bad_sha in ((tag + ";exit", sha), (tag, "main")):
+            with self.assertRaises(ReleaseTargetRefused):
+                validate_release_target(exact, bad_tag, bad_sha)
+
+    def test_release_checks_source_before_asset_mutation_and_publication(self) -> None:
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/plugins-only-release.yml"
+        ).read_text(encoding="utf-8")
+        release_job = workflow.split("\n  release:\n", 1)[1]
+        validator = "python3 scripts/ci_plugins_release_target.py"
+        self.assertEqual(release_job.count(validator), 3)
+        self.assertLess(release_job.index(validator), release_job.index("gh release upload"))
+        self.assertLess(
+            release_job.index("name: Recheck immutable draft target before publication"),
+            release_job.index("name: Publish completed plugins-only release"),
+        )
+        self.assertIn('"scripts/ci_plugins_release_target.py"', workflow)
 
     def test_modified_embedded_metadata_is_detected(self) -> None:
         original = self.build("org.cifereca.provider.alpha")
