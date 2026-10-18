@@ -883,3 +883,28 @@ Tests synthétiques : duplicats/paramètres invalides et surcharge
 de champs côté GET, compatibilité des pages Landing, lien direct
 de plusieurs milliers de caractères rejeté hors réseau. Aucun compte
 réel n'a été utilisé ; #2024 exige toujours une livraison ACSM réelle.
+
+
+## Numilog 0.1.46 — preuve de l'entrée réelle dans la livraison (#2024)
+
+Un lien de confirmation directement issu de **la carte possédée
+relue au clic** est maintenant déclaré dans les événements expurgés
+`acquisition_delivery` avec `source=owned_card`. Si le fournisseur
+répond à une requête `readBook` puis effectue une redirection HTTP 302,
+la source reste `source=readbook`. Ce sont deux valeurs **déjà publiées
+et admises par le Core** ; aucune nouvelle propriété Core et aucune
+query privée ne sont requises pour les distinguer. Les phases
+`delivery_http` permettent en plus de vérifier si le premier hop était
+`confirmation_page` ou `readbook`.
+
+Les deux entrées utilisent les **mêmes** exigences de possession,
+readBook scoped frais, `Links` signé et bouton
+`ModalDownload(ProductId, IndexExemplaire)`. Pour une confirmation
+contenant un widget de connexion, le chemin `owned_card` a accès au
+même validateur strict que `readbook` ; aucun formulaire ni login
+d'une autre page n'est accepté. Les tests HTTPX simulent les deux
+entrées avec et sans widget login, avec import ADEPT fictif unique,
+sans HTTP supplémentaire ni URL de commande, cookie ou `ref`
+dans les logs. Cette correction renseigne la provenance de la
+navigation, **pas la validité d'une session réelle** ni le succès
+d'acquisition sur le serveur Numilog.
