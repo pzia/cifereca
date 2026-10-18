@@ -58,6 +58,14 @@ def test_invalid_release_coordinates_fail_closed(tag, version, commit):
         validate(tag, version, commit, None, None)
 
 
+def test_release_preflight_changes_are_never_skipped_by_pr_ci():
+    from pathlib import Path
+    workflow = (Path(__file__).resolve().parents[1]
+                / ".github/workflows/pr-ci.yml").read_text(encoding="utf-8")
+    assert '      - "scripts/ci_core_release_preflight.py"' in workflow
+    assert r"scripts/ci_core_release_preflight\.py$" in workflow
+
+
 def test_release_workflow_runs_preflight_before_and_after_build():
     from pathlib import Path
     workflow = (Path(__file__).resolve().parents[1]

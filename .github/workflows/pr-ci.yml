@@ -20,6 +20,10 @@ on:
       - "scripts/ci-install-gtk-e2e-runtime.sh"
       - "scripts/ci-smoke-installed-wheel.sh"
       - "scripts/ci-plugins-only-runtime-gate.sh"
+      - "scripts/ci-plugins-only-historical-core-gate.sh"
+      - "scripts/ci_core_release_preflight.py"
+      - "scripts/ci_plugins_release_target.py"
+      - "scripts/ci-full-release-install-gate.py"
       - "scripts/plugin_packaging.py"
       - "scripts/test_plugin_packaging.py"
       - "scripts/verify-packaging.py"
@@ -89,7 +93,7 @@ jobs:
           install=false
           dataset=false
 
-          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$)'; then
+          if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$|scripts/ci_core_release_preflight\.py$)'; then
             core=true
           fi
 
@@ -105,7 +109,7 @@ jobs:
             plugin_scope_all=true
           fi
 
-          if matches '^(src/plugins/|scripts/(plugin_packaging\.py|test_plugin_packaging\.py|verify-packaging\.py|package-all-in-one\.py|package-dev-snapshot\.py|package_partial_plugins\.py|test_partial_plugin_release\.py)$)'; then
+          if matches '^(src/plugins/|scripts/(plugin_packaging\.py|test_plugin_packaging\.py|verify-packaging\.py|package-all-in-one\.py|package-dev-snapshot\.py|package_partial_plugins\.py|test_partial_plugin_release\.py|ci_plugins_release_target\.py)$)'; then
             packaging=true
             plugins=true
           fi
@@ -119,7 +123,7 @@ jobs:
           fi
 
           # Gate script changes exercise packaging and installed-Core validation.
-          if matches '^scripts/ci-plugins-only-runtime-gate\.sh$'; then
+          if matches '^scripts/(ci-plugins-only-runtime-gate\.sh|ci-plugins-only-historical-core-gate\.sh|ci-full-release-install-gate\.py)$'; then
             packaging=true
             install=true
           fi

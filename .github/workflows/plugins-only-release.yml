@@ -12,6 +12,7 @@ on:
       - ".github/workflows/plugins-only-release.yml"
       - "scripts/ci-plugins-only-runtime-gate.sh"
       - "scripts/ci-plugins-only-historical-core-gate.sh"
+      - "scripts/ci_plugins_release_target.py"
       - "scripts/test_partial_plugin_release.py"
       - "scripts/package_partial_plugins.py"
       - "scripts/plugin_packaging.py"
@@ -395,15 +396,18 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
-            if [[ "$is_draft" != "true" ]]; then
-              echo "Published plugins-only release $RELEASE_TAG is immutable; refusing asset replacement." >&2
-              exit 1
-            fi
+            # Refuse an existing draft whose tag belongs to another commit.
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" |
+              python3 scripts/ci_plugins_release_target.py \
+                --tag "$RELEASE_TAG" --commit "$GITHUB_SHA"
             gh release edit "$RELEASE_TAG"               --repo "$GITHUB_REPOSITORY"               --title "$RELEASE_TAG"               --draft
           else
             gh release create "$RELEASE_TAG"               --repo "$GITHUB_REPOSITORY"               --target "$GITHUB_SHA"               --title "$RELEASE_TAG"               --generate-notes               --draft
           fi
+          # Verify new as well as reused draft metadata before any asset write.
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" |
+            python3 scripts/ci_plugins_release_target.py \
+              --tag "$RELEASE_TAG" --commit "$GITHUB_SHA"
           gh release upload "$RELEASE_TAG"             "${{ steps.build.outputs.archive }}"             "${{ steps.build.outputs.archive }}.sha256"             "${{ steps.build.outputs.archive }}.sigstore.json"             --repo "$GITHUB_REPOSITORY"             --clobber
 
       # Download the GitHub-hosted draft assets, not the local build output.
@@ -435,6 +439,16 @@ jobs:
           export CIFERECA_P0_GATE_ROOT="$RUNNER_TEMP/cifereca-p0-downloaded"
           bash scripts/ci-plugins-only-runtime-gate.sh "$artifact_dir/$RELEASE_TAG.zip"
           bash scripts/ci-plugins-only-historical-core-gate.sh "$artifact_dir/$RELEASE_TAG.zip"
+
+      - name: Recheck immutable draft target before publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" |
+            python3 scripts/ci_plugins_release_target.py \
+              --tag "$RELEASE_TAG" --commit "$GITHUB_SHA"
 
       - name: Publish completed plugins-only release
         env:
