@@ -773,9 +773,11 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
             # A second book's readBook anywhere on this page makes an
             # otherwise anonymous single-card match unsafe.
             require(not any(
-                n.tag == 'a' and _readbook_coordinates(
-                    n.attrs.get('href', ''), base_url,
-                ) is not None for n in root.walk()
+                n.tag == 'a' and (
+                    '/pages/compte/readbook.ashx' in str(
+                        n.attrs.get('href', ''),
+                    ).casefold()
+                ) for n in root.walk()
             ))
             # All declared LCP/ADOBE alternatives must attest precisely ONE
             # product and copy; reject hidden or malformed competing entries.
