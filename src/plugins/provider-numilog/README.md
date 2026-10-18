@@ -1187,7 +1187,6 @@ référence numérique de la fiche. Tests entièrement synthétiques utilisant
 la capture publique expurgée Jefferson ; aucune nouvelle requête, aucun
 ACSM ni récupération de contenu privé. La version 0.1.58 suit la 0.1.56 (EAN canonique) et la 0.1.57
 (affinage local), conservées lors de l'intégration CI/CD.
-
 ## 0.1.57 — affinage bibliographique local sur une page Numilog (#1886)
 
 La session anonyme `NumilogPublicSession.refine_loaded_page(page, **filters)`
