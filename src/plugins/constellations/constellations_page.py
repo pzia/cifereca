@@ -89,6 +89,39 @@ def _attested_bibliography_fields(node) -> tuple[DetailField, ...]:
 
     fields = []
 
+    def attested_values(*names):
+        # Graph normalization uses _fold(scalar) for language/publisher.
+        # If the source provides a list/dict, that legacy scalar route
+        # stringifies the Python container into a fake bibliographic value.
+        # Project only explicit, individually bounded source literals.
+        try:
+            from constellations import _meta_value
+            raw_value = _meta_value(raw, *names)
+        except Exception:
+            return ()
+        if type(raw_value) is str:
+            candidates = (raw_value,)
+        elif type(raw_value) in (tuple, list):
+            candidates = raw_value[:8]
+        elif type(raw_value) is dict:
+            candidates = (raw_value.get('name') or raw_value.get('label'),)
+        else:
+            return ()
+        result = []
+        for candidate in candidates:
+            if type(candidate) is dict:
+                candidate = candidate.get('name') or candidate.get('label')
+            if type(candidate) is not str:
+                continue
+            cleaned = ' '.join(candidate.split()).casefold()
+            if (0 < len(cleaned) <= 180
+                    and not any(category(char) in {'Cc', 'Cf', 'Cs'} for char in cleaned)
+                    and cleaned not in result):
+                result.append(cleaned)
+            if len(result) == 4:
+                break
+        return tuple(result)
+
     def add(key, label, value, kind='copy'):
         if (
             type(value) is str and 0 < len(value.strip()) <= 180
@@ -98,8 +131,12 @@ def _attested_bibliography_fields(node) -> tuple[DetailField, ...]:
 
     identifiers = model.identifiers
     add('isbn', 'ISBN', identifiers.get('isbn'), kind='isbn')
-    add('language', 'Langue', model.language, kind='language')
-    add('publisher', 'Éditeur', model.publisher, kind='all')
+    for index, value in enumerate(attested_values('language', 'languages', 'lang')):
+        add('language' if index == 0 else f'language-{index}',
+            'Langue', value, kind='language')
+    for index, value in enumerate(attested_values('publisher', 'publishers', 'imprint')):
+        add('publisher' if index == 0 else f'publisher-{index}',
+            'Éditeur', value, kind='all')
     for index, value in enumerate(model.series[:4]):
         add(f'series-{index}', 'Série', value, kind='all')
     for index, value in enumerate(model.formats[:4]):
