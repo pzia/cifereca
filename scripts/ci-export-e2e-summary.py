@@ -35,13 +35,14 @@ def safe_summary(source: Path) -> dict:
     allowed = _allowed_scenarios()
     rows = []
     for item in data:
-        if not isinstance(item, dict) or item.get("scenario") not in allowed:
+        scenario = item.get("scenario") if isinstance(item, dict) else None
+        if type(scenario) is not str or scenario not in allowed:
             raise ValueError("unexpected E2E scenario")
         code = item.get("returncode")
         if type(code) is not int or not -255 <= code <= 255:
             raise ValueError("invalid E2E return code")
         row = {
-            "scenario": item["scenario"],
+            "scenario": scenario,
             "status": "PASS" if code == 0 else "FAIL",
             "returncode": code,
         }

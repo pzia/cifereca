@@ -57,6 +57,8 @@ class SafeE2EExportTests(unittest.TestCase):
     def test_invalid_scenario_boolean_code_and_nan_are_rejected(self):
         bad = (
             [{"scenario": "secret-private-user", "returncode": 0}],
+            [{"scenario": ["PRIVATE_LIST"], "returncode": 0}],
+            [{"scenario": {"password": "PRIVATE_DICT"}, "returncode": 0}],
             [{"scenario": "startup", "returncode": True}],
             [{"scenario": "startup", "returncode": 1, "visual_change_ratio": float("nan")}],
             [{"scenario": "startup", "returncode": 0, "visual_change_ratio": 2.0}],
