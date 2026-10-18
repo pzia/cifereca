@@ -1,0 +1,191 @@
+"""Closed, optional startup telemetry. Never an acquisition authority (#2131)."""
+from __future__ import annotations
+
+from contextlib import contextmanager
+from contextvars import ContextVar
+import json
+import re
+import secrets
+
+from ..diagnostic_task_context import numilog_task_reference
+from ..plugin_api import Cancelled
+
+PHASES = frozenset({"admission", "durable_claim", "manifest_fetch", "rights_mirror",
+    "preflight", "acquisition", "adept", "index", "receipt_finalization", "completed"})
+CODES = frozenset({"started", "complete", "not_due", "consent_revoked", "admission_failed",
+    "claim_failed", "manifest_failed", "manifest_invalid", "rights_mirror_failed",
+    "preflight_failed", "acquisition_failed", "adept_failed", "index_failed",
+    "receipt_finalize_failed", "interrupted", "adept_complete"})
+STATUSES = frozenset({"running", "complete", "partial", "failed", "blocked", "not_due"})
+COUNTS = ("attempted", "downloaded", "skipped", "failed")
+_KEY = "sync.source.numilog.materialization.diagnostic.v1."
+_CLOCK = "sync.source.numilog.materialization.last_start.v1."
+_ACTIVE = ContextVar("numilog_startup_diagnostic", default=None)
+
+
+def public_fields(detail):
+    """All-or-nothing validation; never coerce or stringify untrusted fields."""
+    if type(detail) is not dict:
+        return {}
+    allowed = {"phase", "cause_phase", "code", "status", "task_kind", *COUNTS,
+               "task_ref", "run_ref"}
+    if set(detail) - allowed:
+        return {}
+    for key, values in (("phase", PHASES), ("cause_phase", PHASES),
+                        ("code", CODES), ("status", STATUSES)):
+        if type(detail.get(key)) is not str or detail[key] not in values:
+            return {}
+    if type(detail.get("task_kind")) is not str or detail["task_kind"] != "source-materialize":
+        return {}
+    if any(type(detail.get(k)) is not int or not 0 <= detail[k] <=
+           (2048 if k == "skipped" else 9 if k == "failed" else 8) for k in COUNTS):
+        return {}
+    if detail["downloaded"] > detail["attempted"]:
+        return {}
+    for key in ("task_ref", "run_ref"):
+        if key in detail and (type(detail[key]) is not str or
+                              re.fullmatch(r"[0-9a-f]{12}", detail[key]) is None):
+            return {}
+    return dict(detail)
+
+
+def _source(source_id):
+    return type(source_id) is str and re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is not None
+
+
+def save(storage, source_id, clock, fields, *, claimed=False):
+    """Auxiliary evidence, guarded by the same clock; never finalize a receipt.
+
+    A failed receipt write remains visibly running in the authoritative ledger.
+    This independent diagnostic can still explain that failure. A late worker
+    cannot overwrite the diagnostic of a newer durable claim.
+    """
+    if not _source(source_id) or not public_fields(fields):
+        return
+    if clock is not None and (type(clock) is not str or not clock.isdecimal() or len(clock) > 11):
+        return
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        current = db.execute("SELECT value FROM metadata WHERE key=?", (_CLOCK + source_id,)).fetchone()
+        if (current[0] if current else None) != clock:
+            return
+        if not claimed:
+            receipt = db.execute("SELECT value FROM metadata WHERE key=?",
+                ("sync.source.numilog.materialization.result.v1." + source_id,)).fetchone()
+            if receipt is not None:
+                try:
+                    if json.loads(receipt[0]).get("status") == "running":
+                        return
+                except (ValueError, TypeError, AttributeError):
+                    return
+        value = json.dumps({"clock": clock, "detail": fields}, separators=(",", ":"), sort_keys=True)
+        db.execute("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                   (_KEY + source_id, value))
+
+
+def read(storage, source_id):
+    """Passive SQL snapshot only; no network, paths, profile or retry."""
+    if not _source(source_id):
+        return {}
+    try:
+        with storage._lock, storage._connect() as db:
+            rows = dict(db.execute("SELECT key,value FROM metadata WHERE key IN (?,?)",
+                                   (_CLOCK + source_id, _KEY + source_id)).fetchall())
+        raw = rows.get(_KEY + source_id)
+        if type(raw) is not str or len(raw) > 2048:
+            return {}
+        data = json.loads(raw)
+        if type(data) is not dict or set(data) != {"clock", "detail"} or data["clock"] != rows.get(_CLOCK + source_id):
+            return {}
+        return public_fields(data["detail"])
+    except Exception:
+        return {}
+
+
+class StartupTrace:
+    def __init__(self, service, source_id):
+        self.service, self.source_id = service, source_id
+        self.phase, self.cause = "admission", None
+        self.counts = dict.fromkeys(COUNTS, 0)
+        self.refs = {}
+        self.clock = None
+        self.claimed = False
+        try:
+            self.clock = service.storage.metadata_get(_CLOCK + source_id)
+            ref = numilog_task_reference()
+            if ref is not None:
+                self.refs["task_ref"] = ref
+            self.refs["run_ref"] = secrets.token_hex(6)
+        except Exception:
+            pass
+
+    def fields(self, phase, code, status):
+        cause_phase = self.cause[0] if self.cause else phase
+        return dict(phase=phase, cause_phase=cause_phase, code=code, status=status,
+                    task_kind="source-materialize", **self.counts, **self.refs)
+
+    def emit(self, phase, code, status="running"):
+        fields = public_fields(self.fields(phase, code, status))
+        if not fields:
+            return {}
+        try:
+            self.service.diagnostics.add("NUMILOG", "startup_materialization",
+                "error" if status in {"failed", "partial"} else "warning" if status == "blocked" else "ok",
+                detail=fields)
+        except Exception:
+            pass
+        try:
+            if self.claimed or phase == "completed":
+                save(self.service.storage, self.source_id, self.clock, fields, claimed=self.claimed)
+        except Exception:
+            pass  # optional evidence cannot alter acquisition or cancellation
+        return fields
+
+    def event(self, phase, code="started"):
+        self.phase = phase
+        self.emit(phase, code)
+
+    def fail(self, code=None):
+        if self.cause is None:
+            self.cause = (self.phase, code or {
+                "admission": "admission_failed", "durable_claim": "claim_failed",
+                "manifest_fetch": "manifest_failed", "rights_mirror": "rights_mirror_failed",
+                "preflight": "preflight_failed", "acquisition": "acquisition_failed",
+                "adept": "adept_failed", "index": "index_failed",
+                "receipt_finalization": "receipt_finalize_failed",
+            }.get(self.phase, "interrupted"))
+
+    def finish(self, status):
+        if status == "not_due" and self.cause is None:
+            self.cause = (self.phase, "not_due")
+        return self.emit("completed", self.cause[1] if self.cause else
+                         "not_due" if status == "not_due" else "complete", status)
+
+    @contextmanager
+    def acquisition(self):
+        token = _ACTIVE.set(self)
+        try:
+            yield
+        finally:
+            _ACTIVE.reset(token)
+
+
+@contextmanager
+def adept_stage(provider_id):
+    """Mark ADEPT only when the public Core import is actually entered."""
+    trace = _ACTIVE.get() if provider_id == "numilog" else None
+    if trace is not None:
+        trace.event("adept")
+    try:
+        yield trace
+    except Cancelled:
+        if trace is not None:
+            trace.fail("interrupted")
+        raise
+    except BaseException:
+        if trace is not None:
+            trace.fail("adept_failed")
+        raise
+    else:
+        if trace is not None:
+            trace.event("acquisition", "adept_complete" if trace.cause is None else "started")

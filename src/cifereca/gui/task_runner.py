@@ -77,7 +77,7 @@ class TaskRunner:
         # may contain URLs, credentials or account details. Preserve the real
         # kind and label for routing and on-screen progress; sanitize TRACE only.
         trace_kind = kind if type(kind) is str and kind in {
-            "task", "opening-sync", "deep-sync", "source-sync",
+            "task", "opening-sync", "deep-sync", "source-sync", "source-materialize",
             "sync-preflight", "kobo-acquisition", "maintenance", "library",
             "recent", "search", "plugin", "other",
         } else "other"

@@ -80,6 +80,9 @@ def public_numilog_fields(operation: str, detail: object, duration: object = Non
                 fields[key] = flag
         if type(duration) is int and 0 <= duration <= 600_000:
             fields['duration_ms'] = duration
+    elif operation == 'startup_materialization':
+        from .numilog_startup_diagnostics import public_fields
+        fields = public_fields(detail)
     elif operation == 'session_state':
         reason = detail.get('reason')
         if type(reason) is str and reason in _SESSION_REASONS:
@@ -91,7 +94,7 @@ def public_numilog_fields(operation: str, detail: object, duration: object = Non
 
 
 def public_numilog_message(operation: str, fields: dict) -> str | None:
-    if operation not in {'acquisition_delivery', 'session_state'}:
+    if operation not in {'acquisition_delivery', 'session_state', 'startup_materialization'}:
         return None
     # The message survives existing UI/selected-event exports (500 chars).
     return (operation + ''.join(f' {key}={value}' for key, value in fields.items()))[:500]

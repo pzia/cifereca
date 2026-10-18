@@ -13,6 +13,7 @@ from typing import Any
 
 from ..models import SearchResult
 from ..plugin_api import Cancelled, SyncResult
+from .numilog_startup_diagnostics import StartupTrace
 from .numilog_local_preview import _item_id
 from .numilog_materialization_checkpoint import index_delivered
 from .numilog_manifest_rights import mirror_numilog_manifest_rights
@@ -24,7 +25,7 @@ from .numilog_materialization_consent import (
 def _result(status: str, *, ok: bool = False,
             downloaded: int = 0, attempted: int = 0,
             skipped: int = 0, failed: int = 0,
-            blocked: int = 0, claimed: int = 0) -> SyncResult:
+            blocked: int = 0, claimed: int = 0, source_results=()) -> SyncResult:
     return SyncResult(
         ok=ok, changed=downloaded, warnings=() if ok else (status,),
         facts={
@@ -32,7 +33,7 @@ def _result(status: str, *, ok: bool = False,
             "status": status, "downloaded": downloaded,
             "attempted": attempted, "skipped": skipped, "failed": failed,
             "blocked": blocked, "sources_claimed": claimed,
-            "acquisition_authorized": False,
+            "acquisition_authorized": False, "source_results": tuple(source_results),
         },
     )
 
@@ -68,6 +69,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
     if trigger != "startup" or type(identity_id) is not str:
         return _result("invalid_trigger")
     total = attempts = skipped = failures = blocked = claimed = 0
+    source_results = []
     sources = eligible_source_ids(broker, identity_id)
     if not sources:
         return _result("not_due", ok=True)
@@ -76,6 +78,15 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         if bound is None or mode(broker, source_id) != "on_start":
             continue
         account, session, roots = bound
+        trace = StartupTrace(broker.service, source_id)
+        previous = (total, attempts, skipped, failures)
+
+        def observe(phase, code="started"):
+            trace.counts.update(downloaded=total - previous[0], attempted=attempts - previous[1],
+                                skipped=skipped - previous[2], failed=failures - previous[3])
+            trace.event(phase, code)
+
+        observe("admission")
         scope = (source_id, identity_id, account.credential_id, account.unique_id)
 
         def same_source() -> bool:
@@ -90,31 +101,41 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 source_id,
             )
         except Cancelled:
+            trace.fail("interrupted")
+            source_results.append(trace.finish("blocked"))
             raise
         except Exception:
             failures += 1
+            trace.counts["failed"] = 1
+            trace.fail()
+            source_results.append(trace.finish("failed"))
             continue
         if type(consent_revision) is not str:
             # An active policy without its confirmation epoch is incomplete.
             # Block only this source and never consume a startup claim for it.
             failures += 1
+            trace.counts["failed"] = 1
+            trace.fail("consent_revoked")
+            source_results.append(trace.finish("failed"))
             continue
         if control is not None and callable(getattr(control, "check_cancelled", None)):
             control.check_cancelled()
         # Counters and receipts are per source, not leaked across accounts.
-        previous = (total, attempts, skipped, failures)
         started_at = None
         manifest_ready = False
         interrupted = False
         try:
             # Claim and 'running' receipt are written in the same SQLite
             # transaction, before any network I/O or ADEPT. No blind retry.
+            observe("durable_claim")
             attempt_clock = int(time())
             if not broker.service.storage.numilog_materialization_claim_startup(
                 source_id=source_id, now=attempt_clock, expected_revision=consent_revision,
             ):
                 continue
             started_at = attempt_clock
+            trace.clock = str(started_at)
+            trace.claimed = True
             claimed += 1
             if (
                 not same_source()
@@ -126,11 +147,14 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 # A revoked/rebound binding after the durable claim is a
                 # blocked attempt, not a silently completed backup.
                 blocked += 1
+                trace.fail("consent_revoked")
                 continue
+            observe("manifest_fetch")
             raw = session.library()
             # The private catalogue can contain hundreds of purchases.
             # Bound memory without blocking ordinary 300+ book libraries.
             if type(raw) not in {list, tuple} or len(raw) > 2048:
+                trace.fail("manifest_invalid")
                 failures += 1
                 continue
             manifest_ready = True
@@ -139,8 +163,10 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     or broker.service.storage.numilog_materialization_consent_revision(
                         source_id,
                     ) != consent_revision):
+                trace.fail("consent_revoked")
                 failures += 1
                 continue
+            observe("rights_mirror")
             # Freshly purchased editions may have no cached local right yet.
             # Mirror only attested purchases from THIS authenticated library;
             # the generic public catalogue never enters this path. The mirror
@@ -160,6 +186,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     source_id,
                 ) != consent_revision
             ):
+                trace.fail("consent_revoked")
                 failures += 1
                 continue
             # Duplicate editions on a private provider page are ambiguous.
@@ -192,8 +219,10 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                             source_id,
                         ) != consent_revision
                         or not same_source()):
+                    trace.fail("consent_revoked")
                     failures += 1
                     break
+                observe("preflight")
                 prior = broker.preflight_numilog_purchase(source_id, row.record_id)
                 if (prior.ok is not True
                         or prior.facts.get("status") != "candidate_unverified"):
@@ -208,31 +237,38 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                                 source_id,
                             ) != consent_revision
                             or not same_source()):
+                        trace.fail("consent_revoked")
                         raise ValueError("numilog_auto_consent_revoked")
                     check = broker.preflight_numilog_purchase(source_id, row.record_id)
                     if (check.ok is not True
                             or check.facts.get("status") != "candidate_unverified"):
+                        trace.fail("preflight_failed")
                         raise ValueError("numilog_auto_purchase_changed")
                     return row
 
                 attempts += 1
-                acquired = broker.service.acquire_direct_item(
-                    row, _admission=admission,
-                )
+                observe("acquisition")
+                with trace.acquisition():
+                    acquired = broker.service.acquire_direct_item(
+                        row, _admission=admission,
+                    )
                 # The provider created a durable receipt under the lock;
                 # index without downloading again. Failed indexing leaves
                 # an attention-required receipt and is NOT auto-retried.
+                observe("index")
                 index_delivered(broker.service, acquired, title=row.title)
                 total += 1
                 if control is not None and callable(getattr(control, "report", None)):
                     control.report(current=total, message="Sauvegarde Numilog")
         except Cancelled:
+            trace.fail("interrupted")
             interrupted = True
             raise
         except Exception:
             # One source's private manifest/ACSM/index failure cannot deny
             # another independently confirmed account its startup attempt.
             # Its receipt is finalized in the finally block below.
+            trace.fail()
             failures += 1
             continue
         finally:
@@ -247,6 +283,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     else "blocked" if interrupted or not manifest_ready
                     else "complete"
                 )
+                observe("receipt_finalization")
                 try:
                     finalized = broker.service.storage.numilog_materialization_finish_startup(
                         source_id=source_id, started_at=started_at,
@@ -259,13 +296,23 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         # without raising. "running" is not "complete":
                         # report a bounded failure while preserving its
                         # durable evidence for explicit reconciliation.
+                        trace.fail("receipt_finalize_failed")
                         failures += 1
                 except Exception:
                     # Never expose SQLite/provider arguments or override a
                     # cooperative Cancelled exception from the in-flight task.
                     # Do not report success when the durable receipt was not
                     # finalized, even if the ebook bytes were indexed.
+                    trace.fail("receipt_finalize_failed")
                     failures += 1
+                final_failed = failures - previous[3]
+                final_status = ("partial" if own_downloaded and (final_failed or interrupted)
+                                else "failed" if final_failed else result_status)
+            else:
+                final_status = "failed" if failures > previous[3] else "blocked" if interrupted else "not_due"
+            trace.counts.update(downloaded=total - previous[0], attempted=attempts - previous[1],
+                                skipped=skipped - previous[2], failed=failures - previous[3])
+            source_results.append(trace.finish(final_status))
     # A startup with no successful claims never backed anything up. Never
     # tell the GUI it completed a run when every account was throttled.
     # Likewise, a post-claim revocation/rebind has a durable "blocked"
@@ -280,5 +327,5 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         status, ok=not (failures or blocked),
         downloaded=total, attempted=attempts,
         skipped=skipped, failed=failures,
-        blocked=blocked, claimed=claimed,
+        blocked=blocked, claimed=claimed, source_results=source_results,
     )

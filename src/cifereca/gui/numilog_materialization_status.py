@@ -14,6 +14,7 @@ _STATUS = {
     "failed": "Dernier essai en échec",
     "blocked": "Dernier essai bloqué ou révoqué",
     "unknown": "Dernier bilan indisponible",
+    "not_due": "Aucun nouvel essai : délai minimum non écoulé",
 }
 
 
@@ -50,15 +51,25 @@ def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
             or (started is not None and due != started + 3600)):
         return "Dernier bilan indisponible."
 
+    # Auxiliary observation never changes the durable receipt or authorizes I/O.
+    from ..core.numilog_startup_diagnostics import public_fields
+    detail = public_fields(data.get("diagnostic"))
+    if detail:
+        status = detail["status"]
+        data = dict(data, **{key: detail[key] for key in counts})
     caption = _STATUS[status]
-    if started is not None:
+    if started is not None and not detail:
         caption += f" le {_date(started)}"
-    if status in {"complete", "partial", "failed", "blocked"}:
+    if status in {"complete", "partial", "failed", "blocked", "not_due"}:
         caption += (
             f" : {data['downloaded']} téléchargé(s), "
             f"{data['attempted']} tenté(s), "
-            f"{data['skipped']} ignoré(s)"
+            f"{data['skipped']} ignoré(s), {data['failed']} échec(s)"
         )
+    if detail:
+        caption += f". Phase : {detail['cause_phase']} ; cause : {detail['code']}"
+        if "task_ref" in detail:
+            caption += f" ; tâche : {detail['task_ref']}"
     if mode == "on_start":
         current = int(time()) if now is None else now
         if type(current) is not int or current < 0:

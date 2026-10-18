@@ -716,7 +716,12 @@ class SynchronizationBrokerImpl:
             raise ValueError("not_a_numilog_source")
         # No private library access, directory creation, acquisition or
         # profile resolution: a disconnected owner can inspect history.
-        return self.service.storage.numilog_materialization_run_status(source_id)
+        result = self.service.storage.numilog_materialization_run_status(source_id)
+        from .core.numilog_startup_diagnostics import read
+        detail = read(self.service.storage, source_id)
+        if detail:
+            result["diagnostic"] = detail
+        return result
 
     def numilog_materialization_schedule(self, source_id: str) -> str:
         """Read an independently confirmed Numilog policy. Defaults manual."""
