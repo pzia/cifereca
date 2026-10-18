@@ -162,3 +162,45 @@ def test_only_failed_branch_still_raises_even_without_result_rows():
         session.search("absent", content_types=("mp3",))
     assert getattr(raised.value, "code", None) == "search_temporarily_unavailable"
     assert "SECRET" not in str(raised.value)
+
+
+
+@pytest.mark.parametrize("include_audio,formats", (
+    (False, ("mp3",)),
+    (True, ("video",)),
+    (True, ("application/x-unknown",)),
+))
+def test_no_matching_media_branch_warns_instead_of_falsely_confirming_zero(
+    include_audio, formats,
+):
+    session = fake_session(include_audio=include_audio)
+    calls = []
+    session._search_ebooks = lambda *_: calls.append("ebooks") or []
+    session._search_audio = lambda *_: calls.append("audio") or []
+    assert session.search("Doyle", content_types=formats) == []
+    assert calls == []
+    assert session.last_search_warnings == [
+        "unsupported_content_type : aucune branche Gallica disponible pour les formats demandés"
+    ]
+
+
+def test_warning_for_unavailable_media_does_not_pollute_next_eligible_search():
+    session = fake_session(include_audio=False)
+    calls = []
+    session._search_ebooks = lambda *_: calls.append("ebooks") or []
+    session._search_audio = lambda *_: pytest.fail("audio disabled")
+    assert session.search("Doyle", content_types=("mp3",)) == []
+    assert len(session.last_search_warnings) == 1
+    assert session.search("Doyle", content_types=("epub",)) == []
+    assert calls == ["ebooks"]
+    assert session.last_search_warnings == []
+
+
+def test_a_supported_media_branch_does_not_claim_unavailable_complementary_media():
+    session = fake_session(include_audio=False)
+    calls = []
+    session._search_ebooks = lambda *_: calls.append("ebooks") or []
+    session._search_audio = lambda *_: pytest.fail("audio disabled")
+    assert session.search("Doyle", content_types=("epub", "mp3")) == []
+    assert calls == ["ebooks"]
+    assert session.last_search_warnings == []
