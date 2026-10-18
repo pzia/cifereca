@@ -621,7 +621,26 @@ class NumilogSession(ProviderSession):
                     if mime == 'text/html':
                         trace.fail('html_oversize')
                         html = self._small(r).decode('utf-8-sig',errors='replace')
-                        kind = html_response_kind(html)
+                        try:
+                            kind = html_response_kind(html)
+                        except ParseError:
+                            # The parser may reject deep/oversized DOM
+                            # structure even when the HTTP body is within
+                            # the byte limit. This is invalid HTML evidence,
+                            # not proof of a missing cookie or oversize file.
+                            trace.fail('html_invalid')
+                            trace.event(
+                                'html_selection', 'html_invalid',
+                                html_kind='invalid', hops=hop+1,
+                            )
+                            self._diag(
+                                'livraison HTML', phase='download',
+                                page_kind='delivery_intermediate',
+                                kind='invalid', result='invalid_structure',
+                            )
+                            raise ProviderError(
+                                'Numilog : structure HTML de livraison inattendue'
+                            ) from None
                         # Only the endpoint *category*, never signed query/HTML,
                         # belongs in the report. This distinguishes readBook from
                         # other intermediates without disclosing a customer's URL.
