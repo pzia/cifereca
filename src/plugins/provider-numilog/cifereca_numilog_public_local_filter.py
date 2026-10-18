@@ -42,8 +42,10 @@ class PublicPageRefinement:
 
 def _fold(value: str) -> str:
     value = unicodedata.normalize("NFKD", value.casefold())
-    return " ".join("".join(c for c in value
-                            if not unicodedata.combining(c)).split())
+    return " ".join("".join(
+        c if c.isalnum() else " " for c in value
+        if not unicodedata.combining(c)
+    ).split())
 
 
 def _validate_page(page):
