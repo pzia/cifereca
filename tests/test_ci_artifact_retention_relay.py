@@ -14,11 +14,12 @@ def test_debian_gtk_relay_never_archives_checkout_or_unreviewed_cache():
     assert "git archive --format=tar.gz" not in source
     assert "tar -czf" not in source
     assert "/tmp/cifereca-gtk-source.tar.gz" not in source
-    assert ".github/gtk-e2e-run-request.txt" in source
-    assert "types: [synchronize]" in source
+    assert "workflow_dispatch:" in source
+    assert "if: inputs.confirm_relay == true" in source
+    assert "  pull_request:" not in source
     assert "persist-credentials: false" in source
     assert "retention-days: 2" in source
-    assert "workflow_dispatch:" not in source
+    assert "default: false" in source
 
 
 def test_manual_package_zip_has_short_explicit_retention():
