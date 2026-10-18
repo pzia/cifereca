@@ -477,3 +477,46 @@ Ces observations ne prouvent ni une recherche serveur par champ dédié
 (auteur/ISBN/etc.), ni toutes les facettes, ni les modalités d'accès à long
 terme. Le catalogue demeure à activation explicite. Aucune possession,
 acquisition, page de compte ni requête supplémentaire implicite n'est ajoutée.
+
+
+## 0.1.34 — déclarations HTML publiques observées (#1886 / #1072)
+
+L'enrichissement explicite conserve maintenant `public_html_metadata` dans la
+preuve de détail public et dans l'enrichissement d'un achat déjà rapproché.
+Aucune requête supplémentaire : même réponse bornée de fiche, jamais au rendu.
+
+| Champ de provenance | Source observée dans la fiche | Interprétation |
+| --- | --- | --- |
+| `brand` | Bloc Détails, `LblPublisher=Marque`, `rptEditeurs…HLEditeurCol` | Marque affichée, sans conversion automatique en éditeur |
+| `publication_date` | `lblDateParution` | Date ISO réelle du produit commercial |
+| `pagination_label` | `lblNbrePage` | Texte publié ; édition/support de pagination non prouvés |
+| `language_label` | `lblLanguage` | Libellé publié, aucune normalisation supposée |
+| `collection` | `lblCollectionLivre` | `n.c` reste absent ; aucun titre/série inféré |
+| `selected_format_label` | `BuySelectedFormat` | Format commercial sélectionné, pas liste exhaustive ni format acheté |
+
+Chaque valeur conserve URL canonique, identifiant exact de balise, source HTML
+et `edition_proven=False`, `rights_proven=False`. JSON-LD et valeurs existantes
+restent séparés : aucune contradiction effacée, aucun droit ni champ `format`
+de l'achat modifié. Le wrapper ASP.NET canonique, un h1 produit unique concordant
+et le bloc Détails qualifient la zone. Contextes masqués, autres formulaires,
+navigation et doublons de preuve ne fournissent pas de valeur. L'absence de
+champ reste l'absence, jamais un défaut inventé.
+
+Les fixtures `observed_metadata_blackbone.html` et
+`observed_metadata_sainte-soline.html` combinent les extraits publics déjà
+qualifiés avec le bloc Détails et le libellé de format de **ces mêmes réponses
+anonymes du 17/10/2026** (empreintes HTTP originales documentées en 0.1.32).
+Aucune description intégrale, état ASP.NET, cookie ou donnée de compte.
+Confrontation hors réseau aux réponses complètes : mêmes cinq valeurs pour
+Blackbone ; 146 pages / Massot éditions / 2026-10-01 pour Sainte-Soline.
+Le conflit d'EAN réel de cette seconde fiche reste bloquant pour l'enrichissement
+complet. Les deux fixtures ne prouvent aucune possession authentifiée.
+
+Qualification complémentaire le 18/10 : GET anonyme du formulaire officiel
+`/Pages/Recherche/RechercheAvancee.aspx` autorisé par robots générique, HTTP 200.
+Il expose Titre, Auteur, EAN, format, rubrique et éditeur, mais utilise une
+soumission ASP.NET cross-page. La soumission de recherche anonyme ciblée a reçu
+HTTP 404 ; aucune capacité serveur dédiée auteur/ISBN n'est donc annoncée.
+Aucun endpoint alternatif deviné, aucune utilisation du compte en repli.
+Le catalogue reste désactivé par défaut ; #1886 reste ouvert pour les recherches
+par attribut, facettes utilisables et qualification d'accès durable.

@@ -235,5 +235,12 @@ def merge_attested_owned_public_detail(owned, detail):
         if type(fields["isbn_edition_unspecified"]) is not str:
             raise ProviderCapabilityError(error)
         detail_summary["isbn_edition_unspecified"] = fields["isbn_edition_unspecified"]
+    from cifereca_numilog_public_metadata import validated_public_metadata, PublicMetadataError
+    try:
+        html_metadata = validated_public_metadata(detail, url)
+    except PublicMetadataError:
+        raise ProviderCapabilityError(error) from None
+    if html_metadata is not None:
+        detail_summary["public_html_metadata"] = html_metadata
     next_metadata["public_detail_enrichment"] = detail_summary
     return replace(owned, metadata=next_metadata, **projection)
