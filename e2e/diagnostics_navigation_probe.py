@@ -1419,7 +1419,22 @@ def main() -> int:
         # consent, and now the separate inventory/rights refresh consent.
         # The synthetic broker declines Kobo scheduling; those rows remain
         # inert. Numilog inventory consent is exercised separately below.
-        assert len(rows) == 33, ("Unexpected GTK sync action-row count", len(rows))
+        # #1905 adds one distinct Numilog *book backup* consent row.
+        # The synthetic broker has no consent APIs: the CTA must be inert.
+        assert len(rows) == 34, ("Unexpected GTK sync action-row count", len(rows))
+        numilog_backup_rows = [
+            row for row in rows
+            if row.get_title() == "Sauvegarde automatique des achats Numilog"
+        ]
+        assert len(numilog_backup_rows) == 1
+        numilog_backup = numilog_backup_rows[0]
+        assert "Sauvegarde planifiée indisponible" in numilog_backup.get_subtitle()
+        assert 0 < numilog_backup.get_height() <= 420
+        assert not any(
+            isinstance(node, Gtk.Button) and node.get_sensitive()
+            for node in walk(sync_action_row(numilog_backup))
+        )
+        report["checks"]["P0_1905_numilog_backup_consent_inert_without_broker"] = True
         inventory_schedule_rows = [
             row for row in rows
             if row.get_title() == "Actualisation automatique des notices Kobo"

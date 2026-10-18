@@ -2100,6 +2100,117 @@ class Storage:
             "acquisitions": [dict(zip(ledger_keys, values)) for values in ledgers],
         }
 
+    def numilog_materialization_consent_revision(
+        self, source_id: str,
+    ) -> str | None:
+        """Observe the opaque consent generation before making a preview."""
+        import re
+        if type(source_id) is not str or re.fullmatch(
+            r"sync:[0-9a-f]{24}", source_id,
+        ) is None:
+            raise ValueError("invalid_numilog_source")
+        key = "sync.source.numilog.materialization.epoch.v1." + source_id
+        value = self.metadata_get(key)
+        if value is not None and re.fullmatch(r"[0-9a-f]{32}", value) is None:
+            raise ValueError("invalid_numilog_consent_revision")
+        return value
+
+    def numilog_materialization_change_consent(
+        self, source_id: str, *, activate: bool,
+        expected_revision: str | None = None,
+    ) -> bool:
+        """Cross-process CAS: revocation invalidates every in-flight token.
+
+        Consent and epoch are written in the same BEGIN IMMEDIATE transaction.
+        Never re-enable after another process has revoked/disabled the source.
+        Missing epoch is valid only on a fresh installation, never after a
+        revocation. A corrupt revision blocks activation but can be revoked.
+        """
+        import re
+        import secrets
+        from .core.numilog_materialization_consent import (
+            _ACTIVE, _MANUAL, policy_key,
+        )
+        if (type(source_id) is not str
+                or re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is None
+                or type(activate) is not bool
+                or (expected_revision is not None and (
+                    type(expected_revision) is not str
+                    or re.fullmatch(r"[0-9a-f]{32}", expected_revision) is None
+                ))):
+            raise ValueError("invalid_numilog_consent_update")
+        epoch = "sync.source.numilog.materialization.epoch.v1." + source_id
+        key = policy_key(source_id)
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (epoch,),
+            ).fetchone()
+            prior = current[0] if current is not None else None
+            state = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (key,),
+            ).fetchone()
+            if activate:
+                if prior != expected_revision or (
+                    state is not None and state[0] != _MANUAL
+                ):
+                    return False
+            generation = secrets.token_hex(16)
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (epoch, generation),
+            )
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, _ACTIVE if activate else _MANUAL),
+            )
+            return True
+
+    def numilog_materialization_claim_startup(
+        self, *, source_id: str, now: int,
+    ) -> bool:
+        """Cross-process one-shot claim, conditional on actual separate consent.
+
+        Claims even when downstream I/O fails, so an interrupted fulfillment
+        cannot be retried on every startup and consume a single-use ACSM URL.
+        Never infer consent from generic sync, legacy Kobo flags or cache.
+        """
+        import re
+        from .core.numilog_materialization_consent import (
+            _ACTIVE, _MIN_SECONDS_BETWEEN_STARTS, policy_key,
+        )
+        if (type(source_id) is not str
+                or re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is None
+                or type(now) is not int or not 1_000_000_000 <= now <= 9_999_999_999):
+            return False
+        clock_key = "sync.source.numilog.materialization.last_start.v1." + source_id
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            consent = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (policy_key(source_id),),
+            ).fetchone()
+            if consent is None or consent[0] != _ACTIVE:
+                return False
+            clock = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (clock_key,),
+            ).fetchone()
+            if clock is not None:
+                stamp = clock[0]
+                if (type(stamp) is not str or not stamp.isdecimal()
+                        or len(stamp) > 11):
+                    return False
+                previous = int(stamp)
+                if previous > now or now - previous < _MIN_SECONDS_BETWEEN_STARTS:
+                    return False
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (clock_key, str(now)),
+            )
+            return True
+
     def source_materialization_evidence(
         self, *, provider_id: str, credential_id: str, account_id: str,
         identity_id: str, max_rows: int = 100_000,

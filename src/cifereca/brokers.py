@@ -131,6 +131,7 @@ class SynchronizationBrokerImpl:
     service: Any
     _subscribers: list[Callable[[], None]] | None = None
     _materialization_plans: MaterializationPlans = field(default_factory=MaterializationPlans, repr=False)
+    _numilog_consent_plans: MaterializationPlans = field(default_factory=MaterializationPlans, repr=False)
     _scheduled_inventory_requested: set[str] = field(default_factory=set, repr=False)
     _scheduled_inventory_running: set[str] = field(default_factory=set, repr=False)
     _scheduled_inventory_lock: Any = field(default_factory=threading.Lock, repr=False)
@@ -443,6 +444,11 @@ class SynchronizationBrokerImpl:
             raise ValueError("invalid source enabled preference")
         account = self._find_account(source_id)
         self.service.storage.metadata_set(self._preference_key(source_id), "1" if enabled else "0")
+        # Disabling a Numilog source also withdraws materialization consent.
+        # Re-enabling inventory later must never resurrect a backup policy.
+        if enabled is False and getattr(account, "provider_id", None) == "numilog":
+            from .core.numilog_materialization_consent import revoke
+            revoke(self, source_id)
         self._notify()
         return self._ref(account)
 
@@ -674,6 +680,33 @@ class SynchronizationBrokerImpl:
         )
         self._notify()
         return mode
+
+    def synchronize_scheduled_numilog_materialization(
+        self, identity_id: str, trigger: str, *, control: Any = None,
+    ) -> SyncResult:
+        """Run opt-in Numilog materialization independently of source-sync."""
+        from .core.numilog_materialization_startup import execute
+        return execute(self, identity_id, trigger, control=control)
+
+    def numilog_materialization_schedule(self, source_id: str) -> str:
+        """Read an independently confirmed Numilog policy. Defaults manual."""
+        from .core.numilog_materialization_consent import mode
+        return mode(self, source_id)
+
+    def prepare_numilog_materialization_consent(self, source_id: str) -> SyncResult:
+        """Explicit offline preview for opt-in at the next opening."""
+        from .core.numilog_materialization_consent import prepare
+        return prepare(self, source_id)
+
+    def confirm_numilog_materialization_consent(
+        self, source_id: str, confirmation_token: str, *, mode: str,
+    ) -> SyncResult:
+        from .core.numilog_materialization_consent import confirm
+        return confirm(self, source_id, confirmation_token, mode=mode)
+
+    def revoke_numilog_materialization_consent(self, source_id: str) -> str:
+        from .core.numilog_materialization_consent import revoke
+        return revoke(self, source_id)
 
     def preflight_numilog_purchase(
         self, source_id: str, item_id: str,
