@@ -780,6 +780,214 @@ def _refresh_sync_page(self) -> None:
                 add_sync_action(local_row, button)
             group.add(sync_action_row(local_row))
 
+            # Numilog materialization is NOT inventory synchronization. Never
+            # infer consent from source enabled, the Kobo switch, or preview.
+            # An explicit SHA preview and a second user confirmation are both
+            # mandatory before the real startup worker may acquire anything.
+            consent_read = getattr(broker, "numilog_materialization_schedule", None)
+            consent_prepare = getattr(broker, "prepare_numilog_materialization_consent", None)
+            consent_confirm = getattr(broker, "confirm_numilog_materialization_consent", None)
+            consent_revoke = getattr(broker, "revoke_numilog_materialization_consent", None)
+            consent_supported = all(callable(method) for method in (
+                consent_read, consent_prepare, consent_confirm, consent_revoke,
+            ))
+            consent_mode = "unavailable"
+            if consent_supported:
+                try:
+                    value = consent_read(source.source_id)
+                    if value in {"manual", "on_start"}:
+                        consent_mode = value
+                except Exception:
+                    pass
+            consent_row = Adw.ActionRow()
+            consent_row.set_title("Sauvegarde automatique des achats Numilog")
+            consent_row.set_subtitle_lines(0)
+            if consent_mode == "on_start":
+                consent_row.set_subtitle(
+                    "Autorisé pour ce compte au prochain démarrage : jusqu’à "
+                    "8 livres par ouverture, espacées d’au moins 60 minutes. "
+                    "Les droits et fichiers sont revérifiés avant téléchargement."
+                )
+            elif consent_mode == "manual":
+                consent_row.set_subtitle(
+                    "Mode manuel (par défaut). Aucun téléchargement automatique. "
+                    "Consentement distinct de l’actualisation des notices."
+                )
+            else:
+                consent_row.set_subtitle(
+                    "Sauvegarde planifiée indisponible. Aucun téléchargement automatique."
+                )
+            consent_button = self.action_button(
+                "Désactiver la sauvegarde" if consent_mode == "on_start"
+                else "Activer au démarrage…",
+                "document-save-symbolic",
+            )
+            consent_button.set_sensitive(
+                consent_supported
+                and consent_mode in {"manual", "on_start"}
+                and (consent_mode == "on_start"
+                     or (source.enabled and source.connected and source.sync_capable))
+            )
+            consent_button.set_valign(Gtk.Align.CENTER)
+            consent_button.set_tooltip_text(
+                "Autoriser ou révoquer la sauvegarde de livres pour ce seul compte. "
+                "L’actualisation des notices reste une option indépendante."
+            )
+            add_sync_action(consent_row, consent_button)
+            group.add(sync_action_row(consent_row))
+
+            def change_numilog_consent(
+                button, sid=source.source_id, expected_identity=source.identity_id,
+                label=display_label, prior=consent_mode, output=consent_row,
+                captured_scope=scope,
+            ):
+                def current():
+                    return (
+                        not getattr(self, "_closed", False)
+                        and sync_action_scope_current(self, captured_scope)
+                        and getattr(self.service.current_identity, "identity_id", None)
+                            == expected_identity
+                    )
+                if not current():
+                    return
+                try:
+                    if consent_read(sid) != prior:
+                        self._refresh_sync_page()
+                        return
+                except Exception:
+                    output.set_subtitle("Consentement indisponible. Aucun changement effectué.")
+                    return
+
+                def finish(result, expected):
+                    if not current():
+                        return
+                    facts = getattr(result, "facts", None)
+                    if (getattr(result, "ok", None) is True
+                            and type(facts) is dict
+                            and facts.get("status") == expected
+                            and facts.get("acquisition_authorized") is False):
+                        self._refresh_sync_page()
+                    else:
+                        output.set_subtitle("Consentement non enregistré. Aucun nouveau téléchargement autorisé.")
+
+                if prior == "on_start":
+                    dialog = Adw.MessageDialog.new(
+                        self, "Désactiver la sauvegarde Numilog ?",
+                        f"Compte : {label}.\\n\\nLa révocation empêche les nouveaux "
+                        "téléchargements programmés pour ce compte. "
+                        "Les fichiers déjà acquis sont conservés."
+                    )
+                    dialog.add_response("cancel", "Annuler")
+                    dialog.add_response("revoke", "Désactiver")
+                    dialog.set_response_appearance(
+                        "revoke", Adw.ResponseAppearance.DESTRUCTIVE,
+                    )
+                    def revoke_response(_dialog, choice):
+                        if choice != "revoke" or not current():
+                            return
+                        output.set_subtitle("Révocation de la sauvegarde en cours…")
+                        def work():
+                            return consent_revoke(sid)
+                        def done(result):
+                            if current() and result == "manual":
+                                self._refresh_sync_page()
+                            elif current():
+                                output.set_subtitle("Révocation indisponible. Vérifiez la politique.")
+                        def failed(_error):
+                            if current():
+                                output.set_subtitle("Révocation indisponible. Vérifiez la politique.")
+                        self.runner.submit(
+                            "Désactivation sauvegarde Numilog…", work,
+                            done, failed, control=button,
+                            priority=TaskPriority.USER_ACTION, kind="source-consent",
+                        )
+                    dialog.connect("response", revoke_response)
+                    dialog.present()
+                    return
+                if prior != "manual":
+                    return
+                output.set_subtitle("Vérification SHA locale en cours avant consentement…")
+
+                def prepared(result):
+                    if not current():
+                        return
+                    facts = getattr(result, "facts", None)
+                    if (getattr(result, "ok", None) is not True
+                            or type(facts) is not dict
+                            or facts.get("status") != "confirmation_required"
+                            or facts.get("acquisition_authorized") is not False
+                            or facts.get("requires_explicit_confirmation") is not True
+                            or facts.get("manifest_refreshed") is not False
+                            or facts.get("files_verified") is not True
+                            or facts.get("schedule_available") is not True):
+                        output.set_subtitle("Préparation non attestée. Aucun consentement enregistré.")
+                        return
+                    token, counts = facts.get("confirmation_token"), facts.get("counts")
+                    keys = (
+                        "owned_purchases", "already_local_linked",
+                        "already_local_verified", "needs_file_verification",
+                        "potentially_missing", "candidate_unverified",
+                        "needs_reconciliation", "attention_required",
+                        "not_downloadable", "ignored_unattested_rights",
+                    )
+                    if (type(token) is not str or len(token) != 64
+                            or any(ch not in "0123456789abcdef" for ch in token)
+                            or type(counts) is not dict
+                            or set(counts) != set(keys)
+                            or any(type(counts[k]) is not int or not 0 <= counts[k] <= 100000
+                                   for k in keys)):
+                        output.set_subtitle("Preuve de consentement invalide. Aucun changement.")
+                        return
+                    summary = (
+                        f"Compte : {label} · achats : {counts['owned_purchases']} · "
+                        f"déjà liés : {counts['already_local_linked']} · "
+                        f"manquants possibles : {counts['potentially_missing']} · "
+                        f"à rapprocher : {counts['needs_reconciliation']}."
+                    )
+                    output.set_subtitle(summary + " Confirmation nécessaire.")
+                    dialog = Adw.MessageDialog.new(
+                        self, "Autoriser les sauvegardes Numilog au démarrage ?",
+                        summary + "\\n\\nAu prochain démarrage, jusqu’à 8 éditions "
+                        "achetées pourront être téléchargées automatiquement pour "
+                        "ce compte, au maximum une tentative par heure. Les droits "
+                        "seront relus dans la bibliothèque privée et les fichiers "
+                        "existants ne seront pas remplacés. Des ACSM peuvent "
+                        "nécessiter un profil ADEPT. Les notices restent séparées."
+                    )
+                    dialog.add_response("cancel", "Annuler")
+                    dialog.add_response("confirm", "Autoriser pour ce compte")
+                    dialog.set_response_appearance(
+                        "confirm", Adw.ResponseAppearance.SUGGESTED,
+                    )
+                    def response(_dialog, choice):
+                        if choice != "confirm" or not current():
+                            return
+                        output.set_subtitle("Enregistrement du consentement Numilog…")
+                        def work():
+                            return consent_confirm(sid, token, mode="on_start")
+                        def failed(_error):
+                            if current():
+                                output.set_subtitle("Consentement indisponible. Aucun nouveau téléchargement autorisé.")
+                        self.runner.submit(
+                            "Confirmation sauvegarde Numilog…", work,
+                            lambda result: finish(result, "on_start"), failed,
+                            control=button, priority=TaskPriority.USER_ACTION,
+                            kind="source-consent",
+                        )
+                    dialog.connect("response", response)
+                    dialog.present()
+
+                def failed(_error):
+                    if current():
+                        output.set_subtitle("Préparation indisponible. Aucun nouveau téléchargement autorisé.")
+                self.runner.submit(
+                    "Préparation du consentement Numilog…",
+                    lambda: consent_prepare(sid),
+                    prepared, failed, control=button,
+                    priority=TaskPriority.USER_ACTION, kind="sync-preflight",
+                )
+            consent_button.connect("clicked", change_numilog_consent)
+
         if source.provider_id in {"kobo", "numilog"}:
             # Inventory consent is separate from local materialization.
             def inventory_current(expected_identity=source.identity_id, captured_scope=scope):
