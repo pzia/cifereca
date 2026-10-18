@@ -575,7 +575,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         _print(result, args.json)
         return 0
-    except (DevUpdateError, updater.UpdateError, TimeoutError) as exc:
+    except TimeoutError:
+        _print({"ok": False, "error": {"code": "dev_update_error",
+               "message": "Délai dépassé pour un sous-processus de mise à jour"}}, args.json)
+        return 1
+    except (DevUpdateError, updater.UpdateError) as exc:
         _print({"ok": False, "error": {"code": "dev_update_error", "message": str(exc)}}, args.json)
         return 1
 
