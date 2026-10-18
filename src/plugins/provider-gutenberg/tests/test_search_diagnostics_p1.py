@@ -136,6 +136,18 @@ def test_invalid_opds_page_rejected_before_any_network(page):
         session.close()
 
 
+@pytest.mark.parametrize("page", (-1, True, "1", None, 101))
+def test_invalid_page_with_short_query_is_not_a_successful_empty_search(page):
+    session, calls = make_session()
+    try:
+        with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+            session.search("x", page=page)
+        assert calls == []
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
 def test_invalid_page_clears_previous_local_filter_warning():
     session, calls = make_session()
     try:
