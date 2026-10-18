@@ -652,3 +652,47 @@ query secrète, page HTML ambiguë, ACSM signé, origine rejetée, et les
 en-têtes Cookie fictifs de différents Domain/Path/Secure/SameSite.
 Cela ne valide pas le parcours réel du compte Numilog : le P0 #2024
 reste à qualifier avec diagnostic utilisateur expurgé.
+
+
+## Numilog 0.1.42 — gabarit de connexion et confirmation d'achat strictement liée (#1884/#2024)
+
+Le gabarit d'une page Numilog peut inclure un champ HTML mot de passe
+pour se connecter, même si la page présente réellement la livraison
+d'un achat. L'ancien comportement 0.1.39 refusait tout HTML comportant
+ce widget, sans tenter la validation d'une confirmation d'achat.
+
+**Exception très ciblée**, uniquement après une action explicite
+`download_direct` d'un `readBook` de bibliothèque fraîche et sur la
+route HTTPS canonique `/Pages/Commande/ConfirmationPaiement.aspx` de
+**l'origine exacte** du compte configuré : si la page comporte un widget
+de connexion, le provider peut maintenant poursuivre **uniquement** un
+ACSM Adobe signé dont la liaison à l'achat est démontrée par toutes les
+preuves structurelles déjà exigées :
+
+- un seul tableau littéral `Links` et un seul candidat ADOBE valide
+  vers l'origine `entrepot2r.numilog.com` ;
+- un bouton `ModalDownload(ProductId, IndexExemplaire)` constant,
+  unique et dans la même carte que le `readBook` de l'achat ciblé ;
+- correspondance **exacte** des coordonnées `readBook` fraîches,
+  sans présumer que son `lid` vaut le `ProductId` commercial ;
+- absence de second ACSM signé et validation HTTPS/host/port/query
+  par les gardes-fous actuels à chaque GET ;
+- broker d'acquisition et identité autorisés inchangés, sans choix
+  automatique de profil Adobe ni consommation opportuniste d'un lien.
+
+Toute page `/Login.Aspx`, tout autre endpoint intermédiaire, toute
+preuve d'édition/copie manquante ou contradictoire, toute structure
+dynamique ou toute simple ancre ACSM **reste refusée** ; une page
+d'authentification exacte continue à suspendre la session.
+Aucun retry, cookie cloné du navigateur, nouvelle connexion, endpoint
+ou téléchargement implicite n'est introduit. Les diagnostics conservent
+des catégories et compteurs bornés, jamais l'HTML, un titre privé, un
+`lid`, un cookie ou un URL ACSM signé.
+
+**Limite de preuve :** les tests utilisent la réduction structurelle
+déjà inspectée du parcours `ConfirmationPaiement` et des achats fictifs,
+avec widget ajouté artificiellement. Ils ne prouvent pas que les
+trois réponses HTML `other` observées chez l'utilisateur suivent cette
+route, ni que le fournisseur accepte leur ACSM. Le P0 #2024 exige
+toujours une vraie livraison réussie du même achat et un export
+expurgé après installation du correctif.
