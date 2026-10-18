@@ -66,7 +66,7 @@ def _read_plugin_package_id(archive: Path) -> tuple[str, str]:
         raise DevUpdateError("plugin ZIP invalide") from exc
     package = raw.get("package") if isinstance(raw, dict) else None
     if not isinstance(package, dict) or not package.get("id") or not package.get("version"):
-        raise DevUpdateError(f"manifest plugin incomplet: {archive.name}")
+        raise DevUpdateError("manifest plugin incomplet")
     package_id = str(package['id'])
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', package_id):
         raise DevUpdateError('identifiant package plugin invalide')
@@ -75,7 +75,7 @@ def _read_plugin_package_id(archive: Path) -> tuple[str, str]:
         from .plugins.manifest import parse_manifest
         parse_manifest(raw)
     except Exception as exc:
-        raise DevUpdateError(f'manifest plugin invalide: {archive.name}') from exc
+        raise DevUpdateError('manifest plugin invalide') from exc
     return package_id, str(package['version'])
 
 
@@ -196,7 +196,7 @@ def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
         and (package_ids is None or row.get('package_id') in package_ids)
         and row.get('state') in {'error', 'incompatible'}]
     if failed:
-        raise DevUpdateError('smoke plugins: erreur des contributions installées: ' + ', '.join(map(str, failed)))
+        raise DevUpdateError('smoke plugins: contributions installées en erreur')
     if package_ids is not None:
         # An install command may return success while its package is absent
         # from the runtime inventory (e.g. broken activation/discovery).
@@ -455,13 +455,13 @@ def apply_snapshot(
             rel = str(item.get("path") if isinstance(item, dict) else item)
             plugin_zip = (root / rel).resolve()
             if not plugin_zip.is_file() or root.resolve() not in plugin_zip.parents:
-                raise DevUpdateError(f"plugin absent ou hors snapshot: {rel}")
+                raise DevUpdateError("plugin absent ou hors snapshot")
             package_id, package_version = step("manifest_validation", _read_plugin_package_id, plugin_zip)
             if package_id in package_ids:
-                raise DevUpdateError(f"package plugin dupliqué dans snapshot: {package_id}")
+                raise DevUpdateError("package plugin dupliqué dans snapshot")
             expected_sha = str(item.get("sha256") or "") if isinstance(item, dict) else ""
             if expected_sha and _sha256(plugin_zip) != expected_sha:
-                raise DevUpdateError(f"SHA-256 plugin invalide: {rel}")
+                raise DevUpdateError("SHA-256 plugin invalide")
             installed_active = _package_is_active(package_id)
             requested_activate = bool(item.get("activate", True)) if isinstance(item, dict) else True
             activate = requested_activate if installed_active is None else installed_active
