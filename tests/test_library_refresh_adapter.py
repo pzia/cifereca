@@ -102,8 +102,8 @@ def test_automatic_library_invalidation_is_not_lost_while_refresh_pending(comple
     host.refresh_library(False)
     stale = host.runner.requests[-1]
     assert len(host.runner.requests) == 1
-    host.refresh_library(False)  # post-acquisition UI notification
-    host.refresh_library(False)  # a second completed source, same GTK turn
+    library_refresh.invalidate_library(host)  # indexed Numilog book
+    library_refresh.invalidate_library(host)  # second source, same GTK turn
     assert len(host.runner.requests) == 1
     assert host._library_refresh_dirty is True
     if completion == "ok":
@@ -126,7 +126,7 @@ def test_pending_library_invalidation_refetches_only_current_identity():
     host = _harness()
     host.refresh_library(False)
     earlier = host.runner.requests[-1]
-    host.refresh_library(False)
+    library_refresh.invalidate_library(host)
     host.service.current_identity = NS(identity_id="bob")
     host._identity_context_generation += 1
     earlier.ok([{"identity_id": "alice", "stale": True}])
@@ -135,3 +135,19 @@ def test_pending_library_invalidation_refetches_only_current_identity():
     assert newer.work() == [{"identity_id": "bob"}]
     newer.ok(newer.work())
     assert host.library_shown == [[{"identity_id": "bob"}]]
+
+
+
+def test_ordinary_background_refresh_never_supersedes_newer_manual_refresh():
+    host = _harness()
+    host.refresh_library(False)
+    old = host.runner.requests[-1]
+    host.refresh_library(False, control=object())
+    manual = host.runner.requests[-1]
+    assert len(host.runner.requests) == 2
+    old.ok([{"title": "old"}])
+    host.refresh_library(False)  # ordinary automatic refresh, not invalidation
+    assert getattr(host, "_library_refresh_dirty", False) is False
+    manual.ok([{"title": "manual latest"}])
+    assert host.library_shown == [[{"title": "manual latest"}]]
+    assert len(host.runner.requests) == 2
