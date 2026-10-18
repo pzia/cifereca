@@ -76,3 +76,27 @@ L'ajout de futurs codes nécessite une preuve du contrat public amont,
 avec message fixe et politique de retry connue, et des tests de fuite.
 Ce travail ne démontre aucune compatibilité nouvelle avec le binaire
 `kobo-adept-next`, ni un diagnostic de la cause Adobe inconnue.
+
+
+## 1.2.20 — acquittement JSON strict du processus externe
+
+Le code de retour **0** du processus ne prouve pas, à lui seul, une
+réussite métier. Le runtime ne reconnaît un succès JSON que si le
+document objet contient `"ok": true` **booléen exact**, sans
+`error` non nul. `ok` absent, `null`, entier (`1`/`0`), chaîne
+(`"true"`/`"false"`), objet ou liste, et contradiction
+`{"ok":true,"error":...}` provoquent le refus stable
+`kobo_adept_invalid_response` et `retryable=false`, sans jamais
+reprendre le champ fournisseur, stderr, XML ou une éventuelle URI.
+`{"ok":false}` et les échecs processus non nuls conservent leurs
+chemins de classification existants, y compris la spécialisation
+Adobe lorsque la requête ACSM est explicitement attestée.
+
+Cette protection vaut pour `contract`, `capabilities`, la gestion
+des profils, `acsm return` et `download request`. Elle ne remplace
+**pas** le contrôle de l'artefact acquis ni la vérification de
+l'inventaire exact après restitution ; aucune confirmation de droits
+ou de succès commercial n'est inférée. Les tests reproduisent le
+contrat v8 de la simulation externe avec `ok:true` et des réponses
+hostiles synthétiques. L'émission du code Adobe détaillé et la
+version minimale réelle de `kobo-adept-next` restent à qualifier.
