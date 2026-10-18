@@ -15,6 +15,7 @@ on:
       - 'scripts/ci_select_plugin_tests.py'
       - '.github/plugin-test-dependencies.json'
       - 'scripts/check_release_inventory.py'
+      - 'scripts/ci_core_release_preflight.py'
       - 'scripts/ci-install-gtk-e2e-runtime.sh'
       - 'scripts/package_partial_plugins.py'
       - 'scripts/plugin_packaging.py'
