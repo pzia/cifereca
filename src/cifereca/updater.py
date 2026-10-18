@@ -41,6 +41,22 @@ class UpdateError(RuntimeError):
     pass
 
 
+def _run_bounded_process(command: list[str], *, timeout: int, **kwargs: Any) -> subprocess.CompletedProcess:
+    """Bound a child process, preserving no raw argv/stdout/stderr in errors.
+
+    subprocess.run kills and waits for the direct child on timeout. The caller
+    owns the update phase and the rollback transaction; no automatic retry.
+    """
+    try:
+        return subprocess.run(command, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired.__str__ contains the original command (possibly
+        # sensitive), so expose only a fixed exception with no chained cause.
+        raise TimeoutError("Délai dépassé pour un sous-processus de mise à jour") from None
+    except OSError:
+        raise UpdateError("Sous-processus de mise à jour indisponible") from None
+
+
 def _home() -> Path:
     return Path.home()
 
@@ -136,7 +152,7 @@ def _metadata(source: Path) -> tuple[str, str]:
 
 def _python_version(exe: str) -> tuple[int, int, int] | None:
     try:
-        proc = subprocess.run(
+        proc = _run_bounded_process(
             [exe, "-c", "import sys,json;print(json.dumps(list(sys.version_info[:3])))"],
             text=True, capture_output=True, timeout=15, check=False,
         )
@@ -175,7 +191,10 @@ def _create_venv(release: Path, python: str) -> Path:
     # PyGObject/GTK stays a system dependency, therefore the release venv may
     # see system site-packages. All cifereca Python runtime dependencies are,
     # however, installed from the bundled offline wheelhouse.
-    proc = subprocess.run([python, "-m", "venv", "--system-site-packages", str(venv)], check=False)
+    proc = _run_bounded_process(
+        [python, "-m", "venv", "--system-site-packages", str(venv)],
+        timeout=300, check=False, text=True, capture_output=True,
+    )
     if proc.returncode != 0:
         raise UpdateError("Création du venv de release impossible")
     py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -193,7 +212,7 @@ def _create_venv(release: Path, python: str) -> Path:
         # Developer/source checkout fallback. Release archives must carry the
         # wheelhouse and are tested with the branch above.
         command = [str(py), "-m", "pip", "install", "--disable-pip-version-check", str(release)]
-    proc = subprocess.run(command, text=True, capture_output=True, check=False)
+    proc = _run_bounded_process(command, timeout=900, text=True, capture_output=True, check=False)
     if proc.returncode != 0:
         raise UpdateError("Installation du package dans le venv impossible")
     return venv
@@ -212,15 +231,15 @@ def _smoke(release: Path) -> dict[str, Any]:
     for path in (cli, app, updater):
         if not path.is_file():
             raise UpdateError(f"Entry point absent après installation: {path.name}")
-    proc = subprocess.run([str(cli), "--version"], text=True, capture_output=True, timeout=30, check=False)
+    proc = _run_bounded_process([str(cli), "--version"], text=True, capture_output=True, timeout=30, check=False)
     if proc.returncode != 0:
         raise UpdateError("Smoke test CLI --version échoué")
-    proc = subprocess.run([str(app), "--version"], text=True, capture_output=True, timeout=30, check=False)
+    proc = _run_bounded_process([str(app), "--version"], text=True, capture_output=True, timeout=30, check=False)
     if proc.returncode != 0:
         raise UpdateError("Smoke test application --version échoué")
     py = _command_path(release, "cifereca-cli").parent / "python"
     core_code = "import cifereca,httpx,packaging; print(cifereca.__version__)"
-    proc = subprocess.run([str(py), "-c", core_code], text=True, capture_output=True, timeout=30, check=False)
+    proc = _run_bounded_process([str(py), "-c", core_code], text=True, capture_output=True, timeout=30, check=False)
     if proc.returncode != 0:
         raise UpdateError("Smoke test core/httpx échoué")
     gtk_code = (
@@ -229,7 +248,7 @@ def _smoke(release: Path) -> dict[str, Any]:
         "from gi.repository import Gtk,Adw;"
         "assert Gtk.get_major_version()>=4"
     )
-    gtk = subprocess.run([str(py), "-c", gtk_code], text=True, capture_output=True, timeout=30, check=False)
+    gtk = _run_bounded_process([str(py), "-c", gtk_code], text=True, capture_output=True, timeout=30, check=False)
     return {
         "core_ready": True,
         "desktop_ready": gtk.returncode == 0,
@@ -571,7 +590,7 @@ def _smoke_restored_plugins(release: Path, transaction: dict[str, Any]) -> dict[
     if not package_rows:
         return {"plugin_count": 0, "managed_packages": []}
     cli = _command_path(release, "cifereca-cli")
-    proc = subprocess.run(
+    proc = _run_bounded_process(
         [str(cli), "plugin", "list"], text=True, capture_output=True, timeout=120, check=False,
     )
     if proc.returncode != 0:
@@ -694,7 +713,7 @@ def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | N
         "--id", "cifereca-release-plugins",
         "--name", snapshot.name,
     ]
-    proc = subprocess.run(command, text=True, capture_output=True, timeout=180, check=False)
+    proc = _run_bounded_process(command, text=True, capture_output=True, timeout=180, check=False)
     if proc.returncode != 0 or not snapshot.is_file():
         raise UpdateError("Construction du snapshot plugins impossible")
     return snapshot
@@ -704,7 +723,7 @@ def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, A
     command = _command_path(release, DEV_COMMAND)
     if not command.is_file():
         raise UpdateError("cifereca-update-dev absent du nouveau runtime")
-    proc = subprocess.run(
+    proc = _run_bounded_process(
         [str(command), str(snapshot), "--json"],
         text=True, capture_output=True, timeout=300, check=False,
     )
@@ -863,7 +882,7 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
     commitish = _github_commitish(ref)
     endpoint = f"repos/{repository}/commits/{quote(commitish, safe='')}"
     with update_phase("resolve_github"):
-        resolved = subprocess.run(
+        resolved = _run_bounded_process(
             [gh, "api", endpoint, "--jq", ".sha"],
             text=True, capture_output=True, timeout=30, check=False,
         )
@@ -871,21 +890,21 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
             raise UpdateError("Branche, tag ou commit GitHub introuvable ou accès refusé")
     sha = resolved.stdout.strip().splitlines()[-1]
     with update_phase("clone"):
-        clone = subprocess.run(
+        clone = _run_bounded_process(
             [gh, "repo", "clone", repository, str(destination), "--", "--filter=blob:none", "--no-checkout"],
             text=True, capture_output=True, timeout=180, check=False,
         )
         if clone.returncode != 0:
             raise UpdateError("Clone GitHub impossible")
     with update_phase("fetch"):
-        fetched = subprocess.run(
+        fetched = _run_bounded_process(
             [git, "-C", str(destination), "fetch", "--depth", "1", "origin", sha],
             text=True, capture_output=True, timeout=180, check=False,
         )
         if fetched.returncode != 0:
             raise UpdateError("Fetch GitHub impossible")
     with update_phase("checkout"):
-        checkout = subprocess.run(
+        checkout = _run_bounded_process(
             [git, "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"],
             text=True, capture_output=True, timeout=60, check=False,
         )
@@ -1100,6 +1119,10 @@ def main(argv: list[str] | None = None) -> int:
                 result = install_archive(a.archive, python=a.python, keep=a.keep, dry_run=a.dry_run)
         _print(result, a.json)
         return 0
+    except TimeoutError:
+        _print({"ok": False, "error": {"code": "update_error",
+               "message": "Délai dépassé pour un sous-processus de mise à jour"}}, a.json)
+        return 1
     except UpdateError as exc:
         error = {"ok": False, "error": {"code": "update_error", "message": str(exc)}}
         _print(error, a.json)

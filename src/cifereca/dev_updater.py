@@ -171,7 +171,7 @@ def _install_plugin_replace(archive: Path, *, activate: bool) -> None:
     command = [str(cli), "plugin", "install", str(archive), "--replace"]
     if not activate:
         command.append("--no-activate")
-    proc = subprocess.run(
+    proc = updater._run_bounded_process(
         command,
         text=True, capture_output=True, timeout=120, check=False,
     )
@@ -181,7 +181,7 @@ def _install_plugin_replace(archive: Path, *, activate: bool) -> None:
 
 def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
     cli = _new_cli()
-    proc = subprocess.run(
+    proc = updater._run_bounded_process(
         [str(cli), "plugin", "list"], text=True, capture_output=True, timeout=120, check=False,
     )
     if proc.returncode != 0:
@@ -575,6 +575,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         _print(result, args.json)
         return 0
+    except TimeoutError:
+        _print({"ok": False, "error": {"code": "dev_update_error",
+               "message": "Délai dépassé pour un sous-processus de mise à jour"}}, args.json)
+        return 1
     except (DevUpdateError, updater.UpdateError) as exc:
         _print({"ok": False, "error": {"code": "dev_update_error", "message": str(exc)}}, args.json)
         return 1
