@@ -2209,7 +2209,142 @@ class Storage:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (clock_key, str(now)),
             )
+            # A crash after claiming is *not* a successful backup. Keep a
+            # durable "running" marker; no scheduler retries this claim.
+            result_key = "sync.source.numilog.materialization.result.v1." + source_id
+            pending = json.dumps({
+                "version": 1, "started_at": now, "status": "running",
+                "attempted": 0, "downloaded": 0, "skipped": 0, "failed": 0,
+            }, sort_keys=True, separators=(",", ":"))
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (result_key, pending),
+            )
             return True
+
+    def numilog_materialization_finish_startup(
+        self, *, source_id: str, started_at: int,
+        status: str, attempted: int, downloaded: int,
+        skipped: int, failed: int,
+    ) -> bool:
+        """Write bounded public counters only, with a stale-run SQL guard."""
+        import re
+        if (type(source_id) is not str
+                or re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is None
+                or type(started_at) is not int
+                or not 1_000_000_000 <= started_at <= 9_999_999_999
+                or type(status) is not str
+                or status not in {"complete", "partial", "failed", "blocked"}
+                or any(type(value) is not int or not 0 <= value <= 8
+                       for value in (attempted, downloaded, failed))
+                or type(skipped) is not int or not 0 <= skipped <= 2048
+                or downloaded > attempted
+                or failed > attempted + 1
+                or (status == "complete" and failed != 0)
+                or (status == "partial" and downloaded == 0)
+                or (status == "failed" and failed == 0)
+                or (status == "blocked" and (downloaded != 0 or failed != 0))):
+            raise ValueError("invalid_numilog_materialization_receipt")
+        clock_key = "sync.source.numilog.materialization.last_start.v1." + source_id
+        result_key = "sync.source.numilog.materialization.result.v1." + source_id
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            clock = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (clock_key,),
+            ).fetchone()
+            prior = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (result_key,),
+            ).fetchone()
+            if clock is None or clock[0] != str(started_at) or prior is None:
+                return False
+            try:
+                current = json.loads(prior[0])
+            except (ValueError, TypeError):
+                return False
+            if (type(current) is not dict
+                    or current.get("version") != 1
+                    or current.get("started_at") != started_at
+                    or current.get("status") != "running"):
+                return False
+            completed = json.dumps({
+                "version": 1, "started_at": started_at, "status": status,
+                "attempted": attempted, "downloaded": downloaded,
+                "skipped": skipped, "failed": failed,
+            }, sort_keys=True, separators=(",", ":"))
+            db.execute(
+                "UPDATE metadata SET value=? WHERE key=?",
+                (completed, result_key),
+            )
+            return True
+
+    def numilog_materialization_run_status(self, source_id: str) -> dict[str, Any]:
+        """Passive, account-scoped status for UI. No private book/URL data."""
+        import re
+        if type(source_id) is not str or re.fullmatch(
+            r"sync:[0-9a-f]{24}", source_id,
+        ) is None:
+            raise ValueError("invalid_numilog_source")
+        clock_key = "sync.source.numilog.materialization.last_start.v1." + source_id
+        result_key = "sync.source.numilog.materialization.result.v1." + source_id
+        with self._lock, self._connect() as db:
+            db.execute("SAVEPOINT numilog_materialization_status")
+            try:
+                clock_row = db.execute(
+                    "SELECT value FROM metadata WHERE key=?", (clock_key,),
+                ).fetchone()
+                result_row = db.execute(
+                    "SELECT value FROM metadata WHERE key=?", (result_key,),
+                ).fetchone()
+            finally:
+                db.execute("RELEASE SAVEPOINT numilog_materialization_status")
+        if clock_row is None:
+            return {"status": "never", "started_at": None,
+                    "next_eligible_at": None,
+                    "attempted": 0, "downloaded": 0, "skipped": 0, "failed": 0}
+        clock = clock_row[0]
+        empty = {"status": "unknown", "started_at": None,
+                 "next_eligible_at": None,
+                 "attempted": 0, "downloaded": 0, "skipped": 0, "failed": 0}
+        if type(clock) is not str or not clock.isdecimal() or len(clock) > 11:
+            return empty
+        started = int(clock)
+        if not 1_000_000_000 <= started <= 9_999_999_999:
+            return empty
+        if result_row is None:
+            return empty  # legacy attempt clock, result was never recorded
+        try:
+            result = json.loads(result_row[0])
+        except (ValueError, TypeError):
+            return empty
+        counts = ("attempted", "downloaded", "skipped", "failed")
+        if (type(result) is not dict or set(result) != {
+                "version", "started_at", "status", *counts,
+            } or type(result.get("version")) is not int
+                or result["version"] != 1 or type(result.get("started_at")) is not int
+                or result["started_at"] != started
+                or type(result.get("status")) is not str
+                or result["status"] not in {
+                    "running", "complete", "partial", "failed", "blocked",
+                } or any(type(result.get(key)) is not int
+                         or not 0 <= result[key] <= (2048 if key == "skipped" else 8)
+                         for key in counts)
+                or result["downloaded"] > result["attempted"]
+                or (result["status"] == "complete" and result["failed"] != 0)
+                or (result["status"] == "partial" and result["downloaded"] == 0)
+                or (result["status"] == "failed" and result["failed"] == 0)
+                or (result["status"] == "blocked" and (
+                    result["downloaded"] != 0 or result["failed"] != 0
+                ))
+                or (result["status"] == "running" and any(
+                    result[key] != 0 for key in counts
+                ))):
+            return empty
+        return {
+            "status": result["status"], "started_at": started,
+            "next_eligible_at": started + 3600,
+            **{key: result[key] for key in counts},
+        }
 
     def source_materialization_evidence(
         self, *, provider_id: str, credential_id: str, account_id: str,

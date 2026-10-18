@@ -688,6 +688,21 @@ class SynchronizationBrokerImpl:
         from .core.numilog_materialization_startup import execute
         return execute(self, identity_id, trigger, control=control)
 
+    def numilog_materialization_run_status(self, source_id: str) -> dict[str, Any]:
+        """Passive, privacy-preserving last run and next eligible opening."""
+        from .core.numilog_materialization_consent import policy_key
+        import re
+        if type(source_id) is not str or re.fullmatch(
+            r"sync:[0-9a-f]{24}", source_id,
+        ) is None:
+            raise ValueError("invalid_numilog_source")
+        account = self._find_account(source_id)
+        if getattr(account, "provider_id", None) != "numilog":
+            raise ValueError("not_a_numilog_source")
+        # No private library access, directory creation, acquisition or
+        # profile resolution: a disconnected owner can inspect history.
+        return self.service.storage.numilog_materialization_run_status(source_id)
+
     def numilog_materialization_schedule(self, source_id: str) -> str:
         """Read an independently confirmed Numilog policy. Defaults manual."""
         from .core.numilog_materialization_consent import mode

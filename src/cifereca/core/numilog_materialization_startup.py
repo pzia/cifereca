@@ -79,13 +79,20 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         )
         if control is not None and callable(getattr(control, "check_cancelled", None)):
             control.check_cancelled()
+        # Counters and receipts are per source, not leaked across accounts.
+        previous = (total, attempts, skipped, failures)
+        started_at = None
+        manifest_ready = False
+        interrupted = False
         try:
-            # The claim is taken BEFORE private-provider I/O, atomically
-            # across application instances. On error we never roll it back.
+            # Claim and 'running' receipt are written in the same SQLite
+            # transaction, before any network I/O or ADEPT. No blind retry.
+            attempt_clock = int(time())
             if not broker.service.storage.numilog_materialization_claim_startup(
-                source_id=source_id, now=int(time()),
+                source_id=source_id, now=attempt_clock,
             ):
                 continue
+            started_at = attempt_clock
             refreshed = _binding(broker, source_id)
             if (
                 refreshed is None or refreshed[1] is not session
@@ -103,6 +110,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             if type(raw) not in {list, tuple} or len(raw) > 2048:
                 failures += 1
                 break
+            manifest_ready = True
             if (_binding(broker, source_id) is None
                     or _binding(broker, source_id)[1] is not session
                     or mode(broker, source_id) != "on_start"
@@ -199,10 +207,35 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 if control is not None and callable(getattr(control, "report", None)):
                     control.report(current=total, message="Sauvegarde Numilog")
         except Cancelled:
+            interrupted = True
             raise
         except Exception:
             failures += 1
             break
+        finally:
+            if started_at is not None:
+                own_downloaded = total - previous[0]
+                own_attempted = attempts - previous[1]
+                own_skipped = skipped - previous[2]
+                own_failed = failures - previous[3]
+                result_status = (
+                    "partial" if own_downloaded and (own_failed or interrupted)
+                    else "failed" if own_failed
+                    else "blocked" if interrupted or not manifest_ready
+                    else "complete"
+                )
+                try:
+                    broker.service.storage.numilog_materialization_finish_startup(
+                        source_id=source_id, started_at=started_at,
+                        status=result_status, attempted=own_attempted,
+                        downloaded=own_downloaded, skipped=own_skipped,
+                        failed=own_failed,
+                    )
+                except Exception:
+                    # Never leak a persistence exception containing source
+                    # metadata, or mask a cooperative cancellation. The
+                    # existing durable "running" receipt remains truthful.
+                    pass
         if failures:
             break
     return _result(
