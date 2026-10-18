@@ -309,3 +309,44 @@ def test_same_selector_ambiguity_rejects_stale_warning_on_next_search():
         assert session.last_search_warnings == []
     finally:
         session.close()
+
+
+
+@pytest.mark.parametrize("page", (-1, True, False, "1", "garbage", 1.9, None, 101, 10**100))
+@pytest.mark.parametrize("field", ("all", "author"))
+def test_invalid_public_page_never_triggers_get_or_post(field, page):
+    client = FakeClient()
+    session = make_session(client)
+    try:
+        with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+            session.search("Jean", field=field, page=page)
+        assert client.get_calls == [] and client.post_calls == []
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("page,expected_offset", ((0, "0"), (2, "100"), (100, "5000")))
+def test_title_search_page_offsets_are_bounded_and_not_clamped(page, expected_offset):
+    client = FakeClient()
+    session = make_session(client)
+    try:
+        assert len(session.search("Jean", field="title", page=page)) == 1
+        assert client.post_calls[0][1]["data"]["offset"] == expected_offset
+    finally:
+        session.close()
+
+
+def test_invalid_page_does_not_retain_previous_partial_warning():
+    client = FakeClient(catalogue="<ul></ul>")
+    session = make_session(client)
+    try:
+        session.search("Doyle", field="all")
+        assert session.last_search_warnings
+        previous_calls = len(client.post_calls)
+        with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+            session.search("Doyle", field="all", page=-1)
+        assert len(client.post_calls) == previous_calls
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
