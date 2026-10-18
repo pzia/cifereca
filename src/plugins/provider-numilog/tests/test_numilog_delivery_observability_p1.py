@@ -61,6 +61,8 @@ def assert_private_data_absent(diagnostics):
             "http_status", "mime", "html_kind", "origin_kind", "path_kind", "candidates",
             "connected_initial", "cookie_header_present",
             "redirect_target_origin_kind", "redirect_target_kind",
+            "confirmation_ref_present", "confirmation_disp_simple",
+            "redirect_confirmation_ref_present", "redirect_confirmation_disp_simple",
         }
         assert set(detail) >= {"action", "source", "phase", "code"}
         assert len(detail["action"]) == 12
