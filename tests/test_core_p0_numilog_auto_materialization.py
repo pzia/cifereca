@@ -455,3 +455,59 @@ def test_numilog_consent_revision_is_atomic_across_storage_instances(tmp_path):
     finally:
         other.close()
         service.close()
+
+
+@pytest.mark.parametrize("interruption", ["during_manifest", "during_locked_admission"])
+def test_revoke_and_reopt_in_cannot_resume_stale_startup_batch(
+    tmp_path, monkeypatch, interruption,
+):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        initial_revision = service.storage.numilog_materialization_consent_revision(sid)
+        book = _row(account.credential_id, 0)
+        seen = []
+        indexed = []
+        def revoke_and_reactivate():
+            assert broker.revoke_numilog_materialization_consent(sid) == "manual"
+            _authorize(broker, sid)
+            assert mode(broker, sid) == "on_start"
+            assert service.storage.numilog_materialization_consent_revision(sid) != initial_revision
+
+        def library():
+            seen.append("library")
+            if interruption == "during_manifest":
+                revoke_and_reactivate()
+            return [book]
+
+        session.library = library
+        monkeypatch.setattr(
+            SynchronizationBrokerImpl, "preflight_numilog_purchase",
+            lambda *_a: SyncResult(
+                ok=True, facts={"status": "candidate_unverified"},
+            ),
+        )
+        monkeypatch.setattr(
+            "cifereca.core.numilog_materialization_startup.index_delivered",
+            lambda *_a, **_kw: indexed.append("indexed"),
+        )
+        def acquire(row, *, _admission=None):
+            seen.append("acquire")
+            assert _admission() is row
+            revoke_and_reactivate()
+            with pytest.raises(ValueError, match="numilog_auto_consent_revoked"):
+                _admission()
+            raise ValueError("old batch must fail")
+        monkeypatch.setattr(service, "acquire_direct_item", acquire)
+        result = execute(broker, account.identity_id, "startup")
+        assert result.changed == 0 and indexed == []
+        if interruption == "during_manifest":
+            assert seen == ["library"]
+            assert result.facts["status"] == "failed"
+        else:
+            assert seen == ["library", "acquire"]
+            assert not result.ok and result.facts["status"] == "failed"
+        assert mode(broker, sid) == "on_start"
+        assert calls == []
+    finally:
+        service.close()
