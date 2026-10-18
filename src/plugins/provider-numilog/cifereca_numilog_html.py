@@ -212,12 +212,20 @@ def _scoped_confirmation_href(card, links, base_url):
         if node.tag != 'a':
             continue
         raw = node.attrs.get('href')
-        if not _raw_delivery_url_safe(raw) or chr(92) in raw:
+        if (
+            not _raw_delivery_url_safe(raw) or chr(92) in raw
+            or len(raw) > 4096
+        ):
+            # An opaque order reference is not a license to navigate a
+            # multi-megabyte link from a page. The signed ACSM parser already
+            # applies the same small, fixed URL budget.
             continue
         try:
             if any(segment in ('.', '..') for segment in urlsplit(raw).path.split('/')):
                 continue
             full = urljoin(base_url, raw)
+            if len(full) > 4096:
+                continue
             parsed = urlsplit(full)
             if (origin(full) != ('https', 'www.numilog.com', 443)
                     or origin(full) != origin(base_url)
