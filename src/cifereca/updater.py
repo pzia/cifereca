@@ -19,6 +19,7 @@ from urllib.parse import quote
 
 from .install_paths import ArchiveNotFoundError, resolve_archive
 from .paths import config_dir, data_dir, database_file, state_dir
+from .update_progress import step, update_phase, update_operation
 
 PROJECT_NAME = "cifereca"
 PROJECT_DIR_NAME = "cifereca"
@@ -745,8 +746,8 @@ def install_source(
     backup_persistent: bool = False,
 ) -> dict[str, Any]:
     source = source.resolve()
-    _, version = _metadata(source)
-    py = select_python(python)
+    _, version = step("metadata", _metadata, source)
+    py = step("python_selection", select_python, python)
     root = install_root()
     result: dict[str, Any] = {
         "ok": True,
@@ -759,7 +760,7 @@ def install_source(
         result["provenance"] = dict(provenance)
     if dry_run:
         return result
-    recovered = _recover_incomplete_transactions(root)
+    recovered = step("recover", _recover_incomplete_transactions, root)
     if recovered:
         result["recovered_transactions"] = recovered
 
@@ -774,14 +775,15 @@ def install_source(
     transaction: dict[str, Any] | None = None
     switched = False
     try:
-        _copy_source(source, release)
-        _create_venv(release, py)
-        smoke = _smoke(release) or {}
-        backup = _backup_persistent_state(
-            (provenance or {}).get("commit", version)
+        step("source_copy", _copy_source, source, release)
+        step("venv", _create_venv, release, py)
+        smoke = step("smoke", _smoke, release) or {}
+        backup = step(
+            "backup", _backup_persistent_state,
+            (provenance or {}).get("commit", version),
         ) if backup_persistent else None
         with tempfile.TemporaryDirectory(prefix="cifereca-release-plugins-") as plugin_tmp:
-            plugin_snapshot = _build_release_plugin_snapshot(release, Path(plugin_tmp))
+            plugin_snapshot = step("plugin_snapshot", _build_release_plugin_snapshot, release, Path(plugin_tmp))
             from datetime import datetime, timezone
             install_metadata: dict[str, Any] = {
                 "version": version,
@@ -794,32 +796,34 @@ def install_source(
                 encoding="utf-8",
             )
             managed_packages = sorted(_release_plugin_manifest(release))
-            transaction_path, transaction = _create_update_transaction(
+            transaction_path, transaction = step(
+                "transaction_prepare", _create_update_transaction,
                 root, release, old_current, old_previous, managed_packages,
             )
             _save_transaction(transaction_path, transaction, "applying")
-            if old_current and old_current.is_dir():
-                _replace_symlink(root / "previous", old_current)
-            _replace_symlink(root / "current", release)
-            switched = True
-            launchers = _write_launchers(root)
-            _gc(root, keep)
+            with update_phase("core_activation"):
+                if old_current and old_current.is_dir():
+                    _replace_symlink(root / "previous", old_current)
+                _replace_symlink(root / "current", release)
+                switched = True
+                launchers = _write_launchers(root)
+                _gc(root, keep)
             if plugin_snapshot is not None:
-                plugins_result = _apply_release_plugin_snapshot(release, plugin_snapshot)
+                plugins_result = step("plugin_activation", _apply_release_plugin_snapshot, release, plugin_snapshot)
             for package_id, row in transaction["packages"].items():
                 row["after"] = _package_identity(package_id)
-            _save_transaction(transaction_path, transaction, "applied")
+            step("transaction_finalize", _save_transaction, transaction_path, transaction, "applied")
     except Exception as update_exc:
         if transaction_path is not None and transaction is not None:
             try:
-                _complete_transaction_restore(root, transaction_path, transaction, "restoring")
+                step("rollback", _complete_transaction_restore, root, transaction_path, transaction, "restoring")
             except Exception as rollback_exc:
                 raise UpdateError(
                     f"Mise à jour échouée ({update_exc}) et restauration incomplète: {rollback_exc}"
                 ) from rollback_exc
         elif switched:
             try:
-                _restore_release_links(root, old_current, old_previous)
+                step("rollback", _restore_release_links, root, old_current, old_previous)
             except Exception as rollback_exc:
                 raise UpdateError(
                     f"Mise à jour échouée et rollback Core impossible: {rollback_exc}"
@@ -862,7 +866,7 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
         raise UpdateError("git absent du PATH")
     commitish = _github_commitish(ref)
     endpoint = f"repos/{repository}/commits/{quote(commitish, safe='')}"
-    resolved = subprocess.run(
+    resolved = step("resolve_github", subprocess.run,
         [gh, "api", endpoint, "--jq", ".sha"],
         text=True, capture_output=True, timeout=30, check=False,
     )
@@ -870,21 +874,21 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
         detail = (resolved.stderr or resolved.stdout or "").strip()
         raise UpdateError(f"Branche, tag ou commit GitHub introuvable ou accès refusé: {detail[-800:]}")
     sha = resolved.stdout.strip().splitlines()[-1]
-    clone = subprocess.run(
+    clone = step("clone", subprocess.run,
         [gh, "repo", "clone", repository, str(destination), "--", "--filter=blob:none", "--no-checkout"],
         text=True, capture_output=True, timeout=180, check=False,
     )
     if clone.returncode != 0:
         detail = (clone.stderr or clone.stdout or "").strip()
         raise UpdateError(f"Clone GitHub impossible: {detail[-800:]}")
-    fetched = subprocess.run(
+    fetched = step("fetch", subprocess.run,
         [git, "-C", str(destination), "fetch", "--depth", "1", "origin", sha],
         text=True, capture_output=True, timeout=180, check=False,
     )
     if fetched.returncode != 0:
         detail = (fetched.stderr or fetched.stdout or "").strip()
         raise UpdateError(f"Fetch GitHub impossible: {detail[-800:]}")
-    checkout = subprocess.run(
+    checkout = step("checkout", subprocess.run,
         [git, "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"],
         text=True, capture_output=True, timeout=60, check=False,
     )
@@ -926,11 +930,11 @@ def install_archive(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     try:
-        archive = resolve_archive(archive)
+        archive = step("resolve_archive", resolve_archive, archive)
     except ArchiveNotFoundError as exc:
         raise UpdateError(str(exc)) from exc
     with tempfile.TemporaryDirectory(prefix="cifereca-update-") as tmp:
-        source = _extract_release(archive, Path(tmp))
+        source = step("snapshot_extract", _extract_release, archive, Path(tmp))
         return install_source(source, python=python, keep=keep, dry_run=dry_run)
 
 
@@ -973,7 +977,7 @@ def status() -> dict[str, Any]:
 
 def rollback(to: str | None = None) -> dict[str, Any]:
     root = install_root()
-    recovered = _recover_incomplete_transactions(root)
+    recovered = step("recover", _recover_incomplete_transactions, root)
     if recovered:
         return {
             "ok": True,
@@ -1021,8 +1025,8 @@ def rollback(to: str | None = None) -> dict[str, Any]:
                 "Rollback refusé: des plugins gérés ont changé après la mise à jour "
                 f"({', '.join(changed)}). Aucun état n'a été écrasé."
             )
-        _smoke(target)
-        _complete_transaction_restore(root, transaction_path, transaction, "rolling_back")
+        step("smoke", _smoke, target)
+        step("rollback", _complete_transaction_restore, root, transaction_path, transaction, "rolling_back")
         result = {
             "ok": True,
             "current": str(target),
@@ -1044,11 +1048,12 @@ def rollback(to: str | None = None) -> dict[str, Any]:
             "des packages, empreintes et activations n'est lié à la transaction. "
             "Aucun lien Core n'a été modifié. Voir le ticket #904."
         )
-    _smoke(target)
-    if current and current.is_dir():
-        _replace_symlink(root / "previous", current)
-    _replace_symlink(root / "current", target)
-    launchers = _write_launchers(root)
+    step("smoke", _smoke, target)
+    with update_phase("rollback"):
+        if current and current.is_dir():
+            _replace_symlink(root / "previous", current)
+        _replace_symlink(root / "current", target)
+        launchers = _write_launchers(root)
     result = {"ok": True, "current": str(target), "launchers": launchers}
     if recovered:
         result["recovered_transactions"] = recovered
@@ -1085,15 +1090,18 @@ def main(argv: list[str] | None = None) -> int:
         if a.status:
             result = status()
         elif a.rollback:
-            result = rollback(a.to)
+            with update_operation("rollback", stream=sys.stderr):
+                result = rollback(a.to)
         elif a.github is not None:
             if a.archive:
                 p.error("archive ZIP incompatible avec --github")
-            result = install_github(a.github, python=a.python, keep=a.keep, dry_run=a.dry_run)
+            with update_operation("github", stream=sys.stderr):
+                result = install_github(a.github, python=a.python, keep=a.keep, dry_run=a.dry_run)
         else:
             if not a.archive:
                 p.error("archive ZIP requise (ou utiliser --github [branche|tag|commit])")
-            result = install_archive(a.archive, python=a.python, keep=a.keep, dry_run=a.dry_run)
+            with update_operation("archive", stream=sys.stderr):
+                result = install_archive(a.archive, python=a.python, keep=a.keep, dry_run=a.dry_run)
         _print(result, a.json)
         return 0
     except UpdateError as exc:
