@@ -6,6 +6,7 @@ a ModalDownload button, a distinct readBook lid and ordinary site navigation.
 This tests HTTP-client/importer boundaries, not a live merchant or real DRM.
 """
 from pathlib import Path
+import http.cookiejar
 
 import httpx
 import pytest
@@ -457,6 +458,78 @@ def test_legacy_intermediate_without_login_still_allows_one_safe_signed_url(tmp_
         assert visited == [LIBRARY, LIBRARY, READ_12, landing, SIGNED]
         assert len(importer.calls) == 1
         assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostics.events)
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize('cookie_path,readbook_has_cookie,confirmation_has_cookie', (
+    ('/', True, True),
+    ('/Pages/Compte', True, False),
+    ('/Pages/Commande', False, True),
+    ('/Pages/Other', False, False),
+))
+def test_fictional_secure_cookie_path_provenance_across_confirmation(
+    tmp_path, cookie_path, readbook_has_cookie, confirmation_has_cookie,
+):
+    """A Cookie header at readBook never proves its presence on confirmation.
+
+    SameSite belongs to a browser navigation context; HTTPX keeps the
+    attribute but does not reproduce the browser's SameSite enforcement.
+    This test only proves Domain/Path/Secure eligibility, using a fake value.
+    """
+    requests = []
+    landing = CONFIRMATION.replace('disp=1', 'disp=simple')
+
+    def handler(request):
+        requests.append(request)
+        url = str(request.url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=INVENTORY)
+        if url == READ_12:
+            return httpx.Response(302, headers={'location': landing})
+        if url == landing:
+            return httpx.Response(200, text=FIXTURE.read_text(),
+                                  headers={'content-type': 'text/html'})
+        if url == SIGNED:
+            return httpx.Response(
+                200, content=ACSM,
+                headers={'content-type': 'application/vnd.adobe.adept+xml'},
+            )
+        pytest.fail('Only the explicitly selected fictional order is allowed')
+
+    session, diagnostics, importer = setup(tmp_path, handler)
+    session.connected = True
+    session.client.cookies.jar.set_cookie(http.cookiejar.Cookie(
+        0, 'synthetic', 'PRIVATE_COOKIE', None, False,
+        'www.numilog.com', False, False,
+        cookie_path, True, True, None, True, None, None,
+        {'SameSite': 'Lax'}, False,
+    ))
+    try:
+        book = session.library()[0]
+        path, source = session.download_direct(book, tmp_path)
+        assert path.is_file() and source == LIBRARY
+        assert len(importer.calls) == 1
+        actual = {str(request.url): request for request in requests}
+        assert ('synthetic=PRIVATE_COOKIE' in
+                actual[READ_12].headers.get('cookie', '')) is readbook_has_cookie
+        assert ('synthetic=PRIVATE_COOKIE' in
+                actual[landing].headers.get('cookie', '')) is confirmation_has_cookie
+        events = [
+            kwargs['detail'] for args, kwargs in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+            and kwargs['detail'].get('phase') == 'delivery_http'
+        ]
+        assert [event['path_kind'] for event in events][:2] == [
+            'readbook', 'confirmation_page',
+        ]
+        assert events[0]['cookie_header_present'] is readbook_has_cookie
+        assert events[1]['cookie_header_present'] is confirmation_has_cookie
+        assert 'PRIVATE_COOKIE' not in repr(diagnostics.events)
+        assert 'synthetic=' not in repr(diagnostics.events)
+        assert 'ref=' not in repr(diagnostics.events)
+        assert 'disp=' not in repr(diagnostics.events)
         _assert_clean(tmp_path)
     finally:
         session.close()
