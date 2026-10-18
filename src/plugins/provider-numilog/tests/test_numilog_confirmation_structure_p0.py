@@ -533,3 +533,104 @@ def test_fictional_secure_cookie_path_provenance_across_confirmation(
         _assert_clean(tmp_path)
     finally:
         session.close()
+
+
+@pytest.mark.parametrize('form_ref,allowed', (
+    ('FICTIONAL', True),
+    ('UNRELATED_PRIVATE_ORDER', False),
+    ('FICTIONAL&amp;ref=UNRELATED_PRIVATE_ORDER', False),
+    ('', False),
+))
+def test_confirmation_form_order_reference_must_match_navigated_order(
+    form_ref, allowed,
+):
+    """A JS modal bound to readBook may not validate a different form order.
+
+    The check compares opaque refs in memory only; neither ref is emitted to
+    the caller, diagnostics, exception text, nor acquisition broker.
+    """
+    html = FIXTURE.read_text().replace(
+        'ref=FICTIONAL&amp;disp=1',
+        'ref=' + form_ref + '&amp;disp=1', 1,
+    )
+    if allowed:
+        assert delivery_url(
+            html, CONFIRMATION, allowed_origins=ALLOWED,
+            expected_readbook=READ_12, require_bound_confirmation=True,
+        ) == SIGNED
+    else:
+        with pytest.raises(DeliverySelectionError, match='ambiguous') as exc:
+            delivery_url(
+                html, CONFIRMATION, allowed_origins=ALLOWED,
+                expected_readbook=READ_12, require_bound_confirmation=True,
+            )
+        assert 'FICTIONAL' not in str(exc.value)
+        assert 'UNRELATED_PRIVATE_ORDER' not in str(exc.value)
+
+
+@pytest.mark.parametrize('login_widget', (False, True))
+def test_mismatched_confirmation_form_reference_blocks_acsm_http(
+    tmp_path, login_widget,
+):
+    """No ACSM GET even when the card/button/Links identify this readBook."""
+    landing = CONFIRMATION.replace('disp=1', 'disp=simple')
+    html = FIXTURE.read_text().replace(
+        'ref=FICTIONAL&amp;disp=1',
+        'ref=UNRELATED_PRIVATE_ORDER&amp;disp=simple', 1,
+    )
+    if login_widget:
+        html = html.replace(
+            '<form method="post"', '<input type="password" value="PRIVATE_HTML" />'
+            '<form method="post"', 1,
+        )
+    visited = []
+
+    def handler(request):
+        url = str(request.url)
+        visited.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=INVENTORY,
+                                  headers={'content-type': 'text/html'})
+        if url == READ_12:
+            return httpx.Response(302, headers={'location': landing})
+        assert url == landing, 'A mismatched order must never reach the ACSM'
+        return httpx.Response(200, text=html, headers={'content-type': 'text/html'})
+
+    session, diagnostics, importer = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        book = session.library()[0]
+        with pytest.raises(ProviderError):
+            session.download_direct(book, tmp_path)
+        assert visited == [LIBRARY, LIBRARY, READ_12, landing]
+        assert session.connected is True
+        assert not importer.calls
+        events = [
+            kw['detail'] for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+        ]
+        selections = [event for event in events if event.get('phase') == 'html_selection']
+        assert len(selections) == 1
+        assert selections[0]['code'] == 'html_delivery_ambiguous'
+        assert events[-1]['code'] == (
+            'login_form_detected' if login_widget else 'html_delivery_ambiguous'
+        )
+        assert 'UNRELATED_PRIVATE_ORDER' not in repr(diagnostics.events)
+        assert 'FICTIONAL' not in repr(diagnostics.events)
+        assert 'PRIVATE_HTML' not in repr(diagnostics.events)
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+def test_form_pointing_to_confirmation_on_other_html_is_not_a_ref_mismatch():
+    """A landing URL has no ref to compare: preserve the historical route.
+
+    This test is only about lack of contradictory GET evidence, not permission
+    to follow a login-shaped page or a new issuer endpoint.
+    """
+    landing = 'https://www.numilog.com/Pages/Compte/Landing.aspx'
+    assert delivery_url(
+        FIXTURE.read_text(), landing, allowed_origins=ALLOWED,
+        expected_readbook=READ_12,
+    ) == SIGNED

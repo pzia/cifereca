@@ -623,6 +623,43 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed):
         while card is not None and 'card' not in classes(card):
             card = parents.get(id(card))
         require(card is not None)
+        # A confirmation form enclosing the selected card may itself
+        # attest an opaque order ref. If it does, its reference must agree
+        # with the actual GET/302 confirmation URL. Never log or return it,
+        # and never assume a ProductId/readBook lid equals an order ref.
+        page_parts = urlsplit(base_url)
+        page_ref = parse_qs(page_parts.query, keep_blank_values=True).get('ref', [])
+        ancestor = parents.get(id(card))
+        while ancestor is not None:
+            if ancestor.tag == 'form' and ancestor.attrs.get('action'):
+                raw_action = ancestor.attrs['action']
+                require(_raw_delivery_url_safe(raw_action))
+                try:
+                    form_url = urljoin(base_url, raw_action)
+                    form_parts = urlsplit(form_url)
+                    if (origin(form_url) == origin(base_url)
+                            and form_parts.path.casefold()
+                            == '/pages/commande/confirmationpaiement.aspx'
+                            and page_parts.path.casefold()
+                            == '/pages/commande/confirmationpaiement.aspx'):
+                        # A different HTML intermediary may include a form
+                        # *linking* to a confirmation. It has no GET order
+                        # ref of its own to compare, so it cannot attest
+                        # either a match or a contradiction. Preserve the
+                        # legacy intermediary selection contract.
+                        form_refs = parse_qs(
+                            form_parts.query, keep_blank_values=True,
+                            strict_parsing=True, max_num_fields=32,
+                        ).get('ref', [])
+                        if form_refs:
+                            require(
+                                len(form_refs) == len(page_ref) == 1
+                                and bool(form_refs[0].strip())
+                                and form_refs == page_ref
+                            )
+                except (ValueError, AttributeError, TypeError):
+                    require(False)
+            ancestor = parents.get(id(ancestor))
         readbooks = [n for n in card.walk() if n.tag == 'a'
                      and _readbook_coordinates(n.attrs.get('href', ''), base_url) is not None]
         if not any(_readbook_coordinates(n.attrs['href'], base_url) == expected for n in readbooks):
