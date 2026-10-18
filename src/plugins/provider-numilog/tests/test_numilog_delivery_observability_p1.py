@@ -61,6 +61,8 @@ def assert_private_data_absent(diagnostics):
             "http_status", "mime", "html_kind", "origin_kind", "path_kind", "candidates",
             "connected_initial", "cookie_header_present",
             "redirect_target_origin_kind", "redirect_target_kind",
+            "confirmation_ref_present", "confirmation_disp_simple",
+            "redirect_confirmation_ref_present", "redirect_confirmation_disp_simple",
         }
         assert set(detail) >= {"action", "source", "phase", "code"}
         assert len(detail["action"]) == 12
@@ -376,3 +378,41 @@ def test_redirect_target_is_only_fixed_enums_and_requires_a_string():
     assert "redirect_target_kind" not in details[2]
     assert "redirect_target_origin_kind" not in details[2]
     assert_private_data_absent(diag)
+
+
+@pytest.mark.parametrize("bad_html", (
+    "<div>" * 130 + "PRIVATE_HTML" + "</div>" * 130,
+    "<br>" * 25100 + "PRIVATE_HTML",
+))
+def test_structurally_unparseable_numilog_html_is_typed_and_fail_closed(
+    tmp_path, bad_html,
+):
+    # Byte size is ordinary; DOM depth/node count deliberately exceeds the
+    # fixed HTML parser budget. No ACSM URL or authenticated state is inferred.
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        assert str(request.url) == START
+        return httpx.Response(
+            200, text=bad_html, headers={"content-type": "text/html"},
+        )
+
+    session, broker, diag = build(tmp_path, handler)
+    try:
+        with pytest.raises(ProviderError, match="structure HTML de livraison inattendue"):
+            session._download(START, tmp_path / "bad.epub", source="readbook")
+        assert seen == [START] and not broker.calls
+        assert diag.completed()[0][1]["detail"]["code"] == "html_invalid"
+        phases = [
+            kw["detail"] for _, kw in diag.acquisition()
+            if kw["detail"].get("phase") == "html_selection"
+        ]
+        assert len(phases) == 1
+        assert phases[0]["code"] == "html_invalid"
+        assert phases[0]["html_kind"] == "invalid"
+        assert phases[0]["hops"] == 1
+        assert not list(tmp_path.glob(".numilog-*"))
+        assert_private_data_absent(diag)
+    finally:
+        session.close()

@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.42, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.43, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.42'
+VERSION = '0.1.43'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -538,7 +538,7 @@ class NumilogSession(ProviderSession):
         self._diag('téléchargement',format='ACSM/ADEPT',fulfillment=status)
         return produced,self.library_url
 
-    def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None):
+    def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None):
         with DeliveryTrace(self.diagnostics, source=source, connected_initial=self.connected) as trace:
             trace.fail('adept_unconfirmed')
             owner = identity_id
@@ -547,7 +547,9 @@ class NumilogSession(ProviderSession):
             seen = set()
             # Keep the fresh owned row's readBook coordinates across redirects;
             # confirmation-page product/copy evidence cannot choose another book.
-            expected_readbook = url
+            expected_readbook = (
+                expected_readbook_url if type(expected_readbook_url) is str else url
+            )
             for hop in range(12):
                 trace.fail('adept_unconfirmed')
                 if owner is not None:
@@ -580,7 +582,10 @@ class NumilogSession(ProviderSession):
                 from_library = (
                     hop == 0
                     and url_origin(url) == url_origin(self.library_url)
-                    and urlsplit(url).path.casefold() == '/pages/compte/readbook.ashx'
+                    and urlsplit(url).path.casefold() in {
+                        '/pages/compte/readbook.ashx',
+                        '/pages/commande/confirmationpaiement.aspx',
+                    }
                 )
                 referer = self.library_url if from_library else self.base_url
                 with self.client.stream('GET',url,headers={'Referer':referer}) as r:
@@ -621,7 +626,26 @@ class NumilogSession(ProviderSession):
                     if mime == 'text/html':
                         trace.fail('html_oversize')
                         html = self._small(r).decode('utf-8-sig',errors='replace')
-                        kind = html_response_kind(html)
+                        try:
+                            kind = html_response_kind(html)
+                        except ParseError:
+                            # The parser may reject deep/oversized DOM
+                            # structure even when the HTTP body is within
+                            # the byte limit. This is invalid HTML evidence,
+                            # not proof of a missing cookie or oversize file.
+                            trace.fail('html_invalid')
+                            trace.event(
+                                'html_selection', 'html_invalid',
+                                html_kind='invalid', hops=hop+1,
+                            )
+                            self._diag(
+                                'livraison HTML', phase='download',
+                                page_kind='delivery_intermediate',
+                                kind='invalid', result='invalid_structure',
+                            )
+                            raise ProviderError(
+                                'Numilog : structure HTML de livraison inattendue'
+                            ) from None
                         # Only the endpoint *category*, never signed query/HTML,
                         # belongs in the report. This distinguishes readBook from
                         # other intermediates without disclosing a customer's URL.
@@ -632,6 +656,8 @@ class NumilogSession(ProviderSession):
                             else 'delivery_intermediate'
                         )
                         if kind == 'login':
+                            confirmation_probe_code = None
+                            confirmation_probe_candidates = None
                             # A login widget is common in Numilog's general
                             # template. On the *attested confirmation route*
                             # alone, permit exactly one signed ACSM only when
@@ -653,8 +679,16 @@ class NumilogSession(ProviderSession):
                                         expected_readbook=expected_readbook,
                                         require_bound_confirmation=True,
                                     )
-                                except (DeliverySelectionError, ParseError):
+                                except DeliverySelectionError as exc:
                                     bound_url = None
+                                    confirmation_probe_code = (
+                                        'html_delivery_ambiguous' if exc.code == 'ambiguous'
+                                        else 'html_delivery_link_missing'
+                                    )
+                                    confirmation_probe_candidates = evidence.get('allowed_candidates')
+                                except ParseError:
+                                    bound_url = None
+                                    confirmation_probe_code = 'html_invalid'
                                 if bound_url is not None:
                                     trace.event(
                                         'html_selection', 'single_allowed_candidate',
@@ -681,7 +715,17 @@ class NumilogSession(ProviderSession):
                                 and url_origin(str(r.url)) == url_origin(self.library_url)
                             )
                             trace.fail('login_form_detected')
-                            trace.event('html_selection','login_form_detected',html_kind='login',hops=hop+1)
+                            # On a known confirmation URL, preserve WHY the
+                            # tightly scoped purchase binding failed. A login
+                            # form alone is still not a verified session expiry.
+                            # Existing closed codes/candidate counts suffice:
+                            # no private HTML, signed URL or new HTTP.
+                            trace.event(
+                                'html_selection',
+                                confirmation_probe_code or 'login_form_detected',
+                                html_kind='login', hops=hop+1,
+                                candidates=confirmation_probe_candidates,
+                            )
                             self._diag('livraison HTML',phase='download',
                                        page_kind='login_page' if login_endpoint else page_kind,
                                        kind='login',result='login_form_detected')
@@ -698,10 +742,20 @@ class NumilogSession(ProviderSession):
                             raise ProviderError('Numilog : page d’erreur reçue au lieu du fichier attendu')
                         evidence = {}
                         trace.fail('html_delivery_link_missing')
+                        # A commercial confirmation is a multi-book-capable
+                        # order page, even without a login widget. A lone
+                        # signed link is not sufficient proof of the selected
+                        # purchase: require the same fresh readBook/card/
+                        # ModalDownload binding as the login-widget branch.
+                        confirmation_page = (
+                            page_path == '/pages/commande/confirmationpaiement.aspx'
+                            and url_origin(str(r.url)) == url_origin(self.library_url)
+                        )
                         try:
                             url = delivery_url(
                                 html,str(r.url),allowed_origins=self.allowed_origins,
                                 evidence=evidence, expected_readbook=expected_readbook,
+                                require_bound_confirmation=confirmation_page,
                             )
                         except DeliverySelectionError as exc:
                             trace.fail('html_delivery_ambiguous' if exc.code == 'ambiguous' else 'html_delivery_link_missing')
@@ -813,11 +867,22 @@ class NumilogSession(ProviderSession):
                     start = evidence.url
                     self._diag('livraison ACSM',phase='owned_card',kind='card_bound',result='single_allowed_candidate')
                 else:
-                    start = row['href']
-                    self._diag('livraison ACSM',phase='readbook',kind='scoped_link',result='fallback')
+                    # Some owned cards may directly expose a confirmed order
+                    # page instead of requiring an initial readBook 302.
+                    # The order ref comes *only* from a fresh, uniquely
+                    # selected card's explicit canonical HTML href.
+                    confirmation = row.get('confirmation')
+                    if type(confirmation) is str:
+                        checked_url(confirmation, self.allowed_origins)
+                        start = confirmation
+                        self._diag('livraison ACSM',phase='confirmation',
+                                   kind='scoped_link',result='direct_confirmed_href')
+                    else:
+                        start = row['href']
+                        self._diag('livraison ACSM',phase='readbook',kind='scoped_link',result='fallback')
                 return self._download(start,directory/name,title=row['title'],author=item.author,
                     book_id=self._id(row),source='owned_card' if isinstance(evidence, OwnedDelivery) else 'readbook',
-                    identity_id=owner)
+                    identity_id=owner,expected_readbook_url=row['href'])
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
 

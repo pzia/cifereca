@@ -6,6 +6,7 @@ a ModalDownload button, a distinct readBook lid and ordinary site navigation.
 This tests HTTP-client/importer boundaries, not a live merchant or real DRM.
 """
 from pathlib import Path
+import http.cookiejar
 
 import httpx
 import pytest
@@ -52,8 +53,11 @@ def test_global_lcp_and_adobe_for_same_copy_select_only_unique_allowed_acsm():
     assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(evidence)
 
 
-def test_fresh_owned_readbook_redirect_confirmation_imports_one_acsm(tmp_path):
+@pytest.mark.parametrize('disp', ('1', 'simple'))
+def test_fresh_owned_readbook_redirect_confirmation_imports_one_acsm(tmp_path, disp):
+    landing = CONFIRMATION.replace("disp=1", "disp=" + disp)
     requested = []
+    html = FIXTURE.read_text().replace('disp=1', 'disp=' + disp)
 
     def handler(request):
         url = str(request.url)
@@ -61,9 +65,9 @@ def test_fresh_owned_readbook_redirect_confirmation_imports_one_acsm(tmp_path):
         if url == LIBRARY:
             return httpx.Response(200, text=INVENTORY, headers={'content-type': 'text/html'})
         if url == READ_12:
-            return httpx.Response(302, headers={'location': CONFIRMATION})
-        if url == CONFIRMATION:
-            return httpx.Response(200, text=FIXTURE.read_text(), headers={'content-type': 'text/html'})
+            return httpx.Response(302, headers={'location': landing})
+        if url == landing:
+            return httpx.Response(200, text=html, headers={'content-type': 'text/html'})
         if url == SIGNED:
             return httpx.Response(200, content=ACSM, headers={'content-type': 'application/vnd.adobe.adept+xml'})
         pytest.fail('No LCP, navigation, other purchase or unowned request is permitted')
@@ -76,8 +80,25 @@ def test_fresh_owned_readbook_redirect_confirmation_imports_one_acsm(tmp_path):
         assert all(book.download_url is None for book in books)
         path, origin = session.download_direct(books[0], tmp_path)
         assert path.is_file() and origin == LIBRARY
-        assert requested == [LIBRARY, LIBRARY, READ_12, CONFIRMATION, SIGNED]
+        assert requested == [LIBRARY, LIBRARY, READ_12, landing, SIGNED]
         assert len(importer.calls) == 1
+        # No signed ref or display value is echoed; route and query shape
+        # are fixed enums/booleans on BOTH the 302 and confirmation 200.
+        delivery_http = [
+            kw['detail'] for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+            and kw['detail'].get('phase') == 'delivery_http'
+        ]
+        assert [row['path_kind'] for row in delivery_http] == [
+            'readbook', 'confirmation_page', 'acsm_fulfillment',
+        ]
+        assert delivery_http[0]['redirect_target_kind'] == 'confirmation_page'
+        assert delivery_http[0]['redirect_confirmation_ref_present'] is True
+        assert delivery_http[0]['redirect_confirmation_disp_simple'] is (disp == 'simple')
+        assert delivery_http[1]['confirmation_ref_present'] is True
+        assert delivery_http[1]['confirmation_disp_simple'] is (disp == 'simple')
+        assert 'ref=' not in repr(diagnostics.events)
+        assert 'disp=' not in repr(diagnostics.events)
         assert importer.calls[0][1]['identity_id'] == 'fictional-reader'
         assert all(marker not in repr(diagnostics.events) for marker in (
             'SYNTHETIC_NOT_A_CREDENTIAL', 'FICTIONAL_LCP', 'orderid=', 'auth=',
@@ -165,14 +186,16 @@ def test_confirmation_requires_exact_modal_copy_and_fresh_readbook_before_signed
         session.close()
 
 
-def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_path):
+@pytest.mark.parametrize('disp', ('1', 'simple'))
+def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_path, disp):
     """A site-wide login widget is not itself evidence of expired access.
 
     Only the already qualified confirmation card+ModalDownload+fresh readBook
     may select a signed ACSM, with no change to account authority.
     """
+    landing = CONFIRMATION.replace("disp=1", "disp=" + disp)
     visited = []
-    confirmation = FIXTURE.read_text().replace(
+    confirmation = FIXTURE.read_text().replace('disp=1', 'disp=' + disp).replace(
         '<form method="post"', '<input type="password" name="loginWidget" value="PRIVATE_HTML" />'
         '<form method="post"', 1,
     )
@@ -185,8 +208,8 @@ def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_pa
             return httpx.Response(200, text=INVENTORY,
                                   headers={'content-type': 'text/html'})
         if url == READ_12:
-            return httpx.Response(302, headers={'location': CONFIRMATION})
-        if url == CONFIRMATION:
+            return httpx.Response(302, headers={'location': landing})
+        if url == landing:
             return httpx.Response(200, text=confirmation,
                                   headers={'content-type': 'text/html'})
         if url == SIGNED:
@@ -201,8 +224,25 @@ def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_pa
         item = session.library()[0]
         path, origin = session.download_direct(item, tmp_path)
         assert path.is_file() and origin == LIBRARY
-        assert visited == [LIBRARY, LIBRARY, READ_12, CONFIRMATION, SIGNED]
+        assert visited == [LIBRARY, LIBRARY, READ_12, landing, SIGNED]
         assert session.connected is True and len(importer.calls) == 1
+        # No signed ref or display value is echoed; route and query shape
+        # are fixed enums/booleans on BOTH the 302 and confirmation 200.
+        delivery_http = [
+            kw['detail'] for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+            and kw['detail'].get('phase') == 'delivery_http'
+        ]
+        assert [row['path_kind'] for row in delivery_http] == [
+            'readbook', 'confirmation_page', 'acsm_fulfillment',
+        ]
+        assert delivery_http[0]['redirect_target_kind'] == 'confirmation_page'
+        assert delivery_http[0]['redirect_confirmation_ref_present'] is True
+        assert delivery_http[0]['redirect_confirmation_disp_simple'] is (disp == 'simple')
+        assert delivery_http[1]['confirmation_ref_present'] is True
+        assert delivery_http[1]['confirmation_disp_simple'] is (disp == 'simple')
+        assert 'ref=' not in repr(diagnostics.events)
+        assert 'disp=' not in repr(diagnostics.events)
         assert diagnostics.events
         assert all(marker not in repr(diagnostics.events) for marker in (
             'PRIVATE_HTML', 'FICTIONAL_LCP', 'SYNTHETIC_NOT_A_CREDENTIAL',
@@ -215,7 +255,7 @@ def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_pa
 
 @pytest.mark.parametrize('mutation', (
     'different_product', 'different_copy', 'different_readbook',
-    'missing_modal', 'duplicate_signed', 'unqualified_landing',
+    'missing_modal', 'duplicate_signed', 'missing_links_array', 'unqualified_landing',
 ))
 def test_shared_login_widget_confirmation_refuses_unbound_acsm(tmp_path, mutation):
     """A login form plus ONE plausible signed link is never enough."""
@@ -235,6 +275,8 @@ def test_shared_login_widget_confirmation_refuses_unbound_acsm(tmp_path, mutatio
         html = html.replace('ModalDownload(9001, 1)', 'UnrelatedAction(9001, 1)')
     elif mutation == 'duplicate_signed':
         html = html.replace('</body>', '<script>const extra = "' + SECOND + '";</script></body>')
+    elif mutation == 'missing_links_array':
+        html = html.replace('const Links = [', 'const OtherLinks = [')
     landing = (
         'https://www.numilog.com/Pages/Compte/Landing.aspx'
         if mutation == 'unqualified_landing' else CONFIRMATION
@@ -263,6 +305,30 @@ def test_shared_login_widget_confirmation_refuses_unbound_acsm(tmp_path, mutatio
         assert not importer.calls
         assert session.connected is True
         assert diagnostics.events
+        # The failure has one bounded, discriminating html_selection event.
+        # The terminal public code remains login_form_detected because a
+        # password widget alone never proves that the cookie expired.
+        selections = [
+            kw['detail'] for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+            and kw['detail'].get('phase') == 'html_selection'
+        ]
+        expected_selection = (
+            'login_form_detected' if mutation == 'unqualified_landing'
+            else 'html_delivery_link_missing' if mutation == 'missing_links_array'
+            else 'html_delivery_ambiguous'
+        )
+        assert len(selections) == 1
+        assert selections[0]['code'] == expected_selection
+        assert selections[0]['html_kind'] == 'login'
+        assert selections[0].get('candidates', 0) <= 10000
+        terminal = [
+            kw['detail'] for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+            and kw['detail'].get('phase') == 'completed'
+        ]
+        assert len(terminal) == 1
+        assert terminal[0]['code'] == 'login_form_detected'
         assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostics.events)
         assert diagnostics.events[-1]
         _assert_clean(tmp_path)
@@ -300,6 +366,170 @@ def test_actual_login_endpoint_refuses_even_a_bound_confirmation_layout(tmp_path
         assert session.connected is False
         assert not importer.calls
         assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostics.events)
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize('html,error_label,error_code', (
+    ('<a class="download" href="' + SIGNED + '">Télécharger</a>',
+     'lien de livraison absent', 'html_delivery_link_missing'),
+    ('<script>window.location = "' + SIGNED + '";</script>',
+     'lien de livraison absent', 'html_delivery_link_missing'),
+    ('<script>const Links = [{ProductId: 9001, IndexExemplaire: 1, '
+     + 'DrmTechnlology: "ADOBE", link: "' + SIGNED + '"}];</script>',
+     'plusieurs liens', 'html_delivery_ambiguous'),
+))
+def test_confirmation_without_login_never_consumes_unbound_signed_acsm(
+    tmp_path, html, error_label, error_code,
+):
+    """Even a harmless template can advertise another order's signed URL.
+
+    The confirmation route is ALWAYS scoped to the exact current purchase,
+    not to whichever ACSM happens to be the only eligible link on the page.
+    """
+    visited = []
+    landing = CONFIRMATION.replace('disp=1', 'disp=simple')
+
+    def handler(request):
+        url = str(request.url)
+        visited.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=INVENTORY,
+                                  headers={'content-type': 'text/html'})
+        if url == READ_12:
+            return httpx.Response(302, headers={'location': landing})
+        assert url == landing, 'An unbound ACSM must never be fetched'
+        return httpx.Response(200, text=html,
+                              headers={'content-type': 'text/html'})
+
+    session, diagnostics, importer = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        book = session.library()[0]
+        with pytest.raises(ProviderError, match=error_label):
+            session.download_direct(book, tmp_path)
+        assert visited == [LIBRARY, LIBRARY, READ_12, landing]
+        assert session.connected is True
+        assert not importer.calls
+        events = [
+            kwargs['detail'] for args, kwargs in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+        ]
+        assert any(event.get('code') == error_code for event in events)
+        assert events[-1]['code'] == error_code
+        assert 'FICTIONAL' not in repr(diagnostics.events)
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostics.events)
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+def test_legacy_intermediate_without_login_still_allows_one_safe_signed_url(tmp_path):
+    """Do not rewrite the historical non-confirmation readBook flow."""
+    landing = 'https://www.numilog.com/Pages/Compte/Landing.aspx'
+    visited = []
+
+    def handler(request):
+        url = str(request.url)
+        visited.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=INVENTORY)
+        if url == READ_12:
+            return httpx.Response(302, headers={'location': landing})
+        if url == landing:
+            return httpx.Response(
+                200, text='<script>window.location = "' + SIGNED + '";</script>',
+                headers={'content-type': 'text/html'},
+            )
+        if url == SIGNED:
+            return httpx.Response(
+                200, content=ACSM,
+                headers={'content-type': 'application/vnd.adobe.adept+xml'},
+            )
+        pytest.fail('Unexpected URL in legacy intermediate path')
+
+    session, diagnostics, importer = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        book = session.library()[0]
+        path, source = session.download_direct(book, tmp_path)
+        assert path.is_file() and source == LIBRARY
+        assert visited == [LIBRARY, LIBRARY, READ_12, landing, SIGNED]
+        assert len(importer.calls) == 1
+        assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostics.events)
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize('cookie_path,readbook_has_cookie,confirmation_has_cookie', (
+    ('/', True, True),
+    ('/Pages/Compte', True, False),
+    ('/Pages/Commande', False, True),
+    ('/Pages/Other', False, False),
+))
+def test_fictional_secure_cookie_path_provenance_across_confirmation(
+    tmp_path, cookie_path, readbook_has_cookie, confirmation_has_cookie,
+):
+    """A Cookie header at readBook never proves its presence on confirmation.
+
+    SameSite belongs to a browser navigation context; HTTPX keeps the
+    attribute but does not reproduce the browser's SameSite enforcement.
+    This test only proves Domain/Path/Secure eligibility, using a fake value.
+    """
+    requests = []
+    landing = CONFIRMATION.replace('disp=1', 'disp=simple')
+
+    def handler(request):
+        requests.append(request)
+        url = str(request.url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=INVENTORY)
+        if url == READ_12:
+            return httpx.Response(302, headers={'location': landing})
+        if url == landing:
+            return httpx.Response(200, text=FIXTURE.read_text(),
+                                  headers={'content-type': 'text/html'})
+        if url == SIGNED:
+            return httpx.Response(
+                200, content=ACSM,
+                headers={'content-type': 'application/vnd.adobe.adept+xml'},
+            )
+        pytest.fail('Only the explicitly selected fictional order is allowed')
+
+    session, diagnostics, importer = setup(tmp_path, handler)
+    session.connected = True
+    session.client.cookies.jar.set_cookie(http.cookiejar.Cookie(
+        0, 'synthetic', 'PRIVATE_COOKIE', None, False,
+        'www.numilog.com', False, False,
+        cookie_path, True, True, None, True, None, None,
+        {'SameSite': 'Lax'}, False,
+    ))
+    try:
+        book = session.library()[0]
+        path, source = session.download_direct(book, tmp_path)
+        assert path.is_file() and source == LIBRARY
+        assert len(importer.calls) == 1
+        actual = {str(request.url): request for request in requests}
+        assert ('synthetic=PRIVATE_COOKIE' in
+                actual[READ_12].headers.get('cookie', '')) is readbook_has_cookie
+        assert ('synthetic=PRIVATE_COOKIE' in
+                actual[landing].headers.get('cookie', '')) is confirmation_has_cookie
+        events = [
+            kwargs['detail'] for args, kwargs in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+            and kwargs['detail'].get('phase') == 'delivery_http'
+        ]
+        assert [event['path_kind'] for event in events][:2] == [
+            'readbook', 'confirmation_page',
+        ]
+        assert events[0]['cookie_header_present'] is readbook_has_cookie
+        assert events[1]['cookie_header_present'] is confirmation_has_cookie
+        assert 'PRIVATE_COOKIE' not in repr(diagnostics.events)
+        assert 'synthetic=' not in repr(diagnostics.events)
+        assert 'ref=' not in repr(diagnostics.events)
+        assert 'disp=' not in repr(diagnostics.events)
         _assert_clean(tmp_path)
     finally:
         session.close()

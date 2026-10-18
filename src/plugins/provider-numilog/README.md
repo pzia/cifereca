@@ -696,3 +696,144 @@ trois réponses HTML `other` observées chez l'utilisateur suivent cette
 route, ni que le fournisseur accepte leur ACSM. Le P0 #2024 exige
 toujours une vraie livraison réussie du même achat et un export
 expurgé après installation du correctif.
+
+
+## 0.1.43 — identifier le vrai saut ConfirmationPaiement sans exposer ref (#2024)
+
+Le parcours navigateur rapporté pour le **même achat** passe par la route
+`/Pages/Commande/ConfirmationPaiement.aspx?ref=<PRIVÉ>&disp=simple` et finit
+par recevoir un ACSM. Le saut HTTP réel depuis `readBook` n'est pas encore
+qualifié : aucun `ref`, URL de commande ni requête JS n'est reconstruit.
+
+Sur les **événements de téléchargement existants**, le producteur Plugins
+déclare `path_kind=confirmation_page` et
+`redirect_target_kind=confirmation_page` **uniquement** pour la route HTTPS
+exacte sur `www.numilog.com`. Il ajoute des booléens stricts
+`confirmation_ref_present` et `confirmation_disp_simple` sur le GET
+effectivement arrivé à la confirmation, et leur variante préfixée
+`redirect_` sur le 302 **déjà autorisé** visant cette page. Une présence
+`ref` signifie un paramètre unique et non vide ; `disp_simple` signifie
+exactement un `disp=simple`. Plusieurs `ref` ou `disp` rendent leur
+preuve correspondante `false`. Une URL non qualifiée n'expose aucun
+de ces champs.
+
+Aucun **contenu** de `ref`/`disp`, nom d'achat, URL signée, `Location`,
+cookie, corps HTML ni titre n'entre dans les événements, logs ou
+erreurs. La page n'est pas considérée comme appartenant au compte sur
+ces seuls booléens : les contrôles d'identité, de copie exacte et
+d'ACSM de 0.1.42 sont inchangés, sans requête supplémentaire.
+
+La projection des diagnostics **Core** utilise une liste fermée :
+elle doit explicitement reconnaître les nouveaux types/catégories, et
+le booléen existant `cookie_header_present`, pour que l'export utilisateur
+les affiche. Cette mise à jour Core est laissée au rôle Core (#1884) et
+n'est **pas** contenue dans cette version du plugin.
+
+Lorsque le gabarit de la vraie confirmation contient un widget
+login **mais ne permet pas une liaison univoque**, l'événement
+`html_selection` distingue désormais `html_delivery_link_missing`,
+`html_delivery_ambiguous` ou `html_invalid` via les **codes publics
+existants**, avec `html_kind=login` et un compteur borné de candidats.
+Le code terminal reste `login_form_detected` et aucune session n'est
+invalidée hors de la vraie page de connexion. Aucune URL signée n'est
+consommée sur ces échecs : ces causes peuvent être observées **sans
+extension du schéma Core pour les codes** (contrairement aux nouveaux
+champs de route).
+
+Tests HTTPX simulés : ancien `disp=1` et `disp=simple`, parcours
+`readBook → 302 → ConfirmationPaiement → ACSM` avec et sans widget login,
+refus sous product/copie/lid/modal ambigus ou absence de tableau de liens,
+acheminement de la query d'origine non modifiée, et absence de fuites
+à chaque événement. **Aucun téléchargement client live validé** :
+le ticket P0 #2024 ne doit pas être clôturé sur ce lot.
+
+
+## 0.1.43 — liaison obligatoire sur toute page de confirmation d'achat (#2024)
+
+Une `ConfirmationPaiement.aspx` peut présenter plusieurs livres, offres ou
+variantes. **Même sans formulaire de connexion**, un unique lien ACSM dans
+une telle page ne prouve pas qu'il concerne l'édition de la carte sélectionnée.
+Le provider exige désormais, sur la **route canonique** de confirmation,
+le même tableau `Links` Adobe unique, le bouton `ModalDownload` constant
+et la correspondance exacte du `readBook` issu de la bibliothèque fraîche.
+Si l'une de ces preuves manque ou diverge, aucun ACSM n'est consommé.
+
+Le repli historique d'une page *intermédiaire distincte* (qui contient
+un seul lien signé admissible) reste inchangé. Tests fictifs couvrant un
+lien unique `<a>`, un `window.location` JS et un `Links` non lié dans
+la confirmation : tous refusés avant tout GET ACSM ; comparaison avec
+un `Landing.aspx` ancien toujours fonctionnel. Il n'y a aucun changement
+de compte, droit, endpoint ni suite d'appels réseau.
+
+
+## Cookies HTTPS entre MesLivres, readBook et confirmation (#2024)
+
+La présence de l'en-tête Cookie sur le GET `readBook.ashx` ne prouve
+pas que ce même cookie est éligible sur
+`/Pages/Commande/ConfirmationPaiement.aspx`. Les cookies déclarés
+avec `Path=/Pages/Compte` ne transitent pas vers
+`/Pages/Commande` ; ceux avec `Path=/` sont éligibles pour les deux.
+Les tests HTTPX hors réseau couvrent également `Path=/Pages/Commande`
+et `/Pages/Other`, avec un cookie `Secure` fictif et l'attribut
+`SameSite=Lax`, en vérifiant **seulement** la présence booléenne au
+niveau de la requête effectivement envoyée et du diagnostic expurgé.
+
+HTTPX **n'émule pas le contexte de navigation SameSite du navigateur** :
+ces tests documentent le filtrage Domain/Path/Secure, pas une preuve que
+Numilog valide une session réelle. Aucun nom/valeur de cookie, query de
+commande ou identifiant privé ne doit entrer dans un export.
+
+
+## Rejet d'un HTML de livraison structurellement invalide (#2024)
+
+Le parseur HTML de première classification peut refuser un DOM trop
+profond ou contenant trop d'éléments, même si la **taille en octets**
+est sous la limite de réponse. Ce cas renvoie maintenant un
+`ProviderError` fixe, un `html_selection=html_invalid` et un
+`completed=html_invalid` expurgés, à la place d'une exception
+`ParseError` brute faussement classée `html_oversize`.
+
+Aucun lien ACSM ni script n'est sélectionné dans cette situation.
+Les tests hors réseau dépassent indépendamment la limite de
+profondeur et la limite du nombre de nœuds. Aucun log du corps
+HTML, d'URL de compte ou de texte d'exception amont n'est publié.
+
+
+## Lien ConfirmationPaiement explicite dans la carte MesLivres (#2024)
+
+Lors du **clic explicite** sur un achat, l'inventaire Numilog est relu
+sous l'identité propriétaire courante. Si la carte de cette **édition
+unique** comporte, en plus de son `readBook.ashx` déjà utilisé pour
+l'identité du record, un lien HTML littéral unique vers
+`https://www.numilog.com/Pages/Commande/ConfirmationPaiement.aspx`
+avec une référence `ref` unique et non vide et un seul `disp=simple`,
+le provider peut emprunter **ce href précis** comme premier saut.
+Aucun `ref` n'est dérivé de `lid`, du titre, d'un ISBN, d'un cache
+ou d'un lien trouvé dans une autre carte. Une route, un host, une
+query ou un fragment inattendu n'est pas admis ; deux liens de
+confirmation concurrents font échouer l'acquisition sans requête de
+livraison. Une carte à plusieurs variantes ne permet pas d'attribuer
+le même href à un exemplaire arbitraire.
+
+Le `readBook` de la carte reste la preuve d'édition transmise au
+validateur strict `Links` / `ModalDownload(ProductId, IndexExemplaire)`
+de la page de confirmation. Si l'ACSM n'est pas rattaché au même
+`readBook` frais, aucun fichier n'est consommé. Sur ce premier saut,
+le `Referer` est `MesLivres.aspx` (sans URL de commande) ; les
+suivants restent la racine du site. Le broker et l'identité Adobe ne
+changent pas.
+
+Les liens de confirmation sont **transitoires et ciblés**, extraits
+seulement en `_rows(include_delivery=True)`, jamais en inventaire,
+catalogue, `SearchResult`, cache, diagnostic ou suivi de droit.
+Si la carte ne contient **pas** de lien explicite qualifié, le
+fallback historique `readBook` continue sans changement.
+
+Les tests offline couvrent les deux entrées (readBook 302 et href
+direct) vers `disp=simple`, avec/sans widget login, liaison exacte,
+mauvais achat, ancres concurrentes, variantes multiples, hosts,
+paramètres et fragments invalides, cookies Domain/Path/Secure
+synthétiques et absence de secret dans toute trace. La **structure
+réelle de l'ancre cliquée** sur le compte Numilog et le succès ACSM
+effectif demeurent non attestés ; aucune nouvelle route ou requête JS
+n'est devinée.

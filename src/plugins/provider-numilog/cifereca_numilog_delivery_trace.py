@@ -7,7 +7,8 @@ from __future__ import annotations
 
 from secrets import token_hex
 from time import perf_counter
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
+from unicodedata import category
 
 _PUBLIC_PHASES = frozenset({
     "start", "delivery_http", "html_selection", "artifact_validation",
@@ -66,9 +67,61 @@ def destination_category(value: object) -> tuple[str, str]:
         else "readbook" if path.endswith("/readbook.ashx")
         else "personal_library" if path.endswith("/meslivres.aspx")
         else "login_page" if host == "www.numilog.com" and path in {"/login.aspx", "/login.aspx/authuser"}
+        else "confirmation_page" if _is_confirmation_url(value)
         else "other"
     )
     return origin, path_kind
+
+
+def _is_confirmation_url(value: object) -> bool:
+    """Recognize only the canonical Numilog HTTPS confirmation path.
+
+    No order reference, URL or query is ever returned from this predicate.
+    """
+    if type(value) is not str or any(
+        category(char) in {"Cc", "Cf", "Cs"} or ord(char) == 92
+        for char in value
+    ):
+        return False
+    try:
+        parts = urlsplit(value)
+        return (
+            parts.scheme.casefold() == "https"
+            and (parts.hostname or "").casefold() == "www.numilog.com"
+            and parts.port in (None, 443)
+            and parts.username is None and parts.password is None
+            and not parts.fragment
+            and parts.path.casefold() == "/pages/commande/confirmationpaiement.aspx"
+        )
+    except (ValueError, AttributeError):
+        return False
+
+
+def confirmation_query_shape(value: object) -> dict[str, bool]:
+    """Return *only* fixed booleans for an exact confirmation-page URL.
+
+    A private ref/disp value is never copied, logged or serialized.
+    Duplicated/empty values do not attest a single unambiguous parameter.
+    """
+    if not _is_confirmation_url(value):
+        return {}
+    try:
+        parts = urlsplit(value)
+        pairs = parse_qsl(
+            parts.query, keep_blank_values=True,
+            strict_parsing=True, max_num_fields=32,
+        )
+    except (ValueError, AttributeError):
+        return {
+            "confirmation_ref_present": False,
+            "confirmation_disp_simple": False,
+        }
+    refs = [v for k, v in pairs if k == "ref"]
+    displays = [v for k, v in pairs if k == "disp"]
+    return {
+        "confirmation_ref_present": len(refs) == 1 and bool(refs[0].strip()),
+        "confirmation_disp_simple": displays == ["simple"],
+    }
 
 
 def mime_group(value: object) -> str:
@@ -127,6 +180,8 @@ class DeliveryTrace:
             detail["mime"] = mime_group(mime)
         if destination is not None:
             detail["origin_kind"], detail["path_kind"] = destination_category(destination)
+            if detail["path_kind"] == "confirmation_page":
+                detail.update(confirmation_query_shape(destination))
         # Only a previously checked/allowlisted URL should be supplied by
         # callers. Even then, export fixed enums only, never Location/query.
         # A rejected/unverified redirect must omit both fields entirely.
@@ -134,6 +189,9 @@ class DeliveryTrace:
             detail["redirect_target_origin_kind"], detail["redirect_target_kind"] = (
                 destination_category(redirect_target)
             )
+            if detail["redirect_target_kind"] == "confirmation_page":
+                for key, flag in confirmation_query_shape(redirect_target).items():
+                    detail["redirect_" + key] = flag
         if html_kind is not None:
             detail["html_kind"] = (
                 html_kind if type(html_kind) is str and html_kind in _PUBLIC_HTML
@@ -189,4 +247,7 @@ class DeliveryTrace:
         return False
 
 
-__all__ = ["DeliveryTrace", "destination_category", "mime_group", "public_http_code"]
+__all__ = [
+    "DeliveryTrace", "confirmation_query_shape", "destination_category",
+    "mime_group", "public_http_code",
+]
