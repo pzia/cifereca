@@ -293,7 +293,7 @@ def test_adept_worker_error_retains_old_dialog_title():
     window, entry, control, adw, errors, dialogs, submitted = _adept_host()
     choose_adept_profile(window, entry, control, Adw=adw)
     submitted[0][0][3](RuntimeError("inventaire indisponible"))
-    assert errors == [("inventaire indisponible", "Profils ADE")]
+    assert errors == [("Lecture des profils ADE impossible", "Profils ADE")]
 
 
 @pytest.mark.parametrize("scope", ["_closed", "_identity_context_generation", "_account_context_generation"])
@@ -325,3 +325,58 @@ def test_late_adept_selection_is_inert_even_if_dialog_was_open(scope):
 
 def test_closed_adept_chooser_does_not_submit_tasks_or_touch_services():
     choose_adept_profile(NS(_closed=True), Mock(), object(), Adw=None)
+
+
+PRIVATE = "https://private.invalid/LOAN/borrow?token=SECRET_CHOOSER /home/secret/account.acsm"
+
+
+def test_directory_chooser_does_not_echo_private_path_or_exception(tmp_path):
+    window, entry, gtk, gio, choosers, errors = _directory_host()
+    choose_identity_directory(window, entry, tmp_path, Gtk=gtk, Gio=gio)
+    chooser = choosers[-1][1]
+    chooser.file = NS(get_path=Mock(side_effect=OSError(PRIVATE)))
+    chooser.respond(gtk.ResponseType.ACCEPT)
+    entry.set_text.assert_not_called()
+    assert chooser.destroyed == 1
+    assert window._identity_directory_chooser is None
+    assert errors == [("Répertoire indisponible", "Choix du répertoire impossible")]
+    assert "SECRET_CHOOSER" not in repr(errors)
+
+
+def test_invalid_directory_selection_does_not_echo_sensitive_name(tmp_path):
+    window, entry, gtk, gio, choosers, errors = _directory_host()
+    choose_identity_directory(window, entry, tmp_path, Gtk=gtk, Gio=gio)
+    chooser = choosers[-1][1]
+    chooser.file = NS(get_path=lambda: str(tmp_path / "SECRET_CHOOSER invalid"))
+    chooser.respond(gtk.ResponseType.ACCEPT)
+    entry.set_text.assert_not_called()
+    assert len(errors) == 1
+    assert errors[0][1] == "Choix du répertoire impossible"
+    assert "sous-répertoire direct" in errors[0][0]
+    assert "SECRET_CHOOSER" not in repr(errors)
+    assert chooser.destroyed == 1
+
+
+def test_adept_inventory_error_does_not_stringify_raw_exception():
+    window, entry, control, adw, errors, dialogs, submitted = _adept_host()
+    choose_adept_profile(window, entry, control, Adw=adw)
+
+    class HostileError(RuntimeError):
+        def __str__(self):
+            raise AssertionError("Exception __str__ must never enter GTK")
+
+    submitted[0][0][3](HostileError(PRIVATE))
+    assert errors == [("Lecture des profils ADE impossible", "Profils ADE")]
+    assert dialogs == []
+
+
+def test_adept_inventory_userfacing_message_is_kept_without_technical_details():
+    from cifereca.plugin_api import UserFacingError
+    window, entry, control, adw, errors, dialogs, submitted = _adept_host()
+    choose_adept_profile(window, entry, control, Adw=adw)
+    submitted[0][0][3](
+        UserFacingError("Associez un profil Adobe.", code="profile_required",
+                        technical_detail=PRIVATE)
+    )
+    assert errors == [("Associez un profil Adobe.", "Profils ADE")]
+    assert "SECRET_CHOOSER" not in repr(errors)

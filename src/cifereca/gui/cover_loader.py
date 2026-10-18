@@ -28,6 +28,22 @@ _TRACE_LOG = logging.getLogger("cifereca")
 CACHE_SCHEMA = "v2"
 
 
+def _cover_failure_code(exc: BaseException) -> str:
+    """Fixed diagnostic vocabulary; never inspect an exception's text or URL."""
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, httpx.HTTPStatusError):
+        return "http_status"
+    if isinstance(exc, httpx.RequestError):
+        return "request_failed"
+    if isinstance(exc, OSError):
+        return "storage_failed"
+    if isinstance(exc, ValueError):
+        return "invalid_image"
+    return "unexpected"
+
+
+
 @dataclass
 class _Callback:
     fn: Callable[[Path | None], None]
@@ -430,8 +446,9 @@ class CoverLoader:
                     tmp.write_bytes(data)
                     tmp.replace(path)
                     result = path
-                    parsed = httpx.URL(absolute)
-                    _TRACE_LOG.debug("TRACE cover download ok host=%s path=%s content_type=%s bytes=%s", parsed.host, parsed.path, content_type, len(data))
+                    # The URL, even its host/path, and MIME headers can be
+                    # private or provider-controlled. Emit only a safe count.
+                    _TRACE_LOG.debug("TRACE cover download ok bytes=%s", len(data))
                     with self._lock:
                         self._stats["download_ok"] += 1
                         self._fail_until.pop(absolute, None)
@@ -441,8 +458,7 @@ class CoverLoader:
                         path.unlink(missing_ok=True)
                     except OSError:
                         pass
-                    parsed = httpx.URL(absolute)
-                    _TRACE_LOG.debug("TRACE cover download failed host=%s path=%s error=%s message=%s", parsed.host, parsed.path, type(exc).__name__, str(exc))
+                    _TRACE_LOG.debug("TRACE cover download failed reason=%s", _cover_failure_code(exc))
                     with self._lock:
                         self._stats["download_failed"] += 1
                         self._fail_until[absolute] = time.monotonic() + 90.0
@@ -467,11 +483,7 @@ class CoverLoader:
                         "download",
                         "error",
                         duration_ms=elapsed,
-                        detail={
-                            "host": httpx.URL(absolute).host,
-                            "error": type(error).__name__,
-                            "message": str(error),
-                        },
+                        detail={"code": _cover_failure_code(error)},
                         level="detailed",
                     )
                 self._maybe_report()
