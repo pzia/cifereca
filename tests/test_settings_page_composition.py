@@ -32,6 +32,7 @@ class Widget:
     def set_sensitive(self, sensitive): self.sensitive = sensitive
     def set_subtitle(self, text): self.subtitle = text
     def set_label(self, label): self.label = label
+    def set_tooltip_text(self, tooltip): self.tooltip = tooltip
 
 
 @pytest.mark.parametrize('standalone', [False, True])
@@ -155,16 +156,23 @@ def test_editor_loading_keeps_bound_ids_and_choosers_read_current_directory(monk
 
 
 def test_diagnostic_factory_binds_controls_and_keeps_late_refresh_inert(monkeypatch):
-    ui = NS(**{name: Widget() for name in ('summary', 'filter', 'issues_box', 'details_toggle', 'text', 'scroll', 'refresh', 'copy', 'export', 'clear', 'performance_capture', 'performance_export', 'performance_status')})
+    ui = NS(**{name: Widget() for name in ('summary', 'filter', 'issues_box', 'details_toggle', 'text', 'scroll', 'refresh', 'copy', 'export', 'clear', 'performance_capture', 'performance_export', 'performance_status', 'open_page')})
     app = NS(level_dropdown=Widget(), diagnostics_switch=Widget(), levels=['normal'])
-    host, lifetime = NS(_closed=False), SettingsPageLifetime()
+    host, lifetime = NS(_closed=False, _pages={}, navigate=Mock()), SettingsPageLifetime()
     callbacks = tuple(Mock() for _ in range(4))
     monkeypatch.setattr(settings_diagnostics_actions, 'build_settings_diagnostic_callbacks', lambda *args, **kwargs: callbacks)
     refresh = Mock()
     monkeypatch.setattr(settings_diagnostics_actions.settings_diagnostics_refresh_controller, 'refresh_settings_diagnostics', refresh)
     refresh_text = settings_diagnostics_actions.bind_settings_diagnostics(host, page_lifetime=lifetime, diagnostic_ui=ui, application_ui=app, Gtk=NS(), Adw=NS(), Gdk=NS(), clear_box=Mock())
     assert refresh.call_count == 1
+    assert ui.open_page.sensitive is False
+    ui.open_page.emit('clicked')
+    host.navigate.assert_not_called()
+    host._pages['diagnostics'] = object()
     ui.refresh.emit('clicked'); ui.filter.emit('notify::selected')
+    assert ui.open_page.sensitive is True
+    ui.open_page.emit('clicked')
+    host.navigate.assert_called_once_with('diagnostics')
     assert refresh.call_count == 3
     ui.copy.emit('clicked'); ui.export.emit('clicked'); ui.clear.emit('clicked')
     app.level_dropdown.emit('notify::selected'); app.diagnostics_switch.emit('notify::active')
@@ -172,7 +180,9 @@ def test_diagnostic_factory_binds_controls_and_keeps_late_refresh_inert(monkeypa
     ui.details_toggle.active = True; ui.details_toggle.emit('toggled')
     assert ui.scroll.visible and ui.details_toggle.label == 'Masquer les détails techniques'
     lifetime.dispose(); refresh_text(); ui.refresh.emit('clicked')
+    ui.open_page.emit('clicked')
     assert refresh.call_count == 3
+    host.navigate.assert_called_once_with('diagnostics')
 
 
 def test_sync_factory_routes_to_scoped_page_without_global_acquisition():
