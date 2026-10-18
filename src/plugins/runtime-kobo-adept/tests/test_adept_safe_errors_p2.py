@@ -172,3 +172,15 @@ def test_top_level_exact_enum_is_mapped_only_for_acsm_request(monkeypatch):
     unrelated = run_failure(monkeypatch, payload, exit_code=10,
                             args=["acsm", "return", "loan-id", "--json"])
     assert unrelated.code == "kobo_adept_failed"
+
+
+@pytest.mark.parametrize("bad_code", [[], {"code": "private"}, ["adept_error"]])
+def test_malformed_vendor_codes_are_never_interpreted_as_adobe(monkeypatch, bad_code):
+    payload = {"ok": False, "error": {
+        "code": bad_code, "message": PRIVATE + " " + SECRET + " " + XML,
+        "retryable": True,
+    }}
+    acsm = run_failure(monkeypatch, payload, exit_code=1)
+    assert acsm.code == "adept_error" and acsm.retryable is False
+    unrelated = run_failure(monkeypatch, payload, exit_code=10, source_type="http")
+    assert unrelated.code == "kobo_adept_failed" and unrelated.retryable is False
