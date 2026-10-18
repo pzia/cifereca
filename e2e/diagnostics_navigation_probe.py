@@ -454,6 +454,11 @@ def main() -> int:
     def later(delay_ms, callback):
         def call():
             try:
+                # Local harness checkpoint only. Publication validates this
+                # integer against this source's function/lambda declarations.
+                code = getattr(callback, "__code__", None)
+                if code is not None and code.co_filename == __file__:
+                    report["checkpoint_line"] = code.co_firstlineno
                 callback()
             except Exception as exc:
                 fail(f"{type(exc).__name__}: {exc}")
