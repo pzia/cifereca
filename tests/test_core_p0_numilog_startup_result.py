@@ -149,3 +149,19 @@ def test_worker_persists_real_result_without_private_provider_data(tmp_path, out
         assert calls == []
     finally:
         service.close()
+
+
+def test_headless_sync_page_shows_persisted_numilog_result_without_network():
+    from tests.test_core_p0_1905_numilog_consent_ui import _ui
+    w, broker, calls, dialogs, state, row = _ui(initial="on_start")
+    broker.numilog_materialization_run_status = lambda sid: {
+        "status": "partial", "started_at": 2_000_000_000,
+        "next_eligible_at": 2_000_003_600,
+        "attempted": 5, "downloaded": 3, "skipped": 2, "failed": 1,
+    }
+    w._refresh_sync_page()
+    assert "Dernier essai partiel" in row().subtitle
+    assert "3 téléchargé(s)" in row().subtitle
+    assert len(dialogs) == 0
+    assert not w.runner.tasks
+    assert not any(name.startswith("materialization-prepare") for name, *_ in calls)
