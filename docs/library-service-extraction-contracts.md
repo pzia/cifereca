@@ -297,6 +297,21 @@ refresh, acquisition decisions, execution/persistence, success-only pruning
 and summary publication. Failed or partial runs preserve manifest rights and
 local artifacts; locks and the existing facade entry points remain unchanged.
 
+## ADEPT inventory reconciliation boundary (#1120)
+
+`core/adept_inventory_reconciliation.py` delegates the existing acquisition to
+public-inventory reconciliation. The private facade signature and the late
+`adept_inventory.match_local_book` import remain in `LibraryService`; the matcher,
+exception class and clock are injected at call time. The remaining executable
+body is AST-identical to its original form.
+
+The existing caller-owned cache reuses profile lists and inventories per exact
+profile-name tuple. Recorded loan IDs retain precedence; incomplete inventories,
+conflicts and ambiguity keep historical IDs/files and disable return. Persistence
+and diagnostic order are unchanged. This boundary never acquires ACSM, fulfills,
+creates a profile, returns a loan or mutates local files. Synthetic registry tests
+with local SQLite do not validate a real Adobe/Paris reconciliation.
+
 ## Read-only ADEPT borrower boundary
 
 `core/adept_borrower.py` resolves the proven Paris borrower/account context and
