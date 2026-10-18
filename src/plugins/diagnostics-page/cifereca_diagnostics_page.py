@@ -1233,6 +1233,104 @@ class DiagnosticsPagePlugin:
             display.get_clipboard().set(exported)
             host.toast("Sélection expurgée copiée")
 
+        def select_on_page(action):
+            nonlocal selection_json, selection_note
+            if selection_busy:
+                return
+            rows = sanitized_rows(
+                current_page, search=search_filter.get_text().strip(),
+                newest_first=sort_latest.get_active(),
+            )
+            previous = selected_event_ids if selection_json is None else set()
+            next_ids = page_selection_ids(rows, set(previous), action)
+            selected_event_ids.clear()
+            selected_event_ids.update(next_ids)
+            selection_json = None
+            selection_note = "Inversion limitée à cette page"
+            display_events()
+
+        def select_filtered(mode):
+            nonlocal selection_json, selection_note, selection_generation, selection_busy
+            if selection_busy:
+                return
+            invalidate_selection("")
+            selection_generation += 1
+            token = selection_generation
+            start_generation = page_generation
+            query = {
+                "source": SOURCES[int(source_selector.get_selected())],
+                "module": module_filter.get_text(),
+                "severity": SEVERITIES[int(severity_selector.get_selected())],
+                "period": PERIODS[int(period_selector.get_selected())],
+                "search": search_filter.get_text().strip(),
+                "mode": mode,
+            }
+            selection_busy = True
+            update_selected_status()
+
+            def scan(control):
+                return collect_filtered_selection(
+                    broker, cancelled=control.cancelled, **query,
+                )
+
+            try:
+                handle = self.tasks.submit(
+                    scan, label="Sélection expurgée des journaux", kind="diagnostics",
+                )
+            except Exception:
+                selection_busy = False
+                selection_note = "Sélection indisponible (traitement non démarré)"
+                update_selected_status()
+                return
+            self._selection_handle = handle
+
+            def finish(token_result, page_token, selected, failure):
+                nonlocal selection_json, selection_note, selection_busy
+                if token_result != selection_generation or page_token != page_generation:
+                    return False
+                selection_busy = False
+                selected_event_ids.clear()
+                if failure is not None:
+                    selection_json = None
+                    selection_note = failure
+                else:
+                    selection_json = selected.export_json
+                    selected_event_ids.update(selected.event_ids)
+                    selection_note = (
+                        f"{selected.inspected} examinés · premier lot revérifié · "
+                        "pas d’instantané Core atomique"
+                        + (" · sources incomplètes possibles" if selected.partial_sources else "")
+                    )
+                display_events()
+                if selection_json is not None:
+                    journals_preview.set_expanded(True)
+                return False
+
+            def done(done_handle):
+                from gi.repository import GLib
+                try:
+                    selected = done_handle.result()
+                except Exception as exc:
+                    fixed = str(exc) if type(exc) is ValueError else ""
+                    safe = {
+                        "diagnostic selection changed during pagination",
+                        "diagnostic selection contains ambiguous event IDs",
+                        "diagnostic selection contains duplicate event IDs",
+                        "diagnostic selection is incomplete",
+                        "diagnostic selection has missing rows",
+                        "diagnostic selection exceeds the safe page limit",
+                        "diagnostic selection exceeds 50 events",
+                        "diagnostic selection exceeds 24 KB",
+                        "diagnostic selection cancelled",
+                        "diagnostic selection contains invalid Unicode",
+                    }
+                    reason = fixed if fixed in safe else "Sélection indisponible : source ou export non qualifié"
+                    GLib.idle_add(finish, token, start_generation, None, reason)
+                else:
+                    GLib.idle_add(finish, token, start_generation, selected, None)
+
+            handle.add_done_callback(done)
+
         # An explicit refresh changes the underlying evidence. Any old AI
         # preview or consent must be revoked *before* starting broker I/O.
         def refresh_journals(_button):
@@ -1243,11 +1341,15 @@ class DiagnosticsPagePlugin:
         journals_previous.connect("clicked", previous_events)
         journals_next.connect("clicked", next_events)
         journals_copy.connect("clicked", copy_selected)
+        journals_select_errors.connect("clicked", lambda *_: select_filtered("errors"))
+        journals_select_all.connect("clicked", lambda *_: select_filtered("all"))
+        journals_invert.connect("clicked", lambda *_: select_on_page("invert"))
+        journals_clear.connect("clicked", lambda *_: (invalidate_selection("Sélection effacée"), display_events()))
         source_selector.connect("notify::selected", reset_events)
         severity_selector.connect("notify::selected", reset_events)
         period_selector.connect("notify::selected", reset_events)
         module_filter.connect("activate", reset_events)
-        search_filter.connect("changed", lambda *_: display_events())
+        search_filter.connect("changed", lambda *_: (invalidate_selection(), display_events()))
         sort_latest.connect("toggled", lambda *_: display_events())
         journals_copy.set_sensitive(False)
         journals_previous.set_sensitive(False)
@@ -1710,6 +1812,12 @@ class DiagnosticsPagePlugin:
             except Exception:
                 pass
         self._event_handle = None
+        if getattr(self, "_selection_handle", None) is not None:
+            try:
+                self._selection_handle.cancel()
+            except Exception:
+                pass
+        self._selection_handle = None
         if getattr(self, "_ai_handle", None) is not None:
             try:
                 self._ai_handle.cancel()
