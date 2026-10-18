@@ -30,6 +30,7 @@ class SelectionTests(unittest.TestCase):
             "src/cifereca/brokers.py",
             "src/cifereca/core/source_materialization.py",
             "src/cifereca/core/numilog_materialization_startup.py",
+            "src/cifereca/core/numilog_materialization_checkpoint.py",
             "src/cifereca/core/sync_coordination.py",
         ):
             self.assertEqual(mod.select([path]), mod.SYNC_CORE, path)
@@ -74,8 +75,9 @@ class SelectionTests(unittest.TestCase):
         self.assertTrue(set(mod.HOME).issubset(set(mod.ALL)))
 
     def test_diagnostics_all_seven(self):
-        self.assertEqual(set(mod.select(["src/plugins/diagnostics-page/page.py"])),
-                         set(mod.DIAG))
+        for path in ("src/plugins/diagnostics-page/page.py",
+                     "src/cifereca/core/diagnostic_numilog_projection.py"):
+            self.assertEqual(set(mod.select([path])), set(mod.DIAG))
 
     def test_1599_youth_gtk_plugin_real_coverage_at_both_widths(self):
         assert {"youth-1366", "youth-1600"}.issubset(set(mod.YOUTH))
