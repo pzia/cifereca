@@ -41,11 +41,11 @@ _DELIVERY_VALUES = {
                                        'personal_library', 'login_page',
                                        'confirmation_page', 'other'}),
 }
-_DELIVERY_BOOL_FIELDS = frozenset({
+_DELIVERY_BOOL_FIELDS = (
     'connected_initial', 'cookie_header_present',
     'confirmation_ref_present', 'confirmation_disp_simple',
     'redirect_confirmation_ref_present', 'redirect_confirmation_disp_simple',
-})
+)
 _SESSION_LOG = re.compile(r'TRACE numilog session connected=(True|False) reason=([a-z_]+)')
 
 
@@ -67,6 +67,14 @@ def public_numilog_fields(operation: str, detail: object, duration: object = Non
             if type(value) is int and low <= value <= high:
                 fields[key] = value
         for key in _DELIVERY_BOOL_FIELDS:
+            # A bool alone does not attest that the URL was a qualified
+            # confirmation: preserve its meaning only with the matching
+            # fixed route enum; never reconstruct a private order URL.
+            if key.startswith('confirmation_') and fields.get('path_kind') != 'confirmation_page':
+                continue
+            if (key.startswith('redirect_confirmation_')
+                    and fields.get('redirect_target_kind') != 'confirmation_page'):
+                continue
             flag = detail.get(key)
             if type(flag) is bool:
                 fields[key] = flag
