@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sqlite3
 import os
 import shutil
@@ -890,7 +891,14 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
         )
         if resolved.returncode != 0 or not resolved.stdout.strip():
             raise UpdateError("Branche, tag ou commit GitHub introuvable ou accès refusé")
-    sha = resolved.stdout.strip().splitlines()[-1]
+    # gh's response is untrusted until it matches the *entire* expected
+    # commit object ID. Do not allow an extra line, git option, refspec,
+    # truncated hash or arbitrary process output to reach 'git fetch'.
+    # Reject it before clone, staging or mutation, even during dry-run.
+    sha = resolved.stdout.strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}", sha) is None:
+        raise UpdateError("Référence GitHub résolue sans SHA de commit valide")
+    sha = sha.lower()
     with update_phase("clone"):
         clone = _run_bounded_process(
             [gh, "repo", "clone", repository, str(destination), "--", "--filter=blob:none", "--no-checkout"],
