@@ -152,7 +152,7 @@ def _metadata(source: Path) -> tuple[str, str]:
 
 def _python_version(exe: str) -> tuple[int, int, int] | None:
     try:
-        proc = subprocess.run(
+        proc = _run_bounded_process(
             [exe, "-c", "import sys,json;print(json.dumps(list(sys.version_info[:3])))"],
             text=True, capture_output=True, timeout=15, check=False,
         )
@@ -590,7 +590,7 @@ def _smoke_restored_plugins(release: Path, transaction: dict[str, Any]) -> dict[
     if not package_rows:
         return {"plugin_count": 0, "managed_packages": []}
     cli = _command_path(release, "cifereca-cli")
-    proc = subprocess.run(
+    proc = _run_bounded_process(
         [str(cli), "plugin", "list"], text=True, capture_output=True, timeout=120, check=False,
     )
     if proc.returncode != 0:
@@ -714,7 +714,7 @@ def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | N
         "--id", "cifereca-release-plugins",
         "--name", snapshot.name,
     ]
-    proc = subprocess.run(command, text=True, capture_output=True, timeout=180, check=False)
+    proc = _run_bounded_process(command, text=True, capture_output=True, timeout=180, check=False)
     if proc.returncode != 0 or not snapshot.is_file():
         detail = (proc.stderr or proc.stdout or "").strip()
         raise UpdateError(f"Construction du snapshot plugins impossible: {detail[-1200:]}")
@@ -725,7 +725,7 @@ def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, A
     command = _command_path(release, DEV_COMMAND)
     if not command.is_file():
         raise UpdateError("cifereca-update-dev absent du nouveau runtime")
-    proc = subprocess.run(
+    proc = _run_bounded_process(
         [str(command), str(snapshot), "--json"],
         text=True, capture_output=True, timeout=300, check=False,
     )
