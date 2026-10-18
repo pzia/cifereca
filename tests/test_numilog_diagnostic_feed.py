@@ -168,3 +168,81 @@ def test_delivery_suspension_fixed_log_survives_without_collector(tmp_path):
                                      source='app_log', log_path=path)['events']
     assert len(events) == 1
     assert 'reason=delivery_login_form_detected' in events[0]['message']
+
+
+def test_numilog_confirmation_query_shape_survives_closed_core_export(tmp_path):
+    """The user sees fixed evidence for ref/disp=simple, not the order URL."""
+    private_url = "https://www.numilog.com/Pages/Commande/ConfirmationPaiement.aspx?ref=PRIVATE&disp=simple"
+    events = feed(tmp_path, [
+        row(dict(action='012345abcdef', source='readbook', phase='delivery_http',
+                 code='redirect', http_status=302, origin_kind='numilog_site',
+                 path_kind='readbook', cookie_header_present=True,
+                 redirect_target_origin_kind='numilog_site',
+                 redirect_target_kind='confirmation_page',
+                 redirect_confirmation_ref_present=True,
+                 redirect_confirmation_disp_simple=True, location=private_url)),
+        row(dict(action='012345abcdef', source='readbook', phase='delivery_http',
+                 code='http_ok', http_status=200, origin_kind='numilog_site',
+                 path_kind='confirmation_page', cookie_header_present=True,
+                 confirmation_ref_present=True, confirmation_disp_simple=True,
+                 url=private_url)),
+    ])['events']
+    assert len(events) == 2
+    redirect, confirmed = [event['detail'] for event in events]
+    assert redirect['redirect_target_kind'] == 'confirmation_page'
+    assert redirect['redirect_target_origin_kind'] == 'numilog_site'
+    assert redirect['redirect_confirmation_ref_present'] is True
+    assert redirect['redirect_confirmation_disp_simple'] is True
+    assert redirect['cookie_header_present'] is True
+    assert confirmed['path_kind'] == 'confirmation_page'
+    assert confirmed['confirmation_ref_present'] is True
+    assert confirmed['confirmation_disp_simple'] is True
+    assert confirmed['cookie_header_present'] is True
+    assert 'confirmation_ref_present=True' in events[1]['message']
+    assert 'redirect_confirmation_disp_simple=True' in events[0]['message']
+    assert 'PRIVATE' not in json.dumps(events) and 'ref=' not in json.dumps(events)
+
+
+@pytest.mark.parametrize('bad', [1, 'True', [], {}, None])
+def test_numilog_confirmation_flags_reject_nonboolean_values(tmp_path, bad):
+    detail = dict(action='012345abcdef', phase='delivery_http', code='redirect',
+                  path_kind='confirmation_page', redirect_target_kind='confirmation_page',
+                  confirmation_ref_present=bad, confirmation_disp_simple=bad,
+                  redirect_confirmation_ref_present=bad,
+                  redirect_confirmation_disp_simple=bad,
+                  cookie_header_present=bad, location='PRIVATE')
+    event = feed(tmp_path, [row(detail)])['events'][0]
+    for field in ('confirmation_ref_present', 'confirmation_disp_simple',
+                  'redirect_confirmation_ref_present',
+                  'redirect_confirmation_disp_simple', 'cookie_header_present'):
+        assert field not in event['detail']
+    assert 'PRIVATE' not in json.dumps(event)
+
+
+def test_numilog_confirmation_flags_require_validated_route_enum(tmp_path):
+    event = feed(tmp_path, [row(dict(
+        action='012345abcdef', phase='delivery_http', code='redirect',
+        path_kind='other', redirect_target_kind='login_page',
+        confirmation_ref_present=True, confirmation_disp_simple=True,
+        redirect_confirmation_ref_present=True,
+        redirect_confirmation_disp_simple=True,
+    ))])['events'][0]
+    assert event['detail']['path_kind'] == 'other'
+    assert event['detail']['redirect_target_kind'] == 'login_page'
+    assert not any(key.startswith(('confirmation_', 'redirect_confirmation_'))
+                   for key in event['detail'])
+
+
+def test_numilog_new_diagnostic_enums_fail_closed_on_private_input(tmp_path):
+    event = feed(tmp_path, [row(dict(
+        action='012345abcdef', phase='delivery_http', code='redirect',
+        path_kind='confirmation_page?ref=PRIVATE',
+        redirect_target_origin_kind='https://private.invalid',
+        redirect_target_kind='https://private.invalid/?ref=PRIVATE',
+        cookie_header_present=True,
+    ))])['events'][0]
+    assert 'path_kind' not in event['detail']
+    assert 'redirect_target_origin_kind' not in event['detail']
+    assert 'redirect_target_kind' not in event['detail']
+    assert event['detail']['cookie_header_present'] is True
+    assert 'PRIVATE' not in json.dumps(event)
