@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from cifereca.plugin_api import ProviderError, ProviderCapabilityError
-from cifereca_numilog import NumilogSession
+from cifereca_numilog import NumilogSession, url_origin
 from cifereca_numilog_html import LIBRARY
 from cifereca_numilog_enrichment import merge_attested_public_listing
 from cifereca_numilog_public import parse_public_search
@@ -279,7 +279,10 @@ def test_duplicate_owned_public_links_in_same_page_block_enrichment_without_acsm
     parsed, _ = parse_library_page(html)
     assert len(parsed) == 1
     session = make_session("alice")
-    session._page = lambda url: (url, html)
+    def private_page(url, *, private_library_origin=None):
+        assert private_library_origin == url_origin(session.library_url)
+        return url, html
+    session._page = private_page
     # The raw readBook variant belongs to the actual parsed card, not an
     # invented equality between lid and product identifier.
     target = session._normalize(parsed[0])
@@ -302,7 +305,8 @@ def test_duplicate_owned_product_across_pages_blocks_enrichment(monkeypatch):
     ))
     accessed = []
 
-    def private_page(url):
+    def private_page(url, *, private_library_origin=None):
+        assert private_library_origin == url_origin(session.library_url)
         accessed.append(url)
         return (url, second if "page=2" in url else first)
 

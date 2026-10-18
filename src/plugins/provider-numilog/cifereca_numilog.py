@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.48, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.50, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.49'
+VERSION = '0.1.50'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -202,10 +202,17 @@ class NumilogSession(ProviderSession):
             parts.append(chunk)
         return b''.join(parts)
 
-    def _page(self,url,*,payload=None):
+    def _page(self,url,*,payload=None,private_library_origin=None):
+        # A private MesLivres request is not a generic allowed download.
+        # Other Numilog/partner origins are valid for DRM fulfillment only;
+        # they must never become evidence of owned purchases. In particular,
+        # reject an external 302 BEFORE sending cookies or any second GET.
         method = 'POST' if payload is not None else 'GET'
         for _ in range(10):
             checked_url(url,self.allowed_origins)
+            if (private_library_origin is not None
+                    and url_origin(url) != private_library_origin):
+                raise ProviderError('Numilog : origine de bibliothèque inattendue ; accès arrêté')
             headers = {'Referer':self.base_url}
             if payload is not None:
                 headers.update({'Origin':self.base_url.rstrip('/'),'X-Requested-With':'XMLHttpRequest','Accept':'application/json'})
@@ -214,7 +221,16 @@ class NumilogSession(ProviderSession):
                 if r.status_code in REDIRECTS:
                     if payload is not None:
                         raise ProviderError('Numilog : redirection inattendue pendant la connexion')
-                    url = checked_redirect(str(r.url),r.headers.get('location',''),self.allowed_origins)
+                    target = checked_redirect(
+                        str(r.url), r.headers.get('location',''), self.allowed_origins,
+                    )
+                    if (private_library_origin is not None
+                            and url_origin(target) != private_library_origin):
+                        # Do not query an allowed CDN, partner or ACSM host
+                        # under a forged /MesLivres.aspx path and then parse
+                        # its HTML as the owner's authenticated inventory.
+                        raise ProviderError('Numilog : origine de bibliothèque inattendue ; accès arrêté')
+                    url = target
                     continue
                 self._status(r)
                 return str(r.url),self._small(r).decode('utf-8-sig',errors='replace')
@@ -239,8 +255,11 @@ class NumilogSession(ProviderSession):
                     result = json.loads(result)
                 if not isinstance(result,dict) or result.get('AuthSuccess') is not True:
                     raise ProviderError('Numilog : connexion refusée')
-                url, text = self._page(self.library_url)
-                if urlsplit(url).path.lower() != '/pages/compte/meslivres.aspx':
+                url, text = self._page(
+                    self.library_url, private_library_origin=url_origin(self.library_url),
+                )
+                if (url_origin(url) != url_origin(self.library_url)
+                        or urlsplit(url).path.lower() != '/pages/compte/meslivres.aspx'):
                     raise ProviderError('Numilog : session non reconnue par la bibliothèque')
                 parse_library(text,url,cover_origins=self.allowed_origins)
             except (httpx.HTTPError,ValueError,TypeError,AttributeError):
@@ -293,8 +312,11 @@ class NumilogSession(ProviderSession):
                 if url in seen_pages:
                     raise ProviderError('Numilog : boucle de pagination de bibliothèque')
                 seen_pages.add(url)
-                final_url,text = self._page(url)
-                if urlsplit(final_url).path.lower() != '/pages/compte/meslivres.aspx':
+                final_url,text = self._page(
+                    url, private_library_origin=url_origin(self.library_url),
+                )
+                if (url_origin(final_url) != url_origin(self.library_url)
+                        or urlsplit(final_url).path.lower() != '/pages/compte/meslivres.aspx'):
                     self.connected = False
                     self._session_event('library_redirect')
                     raise ProviderError('Numilog : session expirée ; reconnecter le compte')

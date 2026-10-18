@@ -84,6 +84,18 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
+      - name: Refuse published Core release and mismatched source tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          python scripts/ci_core_release_preflight.py \
+            --tag "$RELEASE_TAG" --version "$(cat VERSION)" \
+            --commit "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY"
+
       - name: Install validation and build dependencies
         run: python -m pip install --disable-pip-version-check "setuptools>=69" wheel "pytest>=8,<9" "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=10,<12" "PyMuPDF>=1.26,<2"
 
@@ -126,6 +138,15 @@ jobs:
           cd dist
           sha256sum * > SHA256SUMS
 
+      - name: Recheck immutable Core release target before draft mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          python scripts/ci_core_release_preflight.py \
+            --tag "$RELEASE_TAG" --version "$(cat VERSION)" \
+            --commit "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY"
+
       - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -145,6 +166,30 @@ jobs:
             gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" "${create_args[@]}"
           fi
           gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Verify downloaded Core release draft assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          downloaded="$RUNNER_TEMP/core-release-draft-check"
+          mkdir -p "$downloaded"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$downloaded"
+          mapfile -t built < <(find dist -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
+          mapfile -t uploaded < <(find "$downloaded" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
+          if [[ "${built[*]}" != "${uploaded[*]}" ]]; then
+            echo 'Core draft asset set does not match build output.' >&2
+            exit 1
+          fi
+          for file in "${built[@]}"; do
+            cmp "dist/$file" "$downloaded/$file"
+          done
+          (cd "$downloaded" && sha256sum -c SHA256SUMS)
+          python scripts/ci_core_release_preflight.py \
+            --tag "$RELEASE_TAG" --version "$(cat VERSION)" \
+            --commit "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY"
 
       - name: Publish completed release
         env:
