@@ -165,3 +165,51 @@ def test_headless_sync_page_shows_persisted_numilog_result_without_network():
     assert len(dialogs) == 0
     assert not w.runner.tasks
     assert not any(name.startswith("materialization-prepare") for name, *_ in calls)
+
+
+@pytest.mark.parametrize(("status", "attempted", "downloaded", "failed"), [
+    ("complete", 1, 0, 1),
+    ("partial", 1, 0, 1),
+    ("failed", 1, 0, 0),
+    ("blocked", 1, 1, 0),
+])
+def test_contradictory_numilog_backup_result_is_never_persisted(
+    tmp_path, status, attempted, downloaded, failed,
+):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        clock = int(time())
+        assert service.storage.numilog_materialization_claim_startup(
+            source_id=sid, now=clock,
+        )
+        with pytest.raises(ValueError, match="invalid_numilog_materialization_receipt"):
+            service.storage.numilog_materialization_finish_startup(
+                source_id=sid, started_at=clock, status=status,
+                attempted=attempted, downloaded=downloaded,
+                skipped=0, failed=failed,
+            )
+        assert service.storage.numilog_materialization_run_status(sid)["status"] == "running"
+        assert calls == []
+    finally:
+        service.close()
+
+
+def test_corrupted_public_success_with_failed_count_is_shown_as_unknown(tmp_path):
+    import json
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        clock = int(time())
+        assert service.storage.numilog_materialization_claim_startup(
+            source_id=sid, now=clock,
+        )
+        key = "sync.source.numilog.materialization.result.v1." + sid
+        payload = json.loads(service.storage.metadata_get(key))
+        payload.update(status="complete", attempted=1, downloaded=0, failed=1)
+        service.storage.metadata_set(key, json.dumps(payload))
+        status = broker.numilog_materialization_run_status(sid)
+        assert status["status"] == "unknown"
+        assert "Dernier bilan indisponible" in describe_run("on_start", status)
+    finally:
+        service.close()
