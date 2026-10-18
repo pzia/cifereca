@@ -344,3 +344,35 @@ def test_numilog_startup_does_not_run_for_other_identity(tmp_path):
         assert calls == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize(("size", "expected"), [(300, 8), (2049, 0)])
+def test_large_numilog_manifest_is_bounded_without_starving_hundreds_of_books(
+    tmp_path, monkeypatch, size, expected,
+):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        rows = [_row(account.credential_id, i) for i in range(size)]
+        session.library = lambda: rows
+        monkeypatch.setattr(
+            SynchronizationBrokerImpl, "preflight_numilog_purchase",
+            lambda *_a: SyncResult(ok=True, facts={"status": "candidate_unverified"}),
+        )
+        downloads = []
+        def acquire(item, *, _admission=None):
+            assert _admission() is item
+            downloads.append(item.record_id)
+            return NS(metadata={"numilog_checkpoint_id": "FICTIONAL"})
+        monkeypatch.setattr(service, "acquire_direct_item", acquire)
+        monkeypatch.setattr(
+            "cifereca.core.numilog_materialization_startup.index_delivered",
+            lambda *_a, **_kw: None,
+        )
+        result = execute(broker, account.identity_id, "startup")
+        assert result.changed == expected
+        assert len(downloads) == expected
+        assert result.ok is (size <= 2048)
+        assert calls == []
+    finally:
+        service.close()
