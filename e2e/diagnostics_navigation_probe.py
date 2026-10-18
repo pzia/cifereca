@@ -53,6 +53,18 @@ def probe_failure_line(exc):
     return line
 
 
+def present_offline_fixture_error(present_error, error, *, dialogs):
+    """Tag only a new dialog proven to originate in this exact offline fixture."""
+    from cifereca.providers import ProviderConfigurationError
+    before = set(dialogs())
+    present_error(error)
+    expected = (type(error) is ProviderConfigurationError
+                and error.args == ("Provider non connecté: local",))
+    for dialog in set(dialogs()) - before:
+        if expected and dialog.get_body() == "Traitement indisponible":
+            dialog._cifereca_attested_offline_fixture = True
+
+
 def walk(widget):
     yield widget
     child = widget.get_first_child()
@@ -2761,7 +2773,11 @@ def main() -> int:
         dialogs = [node for node in Gtk.Window.list_toplevels()
                    if isinstance(node, Adw.MessageDialog) and node.get_visible()]
         if dialogs:
-            assert all(node.get_body() == "Provider non connecté: local" for node in dialogs)
+            assert all(
+                node.get_body() == "Traitement indisponible"
+                and getattr(node, "_cifereca_attested_offline_fixture", False) is True
+                for node in dialogs
+            ), "Unattested product dialog blocks the offline fixture"
             button = next(node for node in walk(dialogs[-1])
                           if isinstance(node, Gtk.Button)
                           and str(node.get_label()).replace("_", "") == "Fermer")
@@ -3118,6 +3134,15 @@ def main() -> int:
             try:
                 w = MainWindow(self, core.config, core.library, core.diagnostics)
                 window[0] = w
+                # Observe provenance before TaskRunner's intentional redaction.
+                # Only the exact missing-local-provider fixture can be tagged;
+                # an unrelated generic error remains a blocking product dialog.
+                original_present_error = w.runner.present_error
+                w.runner.present_error = lambda error: present_offline_fixture_error(
+                    original_present_error, error,
+                    dialogs=lambda: [node for node in Gtk.Window.list_toplevels()
+                                     if isinstance(node, Adw.MessageDialog)],
+                )
                 w.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
                 w.plugin_manager = IsolatedContributions(page_plugin)
                 w._rebuild_plugin_pages()

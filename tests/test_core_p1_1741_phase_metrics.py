@@ -16,6 +16,7 @@ from unittest.mock import Mock
 import pytest
 
 from cifereca.gui.ui_perf import UiPerfMonitor
+from cifereca.plugin_api import UserFacingError, AttentionRequired
 
 
 def test_phase_aggregates_reuse_monitor_percentiles_and_mark_missing_data():
@@ -142,6 +143,7 @@ def _headless_runner():
         Future=Future, PriorityExecutor=Pool,
         TaskPriority=NS(NORMAL=2), GLib=glib,
         _TRACE_LOG=logging.getLogger("test-core-perf"),
+        UserFacingError=UserFacingError, AttentionRequired=AttentionRequired,
     )
     exec(compile(tree, "task_runner.py", "exec"), env)
 

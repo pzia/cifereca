@@ -12,6 +12,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
 from cifereca.task_queue import TaskPriority
+from cifereca.plugin_api import UserFacingError, AttentionRequired
 
 
 def _runner():
@@ -49,6 +50,7 @@ def _runner():
         GLib=NS(idle_add=lambda fn, *args: callbacks.append((fn, args))),
         _TRACE_LOG=logger, PriorityExecutor=Pool, TaskPriority=TaskPriority,
         Future=Future,
+        UserFacingError=UserFacingError, AttentionRequired=AttentionRequired,
     )
     exec(compile(module, str(source), "exec"), scope)
     window = NS(

@@ -18,6 +18,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.task_queue import PriorityExecutor, TaskPriority
+from cifereca.plugin_api import UserFacingError, AttentionRequired
 
 
 ROOT = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
@@ -57,6 +58,7 @@ def session():
         threading=threading, itertools=itertools, time=time,
         GLib=NS(idle_add=lambda callback, *args: queue.put((callback, args))),
         _TRACE_LOG=log, TaskPriority=TaskPriority, PriorityExecutor=PriorityExecutor,
+        UserFacingError=UserFacingError, AttentionRequired=AttentionRequired,
     )
     exec(compile(declaration, str(ROOT / "task_runner.py"), "exec"), namespace)
     runner = namespace["TaskRunner"](window, max_workers=4)
