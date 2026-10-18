@@ -154,7 +154,7 @@ def test_native_export_is_manual_json_bounded_and_redacted(tmp_path):
     assert [r["category"] for r in report["events"]] == ["other", "other"]
     assert len(report["events"]) == 2
     assert report["stats"]["other.worker"]["count"] == 3
-    assert page.calls == [("toast", ("Mesures de performances exportées localement",))]
+    assert page.calls == [("toast", ("Mesures de performances enregistrées à l’emplacement choisi",))]
 
 
 def test_cancel_and_late_file_chooser_never_write_or_toast(tmp_path):
@@ -213,7 +213,7 @@ def test_invalid_report_fails_without_exposing_payload_in_error():
             return {"schema": "wrong", "secret": "PRIVATE_TOKEN"}
     page = _page(HostMonitor())
     page.export.click()
-    assert page.calls == [("error", ("Rapport de performances indisponible.",))]
+    assert page.calls == [("error", ("Rapport de performances indisponible (report_invalid).",))]
     assert "PRIVATE_TOKEN" not in str(page.calls)
 
 
@@ -222,3 +222,156 @@ def test_synthetic_and_real_sources_are_labeled_differently():
     observed = _page(UiPerfMonitor(measurement_origin="observed"))
     assert "mesures simulées" in simulated.status.label
     assert "mesures observées" in observed.status.label
+
+
+def _gio_testing(monkeypatch):
+    """GI is intentionally absent from the Core-only pytest environment."""
+    import sys
+    from types import ModuleType
+
+    gi = ModuleType("gi")
+    gi.__path__ = []
+    repository = ModuleType("gi.repository")
+    repository.Gio = NS(FileCreateFlags=NS(NONE=0))
+    gi.repository = repository
+    monkeypatch.setitem(sys.modules, "gi", gi)
+    monkeypatch.setitem(sys.modules, "gi.repository", repository)
+
+
+class VirtualDestination:
+    """Gio.File-like save target with no host filesystem path."""
+
+    def __init__(self, *, failure=None, result=(True, None)):
+        self.failure = failure
+        self.result = result
+        self.writes = []
+        self.path_requests = 0
+
+    def get_path(self):
+        self.path_requests += 1
+        raise AssertionError("Never convert a Gio.File to a POSIX path")
+
+    def replace_contents(self, data, etag, backup, flags, cancellable):
+        self.writes.append((data, etag, backup, flags, cancellable))
+        if self.failure is not None:
+            raise self.failure
+        return self.result
+
+
+def _page_with_export_events():
+    records = []
+    monitor = UiPerfMonitor()
+    host = NS(
+        _closed=False, ui_perf=monitor,
+        diagnostics=NS(add=lambda *a, **kw: records.append(("diagnostic", a, kw))),
+        toast=lambda *a: records.append(("toast", a)),
+        show_error=lambda *a: records.append(("error", a)),
+    )
+    return _page(monitor, host=host), records
+
+
+def test_gio_virtual_destination_without_posix_path(monkeypatch):
+    _gio_testing(monkeypatch)
+    Chooser.seen.clear()
+    page, records = _page_with_export_events()
+    page.start.click()
+    page.monitor.record_phase("library", "projection", 3)
+    page.start.click()
+    page.export.click()
+    chooser = Chooser.seen[-1]
+    target = VirtualDestination()
+    chooser.file = target
+    chooser.signals["response"](chooser, GTK.ResponseType.ACCEPT)
+    assert chooser.destroyed
+    assert len(target.writes) == 1 and target.path_requests == 0
+    data, etag, backup, flags, cancellable = target.writes[0]
+    assert (etag, backup, flags, cancellable) == (None, False, 0, None)
+    report = json.loads(data.decode("utf-8"))
+    assert report["schema"] == "cifereca.performance.phases/1"
+    assert report["stats"]["library.projection"]["count"] == 1
+    assert ("toast", ("Mesures de performances enregistrées à l’emplacement choisi",)) in records
+    assert any(event[2] == {"detail": {"code": "completed"}, "level": "detailed"}
+               for event in records if event[0] == "diagnostic")
+
+
+def test_native_export_failure_is_redacted_and_does_not_claim_success(monkeypatch):
+    _gio_testing(monkeypatch)
+    Chooser.seen.clear()
+    page, records = _page_with_export_events()
+    page.export.click()
+    chooser = Chooser.seen[-1]
+    target = VirtualDestination(failure=OSError("/secret/home/file?token=NEVER_LOG"))
+    chooser.file = target
+    chooser.signals["response"](chooser, GTK.ResponseType.ACCEPT)
+    assert chooser.destroyed
+    assert len(target.writes) == 1
+    assert ("error", ("Impossible d’exporter les mesures de performances (write_failed).",)) in records
+    assert "NEVER_LOG" not in str(records)
+    assert not any(event[0] == "toast" for event in records)
+    assert any(event[2].get("detail", {}).get("code") == "write_failed"
+               for event in records if event[0] == "diagnostic")
+
+
+def test_missing_gio_target_and_failed_replace_are_typed(monkeypatch):
+    _gio_testing(monkeypatch)
+    Chooser.seen.clear()
+    page, records = _page_with_export_events()
+    page.export.click()
+    chooser = Chooser.seen[-1]
+    chooser.signals["response"](chooser, GTK.ResponseType.ACCEPT)
+    assert chooser.destroyed
+    assert any("destination_unavailable" in x[1][0] for x in records if x[0] == "error")
+    records.clear()
+    page.export.click()
+    chooser = Chooser.seen[-1]
+    chooser.file = VirtualDestination(result=(False, None))
+    chooser.signals["response"](chooser, GTK.ResponseType.ACCEPT)
+    assert any("write_failed" in x[1][0] for x in records if x[0] == "error")
+    assert not any(x[0] == "toast" for x in records)
+
+
+def test_chooser_failure_and_local_disk_error_are_distinct(monkeypatch, tmp_path):
+    Chooser.seen.clear()
+    page, records = _page_with_export_events()
+    def fail_show(_self):
+        raise OSError("/hidden/chooser")
+    monkeypatch.setattr(Chooser, "show", fail_show)
+    page.export.click()
+    assert Chooser.seen[-1].destroyed
+    assert any("chooser_failed" in x[1][0] for x in records if x[0] == "error")
+    assert "/hidden" not in str(records)
+    monkeypatch.undo()
+    records.clear()
+    page.export.click()
+    chooser = Chooser.seen[-1]
+    # Attempting to write to a directory fails, without leaking the path.
+    chooser.respond(GTK.ResponseType.ACCEPT, tmp_path)
+    assert chooser.destroyed
+    assert any("write_failed" in x[1][0] for x in records if x[0] == "error")
+
+
+def test_export_nonfinite_invalid_schema_and_capture_stale_are_safe(monkeypatch):
+    Chooser.seen.clear()
+    class BrokenReport:
+        detailed_capture_enabled = False
+        def enable_detailed_capture(self, active):
+            self.detailed_capture_enabled = active
+        def performance_report(self):
+            return {
+                "schema": "cifereca.performance.phases/1",
+                "measurement_origin": "observed",
+                "stats": {"task.worker": {"count": 1, "max_ms": float("nan")}},
+            }
+    page = _page(BrokenReport())
+    page.export.click()
+    assert page.calls == [("error", ("Rapport de performances indisponible (serialization_failed).",))]
+    assert Chooser.seen == []
+    _gio_testing(monkeypatch)
+    other, records = _page_with_export_events()
+    other.export.click()
+    chooser = Chooser.seen[-1]
+    target = VirtualDestination()
+    chooser.file = target
+    other.lifetime.dispose()
+    chooser.signals["response"](chooser, GTK.ResponseType.ACCEPT)
+    assert chooser.destroyed and target.writes == [] and records == []
