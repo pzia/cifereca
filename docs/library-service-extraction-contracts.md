@@ -329,6 +329,24 @@ and diagnostic order are unchanged. This boundary never acquires ACSM, fulfills,
 creates a profile, returns a loan or mutates local files. Synthetic registry tests
 with local SQLite do not validate a real Adobe/Paris reconciliation.
 
+## Opening synchronization guard summary (#1120)
+
+Each identity's opening result and persisted sync-run `detail` contain integer
+`skipped_borrower_binding` and `skipped_cross_identity` counters. They count only
+`attention_required` results with exact Core codes
+`adept_borrower_binding_required` and `adept_loan_identity_conflict`, respectively.
+They are subsets of `attention_required`, not additional errors or acquisitions.
+The `identity_end` progress event carries the same counts.
+
+The completion feedback names missing borrower associations and identity conflicts
+using these counts and fixed labels, and remains a persistent warning when either
+is nonzero. A technically completed `opening-sync` task is not evidence that its
+loans were acquired. Existing guards, identity/source partial outcomes, acquisition
+permissions and retry policy are unchanged. No title, profile, account, loan ID or
+URL is added to these counters or feedback labels. The acceptance test reproduces
+four missing borrower bindings followed by four cross-identity refusals with real
+Core guards/local SQLite and synthetic inventory, with zero ACSM/fulfillment calls.
+
 ## Read-only ADEPT borrower boundary
 
 `core/adept_borrower.py` resolves the proven Paris borrower/account context and

@@ -264,7 +264,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         })
         emit("identity_begin", identity_id=identity.identity_id, label=identity.label)
         errors = 0; new_acquisitions = 0; attention = 0
-        detail: dict[str, Any] = {"label": identity.label, "providers": [], "loans": 0, "realized": 0}
+        detail: dict[str, Any] = {
+            "label": identity.label, "providers": [], "loans": 0, "realized": 0,
+            "skipped_borrower_binding": 0, "skipped_cross_identity": 0,
+        }
         bound_profile = str(self.storage.adept_profile_binding_get("identity", identity.identity_id) or "").strip()
         if bound_profile:
             profile = next((p for p in adept_profiles if str(p.get("profile_id") or "") == bound_profile or str(p.get("name") or "") == bound_profile), None)
@@ -350,6 +353,13 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     self._record_action(identity.identity_id, "acquisition", "success", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id})
                 elif result["status"] == "attention_required":
                     attention += 1
+                    # Fixed public counters only: a completed sync task does
+                    # not mean these protected loans were acquired. Keep the
+                    # existing guards and their source-specific outcome intact.
+                    if result.get("code") == "adept_borrower_binding_required":
+                        detail["skipped_borrower_binding"] += 1
+                    elif result.get("code") == "adept_loan_identity_conflict":
+                        detail["skipped_cross_identity"] += 1
                     self._record_action(identity.identity_id, "acquisition", "failed", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id, "status": result["status"]})
                 elif result["status"] == "retryable_error":
                     errors += 1
