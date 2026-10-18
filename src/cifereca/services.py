@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .core import acsm_staging, loan_failure_evidence, adept_acquisition_return
 from .core import manual_acsm_import
+from .core import provider_loan_return
 
 import logging
 import time
@@ -1519,87 +1520,10 @@ class LibraryService:
             }
 
     def _return_digital_guarded(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
-        """PNB provider return with an at-most-once POST until verified.
-
-        An HTTP success only means REQUEST ACCEPTED. No Adobe return is made.
-        If a prior request exists, normal repeated clicks never send POST.
-        An explicit retry may POST only after a fresh read proves still active.
-        """
-        import uuid
-        from .core.loan_return_guard import public_return_state, return_ref
-        if loan.source_provider != "paris":
-            # Preserve legacy non-Paris providers; this guard is Paris-only.
-            account = self._account_for_loan(loan)
-            session = self._session_for_source(loan.source_provider, loan.source_credential)
-            return session.return_digital(loan, account)
-        account, session, key = self._return_loan_identity(loan)
-        if self._cross_identity_loan_conflict(
-            self.storage.acquisitions(provider_id=loan.source_provider),
-            provider_loan_id=loan.id, identity_id=account.identity_id,
-            entitlements=self.storage.entitlements(
-                provider_id=loan.source_provider, state="active"
-            ),
-        ):
-            return {
-                "status": "attention_required", "scope": "provider_pnb_only",
-                "code": "loan_return_identity_conflict",
-                "retry": "resolve_identity",
-            }
-        from .core.return_adept_orchestrator import adept_return_key, public_state
-        adobe_key = adept_return_key(
-            loan.source_provider, loan.source_credential,
-            str(account.unique_id or "primary"), str(loan.id),
+        """PNB provider return with an at-most-once POST until verified."""
+        return provider_loan_return.return_digital(
+            self, loan, explicit_retry=explicit_retry, _TRACE_LOG=_TRACE_LOG,
         )
-        adobe = self.storage.loan_return_state(adobe_key)
-        if adobe is not None:
-            if not explicit_retry or adobe.get("adobe_verified") is not True:
-                return {
-                    **public_state(adobe), "reason": "adobe_return_takes_precedence",
-                }
-            fresh = self.verify_paris_return_inventory(loan)
-            if fresh.get("status") != "still_active":
-                return fresh
-        prior = self.storage.loan_return_state(key)
-        if prior is not None:
-            if not explicit_retry:
-                return public_return_state(prior)
-            verified = self.verify_return_digital(loan)
-            if verified.get("status") != "still_active":
-                return verified
-        operation_id = uuid.uuid4().hex
-        claimed, state = self.storage.loan_return_claim(
-            key, operation_id, reopen=bool(prior and explicit_retry),
-        )
-        if not claimed:
-            return public_return_state(state)
-        _TRACE_LOG.info("TRACE return core phase=request_sent ref=%s", return_ref(key))
-        try:
-            response = session.return_digital(loan, account)
-            if not isinstance(response, dict) or response.get("success") is not True:
-                raise ValueError("Paris did not attest request acceptance")
-        except Exception as exc:
-            # Network failures are indeterminate: POST may already have been
-            # accepted upstream. Never retry automatically on uncertainty.
-            row = self.storage.loan_return_transition(
-                key, operation_id, status="verification_unavailable",
-                verification="unavailable", error_type=type(exc).__name__,
-            )
-            _TRACE_LOG.warning(
-                "TRACE return core phase=request_uncertain ref=%s error_type=%s",
-                return_ref(key), type(exc).__name__,
-            )
-            return public_return_state(row or state)
-        row = self.storage.loan_return_transition(
-            key, operation_id, status="pending_verification",
-            verification="not_checked", accepted=True,
-        )
-        _TRACE_LOG.info(
-            "TRACE return core phase=request_accepted ref=%s provider_inventory_verified=false",
-            return_ref(key),
-        )
-        # Stale cached loans must not override verification after accepted POST.
-        self.storage.cache_delete_namespace("account")
-        return self.verify_return_digital(loan)
 
 
 

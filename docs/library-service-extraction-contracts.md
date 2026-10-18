@@ -306,6 +306,21 @@ and event recording through the existing facade-owned dependencies.
 these reads do not trigger authentication, scans or acquisition. Inter-process
 lock factories and paths are supplied by the facade to preserve coordination.
 
+### Provider loan return orchestration (#1120)
+
+`core/provider_loan_return.py` contains the existing guarded PNB-only return
+body. The `LibraryService` facade keeps both signatures, the cross-channel
+per-loan lock, lock path and busy response. Its logger is injected at call time;
+UUID and public return/checkpoint helpers are still imported at their original
+execution points. Executable AST is unchanged after adapting relative imports.
+
+Non-Paris delegation, exact borrower/source scope, cross-identity refusal, Adobe
+checkpoint precedence, durable SQLite claim, at-most-once POST, indeterminate
+network failure, cache invalidation and fresh verification/explicit retry retain
+their original order. No Adobe return, file deletion or new retry is introduced.
+Existing acceptance/concurrency/restart suites use synthetic provider responses
+and local SQLite; real PNB or Adobe restitution is not attested by these tests.
+
 ### Kobo backup stages
 
 `core/kobo_backup.py` keeps Vault manifest authority and negotiated artifact
