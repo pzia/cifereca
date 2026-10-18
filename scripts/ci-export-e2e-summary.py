@@ -37,6 +37,9 @@ _DIAGNOSTIC_STAGES = frozenset({
     "P0_1905_numilog_inventory_dialog_wait",
     "P0_1905_numilog_inventory_dialog_preflight",
     "P0_1905_numilog_inventory_dialog_ready",
+    "P0_2027_narrow_header_minimum", "P0_2027_narrow_source_minimum",
+    "P0_2027_narrow_scroll_minimum", "P0_2027_narrow_window_minimum",
+    "P0_2027_narrow_allocation_pending",
 })
 
 

@@ -203,6 +203,30 @@ class SafeFailureDiagnosisTests(unittest.TestCase):
                 assert "PRIVATE" not in repr(published)
                 assert "<account-private>" not in repr(published)
 
+    def test_narrow_failure_categories_never_export_geometry_or_labels(self):
+        module = _module()
+        stages = (
+            "P0_2027_narrow_header_minimum", "P0_2027_narrow_source_minimum",
+            "P0_2027_narrow_scroll_minimum", "P0_2027_narrow_window_minimum",
+            "P0_2027_narrow_allocation_pending",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = "mainwindow-baseline-1366"
+            report = root / scenario / scenario / "screen.json"
+            report.parent.mkdir(parents=True)
+            source = root / "summary.json"
+            source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+            for stage in stages:
+                report.write_text(json.dumps({"stage": stage,
+                    "sync_minimum_width_geometry": {"PRIVATE-ACCOUNT": 123456},
+                    "error": "PRIVATE-TOKEN"}))
+                row = module.safe_summary(source)["results"][0]
+                self.assertEqual(row["last_stage"], stage)
+                self.assertEqual(row["status"], "FAIL")
+                self.assertNotIn("PRIVATE", repr(row))
+                self.assertNotIn("123456", repr(row))
+
     def test_unknown_strings_nonfinite_numbers_boolean_line_and_report_path_are_not_exported(self):
         module = _module()
         with tempfile.TemporaryDirectory() as tmp:

@@ -1673,6 +1673,20 @@ def main() -> int:
             ],
         }
         report["sync_minimum_width_geometry"] = geometry
+        if w.get_width() > 760:
+            # Closed failure categories only: distinguish a real minimum
+            # request from an outstanding allocation, without publishing
+            # account labels, widget dumps or native coordinates.
+            if geometry["header_min"] > 760:
+                report["stage"] = "P0_2027_narrow_header_minimum"
+            elif geometry["sources_min"] > 760:
+                report["stage"] = "P0_2027_narrow_source_minimum"
+            elif geometry["scroll_min"] > 760:
+                report["stage"] = "P0_2027_narrow_scroll_minimum"
+            elif w.measure(Gtk.Orientation.HORIZONTAL, -1)[0] > 760:
+                report["stage"] = "P0_2027_narrow_window_minimum"
+            else:
+                report["stage"] = "P0_2027_narrow_allocation_pending"
         assert w.get_width() <= 760, ("Synchronisation minimum window width", geometry)
         assert scroll.get_width() > 0
         allocations = []
