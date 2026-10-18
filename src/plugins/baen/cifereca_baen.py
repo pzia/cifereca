@@ -1,15 +1,39 @@
 from __future__ import annotations
 import hashlib, html, re
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 import httpx
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 BASE='https://www.baen.com/'; FREE=BASE+'allbooks/category/index/id/2012'
 MAX_REQUESTED_PAGES = 101  # Pages 0..100, never a silently clamped page.
+
+
+def _trusted_baen_url(value):
+    """Baen page and EPUB URLs cannot be supplied by arbitrary HTML hosts."""
+    if (type(value) is not str or not value or len(value) > 4096
+            or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in value)):
+        return False
+    try:
+        parts = urlsplit(value)
+        return (parts.scheme == 'https'
+                and parts.hostname == 'www.baen.com'
+                and parts.port in (None, 443)
+                and not parts.username and not parts.password
+                and not parts.fragment)
+    except ValueError:
+        return False
+
+
+def _reject_redirect(response):
+    # httpx.raise_for_status() is not a safe substitute for disabling
+    # redirects: refuse to follow a product/search redirect to another host.
+    if 300 <= getattr(response, 'status_code', 200) < 400:
+        raise ProviderError('Baen : public_redirect_unverified')
+
 DESCRIPTOR=ProviderDescriptor(id='baen',display_name='Baen',description='Baen Free Library et catalogue de livres électroniques.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all',),scopes=('all','digital'),pagination='page',page_size=50,max_pages=MAX_REQUESTED_PAGES,notes=('Le formulaire Baen Free Library interroge la recherche générale uniquement ; ni auteur ni ISBN ne sont filtrés séparément.','Pagination par numéro de page ; couverture du catalogue non exhaustive sans parcourir les pages.',)),homepage=BASE,notes=('Fonds public qualifié ; achats et bibliothèque privée à qualifier.',))
 class BaenSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.10','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=False,trust_env=False,headers={'User-Agent':'Cifereca-Baen/0.1.11','Accept-Language':'en-US,en;q=0.8'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.page_size=50
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Baen Free Library',unique_id='baen-public',provider_id='baen',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close();self.connected=False;self._accounts=[]
@@ -60,6 +84,7 @@ class BaenSession(ProviderSession):
         if not self.connected: raise ProviderError('Baen : connecter le catalogue')
         try:
             r=self.client.get(FREE,params=self._search_params(query,page,self.page_size))
+            _reject_redirect(r)
             r.raise_for_status()
         except httpx.HTTPStatusError as exc:
             # Expose a stable public code, never upstream response bodies or
@@ -81,21 +106,31 @@ class BaenSession(ProviderSession):
             plain=' '.join(re.sub('<[^>]+>',' ',html.unescape(body)).split())
             if not plain or plain.lower() in {'more...','buy'} or '/allbooks/' not in href: continue
             detail=urljoin(BASE,href)
+            if not _trusted_baen_url(detail): continue
             if detail in seen: continue
             seen.add(detail); rid=hashlib.sha256(detail.encode()).hexdigest()[:24]
             out.append(SearchResult(id='baen:'+rid,record_id=rid,docbase='BAEN',medium='digital',title=plain,author=None,type='Livre numérique',format='EPUB',publisher='Baen',published_at=None,description=None,thumbnail_url=None,friendly_url=detail,scenario='BAEN_FREE_LIBRARY',source_provider='baen',source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='public',owned=False,downloadable=False))
         return out[:self.page_size]
     def holdings(self,item,search_terms=''):
         if item.source_provider==self.provider_id and item.friendly_url:
+            if not _trusted_baen_url(item.friendly_url):
+                raise ProviderCapabilityError('Baen : untrusted_url')
             try:
-                response=self.client.get(item.friendly_url);response.raise_for_status()
+                response=self.client.get(item.friendly_url)
+                _reject_redirect(response)
+                response.raise_for_status()
                 self._enrich_item_from_detail(item,response.text)
             except httpx.HTTPError:
                 pass
         return ItemDetail(record_id=item.record_id,docbase='BAEN',title=item.title,author=item.author,type=item.type,year=item.published_at,thumbnail_url=item.thumbnail_url,availability_status='available',availability_label='Baen Free Library — ouvrir la fiche pour vérifier le format',holdings=[],source_provider='baen',source_credential=self.credential_id)
     def download_direct(self,item,target_dir):
         if item.source_provider!=self.provider_id or not item.friendly_url: raise ProviderError('Baen : fiche inconnue')
-        try:r=self.client.get(item.friendly_url);r.raise_for_status()
+        if not _trusted_baen_url(item.friendly_url):
+            raise ProviderCapabilityError('Baen : untrusted_url')
+        try:
+            r=self.client.get(item.friendly_url)
+            _reject_redirect(r)
+            r.raise_for_status()
         except httpx.HTTPError as e: raise ProviderError('Baen : fiche inaccessible') from e
         self._enrich_item_from_detail(item,r.text)
         # Baen exposes a public free-download action on some Free Library fiches.
@@ -104,7 +139,9 @@ class BaenSession(ProviderSession):
         for href,label in links:
             txt=' '.join(re.sub('<[^>]+>',' ',html.unescape(label)).split()).casefold()
             if 'download' in txt or 'epub' in txt or href.lower().endswith('.epub'):
-                candidate=urljoin(item.friendly_url,href); break
+                proposal=urljoin(item.friendly_url,href)
+                if _trusted_baen_url(proposal):
+                    candidate=proposal; break
         if not candidate: raise ProviderError('Baen : aucun lien EPUB public explicite sur cette fiche')
         if self.transport is None: raise ProviderError('Baen : transport.http indisponible')
         d=Path(target_dir);d.mkdir(parents=True,exist_ok=True);dest=d/((re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub')
