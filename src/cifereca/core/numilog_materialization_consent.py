@@ -81,6 +81,9 @@ def prepare(broker: Any, source_id: str) -> SyncResult:
         if bound is None:
             return _receipt("source_not_ready")
         account, session, roots = bound
+        revision = broker.service.storage.numilog_materialization_consent_revision(
+            source_id,
+        )
         preview = broker.preview_local_materialization(
             source_id, verify_local_files=True,
         )
@@ -105,9 +108,12 @@ def prepare(broker: Any, source_id: str) -> SyncResult:
         # Exact session and library configuration are kept only in memory.
         scope = (source_id, account.identity_id, account.credential_id,
                  account.unique_id)
-        revision = broker.service.storage.numilog_materialization_consent_revision(
-            source_id,
-        )
+        # A revoked policy or changed credential during SHA verification
+        # invalidates the proposal before it can become a confirmation token.
+        if (revision != broker.service.storage.numilog_materialization_consent_revision(
+                source_id,
+            ) or _binding(broker, source_id) is None):
+            return _receipt("preview_changed")
         snapshot = (id(session), tuple(str(root) for root in roots),
                     tuple(sorted(counts.items())), revision)
         token = broker._numilog_consent_plans.put(scope, snapshot, (session,))
