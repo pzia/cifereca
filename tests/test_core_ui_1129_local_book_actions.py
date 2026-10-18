@@ -273,3 +273,89 @@ def test_closed_window_suppresses_deferred_artifact_routing():
     window._closed = True
     route_button.click()
     assert submitted == []
+
+PRIVATE = "https://private.invalid/LOAN/borrow?token=SECRET_LOCAL_ROUTE"
+
+
+def test_open_local_book_launcher_error_does_not_leak_private_path():
+    window, item, detail, actions, events, _submitted, _, deps = _environment(
+        identities=("alice",)
+    )
+    presented = []
+    window.show_error = lambda message, title: presented.append((message, title))
+
+    def fail_launch(*_args):
+        raise OSError("file:///home/private/" + PRIVATE)
+
+    deps["Gio"].AppInfo.launch_default_for_uri = fail_launch
+    add_local_book_actions(window, detail, item, **deps)
+    actions[0].click()
+    assert presented == [("Ouverture locale indisponible", "Ouverture du livre impossible")]
+    assert "SECRET_LOCAL_ROUTE" not in repr(presented)
+
+
+def test_known_possessions_exception_does_not_escape_to_diagnostics():
+    read = NS(book=lambda book_id: (_ for _ in ()).throw(RuntimeError(PRIVATE)))
+    manager = NS(broker=lambda name: read if name == "library.read" else None)
+    window, item, detail, actions, events, _submitted, _, deps = _environment(
+        identities=("alice",), manager=manager,
+    )
+    recorded = []
+    window.diagnostics = NS(add=lambda *args, **kw: recorded.append((args, kw)))
+    add_local_book_actions(window, detail, item, **deps)
+    assert [a._cifereca_action_id for a in actions] == ["open-local"]
+    assert recorded == [
+        (("UI", "read known possessions", "error"),
+         {"detail": {"code": "known_possessions_unavailable"}}),
+    ]
+    assert PRIVATE not in repr(recorded)
+
+
+def test_route_target_enumeration_exception_is_closed_diagnostic():
+    routing = NS(targets=lambda *_: (_ for _ in ()).throw(RuntimeError(PRIVATE)))
+    manager = NS(broker=lambda name: routing if name == "artifact.routing" else None)
+    window, item, detail, actions, events, _submitted, _, deps = _environment(
+        identities=("alice",), manager=manager,
+    )
+    recorded = []
+    window.diagnostics = NS(add=lambda *args, **kw: recorded.append((args, kw)))
+    add_local_book_actions(window, detail, item, **deps)
+    assert [a._cifereca_action_id for a in actions] == ["open-local"]
+    assert recorded == [
+        (("UI", "artifact routing targets", "error"),
+         {"detail": {"code": "artifact_targets_unavailable"}}),
+    ]
+    assert PRIVATE not in repr(recorded)
+
+
+def test_failed_artifact_route_preserves_safe_feedback_and_ignores_late_callbacks():
+    from cifereca.plugin_api import UserFacingError
+
+    routing = NS(targets=lambda *_: [NS(target=NS(label="Cloud", target_id="cloud-1"))])
+    manager = NS(broker=lambda name: routing if name == "artifact.routing" else None)
+    window, item, detail, actions, events, submitted, _, deps = _environment(
+        identities=("alice",), manager=manager,
+    )
+    shown = []
+    window.show_error = lambda message, title: shown.append((message, title))
+    add_local_book_actions(window, detail, item, **deps)
+    actions[-1].popover.child.children[0].click()
+    assert len(submitted) == 1
+    failed = submitted[0][0][3]
+
+    class HostileError(RuntimeError):
+        def __str__(self):
+            raise AssertionError("Provider exception must not be stringified")
+
+    failed(HostileError(PRIVATE))
+    assert shown == [("Envoi vers le stockage indisponible", "Envoi impossible")]
+
+    failed(UserFacingError(
+        "Autorisation nécessaire", code="signin_required",
+        technical_detail=PRIVATE,
+    ))
+    assert shown[-1] == ("Autorisation nécessaire", "Envoi impossible")
+    assert PRIVATE not in repr(shown)
+    window._closed = True
+    failed(HostileError(PRIVATE))
+    assert len(shown) == 2
