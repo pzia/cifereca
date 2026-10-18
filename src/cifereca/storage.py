@@ -2238,6 +2238,49 @@ class Storage:
                 ),
             )
 
+    def numilog_checkpoint_complete(
+        self, acquisition_id: str, *, identity_id: str, credential_id: str,
+        account_id: str, item_id: str, path: str, sha256: str, size: int, artifact_id: str,
+    ) -> bool:
+        """Finalize only the exact delivered bytes and same-owner placement.
+
+        Receipt, artifact, placement and competing ledger rows are compared
+        within one SQLite write transaction. No URL/title/provider text enters.
+        """
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT acquisition_id,identity_id,account_id,status,metadata_json FROM acquisition_ledger "
+                "WHERE provider_id='numilog' AND credential_id=? AND item_id=? LIMIT 2",
+                (credential_id, item_id),
+            ).fetchall()
+            if len(rows) != 1:
+                return False
+            aid, owner, account, status, raw = rows[0]
+            meta = self._json_load(raw)
+            if (aid != acquisition_id or owner != identity_id or account != account_id
+                    or status not in {'acquiring', 'retryable_error', 'attention_required', 'complete'}
+                    or meta.get('kind') != 'numilog_delivered_artifact_v1'
+                    or meta.get('phase') not in {'index_pending', 'indexed'}
+                    or meta.get('path') != path or meta.get('sha256') != sha256
+                    or type(meta.get('size')) is not int or meta['size'] != size):
+                return False
+            artifact = db.execute("SELECT sha256,size FROM artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+            placement = db.execute(
+                "SELECT artifact_id,identity_id,provider_id,source_item_id,state FROM placements WHERE path=?",
+                (path,),
+            ).fetchone()
+            if (artifact != (sha256, size)
+                    or placement != (artifact_id, identity_id, 'numilog', item_id, 'present')):
+                return False
+            meta['phase'] = 'indexed'
+            db.execute(
+                "UPDATE acquisition_ledger SET status='complete',artifact_id=?,metadata_json=?,"
+                "error_code=NULL,error_message=NULL,attention_code=NULL,updated_at=? WHERE acquisition_id=?",
+                (artifact_id, self._json_dump(meta), int(time.time()), acquisition_id),
+            )
+            return True
+
     def acquisition_recover_interrupted(self) -> int:
         now = int(time.time())
         with self._lock, self._connect() as db:
