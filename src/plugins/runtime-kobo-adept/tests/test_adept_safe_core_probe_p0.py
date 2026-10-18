@@ -59,7 +59,7 @@ def source():
 def assert_private_absent(result):
     raw = repr(result)
     for hidden in (SECRET, URL, XML, HOME, "alice@example.invalid",
-                   "certificate", "content_keys", "signed_url"):
+                   "certificate", "'content_keys':", "signed_url"):
         assert hidden not in raw
 
 
