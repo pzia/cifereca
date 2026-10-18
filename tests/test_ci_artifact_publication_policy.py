@@ -82,7 +82,7 @@ def _uploads(source: str) -> tuple[tuple[tuple[str, ...], int], ...]:
 
 def test_all_workflow_uploads_have_fixed_allowlisted_paths_and_two_day_retention():
     seen = {}
-    for workflow in ROOT.glob("*.yml"):
+    for workflow in (*ROOT.glob("*.yml"), *ROOT.glob("*.yaml")):
         uploads = _uploads(workflow.read_text(encoding="utf-8"))
         if uploads:
             seen[workflow.name] = tuple(paths for paths, days in uploads)
