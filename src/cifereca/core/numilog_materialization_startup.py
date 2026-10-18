@@ -15,6 +15,7 @@ from ..models import SearchResult
 from ..plugin_api import Cancelled, SyncResult
 from .numilog_local_preview import _item_id
 from .numilog_materialization_checkpoint import index_delivered
+from .numilog_manifest_rights import mirror_numilog_manifest_rights
 from .numilog_materialization_consent import (
     _binding, _MAX_ITEMS_PER_OPENING, mode,
 )
@@ -108,6 +109,27 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     or broker.service.storage.numilog_materialization_consent_revision(
                         source_id,
                     ) != consent_revision):
+                failures += 1
+                break
+            # Freshly purchased editions may have no cached local right yet.
+            # Mirror only attested purchases from THIS authenticated library;
+            # the generic public catalogue never enters this path. The mirror
+            # performs its own account/session re-admission before writing.
+            # This is still NOT permission to acquire: each edition passes
+            # preflight plus the locked admission after this read.
+            mirror_numilog_manifest_rights(
+                broker.service, raw,
+                identity_id=identity_id,
+                credential_id=account.credential_id,
+                account_id=account.unique_id,
+            )
+            if (
+                mode(broker, source_id) != "on_start"
+                or broker.service.storage.numilog_materialization_consent_revision(
+                    source_id,
+                ) != consent_revision
+                or _binding(broker, source_id) is None
+            ):
                 failures += 1
                 break
             # Duplicate editions on a private provider page are ambiguous.
