@@ -215,47 +215,19 @@ def merge_attested_owned_public_detail(owned, detail):
             or type(detail.get("fields")) is not dict
             or type(detail.get("field_evidence")) is not dict):
         raise ProviderCapabilityError(error)
-    fields = detail["fields"]
-    evidence = detail["field_evidence"]
     from cifereca_numilog_public_identifiers import (
         PublicIdentifierError, validated_public_identifiers,
     )
+    from cifereca_numilog_public_detail import (
+        _valid_text, PublicDetailError, validated_public_jsonld_fields,
+    )
     try:
+        # The same strict, copy-on-validation contract protects both the
+        # anonymous catalogue and an explicitly rechecked purchased title.
+        fields, evidence = validated_public_jsonld_fields(detail, url)
         typed_ids, typed_proof = validated_public_identifiers(detail, url)
-    except PublicIdentifierError:
+    except (PublicDetailError, PublicIdentifierError):
         raise ProviderCapabilityError(error) from None
-    allowed = {"title", "authors", "publisher", "published_at",
-               "description", "language", "isbn_edition_unspecified"}
-    if not set(fields).issubset(allowed) or set(fields) != set(evidence):
-        raise ProviderCapabilityError(error)
-    from cifereca_numilog_public_detail import _valid_text, _isbn
-    from datetime import date
-
-    for key, proof in evidence.items():
-        if (type(proof) is not dict
-                or proof.get("kind") != "observed_public_jsonld"
-                or proof.get("source_url") != url
-                or proof.get("edition_proven") is not False):
-            raise ProviderCapabilityError(error)
-        value = fields[key]
-        if key == "authors":
-            if (type(value) is not list or not 0 < len(value) <= 32
-                    or any(not _valid_text(author, 256) for author in value)):
-                raise ProviderCapabilityError(error)
-        elif key == "isbn_edition_unspecified":
-            if type(value) is not str or _isbn(value) != value:
-                raise ProviderCapabilityError(error)
-        elif not _valid_text(value, {
-                "title": 512, "description": 16000, "publisher": 256,
-                "published_at": 32, "language": 80,
-            }[key]):
-            raise ProviderCapabilityError(error)
-        if key == "published_at":
-            try:
-                if len(value) != 10 or date.fromisoformat(value).isoformat() != value:
-                    raise ValueError
-            except ValueError:
-                raise ProviderCapabilityError(error) from None
 
     def comparable(value):
         if type(value) is not str:
