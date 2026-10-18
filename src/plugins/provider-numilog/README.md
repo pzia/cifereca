@@ -1085,3 +1085,31 @@ publiées, pas d'une preuve d'exhaustivité ni de recherche serveur
 par ISBN, auteur ou titre exact. Singleton toujours désactivé par défaut.
 Action UI/Core pour exposer ces facettes et qualification HTTP live/robots/CGU
 restent à faire. Les tests sont déterministes et hors réseau.
+
+
+## Numilog 0.1.53 — résumé complet sourcé des achats (#1072)
+
+L'action **explicite** `enrich_owned_public_detail(item)` conserve désormais
+tous les champs du `Book` JSON-LD public dont l'URL et le titre sont
+identiques à l'édition achetée et à sa carte commerciale attestée, sous
+`metadata.public_detail_enrichment.public_jsonld.fields`, accompagnés des
+`field_evidence` par champ et du statut `edition_proven=false`.
+Ces informations proviennent de la **fiche commerciale** et ne
+prouvent toujours ni le format acheté, ni un fichier, ni un droit DRM.
+
+Si le résumé complet de la fiche **prolonge réellement l'extrait**
+présent dans la carte HTML, et que cet extrait est accompagné de
+sa preuve `p.list-group-item-text` pour la même recherche, le
+`SearchResult.description` prend le résumé complet. L'extrait initial
+reste conservé sous `replaced_listing_excerpt`. Si le texte diffère
+ou que la preuve manque, le texte précédent est conservé et les deux
+valeurs demeurent consultables avec le conflit explicite.
+Les valeurs JSON-LD sont revalidées avant toute fusion (taille,
+caractères de contrôle, dates, auteurs, EAN) ; refus par code fixe
+sans répercuter la donnée reçue.
+
+Aucune nouvelle requête HTTP, lecture automatique, acquisition,
+association de titre approximative, projection d'ISBN papier en EPUB,
+ni changement Core/UI. Tests offline : résumés complets, divergences,
+métadonnées publiques, deux homonymes PDF/EPUB, preuves manquantes
+et données falsifiées. La qualification des achats réels reste ouverte.
