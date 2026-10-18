@@ -35,8 +35,11 @@ def _source_accounts(broker: Any, source_id: str) -> list[Any]:
         return []
     try:
         accounts = broker.service.accounts
-        if type(accounts) not in {list, tuple} or len(accounts) > 256:
+        if type(accounts) not in {list, tuple}:
             return []
+        # These are already loaded local account declarations, not a remote
+        # provider page. Never make explicit *revocation* impossible merely
+        # because many unrelated providers are also configured.
         found = []
         for account in accounts:
             try:
