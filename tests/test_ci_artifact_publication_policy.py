@@ -106,3 +106,16 @@ def test_no_untrusted_e2e_capture_or_raw_youth_response_reaches_actions():
     assert 'cat youth-live-evidence/result.json' in youth
     assert 'raw="$RUNNER_TEMP/youth-live-unvalidated.json"' in youth
     assert 'path: youth-live-evidence/result.json' in youth
+
+
+def test_official_core_release_rejects_unreviewed_assets_before_upload():
+    workflow = (ROOT / "release.yml").read_text(encoding="utf-8")
+    assert "Unexpected Core release artifact set; refusing publication." in workflow
+    assert "find dist -mindepth 1 -maxdepth 1" in workflow
+    assert "git rev-parse --short=12 HEAD" in workflow
+    assert 'test ! -L "dist/$file"' in workflow
+    for name in ("RELEASE_WHEEL", "RELEASE_DEV", "RELEASE_BUNDLE"):
+        assert f'dist/${name}' in workflow
+    assert 'sha256sum "$wheel" "$dev" "$bundle" > SHA256SUMS' in workflow
+    assert 'gh release upload "$RELEASE_TAG" dist/*' not in workflow
+    assert "Verify downloaded Core release draft assets" in workflow
