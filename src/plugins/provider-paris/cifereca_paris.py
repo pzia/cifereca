@@ -58,6 +58,7 @@ DESCRIPTOR = ProviderDescriptor(
         scopes=("all", "digital", "physical"),
         pagination="page",
         page_size=50,
+        max_pages=101,
         notes=(
             "Recherche textuelle générale Syracuse ; aucun filtre auteur/ISBN/sujet natif attesté.",
             "all interroge les catalogues physique et numérique ; une panne de branche est signalée.",
@@ -425,6 +426,10 @@ class ParisProviderSession(ProviderSession):
             raise ProviderCapabilityError("Bibliothèques de Paris : unsupported_field")
         if type(scope) is not str or scope.strip().casefold() not in ("all", "digital", "physical"):
             raise ProviderCapabilityError("Bibliothèques de Paris : unsupported_scope")
+        if type(page) is not int or not 0 <= page <= 100:
+            # A malformed index is not a valid empty page and must never
+            # reach the Syracuse SearchService or its retry/fallback route.
+            raise ProviderCapabilityError("Bibliothèques de Paris : invalid_page")
         try:
             rows = self._decorate(
                 self.client.search(query, scope, page),

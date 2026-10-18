@@ -60,6 +60,7 @@ def test_declaration_is_honest_about_general_query_and_catalogues():
     assert cap.fields == ("all",)
     assert cap.scopes == ("all", "digital", "physical")
     assert cap.pagination == "page" and cap.page_size == 50
+    assert cap.max_pages == 101
     assert not cap.supports_field("author")
     assert not cap.supports_field("isbn")
     assert cap.supports_scope("digital")
@@ -100,6 +101,37 @@ def test_invalid_scope_does_not_fetch_any_catalogue():
         assert client.calls == []
     finally:
         session.close()
+
+
+
+@pytest.mark.parametrize("page", (-1, True, False, "2", "broken", 2.5, None, 101, 10**100))
+@pytest.mark.parametrize("scope", ("all", "digital", "physical"))
+def test_invalid_page_never_reaches_syracuse_or_retains_warning(scope, page):
+    client = FakeClient()
+    session = make_session(client)
+    try:
+        # An earlier partial successful search may have stored a warning.
+        assert session.search("Doyle", scope="all") == []
+        assert session.last_search_warnings
+        client.calls.clear()
+        with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+            session.search("Doyle", scope=scope, page=page)
+        assert client.calls == []
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("page", (0, 2, 100))
+def test_boundary_pages_are_forwarded_unchanged_to_syracuse(page):
+    client = FakeClient()
+    session = make_session(client)
+    try:
+        assert session.search("Doyle", scope="digital", page=page) == []
+        assert client.calls == [("Doyle", "digital", page)]
+    finally:
+        session.close()
+
 
 
 def test_upstream_failure_is_not_misreported_as_empty_result():
