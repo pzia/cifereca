@@ -248,17 +248,24 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     else "complete"
                 )
                 try:
-                    broker.service.storage.numilog_materialization_finish_startup(
+                    finalized = broker.service.storage.numilog_materialization_finish_startup(
                         source_id=source_id, started_at=started_at,
                         status=result_status, attempted=own_attempted,
                         downloaded=own_downloaded, skipped=own_skipped,
                         failed=own_failed,
                     )
+                    if finalized is not True:
+                        # The stale-run SQL guard can refuse a final receipt
+                        # without raising. "running" is not "complete":
+                        # report a bounded failure while preserving its
+                        # durable evidence for explicit reconciliation.
+                        failures += 1
                 except Exception:
-                    # Never leak a persistence exception containing source
-                    # metadata, or mask a cooperative cancellation. The
-                    # existing durable "running" receipt remains truthful.
-                    pass
+                    # Never expose SQLite/provider arguments or override a
+                    # cooperative Cancelled exception from the in-flight task.
+                    # Do not report success when the durable receipt was not
+                    # finalized, even if the ebook bytes were indexed.
+                    failures += 1
     # A startup with no successful claims never backed anything up. Never
     # tell the GUI it completed a run when every account was throttled.
     # Likewise, a post-claim revocation/rebind has a durable "blocked"
