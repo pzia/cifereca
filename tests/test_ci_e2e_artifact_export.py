@@ -311,3 +311,33 @@ class SafeFailureDiagnosisTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BulkFailureDiagnosisTests(unittest.TestCase):
+    def test_bulk_failure_uses_exact_probe_and_never_publishes_geometry(self):
+        import ast
+        module = _module()
+        probe = ast.parse((ROOT / "e2e/diagnostics_page_probe.py").read_text())
+        line = next(n.lineno for n in ast.walk(probe) if isinstance(n, ast.Assert))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = "diagnostics-1366"
+            report = root / scenario / scenario / "screen.json"
+            report.parent.mkdir(parents=True)
+            source = root / "summary.json"
+            source.write_text(json.dumps([{"scenario":scenario,"returncode":1}]))
+            for candidate in (3, True, "3", -1, 128, {"private":"PRIVATE"}):
+                report.write_text(json.dumps({"stage":"P0_2140_narrow_window_minimum",
+                    "failure_line":line, "minimum_row":candidate,
+                    "row_minima":[9999], "window_minimum":9999,
+                    "label":"PRIVATE", "error":"PRIVATE"}))
+                out = module.safe_summary(source)["results"][0]
+                self.assertEqual(out["failure_line"], line)
+                self.assertEqual(out["last_stage"], "P0_2140_narrow_window_minimum")
+                if type(candidate) is int and candidate == 3:
+                    self.assertEqual(out["minimum_row"], 3)
+                else:
+                    self.assertNotIn("minimum_row", out)
+                for private in ("row_minima", "window_minimum", "label", "error"):
+                    self.assertNotIn(private, out)
+                self.assertNotIn("PRIVATE", repr(out))

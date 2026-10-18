@@ -296,7 +296,7 @@ def main():
                     if trace.tb_frame.f_code.co_filename == __file__:
                         frames.append(trace.tb_lineno)
                     trace = trace.tb_next
-                print(json.dumps({"probe":"P0_2140_assertion", "source_line": frames[-1] if frames else 0}), flush=True)
+                report["failure_line"] = frames[-1] if frames else 0
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         return wrapped
@@ -601,12 +601,11 @@ def main():
             while child is not None:
                 rows.append(min(10000, max(0, child.measure(Gtk.Orientation.HORIZONTAL, -1)[0])))
                 child = child.get_next_sibling()
-            # Only geometry of this synthetic probe, never labels, widget
-            # objects, paths or exceptions. Needed to attribute a genuine
-            # minimum-size failure without publishing raw GTK evidence.
-            print(json.dumps({"probe":"P0_2140_narrow_minimum", "row_minima":rows[:128],
-                  "window_minimum": min(10000, max(0, window[0].measure(Gtk.Orientation.HORIZONTAL, -1)[0])),
-                  "page_minimum": min(10000, max(0, page[0].measure(Gtk.Orientation.HORIZONTAL, -1)[0]))}), flush=True)
+            minimum = window[0].measure(Gtk.Orientation.HORIZONTAL, -1)[0]
+            report["stage"] = ("P0_2140_narrow_window_minimum" if minimum > 760
+                               else "P0_2140_narrow_allocation_pending")
+            if rows and max(rows) > 724:
+                report["minimum_row"] = rows.index(max(rows))
             window[0].set_default_size(760, 790)
             until(lambda: window[0].get_width() <= 760,
                   lambda: verify_narrow_bulk(payload), seconds=5)
