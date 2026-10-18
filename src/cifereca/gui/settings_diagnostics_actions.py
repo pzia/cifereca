@@ -8,6 +8,44 @@ from .settings_performance_actions import bind_settings_performance_actions
 from . import settings_diagnostics_refresh_controller
 
 
+def bind_diagnostics_page_link(window, button, *, page_lifetime):
+    """Navigate only to a registered Diagnostics page; preserve Core fallback.
+
+    No plugin is activated by building Settings. A disabled/absent contribution
+    leaves the existing in-Settings diagnostic tools reachable.
+    """
+
+    def active() -> bool:
+        return page_lifetime.alive and not getattr(window, "_closed", False)
+
+    def available() -> bool:
+        pages = getattr(window, "_pages", None)
+        return isinstance(pages, dict) and "diagnostics" in pages
+
+    def refresh() -> None:
+        if not active():
+            return
+        enabled = available()
+        button.set_sensitive(enabled)
+        button.set_tooltip_text(
+            "Ouvrir la page Diagnostics : journaux et rapports"
+            if enabled else
+            "Page Diagnostics indisponible ; les outils locaux restent accessibles ici"
+        )
+
+    def open_page(_button=None) -> None:
+        if not active():
+            return
+        if not available():
+            refresh()
+            return
+        window.navigate("diagnostics")
+
+    button.connect("clicked", open_page)
+    refresh()
+    return refresh
+
+
 def bind_settings_diagnostics(self, *, page_lifetime, diagnostic_ui,
                               application_ui, Gtk, Adw, Gdk, clear_box):
     level_drop = application_ui.level_dropdown
@@ -23,6 +61,12 @@ def bind_settings_diagnostics(self, *, page_lifetime, diagnostic_ui,
     copy = diagnostic_ui.copy
     export = diagnostic_ui.export
     clear = diagnostic_ui.clear
+
+    # Route registration is dynamic (plugin enable/disable/rebuild). Do not
+    # navigate to an absent page; Settings remains the built-in fallback.
+    refresh_diagnostics_link = bind_diagnostics_page_link(
+        self, diagnostic_ui.open_page, page_lifetime=page_lifetime,
+    )
 
     # Reuse MainWindow.ui_perf: no profiler, periodic collector or automatic
     # detailed capture is started by building the Settings page.
@@ -55,6 +99,7 @@ def bind_settings_diagnostics(self, *, page_lifetime, diagnostic_ui,
         if not page_lifetime.alive or getattr(self, "_closed", False):
             return
         refresh_performance_status()
+        refresh_diagnostics_link()
         from ..system_status import system_status
         return settings_diagnostics_refresh_controller.refresh_settings_diagnostics(
             self, page_lifetime=page_lifetime,
