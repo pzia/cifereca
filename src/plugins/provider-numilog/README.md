@@ -729,8 +729,20 @@ le booléen existant `cookie_header_present`, pour que l'export utilisateur
 les affiche. Cette mise à jour Core est laissée au rôle Core (#1884) et
 n'est **pas** contenue dans cette version du plugin.
 
+Lorsque le gabarit de la vraie confirmation contient un widget
+login **mais ne permet pas une liaison univoque**, l'événement
+`html_selection` distingue désormais `html_delivery_link_missing`,
+`html_delivery_ambiguous` ou `html_invalid` via les **codes publics
+existants**, avec `html_kind=login` et un compteur borné de candidats.
+Le code terminal reste `login_form_detected` et aucune session n'est
+invalidée hors de la vraie page de connexion. Aucune URL signée n'est
+consommée sur ces échecs : ces causes peuvent être observées **sans
+extension du schéma Core pour les codes** (contrairement aux nouveaux
+champs de route).
+
 Tests HTTPX simulés : ancien `disp=1` et `disp=simple`, parcours
 `readBook → 302 → ConfirmationPaiement → ACSM` avec et sans widget login,
+refus sous product/copie/lid/modal ambigus ou absence de tableau de liens,
 acheminement de la query d'origine non modifiée, et absence de fuites
 à chaque événement. **Aucun téléchargement client live validé** :
 le ticket P0 #2024 ne doit pas être clôturé sur ce lot.
