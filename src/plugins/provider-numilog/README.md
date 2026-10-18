@@ -782,3 +782,18 @@ HTTPX **n'émule pas le contexte de navigation SameSite du navigateur** :
 ces tests documentent le filtrage Domain/Path/Secure, pas une preuve que
 Numilog valide une session réelle. Aucun nom/valeur de cookie, query de
 commande ou identifiant privé ne doit entrer dans un export.
+
+
+## Rejet d'un HTML de livraison structurellement invalide (#2024)
+
+Le parseur HTML de première classification peut refuser un DOM trop
+profond ou contenant trop d'éléments, même si la **taille en octets**
+est sous la limite de réponse. Ce cas renvoie maintenant un
+`ProviderError` fixe, un `html_selection=html_invalid` et un
+`completed=html_invalid` expurgés, à la place d'une exception
+`ParseError` brute faussement classée `html_oversize`.
+
+Aucun lien ACSM ni script n'est sélectionné dans cette situation.
+Les tests hors réseau dépassent indépendamment la limite de
+profondeur et la limite du nombre de nœuds. Aucun log du corps
+HTML, d'URL de compte ou de texte d'exception amont n'est publié.
