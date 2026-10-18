@@ -187,12 +187,12 @@ def test_confirmation_requires_exact_modal_copy_and_fresh_readbook_before_signed
 
 @pytest.mark.parametrize('disp', ('1', 'simple'))
 def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_path, disp):
-    landing = CONFIRMATION.replace("disp=1", "disp=" + disp)
     """A site-wide login widget is not itself evidence of expired access.
 
     Only the already qualified confirmation card+ModalDownload+fresh readBook
     may select a signed ACSM, with no change to account authority.
     """
+    landing = CONFIRMATION.replace("disp=1", "disp=" + disp)
     visited = []
     confirmation = FIXTURE.read_text().replace('disp=1', 'disp=' + disp).replace(
         '<form method="post"', '<input type="password" name="loginWidget" value="PRIVATE_HTML" />'
