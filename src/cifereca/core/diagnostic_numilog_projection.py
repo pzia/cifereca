@@ -31,8 +31,21 @@ _DELIVERY_VALUES = {
     'html_kind': frozenset({'login', 'error', 'intermediate', 'invalid', 'unknown'}),
     'origin_kind': frozenset({'acsm_fulfillment', 'numilog_site',
                              'numilog_service', 'eden', 'cdn', 'other'}),
-    'path_kind': frozenset({'acsm_fulfillment', 'readbook', 'personal_library', 'other'}),
+    'path_kind': frozenset({'acsm_fulfillment', 'readbook', 'personal_library',
+                            'login_page', 'confirmation_page', 'other'}),
+    # Producer v0.1.41+ emits target enums only after the redirect URL
+    # passes its own allowlist. The Core must never accept raw Location.
+    'redirect_target_origin_kind': frozenset({'acsm_fulfillment', 'numilog_site',
+                                               'numilog_service', 'eden', 'cdn', 'other'}),
+    'redirect_target_kind': frozenset({'acsm_fulfillment', 'readbook',
+                                       'personal_library', 'login_page',
+                                       'confirmation_page', 'other'}),
 }
+_DELIVERY_BOOL_FIELDS = (
+    'connected_initial', 'cookie_header_present',
+    'confirmation_ref_present', 'confirmation_disp_simple',
+    'redirect_confirmation_ref_present', 'redirect_confirmation_disp_simple',
+)
 _SESSION_LOG = re.compile(r'TRACE numilog session connected=(True|False) reason=([a-z_]+)')
 
 
@@ -53,9 +66,18 @@ def public_numilog_fields(operation: str, detail: object, duration: object = Non
             value = detail.get(key)
             if type(value) is int and low <= value <= high:
                 fields[key] = value
-        connected_initial = detail.get('connected_initial')
-        if type(connected_initial) is bool:
-            fields['connected_initial'] = connected_initial
+        for key in _DELIVERY_BOOL_FIELDS:
+            # A bool alone does not attest that the URL was a qualified
+            # confirmation: preserve its meaning only with the matching
+            # fixed route enum; never reconstruct a private order URL.
+            if key.startswith('confirmation_') and fields.get('path_kind') != 'confirmation_page':
+                continue
+            if (key.startswith('redirect_confirmation_')
+                    and fields.get('redirect_target_kind') != 'confirmation_page'):
+                continue
+            flag = detail.get(key)
+            if type(flag) is bool:
+                fields[key] = flag
         if type(duration) is int and 0 <= duration <= 600_000:
             fields['duration_ms'] = duration
     elif operation == 'session_state':
