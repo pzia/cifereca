@@ -231,10 +231,10 @@ def target_for_entry(service, entry):
                       and p.get('state') == 'active' and p.get('provider_id') in {'kobo', 'numilog'}]
         _require(len(candidates) == 1 and candidates[0].get('provider_id') == 'numilog')
         possession = candidates[0]
-        rights = [r for r in service.storage.entitlements(provider_id='numilog', state='active')
-                  if r.get('identity_id') == owner and r.get('item_id') == possession.get('item_id')
-                  and r.get('entitlement_id') == possession.get('entitlement_id')
-                  and r.get('entitlement_type') == 'owned']
+        rights = service.storage.numilog_possession_rights(
+            identity_id=owner, item_id=possession.get('item_id'),
+            entitlement_id=possession.get('entitlement_id'),
+        )
         _require(len(rights) == 1)
         right = rights[0]
         evidence = service.storage.numilog_purchase_preflight_evidence(
