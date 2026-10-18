@@ -86,3 +86,24 @@ def test_invalid_or_unregistered_source_never_changes_numilog_consent(
         assert calls == []
     finally:
         service.close()
+
+
+def test_many_unrelated_providers_cannot_disable_numilog_consent_revocation(
+    tmp_path,
+):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        service.accounts[:0] = [
+            NS(provider_id="other-provider", identity_id="default",
+               credential_id=f"unrelated-{i}", unique_id=f"other-{i}")
+            for i in range(270)
+        ]
+        assert _source_accounts(broker, sid) == [account]
+        _authorize(broker, sid)
+        assert mode(broker, sid) == "on_start"
+        session.connected = False
+        assert broker.revoke_numilog_materialization_consent(sid) == "manual"
+        assert service.storage.metadata_get(policy_key(sid)) == "manual"
+        assert calls == []
+    finally:
+        service.close()
