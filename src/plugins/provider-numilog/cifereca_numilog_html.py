@@ -635,7 +635,8 @@ def _confirmation_readbook_binding(observed, expected):
     return observed_fields == expected_fields
 
 
-def _confirmation_delivery(root, base_url, expected_readbook, allowed):
+def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
+                           allow_missing_readbook=False):
     """Bind the observed global Links array to ONE explicitly selected card.
 
     A single signed URL is not sufficient when a confirmation names another
@@ -732,16 +733,59 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed):
         # Links/ModalDownload candidate; never navigate readBook m=stream.
         # The comparison changes ONLY here, inside the already verified
         # exact confirmation layout and owning card.
-        if not any(
+        matched_readbook = any(
             (
                 _confirmation_readbook_binding(
                     _readbook_coordinates(n.attrs['href'], base_url), expected,
                 ) if allow_stream_identity
                 else _readbook_coordinates(n.attrs['href'], base_url) == expected
             ) for n in readbooks
-        ):
+        )
+        if matched_readbook:
+            require(len(readbooks) == 1)
+        elif not readbooks and allow_missing_readbook and allow_stream_identity:
+            # Some purchases have NO streaming capability and therefore no
+            # readBook link on the confirmation card. The caller may assert
+            # this fallback ONLY after a direct, checked HTTP 302 from this
+            # freshly selected owned readBook?m=dwld to this exact URL.
+            # Never let a standalone confirmation href use this relaxation.
+            try:
+                fields = parse_qs(
+                    page.query, keep_blank_values=True,
+                    strict_parsing=True, max_num_fields=32,
+                )
+            except (ValueError, AttributeError, TypeError):
+                require(False)
+            require(
+                set(fields) == {'ref', 'disp'}
+                and len(fields['ref']) == 1 and bool(fields['ref'][0].strip())
+                and fields['disp'] == ['simple']
+            )
+            # Reject multi-book orders or unrelated cards, even if there is
+            # only one ADOBE URL. No inferred ProductId == readBook lid.
+            carts = [n for n in root.walk() if 'shopping-cart' in classes(n)]
+            require(len(carts) == 1)
+            card_nodes = [n for n in carts[0].walk() if 'card' in classes(n)]
+            require(len(card_nodes) == 1 and card_nodes[0] is card)
+            require(sum(bool(re.search(r'\bModalDownload\s*\(',
+                n.attrs.get('onclick', ''))) for n in root.walk()) == 1)
+            # A second book's readBook anywhere on this page makes an
+            # otherwise anonymous single-card match unsafe.
+            require(not any(
+                n.tag == 'a' and _readbook_coordinates(
+                    n.attrs.get('href', ''), base_url,
+                ) is not None for n in root.walk()
+            ))
+            # All declared LCP/ADOBE alternatives must attest precisely ONE
+            # product and copy; reject hidden or malformed competing entries.
+            blocks = [m.group(0) for m in _JS_OBJECT.finditer(literal.group(1))]
+            require(1 <= len(blocks) <= 16 and all(
+                _field(block, 'ProductId') == candidate.product_id
+                and _field(block, 'IndexExemplaire') == candidate.copy_index
+                for block in blocks
+            ))
+        else:
             continue
-        require(len(readbooks) == 1)
         require(sum(bool(re.search(r'\bModalDownload\s*\(', n.attrs.get('onclick', '')))
                     for n in card.walk()) == 1)
         call = re.fullmatch(
@@ -754,7 +798,8 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed):
 
 
 def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
-                 expected_readbook=None, require_bound_confirmation=False):
+                 expected_readbook=None, require_bound_confirmation=False,
+                 allow_missing_readbook=False):
     """Locate a single allowlisted delivery; optionally require an owned binding.
 
     When an HTML page also has a login widget, callers may only follow a
@@ -821,6 +866,7 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
         })
     bound_confirmation = _confirmation_delivery(
         root, base_url, expected_readbook, allowed,
+        allow_missing_readbook=allow_missing_readbook,
     )
     if require_bound_confirmation:
         # A shared login widget does not by itself prove authentication
