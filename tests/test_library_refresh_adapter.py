@@ -95,6 +95,64 @@ def test_closed_owner_refuses_refresh_before_service_or_runner_access(kind, with
     assert vars(host) == {"_closed": True}
 
 
+
+@pytest.mark.parametrize("completion", ["ok", "err"])
+def test_automatic_library_invalidation_is_not_lost_while_refresh_pending(completion):
+    host = _harness()
+    host.refresh_library(False)
+    stale = host.runner.requests[-1]
+    assert len(host.runner.requests) == 1
+    library_refresh.invalidate_library(host)  # indexed Numilog book
+    library_refresh.invalidate_library(host)  # second source, same GTK turn
+    assert len(host.runner.requests) == 1
+    assert host._library_refresh_dirty is True
+    if completion == "ok":
+        stale.ok([{"identity_id": "alice", "stale": True}])
+    else:
+        stale.err(RuntimeError("an old read failed"))
+    # Never display stale books or a redundant old-error toast.
+    assert host.library_shown == []
+    assert len(host.runner.requests) == 2
+    assert host._library_refresh_dirty is False
+    refreshed = host.runner.requests[-1]
+    assert refreshed.work() == [{"identity_id": "alice"}]
+    refreshed.ok(refreshed.work())
+    assert host.library_shown == [[{"identity_id": "alice"}]]
+    assert host._library_refresh_pending is False
+    assert len(host.runner.requests) == 2
+
+
+def test_pending_library_invalidation_refetches_only_current_identity():
+    host = _harness()
+    host.refresh_library(False)
+    earlier = host.runner.requests[-1]
+    library_refresh.invalidate_library(host)
+    host.service.current_identity = NS(identity_id="bob")
+    host._identity_context_generation += 1
+    earlier.ok([{"identity_id": "alice", "stale": True}])
+    assert host.library_shown == []
+    newer = host.runner.requests[-1]
+    assert newer.work() == [{"identity_id": "bob"}]
+    newer.ok(newer.work())
+    assert host.library_shown == [[{"identity_id": "bob"}]]
+
+
+
+def test_ordinary_background_refresh_never_supersedes_newer_manual_refresh():
+    host = _harness()
+    host.refresh_library(False)
+    old = host.runner.requests[-1]
+    host.refresh_library(False, control=object())
+    manual = host.runner.requests[-1]
+    assert len(host.runner.requests) == 2
+    old.ok([{"title": "old"}])
+    host.refresh_library(False)  # ordinary automatic refresh, not invalidation
+    assert getattr(host, "_library_refresh_dirty", False) is False
+    manual.ok([{"title": "manual latest"}])
+    assert host.library_shown == [[{"title": "manual latest"}]]
+    assert len(host.runner.requests) == 2
+
+
 def test_new_local_artifact_during_inflight_refresh_gets_fresh_snapshot_once():
     """A completed ACSM/indexing task must not lose its no-scan GUI refresh."""
     host = _harness()
@@ -157,3 +215,4 @@ def test_explicit_refresh_supersedes_background_followup_without_third_fetch():
     assert host.library_shown == [[{"identity_id": "alice"}]]
     assert len(host.runner.requests) == 2
     assert host._library_refresh_pending is False
+

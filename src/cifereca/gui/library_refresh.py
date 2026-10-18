@@ -15,19 +15,36 @@ if TYPE_CHECKING:
     from gi.repository import Gtk
 
 
+def invalidate_library(self) -> None:
+    """Signal newly indexed bytes, unlike ordinary coalesced background refresh.
+
+    The existing user-triggered refresh retains priority. Its already-read
+    snapshot might predate the acquisition, so re-read once on GTK completion.
+    This function is only called from TaskRunner's GTK completion callbacks.
+    """
+    if getattr(self, "_closed", False):
+        return
+    if getattr(self, "_library_refresh_pending", False):
+        self._library_refresh_dirty = True
+        return
+    refresh = getattr(self, "refresh_library", None)
+    if callable(refresh):
+        refresh(False)
+
+
 def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None, *, refresh_covers: bool = False) -> None:
     # A delayed request can be emitted after MainWindow's runner/service close.
     if getattr(self, "_closed", False):
         return
     if self._library_refresh_pending and control is None:
-        # Coalesce stale background snapshots; an explicit, newer refresh
-        # already supersedes them and must remain the latest visible result.
+        # Coalesce background invalidations, but a newer explicit user
+        # refresh already supersedes an ordinary redundant background call.
+        # invalidate_library() still records real newly indexed artifacts.
         if not getattr(self, "_library_refresh_explicit_pending", False):
-            self._library_refresh_again = True
+            self._library_refresh_dirty = True
         return
     if control is not None:
-        # A newer explicit request supersedes any queued background follow-up.
-        self._library_refresh_again = False
+        self._library_refresh_dirty = False
     self._library_refresh_pending = True
     self._library_refresh_explicit_pending = control is not None
     self._library_refresh_generation = getattr(self, "_library_refresh_generation", 0) + 1
@@ -52,13 +69,11 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
             return
         self._library_refresh_pending = False
         self._library_refresh_explicit_pending = False
-        if not self._identity_request_current(identity_id, generation):
-            self._library_refresh_again = False
+        if getattr(self, "_library_refresh_dirty", False):
+            self._library_refresh_dirty = False
             self.refresh_library(False)
             return
-        if getattr(self, "_library_refresh_again", False):
-            # Never render a potentially stale snapshot after local indexing.
-            self._library_refresh_again = False
+        if not self._identity_request_current(identity_id, generation):
             self.refresh_library(False)
             return
         self._show_library_entries(entries)
@@ -71,12 +86,11 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
             return
         self._library_refresh_pending = False
         self._library_refresh_explicit_pending = False
-        if not self._identity_request_current(identity_id, generation):
-            self._library_refresh_again = False
+        if getattr(self, "_library_refresh_dirty", False):
+            self._library_refresh_dirty = False
             self.refresh_library(False)
             return
-        if getattr(self, "_library_refresh_again", False):
-            self._library_refresh_again = False
+        if not self._identity_request_current(identity_id, generation):
             self.refresh_library(False)
             return
         self.diagnostics.add("UI", "library refresh", "error", detail={"error": type(exc).__name__, "message": str(exc)})

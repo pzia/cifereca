@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.ebooksgratuits",
-    "version": "0.1.15",
+    "version": "0.1.16",
     "name": "Ebooks libres et gratuits",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -44,7 +44,7 @@
         }
       },
       "help_text": "Catalogue public sans compte. Recherche par titre, auteur et sujet (catégorie/genre) via les filtres publics du site ; pagination serveur et parsing HTML structuré. Le flux EPUB final est téléchargé par transport.http avec limite de taille, validation EPUB et publication atomique. Les recherches filtrées par genre/catégorie conservent le libellé exact du filtre serveur dans les métadonnées, sans le déduire pour les recherches titre/auteur. Les cartes du catalogue affichant « Parution le JJ/MM/AAAA » publient désormais metadata.ebook_release_date (date de mise à disposition de l'édition EbooksGratuits, jamais l'année originale de l'œuvre), avec provenance exacte. L'avertissement « téléchargement non autorisé dans certains pays » est conservé par livre et explicite dans license_note ; cela ne détermine pas la légalité dans le pays du lecteur et n'interdit pas automatiquement l'accès. Sans indication explicite, aucun âge, date ou droit territorial n'est inventé. L'extraction est locale aux pages déjà reçues, sans HTTP supplémentaire.",
-      "version": "0.1.15",
+      "version": "0.1.16",
       "capabilities": [
         "catalog.search",
         "catalog.detail",

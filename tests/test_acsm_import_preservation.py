@@ -210,3 +210,4 @@ def test_acsm_import_is_visible_to_local_library_without_rescan(importer, tmp_pa
     assert matching[0]["title"] == "Fictional fresh book"
     assert matching[0]["provider_id"] == "numilog"
     assert len(after) == len(before) + 1
+

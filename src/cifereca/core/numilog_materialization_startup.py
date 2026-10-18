@@ -23,13 +23,15 @@ from .numilog_materialization_consent import (
 
 def _result(status: str, *, ok: bool = False,
             downloaded: int = 0, attempted: int = 0,
-            skipped: int = 0, failed: int = 0) -> SyncResult:
+            skipped: int = 0, failed: int = 0,
+            blocked: int = 0, claimed: int = 0) -> SyncResult:
     return SyncResult(
         ok=ok, changed=downloaded, warnings=() if ok else (status,),
         facts={
             "phase": "materialize", "trigger": "startup",
             "status": status, "downloaded": downloaded,
             "attempted": attempted, "skipped": skipped, "failed": failed,
+            "blocked": blocked, "sources_claimed": claimed,
             "acquisition_authorized": False,
         },
     )
@@ -65,7 +67,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
     """At most eight attempts *per source*; failures never starve siblings."""
     if trigger != "startup" or type(identity_id) is not str:
         return _result("invalid_trigger")
-    total = attempts = skipped = failures = 0
+    total = attempts = skipped = failures = blocked = claimed = 0
     sources = eligible_source_ids(broker, identity_id)
     if not sources:
         return _result("not_due", ok=True)
@@ -113,6 +115,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             ):
                 continue
             started_at = attempt_clock
+            claimed += 1
             if (
                 not same_source()
                 or mode(broker, source_id) != "on_start"
@@ -120,6 +123,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     source_id,
                 ) != consent_revision
             ):
+                # A revoked/rebound binding after the durable claim is a
+                # blocked attempt, not a silently completed backup.
+                blocked += 1
                 continue
             raw = session.library()
             # The private catalogue can contain hundreds of purchases.
@@ -253,8 +259,19 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     # metadata, or mask a cooperative cancellation. The
                     # existing durable "running" receipt remains truthful.
                     pass
+    # A startup with no successful claims never backed anything up. Never
+    # tell the GUI it completed a run when every account was throttled.
+    # Likewise, a post-claim revocation/rebind has a durable "blocked"
+    # receipt and must not be reported as aggregate success.
+    if failures:
+        status = "partial" if total else "failed"
+    elif blocked:
+        status = "partial" if total else "blocked"
+    else:
+        status = "complete" if claimed else "not_due"
     return _result(
-        "partial" if failures and total else "failed" if failures else "complete",
-        ok=failures == 0, downloaded=total, attempted=attempts,
+        status, ok=not (failures or blocked),
+        downloaded=total, attempted=attempts,
         skipped=skipped, failed=failures,
+        blocked=blocked, claimed=claimed,
     )
