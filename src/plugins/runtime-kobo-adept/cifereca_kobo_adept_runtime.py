@@ -446,15 +446,34 @@ class KoboAdeptRuntime:
                     'Résultat de téléchargement ADEPT non confirmé.',
                     code='kobo_adept_invalid_response',
                 )
-            artifact = value['artifact']
+            artifact = value.get('artifact')
+            if type(artifact) is not dict or type(artifact.get('path')) is not str:
+                raise KoboAdeptError(
+                    'Artefact ADEPT non qualifié.',
+                    code='kobo_adept_invalid_response',
+                )
+            # Format and content hash are public artifact descriptors, not
+            # arbitrary vendor labels. An unknown value must not turn a
+            # private token into a Core metadata attribute.
+            media_format = artifact.get('format') or ''
+            sha256 = artifact.get('sha256') or ''
+            if (type(media_format) is not str
+                    or media_format.casefold() not in ('', 'epub', 'pdf', 'kepub')
+                    or type(sha256) is not str
+                    or (sha256 and (len(sha256) != 64
+                        or any(c not in '0123456789abcdefABCDEF' for c in sha256)))):
+                raise KoboAdeptError(
+                    'Descripteurs de l’artefact ADEPT non qualifiés.',
+                    code='kobo_adept_invalid_response',
+                )
             loan = self._qualified_reference(value.get('loan_id'))
             name = self._qualified_reference(value.get('profile'))
             # ArtifactInput owns the validated destination, hash and format.
             # Do not also publish the entire CLI result in metadata: it may
             # include license XML, activation keys or signed delivery URLs.
             return DrmMutationResult(ok=True, operation='fulfill', artifact=ArtifactInput(
-                path=Path(artifact['path']), format=artifact.get('format', ''),
-                sha256=artifact.get('sha256', ''),
+                path=Path(artifact['path']), format=media_format.casefold(),
+                sha256=sha256.lower(),
             ), metadata={
                 'runtime_result': {'ok': True, 'loan_id': loan, 'profile': name},
                 'adept_loan_id': loan, 'adept_profile_name': name,
