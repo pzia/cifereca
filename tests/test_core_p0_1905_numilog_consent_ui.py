@@ -148,3 +148,29 @@ def test_disconnect_can_still_revoke_durable_source_policy():
     assert state["mode"] == "manual"
     assert "Mode manuel" in row().subtitle
     assert ("materialization-revoke", "numilog-consent-one") in calls
+
+
+def test_queued_confirmation_cannot_authorize_after_identity_changes():
+    w, _broker, calls, dialogs, state, row = _ui()
+    row().suffixes[0].click()
+    prepared = w.runner.tasks[-1]
+    prepared.done(prepared.work())
+    dialogs[0].respond("confirm")
+    queued = w.runner.tasks[-1]
+    w.service.current_identity = NS(identity_id="bob")
+    assert queued.work() is None
+    queued.done(None)
+    assert state["mode"] == "manual"
+    assert not any(name == "materialization-confirm" for name, *_ in calls)
+
+
+def test_queued_revoke_is_account_scoped_at_execution():
+    w, _broker, calls, dialogs, state, row = _ui(initial="on_start")
+    row().suffixes[0].click()
+    dialogs[0].respond("revoke")
+    queued = w.runner.tasks[-1]
+    w.service.current_identity = NS(identity_id="bob")
+    assert queued.work() is None
+    queued.done(None)
+    assert state["mode"] == "on_start"
+    assert not any(name == "materialization-revoke" for name, *_ in calls)
