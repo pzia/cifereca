@@ -20,7 +20,13 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
     if getattr(self, "_closed", False):
         return
     if self._library_refresh_pending and control is None:
+        # A newly indexed book may have arrived after the in-flight snapshot
+        # was read. Coalesce repeated requests into ONE fresh follow-up.
+        self._library_refresh_again = True
         return
+    if control is not None:
+        # A newer explicit request supersedes any queued background follow-up.
+        self._library_refresh_again = False
     self._library_refresh_pending = True
     self._library_refresh_generation = getattr(self, "_library_refresh_generation", 0) + 1
     request_generation = self._library_refresh_generation
@@ -44,6 +50,12 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
             return
         self._library_refresh_pending = False
         if not self._identity_request_current(identity_id, generation):
+            self._library_refresh_again = False
+            self.refresh_library(False)
+            return
+        if getattr(self, "_library_refresh_again", False):
+            # Never render a potentially stale snapshot after local indexing.
+            self._library_refresh_again = False
             self.refresh_library(False)
             return
         self._show_library_entries(entries)
@@ -56,6 +68,11 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
             return
         self._library_refresh_pending = False
         if not self._identity_request_current(identity_id, generation):
+            self._library_refresh_again = False
+            self.refresh_library(False)
+            return
+        if getattr(self, "_library_refresh_again", False):
+            self._library_refresh_again = False
             self.refresh_library(False)
             return
         self.diagnostics.add("UI", "library refresh", "error", detail={"error": type(exc).__name__, "message": str(exc)})
