@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.38, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.39, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.38'
+VERSION = '0.1.39'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -618,15 +618,26 @@ class NumilogSession(ProviderSession):
                             else 'delivery_intermediate'
                         )
                         if kind == 'login':
-                            # A password field proves a form, not cookie expiry
-                            # or the server's reason for returning this page.
+                            # A shared site template can include a password form
+                            # on a page other than the authentication route.
+                            # Either way, *never* select a delivery link from
+                            # this ambiguous HTML. Only an exact login endpoint
+                            # is enough to suspend this session; neither case
+                            # proves that a cookie actually expired.
+                            login_endpoint = (
+                                page_path == '/login.aspx'
+                                and url_origin(str(r.url)) == url_origin(self.library_url)
+                            )
                             trace.fail('login_form_detected')
                             trace.event('html_selection','login_form_detected',html_kind='login',hops=hop+1)
                             self._diag('livraison HTML',phase='download',
-                                       page_kind=page_kind,kind='login',result='login_form_detected')
-                            self.connected = False
-                            self._session_event('delivery_login_form_detected')
-                            raise ProviderError('Numilog : formulaire de connexion reçu au lieu du fichier ; reconnecter le compte puis réessayer explicitement')
+                                       page_kind='login_page' if login_endpoint else page_kind,
+                                       kind='login',result='login_form_detected')
+                            if login_endpoint:
+                                self.connected = False
+                                self._session_event('delivery_login_form_detected')
+                                raise ProviderError('Numilog : formulaire de connexion reçu au lieu du fichier ; reconnecter le compte puis réessayer explicitement')
+                            raise ProviderError('Numilog : formulaire de connexion présent dans une page de livraison non identifiée ; téléchargement arrêté, session non invalidée')
                         if kind == 'error':
                             trace.fail('html_error')
                             trace.event('html_selection','html_error',html_kind='error',hops=hop+1)
