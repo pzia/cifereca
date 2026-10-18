@@ -572,14 +572,24 @@ def _is_fulfillment_acsm(url, allowed_origins):
 
 def _readbook_coordinates(value, base_url):
     try:
-        if not _raw_delivery_url_safe(value):
+        if not _raw_delivery_url_safe(value) or len(value) > 4096:
             return None
         url = urljoin(base_url, value)
+        if len(url) > 4096:
+            return None
         parsed = urlsplit(url)
         if (origin(url) != origin(base_url) or parsed.username or parsed.password
                 or parsed.fragment or parsed.path.lower() != '/pages/compte/readbook.ashx'):
             return None
-        query = parse_qs(parsed.query, keep_blank_values=True)
+        # Identity comparison must never erase a malformed query segment
+        # (e.g. an extra '&edition' without '='), or accept unbounded
+        # repeated params before deciding that a streaming card matches an
+        # owned download. This parser is only used for readBook binding,
+        # not for the ordinary public catalogue.
+        query = parse_qs(
+            parsed.query, keep_blank_values=True,
+            strict_parsing=True, max_num_fields=32,
+        )
         lid = query.get('lid', [])
         if len(lid) != 1 or not re.fullmatch(r'[0-9]{1,20}', lid[0]):
             return None
