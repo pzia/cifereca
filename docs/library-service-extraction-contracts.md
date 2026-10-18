@@ -281,6 +281,23 @@ Aucune migration, opération réseau réelle ou changement métier dans ce lot.
 | `prepare_digital_download` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 1 | 1 | — |
 | `_download_filename` | #1120 | `core/loan_acquisition.py + acsm_cache.py` | 0 | 0 | — |
 
+### Manual ACSM import orchestration (#1120)
+
+`core/manual_acsm_import.py` contains the existing manual import implementation.
+`LibraryService.import_acsm` retains its dedicated `manual-acsm.lock`, busy error,
+identity selection and action recording; both facade signatures are unchanged.
+Filesystem/hash/inspection/profile-error dependencies are injected at call time,
+including historical `cifereca.services` monkeypatch points. The late binding
+capture import remains at the same execution point, with its relative namespace
+adjusted for the Core package. Executable AST otherwise remains identical.
+
+Source preservation, content-derived staging, collision refusal, profile choice,
+runtime payload, output validation, indexing, success-only staging cleanup and
+failure persistence keep their original order. A failure before publication may
+be retried explicitly; an output published before an indexing interruption is
+preserved and blocks a second fulfillment. Tests use synthetic ACSM/runtime data
+and local SQLite, not a real Adobe account or fulfillment.
+
 ### Synchronization boundaries
 
 `core/sync_coordination.py` orchestrates explicit account/opening synchronization
