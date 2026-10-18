@@ -37,8 +37,16 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
     if getattr(self, "_closed", False):
         return
     if self._library_refresh_pending and control is None:
+        # Coalesce background invalidations, but a newer explicit user
+        # refresh already supersedes an ordinary redundant background call.
+        # invalidate_library() still records real newly indexed artifacts.
+        if not getattr(self, "_library_refresh_explicit_pending", False):
+            self._library_refresh_dirty = True
         return
+    if control is not None:
+        self._library_refresh_dirty = False
     self._library_refresh_pending = True
+    self._library_refresh_explicit_pending = control is not None
     self._library_refresh_generation = getattr(self, "_library_refresh_generation", 0) + 1
     request_generation = self._library_refresh_generation
     identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
@@ -60,6 +68,7 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
                 request_generation != self._library_refresh_generation):
             return
         self._library_refresh_pending = False
+        self._library_refresh_explicit_pending = False
         if getattr(self, "_library_refresh_dirty", False):
             self._library_refresh_dirty = False
             self.refresh_library(False)
@@ -76,6 +85,7 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
                 request_generation != self._library_refresh_generation):
             return
         self._library_refresh_pending = False
+        self._library_refresh_explicit_pending = False
         if getattr(self, "_library_refresh_dirty", False):
             self._library_refresh_dirty = False
             self.refresh_library(False)
