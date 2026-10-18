@@ -3137,8 +3137,15 @@ def main() -> int:
             Gio.Application.do_shutdown(self)
 
     app = Application()
+    # The full baseline additionally runs 563-row render comparisons, sync
+    # consent, Settings and three identity changes with their own deadlines.
+    # Its old shared 50s watchdog expired during active profile selection
+    # (#2203), after all 760px assertions passed. Keep a finite suite budget;
+    # individual operation/geometry assertions retain their original bounds.
+    watchdog_seconds = 75 if args.window_baseline else 50
     GLib.timeout_add_seconds(
-        50, lambda: (fail("Timeout Diagnostics navigation 50s"), False)[1]
+        watchdog_seconds,
+        lambda: (fail(f"Timeout Diagnostics navigation {watchdog_seconds}s"), False)[1]
         if report["status"] == "RUNNING" else False,
     )
     app.run([sys.argv[0]])

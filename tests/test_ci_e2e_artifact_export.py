@@ -260,6 +260,27 @@ class SafeFailureDiagnosisTests(unittest.TestCase):
             wait()
         self.assertEqual(pending, [])
 
+    def test_only_reviewed_watchdog_budgets_are_classified_as_timeouts(self):
+        module = _module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = "mainwindow-baseline-1366"
+            report = root / scenario / scenario / "screen.json"
+            report.parent.mkdir(parents=True)
+            source = root / "summary.json"
+            source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+            for text, expected in (
+                ("Timeout Diagnostics navigation 50s", "scenario_timeout"),
+                ("Timeout Diagnostics navigation 75s", "scenario_timeout"),
+                ("Timeout Diagnostics navigation PRIVATE", "assertion_or_runtime"),
+                ({"token": "PRIVATE"}, "assertion_or_runtime"),
+                (["PRIVATE"], "assertion_or_runtime"),
+            ):
+                report.write_text(json.dumps({"error": text}))
+                row = module.safe_summary(source)["results"][0]
+                self.assertEqual(row["failure_kind"], expected)
+                self.assertNotIn("PRIVATE", repr(row))
+
     def test_unknown_strings_nonfinite_numbers_boolean_line_and_report_path_are_not_exported(self):
         module = _module()
         with tempfile.TemporaryDirectory() as tmp:

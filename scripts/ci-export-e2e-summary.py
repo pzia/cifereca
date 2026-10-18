@@ -83,7 +83,9 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
             result["duration_seconds"] = round(duration, 2)
         # Equality against one fixed harness message; never publish its text.
         result["failure_kind"] = (
-            "scenario_timeout" if data.get("error") == "Timeout Diagnostics navigation 50s"
+            "scenario_timeout" if type(data.get("error")) is str and data["error"] in {
+                "Timeout Diagnostics navigation 50s", "Timeout Diagnostics navigation 75s",
+            }
             else "assertion_or_runtime")
         return result
     except (OSError, UnicodeError, ValueError, RecursionError):
