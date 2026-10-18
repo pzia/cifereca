@@ -1957,7 +1957,9 @@ class Storage:
         if (not all(type(v) is str and 0 < len(v) <= 1024
                     and not any(c in v for c in "\0\r\n")
                     for v in (identity_id, item_id, entitlement_id))
-                or len(item_id) > 512 or len(entitlement_id) > 128):
+                or len(item_id) > 512 or len(entitlement_id) > 128
+                or "://" in identity_id
+                or any(ch.isspace() for ch in identity_id)):
             raise ValueError("invalid_numilog_possession_scope")
         columns = (
             "entitlement_id", "identity_id", "credential_id", "account_id",
