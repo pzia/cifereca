@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.baen",
-    "version": "0.1.10",
+    "version": "0.1.11",
     "name": "Baen",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -31,7 +31,7 @@
         }
       },
       "help_text": "Fonds public Baen Free Library : recherche et pagination serveur qualifiées (q/page/pageSize). À l’ouverture d’une fiche publique, le plugin conserve auteur, date de publication et ISBN explicitement exposés par la page produit, avec provenance, sans extrapoler genre ni données de compte. Le flux EPUB final est téléchargé par transport.http avec limite de taille, validation EPUB et publication atomique. Achats et My Books restent hors périmètre.",
-      "version": "0.1.10",
+      "version": "0.1.11",
       "capabilities": [
         "catalog.search",
         "catalog.detail",
