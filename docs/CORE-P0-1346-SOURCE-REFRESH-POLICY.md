@@ -84,18 +84,58 @@ le compte et l'identité consentis et dus sont rafraîchis ; le broker réutilis
 demander de lien de livraison ni télécharger d'EPUB/ACSM.
 
 **Frontière impérative : le consentement d'actualisation des achats n'est
-jamais un consentement de sauvegarde des fichiers.** Pour Numilog,
-`local_materialization_schedule` continue à répondre `not_supported`
-et aucun broker d'acquisition automatique n'est ajouté dans ce lot.
+jamais un consentement de sauvegarde des fichiers.** Le contrat générique
+`local_materialization_schedule` ne programme pas Numilog. La matérialisation
+Numilog utilise désormais les méthodes distinctes décrites ci-dessous ; elle
+n'est pas autorisée par un réglage d'inventaire.
 Les tests utilisent des comptes et identités fictifs, refusent l'exécution
 après révocation ou paramètres corrompus, et vérifient les deux horloges
 `on_start`/`periodic` sans mélanger la source ni déclencher de DRM.
 
 La configuration GTK et les déclencheurs d'inventaire au démarrage et
-périodiques sont raccordés pour Numilog comme pour Kobo. **Non livré pour
-Numilog :** acquisition automatique ciblée opt-in, réconciliation ADEPT/DRM
-et preuve de téléchargement sur compte réel. Aucun succès d'inventaire
-ne peut être présenté comme une sauvegarde de fichier réussie.
+périodiques sont raccordés pour Numilog comme pour Kobo. La sauvegarde
+Numilog opt-in au démarrage est également livrée, indépendamment de cet
+inventaire (voir section suivante). La livraison Numilog/ACSM/ADEPT et deux
+livres visibles en Bibliothèque ont été confirmés par le propriétaire le
+18/10/2026 (#2024) ; cela ne prouve pas un essai réel de chaque planification.
+Aucun succès d'inventaire ne vaut sauvegarde de fichier réussie.
+
+## Sauvegarde Numilog distincte, au démarrage (#1905)
+
+Dans Synchronisation, « Sauvegarde automatique des achats Numilog » est en
+**mode manuel par défaut**, pour chaque source/identité/compte. L'action
+« Activer au démarrage… » exige un aperçu local puis une seconde confirmation
+explicite ; ouvrir la page, lire l'aperçu ou activer l'inventaire ne donne aucun
+consentement de téléchargement. La désactivation de la source révoque ce
+consentement atomiquement ; la révocation reste possible après déconnexion.
+Les anciens réglages ou une confirmation périmée ne sont pas réinterprétés.
+
+Le broker expose `numilog_materialization_schedule`,
+`prepare_numilog_materialization_consent`,
+`confirm_numilog_materialization_consent`,
+`revoke_numilog_materialization_consent` et
+`numilog_materialization_run_status`. Seule l'exécution
+`synchronize_scheduled_numilog_materialization(identity_id, "startup")`
+après ouverture peut acquérir les candidats dûment consentis et réadmis.
+Les callbacks d'inventaire et de rendu n'appellent jamais cette exécution.
+
+La tâche est unique par fenêtre, annulable entre deux livres et bornée à
+**8 tentatives par source et par ouverture**, avec une admission persistée
+espacée d'au moins **60 minutes**. Chaque source garde sa propre limite : un
+échec ne prive pas un autre compte consenti de son essai. Le manifeste privé
+est borné à 2 048 entrées ; un dépassement bloque plutôt que tronquer les droits.
+Connexion, session, racine, propriétaire, consentement et achat exact sont
+revérifiés sous verrou. Les fichiers déjà attestés et les reçus en attente
+ne provoquent pas de nouveau téléchargement ; une indexation interrompue
+se reprend explicitement hors réseau, comme décrit dans
+[SOURCE-MATERIALIZATION-CONFIRMATION.md](SOURCE-MATERIALIZATION-CONFIRMATION.md).
+
+Le bilan affiché distingue tentative, succès, partiel, échec et blocage, avec
+des compteurs bornés et le prochain démarrage admissible. **Aucun timer de
+sauvegarde périodique Numilog ni service hors application n'est annoncé** :
+le mode périodique concerne uniquement l'actualisation des notices/droits.
+L'activation de cette fonction sur un compte réel reste une action utilisateur,
+pas un effet d'installation, de migration, de test ou de consultation.
 
 
 ## Tranche CoreUI — ordonnanceur périodique opt-in (#1346)
