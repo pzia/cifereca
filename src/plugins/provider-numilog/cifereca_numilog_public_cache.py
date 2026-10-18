@@ -5,6 +5,7 @@ reconnecting invalidates entries without waiting for an in-flight HTTP call.
 """
 from collections import OrderedDict
 from copy import deepcopy
+import math
 import threading
 import time
 
@@ -68,8 +69,12 @@ class PublicCatalogueCache:
         except ProviderError as exc:
             if str(exc) in {'Numilog : public_catalog_rate_limited',
                             'Numilog : public_detail_rate_limited'}:
+                delay = getattr(exc, 'retry_after_seconds', 0.0)
+                if type(delay) not in (int, float) or not math.isfinite(delay) or delay < 0:
+                    delay = 0.0
                 with self._lock:
-                    self._paused_until = max(self._paused_until, self._clock() + RATE_LIMIT_PAUSE_SECONDS)
+                    self._paused_until = max(self._paused_until, self._clock() +
+                                             max(RATE_LIMIT_PAUSE_SECONDS, delay))
             raise
         finally:
             with self._lock:
