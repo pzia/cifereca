@@ -376,3 +376,82 @@ def test_large_numilog_manifest_is_bounded_without_starving_hundreds_of_books(
         assert calls == []
     finally:
         service.close()
+
+
+def test_concurrent_revocation_after_confirmation_snapshot_blocks_reactivation(
+    tmp_path, monkeypatch,
+):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        proposed = broker.prepare_numilog_materialization_consent(sid)
+        assert proposed.ok
+        original = service.storage.numilog_materialization_change_consent
+
+        def revoke_between_validation_and_commit(source_id, *, activate, expected_revision=None):
+            if activate:
+                # Another worker, after the SHA re-check but before the SQL
+                # commit, withdraws consent in a real SQLite transaction.
+                assert original(source_id, activate=False)
+            return original(
+                source_id, activate=activate, expected_revision=expected_revision,
+            )
+
+        monkeypatch.setattr(
+            service.storage, "numilog_materialization_change_consent",
+            revoke_between_validation_and_commit,
+        )
+        response = broker.confirm_numilog_materialization_consent(
+            sid, proposed.facts["confirmation_token"], mode="on_start",
+        )
+        assert not response.ok and response.facts["status"] == "consent_changed"
+        assert mode(broker, sid) == "manual"
+        assert service.storage.metadata_get(policy_key(sid)) == "manual"
+        assert calls == []
+    finally:
+        service.close()
+
+
+def test_concurrent_revocation_during_sha_preview_issues_no_usable_token(
+    tmp_path, monkeypatch,
+):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        original = SynchronizationBrokerImpl.preview_local_materialization
+
+        def preview_with_revocation(self, source_id, **kwargs):
+            receipt = original(self, source_id, **kwargs)
+            self.revoke_numilog_materialization_consent(source_id)
+            return receipt
+
+        monkeypatch.setattr(
+            SynchronizationBrokerImpl, "preview_local_materialization",
+            preview_with_revocation,
+        )
+        result = broker.prepare_numilog_materialization_consent(sid)
+        assert not result.ok and result.facts["status"] == "preview_changed"
+        assert "confirmation_token" not in result.facts
+        assert mode(broker, sid) == "manual"
+        assert calls == []
+    finally:
+        service.close()
+
+
+def test_numilog_consent_revision_is_atomic_across_storage_instances(tmp_path):
+    from cifereca.storage import Storage
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    other = Storage(service.storage.path)
+    try:
+        original = service.storage.numilog_materialization_consent_revision(sid)
+        assert other.numilog_materialization_change_consent(
+            sid, activate=False,
+        )
+        changed = service.storage.numilog_materialization_consent_revision(sid)
+        assert changed != original
+        assert not service.storage.numilog_materialization_change_consent(
+            sid, activate=True, expected_revision=original,
+        )
+        assert service.storage.metadata_get(policy_key(sid)) == "manual"
+        assert calls == []
+    finally:
+        other.close()
+        service.close()
