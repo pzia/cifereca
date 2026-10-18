@@ -23,6 +23,7 @@ def test_gallica_exposes_public_only_fields_and_branch_limits():
     assert cap.fields == ("all", "title", "author", "subject", "isbn")
     assert cap.scopes == ("all", "digital")
     assert cap.pagination == "page" and cap.page_size == 50
+    assert cap.max_pages == 101
     assert any("partiels" in note for note in cap.notes)
     assert not cap.supports_scope("physical")
 
@@ -203,4 +204,31 @@ def test_a_supported_media_branch_does_not_claim_unavailable_complementary_media
     session._search_audio = lambda *_: pytest.fail("audio disabled")
     assert session.search("Doyle", content_types=("epub", "mp3")) == []
     assert calls == ["ebooks"]
+    assert session.last_search_warnings == []
+
+
+
+@pytest.mark.parametrize("page", (-1, True, False, "2", "invalid", 0.5, None, 101, 10**100))
+def test_invalid_page_refused_before_any_gallica_branch(page):
+    session = fake_session()
+    calls = []
+    session._search_ebooks = lambda *_: calls.append("ebooks") or []
+    session._search_audio = lambda *_: calls.append("audio") or []
+    with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+        session.search("Doyle", page=page)
+    assert calls == []
+    assert session.last_search_warnings == []
+
+
+@pytest.mark.parametrize("page", (0, 1, 100))
+def test_valid_page_is_forwarded_unchanged_to_both_branches(page):
+    session = fake_session()
+    calls = []
+    session._search_ebooks = lambda *_args: calls.append(("ebooks", _args)) or []
+    session._search_audio = lambda *_args: calls.append(("audio", _args)) or []
+    assert session.search("Doyle", page=page) == []
+    assert set(calls) == {
+        ("ebooks", ("Doyle", page, "all")),
+        ("audio", ("Doyle", page, "all")),
+    }
     assert session.last_search_warnings == []
