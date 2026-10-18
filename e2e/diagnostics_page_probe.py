@@ -586,6 +586,31 @@ def main():
         assert any(q.get("severity") == "error" and q["offset"] == 50 for q in broker.event_queries)
         report["checks"]["P0_2140_errors_57_across_pages_keyboard_background_redacted"] = True
         screenshot("14-bulk-errors-57")
+        if args.width == 1366:
+            report["stage"] = "P0_2140_resize_selected_window_760"
+            window[0].set_default_size(760, 790)
+            until(lambda: window[0].get_width() <= 760,
+                  lambda: verify_narrow_bulk(payload), seconds=5)
+        else:
+            keyboard_action("Copier la sélection", lambda: read_bulk_clipboard(payload))
+
+    def verify_narrow_bulk(payload):
+        assert 700 <= window[0].get_width() <= 760
+        assert selection_count(57) and selection_preview() == payload
+        horizontal = page[0].get_hadjustment()
+        assert horizontal.get_upper() - horizontal.get_page_size() < 5
+        actions = find_button("Erreurs + critiques (filtres)").get_parent().get_parent()
+        assert isinstance(actions, Gtk.FlowBox)
+        # Validate every actual GTK button allocation against the page width,
+        # rather than assuming wrapping from the presence of a FlowBox.
+        for button in [w for w in walk(actions) if isinstance(w, Gtk.Button)]:
+            ok, bounds = button.compute_bounds(page[0])
+            assert ok
+            assert bounds.get_x() >= 0 and bounds.get_x() + bounds.get_width() <= page[0].get_width()
+        report["checks"]["P0_2140_selected_window_760_without_horizontal_overflow"] = True
+        screenshot("14b-bulk-errors-760")
+        # The remaining real XTEST copy/page/invert/all/cancel/refusal sequence
+        # now runs at760 too, with unchanged assertions and operation deadlines.
         keyboard_action("Copier la sélection", lambda: read_bulk_clipboard(payload))
 
     def read_bulk_clipboard(expected):
