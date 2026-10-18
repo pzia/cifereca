@@ -317,6 +317,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         if effective_field is None:
             continue
         primary_ok = False
+        public_outage = False
         for attempt, variant in enumerate(variants):
             # Loose fallbacks are needed only when the exact query produced
             # no strong title/author match. This keeps normal searches fast.
@@ -352,22 +353,47 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 if attempt == 0 and provider_rows:
                     primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
             except Exception as exc:
-                # An exact-query failure should not prevent a looser retry.
+                from ..search_failures import search_failure_code
+                code = search_failure_code(exc)
+                public_outage = public_outage or code == "SearchTemporarilyUnavailable"
+                # Provider exceptions may carry signed URLs, query terms,
+                # cookies or private account identities. Never interpolate
+                # them into warnings or diagnostics.
                 if attempt == 0 or len(variants) == 1:
-                    warnings.append(f"{session.descriptor.display_name}: {exc}")
+                    warnings.append(
+                        f"{session.descriptor.display_name}: recherche en ligne indisponible"
+                        if code else f"{session.descriptor.display_name}: échec de recherche"
+                    )
                 self.diagnostics.add(
                     "PLUGIN", "search", "error",
                     detail={
                         "provider": session.provider_id,
                         "attempt": attempt + 1,
                         "q_len": len(variant),
-                        "error": type(exc).__name__,
-                        "message": str(exc),
+                        "error": code or "ProviderSearchFailed",
+                        "message": "search_provider_failure",
                     },
                 )
-                from ..search_failures import is_technical_search_error
-                if is_technical_search_error(exc):
+                # No equivalent network retry for auth refusal or outage.
+                if code is not None:
                     break
+        if public_outage and not provider_rows and self.current_identity is identity:
+            from .known_catalog_fallback import known_public_fallback
+            previous = known_public_fallback(
+                self.storage, provider_id=session.provider_id,
+                identity_id=identity.identity_id if identity is not None else None,
+                query=query, scope=scope, field=field,
+                content_types=tuple(content_types or ()),
+            )
+            if previous:
+                provider_rows = list(previous)
+                warnings.append(
+                    f"{session.descriptor.display_name}: résultats connus, recherche en ligne indisponible"
+                )
+            else:
+                warnings.append(
+                    f"{session.descriptor.display_name}: recherche en ligne indisponible (aucun résultat connu)"
+                )
         if field in {"title", "author"}:
             provider_rows = [row for row in provider_rows if self._field_match(field, query, row)]
         if str(scope or "all").casefold() == "unknown":
@@ -393,9 +419,13 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         )
     warnings = list(dict.fromkeys(warnings))
     try:
-        self._mirror_remote_results(rows)
+        self._mirror_remote_results([
+            row for row in rows
+            if not isinstance(row.metadata, dict)
+            or row.metadata.get("search_provenance") != "known_catalog_stale"
+        ])
     except Exception as exc:
-        logger.warning("TRACE catalog mirror search error=%s", exc)
+        logger.warning("TRACE catalog mirror search error=%s", type(exc).__name__)
     if not warnings:
         self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
     self.last_search = rows
@@ -704,8 +734,14 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 try:
                     provider_rows, provider_warnings, error_code, error_message = future.result()
                 except Exception as exc:
-                    provider_rows, provider_warnings = [], [f"{session.descriptor.display_name}: {exc}"]
-                    error_code, error_message = type(exc).__name__, str(exc)
+                    from ..search_failures import search_failure_code
+                    # A failed future can bypass the worker's normal sanitized
+                    # error boundary. Preserve only a fixed reason code.
+                    error_code = search_failure_code(exc) or "ProviderSearchFailed"
+                    error_message = "Recherche en ligne indisponible"
+                    provider_rows, provider_warnings = [], [
+                        f"{session.descriptor.display_name}: recherche en ligne indisponible"
+                    ]
                 if request_cancelled():
                     cancelled = True
                     break
