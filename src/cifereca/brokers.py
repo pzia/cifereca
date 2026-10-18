@@ -444,6 +444,11 @@ class SynchronizationBrokerImpl:
             raise ValueError("invalid source enabled preference")
         account = self._find_account(source_id)
         self.service.storage.metadata_set(self._preference_key(source_id), "1" if enabled else "0")
+        # Disabling a Numilog source also withdraws materialization consent.
+        # Re-enabling inventory later must never resurrect a backup policy.
+        if enabled is False and getattr(account, "provider_id", None) == "numilog":
+            from .core.numilog_materialization_consent import revoke
+            revoke(self, source_id)
         self._notify()
         return self._ref(account)
 
@@ -675,6 +680,13 @@ class SynchronizationBrokerImpl:
         )
         self._notify()
         return mode
+
+    def synchronize_scheduled_numilog_materialization(
+        self, identity_id: str, trigger: str, *, control: Any = None,
+    ) -> SyncResult:
+        """Run opt-in Numilog materialization independently of source-sync."""
+        from .core.numilog_materialization_startup import execute
+        return execute(self, identity_id, trigger, control=control)
 
     def numilog_materialization_schedule(self, source_id: str) -> str:
         """Read an independently confirmed Numilog policy. Defaults manual."""
