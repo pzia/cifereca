@@ -62,14 +62,23 @@ def test_coauthor_and_explicit_commercial_format_with_year(monkeypatch):
     s, calls = session(monkeypatch)
     try:
         p = s.browse_public_search("jefferson")
-        matches = s.refine_loaded_page(
+        pdf = s.refine_loaded_page(
             p, author="Antoine Ronzon", year=2026, format_label="PDF",
         )
-        assert matches.matching_count >= 2
-        assert all("Antoine Ronzon" in row.metadata["authors"] for row in matches.items)
-        assert all("PDF" in row.metadata["format_labels"] for row in matches.items)
-        assert all(row.published_at.startswith("2026-") for row in matches.items)
-        assert matches.public_unfiltered_total == p.total_results
+        epub = s.refine_loaded_page(
+            p, author="Antoine Ronzon", year=2026, format_label="ePub",
+        )
+        # Two commercially distinct product IDs with the same title and
+        # authors must never be collapsed into a fabricated owned edition.
+        assert pdf.matching_count == epub.matching_count == 1
+        assert pdf.items[0].record_id != epub.items[0].record_id
+        assert all("Antoine Ronzon" in row.metadata["authors"]
+                   for row in pdf.items + epub.items)
+        assert pdf.items[0].metadata["format_labels"] == ["PDF"]
+        assert epub.items[0].metadata["format_labels"] == ["ePub"]
+        assert all(row.published_at.startswith("2026-")
+                   for row in pdf.items + epub.items)
+        assert pdf.public_unfiltered_total == epub.public_unfiltered_total == p.total_results
         assert calls == [("jefferson", 0, "all")]
     finally:
         s.close()
