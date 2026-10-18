@@ -19,8 +19,11 @@ def create_shell_header(window, *, Gtk, Adw, Gio, Pango):
     try:
         header = window._titlebar_service.build(host) if window._titlebar_service else Adw.HeaderBar()
         if not isinstance(header, Adw.HeaderBar): raise TypeError("Titlebar must return Adw.HeaderBar")
-    except Exception as exc:
-        window.diagnostics.add("PLUGIN", "titlebar build", "error", detail={"error": str(exc)})
+    except Exception:
+        window.diagnostics.add(
+            "PLUGIN", "titlebar build", "error",
+            detail={"code": "titlebar_factory_failed"},
+        )
         header = Adw.HeaderBar(); window._titlebar_service = None
     window.header_title = Gtk.Label(label="cifereca")
     window.header_subtitle = Gtk.Label(label="")
