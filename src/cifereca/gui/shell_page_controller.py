@@ -70,10 +70,15 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
                 return
             if not isinstance(widget, Gtk.Widget):
                 raise TypeError("Page factory must return Gtk.Widget")
-        except Exception as exc:
+        except Exception:
             if not is_current():
                 return
-            window.diagnostics.add("PLUGIN", "ui.page build", "error", detail={"route": page.route, "error": str(exc)})
+            # The route and exception originate from a plugin contribution;
+            # neither is safe for a diagnostic archive.
+            window.diagnostics.add(
+                "PLUGIN", "ui.page build", "error",
+                detail={"code": "page_factory_failed"},
+            )
             if not is_current():
                 return
             recovery = next((p for p in fallback if p.route == page.route and p.route in {"plugins", "settings"}), None)
