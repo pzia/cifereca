@@ -1061,3 +1061,27 @@ page et d’une page paginée vers trois hôtes partenaires/CDN autorisés
 la redirection MesLivres change d’origine, simulation loopback et
 pagination/redirection normale. Aucun cookie, mot de passe, identifiant
 d’achat ou HTML privé ne rejoint les diagnostics.
+
+
+## Catalogue public : navigation sur facettes attestées (0.1.52, #1886)
+
+`NumilogPublicSession.browse_public_search(query)` expose un `PublicSearchPage`
+complet : total public annoncé, notices commerciales, liens de page suivante,
+facettes publiées (`fltrTheme`, `fltrPrice`, `fltrLang`, `fltrPub`) et options
+de tri observées. `search()` utilisé par le Core reste inchangé (une liste
+de notices). Les résultats sont `owned=False`, `downloadable=False`, sans
+`download_url` ni inférence sur le prix historique ou les achats.
+
+`follow_public_link(url)` suit exclusivement un lien de filtre/pagination
+publié par une réponse `browse_public_search` ou `follow_public_link`
+validée dans la même session. Autorisation valable 60 secondes, révoquée
+à la déconnexion/reconnexion. URL construite par l'appelant, page >100,
+paramètre non attesté et lien de fiche/achat sont refusés avant HTTP.
+Le suivi reste anonyme, HTTPS, sans cookies ni redirections, avec le
+même cache TTL/budget HTTP que la recherche simple. Pas de crawl automatique.
+
+Il s'agit de navigation facettée distante sur les URL effectivement
+publiées, pas d'une preuve d'exhaustivité ni de recherche serveur
+par ISBN, auteur ou titre exact. Singleton toujours désactivé par défaut.
+Action UI/Core pour exposer ces facettes et qualification HTTP live/robots/CGU
+restent à faire. Les tests sont déterministes et hors réseau.
