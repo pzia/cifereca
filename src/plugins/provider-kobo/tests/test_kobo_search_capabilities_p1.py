@@ -16,6 +16,7 @@ def test_kobo_declares_unverified_fields_as_unsupported():
     assert cap.scopes == ("all", "digital", "catalog")
     assert cap.pagination == "page"
     assert cap.page_size == 50
+    assert cap.max_pages == 101
     assert cap.supports_field("all")
     assert not cap.supports_field("author")
     assert not cap.supports_field("isbn")
@@ -36,6 +37,37 @@ def test_unverified_field_rejected_before_any_public_or_private_http(field):
         assert "PRIVATE" not in str(error.value)
     finally:
         session.close()
+
+
+
+@pytest.mark.parametrize("page", (-1, True, False, "2", "bad", 0.25, None, 101, 10**100))
+@pytest.mark.parametrize("scope", ("all", "digital", "catalog"))
+def test_invalid_page_stops_both_vault_routes_without_leaking_stale_warning(page, scope):
+    session, paths = _case(library_status=403)
+    try:
+        # First search is deliberately degraded to public-only.
+        session.search("book", scope="all")
+        assert session.last_search_warnings
+        paths.clear()
+        with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+            session.search("book", scope=scope, page=page)
+        assert paths == []
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("page", (0, 2, 100))
+def test_valid_public_pages_only_use_catalog_route(page):
+    session, paths = _case(library_status=503)
+    try:
+        rows = session.search("book", scope="catalog", page=page)
+        assert paths == ["/api/v2/catalog/search"]
+        assert len(rows) == 1
+        assert rows[0].owned is False
+    finally:
+        session.close()
+
 
 
 def test_physical_scope_is_unsupported_not_a_false_empty_catalogue():
