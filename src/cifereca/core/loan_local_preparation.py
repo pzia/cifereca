@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 from . import loan_artifact_state
+from .loan_safe_trace import loan_trace_ref
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -20,6 +21,7 @@ class LocalLoanPreparation:
 def prepare(self, loan, *, identity, entitlement_id, force_refresh, started,
             inspect_artifact, decide_artifact_reuse, blocked_automatic_adept_retry,
             time, _TRACE_LOG) -> LocalLoanPreparation:
+    trace_ref = loan_trace_ref(loan, identity.identity_id)
     existing = loan_artifact_state.local_catalog_candidates(
         self.storage.catalog_entries(),
         identity_id=identity.identity_id,
@@ -38,7 +40,7 @@ def prepare(self, loan, *, identity, entitlement_id, force_refresh, started,
             valid_existing.append(entry)
             continue
         self.storage.catalog_entry_put({**entry, "local_state": "missing" if path is None or not path.is_file() else "invalid"})
-        _TRACE_LOG.info("TRACE download local-recheck provider_loan_id=%s catalog_state=%s", loan.id, "missing" if path is None or not path.is_file() else "invalid")
+        _TRACE_LOG.info("TRACE download local-recheck loan_ref=%s catalog_state=%s", trace_ref, "missing" if path is None or not path.is_file() else "invalid")
     existing = valid_existing
     previous_state = loan_artifact_state.inspect_previous_loan_artifact(
         self.storage.acquisitions(provider_id=loan.source_provider),
@@ -61,8 +63,8 @@ def prepare(self, loan, *, identity, entitlement_id, force_refresh, started,
             identity_id=identity.identity_id, provider_id=loan.source_provider,
         )
         _TRACE_LOG.info(
-            "TRACE download loan_auto catalog-relink loan_id=%s path=%s status=%s",
-            loan.id, previous_path, repaired_index.get("status"),
+            "TRACE download loan_auto catalog-relink loan_ref=%s indexed=%s",
+            trace_ref, repaired_index.get("status") == "indexed",
         )
         existing = [repaired_index] if repaired_index.get("status") == "indexed" else existing
     legacy_reason = (
@@ -84,14 +86,14 @@ def prepare(self, loan, *, identity, entitlement_id, force_refresh, started,
         previous_protected=(previous_inspection.protected if previous_inspection is not None else None),
     )
     _TRACE_LOG.info(
-        "TRACE download loan_auto decision loan_id=%s identity=%s action=%s reason=%s source=%s catalog_valid=%s ledger_valid=%s force_refresh=%s dt=%.3fs",
-        loan.id, identity.identity_id, decision.action, decision.reason, decision.source,
+        "TRACE download loan_auto decision loan_ref=%s action=%s reason=%s source=%s catalog_valid=%s ledger_valid=%s force_refresh=%s dt=%.3fs",
+        trace_ref, decision.action, decision.reason, decision.source,
         bool(existing), previous_complete_local, force_refresh, time.monotonic()-started,
     )
     if decision.action == "reuse":
         _TRACE_LOG.info(
-            "TRACE download loan_auto skip-local loan_id=%s identity=%s source=%s reason=%s dt=%.3fs",
-            loan.id, identity.identity_id, decision.source, decision.reason, time.monotonic()-started,
+            "TRACE download loan_auto skip-local loan_ref=%s source=%s reason=%s dt=%.3fs",
+            trace_ref, decision.source, decision.reason, time.monotonic()-started,
         )
         return LocalLoanPreparation(previous_state, decision, {
             "status": "unchanged",
@@ -110,9 +112,9 @@ def prepare(self, loan, *, identity, entitlement_id, force_refresh, started,
         code = str((previous or {}).get("attention_code")
                    or (previous or {}).get("error_code") or "adept_attention_required")
         _TRACE_LOG.warning(
-            "TRACE download loan_auto auto-retry-blocked provider=%s "
-            "reason=persisted_adept_attention code=%s",
-            loan.source_provider, code,
+            "TRACE download loan_auto auto-retry-blocked loan_ref=%s "
+            "reason=persisted_adept_attention",
+            trace_ref,
         )
         return LocalLoanPreparation(previous_state, decision, {
             "status": "attention_required", "loan_id": loan.id,
@@ -122,7 +124,7 @@ def prepare(self, loan, *, identity, entitlement_id, force_refresh, started,
 
     if decision.action == "repair_legacy":
         _TRACE_LOG.info(
-            "TRACE download loan_auto repair-legacy loan_id=%s reason=%s",
-            loan.id, decision.reason,
+            "TRACE download loan_auto repair-legacy loan_ref=%s reason=%s",
+            trace_ref, decision.reason,
         )
     return LocalLoanPreparation(previous_state, decision)
