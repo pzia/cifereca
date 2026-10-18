@@ -24,7 +24,8 @@ assert DIRECT != CONFIRMATION and READ_CARD_ANCHOR in INVENTORY
 
 
 def inventory_with_first_card_link(anchor=CONFIRMATION_ANCHOR):
-    return INVENTORY.replace(READ_CARD_ANCHOR, READ_CARD_ANCHOR + anchor, 1)
+    complete = READ_CARD_ANCHOR + 'Télécharger</a>'
+    return INVENTORY.replace(complete, complete + anchor, 1)
 
 
 def confirmation_with_matching_synthetic_order():
@@ -100,8 +101,8 @@ def test_order_href_from_other_book_is_not_selected(tmp_path):
     # Only book 34 bears the explicit order navigation. Book 12 may still
     # follow readBook, but cannot use book 34's private confirmation URL.
     inventory = INVENTORY.replace(
-        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=34&amp;m=download">',
-        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=34&amp;m=download">'
+        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=34&amp;m=download">Télécharger</a>',
+        '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=34&amp;m=download">Télécharger</a>'
         + CONFIRMATION_ANCHOR,
         1,
     )
@@ -181,7 +182,7 @@ def test_conflicting_confirmation_hrefs_fail_before_any_order_get(tmp_path):
 def test_multi_variant_owned_card_does_not_bind_one_confirmation_to_both_editions():
     html = (
         '<table id="myTable"><div><span class="pTitle">Same Title</span>'
-        + READ_CARD_ANCHOR
+        + READ_CARD_ANCHOR + 'First</a>'
         + '<a class="LnkDownloadBook" href="/Pages/Compte/readBook.ashx?lid=34&amp;m=download">Another</a>'
         + CONFIRMATION_ANCHOR
         + '</div></table>'
