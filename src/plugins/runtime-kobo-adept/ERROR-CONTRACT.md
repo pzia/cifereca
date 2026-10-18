@@ -196,3 +196,31 @@ public. Aucun renouvellement, restitution ni acquisition automatique.
 Tests déterministes hors ligne avec données et secrets synthétiques.
 Le contrat externe de codes ADEPT/libgourou et la validation sur une
 machine réelle restent à établir sous #979.
+
+
+## 1.2.24 — version de contrat bornée et commande configurée expurgée
+
+Le runtime n'interprète plus par `int(value)` arbitraire le champ
+fournisseur `contract_version`. Sont acceptés seulement un entier
+natif compris entre 0 et 1000, ou, pour conserver la compatibilité
+d'une CLI historique, une chaîne ASCII décimale de 1 à 3 chiffres.
+Les booléens, floats, dates, objets, URL ou chaînes très longues sont
+refusés par code fixe `kobo_adept_invalid_contract`. Un contrat plus
+ancien que la version 8 échoue avec **message fixe sans publier la
+version brute**. Aucune chaîne ou exception fournisseur n'est reprise
+dans le message de la validation.
+
+L'ancienne introspection `configured_command()` rendait à l'état
+technique Core la **liste complète argv** même lorsque Kobo-Adept
+était absent, révélant potentiellement un répertoire personnel,
+`--token` ou une URL signée. Elle publie désormais une liste d'une
+seule étiquette explicite **expurgée**. La propriété `command`
+demeure inchangée pour les réelles exécutions : le diagnostic masqué
+ne sert jamais de commande de lancement. Ces garde-fous s'ajoutent au
+probe Core limité de la version 1.2.23, qui doit être intégrée avant
+celle-ci par CI/CD.
+
+Tests hors réseau : contrat v8 numérique ou chaîne décimale historique,
+versions malformées, codes fixes et argv privé sans impact sur la
+commande réellement exécutée. La qualification des véritables codes
+métier Adobe/libgourou n'est toujours pas revendiquée.
