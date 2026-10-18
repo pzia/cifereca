@@ -37,6 +37,11 @@ METADATA = {
     "publisher": "Éditions UX",
     "catalogue_metadata": {"publishers": ["Maison A", "Maison B"]},
     "access_token": "SECRET_NE_JAMAIS_AFFICHER",
+    "public_product_metadata": {
+        "brand": "Marque commerciale", "pagination_label": "228 pages",
+        "selected_format_label": "PDF sans DRM",
+        "rights": "SECRET_NE_JAMAIS_AFFICHER",
+    },
 }
 
 
@@ -138,7 +143,9 @@ def main():
             if isinstance(x, Adw.ActionRow) and x is not expanded[0]
             and x.get_title() in {"Titre", "Auteur", "Sujet", "ISBN déclaré",
                                  "EAN déclaré", "Identifiant déclaré", "Éditeur",
-                                 "Catalogue · Éditeur"}
+                                 "Catalogue · Éditeur", "Fiche publique · Marque",
+                                 "Fiche publique · Pagination déclarée (support non précisé)",
+                                 "Fiche publique · Format commercial sélectionné"}
         ]
         return expanded[0], rows
 
@@ -213,6 +220,9 @@ def main():
             ("ISBN déclaré", "9780306406157"),
             ("EAN déclaré", "4006381333931"),
             ("Catalogue · Éditeur", "Maison B"),
+            ("Fiche publique · Marque", "Marque commerciale"),
+            ("Fiche publique · Pagination déclarée (support non précisé)", "228 pages"),
+            ("Fiche publique · Format commercial sélectionné", "PDF sans DRM"),
         ):
             assert expected in shown, f"Champ {expected!r} absent du véritable panneau GTK déplié : {shown!r}"
         assert not any("SECRET_NE_JAMAIS_AFFICHER" in v for _, v in shown)
@@ -292,6 +302,7 @@ def main():
         for expected in (
             ("Auteur", "Alice Exemple"), ("Auteur", "Bob Exemple"),
             ("Sujet", "nature"), ("ISBN déclaré", "9780306406157"),
+            ("Fiche publique · Format commercial sélectionné", "PDF sans DRM"),
         ):
             assert expected in shown, f"Bibliothèque n'utilise pas le détail partagé : {shown!r}"
         report["checks"]["library_metadata"] = True
