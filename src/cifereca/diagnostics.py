@@ -40,8 +40,13 @@ def _redact_url(url):
     from urllib.parse import urlsplit
     try:
         parsed = urlsplit(url)
-        # Provider paths can contain opaque account IDs even without a query.
-        if parsed.path not in {"", "/"} or parsed.query or parsed.fragment or parsed.username:
+        # Preserve non-sensitive public URLs (historical Plugin API contract)
+        # while hiding known borrower/account routes even without a query.
+        private_route = re.search(
+            r"(?i)/(?:LOAN|reader|account|users?|private|orders?|borrow|fulfil(?:l)?ment|acquisition|URLLink\\.acsm)(?:/|$)",
+            parsed.path,
+        )
+        if parsed.query or parsed.fragment or parsed.username or private_route:
             return f"{parsed.scheme}://{parsed.hostname}/<redacted>"
         return url
     except ValueError:
