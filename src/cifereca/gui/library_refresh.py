@@ -20,14 +20,16 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
     if getattr(self, "_closed", False):
         return
     if self._library_refresh_pending and control is None:
-        # A newly indexed book may have arrived after the in-flight snapshot
-        # was read. Coalesce repeated requests into ONE fresh follow-up.
-        self._library_refresh_again = True
+        # Coalesce stale background snapshots; an explicit, newer refresh
+        # already supersedes them and must remain the latest visible result.
+        if not getattr(self, "_library_refresh_explicit_pending", False):
+            self._library_refresh_again = True
         return
     if control is not None:
         # A newer explicit request supersedes any queued background follow-up.
         self._library_refresh_again = False
     self._library_refresh_pending = True
+    self._library_refresh_explicit_pending = control is not None
     self._library_refresh_generation = getattr(self, "_library_refresh_generation", 0) + 1
     request_generation = self._library_refresh_generation
     identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
@@ -49,6 +51,7 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
                 request_generation != self._library_refresh_generation):
             return
         self._library_refresh_pending = False
+        self._library_refresh_explicit_pending = False
         if not self._identity_request_current(identity_id, generation):
             self._library_refresh_again = False
             self.refresh_library(False)
@@ -67,6 +70,7 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
                 request_generation != self._library_refresh_generation):
             return
         self._library_refresh_pending = False
+        self._library_refresh_explicit_pending = False
         if not self._identity_request_current(identity_id, generation):
             self._library_refresh_again = False
             self.refresh_library(False)
