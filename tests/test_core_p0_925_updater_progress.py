@@ -196,3 +196,76 @@ def test_github_failed_subprocess_marks_error_without_exposing_private_stderr(
     assert events[-1]["outcome"] == "failed"
     assert "DO_NOT_LOG" not in stream.getvalue()
     assert "DO_NOT_LOG" not in repr(events)
+
+
+def test_long_running_stage_emits_periodic_running_without_fabricated_progress():
+    import time
+
+    events, output = [], FlushingStream()
+    with update_operation(
+        "github", stream=output, callback=events.append,
+        heartbeat_seconds=0.008,
+    ):
+        with update_phase("clone"):
+            time.sleep(0.045)
+    clone_events = [event for event in events if event["stage"] == "clone"]
+    assert len(clone_events) >= 4
+    assert clone_events[0]["status"] == "RUNNING"
+    assert clone_events[-1]["status"] == "OK"
+    assert all(event["status"] == "RUNNING" for event in clone_events[:-1])
+    assert all(event["duration_ms"] >= 0 for event in clone_events)
+    assert all("percent" not in event for event in events)
+    assert events[-1]["status"] == "DONE"
+    assert output.flushes == len(events)
+    assert output.getvalue().count("github/clone RUNNING") >= 2
+
+
+def test_heartbeat_tracks_innermost_active_phase_and_resumes_parent():
+    import time
+
+    events = []
+    with update_operation("dev_snapshot", callback=events.append,
+                          heartbeat_seconds=0.007):
+        with update_phase("core_activation"):
+            with update_phase("venv"):
+                time.sleep(0.025)
+            time.sleep(0.025)
+    phases = [event["stage"] for event in events
+              if event["status"] == "RUNNING"]
+    assert phases.count("venv") >= 2
+    assert phases.count("core_activation") >= 2
+    assert events[-1]["status"] == "DONE"
+    for phase in ("venv", "core_activation"):
+        indices = [index for index, event in enumerate(events)
+                   if event["stage"] == phase]
+        assert events[indices[-1]]["status"] == "OK"
+
+
+def test_no_heartbeat_or_thread_when_operation_has_no_observer(monkeypatch):
+    from cifereca import update_progress
+
+    def no_thread(*_args, **_kwargs):
+        raise AssertionError("thread should never be started without sink")
+
+    monkeypatch.setattr(update_progress, "Thread", no_thread)
+    with update_operation("source", heartbeat_seconds=0.005):
+        assert step("metadata", lambda: 7) == 7
+
+
+def test_heartbeat_stops_on_error_without_late_progress_event():
+    import time
+
+    events = []
+    with pytest.raises(RuntimeError):
+        with update_operation("archive", callback=events.append,
+                              heartbeat_seconds=0.006):
+            with update_phase("snapshot_extract"):
+                time.sleep(0.018)
+                raise RuntimeError("SECRET_FILE_NAME")
+    at_end = len(events)
+    time.sleep(0.03)
+    assert len(events) == at_end
+    assert [e["status"] for e in events[-3:]] == [
+        "ERROR", "ERROR", "DONE",
+    ]
+    assert "SECRET_FILE_NAME" not in repr(events)
