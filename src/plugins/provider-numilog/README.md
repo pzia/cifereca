@@ -523,3 +523,29 @@ HTTP 404 ; aucune capacité serveur dédiée auteur/ISBN n'est donc annoncée.
 Aucun endpoint alternatif deviné, aucune utilisation du compte en repli.
 Le catalogue reste désactivé par défaut ; #1886 reste ouvert pour les recherches
 par attribut, facettes utilisables et qualification d'accès durable.
+
+
+## 0.1.35 — budget et cache du catalogue public (#1886)
+
+Le singleton public possède un cache **mémoire propre à sa session**, maximum
+16 recherches/détails parsés, TTL 60 secondes. Ni HTML brut, compte, cookie,
+ligne privée ni fichier ne sont conservés. Une copie défensive des résultats
+empêche qu'un enrichissement ou consommateur altère le prochain résultat.
+Connexion/reconnexion/fermeture invalident les entrées ; une réponse réseau
+terminée après invalidation ne peut pas repeupler le cache. Aucun mutex retenu
+pendant HTTP : fermer/invalider ne bloque pas sur une requête en cours.
+
+Les nouveaux GET ont un budget de deux appels en rafale (recherche puis détail
+explicite), puis un appel par seconde. Une requête simultanée en cours, budget
+épuisé ou pause produit une erreur publique fixe, jamais un résultat vide,
+une attente GTK ou une relance automatique. Un 429 public impose 60 secondes
+de pause pour les nouveaux GET de cette même session ; reconnexion ne remet
+pas à zéro cette pause ni le budget. Le contenu encore valide en cache reste
+lisible sans réseau. 403, erreurs et résultats expirés ne sont pas servis
+comme succès. Aucun mécanisme de contournement ni source authentifiée en repli.
+
+Le provider privé continue d'utiliser ses requêtes publiques explicitement
+scopées séparément ; ce cache ne contient pas d'achats ni de droits et n'est
+pas partagé entre comptes ou sessions. Le TTL ne prouve pas la disponibilité
+courante, une édition achetée ou un droit. Le catalogue reste opt-in ; les
+capacités serveur auteur/ISBN ne sont pas ajoutées.
