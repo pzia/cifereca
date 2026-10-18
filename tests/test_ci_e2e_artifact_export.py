@@ -227,6 +227,39 @@ class SafeFailureDiagnosisTests(unittest.TestCase):
                 self.assertNotIn("PRIVATE", repr(row))
                 self.assertNotIn("123456", repr(row))
 
+    def test_resize_wait_requires_actual_width_and_preserves_deadline_failure(self):
+        import ast
+        from types import SimpleNamespace
+        path = ROOT / "e2e/diagnostics_navigation_probe.py"
+        probe = ast.parse(path.read_text())
+        node = next(n for n in ast.walk(probe)
+                    if isinstance(n, ast.FunctionDef) and n.name == "wait_sync_narrow")
+        width, now, pending, checked = [1280], [0.0], [], []
+        def strict_allocations(large_font):
+            checked.append(large_font)
+            assert width[0] <= 760, "width assertion still enforced"
+        namespace = {
+            "w": SimpleNamespace(get_width=lambda: width[0]),
+            "deadline": 4.0, "monotonic": lambda: now[0],
+            "sync_narrow_allocations": strict_allocations,
+            "later": lambda ms, callback: pending.append((ms, callback)),
+        }
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
+        wait = namespace["wait_sync_narrow"]
+        wait()
+        self.assertEqual(checked, [])
+        self.assertEqual(pending[0][0], 80)
+        now[0] = 0.8
+        pending.pop()[1]()
+        self.assertEqual(checked, [])
+        width[0] = 760
+        pending.pop()[1]()
+        self.assertEqual(checked, [False])
+        width[0], now[0] = 1280, 4.0
+        with self.assertRaisesRegex(AssertionError, "width assertion still enforced"):
+            wait()
+        self.assertEqual(pending, [])
+
     def test_unknown_strings_nonfinite_numbers_boolean_line_and_report_path_are_not_exported(self):
         module = _module()
         with tempfile.TemporaryDirectory() as tmp:

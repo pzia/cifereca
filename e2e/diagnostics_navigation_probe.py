@@ -1656,7 +1656,18 @@ def main() -> int:
             "gtk-font-name", f["sync_original_font"]
         )
         w.set_default_size(760, 780)
-        later(350, lambda: sync_narrow_allocations(False))
+        deadline = monotonic() + 4
+
+        def wait_sync_narrow():
+            # set_default_size queues an asynchronous toplevel allocation.
+            # #2203 observed width >760 despite all GTK minima <=760 after
+            # the fixed 350ms delay. Wait for the requested width, as D16
+            # already does; on deadline run the unchanged strict assertions.
+            if w.get_width() <= 760 or monotonic() >= deadline:
+                sync_narrow_allocations(False)
+            else:
+                later(80, wait_sync_narrow)
+        later(80, wait_sync_narrow)
 
     def sync_narrow_allocations(large_font):
         w = window[0]
