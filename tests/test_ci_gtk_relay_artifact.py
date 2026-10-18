@@ -110,10 +110,12 @@ class GTKRelayArtifactTests(unittest.TestCase):
 
     def test_publication_remains_opt_in_and_excludes_source_checkout(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn(".github/gtk-e2e-run-request.txt", workflow)
-        self.assertIn("types: [synchronize]", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("if: inputs.confirm_relay == true", workflow)
+        self.assertIn("default: false", workflow)
+        self.assertNotIn("  pull_request:", workflow)
         self.assertIn("scripts/ci-validate-gtk-relay-cache.py", workflow)
-        self.assertNotIn("workflow_dispatch:", workflow)
+        self.assertNotIn(".github/gtk-e2e-run-request.txt", workflow)
         self.assertNotIn("git archive", workflow)
         self.assertNotIn("cifereca-gtk-source.tar.gz", workflow)
         self.assertIn("retention-days: 2", workflow)
