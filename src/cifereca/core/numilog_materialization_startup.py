@@ -17,7 +17,7 @@ from .numilog_local_preview import _item_id
 from .numilog_materialization_checkpoint import index_delivered
 from .numilog_manifest_rights import mirror_numilog_manifest_rights
 from .numilog_materialization_consent import (
-    _binding, _MAX_ITEMS_PER_OPENING, mode,
+    _binding, _same_binding, _MAX_ITEMS_PER_OPENING, mode,
 )
 
 
@@ -73,7 +73,13 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         bound = _binding(broker, source_id)
         if bound is None or mode(broker, source_id) != "on_start":
             continue
-        account, session, _roots = bound
+        account, session, roots = bound
+        scope = (source_id, identity_id, account.credential_id, account.unique_id)
+
+        def same_source() -> bool:
+            # Freeze dispatch coordinates, including the preview's local root.
+            # A configuration change cannot move an in-flight startup batch.
+            return _same_binding(broker, source_id, scope, session, roots)
         # A persisted "on_start" may be revoked and explicitly re-enabled
         # while this batch is in flight. Its new consent is NOT a grant to
         # revive this earlier job (or to reuse an already-fetched manifest).
@@ -107,11 +113,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             ):
                 continue
             started_at = attempt_clock
-            refreshed = _binding(broker, source_id)
             if (
-                refreshed is None or refreshed[1] is not session
-                or refreshed[0].identity_id != identity_id
-                or refreshed[0].unique_id != account.unique_id
+                not same_source()
                 or mode(broker, source_id) != "on_start"
                 or broker.service.storage.numilog_materialization_consent_revision(
                     source_id,
@@ -125,8 +128,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 failures += 1
                 continue
             manifest_ready = True
-            if (_binding(broker, source_id) is None
-                    or _binding(broker, source_id)[1] is not session
+            if (not same_source()
                     or mode(broker, source_id) != "on_start"
                     or broker.service.storage.numilog_materialization_consent_revision(
                         source_id,
@@ -145,11 +147,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 credential_id=account.credential_id,
                 account_id=account.unique_id,
             )
-            refreshed = _binding(broker, source_id)
             if (
-                refreshed is None or refreshed[1] is not session
-                or refreshed[0].identity_id != identity_id
-                or refreshed[0].unique_id != account.unique_id
+                not same_source()
                 or mode(broker, source_id) != "on_start"
                 or broker.service.storage.numilog_materialization_consent_revision(
                     source_id,
@@ -186,8 +185,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                         or broker.service.storage.numilog_materialization_consent_revision(
                             source_id,
                         ) != consent_revision
-                        or _binding(broker, source_id) is None
-                        or _binding(broker, source_id)[1] is not session):
+                        or not same_source()):
                     failures += 1
                     break
                 prior = broker.preflight_numilog_purchase(source_id, row.record_id)
@@ -203,8 +201,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                             or broker.service.storage.numilog_materialization_consent_revision(
                                 source_id,
                             ) != consent_revision
-                            or _binding(broker, source_id) is None
-                            or _binding(broker, source_id)[1] is not session):
+                            or not same_source()):
                         raise ValueError("numilog_auto_consent_revoked")
                     check = broker.preflight_numilog_purchase(source_id, row.record_id)
                     if (check.ok is not True
