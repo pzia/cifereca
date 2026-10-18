@@ -1944,6 +1944,45 @@ class Storage:
                 db.execute("RELEASE SAVEPOINT numilog_rights_index")
         return list(rows.values())
 
+    def numilog_possession_rights(
+        self, *, identity_id: str, item_id: str, entitlement_id: str,
+    ) -> list[dict[str, Any]]:
+        """Only the exact owner/edition/right for an offline index-resume action.
+
+        Never enumerate or decode other accounts' entitlements in the library
+        UI. This passive read is NOT acquisition consent or a download grant.
+        The receipt itself is checked separately under the acquisition lock.
+        """
+        from .core.numilog_manifest_rights import _scoped_record_id
+        if (not all(type(v) is str and 0 < len(v) <= 1024
+                    and not any(c in v for c in "\0\r\n")
+                    for v in (identity_id, item_id, entitlement_id))
+                or len(item_id) > 512 or len(entitlement_id) > 128):
+            raise ValueError("invalid_numilog_possession_scope")
+        columns = (
+            "entitlement_id", "identity_id", "credential_id", "account_id",
+            "item_id", "entitlement_type", "state", "loan_id", "expires_at",
+            "metadata_json",
+        )
+        with self._lock, self._connect() as db:
+            values = db.execute(
+                "SELECT " + ",".join(columns) + " FROM entitlements "
+                "WHERE provider_id='numilog' AND identity_id=? AND item_id=? "
+                "AND entitlement_id=? AND entitlement_type='owned' "
+                "AND state='active' LIMIT 2",
+                (identity_id, item_id, entitlement_id),
+            ).fetchall()
+        result = []
+        for value in values:
+            row = dict(zip(columns, value))
+            credential = row.get("credential_id")
+            if (type(credential) is not str
+                    or _scoped_record_id(item_id, credential) is None):
+                continue
+            row["metadata"] = self._json_load(row.pop("metadata_json"))
+            result.append(row)
+        return result
+
     def entitlements(self, *, provider_id: str | None = None, state: str | None = None) -> list[dict[str, Any]]:
         columns = [
             "entitlement_id", "provider_id", "credential_id", "account_id", "item_id", "revision_id", "identity_id",
