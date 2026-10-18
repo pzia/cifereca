@@ -632,6 +632,8 @@ class NumilogSession(ProviderSession):
                             else 'delivery_intermediate'
                         )
                         if kind == 'login':
+                            confirmation_probe_code = None
+                            confirmation_probe_candidates = None
                             # A login widget is common in Numilog's general
                             # template. On the *attested confirmation route*
                             # alone, permit exactly one signed ACSM only when
@@ -653,8 +655,16 @@ class NumilogSession(ProviderSession):
                                         expected_readbook=expected_readbook,
                                         require_bound_confirmation=True,
                                     )
-                                except (DeliverySelectionError, ParseError):
+                                except DeliverySelectionError as exc:
                                     bound_url = None
+                                    confirmation_probe_code = (
+                                        'html_delivery_ambiguous' if exc.code == 'ambiguous'
+                                        else 'html_delivery_link_missing'
+                                    )
+                                    confirmation_probe_candidates = evidence.get('allowed_candidates')
+                                except ParseError:
+                                    bound_url = None
+                                    confirmation_probe_code = 'html_invalid'
                                 if bound_url is not None:
                                     trace.event(
                                         'html_selection', 'single_allowed_candidate',
@@ -681,7 +691,17 @@ class NumilogSession(ProviderSession):
                                 and url_origin(str(r.url)) == url_origin(self.library_url)
                             )
                             trace.fail('login_form_detected')
-                            trace.event('html_selection','login_form_detected',html_kind='login',hops=hop+1)
+                            # On a known confirmation URL, preserve WHY the
+                            # tightly scoped purchase binding failed. A login
+                            # form alone is still not a verified session expiry.
+                            # Existing closed codes/candidate counts suffice:
+                            # no private HTML, signed URL or new HTTP.
+                            trace.event(
+                                'html_selection',
+                                confirmation_probe_code or 'login_form_detected',
+                                html_kind='login', hops=hop+1,
+                                candidates=confirmation_probe_candidates,
+                            )
                             self._diag('livraison HTML',phase='download',
                                        page_kind='login_page' if login_endpoint else page_kind,
                                        kind='login',result='login_form_detected')
