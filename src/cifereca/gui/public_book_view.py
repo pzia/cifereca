@@ -21,6 +21,7 @@ class PublicBookMasterDetailView:
     ) -> None:
         self._page = MasterDetailPage(window, title, subtitle, empty_title, empty_desc)
         self._rows: dict[str, Any] = {}
+        self._window = window
 
     @property
     def widget(self):
@@ -93,7 +94,29 @@ class PublicBookMasterDetailView:
                 button = action_button(str(action.title), str(action.icon_name or "view-more-symbolic"))
                 callback = getattr(action, "callback", None)
                 if callable(callback):
-                    button.connect("clicked", lambda _button, cb=callback: cb())
+                    def activate(clicked, cb=callback, action_id=str(action.id)):
+                        # Capture the real clicked action before its callback
+                        # switches routes: mouse clicks need not give GTK focus.
+                        window = self._window
+                        youth = getattr(window, "_plugin_page_widgets", {}).get("youth")
+                        intent = (
+                            action_id == "search-library"
+                            and not getattr(window, "_closed", False)
+                            and window.view_stack.get_visible_child_name() == "youth"
+                            and youth is not None and clicked.is_ancestor(youth)
+                            and clicked.get_mapped() and clicked.get_sensitive()
+                        )
+                        if intent:
+                            identity = getattr(
+                                getattr(window.service, "current_identity", None),
+                                "identity_id", None,
+                            )
+                            window._youth_return_focus = (clicked, identity)
+                        result = cb()
+                        if intent and result is False:
+                            window._youth_return_focus = None
+                        return result
+                    button.connect("clicked", activate)
             button._cifereca_action_id = str(action.id)
             buttons.append(button)
         panel.add_actions(buttons)

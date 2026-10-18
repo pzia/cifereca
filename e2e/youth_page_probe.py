@@ -88,11 +88,14 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", required=True, type=int, choices=(1366, 1600))
     parser.add_argument("--library-search", action="store_true", help="P0 #906: vraie navigation Jeunesse -> Recherche locale -> Retour")
+    parser.add_argument("--focus-return", action="store_true", help="UX P2 #962: arrêt et assertion stricts après Retour")
     provider = parser.add_mutually_exclusive_group()
     provider.add_argument("--milan", action="store_true", help="Use installed Milan with offline HTML fixtures")
     provider.add_argument("--editions", action="store_true", help="Offline same-title editions and conflicting provenance on real GTK")
     provider.add_argument("--filters-ux", action="store_true", help="UX #922: strict GTK audit of visible labels and tooltips")
     args = parser.parse_args()
+    if args.focus_return and (not args.library_search or args.milan or args.editions or args.filters_ux):
+        parser.error("--focus-return exige --library-search seul")
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     if os.environ.get("GDK_BACKEND") != "x11" or not os.environ.get("DISPLAY"):
@@ -688,7 +691,9 @@ def main() -> int:
         else:
             window.go_back()
             result["library_search_back"] = "GTK navigation API"
-        later(260, library_search_verify_return)
+        # Attendre que la transition GTK se termine avant de mesurer le focus.
+        # Le parcours P0 conserve son délai initial.
+        later(900 if args.focus_return else 260, library_search_verify_return)
 
     def library_search_verify_return():
         assert window.view_stack.get_visible_child_name() == "youth"
@@ -709,6 +714,30 @@ def main() -> int:
                 "Le focus ne revient pas au bouton initial ; à traiter séparément en UX"
             )
         capture("14-library-search-return")
+        if args.focus_return:
+            # #962 : ne pas « réparer » artificiellement le focus dans la sonde.
+            # L'ancienne recette #906 appelle grab_focus() pour tester Entrée/Espace ;
+            # celle-ci doit constater le focus rendu par la navigation elle-même.
+            result["focus_return_action_mapped"] = bool(action.get_mapped())
+            result["focus_return_widget"] = (
+                type(focus).__name__ if focus is not None else None
+            )
+            result["focus_return_expected_action"] = str(
+                getattr(action, "_cifereca_action_label", "") or "Rechercher en bibliothèque"
+            )
+            assert result["library_search_action_focus_restored"], (
+                "UX #962 : après Retour, le focus clavier doit revenir à l'action "
+                "Rechercher en bibliothèque du livre toujours sélectionné ; "
+                f"focus observé={result['focus_return_widget']!r}"
+            )
+            assert not online_attempts and not requests, (
+                "Retour clavier : aucune recherche ou collecte réseau implicite"
+            )
+            result["status"] = "PASS"
+            write_report()
+            rc[0] = 0
+            app.quit()
+            return
         assert action.grab_focus() is not False
         keys("Return")
         later(280, library_search_verify_enter)

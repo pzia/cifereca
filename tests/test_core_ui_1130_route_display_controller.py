@@ -73,7 +73,8 @@ def test_no_gtk_import_and_stable_main_window_route_signature():
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef)
                   and n.name == "_show_route")
     assert [arg.arg for arg in method.args.args] == ["self", "route"]
-    assert "route_display_controller.show_route(self, route, Gtk=Gtk)" in ast.unparse(method)
+    assert ("route_display_controller.show_route(self, route, Gtk=Gtk, "
+            "idle_add=GLib.idle_add)") in ast.unparse(method)
 
 
 def test_missing_route_and_closed_window_do_not_access_any_widgets():

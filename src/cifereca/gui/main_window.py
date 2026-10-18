@@ -537,7 +537,7 @@ class MainWindow(Adw.ApplicationWindow):
         return plugin_action_dispatch_controller.invoke_ui_action(self, action, host)
 
     def _show_route(self, route: str) -> None:
-        return route_display_controller.show_route(self, route, Gtk=Gtk)
+        return route_display_controller.show_route(self, route, Gtk=Gtk, idle_add=GLib.idle_add)
 
     def _navigation_state(self, route: str):
         return navigation_controller.navigation_state(self, route)
