@@ -18,6 +18,7 @@ from cifereca.plugin_api import (
 SRU = "http://www.loc.gov/zing/srw/"
 DC = "http://purl.org/dc/elements/1.1/"
 ENDPOINT = "https://catalogue.bnf.fr/api/SRU"
+MAX_REQUESTED_PAGES = 101  # Zero-indexed, page 0..100; no unbounded SRU offsets.
 ARK = re.compile(r"(?:https?://catalogue\.bnf\.fr/)?(ark:/12148/cb[0-9]+[a-z0-9])(?:[/?#\s]|$)", re.I)
 FIELDS = {
     "all": "bib.anywhere", "title": "bib.title", "author": "bib.author",
@@ -33,6 +34,7 @@ DESCRIPTOR = ProviderDescriptor(
         scopes=("all", "physical", "digital"),
         pagination="page",
         page_size=50,
+        max_pages=MAX_REQUESTED_PAGES,
         notes=(
             "SRU BnF : all/title/author/isbn/subject passent par des champs serveur dédiés.",
             "series/collection : SRU bib.anywhere puis post-filtre local sur la page reçue ; résultats non exhaustifs.",
@@ -115,6 +117,10 @@ class BnfCatalogueSession(ProviderSession):
             raise ProviderCapabilityError("BnF : unsupported_field")
         if type(scope) is not str or scope not in {"all", "physical", "digital"}:
             raise ProviderCapabilityError("BnF : unsupported_scope")
+        if type(page) is not int or not 0 <= page < MAX_REQUESTED_PAGES:
+            # Never silently transform a requested negative/boolean/fractional
+            # page into page 0 and call that a valid search result.
+            raise ProviderCapabilityError("BnF : invalid_page")
         if len(query) < 2:
             return []
         if field == "isbn":
@@ -126,7 +132,7 @@ class BnfCatalogueSession(ProviderSession):
             response = self.client.get(self.sru_url, params={
                 "operation": "searchRetrieve", "version": "1.2", "recordSchema": "dublincore",
                 "query": f"{FIELDS[field]} {relation} {literal(query)}",
-                "startRecord": str(max(0, int(page)) * self.page_size + 1),
+                "startRecord": str(page * self.page_size + 1),
                 "maximumRecords": str(self.page_size),
             })
             response.raise_for_status()
