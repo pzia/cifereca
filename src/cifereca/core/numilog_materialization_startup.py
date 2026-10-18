@@ -68,6 +68,14 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         if bound is None or mode(broker, source_id) != "on_start":
             continue
         account, session, _roots = bound
+        # A persisted "on_start" may be revoked and explicitly re-enabled
+        # while this batch is in flight. Its new consent is NOT a grant to
+        # revive this earlier job (or to reuse an already-fetched manifest).
+        consent_revision = (
+            broker.service.storage.numilog_materialization_consent_revision(
+                source_id,
+            )
+        )
         if control is not None and callable(getattr(control, "check_cancelled", None)):
             control.check_cancelled()
         try:
@@ -77,7 +85,12 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 source_id=source_id, now=int(time()),
             ):
                 continue
-            if mode(broker, source_id) != "on_start":
+            if (
+                mode(broker, source_id) != "on_start"
+                or broker.service.storage.numilog_materialization_consent_revision(
+                    source_id,
+                ) != consent_revision
+            ):
                 continue
             raw = session.library()
             # The private catalogue can contain hundreds of purchases.
@@ -87,7 +100,10 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 break
             if (_binding(broker, source_id) is None
                     or _binding(broker, source_id)[1] is not session
-                    or mode(broker, source_id) != "on_start"):
+                    or mode(broker, source_id) != "on_start"
+                    or broker.service.storage.numilog_materialization_consent_revision(
+                        source_id,
+                    ) != consent_revision):
                 failures += 1
                 break
             # Duplicate editions on a private provider page are ambiguous.
@@ -113,6 +129,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 if control is not None and callable(getattr(control, "check_cancelled", None)):
                     control.check_cancelled()
                 if (mode(broker, source_id) != "on_start"
+                        or broker.service.storage.numilog_materialization_consent_revision(
+                            source_id,
+                        ) != consent_revision
                         or _binding(broker, source_id) is None
                         or _binding(broker, source_id)[1] is not session):
                     failures += 1
@@ -127,6 +146,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                     # Called inside global acquisition lock, at each
                     # readmission boundary including after provider/ADEPT.
                     if (mode(broker, source_id) != "on_start"
+                            or broker.service.storage.numilog_materialization_consent_revision(
+                                source_id,
+                            ) != consent_revision
                             or _binding(broker, source_id) is None
                             or _binding(broker, source_id)[1] is not session):
                         raise ValueError("numilog_auto_consent_revoked")
