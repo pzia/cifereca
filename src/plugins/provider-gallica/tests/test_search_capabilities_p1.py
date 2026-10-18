@@ -197,13 +197,47 @@ def test_warning_for_unavailable_media_does_not_pollute_next_eligible_search():
     assert session.last_search_warnings == []
 
 
-def test_a_supported_media_branch_does_not_claim_unavailable_complementary_media():
+def test_explicit_mixed_formats_warn_when_configured_audio_is_skipped():
     session = fake_session(include_audio=False)
     calls = []
-    session._search_ebooks = lambda *_: calls.append("ebooks") or []
+    book = NS(id="book-1", content_type="ebook")
+    session._search_ebooks = lambda *_: calls.append("ebooks") or [book]
     session._search_audio = lambda *_: pytest.fail("audio disabled")
-    assert session.search("Doyle", content_types=("epub", "mp3")) == []
+    assert session.search("Doyle", content_types=("epub", "mp3")) == [book]
     assert calls == ["ebooks"]
+    assert session.last_search_warnings == [
+        "partial_results : Gallica : branche audio désactivée par configuration"
+    ]
+    # The next explicitly ebook-only request is complete within its scope.
+    assert session.search("Doyle", content_types=("epub",)) == [book]
+    assert calls == ["ebooks", "ebooks"]
+    assert session.last_search_warnings == []
+
+
+def test_mixed_formats_with_enabled_audio_call_both_routes_without_warning():
+    session = fake_session(include_audio=True)
+    calls = []
+    session._search_ebooks = lambda *_: calls.append("ebooks") or []
+    session._search_audio = lambda *_: calls.append("audio") or []
+    assert session.search("Doyle", content_types=("epub", "mp3")) == []
+    assert set(calls) == {"ebooks", "audio"}
+    assert session.last_search_warnings == []
+
+
+def test_skipped_audio_does_not_turn_failed_ebook_branch_into_partial_success():
+    session = fake_session(include_audio=False)
+    session._search_ebooks = lambda *_: (_ for _ in ()).throw(RuntimeError("PRIVATE_TOKEN"))
+    session._search_audio = lambda *_: pytest.fail("audio disabled")
+    with pytest.raises(ProviderError, match="catalogue livres numériques temporairement indisponible"):
+        session.search("Doyle", content_types=("epub", "mp3"))
+    assert "PRIVATE_TOKEN" not in repr(session.last_search_warnings)
+
+
+def test_disabled_audio_without_explicit_audio_request_has_no_false_warning():
+    session = fake_session(include_audio=False)
+    session._search_ebooks = lambda *_: []
+    session._search_audio = lambda *_: pytest.fail("audio disabled")
+    assert session.search("Doyle") == []
     assert session.last_search_warnings == []
 
 
