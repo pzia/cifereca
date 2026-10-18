@@ -260,3 +260,44 @@ def test_preflight_rejection_and_refused_remote_consent_do_not_claim_executed_pr
         Dialog.instances[-1].respond("cancel")
         assert remote_window.runner.jobs == []
     assert "operation=llm_connection_probe" not in caplog.text
+
+
+def test_probe_rejects_injected_labels_and_untrusted_status_in_log_and_ui(caplog, monkeypatch):
+    import logging
+    from cifereca.gui.llm_settings import LLMProbeResult
+
+    sentinel = "TOKEN_PRIVATE_MODEL_PATH"
+    for fake in (
+        LLMProbeResult("auth_refused", sentinel),  # Valid status, hostile UI label.
+        LLMProbeResult("Bearer " + sentinel, sentinel),
+        LLMProbeResult([sentinel], sentinel),  # Annotation cannot validate types.
+        SimpleNamespace(status="success", label=sentinel),
+    ):
+        window, ui, _lifetime, _capture = _bind()
+        monkeypatch.setattr(
+            "cifereca.gui.settings_ai_actions.probe_llm_connection_result",
+            lambda *_args, **_kwargs: fake,
+        )
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            ui.test_button.emit("clicked", ui.test_button)
+            args, _kwargs = window.runner.jobs[-1]
+            outcome = args[1]()
+            args[2](outcome)
+        expected = "auth_refused" if fake is not None and type(fake) is LLMProbeResult and fake.status == "auth_refused" else "inconclusive"
+        assert outcome.status == expected
+        assert ui.status.text.startswith(outcome.label)
+        assert sentinel not in caplog.text
+        assert sentinel not in ui.status.text
+        assert caplog.text.count("operation=llm_connection_probe") >= 1
+        caplog.clear()
+
+
+def test_late_injected_callback_label_is_normalized_before_render():
+    from cifereca.gui.llm_settings import LLMProbeResult
+    window, ui, lifetime, _capture = _bind()
+    ui.test_button.emit("clicked", ui.test_button)
+    args, _kwargs = window.runner.jobs[0]
+    args[2](LLMProbeResult("success", "URL_TOKEN_MUST_NOT_RENDER"))
+    assert ui.status.text.startswith("Test réussi")
+    assert "URL_TOKEN_MUST_NOT_RENDER" not in ui.status.text
+    lifetime.dispose()

@@ -136,8 +136,10 @@ class LLMProbeResult:
     label: str
 
 
-def _probe_outcome(code: str) -> LLMProbeResult:
-    status = code if code in _PROBE_LABELS else "inconclusive"
+def _probe_outcome(code: object) -> LLMProbeResult:
+    # Typed annotations do not validate runtime data. Never relay a provider
+    # supplied or malformed status into tracing or UI labels.
+    status = code if type(code) is str and code in _PROBE_LABELS else "inconclusive"
     return LLMProbeResult(status=status, label=_PROBE_LABELS[status])
 
 

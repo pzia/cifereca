@@ -117,8 +117,8 @@ def bind_settings_ai_callbacks(
             if version == ai_probe_version[0] and page_lifetime.alive:
                 host, _ = destination_summary(settings)
                 label = (
-                    result.label if isinstance(result, LLMProbeResult)
-                    else "Test non concluant"
+                    _probe_outcome(result.status).label
+                    if type(result) is LLMProbeResult else "Test non concluant"
                 )
                 ai_status.set_text(f"{label} · {host} · modèle {settings['model']}")
         def failed(_exc):
@@ -142,6 +142,11 @@ def bind_settings_ai_callbacks(
             except Exception:
                 # Never log exception text, class names, headers or URL.
                 outcome = _probe_outcome("internal_error")
+            # The connection result is a runtime object, not a security
+            # boundary. Rebuild both status and label from our fixed taxonomy.
+            outcome = _probe_outcome(
+                outcome.status if type(outcome) is LLMProbeResult else "inconclusive"
+            )
             elapsed = min(60_000, max(0, int((monotonic() - started) * 1000)))
             _host, remote = destination_summary(settings)
             _TRACE_LOG.info(
