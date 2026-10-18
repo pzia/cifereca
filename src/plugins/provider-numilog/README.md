@@ -1159,6 +1159,32 @@ externe, URLs signées et séparation papier/EPUB. Disponibilité live,
 conditions robots/CGU et moteur multi-attributs serveur restent à qualifier.
 
 
+## 0.1.57 — affinage bibliographique local sur une page Numilog (#1886)
+
+La session anonyme `NumilogPublicSession.refine_loaded_page(page, **filters)`
+affine **uniquement une page déjà renvoyée par** `browse_public_search`
+ou `follow_public_link` et n'émet **aucune nouvelle requête**. Champs
+acceptés : `title`, `author` (y compris co-auteurs), `publisher`,
+`year` (année entière) et `format_label` (format commercial affiché).
+Chaque correspondance exige un champ et son sélecteur de provenance
+`observed_public_html` de la même recherche ; les champs absents ou
+non attestés sont comptés en `missing_evidence_count`, pas en preuve
+d'absence du catalogue. Comparaison locale insensible aux accents,
+casse et ponctuation ; aucun ISBN, âge ni recherche native auteur
+**serveur** n'est inventé.
+
+Le résultat `PublicPageRefinement` distingue
+`matching_count` de `public_unfiltered_total`, indique
+`scope=loaded_public_page_only`, `loaded_count`, la page interrogée,
+la présence de pages non parcourues et le nombre de fiches incertaines.
+Ce n'est **pas un total filtré serveur**, ni un filtrage global. Les
+résultats demeurent `owned=False`, `downloadable=False`, et sans URL
+d'acquisition. La méthode est **optionnelle** ; la recherche Core
+conserve `field=all` et ne présente pas cette fonction comme une
+facette distante. Tests hors réseau sur cartes publiques expurgées,
+limites de champs, provenance et identités, sans cookie/ACSM.
+
+
 ## Numilog 0.1.56 — EAN dans la fiche canonique uniquement (#1072)
 
 Les identifiants publics typés `paper`, `epub`, `pdf` et
