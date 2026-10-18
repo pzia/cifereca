@@ -14,6 +14,7 @@ from diagnostics_explorer import (
     next_page_offset, selectable_event_ids, export_selected_events,
     empty_observation,
 )
+from diagnostics_selection import collect_filtered_selection, page_selection_ids
 from diagnostics_support import (
     SupportReportExport, diagnostic_json_bytes, preserve_report_selection,
 )
@@ -467,6 +468,7 @@ class DiagnosticsPagePlugin:
         self.tasks = None
         self._check_handle = None
         self._ai_handle = None
+        self._selection_handle = None
         self.llm = None
 
     def activate(self, context):
@@ -605,6 +607,52 @@ class DiagnosticsPagePlugin:
         journals_actions.append(journals_next)
         journals_actions.append(journals_copy)
         outer.append(journals_actions)
+
+        # FlowBox wraps four actions even in narrow 760px windows.
+        journals_select_actions = Gtk.FlowBox()
+        journals_select_actions.set_selection_mode(Gtk.SelectionMode.NONE)
+        journals_select_actions.set_min_children_per_line(1)
+        journals_select_actions.set_max_children_per_line(4)
+        journals_select_actions.set_column_spacing(6)
+        journals_select_actions.set_row_spacing(6)
+        journals_select_errors = Gtk.Button(label="Erreurs + critiques (filtres)")
+        journals_select_all = Gtk.Button(label="Tout sélectionner (filtres)")
+        journals_invert = Gtk.Button(label="Inverser cette page")
+        journals_clear = Gtk.Button(label="Effacer la sélection")
+        for button in (journals_select_errors, journals_select_all,
+                       journals_invert, journals_clear):
+            journals_select_actions.insert(button, -1)
+        journals_select_errors.set_tooltip_text(
+            "Erreurs/critiques sur toutes les pages : source, module, période "
+            "et recherche texte ; remplace uniquement le filtre de niveau"
+        )
+        journals_select_all.set_tooltip_text(
+            "Toutes les pages du périmètre filtré, dans les limites sûres d'export"
+        )
+        outer.append(journals_select_actions)
+        journals_selection = Gtk.Label(label="0 sélectionné · portée : cette page", xalign=0)
+        journals_selection.set_wrap(True)
+        journals_selection.add_css_class("dim-label")
+        outer.append(journals_selection)
+        journals_preview = Gtk.Expander(label="Aperçu des événements expurgés sélectionnés")
+        journals_preview_scroll = Gtk.ScrolledWindow()
+        journals_preview_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        journals_preview_scroll.set_size_request(-1, 145)
+        journals_preview_text = Gtk.TextView()
+        journals_preview_text.set_editable(False)
+        journals_preview_text.set_monospace(True)
+        journals_preview_text.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        journals_preview_scroll.set_child(journals_preview_text)
+        journals_preview.set_child(journals_preview_scroll)
+        outer.append(journals_preview)
+        journals_limits = Gtk.Label(
+            label="Export : 50 événements et 24 Ko maximum, 8 pages par niveau. "
+                  "Consultation multi-page non atomique, sources parfois partielles ; "
+                  "champs expurgés et résumés à 500 caractères.", xalign=0,
+        )
+        journals_limits.set_wrap(True)
+        journals_limits.add_css_class("dim-label")
+        outer.append(journals_limits)
 
         journals_sources = Gtk.Label(label="Sources non alimentées", xalign=0)
         journals_sources.set_wrap(True)
