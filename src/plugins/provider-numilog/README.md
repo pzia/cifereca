@@ -1,5 +1,22 @@
 # Numilog — provenance des URL de livres (0.1.16)
 
+## 0.1.55 — navigation facettes sans perte silencieuse (#1886)
+
+La navigation GET de la recherche publique `brSimple` conserve chaque
+facette **déjà appliquée**, à l'exception de l'unique facette
+explicitement remplacée par le lien observé. Un lien thème/prix/langue/
+éditeur qui retire implicitement une autre sélection, change plusieurs
+filtres à la fois ou impose `GRID_PAGE > 0` au moment du filtrage est
+refusé par code fixe `invalid_facets`. Les transitions qui défiltrent
+une dimension ne sont pas devinées sans preuve du parcours amont.
+
+La sélection d'un filtre repart de la première page ; la pagination
+normale conserve ses paramètres comme avant. Les tests sont offline,
+sur cartes publiques expurgées et liens synthétiques, sans nouveau
+transport, cookie, achat, accès privé ou preuve de disponibilité live.
+Les options serveur auteur, ISBN et recherche avancée restent non attestées.
+
+
 ## 0.1.51 — achats sans lecture en ligne : confirmation ACSM
 
 Certaines éditions achetées ne disposent **pas** d'un lien
@@ -1142,7 +1159,7 @@ externe, URLs signées et séparation papier/EPUB. Disponibilité live,
 conditions robots/CGU et moteur multi-attributs serveur restent à qualifier.
 
 
-## 0.1.56 — affinage bibliographique local sur une page Numilog (#1886)
+## 0.1.57 — affinage bibliographique local sur une page Numilog (#1886)
 
 La session anonyme `NumilogPublicSession.refine_loaded_page(page, **filters)`
 affine **uniquement une page déjà renvoyée par** `browse_public_search`
@@ -1166,3 +1183,28 @@ d'acquisition. La méthode est **optionnelle** ; la recherche Core
 conserve `field=all` et ne présente pas cette fonction comme une
 facette distante. Tests hors réseau sur cartes publiques expurgées,
 limites de champs, provenance et identités, sans cookie/ACSM.
+
+
+## Numilog 0.1.56 — EAN dans la fiche canonique uniquement (#1072)
+
+Les identifiants publics typés `paper`, `epub`, `pdf` et
+`digital_unspecified` ne sont désormais retenus par
+`parse_public_detail_jsonld` que si les étiquettes appartiennent
+au **formulaire WebForms public exact** (`aspnetForm`, `POST`, action =
+chemin canonique du produit), entièrement fermé, avec **un seul H1**
+concordant avec le titre du `Book` JSON-LD sélectionné.
+
+Les ISBN placés hors du formulaire (navigation, autre produit, pied de
+page, résultats connexes), après sa fermeture, dans un formulaire
+étranger ou sur une page sans wrapper attesté, sont ignorés.
+Une seconde fiche canonique reste ambiguë et provoque un refus à code fixe.
+L'extraction directe hors réseau conserve son mode historique pour les
+tests de fragments ; le pipeline de fiche publique réclame explicitement
+le mode strict.
+
+Tests : extrait public expurgé Blackbone (EAN papier différent de l'EPUB),
+en-tête/pied de page hostiles, wrapper absent ou non clos, action/méthode
+étrangère, H1 divergent, double formulaire. Aucun réseau supplémentaire,
+aucune promotion des ISBN publics en format acheté ni propriété/droit
+de téléchargement. Le couplage **achat authentifié → édition numérique**
+continue à nécessiter une preuve réelle distincte.

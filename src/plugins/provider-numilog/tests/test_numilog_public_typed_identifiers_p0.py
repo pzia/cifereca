@@ -7,6 +7,7 @@ cookies, personal-library exports, signed delivery URLs, or fulfillment.
 from dataclasses import replace
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -34,8 +35,12 @@ SEARCH = parse_public_search(CAPTURE, SOURCE)
 def product_html(url, title, visible):
     book = json.dumps({"@context": "https://schema.org", "@type": "Book",
                        "url": url, "name": title}, ensure_ascii=False)
-    return ("<html><h1>" + title + "</h1><h2>Détails</h2>"
-            + visible + '<script type="application/ld+json">' + book
+    # Production evidence is admitted only from the observed, canonical,
+    # explicitly closed Numilog WebForms wrapper for this JSON-LD Book.
+    return ('<html><form id="aspnetForm" name="aspnetForm" method="post" action="'
+            + urlsplit(url).path + '"><h1>' + title
+            + '</h1><h2>Détails</h2>' + visible
+            + '</form><script type="application/ld+json">' + book
             + "</script></html>")
 
 

@@ -200,7 +200,10 @@ def parse_public_detail_jsonld(html, product_url):
         PublicIdentifierError, extract_public_identifiers,
     )
     try:
-        typed_identifiers = extract_public_identifiers(html, product_url)
+        typed_identifiers = extract_public_identifiers(
+            html, product_url, expected_title=fields.get("title"),
+            require_product_form=True,
+        )
     except PublicIdentifierError:
         raise PublicDetailError("public_identifier_evidence_unverified") from None
     from cifereca_numilog_public_metadata import extract_public_metadata, PublicMetadataError

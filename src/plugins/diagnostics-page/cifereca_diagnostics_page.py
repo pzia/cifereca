@@ -646,8 +646,9 @@ class DiagnosticsPagePlugin:
         journals_preview.set_child(journals_preview_scroll)
         outer.append(journals_preview)
         journals_limits = Gtk.Label(
-            label="Export : 50 événements et 24 Ko maximum, 8 pages par niveau. "
-                  "Consultation multi-page non atomique, sources parfois partielles ; "
+            label="Page : 50 événements / 24 Ko. Sélection filtrée multi-page : "
+                  "200 événements / 96 Ko maximum, 8 pages par niveau. "
+                  "Consultation non atomique, sources parfois partielles ; "
                   "champs expurgés et résumés à 500 caractères.", xalign=0,
         )
         journals_limits.set_wrap(True)
@@ -1338,8 +1339,8 @@ class DiagnosticsPagePlugin:
                         "diagnostic selection is incomplete",
                         "diagnostic selection has missing rows",
                         "diagnostic selection exceeds the safe page limit",
-                        "diagnostic selection exceeds 50 events",
-                        "diagnostic selection exceeds 24 KB",
+                        "diagnostic selection exceeds 200 events",
+                        "diagnostic selection exceeds 96 KB",
                         "diagnostic selection cancelled",
                         "diagnostic selection contains invalid Unicode",
                     }

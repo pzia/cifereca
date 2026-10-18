@@ -177,7 +177,9 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
     all_rows: list[SearchResult] = []
     seen: set[str] = set()
     attempts = 0
-    search_error: Exception | None = None
+    # Only the fact of a failed provider request must survive. Neither a
+    # traceback nor exception object belongs in diagnostic or cache state.
+    search_error = False
     search_queries = self._history_search_queries(title)
     folded_queries = {self._history_fold(q) for q in search_queries if q}
 
@@ -185,15 +187,13 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
         attempts += 1
         try:
             rows = session.search(query, scope="all", page=0, field="all")
-        except Exception as exc:
-            search_error = exc
+        except Exception:
+            search_error = True
             self.diagnostics.add(
                 "COVER", "history search attempt", "error",
                 detail={
-                    "provider": provider,
                     "attempt": attempts,
-                    "error": type(exc).__name__,
-                    "message": str(exc)[:160],
+                    "code": "history_cover_search_failed",
                 },
                 level="detailed",
             )
@@ -227,17 +227,15 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
             if self._history_fold(pbest.title) == self._history_fold(title) and pscore >= 85.0:
                 break
 
-    if not all_rows and search_error is not None:
+    if not all_rows and search_error:
         self.storage.cache_put(namespace, key, {"url": "", "status": "error"}, 5 * 60)
         self.diagnostics.add(
             "COVER", "history search", "error",
             detail={
-                "provider": provider,
                 "result": "error",
                 "cache": False,
                 "attempts": attempts,
-                "error": type(search_error).__name__,
-                "message": str(search_error)[:160],
+                "code": "history_cover_search_failed",
             },
             level="detailed",
         )
@@ -291,15 +289,11 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
                         cover_source = "detail"
                     else:
                         status = "no_cover"
-                except Exception as exc:
+                except Exception:
                     status = "no_cover"
                     self.diagnostics.add(
                         "COVER", "history detail cover", "error",
-                        detail={
-                            "provider": provider,
-                            "error": type(exc).__name__,
-                            "message": str(exc)[:160],
-                        },
+                        detail={"code": "history_cover_detail_failed"},
                         level="detailed",
                     )
 

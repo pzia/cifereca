@@ -9,7 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from cifereca.gui.plugin_action_dispatch_controller import invoke_ui_action
-from cifereca.plugin_api import UiActionContribution
+from cifereca.plugin_api import UiActionContribution, UserFacingError, AttentionRequired
 
 
 ROOT = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
@@ -89,7 +89,7 @@ def test_regular_plugin_failure_reports_existing_public_action_error():
         raise ValueError("Plugin indisponible")
     invoke_ui_action(window, _action(failing), NS())
     assert events == [
-        "dismiss", "callback", ("error", "Plugin indisponible", "Action impossible"),
+        "dismiss", "callback", ("error", "Traitement indisponible", "Action impossible"),
     ]
 
 
@@ -118,12 +118,53 @@ def test_action_return_value_is_not_interpreted_as_a_new_navigation():
     assert events == ["dismiss"]
 
 
-def test_action_error_uses_exact_exception_string_not_repr():
+def test_action_error_does_not_stringify_arbitrary_exception():
     window, events = _window()
+
+    class HostileException(RuntimeError):
+        def __str__(self):
+            raise AssertionError("Raw plugin exception must never be stringified")
+
+        def __repr__(self):
+            raise AssertionError("Raw plugin exception must never be repr'd")
+
     invoke_ui_action(window, _action(
-        lambda _host: (_ for _ in ()).throw(KeyError("unknown-route")),
+        lambda _host: (_ for _ in ()).throw(HostileException()),
     ), NS())
-    assert events[-1] == ("error", "'unknown-route'", "Action impossible")
+    assert events[-1] == ("error", "Traitement indisponible", "Action impossible")
+
+
+@pytest.mark.parametrize("error", [
+    RuntimeError("https://private.invalid/borrow?token=PRIVATE_BEARER"),
+    KeyError("/home/private/secret_reader.acsm"),
+    ValueError("Authorization: Bearer PRIVATE_BEARER"),
+])
+def test_untyped_plugin_exception_never_reaches_user_visible_feedback(error):
+    window, events = _window()
+    invoke_ui_action(window, _action(lambda _host: (_ for _ in ()).throw(error)), NS())
+    assert events == ["dismiss", ("error", "Traitement indisponible", "Action impossible")]
+    assert "PRIVATE_BEARER" not in str(events)
+    assert "/home/private/" not in str(events)
+    assert "private.invalid" not in str(events)
+
+
+@pytest.mark.parametrize("error", [
+    UserFacingError(
+        "Autorisation requise", code="auth_required",
+        technical_detail="Bearer PRIVATE_BEARER",
+    ),
+    AttentionRequired(
+        "Ouvrir les paramètres du fournisseur", code="configuration_required",
+        technical_detail="https://private.invalid/?token=PRIVATE_BEARER",
+    ),
+])
+def test_public_user_facing_plugin_error_preserves_safe_message_only(error):
+    window, events = _window()
+    invoke_ui_action(window, _action(lambda _host: (_ for _ in ()).throw(error)), NS())
+    assert events == ["dismiss", ("error", error.user_message, "Action impossible")]
+    assert "PRIVATE_BEARER" not in str(events)
+    assert "private.invalid" not in str(events)
+    assert error.code not in str(events)
 
 
 def test_independent_action_invocations_are_not_coalesced():
