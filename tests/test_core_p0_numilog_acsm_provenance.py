@@ -100,6 +100,36 @@ def test_exact_numilog_acsm_delivery_reconciles_existing_file_and_two_scans(
                 if x["placement_id"] == placed["placement_id"]]
         assert len(rows) == 1 and rows[0]["item_id"] == case.item.record_id
         assert path.read_bytes() == before
+    for verify_scan in (False, True):
+        library = service.library_entries(
+            identity_id=case.account.identity_id, scan=verify_scan,
+        )
+        # Reconciliation gives ONE content-hash row with both the local
+        # artifact and the exact private Numilog possession; no duplicate
+        # remote_owned card survives a cache refresh / recursive disk scan.
+        matching = [
+            row for row in library
+            if row.get("artifact_id") == initial["artifact_id"]
+        ]
+        assert len(matching) == 1
+        book = matching[0]
+        assert book["local"] is True and book["state"] == "local"
+        assert book["identity_id"] == case.account.identity_id
+        assert any(
+            ref.get("provider_id") == "numilog"
+            and ref.get("item_id") == case.item.record_id
+            for ref in book["source_refs"]
+        )
+        assert any(
+            p.get("entitlement_id") == case.right["entitlement_id"]
+            and p.get("item_id") == case.item.record_id
+            for p in book["possessions"]
+        )
+        assert not any(
+            row is not book and row.get("item_id") == case.item.record_id
+            and row.get("state") == "remote_owned"
+            for row in library
+        )
     assert len(case.deliveries) == 1
 
 
