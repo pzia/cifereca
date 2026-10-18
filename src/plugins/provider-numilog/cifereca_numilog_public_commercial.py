@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from cifereca_numilog_html import public_book_url
 
-_PRICE = re.compile(r"(?:0|[1-9][0-9]{0,7})\.[0-9]{2}\Z")
+_PRICE = re.compile(r"(?:0|[1-9][0-9]{0,4})\.[0-9]{2}\Z")
 _COVER = re.compile(r"https://couverture\.numilog\.com/[0-9]{13}_TRESGRANDE\.jpg\Z")
 _AVAILABILITY = {
     "https://schema.org/InStock": "in_stock",
