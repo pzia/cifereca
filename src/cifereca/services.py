@@ -2735,7 +2735,6 @@ class LibraryService:
                             account_id=pinned_account_id,
                         )
 
-                    item = readmit()
                     if self.storage.numilog_purchase_has_local_conflict(
                         credential_id=item.source_credential,
                         item_id=item.record_id,
@@ -2764,6 +2763,11 @@ class LibraryService:
                         raise ProviderConfigurationError(
                             "Numilog : fichier local candidat ; rapprochement requis"
                         )
+                    from .core.numilog_publication_guard import require_tracked_publications
+                    require_tracked_publications(self, identity.identity_id, target_dir)
+                    # Recheck the exact caller/source after bounded filesystem
+                    # inspection and immediately before any provider I/O.
+                    item = readmit()
                     try:
                         path, _private_url = pinned_session.download_direct(
                             item, target_dir,
