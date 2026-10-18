@@ -369,11 +369,11 @@ def provider_diagnostic_state(self) -> dict[str, Any]:
     try:
         adept = self.kobo_adept_state()
     except Exception as exc:
-        adept = {"available": False, "error": str(exc)}
+        adept = {"available": False, "error": "ADEPT indisponible"}
     return {
         "plugins": self.registry.diagnostic_state(),
         "sessions": [session.diagnostic_state() for session in self._sessions.values() if session.credential_id != "legacy"],
-        "errors": dict(self._session_errors),
+        "errors": {"connect_failed": min(10000, len(self._session_errors))},
         "kobo_adept": adept,
     }
 
@@ -483,7 +483,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
     catalogue-only providers will be included once their plugin is ready.
     """
     started_all = time.monotonic()
-    logger.info("TRACE connect-configured begin current_identity=%s", getattr(getattr(self, "current_identity", None), "identity_id", None))
+    logger.info("TRACE connect-configured begin")
     self.disconnect_configured()
     all_accounts: list[Account] = []
     connected: list[str] = []
@@ -542,12 +542,16 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 "PLUGIN", "public provider connected", "ok",
                 detail={"provider": provider_id, "instantiation": "singleton_public"}, level="detailed",
             )
-        except Exception as exc:
+        except Exception:
             try:
                 session.close()
             except Exception:
                 pass
-            errors[key] = str(exc)
+            errors[key] = "Connexion à la source indisponible"
+            self.diagnostics.add(
+                "PLUGIN", "public provider connect", "error",
+                detail={"code": "provider_connect_failed"},
+            )
 
     logger.info("TRACE connect-configured enabled-rows=%s", len(rows))
     for row in rows:
@@ -557,7 +561,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         if not provider_id or not credential_id:
             continue
         item_started = time.monotonic()
-        logger.info("TRACE provider prepare provider=%s credential=%s identity=%s", provider_id, credential_id, identity_id)
+        logger.info("TRACE provider prepare kind=configured")
         plugin = self.registry.maybe_get(provider_id)
         if plugin is None:
             errors[f"{provider_id}:{credential_id}"] = "Plugin inconnu"
@@ -574,9 +578,9 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         )
         key = self._session_key(provider_id, credential_id)
         try:
-            logger.info("TRACE provider connect begin provider=%s credential=%s identity=%s", provider_id, credential_id, identity_id)
+            logger.info("TRACE provider connect begin kind=configured")
             accounts = session.connect()
-            logger.info("TRACE provider connect end provider=%s credential=%s accounts=%s dt=%.3fs", provider_id, credential_id, len(accounts), time.monotonic()-item_started)
+            logger.info("TRACE provider connect end account_count=%s dt=%.3fs", len(accounts), time.monotonic()-item_started)
             self._sessions[key] = session
             connection_id = self.storage.provider_connection_put({
                 "identity_id": identity_id, "provider_id": provider_id, "credential_id": credential_id,
@@ -595,18 +599,20 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             connected.append(key)
             self.diagnostics.add(
                 "PLUGIN", "provider connected", "ok",
-                detail={"provider": provider_id, "credential_id": credential_id, "accounts": len(accounts)},
+                detail={"code": "provider_connected", "accounts": len(accounts)},
             )
-        except Exception as exc:
-            logger.exception("TRACE provider connect error provider=%s credential=%s identity=%s dt=%.3fs", provider_id, credential_id, identity_id, time.monotonic()-item_started)
+        except Exception:
+            # Never invoke logger.exception: the traceback may include signed
+            # endpoints, plugin credentials, response bodies and local paths.
+            logger.warning("TRACE provider connect error code=provider_connect_failed dt=%.3fs", time.monotonic()-item_started)
             try:
                 session.close()
             except Exception:
                 pass
-            errors[key] = str(exc)
+            errors[key] = "Connexion à la source indisponible"
             self.diagnostics.add(
                 "PLUGIN", "provider connect", "error",
-                detail={"provider": provider_id, "credential_id": credential_id, "error": type(exc).__name__, "message": str(exc)},
+                detail={"code": "provider_connect_failed"},
             )
 
     self._session_errors = errors
