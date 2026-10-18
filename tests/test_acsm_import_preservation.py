@@ -181,3 +181,32 @@ def test_staging_symlink_never_overwrites_another_file(tmp_path, importer):
         service.import_acsm(source)
     assert existing.read_bytes() == b'keep original foreign file'
     assert not requests
+
+
+def test_acsm_import_is_visible_to_local_library_without_rescan(importer, tmp_path, monkeypatch):
+    """An indexed ADEPT artifact is immediately present in the SQL projection."""
+    service, requests = importer
+    source = tmp_path / "newly-delivered.acsm"
+    source.write_text(
+        "<fulfillment><id>synthetic-refresh</id>"
+        "<format>application/pdf</format></fulfillment>"
+    )
+    identity_id = service.current_identity.identity_id
+    before = service.library_entries(identity_id=identity_id, scan=False)
+    monkeypatch.setattr(
+        service, "catalog_scan",
+        lambda **_kwargs: pytest.fail("local refresh must not scan the filesystem"),
+    )
+
+    result = service.import_acsm(source, provider_id="numilog", title="Fictional fresh book")
+    assert result["status"] == "complete"
+    assert len(requests) == 1
+    after = service.library_entries(identity_id=identity_id, scan=False)
+    matching = [
+        row for row in after
+        if row.get("local_path") == result["path"] and row.get("local") is True
+    ]
+    assert len(matching) == 1
+    assert matching[0]["title"] == "Fictional fresh book"
+    assert matching[0]["provider_id"] == "numilog"
+    assert len(after) == len(before) + 1
