@@ -43,7 +43,7 @@ def _redact_url(url):
         # Preserve non-sensitive public URLs (historical Plugin API contract)
         # while hiding known borrower/account routes even without a query.
         private_route = re.search(
-            r"(?i)/(?:LOAN|reader|account|users?|private|orders?|borrow|fulfil(?:l)?ment|acquisition|URLLink\\.acsm)(?:/|$)",
+            r"(?i)/(?:LOAN|reader|account|users?|private|orders?|borrow|fulfil(?:l)?ment|acquisition|URLLink\.acsm)(?:/|$)",
             parsed.path,
         )
         if parsed.query or parsed.fragment or parsed.username or private_route:
