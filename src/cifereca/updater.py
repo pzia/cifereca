@@ -1122,7 +1122,11 @@ def main(argv: list[str] | None = None) -> int:
                 result = install_archive(a.archive, python=a.python, keep=a.keep, dry_run=a.dry_run)
         _print(result, a.json)
         return 0
-    except (UpdateError, TimeoutError) as exc:
+    except TimeoutError:
+        _print({"ok": False, "error": {"code": "update_error",
+               "message": "Délai dépassé pour un sous-processus de mise à jour"}}, a.json)
+        return 1
+    except UpdateError as exc:
         error = {"ok": False, "error": {"code": "update_error", "message": str(exc)}}
         _print(error, a.json)
         return 1
