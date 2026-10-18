@@ -50,6 +50,18 @@ class GTKRelayArtifactTests(unittest.TestCase):
                 | {f"libgtk-test{i}_1.2.3_amd64.deb" for i in range(12)})
             self.assertEqual(json.load(archive.extractfile(members[0])), self.module.PROFILE)
 
+    def test_success_canonicalizes_duplicate_json_keys_that_hide_private_data(self):
+        marker = self.cache / self.module.MARKER
+        marker.write_text(
+            '{"distro":"PRIVATE-SECRET","distro":"debian",'
+            '"codename":"trixie","architecture":"amd64"}',
+            encoding="utf-8")
+        self.assertEqual(self.module.build(self.cache, self.output), 12)
+        with tarfile.open(self.output, "r:gz") as archive:
+            safe = archive.extractfile(f".gtk-deb-cache/{self.module.MARKER}").read()
+            self.assertNotIn(b"PRIVATE-SECRET", safe)
+            self.assertEqual(json.loads(safe), self.module.PROFILE)
+
     def test_rejects_unexpected_or_private_files_without_creating_bundle(self):
         for relative, contents in (
             ("secrets.env", b"TOKEN=PRIVATE"),
