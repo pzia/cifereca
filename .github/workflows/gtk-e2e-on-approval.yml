@@ -1,16 +1,20 @@
 # Temporary Debian dependency relay (#1011, #1143). No private source or
-# unreviewed caches are uploaded. Only an explicit sentinel PR synchronization
-# starts the network download; there is no push or manual dispatch trigger.
+# unreviewed cache entries are uploaded. A manual action AND affirmative
+# boolean consent are both mandatory; PR edits never start live downloads.
 name: Debian 13 GTK dependency relay (temporary)
 on:
-  pull_request:
-    types: [synchronize]
-    paths:
-      - .github/gtk-e2e-run-request.txt
+  workflow_dispatch:
+    inputs:
+      confirm_relay:
+        description: "I explicitly authorize a bounded Debian 13 GTK dependency download"
+        required: true
+        default: false
+        type: boolean
 permissions:
   contents: read
 jobs:
   bundle:
+    if: inputs.confirm_relay == true
     name: Download Debian GTK debs for local rootless bootstrap
     runs-on: ubuntu-24.04
     timeout-minutes: 15
