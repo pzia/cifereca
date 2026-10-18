@@ -51,6 +51,35 @@ def page_selection_ids(rows: list[dict], previous: set[str], action: str) -> set
             and row.get("severity") in ("error", "critical")}
 
 
+# These seven fields are the complete exported, redacted event summary.
+# Rechecking their fingerprint (not only IDs) prevents stale message/status
+# changes being advertised as a stable, selected snapshot.
+_EXPORTED_EVENT_FIELDS = (
+    "timestamp", "source", "module", "severity", "message", "status", "event_id",
+)
+
+
+def _redacted_page_fingerprint(rows):
+    return tuple(tuple(row[field] for field in _EXPORTED_EVENT_FIELDS) for row in rows)
+
+
+def _check_selected_scope(rows, *, source: str, module: str, severity: str):
+    """Validate the broker response against the actual query, not just its IDs.
+
+    The Core applies these filters, but treating a partial/malformed provider
+    response as truth could include a warning under the "all errors" action.
+    Never silently drop those rows: incomplete selection must fail explicitly.
+    """
+    module_prefix = module.strip().casefold()
+    for row in rows:
+        if (row["source"] not in ("app_log", "core_events")
+                or (source != "all" and row["source"] != source)
+                or row["severity"] not in ("debug", "info", "warning", "error", "critical")
+                or (severity and row["severity"] != severity)
+                or (module_prefix and not row["module"].casefold().startswith(module_prefix))):
+            raise ValueError("diagnostic selection contains out-of-scope events")
+
+
 def _checked_page(payload: Mapping, offset: int, expected_total: int | None):
     if not isinstance(payload, Mapping):
         raise ValueError("diagnostic selection unavailable")
@@ -105,7 +134,7 @@ def collect_filtered_selection(
     for level in levels:
         offset = 0
         total_expected = None
-        first_page_ids = None
+        first_page_fingerprint = None
         pages = 0
         while True:
             if cancelled is not None and cancelled():
@@ -117,9 +146,10 @@ def collect_filtered_selection(
                 period=period, offset=offset, reference_time=reference_time,
             )
             rows, total, following = _checked_page(page, offset, total_expected)
+            _check_selected_scope(rows, source=source, module=module, severity=level)
             total_expected = total
-            if first_page_ids is None:
-                first_page_ids = tuple(row["event_id"] for row in rows)
+            if first_page_fingerprint is None:
+                first_page_fingerprint = _redacted_page_fingerprint(rows)
             pages += 1
             inspected += len(rows)
             statuses = source_summaries(page)
@@ -151,7 +181,8 @@ def collect_filtered_selection(
             period=period, offset=0, reference_time=reference_time,
         )
         reread, _total, _next = _checked_page(current, 0, total_expected)
-        if tuple(row["event_id"] for row in reread) != first_page_ids:
+        _check_selected_scope(reread, source=source, module=module, severity=level)
+        if _redacted_page_fingerprint(reread) != first_page_fingerprint:
             raise ValueError("diagnostic selection changed during pagination")
 
     event_ids = frozenset(row["event_id"] for row in results)
