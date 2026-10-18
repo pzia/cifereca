@@ -2210,13 +2210,16 @@ class Storage:
             return True
 
     def numilog_materialization_claim_startup(
-        self, *, source_id: str, now: int,
+        self, *, source_id: str, now: int, expected_revision: str,
     ) -> bool:
         """Cross-process one-shot claim, conditional on actual separate consent.
 
         Claims even when downstream I/O fails, so an interrupted fulfillment
         cannot be retried on every startup and consume a single-use ACSM URL.
         Never infer consent from generic sync, legacy Kobo flags or cache.
+        A queued worker supplies its observed consent revision: compare it in
+        the same transaction before consuming the new grant's clock/receipt.
+        Every caller must name the grant it observed.
         """
         import re
         from .core.numilog_materialization_consent import (
@@ -2224,7 +2227,9 @@ class Storage:
         )
         if (type(source_id) is not str
                 or re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is None
-                or type(now) is not int or not 1_000_000_000 <= now <= 9_999_999_999):
+                or type(now) is not int or not 1_000_000_000 <= now <= 9_999_999_999
+                or type(expected_revision) is not str
+                or re.fullmatch(r"[0-9a-f]{32}", expected_revision) is None):
             return False
         clock_key = "sync.source.numilog.materialization.last_start.v1." + source_id
         with self._lock, self._connect() as db:
@@ -2233,6 +2238,12 @@ class Storage:
                 "SELECT value FROM metadata WHERE key=?", (policy_key(source_id),),
             ).fetchone()
             if consent is None or consent[0] != _ACTIVE:
+                return False
+            epoch = db.execute(
+                "SELECT value FROM metadata WHERE key=?",
+                ("sync.source.numilog.materialization.epoch.v1." + source_id,),
+            ).fetchone()
+            if epoch is None or epoch[0] != expected_revision:
                 return False
             clock = db.execute(
                 "SELECT value FROM metadata WHERE key=?", (clock_key,),
