@@ -553,7 +553,9 @@ def apply_snapshot(
         if restart:
             app = updater._command_path(updater.install_root() / "current", "cifereca")
             try:
-                subprocess.Popen([str(app)], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # Success attests process launch only, not GTK readiness.
+                step("restart", subprocess.Popen, [str(app)], start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 result["restarted"] = True
             except Exception as exc:
                 result["restarted"] = False
