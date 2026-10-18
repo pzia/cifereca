@@ -84,6 +84,17 @@ def _binding(broker: Any, source_id: str):
     return account, session, roots
 
 
+def _same_binding(broker: Any, source_id: str, scope: tuple, session: Any, roots: tuple) -> bool:
+    """Re-admit the exact pre-preview source, session object and directory."""
+    current = _binding(broker, source_id)
+    if current is None:
+        return False
+    account, active, current_roots = current
+    return (active is session
+            and (source_id, account.identity_id, account.credential_id, account.unique_id) == scope
+            and tuple(current_roots) == tuple(roots))
+
+
 def mode(broker: Any, source_id: str) -> str:
     try:
         # The configured consent must remain visible and revocable while
@@ -110,6 +121,8 @@ def prepare(broker: Any, source_id: str) -> SyncResult:
         if bound is None:
             return _receipt("source_not_ready")
         account, session, roots = bound
+        scope = (source_id, account.identity_id, account.credential_id,
+                 account.unique_id)
         revision = broker.service.storage.numilog_materialization_consent_revision(
             source_id,
         )
@@ -135,13 +148,11 @@ def prepare(broker: Any, source_id: str) -> SyncResult:
                  for value in counts.values())):
             return _receipt("preview_unavailable")
         # Exact session and library configuration are kept only in memory.
-        scope = (source_id, account.identity_id, account.credential_id,
-                 account.unique_id)
         # A revoked policy or changed credential during SHA verification
         # invalidates the proposal before it can become a confirmation token.
         if (revision != broker.service.storage.numilog_materialization_consent_revision(
                 source_id,
-            ) or _binding(broker, source_id) is None):
+            ) or not _same_binding(broker, source_id, scope, session, roots)):
             return _receipt("preview_changed")
         snapshot = (id(session), tuple(str(root) for root in roots),
                     tuple(sorted(counts.items())), revision)
@@ -178,7 +189,7 @@ def confirm(broker: Any, source_id: str, token: str, *, mode: str) -> SyncResult
         if (preview.ok is not True
                 or preview.facts.get("files_verified") is not True
                 or evidence != row[2][:3] or row[3][0] is not session
-                or _binding(broker, source_id) is None):
+                or not _same_binding(broker, source_id, scope, session, roots)):
             return _receipt("preview_changed")
         if not broker.service.storage.numilog_materialization_change_consent(
             source_id, activate=True, expected_revision=row[2][3],
