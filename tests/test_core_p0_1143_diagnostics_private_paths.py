@@ -45,6 +45,10 @@ def test_unsigned_catalog_url_path_is_redacted_but_public_origin_remains():
     assert redact_text("https://catalog.example.test/") == (
         "https://catalog.example.test/"
     )
+    # Public non-sensitive paths remain visible by the historical contract.
+    assert redact_text("https://catalog.example.test/book") == (
+        "https://catalog.example.test/book"
+    )
     assert redact_text("https://catalog.example.test/cover?auth=SECRET_VALUE") == (
         "https://catalog.example.test/<redacted>"
     )
