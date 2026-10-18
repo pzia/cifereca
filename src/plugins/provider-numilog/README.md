@@ -837,3 +837,22 @@ synthétiques et absence de secret dans toute trace. La **structure
 réelle de l'ancre cliquée** sur le compte Numilog et le succès ACSM
 effectif demeurent non attestés ; aucune nouvelle route ou requête JS
 n'est devinée.
+
+
+## Cohérence de la référence de commande du formulaire de confirmation (#2024)
+
+Si le formulaire HTML **englobant la carte de livraison** possède une
+`action` vers la même route de confirmation et fournit sa propre clé
+`ref`, cette référence opaque doit correspondre exactement à celle du
+GET `ConfirmationPaiement.aspx` en cours. Une référence différente, vide
+ou dupliquée provoque `html_delivery_ambiguous` **avant tout GET ACSM**,
+même quand les `Links` Adobe, le `ModalDownload` et le `readBook`
+semblent autrement correspondre. Les formulaires indépendants
+(login/en-tête hors de la carte) ne définissent pas cette liaison.
+Aucune comparaison de `ref` n'infère une équivalence avec `lid` ou
+`ProductId` : les identifiants restent dans leurs espaces distincts.
+
+La comparaison est en mémoire seulement, sans exposer l'un ou l'autre
+`ref` dans la trace, l'erreur ou le Core. Tests offline avec formulaire
+cohérent, référence contradictoire, vide/dupliquée et widget login
+présent/absent : le refus n'envoie jamais l'ACSM.
