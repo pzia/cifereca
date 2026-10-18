@@ -208,7 +208,10 @@ def parse_public_detail_jsonld(html, product_url):
         visible_metadata = extract_public_metadata(html, product_url, fields.get("title"))
     except PublicMetadataError:
         raise PublicDetailError("public_metadata_evidence_unverified") from None
+    from cifereca_numilog_public_commercial import extract_public_commercial
+    public_commercial = extract_public_commercial(node, product_url)
     return {
+        "public_commercial": public_commercial,
         "public_html_metadata": visible_metadata,
         "product_url": product_url,
         "public_identifiers": typed_identifiers["identifiers"],
@@ -323,9 +326,13 @@ def merge_public_detail(item, detail):
     if "title" in conflicts:
         projection.clear()
     from cifereca_numilog_public_metadata import validated_public_metadata, PublicMetadataError
+    from cifereca_numilog_public_commercial import (
+        validated_public_commercial, PublicCommercialError,
+    )
     try:
         html_metadata = validated_public_metadata(detail, url)
-    except PublicMetadataError:
+        commercial = validated_public_commercial(detail, url)
+    except (PublicMetadataError, PublicCommercialError):
         raise ProviderCapabilityError(error) from None
     next_meta = dict(metadata)
     next_meta["public_detail"] = {
@@ -340,6 +347,10 @@ def merge_public_detail(item, detail):
         "identifier_evidence": public_id_evidence,
         "format_edition_proven": False,
     }
+    if commercial is not None:
+        # Store-only evidence: not a downloaded or purchased edition's price,
+        # stock, cover or offer. Never overwrite search price or image.
+        next_meta["public_detail"]["public_commercial"] = commercial
     if html_metadata is not None:
         next_meta["public_detail"]["public_html_metadata"] = html_metadata
         next_meta["public_product_metadata"] = dict(html_metadata["fields"])
