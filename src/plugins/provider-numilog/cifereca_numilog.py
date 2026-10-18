@@ -538,7 +538,7 @@ class NumilogSession(ProviderSession):
         self._diag('téléchargement',format='ACSM/ADEPT',fulfillment=status)
         return produced,self.library_url
 
-    def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None):
+    def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None):
         with DeliveryTrace(self.diagnostics, source=source, connected_initial=self.connected) as trace:
             trace.fail('adept_unconfirmed')
             owner = identity_id
@@ -547,7 +547,9 @@ class NumilogSession(ProviderSession):
             seen = set()
             # Keep the fresh owned row's readBook coordinates across redirects;
             # confirmation-page product/copy evidence cannot choose another book.
-            expected_readbook = url
+            expected_readbook = (
+                expected_readbook_url if type(expected_readbook_url) is str else url
+            )
             for hop in range(12):
                 trace.fail('adept_unconfirmed')
                 if owner is not None:
@@ -580,7 +582,10 @@ class NumilogSession(ProviderSession):
                 from_library = (
                     hop == 0
                     and url_origin(url) == url_origin(self.library_url)
-                    and urlsplit(url).path.casefold() == '/pages/compte/readbook.ashx'
+                    and urlsplit(url).path.casefold() in {
+                        '/pages/compte/readbook.ashx',
+                        '/pages/commande/confirmationpaiement.aspx',
+                    }
                 )
                 referer = self.library_url if from_library else self.base_url
                 with self.client.stream('GET',url,headers={'Referer':referer}) as r:
@@ -862,11 +867,22 @@ class NumilogSession(ProviderSession):
                     start = evidence.url
                     self._diag('livraison ACSM',phase='owned_card',kind='card_bound',result='single_allowed_candidate')
                 else:
-                    start = row['href']
-                    self._diag('livraison ACSM',phase='readbook',kind='scoped_link',result='fallback')
+                    # Some owned cards may directly expose a confirmed order
+                    # page instead of requiring an initial readBook 302.
+                    # The order ref comes *only* from a fresh, uniquely
+                    # selected card's explicit canonical HTML href.
+                    confirmation = row.get('confirmation')
+                    if type(confirmation) is str:
+                        checked_url(confirmation, self.allowed_origins)
+                        start = confirmation
+                        self._diag('livraison ACSM',phase='confirmation',
+                                   kind='scoped_link',result='direct_confirmed_href')
+                    else:
+                        start = row['href']
+                        self._diag('livraison ACSM',phase='readbook',kind='scoped_link',result='fallback')
                 return self._download(start,directory/name,title=row['title'],author=item.author,
                     book_id=self._id(row),source='owned_card' if isinstance(evidence, OwnedDelivery) else 'readbook',
-                    identity_id=owner)
+                    identity_id=owner,expected_readbook_url=row['href'])
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
 
