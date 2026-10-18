@@ -242,5 +242,6 @@ def merge_attested_owned_public_detail(owned, detail):
         raise ProviderCapabilityError(error) from None
     if html_metadata is not None:
         detail_summary["public_html_metadata"] = html_metadata
+        next_metadata["public_product_metadata"] = dict(html_metadata["fields"])
     next_metadata["public_detail_enrichment"] = detail_summary
     return replace(owned, metadata=next_metadata, **projection)

@@ -136,6 +136,9 @@ def test_public_and_owned_merges_preserve_labels_without_changing_artifact_or_ri
                                'source_url':source, 'field_evidence':{}}})
     result = merge_attested_owned_public_detail(owned, detail)
     assert result.metadata['public_detail_enrichment']['public_html_metadata'] == detail['public_html_metadata']
+    assert merged.metadata['public_product_metadata'] == detail['public_html_metadata']['fields']
+    assert result.metadata['public_product_metadata'] == detail['public_html_metadata']['fields']
+    assert 'public_product_metadata' not in owned.metadata
     assert result.source_credential == 'alice' and result.record_id == 'private-purchase'
     assert result.owned is True and result.downloadable is True and result.download_url is None
     assert result.format == owned.format

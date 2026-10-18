@@ -483,6 +483,9 @@ acquisition, page de compte ni requête supplémentaire implicite n'est ajoutée
 
 L'enrichissement explicite conserve maintenant `public_html_metadata` dans la
 preuve de détail public et dans l'enrichissement d'un achat déjà rapproché.
+Les seules valeurs validées alimentent aussi le namespace générique
+`public_product_metadata` du Core (#2042), qui les présente séparément comme
+déclarations commerciales, copiables sans recherche typée sur l'édition.
 Aucune requête supplémentaire : même réponse bornée de fiche, jamais au rendu.
 
 | Champ de provenance | Source observée dans la fiche | Interprétation |

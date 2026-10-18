@@ -342,4 +342,5 @@ def merge_public_detail(item, detail):
     }
     if html_metadata is not None:
         next_meta["public_detail"]["public_html_metadata"] = html_metadata
+        next_meta["public_product_metadata"] = dict(html_metadata["fields"])
     return replace(item, metadata=next_meta, **projection)
