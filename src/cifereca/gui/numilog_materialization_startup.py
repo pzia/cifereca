@@ -103,6 +103,16 @@ def dispatch_after_opening(window: Any) -> bool:
         # A partial batch can have indexed valid books before another
         # account fails. Update those books even on the failure path.
         refresh_affected_library()
+        if (getattr(window, "_closed", False) or _broker(window) is not broker
+                or isinstance(error, Cancelled)):
+            return
+        # Supplying an error callback must not silently suppress the prior
+        # TaskRunner feedback. Display only our fixed, redacted message.
+        present = getattr(getattr(window, "runner", None), "present_error", None)
+        if callable(present):
+            present(RuntimeError(
+                "Sauvegarde initiale Numilog incomplète ; consulter Synchronisation"
+            ))
 
     try:
         window.runner.submit(
