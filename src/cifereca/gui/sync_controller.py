@@ -799,6 +799,17 @@ def _refresh_sync_page(self) -> None:
                         consent_mode = value
                 except Exception:
                     pass
+            # Read only local scoped state; never fetch the provider,
+            # hash files or resolve ADEPT merely to render a page.
+            from .numilog_materialization_status import describe_run
+            consent_history = ""
+            status_reader = getattr(broker, "numilog_materialization_run_status", None)
+            if callable(status_reader):
+                try:
+                    summary = status_reader(source.source_id)
+                    consent_history = describe_run(consent_mode, summary)
+                except Exception:
+                    consent_history = "Dernier bilan indisponible."
             consent_row = Adw.ActionRow()
             consent_row.set_title("Sauvegarde automatique des achats Numilog")
             consent_row.set_subtitle_lines(0)
@@ -817,6 +828,8 @@ def _refresh_sync_page(self) -> None:
                 consent_row.set_subtitle(
                     "Sauvegarde planifiée indisponible. Aucun téléchargement automatique."
                 )
+            if consent_history:
+                consent_row.set_subtitle(consent_row.get_subtitle() + " " + consent_history)
             consent_button = self.action_button(
                 "Désactiver la sauvegarde" if consent_mode == "on_start"
                 else "Activer au démarrage…",
