@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.41, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.42, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.41'
+VERSION = '0.1.42'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -632,6 +632,44 @@ class NumilogSession(ProviderSession):
                             else 'delivery_intermediate'
                         )
                         if kind == 'login':
+                            # A login widget is common in Numilog's general
+                            # template. On the *attested confirmation route*
+                            # alone, permit exactly one signed ACSM only when
+                            # its ProductId/copy, ModalDownload and readBook
+                            # coordinates are all bound to this fresh owned
+                            # card. A mere link or login-shaped page cannot
+                            # bypass the normal fail-closed login handling.
+                            if (
+                                source == 'readbook'
+                                and page_path == '/pages/commande/confirmationpaiement.aspx'
+                                and url_origin(str(r.url)) == url_origin(self.library_url)
+                            ):
+                                evidence = {}
+                                try:
+                                    bound_url = delivery_url(
+                                        html, str(r.url),
+                                        allowed_origins=self.allowed_origins,
+                                        evidence=evidence,
+                                        expected_readbook=expected_readbook,
+                                        require_bound_confirmation=True,
+                                    )
+                                except (DeliverySelectionError, ParseError):
+                                    bound_url = None
+                                if bound_url is not None:
+                                    trace.event(
+                                        'html_selection', 'single_allowed_candidate',
+                                        html_kind='intermediate', hops=hop+1,
+                                        candidates=evidence.get('allowed_candidates'),
+                                    )
+                                    self._diag(
+                                        'livraison HTML', phase='download',
+                                        page_kind='delivery_intermediate',
+                                        kind='intermediate',
+                                        result='owned_confirmation_binding', **evidence,
+                                    )
+                                    url = bound_url
+                                    trace.fail('redirect_limit')
+                                    continue
                             # A shared site template can include a password form
                             # on a page other than the authentication route.
                             # Either way, *never* select a delivery link from

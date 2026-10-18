@@ -250,10 +250,16 @@ class SynchronizationBrokerImpl:
         # This is a routing key, not an instruction to pick the first
         # matching session. Duplicate account bindings must fail closed
         # before network access or local mutations.
-        matches = [
-            account for account in (getattr(self.service, "accounts", ()) or ())
-            if self._source_id(account) == source_id
-        ]
+        matches = []
+        # Routing is based on an exact hash, never on the first account.
+        # A malformed *unrelated* account must not deny source management
+        # to healthy siblings (notably a disconnected Numilog revocation).
+        for account in (getattr(self.service, "accounts", ()) or ()):
+            try:
+                if self._source_id(account) == source_id:
+                    matches.append(account)
+            except Exception:
+                continue
         if len(matches) != 1:
             raise ValueError("ambiguous sync source" if matches else "unknown sync source")
         return matches[0]
