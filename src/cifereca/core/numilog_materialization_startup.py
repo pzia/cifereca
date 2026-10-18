@@ -104,7 +104,9 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 and _item_id(row.record_id, account.credential_id)
                 and count[row.record_id] == 1
             ]
-            for row in candidates[:_MAX_ITEMS_PER_OPENING]:
+            for row in candidates:
+                if attempts >= _MAX_ITEMS_PER_OPENING:
+                    break
                 if control is not None and callable(getattr(control, "check_cancelled", None)):
                     control.check_cancelled()
                 if (mode(broker, source_id) != "on_start"
