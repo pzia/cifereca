@@ -5,6 +5,9 @@ private library URLs, fulfillment or downloads cross this boundary.
 """
 from __future__ import annotations
 
+from email.utils import parsedate_to_datetime
+import re
+import time
 import unicodedata
 from urllib.parse import urlencode
 
@@ -17,6 +20,29 @@ from cifereca_numilog_public import (
 
 PUBLIC_ORIGIN = "https://www.numilog.com"
 _PUBLIC_FIELDS = frozenset({"all"})
+
+
+class PublicRateLimitError(ProviderError):
+    """Fixed public error plus a numeric delay; never retain raw headers."""
+    def __init__(self, code, retry_after):
+        super().__init__(code)
+        self.retry_after_seconds = _retry_after_seconds(retry_after)
+
+
+def _retry_after_seconds(value, *, now=None):
+    """Read delay-seconds or HTTP-date without retaining untrusted text."""
+    if type(value) is not str or len(value) > 128:
+        return 0.0
+    value = value.strip()
+    if re.fullmatch(r'[0-9]+', value):
+        return float(value)
+    try:
+        date = parsedate_to_datetime(value)
+        if date.tzinfo is None:
+            return 0.0
+        return max(0.0, date.timestamp() - (time.time() if now is None else now))
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
 
 
 def public_search_url(query: str, page: int = 0) -> str:
@@ -53,7 +79,8 @@ def fetch_public_search(query: str, *, page: int = 0, field: str = "all",
                 if status in (401, 403):
                     raise ProviderError("Numilog : public_catalog_forbidden")
                 if status == 429:
-                    raise ProviderError("Numilog : public_catalog_rate_limited")
+                    raise PublicRateLimitError("Numilog : public_catalog_rate_limited",
+                                               response.headers.get("retry-after"))
                 if status in (301, 302, 303, 307, 308):
                     raise ProviderError("Numilog : public_catalog_redirect_unverified")
                 if status != 200:
@@ -102,7 +129,8 @@ def fetch_public_detail(product_url: str, *, timeout: float = 15.0):
                 if status in (401, 403):
                     raise ProviderError("Numilog : public_detail_forbidden")
                 if status == 429:
-                    raise ProviderError("Numilog : public_detail_rate_limited")
+                    raise PublicRateLimitError("Numilog : public_detail_rate_limited",
+                                               response.headers.get("retry-after"))
                 if status in (301, 302, 303, 307, 308):
                     raise ProviderError("Numilog : public_detail_redirect_unverified")
                 if status != 200:

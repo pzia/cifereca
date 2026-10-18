@@ -549,3 +549,14 @@ scopées séparément ; ce cache ne contient pas d'achats ni de droits et n'est
 pas partagé entre comptes ou sessions. Le TTL ne prouve pas la disponibilité
 courante, une édition achetée ou un droit. Le catalogue reste opt-in ; les
 capacités serveur auteur/ISBN ne sont pas ajoutées.
+
+## 0.1.36 — respecter Retry-After public (#1886)
+
+Un HTTP 429 de recherche ou de détail conserve uniquement le délai numérique
+`Retry-After` (secondes ou date HTTP), sans corps ni en-tête brut. Le cache
+public bloque les nouveaux GET pendant **au moins 60 secondes et jusqu'au délai
+demandé par le serveur** s'il est plus long. Une valeur absente, invalide ou une
+date passée conserve la pause minimale ; reconnexion/invalidation ne la réduit
+pas. Aucun sleep, retry automatique, cookie de compte ou repli authentifié.
+Les entrées en cache encore valides restent lisibles sans réseau. Les tests
+HTTP synthétiques ne constituent pas une nouvelle qualification d'accès live.
