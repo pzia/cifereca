@@ -55,6 +55,8 @@ def _add_owned_download(window, detail, item, TaskPriority):
                 window._activity_result('Indexation Numilog terminée.' if resume else 'Livre téléchargé dans la Bibliothèque.')
                 window.refresh_library(False)
                 window.refresh_recent()
+                from .search_snapshot_refresh import invalidate_search_snapshot
+                invalidate_search_snapshot(window)
         def failed(_exc):
             if current():
                 window.show_error(failure, 'Reprise d’indexation Numilog' if resume else 'Téléchargement du livre possédé')
