@@ -797,3 +797,43 @@ Aucun lien ACSM ni script n'est sélectionné dans cette situation.
 Les tests hors réseau dépassent indépendamment la limite de
 profondeur et la limite du nombre de nœuds. Aucun log du corps
 HTML, d'URL de compte ou de texte d'exception amont n'est publié.
+
+
+## Lien ConfirmationPaiement explicite dans la carte MesLivres (#2024)
+
+Lors du **clic explicite** sur un achat, l'inventaire Numilog est relu
+sous l'identité propriétaire courante. Si la carte de cette **édition
+unique** comporte, en plus de son `readBook.ashx` déjà utilisé pour
+l'identité du record, un lien HTML littéral unique vers
+`https://www.numilog.com/Pages/Commande/ConfirmationPaiement.aspx`
+avec une référence `ref` unique et non vide et un seul `disp=simple`,
+le provider peut emprunter **ce href précis** comme premier saut.
+Aucun `ref` n'est dérivé de `lid`, du titre, d'un ISBN, d'un cache
+ou d'un lien trouvé dans une autre carte. Une route, un host, une
+query ou un fragment inattendu n'est pas admis ; deux liens de
+confirmation concurrents font échouer l'acquisition sans requête de
+livraison. Une carte à plusieurs variantes ne permet pas d'attribuer
+le même href à un exemplaire arbitraire.
+
+Le `readBook` de la carte reste la preuve d'édition transmise au
+validateur strict `Links` / `ModalDownload(ProductId, IndexExemplaire)`
+de la page de confirmation. Si l'ACSM n'est pas rattaché au même
+`readBook` frais, aucun fichier n'est consommé. Sur ce premier saut,
+le `Referer` est `MesLivres.aspx` (sans URL de commande) ; les
+suivants restent la racine du site. Le broker et l'identité Adobe ne
+changent pas.
+
+Les liens de confirmation sont **transitoires et ciblés**, extraits
+seulement en `_rows(include_delivery=True)`, jamais en inventaire,
+catalogue, `SearchResult`, cache, diagnostic ou suivi de droit.
+Si la carte ne contient **pas** de lien explicite qualifié, le
+fallback historique `readBook` continue sans changement.
+
+Les tests offline couvrent les deux entrées (readBook 302 et href
+direct) vers `disp=simple`, avec/sans widget login, liaison exacte,
+mauvais achat, ancres concurrentes, variantes multiples, hosts,
+paramètres et fragments invalides, cookies Domain/Path/Secure
+synthétiques et absence de secret dans toute trace. La **structure
+réelle de l'ancre cliquée** sur le compte Numilog et le succès ACSM
+effectif demeurent non attestés ; aucune nouvelle route ou requête JS
+n'est devinée.
