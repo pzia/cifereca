@@ -105,7 +105,7 @@ def prepare(broker: Any, source_id: str) -> SyncResult:
                  account.unique_id)
         snapshot = (id(session), tuple(str(root) for root in roots),
                     tuple(sorted(counts.items())))
-        token = broker._numilog_consent_plans.put(scope, snapshot, ())
+        token = broker._numilog_consent_plans.put(scope, snapshot, (session,))
         return _receipt(
             "confirmation_required", ok=True,
             confirmation_token=token, expires_in_seconds=600,
@@ -137,7 +137,8 @@ def confirm(broker: Any, source_id: str, token: str, *, mode: str) -> SyncResult
                     tuple(sorted(counts.items()))) if type(counts) is dict else None
         if (preview.ok is not True
                 or preview.facts.get("files_verified") is not True
-                or evidence != row[2] or _binding(broker, source_id) is None):
+                or evidence != row[2] or row[3][0] is not session
+                or _binding(broker, source_id) is None):
             return _receipt("preview_changed")
         broker.service.storage.metadata_set(policy_key(source_id), _ACTIVE)
         broker._notify()
