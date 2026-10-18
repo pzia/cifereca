@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.40, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.41, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.40'
+VERSION = '0.1.41'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -585,11 +585,23 @@ class NumilogSession(ProviderSession):
                 referer = self.library_url if from_library else self.base_url
                 with self.client.stream('GET',url,headers={'Referer':referer}) as r:
                     self._diag('HTTP',method='GET',origin_kind=destination_category(url)[0],status=r.status_code)
+                    # Validate Location before recording target evidence. A
+                    # blocked redirect still gets its ordinary HTTP event
+                    # (without a target), followed by origin_rejected.
+                    # Validation does not perform another network request.
+                    redirect_to = redirect_error = None
+                    if r.status_code in REDIRECTS:
+                        try:
+                            redirect_to = checked_redirect(
+                                str(r.url), r.headers.get('location',''), self.allowed_origins,
+                            )
+                        except ProviderError as exc:
+                            redirect_error = exc
                     trace.event('delivery_http',
                         'redirect' if r.status_code in REDIRECTS else
                         'http_ok' if r.status_code == 200 else public_http_code(r.status_code),
                         status=r.status_code, mime=r.headers.get('content-type'), hops=hop+1,
-                        destination=url,
+                        destination=url, redirect_target=redirect_to,
                         # Boolean metadata from the actual outgoing HTTP request.
                         # It cannot attest cookie validity, only header presence.
                         cookie_header_present=bool(r.request.headers.get('cookie')))
@@ -598,7 +610,9 @@ class NumilogSession(ProviderSession):
                         # The P0 pre-normalization guard can reject this hop
                         # before another GET. Attribute that failure safely.
                         trace.fail('origin_rejected')
-                        url = checked_redirect(str(r.url),r.headers.get('location',''),self.allowed_origins)
+                        if redirect_error is not None:
+                            raise redirect_error
+                        url = redirect_to
                         trace.fail('redirect_limit')
                         continue
                     self._status(r)
