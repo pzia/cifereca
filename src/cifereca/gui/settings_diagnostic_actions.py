@@ -40,13 +40,13 @@ def build_settings_diagnostic_callbacks(
             self._clipboard_provider = provider
             if not clipboard.set_content(provider):
                 raise RuntimeError("GDK a refusé la prise de possession du presse-papiers")
-        except Exception as exc:
+        except Exception:
             self.diagnostics.add(
                 "UI", "clipboard write", "error",
-                detail={"error": type(exc).__name__, "message": str(exc)[:180]},
+                detail={"code": "clipboard_write_failed"},
                 level="detailed",
             )
-            self.show_error(f"Impossible d'écrire dans le presse-papiers : {exc}", "Copie impossible")
+            self.show_error("Impossible d'écrire dans le presse-papiers", "Copie impossible")
             return
 
         def verified(source, result, *_args) -> None:
@@ -56,10 +56,10 @@ def build_settings_diagnostic_callbacks(
                 return
             try:
                 copied = source.read_text_finish(result)
-            except Exception as exc:
+            except Exception:
                 self.diagnostics.add(
                     "UI", "clipboard verify", "error",
-                    detail={"error": type(exc).__name__, "message": str(exc)[:180]},
+                    detail={"code": "clipboard_verify_failed"},
                     level="detailed",
                 )
                 # L'écriture GDK a réussi ; seule la relecture n'est pas disponible.
@@ -78,10 +78,10 @@ def build_settings_diagnostic_callbacks(
 
         try:
             clipboard.read_text_async(None, verified)
-        except Exception as exc:
+        except Exception:
             self.diagnostics.add(
                 "UI", "clipboard verify", "error",
-                detail={"error": type(exc).__name__, "message": str(exc)[:180]},
+                detail={"code": "clipboard_verify_failed"},
                 level="detailed",
             )
             self.toast("Diagnostic copié dans le presse-papiers")
@@ -119,17 +119,17 @@ def build_settings_diagnostic_callbacks(
                 Path(path).write_text(content, encoding="utf-8")
                 self.diagnostics.add(
                     "UI", "diagnostic export", "ok",
-                    detail={"file": Path(path).name},
+                    detail={"code": "export_completed"},
                     level="detailed",
                 )
                 self.toast("Diagnostic exporté")
-            except Exception as exc:
+            except Exception:
                 self.diagnostics.add(
                     "UI", "diagnostic export", "error",
-                    detail={"error": type(exc).__name__, "message": str(exc)[:180]},
+                    detail={"code": "diagnostic_export_failed"},
                     level="detailed",
                 )
-                self.show_error(f"Impossible d’exporter le diagnostic : {exc}", "Export impossible")
+                self.show_error("Impossible d’exporter le diagnostic", "Export impossible")
             finally:
                 dialog.destroy()
 
@@ -146,8 +146,8 @@ def build_settings_diagnostic_callbacks(
         try:
             self.service.save_diagnostic_preferences(enabled=diag_switch.get_active(), level=levels[selected])
             refresh_text()
-        except Exception as exc:
-            self.show_error("Impossible d’enregistrer le niveau de diagnostic : " + str(exc))
+        except Exception:
+            self.show_error("Impossible d’enregistrer le niveau de diagnostic")
 
 
     def clear_diagnostics(_button=None) -> None:
