@@ -31,6 +31,8 @@ def test_failed_subprocess_never_surfaces_captured_output(monkeypatch, tmp_path,
         script.touch()
         invoke = lambda: updater._build_release_plugin_snapshot(tmp_path, tmp_path / "out")
     elif which == "plugin_apply":
+        monkeypatch.setattr(updater, "run_plugin_child", lambda *_a, **_kw:
+                            SimpleNamespace(returncode=1, stdout=SECRET, stderr=SECRET))
         invoke = lambda: updater._apply_release_plugin_snapshot(tmp_path, tmp_path / "snapshot.zip")
     else:
         invoke = lambda: updater._smoke_restored_plugins(
