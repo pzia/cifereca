@@ -11,7 +11,7 @@ import pytest
 
 from cifereca.plugin_api import UiBookListEntry
 from recommendation_engine import RankedCandidate
-from recommendations import UxRecommendationsView, _public_cover_url, _public_candidate_authors, _reference_label, _reference_label, _public_candidate_description
+from recommendations import UxRecommendationsView, _public_cover_url, _public_recommendation_notice, _public_candidate_authors, _reference_label, _public_candidate_description
 
 
 @pytest.mark.parametrize("unsafe", (
@@ -383,3 +383,63 @@ def test_empty_filter_invalidates_previous_detail_without_selection_callback():
     assert view._llm_selection_key is None
     assert view._llm_selected_row is None
     assert view._ranked_by_key == {}
+
+
+class SelectivelyBrokenURLRecord(dict):
+    def __init__(self, *args, broken=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.broken = frozenset(broken)
+
+    def get(self, field, default=None):
+        if field in self.broken:
+            raise RuntimeError("PRIVATE_SIGNED_TOKEN in untrusted accessor")
+        return super().get(field, default)
+
+
+@pytest.mark.parametrize("broken", (
+    ("friendly_url",), ("thumbnail_url",),
+    ("friendly_url", "thumbnail_url"),
+))
+def test_faulty_preferred_url_getters_preserve_independent_public_fallbacks(broken):
+    item = SelectivelyBrokenURLRecord({
+        "title": "Book attested by provider",
+        "authors": ["Alice"],
+        "friendly_url": "https://example.org/notice/preferred",
+        "notice_url": "https://example.org/notice/fallback",
+        "thumbnail_url": "https://example.org/img/preferred.jpg",
+        "cover_url": "https://example.org/img/fallback.jpg",
+    }, broken=broken)
+    assert _public_recommendation_notice(item) == (
+        "https://example.org/notice/fallback" if "friendly_url" in broken
+        else "https://example.org/notice/preferred"
+    )
+    assert _public_cover_url(item) == (
+        "https://example.org/img/fallback.jpg" if "thumbnail_url" in broken
+        else "https://example.org/img/preferred.jpg"
+    )
+    view, rows, details, empties = _make_view(item)
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+    assert rows[0].thumbnail_url == details[0].thumbnail_url
+    assert details[0].actions[-1].uri == _public_recommendation_notice(item)
+    assert empties == []
+    assert "PRIVATE_SIGNED_TOKEN" not in repr((rows, details))
+
+
+def test_two_broken_public_url_getters_do_not_disclose_exception_or_add_action():
+    item = SelectivelyBrokenURLRecord({
+        "title": "Book", "authors": ["Alice"],
+        "friendly_url": "https://example.org/notice/preferred",
+        "notice_url": "https://example.org/notice/fallback",
+        "thumbnail_url": "https://example.org/img/preferred.jpg",
+        "cover_url": "https://example.org/img/fallback.jpg",
+    }, broken=("friendly_url", "notice_url", "thumbnail_url", "cover_url"))
+    view, rows, details, _ = _make_view(item)
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+    assert len(rows) == len(details) == 1
+    assert rows[0].thumbnail_url is None and details[0].thumbnail_url is None
+    assert details[0].actions == ()
+    assert _public_recommendation_notice(item) is None
+    assert _public_cover_url(item) is None
+    assert "PRIVATE_SIGNED_TOKEN" not in repr((rows, details))
