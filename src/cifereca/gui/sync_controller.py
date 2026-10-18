@@ -873,7 +873,7 @@ def _refresh_sync_page(self) -> None:
                 if prior == "on_start":
                     dialog = Adw.MessageDialog.new(
                         self, "Désactiver la sauvegarde Numilog ?",
-                        f"Compte : {label}.\\n\\nLa révocation empêche les nouveaux "
+                        f"Compte : {label}.\n\nLa révocation empêche les nouveaux "
                         "téléchargements programmés pour ce compte. "
                         "Les fichiers déjà acquis sont conservés."
                     )
@@ -947,7 +947,7 @@ def _refresh_sync_page(self) -> None:
                     output.set_subtitle(summary + " Confirmation nécessaire.")
                     dialog = Adw.MessageDialog.new(
                         self, "Autoriser les sauvegardes Numilog au démarrage ?",
-                        summary + "\\n\\nAu prochain démarrage, jusqu’à 8 éditions "
+                        summary + "\n\nAu prochain démarrage, jusqu’à 8 éditions "
                         "achetées pourront être téléchargées automatiquement pour "
                         "ce compte, au maximum une tentative par heure. Les droits "
                         "seront relus dans la bibliothèque privée et les fichiers "
