@@ -746,3 +746,21 @@ refus sous product/copie/lid/modal ambigus ou absence de tableau de liens,
 acheminement de la query d'origine non modifiée, et absence de fuites
 à chaque événement. **Aucun téléchargement client live validé** :
 le ticket P0 #2024 ne doit pas être clôturé sur ce lot.
+
+
+## 0.1.43 — liaison obligatoire sur toute page de confirmation d'achat (#2024)
+
+Une `ConfirmationPaiement.aspx` peut présenter plusieurs livres, offres ou
+variantes. **Même sans formulaire de connexion**, un unique lien ACSM dans
+une telle page ne prouve pas qu'il concerne l'édition de la carte sélectionnée.
+Le provider exige désormais, sur la **route canonique** de confirmation,
+le même tableau `Links` Adobe unique, le bouton `ModalDownload` constant
+et la correspondance exacte du `readBook` issu de la bibliothèque fraîche.
+Si l'une de ces preuves manque ou diverge, aucun ACSM n'est consommé.
+
+Le repli historique d'une page *intermédiaire distincte* (qui contient
+un seul lien signé admissible) reste inchangé. Tests fictifs couvrant un
+lien unique `<a>`, un `window.location` JS et un `Links` non lié dans
+la confirmation : tous refusés avant tout GET ACSM ; comparaison avec
+un `Landing.aspx` ancien toujours fonctionnel. Il n'y a aucun changement
+de compte, droit, endpoint ni suite d'appels réseau.
