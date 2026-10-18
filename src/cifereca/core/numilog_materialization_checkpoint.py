@@ -36,7 +36,33 @@ def _record(service, item, target_dir, identity_id, account_id, fingerprint):
                                item.source_credential, account_id, item.record_id)
     # Existing receipts (including failures/completed) are never overwritten.
     _require(service.storage.acquisition_get(acquisition_id) is None)
+    evidence = service.storage.numilog_purchase_preflight_evidence(
+        identity_id=identity_id, credential_id=item.source_credential,
+        account_id=account_id, item_id=item.record_id,
+    )
+    _require(evidence.get('acquisitions') == [])
+    # A durable local right can bind the receipt for the existing preview.
+    # No local right is required for fresh provider delivery, and ambiguous,
+    # stale or public evidence must never be guessed into an entitlement.
+    entitlement_id = None
+    rights = evidence.get('entitlements')
+    if type(rights) is list and len(rights) == 1:
+        right = rights[0]
+        meta = right.get('metadata')
+        if (type(right.get('entitlement_id')) is str and right['entitlement_id']
+                and right.get('identity_id') == identity_id
+                and right.get('credential_id') == item.source_credential
+                and right.get('account_id') == account_id and right.get('item_id') == item.record_id
+                and right.get('entitlement_type') == 'owned' and right.get('state') == 'active'
+                and right.get('loan_id') is None and right.get('expires_at') is None
+                and type(meta) is dict and meta.get('source') == 'numilog.authenticated_library'
+                and all(meta.get(k) is None or type(meta[k]) is bool
+                        for k in ('owned', 'downloadable', 'archived'))
+                and meta.get('owned') is not False and meta.get('downloadable') is not False
+                and meta.get('archived') is not True):
+            entitlement_id = right['entitlement_id']
     service.storage.acquisition_put({
+        'entitlement_id': entitlement_id,
         'acquisition_id': acquisition_id, 'provider_id': 'numilog',
         'credential_id': item.source_credential, 'account_id': account_id,
         'identity_id': identity_id, 'item_id': item.record_id,
