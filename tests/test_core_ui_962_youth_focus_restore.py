@@ -12,6 +12,10 @@ class Button:
         self.mapped = True
         self.sensitive = True
 
+    def is_ancestor(self, ancestor):
+        # GTK4: widget.is_ancestor(ancestor) means widget is contained in ancestor.
+        return ancestor is self.window.youth
+
     def get_mapped(self):
         return self.mapped
 
@@ -28,9 +32,6 @@ class YouthWidget:
         self.window = window
         self.button = button
         self.default_focus_calls = 0
-
-    def is_ancestor(self, candidate):
-        return candidate is self.button
 
     def get_root(self):
         return self.window
@@ -106,6 +107,17 @@ def test_back_restores_exact_click_origin_not_generic_first_filter():
     assert host.youth.default_focus_calls == 1
     assert host.get_focus() is host.button
     assert host._youth_return_focus is None
+
+
+def test_clicked_action_survives_pointer_focus_on_another_widget():
+    host = Host()
+    host._youth_return_focus = (host.button, "camille")
+    host.focus = object()  # GTK XTEST mouse clicks need not focus Gtk.Button.
+    show_route(host, "search", Gtk=Gtk)
+    assert host._youth_return_focus == (host.button, "camille")
+    host._restoring_navigation = True
+    show_route(host, "youth", Gtk=Gtk)
+    assert host.get_focus() is host.button
 
 
 def test_other_identity_cannot_restore_old_accounts_action():
