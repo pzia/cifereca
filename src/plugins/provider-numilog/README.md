@@ -627,3 +627,28 @@ tenu pendant HTTP ; une requête déjà en cours peut se terminer mais ne sera
 ni mise en cache, ni présentée comme résultat de la nouvelle session.
 Un appel ultérieur explicite réinterroge normalement le catalogue sous
 le budget/cooldown existant, sans retry automatique ni réseau supplémentaire.
+
+## Destination validée des redirections de livraison (#1884/#2024, 0.1.41)
+
+La trace **existante** `delivery_http` du saut HTTP 301/302/303/307/308
+indique dorénavant les catégories **fixes** `redirect_target_origin_kind`
+et `redirect_target_kind` lorsque la valeur `Location` a été résolue et
+validée par le garde-fou de destination du téléchargement. Exemples :
+`numilog_site/login_page`, `acsm_fulfillment/acsm_fulfillment`,
+`numilog_site/other`. Aucune URL de destination, query, fragment, nom
+de cookie, ticket, contenu HTML ni compte n'est propagé dans la trace.
+
+Une redirection refusée n'émet **aucune** catégorie de destination
+(après 302 visible, code terminal `origin_rejected`) ; cette absence
+ne doit pas être interprétée comme une réussite de navigation.
+Le `login_page` d'une `Location` est seulement un indice de parcours
+du serveur, **pas** une preuve d'expiration du cookie. L'ancienne
+classification par saut HTTP suivant reste disponible ; le nombre
+d'événements est inchangé. Aucun nouveau HTTP, retry, validation de
+droit ou bascule de session n'est ajouté.
+
+Les tests HTTPX fictifs couvrent les redirections vers page login avec
+query secrète, page HTML ambiguë, ACSM signé, origine rejetée, et les
+en-têtes Cookie fictifs de différents Domain/Path/Secure/SameSite.
+Cela ne valide pas le parcours réel du compte Numilog : le P0 #2024
+reste à qualifier avec diagnostic utilisateur expurgé.

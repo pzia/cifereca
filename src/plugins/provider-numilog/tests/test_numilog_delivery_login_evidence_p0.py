@@ -77,6 +77,13 @@ def test_recent_success_then_login_form_reports_evidence_not_expiry(tmp_path, ca
                 for d in details if 'http_status' in d] == [
             (302, 'readbook', sent),
             (200, 'login_page', expected_redirect_cookie)]
+        # Proven from the 302 Location after the existing origin check,
+        # never from a stored/signed Location string or presumed expiry.
+        redirect = next(d for d in details if d.get('http_status') == 302)
+        assert redirect['redirect_target_kind'] == 'login_page'
+        assert redirect['redirect_target_origin_kind'] == 'numilog_site'
+        assert 'redirect_target_kind' not in next(
+            d for d in details if d.get('http_status') == 200)
         assert details[-2]['code'] == details[-1]['code'] == 'login_form_detected'
         assert details[-2]['html_kind'] == 'login' and details[-1]['hops'] == 2
         assert events[-1][0][2] == 'error'
@@ -191,6 +198,11 @@ def test_login_widget_off_login_route_keeps_session_but_never_follows_link(
         assert list(tmp_path.iterdir()) == []
         result = diag.completed()[0][1]['detail']
         assert result['code'] == 'login_form_detected'
+        if final_path != READ:
+            redirect = next(kw['detail'] for _, kw in diag.acquisition()
+                            if kw['detail'].get('http_status') == 302)
+            assert redirect['redirect_target_kind'] == 'other'
+            assert redirect['redirect_target_origin_kind'] == 'numilog_site'
         assert result['connected_initial'] is True
         emitted = json.dumps(diag.events) + caplog.text + str(error.value)
         assert SIGNED not in emitted and SECRET not in emitted
