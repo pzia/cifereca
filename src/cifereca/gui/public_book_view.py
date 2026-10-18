@@ -98,7 +98,7 @@ class PublicBookMasterDetailView:
                         # Capture the real clicked action before its callback
                         # switches routes: mouse clicks need not give GTK focus.
                         window = self._window
-                        youth = window._plugin_page_widgets.get("youth")
+                        youth = getattr(window, "_plugin_page_widgets", {}).get("youth")
                         intent = (
                             action_id == "search-library"
                             and not getattr(window, "_closed", False)
