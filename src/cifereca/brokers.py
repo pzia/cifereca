@@ -449,13 +449,15 @@ class SynchronizationBrokerImpl:
         if type(enabled) is not bool:
             raise ValueError("invalid source enabled preference")
         account = self._find_account(source_id)
-        if enabled is False and getattr(account, "provider_id", None) == "numilog":
-            # Source enablement and the separate acquisition consent must
-            # commit atomically. A failed revoke must not leave a disabled
-            # source with a still-active grant that resurrects on re-enable.
-            self.service.storage.numilog_materialization_disable_source(source_id)
-            # Expiring all outstanding preview tokens is safe: they are
-            # local, ephemeral proposals, not acquisition permissions.
+        if getattr(account, "provider_id", None) == "numilog":
+            if enabled:
+                # Old releases could leave a disabled source with an active
+                # consent after a crash in the former two-step revoke.
+                self.service.storage.numilog_materialization_enable_source(source_id)
+            else:
+                self.service.storage.numilog_materialization_disable_source(source_id)
+            # Invalidate stale SHA-preview proposals after either source
+            # transition, even when another account is selected in GTK.
             with self._numilog_consent_plans.lock:
                 self._numilog_consent_plans.entries.clear()
         else:
