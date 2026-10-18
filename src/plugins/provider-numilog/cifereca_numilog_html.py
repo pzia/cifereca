@@ -586,11 +586,15 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed):
     return candidate.url
 
 
-def delivery_url(text, base_url, *, allowed_origins=None, evidence=None, expected_readbook=None):
-    """Locate exactly one allowlisted HTML delivery; optionally count shapes.
+def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
+                 expected_readbook=None, require_bound_confirmation=False):
+    """Locate a single allowlisted delivery; optionally require an owned binding.
 
-    Evidence contains only bounded integers. Raw URLs and HTML never escape
-    through the diagnostic channel, including when the selection fails.
+    When an HTML page also has a login widget, callers may only follow a
+    signed ACSM that is structurally bound to the fresh readBook card inside
+    an observed Numilog confirmation layout. Never accept an unrelated
+    single HTML link as an alternative in that mode.
+    Evidence contains bounded counters only, never a URL or HTML body.
     """
     root = Parser(text).root
     allowed=set(allowed_origins or {origin('https://services.numilog.com/')})
@@ -651,6 +655,16 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None, expecte
     bound_confirmation = _confirmation_delivery(
         root, base_url, expected_readbook, allowed,
     )
+    if require_bound_confirmation:
+        # A shared login widget does not by itself prove authentication
+        # failure, but it makes all unbound HTML links untrustworthy. Only
+        # the exact product/copy + fresh owned readBook + ModalDownload
+        # combination may authorize following the signed ACSM.
+        if bound_confirmation is None:
+            raise DeliverySelectionError('missing')
+        if signed_acsm != {bound_confirmation}:
+            raise DeliverySelectionError('ambiguous')
+        return bound_confirmation
     if bound_confirmation is not None and signed_acsm != {bound_confirmation}:
         raise DeliverySelectionError('ambiguous')
     # Pages intermédiaires may contain harmless site navigation and a
