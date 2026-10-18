@@ -81,3 +81,14 @@ Une option exactement égale au texte demandé prime sans fausse ambiguïté.
 En mode sujet, la perte d'une deuxième voie catégorie/genre reste signalée
 indépendamment. Aucun scan réseau supplémentaire, aucune revendication de
 recherche exhaustive, et aucun nouveau filtre serveur n'est introduit.
+
+
+## Pages de recherche bornées (#1917, 0.1.14)
+
+Les recherches titre, auteur, catégorie, genre et sujet utilisent un index de
+page **entier** `0..100`, déclaré dans les capacités de recherche
+(`max_pages=101`). Les index négatifs, booléens, chaînes, fractions et pages
+hors limite sont refusés avant tout GET/POST avec le code public
+`invalid_page`, au lieu de réinterpréter la demande en page zéro.
+Les avertissements de recherche sont réinitialisés pour les requêtes
+refusées ; aucun scan des pages suivantes n'est déclenché.
