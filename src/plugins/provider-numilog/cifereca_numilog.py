@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.36, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.37, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.36'
+VERSION = '0.1.37'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -578,7 +578,10 @@ class NumilogSession(ProviderSession):
                         'redirect' if r.status_code in REDIRECTS else
                         'http_ok' if r.status_code == 200 else public_http_code(r.status_code),
                         status=r.status_code, mime=r.headers.get('content-type'), hops=hop+1,
-                        destination=url)
+                        destination=url,
+                        # Boolean metadata from the actual outgoing HTTP request.
+                        # It cannot attest cookie validity, only header presence.
+                        cookie_header_present=bool(r.request.headers.get('cookie')))
                     trace.fail(public_http_code(r.status_code))
                     if r.status_code in REDIRECTS:
                         # The P0 pre-normalization guard can reject this hop

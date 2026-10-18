@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from cifereca.plugin_api import ProviderError
-from cifereca_numilog_delivery_trace import DeliveryTrace
+from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category
 from tests.test_numilog_delivery_observability_p1 import Capture, assert_private_data_absent
 from tests.test_numilog_session_state_diagnostics_p0 import session_for, SECRET
 
@@ -71,8 +71,10 @@ def test_recent_success_then_login_form_reports_evidence_not_expiry(tmp_path, ca
         assert len({kw['detail']['action'] for _, kw in events}) == 1
         assert all(kw['detail']['connected_initial'] is True for _, kw in events)
         details = [kw['detail'] for _, kw in events]
-        assert [(d['http_status'], d['path_kind']) for d in details if 'http_status' in d] == [
-            (302, 'readbook'), (200, 'other')]
+        assert [(d['http_status'], d['path_kind'], d['cookie_header_present'])
+                for d in details if 'http_status' in d] == [
+            (302, 'readbook', sent),
+            (200, 'login_page', expected_redirect_cookie)]
         assert details[-2]['code'] == details[-1]['code'] == 'login_form_detected'
         assert details[-2]['html_kind'] == 'login' and details[-1]['hops'] == 2
         assert events[-1][0][2] == 'error'
@@ -120,3 +122,15 @@ def test_initial_connection_evidence_requires_exact_boolean(value):
         pass
     assert all('connected_initial' not in kw['detail'] for _, kw in diag.acquisition())
     assert_private_data_absent(diag)
+
+
+def test_only_exact_numilog_login_paths_get_a_public_login_category():
+    # Query strings may contain signed/private values; no value is exported.
+    assert destination_category('https://www.numilog.com/Login.Aspx?auth='+SECRET) == (
+        'numilog_site', 'login_page')
+    assert destination_category('https://www.numilog.com/Login.Aspx/AuthUser') == (
+        'numilog_site', 'login_page')
+    assert destination_category('https://www.numilog.com/Login.Aspx/private') == (
+        'numilog_site', 'other')
+    assert destination_category('https://other.invalid/Login.Aspx') == (
+        'other', 'other')

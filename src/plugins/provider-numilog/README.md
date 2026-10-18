@@ -560,3 +560,19 @@ date passée conserve la pause minimale ; reconnexion/invalidation ne la réduit
 pas. Aucun sleep, retry automatique, cookie de compte ou repli authentifié.
 Les entrées en cache encore valides restent lisibles sans réseau. Les tests
 HTTP synthétiques ne constituent pas une nouvelle qualification d'accès live.
+
+## Diagnostic de téléchargement : preuves expurgées (#1884 / #2024, 0.1.37)
+
+Chaque événement `delivery_http` de l'action explicite Numilog publie maintenant
+`cookie_header_present: true/false` **uniquement comme indicateur de présence**
+d'un en-tête HTTP `Cookie` sur la requête effectivement émise. Cela ne prouve
+ni que le cookie est un cookie d'authentification, ni sa validité côté serveur.
+Jamais de nom, valeur, domaine, chemin, nombre de cookies, URL ni jeton.
+La destination `/Login.Aspx` ou `/Login.Aspx/AuthUser` sur l'hôte Numilog exact
+est projetée en catégorie `login_page` ; les autres chemins restent `other`.
+Les traces d'une réponse 302 sont toujours celles du saut courant : la destination
+n'est connue que par la catégorie du saut HTTP suivant s'il a réellement lieu.
+La combinaison `connected_initial=true`, présence/absence de Cookie et
+`login_form_detected` peut orienter le diagnostic, **pas prouver une expiration**.
+Ces traces ne modifient ni les règles de redirection, ni l'authentification, ni
+les téléchargements. Validation live toujours nécessaire pour #2024.
