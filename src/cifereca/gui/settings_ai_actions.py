@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from time import monotonic
 
+from ..plugin_api import Cancelled
+
 from .llm_settings import (
     LLMSettingsError, normalize_llm_settings, destination_summary,
     env_key_is_set, LLMProbeResult, probe_llm_connection_result,
@@ -133,6 +135,10 @@ def bind_settings_ai_callbacks(
                 outcome = probe_llm_connection_result(
                     settings, remote_confirmed=confirmed,
                 )
+            except Cancelled:
+                # A cooperative runtime cancellation is not a backend crash.
+                # Log its fixed business outcome even if GTK is already gone.
+                outcome = _probe_outcome("cancelled")
             except LLMSettingsError:
                 outcome = _probe_outcome("invalid_config")
             except TimeoutError:

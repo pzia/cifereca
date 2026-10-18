@@ -301,3 +301,61 @@ def test_late_injected_callback_label_is_normalized_before_render():
     assert ui.status.text.startswith("Test réussi")
     assert "URL_TOKEN_MUST_NOT_RENDER" not in ui.status.text
     lifetime.dispose()
+
+
+def test_cooperative_probe_cancel_is_logged_as_cancelled_not_internal_error(
+    caplog, monkeypatch,
+):
+    import logging
+    from cifereca.plugin_api import Cancelled
+
+    marker = "TOKEN_MUST_NOT_BE_LOGGED"
+    def cancelled(*_args, **_kwargs):
+        raise Cancelled("private account bearer " + marker)
+
+    monkeypatch.setattr(
+        "cifereca.gui.settings_ai_actions.probe_llm_connection_result",
+        cancelled,
+    )
+    window, ui, lifetime, _capture = _bind()
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        ui.test_button.emit("clicked", ui.test_button)
+        args, _kwargs = window.runner.jobs[0]
+        result = args[1]()
+        args[2](result)
+    assert result.status == "cancelled"
+    assert result.label == "Test annulé"
+    assert ui.status.text.startswith("Test annulé")
+    assert caplog.text.count("operation=llm_connection_probe") == 1
+    assert "status=cancelled" in caplog.text
+    assert "status=internal_error" not in caplog.text
+    assert marker not in caplog.text
+    lifetime.dispose()
+
+
+def test_cancelled_probe_result_is_recorded_even_after_page_disposal(
+    caplog, monkeypatch,
+):
+    import logging
+    from cifereca.plugin_api import Cancelled
+
+    def cancelled(*_args, **_kwargs):
+        raise Cancelled("private token DO_NOT_EXPORT")
+
+    monkeypatch.setattr(
+        "cifereca.gui.settings_ai_actions.probe_llm_connection_result",
+        cancelled,
+    )
+    window, ui, lifetime, _capture = _bind()
+    ui.test_button.emit("clicked", ui.test_button)
+    args, _kwargs = window.runner.jobs[0]
+    status_before = ui.status.text
+    lifetime.dispose()
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        outcome = args[1]()
+        args[2](outcome)
+    assert outcome.status == "cancelled"
+    assert ui.status.text == status_before
+    assert caplog.text.count("operation=llm_connection_probe") == 1
+    assert "status=cancelled" in caplog.text
+    assert "DO_NOT_EXPORT" not in caplog.text
