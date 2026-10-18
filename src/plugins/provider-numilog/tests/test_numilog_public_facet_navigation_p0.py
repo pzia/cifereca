@@ -89,6 +89,9 @@ def test_follow_observed_facet_then_page_with_public_evidence_and_no_private_htt
         assert filtered.total_results == 1 and len(filtered.items) == 1
         assert filtered.items[0].metadata["source_url"] == facet["url"]
         assert filtered.items[0].owned is False and filtered.items[0].download_url is None
+        # Simulate >1 s elapsed: public budget allows only a 2-request burst.
+        with s._public_cache._lock:
+            s._public_cache._updated -= 1.1
         # Original page's observed GET GRID_PAGE=1 is also a permitted link.
         next_page = s.follow_public_link(base.next_url)
         assert next_page.page_index == 1 and next_page.total_results == 2
