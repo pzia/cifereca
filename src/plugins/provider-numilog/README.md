@@ -908,3 +908,44 @@ sans HTTP supplémentaire ni URL de commande, cookie ou `ref`
 dans les logs. Cette correction renseigne la provenance de la
 navigation, **pas la validité d'une session réelle** ni le succès
 d'acquisition sur le serveur Numilog.
+
+
+## Recette P0 #2024 — vérifier le plugin réellement chargé avant un clic
+
+**Ne pas confondre version du Core et version du plugin.**
+Dans le **même environnement runtime/XDG** que l'application lancée
+(`CIFERECA_INSTALL_ROOT`, `XDG_DATA_HOME` et `XDG_CONFIG_HOME`
+cohérents), la commande publique suivante lit le package installé
+sans ouvrir une connexion Numilog ni déclencher une acquisition :
+
+```sh
+cifereca-cli plugin inspect provider.numilog |
+  python3 -c 'import json,sys; d=json.load(sys.stdin); print("plugin_version="+str(d.get("version"))+" package_version="+str(d.get("package_version"))+" state="+str(d.get("state"))+" freshness="+str(d.get("package_freshness")))'
+```
+
+Les quatre valeurs affichées sont des métadonnées de package, et
+**non** un identifiant de compte, un cookie, une URL `ref` ou
+une preuve de connexion. Une liste de packages source du dépôt
+GitHub ou la version `0.9.44+dev.12` du Core ne prouvent pas
+la version active du plugin dans le processus GUI.
+
+Une recette après installation 0.1.46 doit distinguer deux
+parcours **sans exposer leurs URLs réelles** :
+
+- `source=readbook` + premier `path_kind=readbook` : première
+  requête à `readBook`, puis éventuelle redirection autorisée 302
+  vers `confirmation_page`.
+- `source=owned_card` + premier `path_kind=confirmation_page` :
+  lien littéral de confirmation provenant directement de la carte
+  du livre relue au moment du clic (aucune requête `readBook`
+  initiale). `source=owned_card` peut également correspondre à
+  un ACSM **déjà lié à la carte** ; le premier `path_kind` en
+  distingue la livraison directe.
+
+Dans les deux cas, vérifier uniquement les indicateurs fermés
+`redirect_target_kind`, `confirmation_ref_present`,
+`confirmation_disp_simple`, `cookie_header_present`,
+`html_selection` et `completed`. Un `login_form_detected`
+seul ne prouve pas une expiration de cookie. **Le P0 #2024
+reste ouvert** tant que le même achat n'a pas donné un ACSM
+réellement validé par le broker ADEPT dans Cifereca.
