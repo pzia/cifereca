@@ -41,6 +41,18 @@ from diagnostics_states_probe import StateTasks
 from x11_input import X11Input
 
 
+
+def probe_failure_line(exc):
+    """Return only the deepest line in this probe, never exception data."""
+    line = None
+    trace = exc.__traceback__
+    while trace is not None:
+        if trace.tb_frame.f_code.co_filename == __file__:
+            line = trace.tb_lineno
+        trace = trace.tb_next
+    return line
+
+
 def walk(widget):
     yield widget
     child = widget.get_first_child()
@@ -461,6 +473,7 @@ def main() -> int:
                     report["checkpoint_line"] = code.co_firstlineno
                 callback()
             except Exception as exc:
+                report["failure_line"] = probe_failure_line(exc)
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(delay_ms, call)
@@ -1538,13 +1551,123 @@ def main() -> int:
         while not isinstance(scroll, Gtk.ScrolledWindow):
             scroll = scroll.get_parent()
         f["sync_scroll"] = scroll
+        # UX #2141: observation du premier écran de la vraie fenêtre GTK.
+        # Métriques agrégées sans nom de compte, URL ni texte de fournisseur.
+        # Ce relevé ne vaut pas validation de la lisibilité : pas de seuil PASS.
+        source_groups = []
+        group_child = w._sync_sources_box.get_first_child()
+        while group_child is not None:
+            if isinstance(group_child, Adw.PreferencesGroup):
+                source_groups.append(group_child)
+            group_child = group_child.get_next_sibling()
+        source_rows = []
+        for group in source_groups:
+            first_row = next(
+                (node for node in walk(group) if isinstance(node, Adw.ActionRow)),
+                None,
+            )
+            if first_row is not None:
+                source_rows.append(first_row)
+
+        def in_first_view(widget):
+            ok, bounds = widget.compute_bounds(scroll)
+            return bool(
+                ok and widget.get_mapped()
+                and bounds.get_y() < scroll.get_height()
+                and bounds.get_y() + bounds.get_height() > 0
+                and bounds.get_x() < scroll.get_width()
+                and bounds.get_x() + bounds.get_width() > 0
+            )
+
+        first_actions = []
+        all_actions = []
+        for row in rows:
+            buttons = [
+                node for node in walk(sync_action_row(row))
+                if isinstance(node, Gtk.Button)
+            ]
+            all_actions.extend(buttons)
+            if row in source_rows and buttons:
+                first_actions.append(buttons[0])
+
+        def sample_first_fold():
+            # Recompute dimensions after every GTK reflow; 1366/1600 is
+            # not evidence for 1280 or enlarged typography.
+            adjustment = scroll.get_vadjustment()
+            viewport = max(1.0, float(adjustment.get_page_size()))
+            total_height = float(adjustment.get_upper())
+            return {
+                "viewport_width": int(scroll.get_width()),
+                "viewport_height": int(scroll.get_height()),
+                "window_width": int(w.get_width()),
+                "window_height": int(w.get_height()),
+                "source_cards": len(source_groups),
+                "source_status_rows": len(source_rows),
+                "detail_rows": len(rows) - len(source_rows),
+                "source_summary_lines": sum(
+                    (row.get_subtitle() or "").count("\n") + 1
+                    for row in source_rows
+                ),
+                "action_buttons": len(all_actions),
+                "primary_source_actions": len(first_actions),
+                "visible_source_status_rows": sum(
+                    in_first_view(row) for row in source_rows
+                ),
+                "visible_primary_source_actions": sum(
+                    in_first_view(button) for button in first_actions
+                ),
+                "visible_action_buttons": sum(
+                    in_first_view(button) for button in all_actions
+                ),
+                "global_action_visible": in_first_view(w._sync_all_button),
+                "scroll_content_height": round(total_height, 1),
+                "scroll_extent_viewports": round(
+                    max(0.0, total_height - viewport) / viewport, 2
+                ),
+            }
+        f["sync_first_fold_sample"] = sample_first_fold
+        report["sync_first_fold_ux"] = sample_first_fold()
         f["sync_original_font"] = Gtk.Settings.get_default().get_property("gtk-font-name")
         long_name_row = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
         f["sync_long_name_row"] = long_name_row
         f["sync_original_title"] = long_name_row.get_title()
         long_name_row.set_title("Compte familial de démonstration — plusieurs éditions homonymes et un nom volontairement long")
+        # Keep the existing 760px assertions; collect UX evidence at the
+        # product's target 1280px *before* shrinking further.
+        w.set_default_size(1280, 850)
+        later(350, lambda: sync_desktop_first_fold(False))
+
+    def sync_desktop_first_fold(large_font):
+        w = window[0]
+        f = loan_sync_fixture
+        key = "large_font" if large_font else "normal_font"
+        sample = f["sync_first_fold_sample"]()
+        sample["requested_width"] = 1280
+        sample["enlarged_font"] = large_font
+        report.setdefault("sync_1280_first_fold_ux", {})[key] = sample
+        # Screenshots are local/private E2E proof; only existing allowlisted
+        # PASS/FAIL verdicts are published by the CI pipeline.
+        capture("03i-sync-1280-" + key)
+        if not large_font:
+            Gtk.Settings.get_default().set_property("gtk-font-name", "Sans 12")
+            later(350, lambda: sync_desktop_first_fold(True))
+            return
+        Gtk.Settings.get_default().set_property(
+            "gtk-font-name", f["sync_original_font"]
+        )
         w.set_default_size(760, 780)
-        later(350, lambda: sync_narrow_allocations(False))
+        deadline = monotonic() + 4
+
+        def wait_sync_narrow():
+            # set_default_size queues an asynchronous toplevel allocation.
+            # #2203 observed width >760 despite all GTK minima <=760 after
+            # the fixed 350ms delay. Wait for the requested width, as D16
+            # already does; on deadline run the unchanged strict assertions.
+            if w.get_width() <= 760 or monotonic() >= deadline:
+                sync_narrow_allocations(False)
+            else:
+                later(80, wait_sync_narrow)
+        later(80, wait_sync_narrow)
 
     def sync_narrow_allocations(large_font):
         w = window[0]
@@ -1561,6 +1684,20 @@ def main() -> int:
             ],
         }
         report["sync_minimum_width_geometry"] = geometry
+        if w.get_width() > 760:
+            # Closed failure categories only: distinguish a real minimum
+            # request from an outstanding allocation, without publishing
+            # account labels, widget dumps or native coordinates.
+            if geometry["header_min"] > 760:
+                report["stage"] = "P0_2027_narrow_header_minimum"
+            elif geometry["sources_min"] > 760:
+                report["stage"] = "P0_2027_narrow_source_minimum"
+            elif geometry["scroll_min"] > 760:
+                report["stage"] = "P0_2027_narrow_scroll_minimum"
+            elif w.measure(Gtk.Orientation.HORIZONTAL, -1)[0] > 760:
+                report["stage"] = "P0_2027_narrow_window_minimum"
+            else:
+                report["stage"] = "P0_2027_narrow_allocation_pending"
         assert w.get_width() <= 760, ("Synchronisation minimum window width", geometry)
         assert scroll.get_width() > 0
         allocations = []
@@ -1713,10 +1850,15 @@ def main() -> int:
         assert bounds.get_y() + bounds.get_height() <= viewport_height, (
             "P0_1905: planning button outside viewport after scroll", click_geometry,
         )
+        # Closed diagnostic phases only: distinguish geometry, pointer dispatch
+        # and dialog realization without exporting GTK text or coordinates.
+        report["stage"] = "P0_1905_numilog_inventory_pointer_dispatch"
         report["pointer_actions"].append(device[0].click_widget(button))
+        report["stage"] = "P0_1905_numilog_inventory_dialog_wait"
         later(250, numilog_inventory_schedule_dialog)
 
     def numilog_inventory_schedule_dialog():
+        report["stage"] = "P0_1905_numilog_inventory_dialog_preflight"
         f = loan_sync_fixture
         dialogs = [node for node in Gtk.Window.list_toplevels()
                    if isinstance(node, Adw.MessageDialog) and node.get_visible()
@@ -1728,6 +1870,7 @@ def main() -> int:
         assert not f["materialize_calls"] and not f["source_sync_calls"]
         button = next(node for node in walk(dialog) if isinstance(node, Gtk.Button)
                       and str(node.get_label()).replace("_", "") == "Périodique")
+        report["stage"] = "P0_1905_numilog_inventory_dialog_ready"
         capture("03i1-numilog-inventory-consent")
         report["pointer_actions"].append(device[0].click_widget(button))
         later(300, numilog_inventory_schedule_revoke)
@@ -2994,8 +3137,15 @@ def main() -> int:
             Gio.Application.do_shutdown(self)
 
     app = Application()
+    # The full baseline additionally runs 563-row render comparisons, sync
+    # consent, Settings and three identity changes with their own deadlines.
+    # Its old shared 50s watchdog expired during active profile selection
+    # (#2203), after all 760px assertions passed. Keep a finite suite budget;
+    # individual operation/geometry assertions retain their original bounds.
+    watchdog_seconds = 75 if args.window_baseline else 50
     GLib.timeout_add_seconds(
-        50, lambda: (fail("Timeout Diagnostics navigation 50s"), False)[1]
+        watchdog_seconds,
+        lambda: (fail(f"Timeout Diagnostics navigation {watchdog_seconds}s"), False)[1]
         if report["status"] == "RUNNING" else False,
     )
     app.run([sys.argv[0]])

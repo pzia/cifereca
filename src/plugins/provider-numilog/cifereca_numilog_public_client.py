@@ -67,7 +67,24 @@ def fetch_public_search(query: str, *, page: int = 0, field: str = "all",
     """
     if type(field) is not str or field not in _PUBLIC_FIELDS:
         raise ProviderCapabilityError("Numilog : unsupported_public_field")
-    url = public_search_url(query, page)
+    return fetch_public_search_url(public_search_url(query, page), timeout=timeout)
+
+
+def fetch_public_search_url(url: str, *, timeout: float = 15.0):
+    """Follow only an already-attested public pager/facet URL.
+
+    The session enforces source provenance before calling this transport.
+    Here enforce the same strict public query/page bounds as ordinary search
+    before sending any HTTP request; never accept signed/private parameters.
+    """
+    from cifereca_numilog_public import _query
+    try:
+        parsed = _query(url)
+    except PublicSearchParseError:
+        raise ProviderCapabilityError("Numilog : invalid_public_navigation_url") from None
+    # The parser accepts a wider set of page values for offline inspection;
+    # live requests must retain the narrower provider budget.
+    public_search_url(parsed["query"], int(parsed.get("GRID_PAGE", "0")))
     try:
         with httpx.Client(
             timeout=timeout, follow_redirects=False, trust_env=False,

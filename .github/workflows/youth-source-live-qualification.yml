@@ -110,4 +110,4 @@ jobs:
           name: youth-source-live-evidence
           path: youth-live-evidence/result.json
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 2

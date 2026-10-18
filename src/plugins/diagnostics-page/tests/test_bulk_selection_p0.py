@@ -78,11 +78,11 @@ def test_select_all_respects_severity_and_scans_zero_and_one_page():
     assert collect_filtered_selection(FakeBroker([]), mode="errors").count == 0
 
 
-def test_selection_over_fifty_does_not_export_partial_result():
-    broker = FakeBroker([event(i, "error") for i in range(51)])
-    with pytest.raises(ValueError, match="50 events"):
+def test_selection_over_two_hundred_does_not_export_partial_result():
+    broker = FakeBroker([event(i, "error") for i in range(201)])
+    with pytest.raises(ValueError, match="200 events"):
         collect_filtered_selection(broker, mode="errors")
-    assert [call["offset"] for call in broker.calls] == [0, 50]
+    assert [call["offset"] for call in broker.calls] == [0, 50, 100, 150, 200]
 
 
 def test_more_than_eight_pages_is_a_refusal_not_a_false_zero():
@@ -92,9 +92,9 @@ def test_more_than_eight_pages_is_a_refusal_not_a_false_zero():
     assert len(broker.calls) == MAX_SCAN_PAGES
 
 
-def test_large_utf8_selection_exceeding_24k_is_refused():
-    broker = FakeBroker([event(i, "error", "é" * 490) for i in range(50)])
-    with pytest.raises(ValueError, match="24 KB"):
+def test_large_utf8_selection_exceeding_96k_is_refused():
+    broker = FakeBroker([event(i, "error", "é" * 490) for i in range(200)])
+    with pytest.raises(ValueError, match="96 KB"):
         collect_filtered_selection(broker, mode="errors")
 
 
@@ -180,3 +180,70 @@ def test_gtk_has_wrapped_actions_preview_async_and_stale_response_guard():
     assert "selected_event_ids.clear()" in src
     assert "journals_preview_text.set_editable(False)" in src
     assert "journals_select_actions.set_max_children_per_line(4)" in src
+
+
+def test_fifty_one_and_two_hundred_errors_export_every_row_across_pages():
+    for count in (51, 200):
+        rows = [event(i, "error", "Err public") for i in range(count)]
+        rows.append(event(count + 1, "warning", "Ignored warning"))
+        broker = FakeBroker(rows)
+        selected = collect_filtered_selection(broker, mode="errors", source="app_log")
+        exported = json.loads(selected.export_json)
+        assert selected.count == count
+        assert len(selected.event_ids) == count
+        assert selected.inspected == count
+        assert len(exported["events"]) == count
+        assert exported["selection"]["event_count"] == count
+        assert exported["selection"]["pagination_consistency"] == "first_page_rechecked_non_atomic"
+        assert len({row["event_id"] for row in exported["events"]}) == count
+        assert {row["severity"] for row in exported["events"]} == {"error"}
+        assert [x["offset"] for x in broker.calls if x["severity"] == "error"] == (
+            list(range(0, count, 50)) + [0]
+        )
+        assert len(selected.export_json.encode("utf-8")) <= 96_000
+
+
+def test_bulk_export_redacts_secrets_even_across_the_fifty_row_boundary():
+    rows = [event(i, "error") for i in range(55)]
+    rows[50]["message"] = (
+        "book_title: Le livre secret\n"
+        "Bearer SAMPLESECRET tok=privacy "
+        "https://example.invalid/fulfillment?token=SECRET "
+        "token=PRIVATE_TOKEN alice@example.com /home/secret/mybook"
+    )
+    selection = collect_filtered_selection(FakeBroker(rows), mode="errors")
+    exported = selection.export_json
+    for secret in ("Le livre secret", "SAMPLESECRET", "PRIVATE_TOKEN",
+                   "alice@example.com", "/home/secret/mybook",
+                   "https://example.invalid/fulfillment"):
+        assert secret not in exported
+    assert '"event_count": 55' in exported
+    assert "<expurgé>" in exported or "<URL expurgée>" in exported
+
+
+def test_filtered_batch_limits_do_not_raise_page_export_limits():
+    from diagnostics_explorer import export_selected_events
+    rows = [event(i, "error") for i in range(51)]
+    ids = {row["event_id"] for row in rows}
+    with pytest.raises(ValueError, match="too many"):
+        export_selected_events(rows, ids)
+    multi = json.loads(export_selected_events(
+        rows, ids, max_events=200, max_bytes=96_000,
+    ))
+    assert len(multi["events"]) == 51
+    for extra in (
+        {"max_events": 201, "max_bytes": 96_000},
+        {"max_events": 200, "max_bytes": 96_001},
+        {"max_events": 200, "max_bytes": True},
+        {"max_events": True, "max_bytes": 96_000},
+    ):
+        with pytest.raises(ValueError, match="budget"):
+            export_selected_events(rows, ids, **extra)
+
+
+def test_gtk_label_and_failure_handling_disclose_boundaries():
+    src = (Path(__file__).parents[1] / "cifereca_diagnostics_page.py").read_text()
+    assert "200 événements / 96 Ko maximum" in src
+    assert "50 événements / 24 Ko" in src
+    assert '"diagnostic selection exceeds 200 events"' in src
+    assert '"diagnostic selection exceeds 96 KB"' in src

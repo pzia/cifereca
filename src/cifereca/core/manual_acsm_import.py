@@ -66,11 +66,17 @@ def import_acsm(
         try:
             profile_name, _profile_source = self.resolve_adept_profile_for_identity(identity.identity_id)
         except AdeptProfileResolutionError as exc:
+            # Profile resolver errors are not evidence safe for persistent
+            # diagnostics. Keep only the two known Core remediation codes.
+            code = (exc.code if type(exc.code) is str and exc.code in {
+                "adept_profile_required", "adept_profile_ambiguous",
+            } else "adept_profile_required")
             self.storage.acquisition_update_state(
-                acquisition_id, "attention_required", error_code=exc.code, error_message=str(exc),
-                attention_code=exc.code, metadata={"staging": str(staged)},
+                acquisition_id, "attention_required", error_code=code,
+                error_message="Profil ADEPT indisponible",
+                attention_code=code, metadata={"staging": str(staged)},
             )
-            return {"status": "attention_required", "code": exc.code, "staging": str(staged)}
+            return {"status": "attention_required", "code": code, "staging": str(staged)}
         request = {
             "schema_version": 2,
             "source": {"type": "acsm", "provider": provider_id, "path": str(staged), "headers": {}},
@@ -90,7 +96,7 @@ def import_acsm(
             raise ProviderConfigurationError("Le runtime DRM n'a produit aucun Artifact")
         inspected = inspect_artifact(produced)
         if not inspected.valid or inspected.media_format not in {"epub", "pdf"}:
-            raise ProviderConfigurationError(f"Artifact ACSM invalide: {inspected.reason or 'format'}")
+            raise ProviderConfigurationError("Artifact ACSM invalide")
         expected_suffix = ".pdf" if inspected.media_format == "pdf" else ".epub"
         if produced.suffix.casefold() != expected_suffix:
             corrected = produced.with_suffix(expected_suffix)
@@ -104,7 +110,7 @@ def import_acsm(
             identity_id=identity.identity_id, provider_id=provider_id,
         )
         if indexed.get("status") != "indexed":
-            raise ProviderConfigurationError(f"Indexation ACSM impossible: {indexed.get('reason') or indexed.get('status')}")
+            raise ProviderConfigurationError("Indexation ACSM impossible")
         self.storage.acquisition_update_state(
             acquisition_id, "complete", artifact_id=indexed.get("artifact_id"),
             metadata={"path": str(produced), "catalog_index": indexed, "source_acsm_sha256": source_sha, "adept_binding": adept_binding},
@@ -116,11 +122,14 @@ def import_acsm(
         except OSError:
             pass
         return {"status": "complete", "path": str(produced), "artifact_id": indexed.get("artifact_id"), "acquisition_id": acquisition_id}
-    except Exception as exc:
+    except Exception:
         current = self.storage.acquisition_get(acquisition_id)
         if not current or current.get("status") != "attention_required":
+            # Never persist a runtime/provider/SQLite exception's class or
+            # text; both may contain ACSM payloads, signed URLs or paths.
             self.storage.acquisition_update_state(
-                acquisition_id, "retryable_error", error_code=type(exc).__name__, error_message=str(exc),
+                acquisition_id, "retryable_error",
+                error_code="manual_acsm_failed", error_message="Import ACSM échoué",
                 metadata={"staging": str(staged), "source_acsm_sha256": source_sha},
             )
         raise

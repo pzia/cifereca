@@ -1,15 +1,20 @@
-# Temporary network relay for the already documented rootless Debian 13 recipe.
-# Runs only on PR synchronization changing the authorization sentinel.
+# Temporary Debian dependency relay (#1011, #1143). No private source or
+# unreviewed cache entries are uploaded. A manual action AND affirmative
+# boolean consent are both mandatory; PR edits never start live downloads.
 name: Debian 13 GTK dependency relay (temporary)
 on:
-  pull_request:
-    types: [synchronize]
-    paths:
-      - .github/gtk-e2e-run-request.txt
+  workflow_dispatch:
+    inputs:
+      confirm_relay:
+        description: "I explicitly authorize a bounded Debian 13 GTK dependency download"
+        required: true
+        default: false
+        type: boolean
 permissions:
   contents: read
 jobs:
   bundle:
+    if: inputs.confirm_relay == true
     name: Download Debian GTK debs for local rootless bootstrap
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -32,12 +37,16 @@ jobs:
           python3 environnements/openai-chat-debian/bootstrap.py --download-only --deb-cache "$GITHUB_WORKSPACE/.gtk-deb-cache"
           test -f .gtk-deb-cache/.gtk4-cache-profile.json
           test "$(find .gtk-deb-cache -name '*.deb' | wc -l)" -gt 10
-          tar -czf /tmp/gtk4-debian13-rootless-offline.tar.gz -C "$GITHUB_WORKSPACE" .gtk-deb-cache
-          # Only version-controlled source is forwarded. Never bundle runner
-          # workspace extras, generated files, caches or private runtime data.
-          # GTK execution still happens on the local host, not in Actions.
-          git archive --format=tar.gz --output=/tmp/cifereca-gtk-source.tar.gz HEAD
-          sha256sum /tmp/gtk4-debian13-rootless-offline.tar.gz /tmp/cifereca-gtk-source.tar.gz > /tmp/SHA256SUMS
+          # Build a fresh allowlisted tar containing only Debian .deb packages
+          # and the exact reviewed Debian 13 marker. Reject all other files,
+          # symlinks, logs, local configurations and captured images.
+          python3 scripts/ci-validate-gtk-relay-cache.py \
+            --cache "$GITHUB_WORKSPACE/.gtk-deb-cache" \
+            --output /tmp/gtk4-debian13-rootless-offline.tar.gz
+          test -s /tmp/gtk4-debian13-rootless-offline.tar.gz
+          # The public checkout is obtained from GitHub by commit SHA locally,
+          # never transmitted as a redundant archive in an Actions artifact.
+          sha256sum /tmp/gtk4-debian13-rootless-offline.tar.gz > /tmp/SHA256SUMS
       - name: Upload offline bundle only
         if: success()
         uses: actions/upload-artifact@v4
@@ -45,7 +54,6 @@ jobs:
           name: gtk4-debian13-offline-relay
           path: |
             /tmp/gtk4-debian13-rootless-offline.tar.gz
-            /tmp/cifereca-gtk-source.tar.gz
             /tmp/SHA256SUMS
           retention-days: 2
           compression-level: 0

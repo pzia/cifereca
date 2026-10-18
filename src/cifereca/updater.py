@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sqlite3
 import os
 import shutil
@@ -19,7 +20,7 @@ from urllib.parse import quote
 
 from .install_paths import ArchiveNotFoundError, resolve_archive
 from .paths import config_dir, data_dir, database_file, state_dir
-from .update_progress import step, update_phase, update_operation
+from .update_progress import step, update_phase, update_operation, skip_update_phase
 
 PROJECT_NAME = "cifereca"
 PROJECT_DIR_NAME = "cifereca"
@@ -39,6 +40,22 @@ TRANSACTION_SCHEMA = 1
 
 class UpdateError(RuntimeError):
     pass
+
+
+def _run_bounded_process(command: list[str], *, timeout: int, **kwargs: Any) -> subprocess.CompletedProcess:
+    """Bound a child process, preserving no raw argv/stdout/stderr in errors.
+
+    subprocess.run kills and waits for the direct child on timeout. The caller
+    owns the update phase and the rollback transaction; no automatic retry.
+    """
+    try:
+        return subprocess.run(command, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired.__str__ contains the original command (possibly
+        # sensitive), so expose only a fixed exception with no chained cause.
+        raise TimeoutError("Délai dépassé pour un sous-processus de mise à jour") from None
+    except OSError:
+        raise UpdateError("Sous-processus de mise à jour indisponible") from None
 
 
 def _home() -> Path:
@@ -67,10 +84,10 @@ def _safe_member(info: zipfile.ZipInfo) -> PurePosixPath:
     p = PurePosixPath(name)
     wp = PureWindowsPath(name)
     if p.is_absolute() or wp.is_absolute() or bool(wp.drive) or ".." in p.parts or not p.parts:
-        raise UpdateError(f"Chemin interdit dans l'archive: {info.filename}")
+        raise UpdateError("Chemin interdit dans l'archive")
     mode = info.external_attr >> 16
     if stat.S_ISLNK(mode):
-        raise UpdateError(f"Symlink ZIP interdit: {info.filename}")
+        raise UpdateError("Symlink ZIP interdit dans l'archive")
     return p
 
 
@@ -136,7 +153,7 @@ def _metadata(source: Path) -> tuple[str, str]:
 
 def _python_version(exe: str) -> tuple[int, int, int] | None:
     try:
-        proc = subprocess.run(
+        proc = _run_bounded_process(
             [exe, "-c", "import sys,json;print(json.dumps(list(sys.version_info[:3])))"],
             text=True, capture_output=True, timeout=15, check=False,
         )
@@ -175,7 +192,10 @@ def _create_venv(release: Path, python: str) -> Path:
     # PyGObject/GTK stays a system dependency, therefore the release venv may
     # see system site-packages. All cifereca Python runtime dependencies are,
     # however, installed from the bundled offline wheelhouse.
-    proc = subprocess.run([python, "-m", "venv", "--system-site-packages", str(venv)], check=False)
+    proc = _run_bounded_process(
+        [python, "-m", "venv", "--system-site-packages", str(venv)],
+        timeout=300, check=False, text=True, capture_output=True,
+    )
     if proc.returncode != 0:
         raise UpdateError("Création du venv de release impossible")
     py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -193,7 +213,7 @@ def _create_venv(release: Path, python: str) -> Path:
         # Developer/source checkout fallback. Release archives must carry the
         # wheelhouse and are tested with the branch above.
         command = [str(py), "-m", "pip", "install", "--disable-pip-version-check", str(release)]
-    proc = subprocess.run(command, text=True, capture_output=True, check=False)
+    proc = _run_bounded_process(command, timeout=900, text=True, capture_output=True, check=False)
     if proc.returncode != 0:
         raise UpdateError("Installation du package dans le venv impossible")
     return venv
@@ -212,15 +232,15 @@ def _smoke(release: Path) -> dict[str, Any]:
     for path in (cli, app, updater):
         if not path.is_file():
             raise UpdateError(f"Entry point absent après installation: {path.name}")
-    proc = subprocess.run([str(cli), "--version"], text=True, capture_output=True, timeout=30, check=False)
+    proc = _run_bounded_process([str(cli), "--version"], text=True, capture_output=True, timeout=30, check=False)
     if proc.returncode != 0:
         raise UpdateError("Smoke test CLI --version échoué")
-    proc = subprocess.run([str(app), "--version"], text=True, capture_output=True, timeout=30, check=False)
+    proc = _run_bounded_process([str(app), "--version"], text=True, capture_output=True, timeout=30, check=False)
     if proc.returncode != 0:
         raise UpdateError("Smoke test application --version échoué")
     py = _command_path(release, "cifereca-cli").parent / "python"
     core_code = "import cifereca,httpx,packaging; print(cifereca.__version__)"
-    proc = subprocess.run([str(py), "-c", core_code], text=True, capture_output=True, timeout=30, check=False)
+    proc = _run_bounded_process([str(py), "-c", core_code], text=True, capture_output=True, timeout=30, check=False)
     if proc.returncode != 0:
         raise UpdateError("Smoke test core/httpx échoué")
     gtk_code = (
@@ -229,7 +249,7 @@ def _smoke(release: Path) -> dict[str, Any]:
         "from gi.repository import Gtk,Adw;"
         "assert Gtk.get_major_version()>=4"
     )
-    gtk = subprocess.run([str(py), "-c", gtk_code], text=True, capture_output=True, timeout=30, check=False)
+    gtk = _run_bounded_process([str(py), "-c", gtk_code], text=True, capture_output=True, timeout=30, check=False)
     return {
         "core_ready": True,
         "desktop_ready": gtk.returncode == 0,
@@ -543,7 +563,7 @@ def _create_update_transaction(
         shutil.rmtree(tmp, ignore_errors=True)
         if isinstance(exc, UpdateError):
             raise
-        raise UpdateError(f"Snapshot transactionnel des plugins impossible: {exc}") from exc
+        raise UpdateError("Snapshot transactionnel des plugins impossible") from exc
 
 
 def _restore_transaction_packages(path: Path, transaction: dict[str, Any]) -> None:
@@ -571,12 +591,11 @@ def _smoke_restored_plugins(release: Path, transaction: dict[str, Any]) -> dict[
     if not package_rows:
         return {"plugin_count": 0, "managed_packages": []}
     cli = _command_path(release, "cifereca-cli")
-    proc = subprocess.run(
+    proc = _run_bounded_process(
         [str(cli), "plugin", "list"], text=True, capture_output=True, timeout=120, check=False,
     )
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise UpdateError(f"Validation des plugins restaurés échouée: {detail[-1200:]}")
+        raise UpdateError("Validation des plugins restaurés échouée")
     try:
         rows = json.loads(proc.stdout)
     except Exception as exc:
@@ -636,7 +655,7 @@ def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str,
     try:
         _restore_transaction_packages(path, transaction)
     except Exception as exc:
-        errors.append(f"plugins: {exc}")
+        errors.append("plugins")
     core = transaction.get("core") if isinstance(transaction.get("core"), dict) else {}
     try:
         _restore_release_links(
@@ -653,11 +672,11 @@ def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str,
             for command in (*PUBLIC_COMMANDS, DEV_COMMAND):
                 (bin_dir() / command).unlink(missing_ok=True)
     except Exception as exc:
-        errors.append(f"Core: {exc}")
+        errors.append("core")
     if errors:
         transaction["restoration_errors"] = errors
         _save_transaction(path, transaction, "restoration_incomplete")
-        raise UpdateError("Restauration transactionnelle incomplète: " + "; ".join(errors))
+        raise UpdateError("Restauration transactionnelle incomplète: " + ", ".join(errors))
     transaction.pop("restoration_errors", None)
     _save_transaction(path, transaction, "rolled_back" if state == "rolling_back" else "update_failed_restored")
 
@@ -695,10 +714,9 @@ def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | N
         "--id", "cifereca-release-plugins",
         "--name", snapshot.name,
     ]
-    proc = subprocess.run(command, text=True, capture_output=True, timeout=180, check=False)
+    proc = _run_bounded_process(command, text=True, capture_output=True, timeout=180, check=False)
     if proc.returncode != 0 or not snapshot.is_file():
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise UpdateError(f"Construction du snapshot plugins impossible: {detail[-1200:]}")
+        raise UpdateError("Construction du snapshot plugins impossible")
     return snapshot
 
 
@@ -706,13 +724,12 @@ def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, A
     command = _command_path(release, DEV_COMMAND)
     if not command.is_file():
         raise UpdateError("cifereca-update-dev absent du nouveau runtime")
-    proc = subprocess.run(
+    proc = _run_bounded_process(
         [str(command), str(snapshot), "--json"],
         text=True, capture_output=True, timeout=300, check=False,
     )
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise UpdateError(f"Upgrade des plugins de release échoué: {detail[-1600:]}")
+        raise UpdateError("Upgrade des plugins de release échoué")
     try:
         value = json.loads(proc.stdout)
     except Exception as exc:
@@ -758,6 +775,15 @@ def install_source(
     if provenance:
         result["provenance"] = dict(provenance)
     if dry_run:
+        # A dry-run only checks metadata and Python selection. Explicitly
+        # distinguish unexecuted stages from actual validated success,
+        # without allocating a runtime tree or contacting plugin services.
+        for skipped_stage in (
+            "recover", "source_copy", "venv", "smoke", "backup",
+            "plugin_snapshot", "transaction_prepare", "core_activation",
+            "plugin_activation", "transaction_finalize", "cleanup",
+        ):
+            skip_update_phase(skipped_stage)
         return result
     recovered = step("recover", _recover_incomplete_transactions, root)
     if recovered:
@@ -812,20 +838,22 @@ def install_source(
             for package_id, row in transaction["packages"].items():
                 row["after"] = _package_identity(package_id)
             step("transaction_finalize", _save_transaction, transaction_path, transaction, "applied")
-    except Exception as update_exc:
+    except (Exception, KeyboardInterrupt) as update_exc:
+        # Ctrl-C after Core activation must attempt the same safe transactional
+        # restore as ordinary failures; never leave a success-looking state.
         if transaction_path is not None and transaction is not None:
             try:
                 step("rollback", _complete_transaction_restore, root, transaction_path, transaction, "restoring")
             except Exception as rollback_exc:
                 raise UpdateError(
-                    f"Mise à jour échouée ({update_exc}) et restauration incomplète: {rollback_exc}"
+                    "Mise à jour échouée et restauration transactionnelle incomplète"
                 ) from rollback_exc
         elif switched:
             try:
                 step("rollback", _restore_release_links, root, old_current, old_previous)
             except Exception as rollback_exc:
                 raise UpdateError(
-                    f"Mise à jour échouée et rollback Core impossible: {rollback_exc}"
+                    "Mise à jour échouée et rollback Core impossible"
                 ) from rollback_exc
         current = _symlink_target(root / "current")
         if current is None or current.resolve() != release.resolve():
@@ -866,29 +894,36 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
     commitish = _github_commitish(ref)
     endpoint = f"repos/{repository}/commits/{quote(commitish, safe='')}"
     with update_phase("resolve_github"):
-        resolved = subprocess.run(
+        resolved = _run_bounded_process(
             [gh, "api", endpoint, "--jq", ".sha"],
             text=True, capture_output=True, timeout=30, check=False,
         )
         if resolved.returncode != 0 or not resolved.stdout.strip():
             raise UpdateError("Branche, tag ou commit GitHub introuvable ou accès refusé")
-    sha = resolved.stdout.strip().splitlines()[-1]
+        # gh's response is untrusted until it matches the *entire* expected
+        # commit object ID. Do not allow an extra line, git option, refspec,
+        # truncated hash or arbitrary process output to reach 'git fetch'.
+        # Reject it before clone, staging or mutation, even during dry-run.
+        sha = resolved.stdout.strip()
+        if re.fullmatch(r"[0-9a-fA-F]{40}", sha) is None:
+            raise UpdateError("Référence GitHub résolue sans SHA de commit valide")
+        sha = sha.lower()
     with update_phase("clone"):
-        clone = subprocess.run(
+        clone = _run_bounded_process(
             [gh, "repo", "clone", repository, str(destination), "--", "--filter=blob:none", "--no-checkout"],
             text=True, capture_output=True, timeout=180, check=False,
         )
         if clone.returncode != 0:
             raise UpdateError("Clone GitHub impossible")
     with update_phase("fetch"):
-        fetched = subprocess.run(
+        fetched = _run_bounded_process(
             [git, "-C", str(destination), "fetch", "--depth", "1", "origin", sha],
             text=True, capture_output=True, timeout=180, check=False,
         )
         if fetched.returncode != 0:
             raise UpdateError("Fetch GitHub impossible")
     with update_phase("checkout"):
-        checkout = subprocess.run(
+        checkout = _run_bounded_process(
             [git, "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"],
             text=True, capture_output=True, timeout=60, check=False,
         )
@@ -1103,6 +1138,14 @@ def main(argv: list[str] | None = None) -> int:
                 result = install_archive(a.archive, python=a.python, keep=a.keep, dry_run=a.dry_run)
         _print(result, a.json)
         return 0
+    except KeyboardInterrupt:
+        _print({"ok": False, "error": {"code": "interrupted",
+               "message": "Mise à jour interrompue"}}, a.json)
+        return 130
+    except TimeoutError:
+        _print({"ok": False, "error": {"code": "update_error",
+               "message": "Délai dépassé pour un sous-processus de mise à jour"}}, a.json)
+        return 1
     except UpdateError as exc:
         error = {"ok": False, "error": {"code": "update_error", "message": str(exc)}}
         _print(error, a.json)

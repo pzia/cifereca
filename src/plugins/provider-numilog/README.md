@@ -1,5 +1,22 @@
 # Numilog — provenance des URL de livres (0.1.16)
 
+## 0.1.55 — navigation facettes sans perte silencieuse (#1886)
+
+La navigation GET de la recherche publique `brSimple` conserve chaque
+facette **déjà appliquée**, à l'exception de l'unique facette
+explicitement remplacée par le lien observé. Un lien thème/prix/langue/
+éditeur qui retire implicitement une autre sélection, change plusieurs
+filtres à la fois ou impose `GRID_PAGE > 0` au moment du filtrage est
+refusé par code fixe `invalid_facets`. Les transitions qui défiltrent
+une dimension ne sont pas devinées sans preuve du parcours amont.
+
+La sélection d'un filtre repart de la première page ; la pagination
+normale conserve ses paramètres comme avant. Les tests sont offline,
+sur cartes publiques expurgées et liens synthétiques, sans nouveau
+transport, cookie, achat, accès privé ou preuve de disponibilité live.
+Les options serveur auteur, ISBN et recherche avancée restent non attestées.
+
+
 ## 0.1.51 — achats sans lecture en ligne : confirmation ACSM
 
 Certaines éditions achetées ne disposent **pas** d'un lien
@@ -1061,3 +1078,162 @@ page et d’une page paginée vers trois hôtes partenaires/CDN autorisés
 la redirection MesLivres change d’origine, simulation loopback et
 pagination/redirection normale. Aucun cookie, mot de passe, identifiant
 d’achat ou HTML privé ne rejoint les diagnostics.
+
+
+## Catalogue public : navigation sur facettes attestées (0.1.52, #1886)
+
+`NumilogPublicSession.browse_public_search(query)` expose un `PublicSearchPage`
+complet : total public annoncé, notices commerciales, liens de page suivante,
+facettes publiées (`fltrTheme`, `fltrPrice`, `fltrLang`, `fltrPub`) et options
+de tri observées. `search()` utilisé par le Core reste inchangé (une liste
+de notices). Les résultats sont `owned=False`, `downloadable=False`, sans
+`download_url` ni inférence sur le prix historique ou les achats.
+
+`follow_public_link(url)` suit exclusivement un lien de filtre/pagination
+publié par une réponse `browse_public_search` ou `follow_public_link`
+validée dans la même session. Autorisation valable 60 secondes, révoquée
+à la déconnexion/reconnexion. URL construite par l'appelant, page >100,
+paramètre non attesté et lien de fiche/achat sont refusés avant HTTP.
+Le suivi reste anonyme, HTTPS, sans cookies ni redirections, avec le
+même cache TTL/budget HTTP que la recherche simple. Pas de crawl automatique.
+
+Il s'agit de navigation facettée distante sur les URL effectivement
+publiées, pas d'une preuve d'exhaustivité ni de recherche serveur
+par ISBN, auteur ou titre exact. Singleton toujours désactivé par défaut.
+Action UI/Core pour exposer ces facettes et qualification HTTP live/robots/CGU
+restent à faire. Les tests sont déterministes et hors réseau.
+
+
+## Numilog 0.1.53 — résumé complet sourcé des achats (#1072)
+
+L'action **explicite** `enrich_owned_public_detail(item)` conserve désormais
+tous les champs du `Book` JSON-LD public dont l'URL et le titre sont
+identiques à l'édition achetée et à sa carte commerciale attestée, sous
+`metadata.public_detail_enrichment.public_jsonld.fields`, accompagnés des
+`field_evidence` par champ et du statut `edition_proven=false`.
+Ces informations proviennent de la **fiche commerciale** et ne
+prouvent toujours ni le format acheté, ni un fichier, ni un droit DRM.
+
+Si le résumé complet de la fiche **prolonge réellement l'extrait**
+présent dans la carte HTML, et que cet extrait est accompagné de
+sa preuve `p.list-group-item-text` pour la même recherche, le
+`SearchResult.description` prend le résumé complet. L'extrait initial
+reste conservé sous `replaced_listing_excerpt`. Si le texte diffère
+ou que la preuve manque, le texte précédent est conservé et les deux
+valeurs demeurent consultables avec le conflit explicite.
+Les valeurs JSON-LD sont revalidées avant toute fusion (taille,
+caractères de contrôle, dates, auteurs, EAN) ; refus par code fixe
+sans répercuter la donnée reçue.
+
+Aucune nouvelle requête HTTP, lecture automatique, acquisition,
+association de titre approximative, projection d'ISBN papier en EPUB,
+ni changement Core/UI. Tests offline : résumés complets, divergences,
+métadonnées publiques, deux homonymes PDF/EPUB, preuves manquantes
+et données falsifiées. La qualification des achats réels reste ouverte.
+
+
+## 0.1.54 — Offre commerciale et couverture JSON-LD qualifiées (#1886)
+
+`parse_public_detail_jsonld` conserve désormais la seule offre Product/Book
+de type `Offer` avec prix **décimal EUR affiché**, disponibilité Schema.org
+explicitement publiée (`in_stock`, `out_of_stock`, `pre_order`)
+et URL de couverture canonique `couverture.numilog.com`, si elles sont
+strictement validées. Ces attributs restent isolés dans
+`public_commercial.fields` et `field_evidence` avec provenance exacte
+`Product.offers.*` / `Product.image`, source de fiche et indicateurs
+`edition_proven=false` / `rights_proven=false`. Une image dont le nom
+contient l'EAN papier n'établit **pas** l'EAN EPUB.
+
+Le provider catalogue et l'enrichissement explicite des achats conservent
+cette section dans les métadonnées de la **fiche publique** seulement.
+Les prix déjà présents dans les résultats de recherche et les prix
+historiques d'achat ne changent pas ; aucune disponibilité marchande
+n'est interprétée comme un droit à télécharger. Aucun URL d'offre
+(même présent dans le JSON-LD), vendeur, jeton ou lien d'acquisition
+n'est repris. Une offre multiple/ambiguë ou non qualifiée ne fournit
+aucun prix. Cette extraction n'ajoute aucun appel HTTP ni N+1.
+
+Preuves : capture publique expurgée Blackbone du 17 octobre 2026 et
+tests déterministes d'offres invalides, provenance falsifiée, couverture
+externe, URLs signées et séparation papier/EPUB. Disponibilité live,
+conditions robots/CGU et moteur multi-attributs serveur restent à qualifier.
+
+
+
+## 0.1.58 — preuve de concordance achat / fiche publique (#1072)
+
+Le rapprochement explicite entre une ligne fraîche **Mes Livres** et une
+carte commerciale du même identifiant/URL Numilog exige désormais aussi un
+titre identique après normalisation Unicode NFKC, espaces et casse. Une
+fiche publique dont le titre diffère provoque
+`public_edition_title_conflict` **avant toute projection** d'auteur,
+éditeur, résumé, date, couverture, collection ou prix. Une édition homonyme
+située sous une autre URL conserve sa séparation, même si son titre est
+identique. Le titre privé provenant du compte ne peut jamais être remplacé
+par celui d'une fiche publique.
+
+Les sélecteurs de provenance de chacun de ces champs sont exacts, et pas
+simplement un champ `kind=observed_public_html` accompagné d'une URL.
+Le prix commercial doit être cohérent avec les morceaux de prix observés,
+sa devise EUR, sa valeur numérique et ses sélecteurs exacts. La projection
+conserve uniquement montant, centimes, devise et portée de l'offre
+**publique**, jamais les valeurs brutes d'une carte non qualifiée, et ne
+modifie ni prix historique d'achat, ni format, ni propriété, ni droit
+d'acquisition.
+
+Cette vérification hors réseau ne remplace **pas** la preuve manquante
+d'association authentifiée entre une édition EPUB/PDF achetée et la
+référence numérique de la fiche. Tests entièrement synthétiques utilisant
+la capture publique expurgée Jefferson ; aucune nouvelle requête, aucun
+ACSM ni récupération de contenu privé. La version 0.1.58 suit la 0.1.56 (EAN canonique) et la 0.1.57
+(affinage local), conservées lors de l'intégration CI/CD.
+## 0.1.57 — affinage bibliographique local sur une page Numilog (#1886)
+
+La session anonyme `NumilogPublicSession.refine_loaded_page(page, **filters)`
+affine **uniquement une page déjà renvoyée par** `browse_public_search`
+ou `follow_public_link` et n'émet **aucune nouvelle requête**. Champs
+acceptés : `title`, `author` (y compris co-auteurs), `publisher`,
+`year` (année entière) et `format_label` (format commercial affiché).
+Chaque correspondance exige un champ et son sélecteur de provenance
+`observed_public_html` de la même recherche ; les champs absents ou
+non attestés sont comptés en `missing_evidence_count`, pas en preuve
+d'absence du catalogue. Comparaison locale insensible aux accents,
+casse et ponctuation ; aucun ISBN, âge ni recherche native auteur
+**serveur** n'est inventé.
+
+Le résultat `PublicPageRefinement` distingue
+`matching_count` de `public_unfiltered_total`, indique
+`scope=loaded_public_page_only`, `loaded_count`, la page interrogée,
+la présence de pages non parcourues et le nombre de fiches incertaines.
+Ce n'est **pas un total filtré serveur**, ni un filtrage global. Les
+résultats demeurent `owned=False`, `downloadable=False`, et sans URL
+d'acquisition. La méthode est **optionnelle** ; la recherche Core
+conserve `field=all` et ne présente pas cette fonction comme une
+facette distante. Tests hors réseau sur cartes publiques expurgées,
+limites de champs, provenance et identités, sans cookie/ACSM.
+
+
+## Numilog 0.1.56 — EAN dans la fiche canonique uniquement (#1072)
+
+Les identifiants publics typés `paper`, `epub`, `pdf` et
+`digital_unspecified` ne sont désormais retenus par
+`parse_public_detail_jsonld` que si les étiquettes appartiennent
+au **formulaire WebForms public exact** (`aspnetForm`, `POST`, action =
+chemin canonique du produit), entièrement fermé, avec **un seul H1**
+concordant avec le titre du `Book` JSON-LD sélectionné.
+
+Les ISBN placés hors du formulaire (navigation, autre produit, pied de
+page, résultats connexes), après sa fermeture, dans un formulaire
+étranger ou sur une page sans wrapper attesté, sont ignorés.
+Une seconde fiche canonique reste ambiguë et provoque un refus à code fixe.
+L'extraction directe hors réseau conserve son mode historique pour les
+tests de fragments ; le pipeline de fiche publique réclame explicitement
+le mode strict.
+
+Tests : extrait public expurgé Blackbone (EAN papier différent de l'EPUB),
+en-tête/pied de page hostiles, wrapper absent ou non clos, action/méthode
+étrangère, H1 divergent, double formulaire. Aucun réseau supplémentaire,
+aucune promotion des ISBN publics en format acheté ni propriété/droit
+de téléchargement. Le couplage **achat authentifié → édition numérique**
+continue à nécessiter une preuve réelle distincte.
+

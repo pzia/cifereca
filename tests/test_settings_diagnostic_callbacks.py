@@ -147,3 +147,91 @@ assert 'gi' not in sys.modules
         capture_output=True, text=True, timeout=15,
     )
     assert result.returncode == 0, result.stderr
+
+
+PRIVATE = "https://private.invalid/acsm?token=DO_NOT_INCLUDE_IN_DIAGNOSTICS"
+
+
+def test_clipboard_write_failure_never_logs_exception_or_exposes_secret():
+    h = _harness()
+    h.clipboard.set_content.side_effect = RuntimeError(PRIVATE)
+    h.copy()
+    h.host.diagnostics.add.assert_called_once_with(
+        "UI", "clipboard write", "error",
+        detail={"code": "clipboard_write_failed"}, level="detailed",
+    )
+    h.host.show_error.assert_called_once_with(
+        "Impossible d'écrire dans le presse-papiers", "Copie impossible",
+    )
+    h.clipboard.read_text_async.assert_not_called()
+    assert "DO_NOT_INCLUDE_IN_DIAGNOSTICS" not in str((
+        h.host.diagnostics.add.call_args, h.host.show_error.call_args,
+    ))
+
+
+@pytest.mark.parametrize("failure", ["read_finish", "async_schedule"])
+def test_clipboard_verification_failures_are_redacted_without_false_copy_failure(failure):
+    h = _harness()
+    if failure == "async_schedule":
+        h.clipboard.read_text_async.side_effect = OSError(PRIVATE)
+    h.copy()
+    if failure == "read_finish":
+        callback = h.clipboard.read_text_async.call_args.args[1]
+        callback(NS(read_text_finish=Mock(side_effect=RuntimeError(PRIVATE))), object())
+    h.host.diagnostics.add.assert_called_once_with(
+        "UI", "clipboard verify", "error",
+        detail={"code": "clipboard_verify_failed"}, level="detailed",
+    )
+    # GDK accepted the write; only verification failed.
+    h.host.toast.assert_called_once_with("Diagnostic copié dans le presse-papiers")
+    h.host.show_error.assert_not_called()
+    assert "DO_NOT_INCLUDE_IN_DIAGNOSTICS" not in str((
+        h.host.diagnostics.add.call_args, h.host.show_error.call_args,
+    ))
+
+
+def test_diagnostic_export_never_records_sensitive_local_filename(tmp_path):
+    h = _harness()
+    secret_filename = "PRIVATE_READER_FILENAME.txt"
+    path = tmp_path / secret_filename
+    h.chooser.get_file.return_value = NS(get_path=lambda: str(path))
+    h.export()
+    callback = h.chooser.connect.call_args.args[1]
+    callback(h.chooser, h.gtk.ResponseType.ACCEPT)
+    assert path.read_text("utf-8") == "rapport synthétique expurgé"
+    h.host.diagnostics.add.assert_called_once_with(
+        "UI", "diagnostic export", "ok",
+        detail={"code": "export_completed"}, level="detailed",
+    )
+    assert secret_filename not in str(h.host.diagnostics.add.call_args)
+
+
+def test_failed_diagnostic_export_never_exposes_selected_private_path(tmp_path):
+    h = _harness()
+    destination = tmp_path / "PRIVATE_READER_DIRECTORY" / "missing.txt"
+    h.chooser.get_file.return_value = NS(get_path=lambda: str(destination))
+    h.export()
+    callback = h.chooser.connect.call_args.args[1]
+    callback(h.chooser, h.gtk.ResponseType.ACCEPT)
+    h.chooser.destroy.assert_called_once_with()
+    h.host.diagnostics.add.assert_called_once_with(
+        "UI", "diagnostic export", "error",
+        detail={"code": "diagnostic_export_failed"}, level="detailed",
+    )
+    h.host.show_error.assert_called_once_with(
+        "Impossible d’exporter le diagnostic", "Export impossible",
+    )
+    assert not destination.exists()
+    assert "PRIVATE_READER_DIRECTORY" not in str((
+        h.host.diagnostics.add.call_args, h.host.show_error.call_args,
+    ))
+
+
+def test_preferences_save_failure_never_exposes_private_service_exception():
+    h = _harness()
+    h.host.service.save_diagnostic_preferences.side_effect = RuntimeError(PRIVATE)
+    h.persist()
+    h.host.show_error.assert_called_once_with(
+        "Impossible d’enregistrer le niveau de diagnostic",
+    )
+    assert PRIVATE not in str(h.host.show_error.call_args)

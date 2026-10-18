@@ -1,0 +1,58 @@
+"""P0 #2147: required PR CI must always produce one stable status context.
+
+The branch protection rule is managed by a repository administrator; this
+contract only makes the job eligible for all PRs, while its expensive scopes
+remain selected by the changed paths inside the job.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+import re
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github/workflows/pr-ci.yml"
+
+
+def _workflow() -> str:
+    return WORKFLOW.read_text(encoding="utf-8")
+
+
+def _matched_path(patterns: list[str], path: str) -> bool:
+    return any(re.search(pattern, path) is not None for pattern in patterns)
+
+
+def test_required_pr_ci_is_not_skipped_by_event_paths():
+    source = _workflow()
+    event_block = source.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
+    assert re.search(r"(?m)^  pull_request:\s*$", event_block)
+    assert re.search(r"(?m)^  workflow_dispatch:\s*$", event_block)
+    assert "paths:" not in event_block
+    assert re.search(r"(?m)^  ci:\n    name: PR CI$", source)
+    assert "group: pr-ci-${{ github.event.pull_request.number || github.run_id }}" in source
+    assert "contents: read" in source
+
+
+def test_documentation_only_still_emits_ci_without_heavy_validation():
+    source = _workflow()
+    patterns = re.findall(r"if matches '([^']+)'", source)
+    assert patterns
+    for path in (
+        "docs/example.md", "AGENTS.md", ".agents/roles/cicd.md",
+        ".github/release-trigger",
+    ):
+        assert not _matched_path(patterns, path), path
+    assert "if [[ \"$core\" == true || \"$plugins\" == true" in source
+    assert "python=false" in source
+
+
+def test_readme_metadata_changes_validate_installed_wheel():
+    source = _workflow()
+    conditions = re.findall(
+        r"(?m)^          if matches '([^']+)'; then\n            install=true", source
+    )
+    assert len(conditions) == 1
+    assert re.search(conditions[0], "README.md")
+    assert not re.search(conditions[0], "docs/changelog.md")
+    assert re.search(conditions[0], "VERSION")
+    assert "if: steps.scope.outputs.install == 'true'" in source
+    assert "bash scripts/ci-smoke-installed-wheel.sh" in source
