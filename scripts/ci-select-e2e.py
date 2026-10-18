@@ -16,6 +16,8 @@ SYNC_PRODUCERS = frozenset((
     "src/cifereca/core/numilog_materialization_startup.py",
     "src/cifereca/core/numilog_materialization_checkpoint.py",
     "src/cifereca/core/numilog_direct_acquisition.py",
+    "src/cifereca/core/loan_local_preparation.py",
+    "src/cifereca/core/loan_provider_delivery.py",
     "src/cifereca/core/sync_coordination.py",
 ))
 BOOK_DETAIL = ("book-detail-1366", "book-detail-1600")
