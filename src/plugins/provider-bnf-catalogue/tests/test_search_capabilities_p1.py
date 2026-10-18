@@ -45,6 +45,7 @@ def test_bnf_search_declares_native_and_page_local_fields():
     assert cap.fields == ("all", "title", "author", "isbn", "subject", "series", "collection")
     assert cap.scopes == ("all", "physical", "digital")
     assert cap.pagination == "page" and cap.page_size == 50
+    assert cap.max_pages == 101
     assert any("post-filtre" in note for note in cap.notes)
     assert not cap.supports_field("language")
 
@@ -106,5 +107,31 @@ def test_sru_network_failure_does_not_expose_provider_exception():
         with pytest.raises(ProviderError, match="catalogue temporairement indisponible") as caught:
             session.search("Doyle", field="author")
         assert "PRIVATE_CREDENTIAL" not in str(caught.value)
+    finally:
+        session.close()
+
+
+
+@pytest.mark.parametrize("page", (-1, True, False, "2", "bad", 2.5, None, 101, 10**100))
+def test_invalid_page_rejected_before_http_even_for_short_query(page):
+    client = FakeClient()
+    session = make_session(client)
+    try:
+        with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+            session.search("x", page=page)
+        assert client.calls == []
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("page,first_record", ((0, "1"), (1, "51"), (100, "5001")))
+def test_zero_index_page_offsets_are_not_silently_clamped(page, first_record):
+    client = FakeClient()
+    session = make_session(client)
+    try:
+        assert session.search("Doyle", page=page) == []
+        assert len(client.calls) == 1
+        assert client.calls[0][1]["startRecord"] == first_record
     finally:
         session.close()
