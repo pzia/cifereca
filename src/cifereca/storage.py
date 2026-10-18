@@ -2100,6 +2100,49 @@ class Storage:
             "acquisitions": [dict(zip(ledger_keys, values)) for values in ledgers],
         }
 
+    def numilog_materialization_claim_startup(
+        self, *, source_id: str, now: int,
+    ) -> bool:
+        """Cross-process one-shot claim, conditional on actual separate consent.
+
+        Claims even when downstream I/O fails, so an interrupted fulfillment
+        cannot be retried on every startup and consume a single-use ACSM URL.
+        Never infer consent from generic sync, legacy Kobo flags or cache.
+        """
+        import re
+        from .core.numilog_materialization_consent import (
+            _ACTIVE, _MIN_SECONDS_BETWEEN_STARTS, policy_key,
+        )
+        if (type(source_id) is not str
+                or re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is None
+                or type(now) is not int or not 1_000_000_000 <= now <= 9_999_999_999):
+            return False
+        clock_key = "sync.source.numilog.materialization.last_start.v1." + source_id
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            consent = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (policy_key(source_id),),
+            ).fetchone()
+            if consent is None or consent[0] != _ACTIVE:
+                return False
+            clock = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (clock_key,),
+            ).fetchone()
+            if clock is not None:
+                stamp = clock[0]
+                if (type(stamp) is not str or not stamp.isdecimal()
+                        or len(stamp) > 11):
+                    return False
+                previous = int(stamp)
+                if previous > now or now - previous < _MIN_SECONDS_BETWEEN_STARTS:
+                    return False
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (clock_key, str(now)),
+            )
+            return True
+
     def source_materialization_evidence(
         self, *, provider_id: str, credential_id: str, account_id: str,
         identity_id: str, max_rows: int = 100_000,
