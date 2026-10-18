@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.constellations",
-    "version": "0.3.7",
+    "version": "0.3.8",
     "name": "Constellations",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "navigation.constellations",
       "type": "navigation.constellation",
-      "version": "0.3.7",
+      "version": "0.3.8",
       "entrypoint": "constellations:PLUGIN",
       "display_name": "Constellations",
       "description": "Navigation relationnelle explicable entre livres et promenades culturelles.",
@@ -33,7 +33,7 @@
     {
       "id": "ui.page.constellations",
       "type": "ui.page",
-      "version": "0.3.7",
+      "version": "0.3.8",
       "entrypoint": "constellations_page:PLUGIN",
       "display_name": "Constellations — navigation",
       "description": "Depuis un livre de Recherche/Bibliothèque : explorer ses voisins expliqués de proche en proche.",
