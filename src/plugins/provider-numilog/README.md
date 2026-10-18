@@ -1237,3 +1237,28 @@ aucune promotion des ISBN publics en format acheté ni propriété/droit
 de téléchargement. Le couplage **achat authentifié → édition numérique**
 continue à nécessiter une preuve réelle distincte.
 
+
+
+## 0.1.59 — frontière de confiance JSON-LD des fiches publiques (#1886, #1072)
+
+Les résultats d'un parseur public ne sont **pas considérés fiables par
+simple transit dans un cache ou un appelant**. La projection du détail
+`merge_public_detail` et l'enrichissement explicite d'un achat
+`merge_attested_owned_public_detail` appliquent désormais **la même
+validation stricte** des champs JSON-LD : type, bornes, ISBN-13 correct,
+date ISO réelle, 1–32 auteurs textuels ; la provenance doit provenir
+du sélecteur structuré exact `public_product_jsonld_Book` ou
+`public_product_jsonld_Product_Book`, avec URL produit canonique,
+`kind=observed_public_jsonld` et `edition_proven=false`. Les
+preuves à clés additionnelles, chaînes de provenance arbitraires et
+valeurs imbriquées non qualifiées sont refusées avant publication dans
+les métadonnées Core ou catalogue. Les listes auteurs et preuves sont
+recopiées de façon indépendante du document d'entrée pour qu'une
+mutation tardive de l'appelant ne modifie pas le résultat.
+
+Ce correctif ne transforme **jamais** un ISBN non typé en ISBN EPUB/PDF
+acheté, ni une offre en droit ou téléchargement. Tests hors réseau
+avec fixture de liste publique expurgée et détails JSON-LD fictifs ;
+pas de changement du transport ou d'accès au compte. La recherche
+avancée serveur auteur/EAN et les conditions d'accès restent non
+qualifiées, indépendamment de cette barrière de projection.
