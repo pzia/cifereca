@@ -250,7 +250,8 @@ def test_equally_ranked_server_options_warn_about_partial_selection(
         rows = session.search("jean", field=field)
         assert len(rows) == 1
         assert len(client.get_calls) == 2
-        assert client.get_calls[1][1]["params"][expected_key] == "51"
+        # The existing selector deliberately prefers the shorter label.
+        assert client.get_calls[1][1]["params"][expected_key] == "52"
         assert session.last_search_warnings == [
             "partial_results : plusieurs options du filtre ; une seule interrogée"
         ]
