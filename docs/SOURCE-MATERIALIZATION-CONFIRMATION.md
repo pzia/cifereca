@@ -101,3 +101,27 @@ Ce reçu couvre la fenêtre livraison validée → indexation. Il ne qualifie pa
 un crash pendant le téléchargement ou avant l'écriture du reçu, et ne constitue
 ni consentement à une sauvegarde automatique ni preuve fournisseur réelle.
 Le parent #1905 reste ouvert.
+
+## Fichier Numilog publié sans reçu (#1905)
+
+Avant un nouveau téléchargement Numilog, sous le verrou d'acquisition, le Core
+inspecte uniquement le répertoire Numilog de l'identité propriétaire. Un EPUB,
+PDF ou KEPUB sans placement source attesté ou reçu de livraison valide bloque
+l'appel fournisseur, y compris avec un nom lisible ou dans un sous-dossier ADEPT.
+Le nom du fichier ne sert jamais à l'associer à un achat. Aucun fichier n'est
+lu, adopté, déplacé ou supprimé par ce garde ; les autres comptes de la même
+identité peuvent conserver leurs publications connues dans ce répertoire partagé.
+
+L'inspection utilise des descripteurs de répertoires sans suivi de symlinks,
+y compris dans les ancêtres de la racine. Elle est bornée à 4 096 entrées,
+16 niveaux et 4 096 lignes de provenance par table ; erreur ou dépassement
+refuse l'acquisition avec un message fixe, sans chemin ni donnée fournisseur.
+Elle ne s'exécute ni au rendu des lignes ni pendant une recherche/actualisation
+d'inventaire. Elle protège aussi les appels `on_start` déjà explicitement consentis.
+Les droits et la connexion sont rejoués après l'inspection, juste avant HTTP.
+
+Après un crash avant le reçu, le fichier reste à rapprocher et un nouvel essai
+ne retélécharge pas silencieusement le livre. Ce garde ne fournit pas la preuve
+d'édition nécessaire à une adoption automatique ; cette reprise des orphelins
+et le contrat complet du parent #1905 restent à livrer. Les fichiers partiels
+non lisibles et les modifications externes après inspection restent hors preuve.
