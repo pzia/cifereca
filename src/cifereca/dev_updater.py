@@ -522,7 +522,9 @@ def apply_snapshot(
             if require_plugins_only:
                 step("plugin_verification", _verify_strict_installed_packages, strict_packages)
             smoke = step("smoke", _smoke_plugins, package_ids)
-        except Exception as exc:
+        except (Exception, KeyboardInterrupt) as exc:
+            # A cooperative Ctrl-C must restore the pre-update plugin state,
+            # even when the interrupted installation already changed Core.
             restoration_errors = []
             try:
                 step("rollback", _restore_plugins, package_ids, backup_plugins)
@@ -583,6 +585,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         _print(result, args.json)
         return 0
+    except KeyboardInterrupt:
+        _print({"ok": False, "error": {"code": "interrupted",
+               "message": "Mise à jour interrompue"}}, args.json)
+        return 130
     except TimeoutError:
         _print({"ok": False, "error": {"code": "dev_update_error",
                "message": "Délai dépassé pour un sous-processus de mise à jour"}}, args.json)
