@@ -1,5 +1,38 @@
 # Numilog — provenance des URL de livres (0.1.16)
 
+## 0.1.51 — achats sans lecture en ligne : confirmation ACSM
+
+Certaines éditions achetées ne disposent **pas** d'un lien
+`Lire en ligne (Streaming)` dans la page `ConfirmationPaiement.aspx`.
+L'absence de `readBook?m=stream` ne signifie ni absence d'achat,
+ni absence de lien ACSM Adobe. Le fournisseur peut afficher seulement
+`ModalDownload(ProductId, IndexExemplaire)` et le tableau `Links`.
+
+Le fournisseur accepte dorénavant ce cas **seulement** lorsque Cifereca
+a lui-même suivi un `readBook?m=dwld` provenant d'une fiche achetée
+et obtenu une **redirection HTTP 302 directe** vers
+`ConfirmationPaiement.aspx?ref=<opaque>&disp=simple`.
+La page doit alors attester une seule carte marchande, un seul bouton,
+un seul produit/exemplaire sur toutes les alternatives JavaScript, un
+ACSM Adobe unique et une éventuelle référence de formulaire cohérente.
+Le lien streaming, lorsqu'il existe, continue d'être vérifié comme
+preuve supplémentaire ; aucun lien streaming n'est utilisé pour livrer l'EPUB.
+
+Refus si page multicarte, second bouton, autre produit/copie, lien readBook
+contradictoire ailleurs, URL ACSM concurrente, redirection indirecte,
+page de confirmation ouverte sans preuve 302, ou `ref` incohérent.
+Aucune construction d'URL de commande, nouveau GET réseau, affaiblissement
+du contrôle de propriété/identité ou divulgation de jeton.
+Tests MockTransport purement synthétiques dans
+`test_numilog_no_stream_confirmation_p0.py`.
+
+**Portée de la preuve :** le téléchargement manuel ACSM avait déjà réussi
+sur une édition qui proposait le streaming ; la cause de l'échec de la
+sauvegarde automatique est encore à confirmer par une trace de recette
+sur une édition sans streaming. L'observabilité de la tâche automatique
+fait l'objet d'un suivi séparé.
+
+
 ## Audit P2 #764 — 11 octobre 2026
 
 **Preuves sur les pages publiques officielles**
