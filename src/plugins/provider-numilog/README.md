@@ -764,3 +764,21 @@ lien unique `<a>`, un `window.location` JS et un `Links` non lié dans
 la confirmation : tous refusés avant tout GET ACSM ; comparaison avec
 un `Landing.aspx` ancien toujours fonctionnel. Il n'y a aucun changement
 de compte, droit, endpoint ni suite d'appels réseau.
+
+
+## Cookies HTTPS entre MesLivres, readBook et confirmation (#2024)
+
+La présence de l'en-tête Cookie sur le GET `readBook.ashx` ne prouve
+pas que ce même cookie est éligible sur
+`/Pages/Commande/ConfirmationPaiement.aspx`. Les cookies déclarés
+avec `Path=/Pages/Compte` ne transitent pas vers
+`/Pages/Commande` ; ceux avec `Path=/` sont éligibles pour les deux.
+Les tests HTTPX hors réseau couvrent également `Path=/Pages/Commande`
+et `/Pages/Other`, avec un cookie `Secure` fictif et l'attribut
+`SameSite=Lax`, en vérifiant **seulement** la présence booléenne au
+niveau de la requête effectivement envoyée et du diagnostic expurgé.
+
+HTTPX **n'émule pas le contexte de navigation SameSite du navigateur** :
+ces tests documentent le filtrage Domain/Path/Secure, pas une preuve que
+Numilog valide une session réelle. Aucun nom/valeur de cookie, query de
+commande ou identifiant privé ne doit entrer dans un export.
