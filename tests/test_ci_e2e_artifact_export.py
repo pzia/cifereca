@@ -127,6 +127,42 @@ class SafeFailureDiagnosisTests(unittest.TestCase):
                 'duration_seconds':50.12,'failure_kind':'scenario_timeout'})
             self.assertNotIn('PRIVATE', repr(result))
 
+    def test_numilog_pointer_dialog_phase_verdict_is_bounded_and_privacy_safe(self):
+        module = _module()
+        stages = (
+            "P0_1905_numilog_inventory_pointer_dispatch",
+            "P0_1905_numilog_inventory_dialog_wait",
+            "P0_1905_numilog_inventory_dialog_preflight",
+            "P0_1905_numilog_inventory_dialog_ready",
+        )
+        probe = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(encoding="utf-8")
+        for stage in stages:
+            assert 'report["stage"] = "' + stage + '"' in probe
+        assert [probe.index('report["stage"] = "' + stage + '"') for stage in stages] == sorted(
+            probe.index('report["stage"] = "' + stage + '"') for stage in stages
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = "mainwindow-baseline-1366"
+            report = root / scenario / scenario / "screen.json"
+            report.parent.mkdir(parents=True)
+            source = root / "summary.json"
+            source.write_text(
+                json.dumps([{"scenario": scenario, "returncode": 1,
+                             "stderr": "PRIVATE-SIGNED-URL"}]), encoding="utf-8"
+            )
+            for stage in stages:
+                report.write_text(
+                    json.dumps({"stage": stage, "error": "PRIVATE-SIGNED-URL",
+                                "html": "<account-private>", "cookie": "PRIVATE"}),
+                    encoding="utf-8",
+                )
+                published = module.safe_summary(source)
+                assert published["results"][0]["last_stage"] == stage
+                assert published["results"][0]["failure_kind"] == "assertion_or_runtime"
+                assert "PRIVATE" not in repr(published)
+                assert "<account-private>" not in repr(published)
+
     def test_unknown_strings_nonfinite_numbers_boolean_line_and_report_path_are_not_exported(self):
         module = _module()
         with tempfile.TemporaryDirectory() as tmp:
