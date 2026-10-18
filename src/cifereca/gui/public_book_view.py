@@ -103,7 +103,7 @@ class PublicBookMasterDetailView:
                             action_id == "search-library"
                             and not getattr(window, "_closed", False)
                             and window.view_stack.get_visible_child_name() == "youth"
-                            and youth is not None and youth.is_ancestor(clicked)
+                            and youth is not None and clicked.is_ancestor(youth)
                             and clicked.get_mapped() and clicked.get_sensitive()
                         )
                         if intent:
