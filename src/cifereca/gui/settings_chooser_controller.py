@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..identities.directory_selection import directory_choice
+from ..identities.directory_selection import DirectoryMigrationError, directory_choice
+from ..plugin_api import UserFacingError
 
 
 def _context(window):
@@ -40,11 +41,19 @@ def choose_identity_directory(window, entry, root: Path, *, Gtk, Gio) -> None:
             if selected == Gtk.ResponseType.ACCEPT:
                 file = dialog.get_file()
                 if file is None or not file.get_path():
-                    raise ValueError("Choisissez un dossier local.")
+                    window.show_error("Choisissez un dossier local.", "Choix du répertoire impossible")
+                    return
                 entry.set_text(directory_choice(file.get_path(), root))
-        except Exception as exc:
+        except DirectoryMigrationError:
             if not getattr(window, "_closed", False):
-                window.show_error(str(exc), "Choix du répertoire impossible")
+                window.show_error(
+                    "Choisissez un sous-répertoire direct de la bibliothèque "
+                    "(lettres, chiffres, point, tiret ou underscore).",
+                    "Choix du répertoire impossible",
+                )
+        except Exception:
+            if not getattr(window, "_closed", False):
+                window.show_error("Répertoire indisponible", "Choix du répertoire impossible")
         finally:
             dialog.destroy()
             if getattr(window, "_identity_directory_chooser", None) is dialog:
@@ -96,7 +105,12 @@ def choose_adept_profile(window, entry, control, *, Adw) -> None:
 
     def error(exc):
         if current():
-            window.show_error(str(exc), "Profils ADE")
+            # Runtime errors can include private paths, profile identifiers
+            # or a provider response. The public user_message is the only
+            # explicitly UI-safe exception string in this boundary.
+            message = (exc.user_message if isinstance(exc, UserFacingError)
+                       else "Lecture des profils ADE impossible")
+            window.show_error(message, "Profils ADE")
 
     window.runner.submit(
         "Profils ADE…",
