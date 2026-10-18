@@ -696,3 +696,41 @@ trois réponses HTML `other` observées chez l'utilisateur suivent cette
 route, ni que le fournisseur accepte leur ACSM. Le P0 #2024 exige
 toujours une vraie livraison réussie du même achat et un export
 expurgé après installation du correctif.
+
+
+## 0.1.43 — identifier le vrai saut ConfirmationPaiement sans exposer ref (#2024)
+
+Le parcours navigateur rapporté pour le **même achat** passe par la route
+`/Pages/Commande/ConfirmationPaiement.aspx?ref=<PRIVÉ>&disp=simple` et finit
+par recevoir un ACSM. Le saut HTTP réel depuis `readBook` n'est pas encore
+qualifié : aucun `ref`, URL de commande ni requête JS n'est reconstruit.
+
+Sur les **événements de téléchargement existants**, le producteur Plugins
+déclare `path_kind=confirmation_page` et
+`redirect_target_kind=confirmation_page` **uniquement** pour la route HTTPS
+exacte sur `www.numilog.com`. Il ajoute des booléens stricts
+`confirmation_ref_present` et `confirmation_disp_simple` sur le GET
+effectivement arrivé à la confirmation, et leur variante préfixée
+`redirect_` sur le 302 **déjà autorisé** visant cette page. Une présence
+`ref` signifie un paramètre unique et non vide ; `disp_simple` signifie
+exactement un `disp=simple`. Plusieurs `ref` ou `disp` rendent leur
+preuve correspondante `false`. Une URL non qualifiée n'expose aucun
+de ces champs.
+
+Aucun **contenu** de `ref`/`disp`, nom d'achat, URL signée, `Location`,
+cookie, corps HTML ni titre n'entre dans les événements, logs ou
+erreurs. La page n'est pas considérée comme appartenant au compte sur
+ces seuls booléens : les contrôles d'identité, de copie exacte et
+d'ACSM de 0.1.42 sont inchangés, sans requête supplémentaire.
+
+La projection des diagnostics **Core** utilise une liste fermée :
+elle doit explicitement reconnaître les nouveaux types/catégories, et
+le booléen existant `cookie_header_present`, pour que l'export utilisateur
+les affiche. Cette mise à jour Core est laissée au rôle Core (#1884) et
+n'est **pas** contenue dans cette version du plugin.
+
+Tests HTTPX simulés : ancien `disp=1` et `disp=simple`, parcours
+`readBook → 302 → ConfirmationPaiement → ACSM` avec et sans widget login,
+acheminement de la query d'origine non modifiée, et absence de fuites
+à chaque événement. **Aucun téléchargement client live validé** :
+le ticket P0 #2024 ne doit pas être clôturé sur ce lot.
