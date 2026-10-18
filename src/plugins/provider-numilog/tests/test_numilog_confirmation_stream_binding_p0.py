@@ -71,6 +71,11 @@ def _attested_pair(expected, observed):
     ('lid=12&m=dwld', 'lid=12&m=stream&m=stream', False),
     ('lid=12&m=dwld&m=dwld', 'lid=12&m=stream', False),
     ('lid=12&m=dwld', 'lid=12&m=stream&copy=2', False),
+    ('lid=12&m=dwld', 'lid=12&m=stream&edition', False),
+    ('lid=12&m=dwld&edition', 'lid=12&m=stream', False),
+    ('lid=12&m=dwld', 'lid=12&m=stream&' + '&'.join(
+        f'copy{i}=1' for i in range(33)
+    ), False),
     ('lid=12&m=dwld&copy=1', 'lid=12&m=stream', False),
     ('lid=12&m=dwld&copy=1', 'lid=12&m=stream&copy=2', False),
     ('lid=12&m=dwld&edition=A&edition=B',
@@ -85,6 +90,15 @@ def test_only_directional_dwld_to_stream_same_lid_other_params_exact(
     start = '/Pages/Compte/readBook.ashx?' + expected
     in_card = '/Pages/Compte/readBook.ashx?' + observed
     assert _attested_pair(start, in_card) is allow
+
+
+def test_readbook_query_budget_does_not_normalize_overlong_mode_or_ref():
+    excess = '/Pages/Compte/readBook.ashx?lid=12&m=stream&edition=' + 'A' * 5000
+    assert _readbook_coordinates(excess, CONFIRM_SIMPLE) is None
+    assert not _attested_pair(READ_DWLD, excess)
+    excess_expected = '/Pages/Compte/readBook.ashx?lid=12&m=dwld&edition=' + 'A' * 5000
+    assert _readbook_coordinates(excess_expected, CONFIRM_SIMPLE) is None
+    assert not _attested_pair(excess_expected, READ_STREAM)
 
 
 def test_confirmation_binding_does_not_accept_unknown_readbook_origins():
@@ -169,6 +183,7 @@ def test_real_shape_dwld_to_stream_downloads_only_signed_adobe(
 @pytest.mark.parametrize('variation', (
     'other_lid', 'other_mode', 'stream_extra_copy', 'dwld_extra_copy',
     'double_stream_mode', 'double_stream_anchor', 'stream_outside_card',
+    'stream_invalid_suffix', 'dwld_invalid_suffix', 'stream_query_bomb',
     'wrong_product', 'wrong_copy', 'different_form_ref',
 ))
 @pytest.mark.parametrize('with_login_widget', (False, True))
@@ -187,6 +202,14 @@ def test_reject_streaming_edition_mismatch_without_any_signed_get(
         inventory = inventory.replace('m=dwld', 'm=dwld&amp;copy=2')
     elif variation == 'double_stream_mode':
         html = html.replace('m=stream', 'm=stream&amp;m=stream')
+    elif variation == 'stream_invalid_suffix':
+        html = html.replace('m=stream', 'm=stream&amp;unpaired', 1)
+    elif variation == 'dwld_invalid_suffix':
+        inventory = inventory.replace('m=dwld', 'm=dwld&amp;unpaired', 1)
+    elif variation == 'stream_query_bomb':
+        html = html.replace('m=stream', 'm=stream&amp;' + '&amp;'.join(
+            f'copy{i}=1' for i in range(33)
+        ), 1)
     elif variation == 'double_stream_anchor':
         stream = '<a href="/Pages/Compte/readBook.ashx?lid=12&amp;m=stream">Extra</a>'
         marker = '</div>\n    </div></div>'
@@ -217,7 +240,16 @@ def test_reject_streaming_edition_mismatch_without_any_signed_get(
         visited.append(url)
         if url == LIBRARY:
             return httpx.Response(200, text=inventory)
-        if url == READ_DWLD or ('copy=2' in url and 'readBook.ashx' in url):
+        if (
+            url == READ_DWLD
+            or (
+                'readBook.ashx' in url
+                and (
+                    'copy=2' in url
+                    or 'unpaired' in url
+                )
+            )
+        ):
             return httpx.Response(302, headers={'location': CONFIRM_SIMPLE})
         assert url == CONFIRM_SIMPLE, 'Rejected candidate must never trigger a signed GET'
         return httpx.Response(200, text=html,
