@@ -108,11 +108,14 @@ class FilterParser(HTMLParser):
 def _fold(value):
     return ''.join(ch for ch in unicodedata.normalize('NFKD',str(value or '').casefold()) if not unicodedata.combining(ch))
 
-def _filter_choice(text,names,query):
+def _filter_choice(text,names,query,*,ambiguity=None):
     parser=FilterParser(); parser.feed(text); parser.close()
     needle=_fold(query).strip()
     if not needle: return None
     best=None
+    # A partial author/category name can match multiple *equally ranked*
+    # server choices. Picking one is not evidence of exhaustive coverage.
+    equal_rank_counts={}
     for name in names:
         for value,label in parser.options.get(name,()):
             folded=_fold(label)
@@ -122,6 +125,11 @@ def _filter_choice(text,names,query):
             else: continue
             candidate=(score,len(folded),name,value,label)
             if best is None or candidate<best: best=candidate
+            equal_rank_counts[(name,score)]=equal_rank_counts.get((name,score),0)+1
+    if ambiguity is not None:
+        # Distinct subject selectors already have their own warning; only
+        # count competing options inside the chosen server selector.
+        ambiguity.append(best is not None and equal_rank_counts[(best[2],best[0])]>1)
     return None if best is None else best[2:]
 
 def _attested_filter_metadata(selected,label):
@@ -147,7 +155,7 @@ def _public_search_error(exc):
 
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.12','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.13','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Catalogue public',unique_id='ebooksgratuits',provider_id='ebooksgratuits',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close(); self.connected=False; self._accounts=[]
@@ -180,8 +188,13 @@ class EbooksSession(ProviderSession):
                     raise ProviderCapabilityError('Ebooks libres et gratuits : field_route_unavailable')
                 if field == 'subject' and len(available) < len(names):
                     self.last_search_warnings.append('partial_results : un sélecteur catégorie/genre est indisponible')
-                choice=_filter_choice(form.text,names,query)
+                ambiguity=[]
+                choice=_filter_choice(form.text,names,query,ambiguity=ambiguity)
                 if choice is None: return []
+                if ambiguity[0]:
+                    self.last_search_warnings.append(
+                        'partial_results : plusieurs options du filtre ; une seule interrogée'
+                    )
                 if field == 'subject' and len(available) == 2:
                     # Both independently selectable routes may match the
                     # query. A single request below then covers just one of

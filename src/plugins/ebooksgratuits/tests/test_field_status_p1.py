@@ -225,3 +225,87 @@ def test_subject_without_matching_options_remains_true_zero():
         assert len(client.get_calls) == 1
     finally:
         session.close()
+
+
+
+@pytest.mark.parametrize("field,select_name,expected_key", (
+    ("author", "id_auteur", "id_auteur"),
+    ("category", "id_categorie", "id_categorie"),
+    ("genre", "id_genre", "id_genre"),
+))
+def test_equally_ranked_server_options_warn_about_partial_selection(
+    field, select_name, expected_key,
+):
+    # Query "jean" can select TWO public options on the same server route.
+    # One GET is valid, but must never be presented as comprehensive.
+    form = (
+        f'<select name="{select_name}">'
+        '<option value="51">Jean Alpha</option>'
+        '<option value="52">Jean Beta</option>'
+        '</select>'
+    )
+    client = FakeClient(form=form)
+    session = make_session(client)
+    try:
+        rows = session.search("jean", field=field)
+        assert len(rows) == 1
+        assert len(client.get_calls) == 2
+        # The existing selector deliberately prefers the shorter label.
+        assert client.get_calls[1][1]["params"][expected_key] == "52"
+        assert session.last_search_warnings == [
+            "partial_results : plusieurs options du filtre ; une seule interrogée"
+        ]
+    finally:
+        session.close()
+
+
+def test_exact_option_beats_other_partial_labels_without_spurious_warning():
+    form = ('<select name="id_auteur">'
+            '<option value="12">Jean Dupont</option>'
+            '<option value="11">Jean</option>'
+            '</select>')
+    client = FakeClient(form=form)
+    session = make_session(client)
+    try:
+        assert len(session.search("jean", field="author")) == 1
+        assert client.get_calls[1][1]["params"]["id_auteur"] == "11"
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+def test_subject_warnings_distinguish_cross_route_and_within_route_ambiguity():
+    form = (
+        '<select name="id_categorie">'
+        '<option value="7">Science-fiction A</option>'
+        '<option value="8">Science-fiction B</option></select>'
+        '<select name="id_genre">'
+        '<option value="9">Science-fiction</option></select>'
+    )
+    client = FakeClient(form=form)
+    session = make_session(client)
+    try:
+        assert len(session.search("science-fiction", field="subject")) == 1
+        # Exact genre match wins over two approximate category matches.
+        assert client.get_calls[1][1]["params"]["id_genre"] == "9"
+        assert session.last_search_warnings == [
+            "partial_results : catégorie et genre correspondants ; un seul interrogé"
+        ]
+    finally:
+        session.close()
+
+
+def test_same_selector_ambiguity_rejects_stale_warning_on_next_search():
+    form = ('<select name="id_auteur">'
+            '<option value="51">Jean Alpha</option>'
+            '<option value="52">Jean Beta</option>'
+            '<option value="53">Bernard</option></select>')
+    client = FakeClient(form=form)
+    session = make_session(client)
+    try:
+        session.search("Jean", field="author")
+        assert session.last_search_warnings
+        session.search("Bernard", field="author")
+        assert session.last_search_warnings == []
+    finally:
+        session.close()

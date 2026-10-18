@@ -65,6 +65,7 @@ def destination_category(value: object) -> tuple[str, str]:
         "acsm_fulfillment" if path == "/fulfillment/urllink.acsm"
         else "readbook" if path.endswith("/readbook.ashx")
         else "personal_library" if path.endswith("/meslivres.aspx")
+        else "login_page" if host == "www.numilog.com" and path in {"/login.aspx", "/login.aspx/authuser"}
         else "other"
     )
     return origin, path_kind
@@ -111,6 +112,7 @@ class DeliveryTrace:
         self, phase: str, code: str, *, status: object = None,
         mime: object = None, html_kind: object = None, hops: object = None,
         destination: object = None, candidates: object = None,
+        cookie_header_present: object = None,
     ) -> None:
         if phase not in _PUBLIC_PHASES or code not in _PUBLIC_CODES:
             return
@@ -130,6 +132,10 @@ class DeliveryTrace:
                 html_kind if type(html_kind) is str and html_kind in _PUBLIC_HTML
                 else "unknown"
             )
+        # A boolean presence signal only: never serialize Cookie contents, names,
+        # domains or count. Presence is NOT proof of a valid login session.
+        if type(cookie_header_present) is bool:
+            detail["cookie_header_present"] = cookie_header_present
         if type(candidates) is int and 0 <= candidates <= 10_000:
             detail["candidates"] = candidates
         if type(hops) is int and 0 <= hops <= 12:

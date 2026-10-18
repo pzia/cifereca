@@ -69,3 +69,15 @@ Une extension de ces champs exigerait la vérification des ancres
 effectives et de leur correspondance dans le HTML de catalogue ;
 **ne pas** attribuer une catégorie ou une date de publication
 historique sur la simple base du titre.
+
+
+## Couverture des sélecteurs de recherche (#1917, 0.1.13)
+
+Lorsqu'un texte auteur, catégorie ou genre correspond à plusieurs options
+**également classées dans le même sélecteur** (ex. `Jean Alpha` et
+`Jean Beta` pour `jean`), la recherche conserve son choix déterministe
+mais annonce `partial_results : plusieurs options du filtre ; une seule interrogée`.
+Une option exactement égale au texte demandé prime sans fausse ambiguïté.
+En mode sujet, la perte d'une deuxième voie catégorie/genre reste signalée
+indépendamment. Aucun scan réseau supplémentaire, aucune revendication de
+recherche exhaustive, et aucun nouveau filtre serveur n'est introduit.
