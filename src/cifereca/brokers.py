@@ -449,12 +449,21 @@ class SynchronizationBrokerImpl:
         if type(enabled) is not bool:
             raise ValueError("invalid source enabled preference")
         account = self._find_account(source_id)
-        self.service.storage.metadata_set(self._preference_key(source_id), "1" if enabled else "0")
-        # Disabling a Numilog source also withdraws materialization consent.
-        # Re-enabling inventory later must never resurrect a backup policy.
-        if enabled is False and getattr(account, "provider_id", None) == "numilog":
-            from .core.numilog_materialization_consent import revoke
-            revoke(self, source_id)
+        if getattr(account, "provider_id", None) == "numilog":
+            if enabled:
+                # Old releases could leave a disabled source with an active
+                # consent after a crash in the former two-step revoke.
+                self.service.storage.numilog_materialization_enable_source(source_id)
+            else:
+                self.service.storage.numilog_materialization_disable_source(source_id)
+            # Invalidate stale SHA-preview proposals after either source
+            # transition, even when another account is selected in GTK.
+            with self._numilog_consent_plans.lock:
+                self._numilog_consent_plans.entries.clear()
+        else:
+            self.service.storage.metadata_set(
+                self._preference_key(source_id), "1" if enabled else "0",
+            )
         self._notify()
         return self._ref(account)
 
