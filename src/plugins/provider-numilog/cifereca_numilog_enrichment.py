@@ -283,10 +283,18 @@ def merge_attested_owned_public_detail(owned, detail):
     if "isbn_edition_unspecified" in fields:
         detail_summary["isbn_edition_unspecified"] = fields["isbn_edition_unspecified"]
     from cifereca_numilog_public_metadata import validated_public_metadata, PublicMetadataError
+    from cifereca_numilog_public_commercial import (
+        validated_public_commercial, PublicCommercialError,
+    )
     try:
         html_metadata = validated_public_metadata(detail, url)
-    except PublicMetadataError:
+        commercial = validated_public_commercial(detail, url)
+    except (PublicMetadataError, PublicCommercialError):
         raise ProviderCapabilityError(error) from None
+    if commercial is not None:
+        # Observed public shelf price/availability/image are NOT evidence of
+        # purchased EPUB/PDF format, title, artifact, right or historical price.
+        detail_summary["public_commercial"] = commercial
     if html_metadata is not None:
         detail_summary["public_html_metadata"] = html_metadata
         next_metadata["public_product_metadata"] = dict(html_metadata["fields"])
