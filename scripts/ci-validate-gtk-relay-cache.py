@@ -47,6 +47,10 @@ def build(cache: Path, output: Path) -> int:
             raise ValueError("unexpected cache entry")
         if path == marker:
             continue
+        # APT commonly leaves an empty archives/lock beside partial/;
+        # accept it as input only when empty, never transmit it.
+        if relative.parts == ("lock",) and path.stat().st_size == 0:
+            continue
         if not DEB_NAME.fullmatch(path.name):
             raise ValueError("unreviewed cache file")
         size = path.stat().st_size
