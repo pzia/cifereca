@@ -15,6 +15,23 @@ if TYPE_CHECKING:
     from gi.repository import Gtk
 
 
+def invalidate_library(self) -> None:
+    """Signal newly indexed bytes, unlike ordinary coalesced background refresh.
+
+    The existing user-triggered refresh retains priority. Its already-read
+    snapshot might predate the acquisition, so re-read once on GTK completion.
+    This function is only called from TaskRunner's GTK completion callbacks.
+    """
+    if getattr(self, "_closed", False):
+        return
+    if getattr(self, "_library_refresh_pending", False):
+        self._library_refresh_dirty = True
+        return
+    refresh = getattr(self, "refresh_library", None)
+    if callable(refresh):
+        refresh(False)
+
+
 def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None, *, refresh_covers: bool = False) -> None:
     # A delayed request can be emitted after MainWindow's runner/service close.
     if getattr(self, "_closed", False):
@@ -43,6 +60,10 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
                 request_generation != self._library_refresh_generation):
             return
         self._library_refresh_pending = False
+        if getattr(self, "_library_refresh_dirty", False):
+            self._library_refresh_dirty = False
+            self.refresh_library(False)
+            return
         if not self._identity_request_current(identity_id, generation):
             self.refresh_library(False)
             return
@@ -55,6 +76,10 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
                 request_generation != self._library_refresh_generation):
             return
         self._library_refresh_pending = False
+        if getattr(self, "_library_refresh_dirty", False):
+            self._library_refresh_dirty = False
+            self.refresh_library(False)
+            return
         if not self._identity_request_current(identity_id, generation):
             self.refresh_library(False)
             return
