@@ -44,9 +44,9 @@ def _safe_member(info: zipfile.ZipInfo) -> PurePosixPath:
     wp = PureWindowsPath(name)
     mode = (info.external_attr >> 16) & 0xFFFF
     if not name or p.is_absolute() or wp.is_absolute() or bool(wp.drive) or ".." in p.parts:
-        raise DevUpdateError(f"chemin interdit dans le snapshot dev: {info.filename}")
+        raise DevUpdateError("chemin interdit dans le snapshot dev")
     if stat.S_ISLNK(mode):
-        raise DevUpdateError(f"symlink ZIP interdit dans le snapshot dev: {info.filename}")
+        raise DevUpdateError("symlink ZIP interdit dans le snapshot dev")
     return p
 
 
@@ -63,7 +63,7 @@ def _read_plugin_package_id(archive: Path) -> tuple[str, str]:
         with zipfile.ZipFile(archive, "r") as z:
             raw = json.loads(z.read(PLUGIN_MANIFEST).decode("utf-8"))
     except Exception as exc:
-        raise DevUpdateError(f"plugin ZIP invalide: {archive.name}: {exc}") from exc
+        raise DevUpdateError("plugin ZIP invalide") from exc
     package = raw.get("package") if isinstance(raw, dict) else None
     if not isinstance(package, dict) or not package.get("id") or not package.get("version"):
         raise DevUpdateError(f"manifest plugin incomplet: {archive.name}")
@@ -537,7 +537,7 @@ def apply_snapshot(
                 result["restarted"] = True
             except Exception as exc:
                 result["restarted"] = False
-                result["restart_error"] = str(exc)
+                result["restart_error"] = "redemarrage_impossible"
         return result
 
 
