@@ -255,8 +255,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     try:
         if self._kobo_adapter().available():
             adept_profiles = self.kobo_profiles()
-    except Exception as exc:
-        self.diagnostics.add("ADEPT", "profile list for dashboard", "error", detail={"error": type(exc).__name__, "message": str(exc)})
+    except Exception:
+        self.diagnostics.add(
+            "ADEPT", "profile list for dashboard", "error",
+            detail={"code": "adept_profile_lookup_failed"},
+        )
     for identity in self.identities:
         run_id = self.storage.sync_run_put({
             "identity_id": identity.identity_id, "scope": "opening", "status": "running", "started_at": started,
@@ -385,8 +388,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 status = "partial" if loans or len(accounts) > len(provider_errors) else "failed"
             else:
                 status = "success"
-        except Exception as exc:
-            errors += 1; status = "failed"; detail["error"] = str(exc)
+        except Exception:
+            # Persist a stable reason, never an identity/storage/provider
+            # exception that may disclose database paths or loan credentials.
+            errors += 1; status = "failed"; detail["error"] = "opening_sync_failed"
             # An identity-level persistence/coordination failure invalidates
             # confirmation of the entire batch, even when a provider replied.
             source_outcomes = {
