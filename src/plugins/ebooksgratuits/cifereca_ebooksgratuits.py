@@ -101,7 +101,12 @@ class FilterParser(HTMLParser):
         tag=tag.lower()
         if tag=='option' and self._select and self._value is not None:
             label=' '.join(self._pieces).strip()
-            if self._value and label: self.options.setdefault(self._select,[]).append((self._value,label))
+            # These IDs are the site's already-used "all" defaults, not
+            # selectable author/category/genre evidence. Matching their
+            # labels (Tous/Toutes) would silently return an unfiltered page.
+            default_value = {'id_auteur': '0', 'id_categorie': '1', 'id_genre': '1'}.get(self._select)
+            if self._value and label and self._value != default_value:
+                self.options.setdefault(self._select, []).append((self._value, label))
             self._value=None; self._pieces=[]
         elif tag=='select':
             self._select=None; self._value=None; self._pieces=[]
@@ -156,7 +161,7 @@ def _public_search_error(exc):
 
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.14','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.15','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Catalogue public',unique_id='ebooksgratuits',provider_id='ebooksgratuits',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close(); self.connected=False; self._accounts=[]
