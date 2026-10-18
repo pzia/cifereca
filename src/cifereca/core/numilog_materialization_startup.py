@@ -47,7 +47,8 @@ def eligible_source_ids(broker: Any, identity_id: str) -> tuple[str, ...]:
         ids = []
         for account in accounts:
             sid = broker._source_id(account)
-            if mode(broker, sid) == "on_start":
+            if (mode(broker, sid) == "on_start"
+                    and _binding(broker, sid) is not None):
                 ids.append(sid)
         return tuple(ids)
     except Exception:
