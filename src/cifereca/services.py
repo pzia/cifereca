@@ -3,6 +3,7 @@ from __future__ import annotations
 from .core import acsm_staging, loan_failure_evidence, adept_acquisition_return
 from .core import adept_artifact_publication
 from .core import loan_acquisition_admission, loan_local_preparation
+from .core import loan_provider_delivery
 from .core import manual_acsm_import
 from .core import provider_loan_return
 from .core import return_adept_orchestrator
@@ -2759,14 +2760,9 @@ class LibraryService:
         retained_acsm: Path | None = None
         failure_executor = "provider"
         try:
-            provider_started = time.monotonic()
-            _TRACE_LOG.info("TRACE download provider begin loan_id=%s provider=%s", loan.id, loan.source_provider)
-            acquisition = self.acquire_digital_loan(loan, force_refresh=True) if force_refresh else self.acquire_digital_loan(loan)
-            _TRACE_LOG.info(
-                "TRACE download provider end loan_id=%s kind=%s file=%s bytes=%s dt=%.3fs",
-                loan.id, acquisition.kind, acquisition.path.name if acquisition.path else None,
-                acquisition.path.stat().st_size if acquisition.path and acquisition.path.is_file() else 0,
-                time.monotonic()-provider_started,
+            acquisition = loan_provider_delivery.acquire_provider_loan(
+                self, loan, force_refresh=force_refresh,
+                time=time, _TRACE_LOG=_TRACE_LOG,
             )
             final_path = acquisition.path
             artifact_drm = "unknown"
@@ -2891,23 +2887,12 @@ class LibraryService:
                     inspect_artifact=inspect_artifact, adept_acsm_plan=adept_acsm_plan,
                     uuid=uuid, _TRACE_LOG=_TRACE_LOG,
                 )
-            if final_path is None or not final_path.is_file():
-                raise ProviderConfigurationError("L'acquisition automatique n'a produit aucun artefact local")
-            final_inspection = inspect_artifact(final_path)
-            if final_path.suffix.casefold() in {".epub", ".pdf"} and not final_inspection.valid:
-                raise ProviderConfigurationError(f"Artefact local invalide: {final_inspection.reason or 'validation'}")
-            _TRACE_LOG.info(
-                "TRACE download artifact ready loan_id=%s path=%s bytes=%s format=%s protected=%s",
-                loan.id, final_path, final_path.stat().st_size, final_inspection.media_format, final_inspection.protected,
+            final_inspection, scan = loan_provider_delivery.index_local_loan_artifact(
+                self, loan, identity, final_path,
+                time=time, _TRACE_LOG=_TRACE_LOG,
+                inspect_artifact=inspect_artifact,
+                ProviderConfigurationError=ProviderConfigurationError,
             )
-            index_started = time.monotonic()
-            scan = self.catalog_index_path(
-                final_path, title=loan.title, item_id=str(loan.record_id or loan.id),
-                identity_id=identity.identity_id, provider_id=loan.source_provider,
-            )
-            _TRACE_LOG.info("TRACE download catalog index end loan_id=%s status=%s dt=%.3fs", loan.id, scan.get("status"), time.monotonic()-index_started)
-            if scan.get("status") != "indexed":
-                raise ProviderConfigurationError(f"Indexation locale impossible: {scan.get('reason') or scan.get('status')}")
             self.storage.acquisition_put({
                 **ledger_base, "status": "complete", "strategy": "loan_auto",
                 "artifact_id": scan.get("artifact_id"),
