@@ -655,6 +655,16 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed):
     candidate = candidates[0]
     expected = _readbook_coordinates(expected_readbook, base_url)
     require(expected is not None)
+    # Never extend the streaming equivalence to arbitrary HTML landings:
+    # the extra identity proof exists ONLY on the observed canonical
+    # Numilog confirmation page, after the HTTPS/origin check.
+    page = urlsplit(base_url)
+    allow_stream_identity = (
+        origin(base_url) == ('https', 'www.numilog.com', 443)
+        and page.path.casefold() == '/pages/commande/confirmationpaiement.aspx'
+        and page.username is None and page.password is None
+        and not page.fragment
+    )
     parents = {id(child): node for node in root.walk() for child in node.children}
     bindings = []
     for action in root.walk():
@@ -712,9 +722,14 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed):
         # Links/ModalDownload candidate; never navigate readBook m=stream.
         # The comparison changes ONLY here, inside the already verified
         # exact confirmation layout and owning card.
-        if not any(_confirmation_readbook_binding(
-                _readbook_coordinates(n.attrs['href'], base_url), expected,
-        ) for n in readbooks):
+        if not any(
+            (
+                _confirmation_readbook_binding(
+                    _readbook_coordinates(n.attrs['href'], base_url), expected,
+                ) if allow_stream_identity
+                else _readbook_coordinates(n.attrs['href'], base_url) == expected
+            ) for n in readbooks
+        ):
             continue
         require(len(readbooks) == 1)
         require(sum(bool(re.search(r'\bModalDownload\s*\(', n.attrs.get('onclick', '')))
