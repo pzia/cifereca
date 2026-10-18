@@ -828,7 +828,9 @@ def install_source(
             for package_id, row in transaction["packages"].items():
                 row["after"] = _package_identity(package_id)
             step("transaction_finalize", _save_transaction, transaction_path, transaction, "applied")
-    except Exception as update_exc:
+    except (Exception, KeyboardInterrupt) as update_exc:
+        # Ctrl-C after Core activation must attempt the same safe transactional
+        # restore as ordinary failures; never leave a success-looking state.
         if transaction_path is not None and transaction is not None:
             try:
                 step("rollback", _complete_transaction_restore, root, transaction_path, transaction, "restoring")
@@ -1119,6 +1121,10 @@ def main(argv: list[str] | None = None) -> int:
                 result = install_archive(a.archive, python=a.python, keep=a.keep, dry_run=a.dry_run)
         _print(result, a.json)
         return 0
+    except KeyboardInterrupt:
+        _print({"ok": False, "error": {"code": "interrupted",
+               "message": "Mise à jour interrompue"}}, a.json)
+        return 130
     except TimeoutError:
         _print({"ok": False, "error": {"code": "update_error",
                "message": "Délai dépassé pour un sous-processus de mise à jour"}}, a.json)
