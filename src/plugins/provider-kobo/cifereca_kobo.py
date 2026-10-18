@@ -174,6 +174,7 @@ DESCRIPTOR = ProviderDescriptor(
         scopes=("all", "digital", "catalog"),
         pagination="page",
         page_size=50,
+        max_pages=101,
         notes=(
             "Recherche générale via Kobo-Vault ; filtrage serveur auteur/ISBN non attesté.",
             "Sans compte attesté, all/digital restent limités au catalogue public.",
@@ -384,6 +385,10 @@ class KoboSession(ProviderSession):
             if scope == "physical":
                 raise ProviderCapabilityError("Kobo-Vault : unsupported_scope")
             raise ProviderError("Kobo-Vault : portée de recherche invalide")
+        if type(page) is not int or not 0 <= page <= 100:
+            # Never send malformed pagination to a Vault catalogue route,
+            # especially not to the separate authenticated /library/search.
+            raise ProviderCapabilityError("Kobo-Vault : invalid_page")
         # Determine whether personal discovery is authorized *before* the
         # service can issue /library/search. Post-filtering private hits is
         # insufficient: a disconnected or mismatched account must not incur
