@@ -18,9 +18,9 @@ from diagnostics_explorer import (
     source_summaries,
 )
 
-MAX_SELECTED = 50
+MAX_SELECTED = 200
 MAX_SCAN_PAGES = 8
-MAX_EXPORT_BYTES = 24_000
+MAX_EXPORT_BYTES = 96_000
 
 
 @dataclass(frozen=True)
@@ -84,7 +84,7 @@ def collect_filtered_selection(
     Error selection queries the two *server-side* severity feeds regardless
     of the current severity dropdown. It still applies source, module, period
     and the local text search to each page. "Tout" follows the current
-    severity dropdown. 50 events / 24 KB / 8 pages per feed are hard caps;
+    severity dropdown. 200 events / 96 KB / 8 pages per feed are hard caps;
     an incomplete scan is NEVER returned as a complete selection.
     """
     if mode not in {"errors", "all"}:
@@ -137,7 +137,7 @@ def collect_filtered_selection(
                     continue
                 results.append(row)
                 if len(results) > MAX_SELECTED:
-                    raise ValueError("diagnostic selection exceeds 50 events")
+                    raise ValueError("diagnostic selection exceeds 200 events")
             if following is None:
                 break
             offset = following
@@ -155,8 +155,18 @@ def collect_filtered_selection(
             raise ValueError("diagnostic selection changed during pagination")
 
     event_ids = frozenset(row["event_id"] for row in results)
-    # Uses the existing redacted-export contract, including 24 KB limit.
-    packed = json.loads(export_selected_events(results, set(event_ids)))
+    # The background-only bulk path validates *all* selected rows using
+    # the same field allowlist and second redaction as the 50-row page export.
+    # No partial/truncated clipboard payload is returned on any overflow.
+    try:
+        packed = json.loads(export_selected_events(
+            results, set(event_ids),
+            max_events=MAX_SELECTED, max_bytes=MAX_EXPORT_BYTES,
+        ))
+    except ValueError as exc:
+        if str(exc) == "diagnostic export exceeds the 96 KB limit":
+            raise ValueError("diagnostic selection exceeds 96 KB") from None
+        raise
     packed["selection"] = {
         "scope": "all_accessible_filtered_pages",
         "event_count": len(results),
@@ -172,7 +182,7 @@ def collect_filtered_selection(
     result = json.dumps(packed, ensure_ascii=False, indent=2, allow_nan=False)
     try:
         if len(result.encode("utf-8")) > MAX_EXPORT_BYTES:
-            raise ValueError("diagnostic selection exceeds 24 KB")
+            raise ValueError("diagnostic selection exceeds 96 KB")
     except UnicodeError:
         raise ValueError("diagnostic selection contains invalid Unicode") from None
     return FilteredSelection(event_ids, result, len(results), inspected, partial)
