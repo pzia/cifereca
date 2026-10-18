@@ -333,3 +333,61 @@ def test_queued_periodic_work_is_discarded_after_broker_replacement():
     r.window.plugin_manager.broker = lambda _name: None
     assert r.jobs[0].work() is None
     assert not any(entry[0] == "dispatch" for entry in r.records["calls"])
+
+
+@pytest.mark.parametrize("corrupt", [
+    "unhashable_provider", "unhashable_status",
+    "schedule_read_error", "malformed_phase",
+])
+def test_one_corrupt_source_cannot_starve_healthy_periodic_sibling(corrupt):
+    bad_id = "sync:" + "b" * 24
+    good_id = "sync:" + "c" * 24
+    bad = NS(
+        identity_id="alice", source_id=bad_id, provider_id="numilog",
+        connected=True, enabled=True, sync_capable=True,
+        status="idle", last_attempt="",
+        phase_states=(NS(phase="discover_rights", status="idle", last_attempt=""),),
+    )
+    healthy = NS(
+        identity_id="alice", source_id=good_id, provider_id="numilog",
+        connected=True, enabled=True, sync_capable=True,
+        status="idle", last_attempt="",
+        phase_states=(NS(phase="discover_rights", status="idle", last_attempt=""),),
+    )
+    r = rig(
+        accounts=[bad, healthy],
+        modes={
+            bad_id: {"mode": "periodic", "interval_minutes": 15},
+            good_id: {"mode": "periodic", "interval_minutes": 15},
+        },
+    )
+    if corrupt == "unhashable_provider":
+        bad.provider_id = {"private": "DO_NOT_ECHO"}
+    elif corrupt == "unhashable_status":
+        bad.phase_states = (
+            NS(phase="discover_rights", status={"private": "DO_NOT_ECHO"},
+               last_attempt=""),
+        )
+    elif corrupt == "schedule_read_error":
+        original = r.broker.inventory_refresh_schedule
+        def broken(sid):
+            if sid == bad_id:
+                raise ValueError("https://private.invalid?auth=DO_NOT_ECHO")
+            return original(sid)
+        r.broker.inventory_refresh_schedule = broken
+    else:
+        bad.phase_states = (
+            NS(phase="discover_rights", status="unknown", last_attempt=""),
+        )
+
+    # The source-specific corruption must not disable a whole identity's
+    # opt-in heartbeat, even when corrupt source precedes a healthy one.
+    assert r.configure() is False
+    assert len(r.records["timers"]) == 1
+    assert timer.periodic_identities_due(r.window, r.broker, now=NOW) == ("alice",)
+    tick = next(iter(r.records["timers"].values()))
+    assert tick() is True
+    assert len(r.jobs) == 1
+    r.jobs[0].work()
+    assert ("dispatch", "alice", "periodic") in r.records["calls"]
+    assert "DO_NOT_ECHO" not in repr(r.jobs)
