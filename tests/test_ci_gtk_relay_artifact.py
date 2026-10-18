@@ -50,6 +50,18 @@ class GTKRelayArtifactTests(unittest.TestCase):
                 | {f"libgtk-test{i}_1.2.3_amd64.deb" for i in range(12)})
             self.assertEqual(json.load(archive.extractfile(members[0])), self.module.PROFILE)
 
+    def test_empty_apt_lock_is_never_published_but_nonempty_lock_fails(self):
+        lock = self.cache / "lock"
+        lock.touch()
+        self.assertEqual(self.module.build(self.cache, self.output), 12)
+        with tarfile.open(self.output, "r:gz") as archive:
+            self.assertFalse(any(member.name.endswith("/lock") for member in archive.getmembers()))
+        self.output.unlink()
+        lock.write_text("PRIVATE ACCESS TOKEN", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.module.build(self.cache, self.output)
+        self.assertFalse(self.output.exists())
+
     def test_success_canonicalizes_duplicate_json_keys_that_hide_private_data(self):
         marker = self.cache / self.module.MARKER
         marker.write_text(
