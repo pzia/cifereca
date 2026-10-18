@@ -92,6 +92,9 @@ def test_cover_detail_failure_is_code_only_and_uses_existing_fallback(tmp_path):
         assert detail[0]["status"] == "error"
         assert "PRIVATE_HISTORY_COVER" not in service.diagnostics.text("test")
         assert "private.invalid" not in service.diagnostics.text("test")
-        assert not _rows(service, "history search attempt")
+        # The catalogue search itself succeeded; only holdings failed.
+        search_attempts = _rows(service, "history search attempt")
+        assert search_attempts
+        assert all(row["status"] == "ok" for row in search_attempts)
     finally:
         service.close()
