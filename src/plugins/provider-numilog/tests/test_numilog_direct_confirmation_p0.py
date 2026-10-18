@@ -87,7 +87,12 @@ def test_owned_direct_confirmation_href_selects_only_fresh_matching_acsm(
             'confirmation_page', 'acsm_fulfillment',
         ]
         assert details[-1]['code'] == 'acsm_complete'
-        assert details[-1]['source'] == 'readbook'
+        # Source names the route ACTUALLY selected at user click, not the
+        # readBook evidence retained only for ownership/binding validation.
+        assert details[-1]['source'] == 'owned_card'
+        assert details[0]['phase'] == 'start'
+        assert details[0]['source'] == 'owned_card'
+        assert all(d['source'] == 'owned_card' for d in details)
         assert all(token not in repr(diag.events) for token in (
             'PRIVATE_ORDER', 'PRIVATE_HTML', 'FICTIONAL_LCP',
             'SYNTHETIC_NOT_A_CREDENTIAL', 'ref=', 'disp=',
@@ -224,3 +229,54 @@ def test_oversized_owned_confirmation_href_is_not_sent_or_saved():
     assert rows[0]['href'] == READ_12
     assert 'confirmation' not in rows[0]
     assert huge_ref not in repr(rows)
+
+
+@pytest.mark.parametrize("with_login_widget", (False, True))
+def test_unbound_owned_card_confirmation_keeps_true_source_on_failure(
+    tmp_path, with_login_widget,
+):
+    """Even after rejecting HTML, the origin of this user action is public."""
+    html = (
+        '<input type="password" name="loginWidget" value="PRIVATE_HTML"/>'
+        if with_login_widget else '<div>Unbound order</div>'
+    )
+    html += '<a href="' + SIGNED + '">Unrelated signed link</a>'
+    requests = []
+
+    def handler(request):
+        url = str(request.url)
+        requests.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=inventory_with_first_card_link())
+        assert url == DIRECT, 'No readBook or unbound ACSM request is authorized'
+        return httpx.Response(200, text=html,
+                              headers={'content-type': 'text/html'})
+
+    session, diag, importer = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        book = session.library()[0]
+        with pytest.raises(ProviderError):
+            session.download_direct(book, tmp_path)
+        assert requests == [LIBRARY, LIBRARY, DIRECT]
+        assert session.connected is True and not importer.calls
+        events = [
+            kwargs['detail'] for args, kwargs in diag.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+        ]
+        assert [event['phase'] for event in events] == [
+            'start', 'delivery_http', 'html_selection', 'completed',
+        ]
+        assert all(event['source'] == 'owned_card' for event in events)
+        assert events[1]['path_kind'] == 'confirmation_page'
+        assert events[-1]['code'] == (
+            'login_form_detected' if with_login_widget
+            else 'html_delivery_link_missing'
+        )
+        assert all(value not in repr(diag.events) for value in (
+            'PRIVATE_HTML', 'PRIVATE_ORDER', 'ref=', 'disp=',
+            'SYNTHETIC_NOT_A_CREDENTIAL',
+        ))
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
