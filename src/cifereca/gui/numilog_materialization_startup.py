@@ -53,6 +53,10 @@ def dispatch_after_opening(window: Any) -> bool:
         return False
     window._numilog_materialization_startup_dispatched = True
 
+    # Worker results are private to this task. Only identity *membership*
+    # crosses into its GTK completion; never forward titles, item IDs or URLs.
+    affected_identities: set[str] = set()
+
     def work(report=None):
         control = _StartupControl(window, broker, report)
         failures = 0
@@ -65,6 +69,9 @@ def dispatch_after_opening(window: Any) -> bool:
                 result = broker.synchronize_scheduled_numilog_materialization(
                     identity_id, "startup", control=control,
                 )
+                changed = getattr(result, "changed", None)
+                if type(changed) is int and 0 < changed <= 512:
+                    affected_identities.add(identity_id)
                 if getattr(result, "ok", None) is not True:
                     failures += 1
             except Cancelled:
@@ -76,9 +83,31 @@ def dispatch_after_opening(window: Any) -> bool:
                 "Sauvegarde initiale Numilog incomplète ; consulter Synchronisation"
             ) from None
 
+    def refresh_affected_library(_result=None):
+        # TaskRunner invokes completion callbacks on GTK, never on the
+        # worker. Refresh only the currently displayed, actually modified
+        # identity; an identity switch does not authorize another download.
+        if getattr(window, "_closed", False) or _broker(window) is not broker:
+            return
+        identity = getattr(
+            getattr(getattr(window, "service", None), "current_identity", None),
+            "identity_id", None,
+        )
+        if type(identity) is not str or identity not in affected_identities:
+            return
+        refresh = getattr(window, "refresh_library", None)
+        if callable(refresh):
+            refresh(False)
+
+    def failed(error):
+        # A partial batch can have indexed valid books before another
+        # account fails. Update those books even on the failure path.
+        refresh_affected_library()
+
     try:
         window.runner.submit(
             "Sauvegarde des achats Numilog consentie…", work,
+            refresh_affected_library, failed,
             priority=TaskPriority.PROVIDER_SYNC,
             kind="source-materialize", origin="automatic",
             coalesce_key="source:numilog:materialize:startup", with_progress=True,
