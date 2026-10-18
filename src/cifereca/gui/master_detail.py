@@ -285,7 +285,9 @@ class MasterDetailPage(Gtk.Box):
         # the already-materialised GTK rows in place instead of splicing the
         # complete ListStore on every batch. The final authoritative ranking may
         # reorder rows; that falls through to the full reconciliation below.
-        if existing_count and existing_keys == new_keys[:existing_count] and len(rows) >= existing_count:
+        if (existing_count and existing_keys == new_keys[:existing_count] and len(rows) >= existing_count
+                and not (self is getattr(self.window, "search_page", None)
+                         and getattr(self.window, "_search_local_snapshot_dirty", False))):
             tail = rows[existing_count:]
             if tail:
                 try:

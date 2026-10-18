@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 from ..models import Loan
+from .loan_safe_trace import loan_trace_ref
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -19,14 +20,15 @@ class AutomaticLoanAdmission:
 
 
 def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
+    request_ref = loan_trace_ref(loan, None)
     bound_identity_id = self.storage.identity_for_connection(
         loan.source_provider, loan.source_credential
     )
     identity = self.identity_by_id(bound_identity_id)
     if identity is None:
         _TRACE_LOG.warning(
-            "TRACE download loan_auto blocked reason=unbound_connection_identity provider=%s",
-            loan.source_provider,
+            "TRACE download loan_auto blocked reason=unbound_connection_identity request_ref=%s",
+            request_ref,
         )
         return AutomaticLoanAdmission(refusal={
             "status": "attention_required", "loan_id": loan.id,
@@ -34,15 +36,16 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
             "reason": "unbound_connection_identity",
             "retry": "explicit_only",
         })
-    _TRACE_LOG.info("TRACE download identity resolved loan_id=%s identity=%s", loan.id, identity.identity_id)
+    trace_ref = loan_trace_ref(loan, identity.identity_id)
+    _TRACE_LOG.info("TRACE download identity resolved request_ref=%s loan_ref=%s", request_ref, trace_ref)
     if str(loan.source_provider).lower() == "paris":
         _, borrower_code = self._paris_adept_identity_for_loan(
             loan, connection_identity_id=identity.identity_id,
         )
         if borrower_code:
             _TRACE_LOG.warning(
-                "TRACE download loan_auto blocked reason=%s provider=%s",
-                borrower_code, loan.source_provider,
+                "TRACE download loan_auto blocked reason=borrower_binding_guard loan_ref=%s",
+                trace_ref,
             )
             return AutomaticLoanAdmission(refusal={
                 "status": "attention_required", "loan_id": loan.id,
@@ -57,8 +60,8 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
         entitlements=entitlement_inventory,
     ):
         _TRACE_LOG.warning(
-            "TRACE download loan_auto blocked reason=cross_identity_loan provider=%s",
-            loan.source_provider,
+            "TRACE download loan_auto blocked reason=cross_identity_loan loan_ref=%s",
+            trace_ref,
         )
         return AutomaticLoanAdmission(refusal={
             "status": "attention_required", "loan_id": loan.id,

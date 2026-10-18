@@ -96,6 +96,7 @@ def _render_search_results(self) -> int:
             ))
         self._attach_row_facets(local_rows, self._search_local_objects, self.search_controls)
         self.search_page.show_rows(local_rows)
+        self._search_local_snapshot_dirty = False
         shown = len(local_rows)
         self._update_search_count(shown)
         return shown
@@ -166,6 +167,7 @@ def _render_search_results(self) -> int:
     objects = {**self._search_local_objects, **{f"{item.source_provider}:{item.id}": result_row(item) for item in self._remote_search_results}}
     self._attach_row_facets(ui_rows, objects, self.search_controls)
     self.search_page.show_rows(ui_rows)
+    self._search_local_snapshot_dirty = False
     shown = len(ui_rows)
     self._update_search_count(shown)
     return shown

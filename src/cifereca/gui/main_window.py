@@ -1628,15 +1628,28 @@ class MainWindow(Adw.ApplicationWindow):
             priority=TaskPriority.USER_ACTION, kind="borrow")
 
     def download_direct_item(self, item: SearchResult, control: Gtk.Widget | None = None) -> None:
+        from .search_snapshot_refresh import invalidate_search_snapshot
+        identity_id = getattr(self.service.current_identity, 'identity_id', None)
+        generation = self._identity_context_generation
+        def current():
+            return (not getattr(self, '_closed', False)
+                    and identity_id == getattr(self.service.current_identity, 'identity_id', None)
+                    and generation == self._identity_context_generation)
         def work():
+            if not current():
+                from ..plugin_api import Cancelled
+                raise Cancelled('Le contexte de l’obtention a changé.')
             return self.service.obtain_search_item(item)
 
         def ok(result) -> None:
+            if not current():
+                return
             acquisition = result.acquisition
             if result.path is not None:
                 self._activity_result(f"Disponible dans la Bibliothèque : {result.path.name}")
                 self.refresh_library(False)
                 self.refresh_recent()
+                invalidate_search_snapshot(self)
             elif acquisition.action == "command":
                 self._activity_result("Commande d’obtention terminée")
             else:
