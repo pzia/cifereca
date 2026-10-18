@@ -718,10 +718,20 @@ class NumilogSession(ProviderSession):
                             raise ProviderError('Numilog : page d’erreur reçue au lieu du fichier attendu')
                         evidence = {}
                         trace.fail('html_delivery_link_missing')
+                        # A commercial confirmation is a multi-book-capable
+                        # order page, even without a login widget. A lone
+                        # signed link is not sufficient proof of the selected
+                        # purchase: require the same fresh readBook/card/
+                        # ModalDownload binding as the login-widget branch.
+                        confirmation_page = (
+                            page_path == '/pages/commande/confirmationpaiement.aspx'
+                            and url_origin(str(r.url)) == url_origin(self.library_url)
+                        )
                         try:
                             url = delivery_url(
                                 html,str(r.url),allowed_origins=self.allowed_origins,
                                 evidence=evidence, expected_readbook=expected_readbook,
+                                require_bound_confirmation=confirmation_page,
                             )
                         except DeliverySelectionError as exc:
                             trace.fail('html_delivery_ambiguous' if exc.code == 'ambiguous' else 'html_delivery_link_missing')
