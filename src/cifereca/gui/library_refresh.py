@@ -20,6 +20,10 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
     if getattr(self, "_closed", False):
         return
     if self._library_refresh_pending and control is None:
+        # An automatic index may finish while a previous Library query is
+        # still in flight. Never discard that invalidation: the older query
+        # could otherwise overwrite the freshly indexed local projection.
+        self._library_refresh_dirty = True
         return
     self._library_refresh_pending = True
     self._library_refresh_generation = getattr(self, "_library_refresh_generation", 0) + 1
@@ -43,6 +47,10 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
                 request_generation != self._library_refresh_generation):
             return
         self._library_refresh_pending = False
+        if getattr(self, "_library_refresh_dirty", False):
+            self._library_refresh_dirty = False
+            self.refresh_library(False)
+            return
         if not self._identity_request_current(identity_id, generation):
             self.refresh_library(False)
             return
@@ -55,6 +63,10 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
                 request_generation != self._library_refresh_generation):
             return
         self._library_refresh_pending = False
+        if getattr(self, "_library_refresh_dirty", False):
+            self._library_refresh_dirty = False
+            self.refresh_library(False)
+            return
         if not self._identity_request_current(identity_id, generation):
             self.refresh_library(False)
             return
