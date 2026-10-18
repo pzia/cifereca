@@ -58,9 +58,17 @@ def source():
 
 def assert_private_absent(result):
     raw = repr(result)
-    for hidden in (SECRET, URL, XML, HOME, "alice@example.invalid",
-                   "certificate", "'content_keys':", "signed_url"):
+    for hidden in (SECRET, URL, XML, HOME, "alice@example.invalid"):
         assert hidden not in raw
+    def check_keys(value):
+        if type(value) is dict:
+            assert not set(value).intersection({"certificate", "content_keys", "signed_url"})
+            for nested in value.values():
+                check_keys(nested)
+        elif type(value) in (list, tuple):
+            for nested in value:
+                check_keys(nested)
+    check_keys(result)
 
 
 def test_strict_core_probe_preserves_only_core_capabilities():
@@ -159,3 +167,41 @@ def test_adaptive_capabilities_can_still_prove_acsm_from_contract_only():
     assert "download_acsm_adept" in out["contract"]["capabilities"]
     assert out["capabilities"]["capabilities"]["download"]["acsm"]["available"] is False
     assert_private_absent(out)
+
+
+@pytest.mark.parametrize(("drm", "expected"), [
+    (None, True),
+    ({}, True),
+    ({"KDRM": None}, True),
+    ({"KDRM": {"available": False}}, False),
+    ({"KDRM": {}}, False),
+    ({"KDRM": {}, "kdrm": {"available": True}}, False),
+    ({"kdrm": {"available": True}}, True),
+    ({"KDRM": {"available": True}}, True),
+])
+def test_safe_probe_preserves_real_core_kdrm_fallback_and_explicit_denial(drm, expected):
+    from cifereca.services import LibraryService
+    contract, payload = source()
+    kobo = payload["capabilities"]["download"]["kobo"]
+    if drm is None:
+        kobo.pop("drm")
+    else:
+        kobo["drm"] = drm
+
+    def consume(probe):
+        service = LibraryService.__new__(LibraryService)
+        service._kobo_adept_state_cache = None
+        service._kobo_adept_state_cache_at = 0
+        service._kobo_adapter = lambda: SimpleNamespace(
+            required_contract=8, probe_core=lambda: probe,
+        )
+        return service.kobo_adept_state(force=True)
+
+    raw_state = consume({"contract": contract, "capabilities": payload})
+    safe_state = consume(public_core_probe(contract, payload, True))
+    assert raw_state["kobo_kdrm_available"] is expected
+    assert safe_state["kobo_kdrm_available"] is expected
+    for key in ("compatible", "operational", "kobo_delegated_available",
+                "kobo_pinned_delivery_candidate", "kobo_separate_content_keys_replay"):
+        assert safe_state[key] == raw_state[key]
+    assert_private_absent(safe_state)

@@ -55,7 +55,9 @@ def public_core_probe(contract, capabilities, executable_resolved):
     acsm = _object(download.get("acsm"))
     kobo = _object(download.get("kobo"))
     drm = _object(kobo.get("drm"))
-    kdrm = _object(drm.get("KDRM") or drm.get("kdrm"))
+    kdrm = drm.get("KDRM")
+    if type(kdrm) is not dict:
+        kdrm = drm.get("kdrm")
     adept = _object(caps.get("adept"))
     loan_return = adept.get("loan_return")
     return {
@@ -78,7 +80,11 @@ def public_core_probe(contract, capabilities, executable_resolved):
                         "formats": _formats(kobo.get("formats")),
                         "pinned_delivery_candidate": _bool(kobo.get("pinned_delivery_candidate")),
                         "separate_content_keys_replay": _bool(kobo.get("separate_content_keys_replay")),
-                        "drm": {"KDRM": {"available": _bool(kdrm.get("available"))}},
+                        # Preserve absence for Core's documented legacy
+                        # pinned+replay fallback. An explicit map, even {},
+                        # remains authoritative and cannot become fallback.
+                        **({"drm": {"KDRM": {"available": _bool(kdrm.get("available"))}}}
+                           if type(kdrm) is dict else {}),
                     },
                 },
                 "adept": {

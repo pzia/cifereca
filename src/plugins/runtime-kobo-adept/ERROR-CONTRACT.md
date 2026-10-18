@@ -227,3 +227,10 @@ jetons, e-mails, XML, URLs et chemins dans le reçu public.
 Ce changement n'est pas une preuve supplémentaire de codes d'erreur
 Adobe détaillés dans une CLI réelle. #979 reste conditionné à la
 qualification amont.
+
+La projection conserve également **l’absence** d’une sous-preuve KDRM
+quand aucune map n’est publiée : le consommateur Core garde alors son
+fallback historique `pinned_delivery_candidate` +
+`separate_content_keys_replay`. Une map explicite, même vide ou portant
+`available=false`, reste prioritaire et n’est jamais remplacée par ce
+fallback. Tests de la projection suivie du véritable consommateur Core.
