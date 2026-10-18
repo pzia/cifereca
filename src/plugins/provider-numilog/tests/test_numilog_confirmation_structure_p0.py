@@ -54,7 +54,7 @@ def test_global_lcp_and_adobe_for_same_copy_select_only_unique_allowed_acsm():
 
 @pytest.mark.parametrize('disp', ('1', 'simple'))
 def test_fresh_owned_readbook_redirect_confirmation_imports_one_acsm(tmp_path, disp):
-    landing = landing.replace("disp=1", "disp=" + disp)
+    landing = CONFIRMATION.replace("disp=1", "disp=" + disp)
     requested = []
     html = FIXTURE.read_text().replace('disp=1', 'disp=' + disp)
 
@@ -187,7 +187,7 @@ def test_confirmation_requires_exact_modal_copy_and_fresh_readbook_before_signed
 
 @pytest.mark.parametrize('disp', ('1', 'simple'))
 def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_path, disp):
-    landing = landing.replace("disp=1", "disp=" + disp)
+    landing = CONFIRMATION.replace("disp=1", "disp=" + disp)
     """A site-wide login widget is not itself evidence of expired access.
 
     Only the already qualified confirmation card+ModalDownload+fresh readBook
