@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import zipfile
@@ -20,6 +21,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from . import updater
+from .update_progress import step, update_phase, update_operation
 from .paths import data_dir, state_dir
 from .install_paths import ArchiveNotFoundError, resolve_archive
 
@@ -174,8 +176,7 @@ def _install_plugin_replace(archive: Path, *, activate: bool) -> None:
         text=True, capture_output=True, timeout=120, check=False,
     )
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise DevUpdateError(f"installation plugin dev échouée ({archive.name}): {detail[-1200:]}")
+        raise DevUpdateError("installation plugin dev échouée")
 
 
 def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
@@ -184,8 +185,7 @@ def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
         [str(cli), "plugin", "list"], text=True, capture_output=True, timeout=120, check=False,
     )
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise DevUpdateError(f"smoke plugins échoué: {detail[-1200:]}")
+        raise DevUpdateError("smoke plugins échoué")
     try:
         rows = json.loads(proc.stdout)
     except Exception as exc:
@@ -409,7 +409,7 @@ def apply_snapshot(
     require_plugins_only: bool = False,
 ) -> dict[str, Any]:
     try:
-        archive = resolve_archive(archive)
+        archive = step("resolve_archive", resolve_archive, archive)
     except ArchiveNotFoundError as exc:
         raise DevUpdateError(str(exc)) from exc
     # An official plugins-only caller must supply its own trusted digest.
@@ -430,13 +430,15 @@ def apply_snapshot(
         if expected_sha256 is not None:
             snapshot = Path(tmp) / "verified-snapshot.zip"
             try:
-                shutil.copyfile(archive, snapshot)
-                matching = hmac.compare_digest(_sha256(snapshot), expected_sha256.lower())
+                step("snapshot_copy", shutil.copyfile, archive, snapshot)
+                matching = hmac.compare_digest(
+                    step("snapshot_sha", _sha256, snapshot), expected_sha256.lower()
+                )
             except OSError as exc:
                 raise DevUpdateError("snapshot illisible pour vérification SHA-256") from exc
             if not matching:
                 raise DevUpdateError("SHA-256 du snapshot incompatible avec la provenance attendue")
-        root, manifest = _extract_snapshot(snapshot, Path(tmp) / "contents")
+        root, manifest = step("snapshot_extract", _extract_snapshot, snapshot, Path(tmp) / "contents")
         snapshot_id = str(manifest.get("id") or archive.stem)
         core_rel = str(manifest.get("core") or "")
         core_zip = (root / core_rel).resolve() if core_rel else None
@@ -454,7 +456,7 @@ def apply_snapshot(
             plugin_zip = (root / rel).resolve()
             if not plugin_zip.is_file() or root.resolve() not in plugin_zip.parents:
                 raise DevUpdateError(f"plugin absent ou hors snapshot: {rel}")
-            package_id, package_version = _read_plugin_package_id(plugin_zip)
+            package_id, package_version = step("manifest_validation", _read_plugin_package_id, plugin_zip)
             if package_id in package_ids:
                 raise DevUpdateError(f"package plugin dupliqué dans snapshot: {package_id}")
             expected_sha = str(item.get("sha256") or "") if isinstance(item, dict) else ""
@@ -474,7 +476,7 @@ def apply_snapshot(
             raise DevUpdateError("SHA-256 du core invalide")
         # Indexed partial releases must prove compatibility with the installed
         # Core and API before dry-run, backup, plugin install or Core mutation.
-        partial_index = _validate_plugins_only_index(root, manifest, indexed_packages)
+        partial_index = step("manifest_validation", _validate_plugins_only_index, root, manifest, indexed_packages)
         if require_plugins_only and (manifest.get("scope") != "plugins-only" or partial_index is None):
             raise DevUpdateError(
                 "mode plugins-only strict : marqueur de portée et index obligatoires"
@@ -499,29 +501,29 @@ def apply_snapshot(
         backup_name = hashlib.sha256(snapshot_id.encode()).hexdigest()[:16] + '-' + str(time.time_ns())
         backup_base = state_dir() / "dev-updates" / backup_name
         backup_plugins = backup_base / "plugins"
-        _backup_plugins(package_ids, backup_plugins)
+        step("plugin_backup", _backup_plugins, package_ids, backup_plugins)
         old_current = updater._symlink_target(updater.install_root() / "current")
         core_installed = False
         core_result = None
         try:
             if core_zip is not None:
-                core_result = updater.install_archive(core_zip, python=python, keep=max(keep, 3), dry_run=False)
+                core_result = step("core_activation", updater.install_archive, core_zip, python=python, keep=max(keep, 3), dry_run=False)
                 core_installed = True
             for plugin_zip, activate in plugin_archives:
-                _install_plugin_replace(plugin_zip, activate=activate)
+                step("plugin_install", _install_plugin_replace, plugin_zip, activate=activate)
             if require_plugins_only:
-                _verify_strict_installed_packages(strict_packages)
-            smoke = _smoke_plugins(package_ids)
+                step("plugin_verification", _verify_strict_installed_packages, strict_packages)
+            smoke = step("smoke", _smoke_plugins, package_ids)
         except Exception as exc:
             restoration_errors = []
             try:
-                _restore_plugins(package_ids, backup_plugins)
+                step("rollback", _restore_plugins, package_ids, backup_plugins)
             except Exception:
                 restoration_errors.append('plugins')
             current = updater._symlink_target(updater.install_root() / 'current')
             if core_zip is not None and old_current is not None and old_current.is_dir() and (core_installed or current != old_current):
                 try:
-                    updater.rollback(old_current.name)
+                    step("rollback", updater.rollback, old_current.name)
                 except Exception:
                     restoration_errors.append('core')
             if restoration_errors:
@@ -561,12 +563,16 @@ def main(argv: list[str] | None = None) -> int:
     if not args.snapshot:
         parser.error("snapshot ZIP requis")
     try:
-        result = apply_snapshot(
-            args.snapshot, python=args.python, keep=args.keep,
-            dry_run=args.dry_run, restart=args.restart,
-            expected_sha256=args.expected_sha256,
-            require_plugins_only=args.require_plugins_only,
-        )
+        with update_operation(
+            "dev_plugins_only" if args.require_plugins_only else "dev_snapshot",
+            stream=sys.stderr,
+        ):
+            result = apply_snapshot(
+                args.snapshot, python=args.python, keep=args.keep,
+                dry_run=args.dry_run, restart=args.restart,
+                expected_sha256=args.expected_sha256,
+                require_plugins_only=args.require_plugins_only,
+            )
         _print(result, args.json)
         return 0
     except (DevUpdateError, updater.UpdateError) as exc:
