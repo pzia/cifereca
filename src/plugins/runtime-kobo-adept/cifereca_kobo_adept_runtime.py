@@ -5,6 +5,7 @@ import logging
 import hashlib
 import uuid
 from pathlib import Path
+from datetime import date
 import shutil
 import subprocess
 import time
@@ -575,16 +576,21 @@ class KoboAdeptRuntime:
             validity = row.get('validity')
             # An unknown/untyped validity is omitted, never interpreted as
             # a verified expiry date. Preserve only an ISO calendar date.
-            if (type(validity) is str and len(validity) == 10
-                    and validity[4] == '-' and validity[7] == '-'
-                    and validity[:4].isascii() and validity[:4].isdigit()
-                    and validity[5:7].isascii() and validity[5:7].isdigit()
-                    and validity[8:].isascii() and validity[8:].isdigit()):
-                loan['validity'] = validity
+            if type(validity) is str and len(validity) == 10:
+                try:
+                    # Exact ISO8601 calendar date, no arbitrary vendor prose.
+                    if date.fromisoformat(validity).isoformat() == validity:
+                        loan['validity'] = validity
+                except ValueError:
+                    pass
             local_book = row.get('local_book')
             # Core needs the exact path for *local*, non-inferred artifact
-            # matching. It is never used in diagnostics or thrown in errors.
-            if type(local_book) is str and 0 < len(local_book) <= 8192:
+            # matching. Opaque HTTP URLs and control characters are not file
+            # paths and must not be passed to the loan choice UI.
+            if (type(local_book) is str and 0 < len(local_book) <= 8192
+                    and Path(local_book).is_absolute()
+                    and '://' not in local_book
+                    and not any(ord(char) < 32 or ord(char) == 127 for char in local_book)):
                 loan['local_book'] = local_book
             loans.append(loan)
         self.last_run_diagnostic.update(loan_count=len(loans), inventory_valid=True)
