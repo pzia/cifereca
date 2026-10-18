@@ -357,9 +357,13 @@ def main():
         window.refresh_recent = lambda *a, **kw: owned_action["recents"].append(a)
         possession = {"identity_id": owner, "provider_id": provider, "item_id": product,
                       "kind": "owned", "state": "active", "entitlement_id": "gtk-owned-right"}
-        window._library_entries_cache = [dict(entry, key="gtk-owned-row", provider_id=provider,
+        window._library_entries_cache = [dict(entry, key="gtk-owned-row-" + provider, provider_id=provider,
             item_id=product, local=False, state="remote_owned", source="entitlement",
             entitlement_id="gtk-owned-right", possessions=[possession])]
+        # Different purchases need different canonical GTK row keys; reusing
+        # a key would intentionally exercise the progressive append fast path
+        # and leave the preceding provider's row materialized.
+        assert service.owned_library_download_target(window._library_entries_cache[0]) is not None
         window._render_library()
         later(160, owned_book_select)
 
