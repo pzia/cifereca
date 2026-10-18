@@ -27,6 +27,8 @@ def test_milan_and_fixture_changes_trigger_real_gtk_e2e():
         "src/plugins/youth-catalog/youth_page.py",
         "src/cifereca/brokers.py",
         "src/cifereca/core/source_materialization.py",
+        "src/cifereca/core/loan_local_preparation.py",
+        "src/cifereca/core/loan_provider_delivery.py",
         "src/cifereca/core/numilog_direct_acquisition.py",
         "src/cifereca/core/sync_coordination.py",
         "src/plugins/youth-detail-enrichment/enrich.py",
