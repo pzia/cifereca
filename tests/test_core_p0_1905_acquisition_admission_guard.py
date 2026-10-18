@@ -10,8 +10,8 @@ from tests.test_core_p0_1862_numilog_store_mirror import _connect, _row
 from tests.test_sync_state_contract import _service
 
 
-@pytest.mark.parametrize("provider", ["numilog", "paris", "third-party"])
-def test_explicit_admission_non_kobo_rejected_before_any_session_or_download(
+@pytest.mark.parametrize("provider", ["paris", "third-party"])
+def test_unsupported_targeted_admission_rejected_before_any_session_or_download(
     tmp_path, monkeypatch, provider,
 ):
     service = _service(tmp_path)
