@@ -106,3 +106,13 @@ def test_resume_action_never_submits_stale_or_hidden_context(mutation):
     if mutation == 'closed':window._closed = True
     actions[0].click()
     assert not calls and not submissions
+
+
+def test_resume_worker_preserves_cancellation_without_success_callback():
+    from cifereca.plugin_api import Cancelled
+    window, actions, calls, submissions, target = setup_action('numilog', 'resume_index')
+    def cancelled(_target):raise Cancelled()
+    window.service.obtain_owned_library_item = cancelled
+    actions[0].click()
+    with pytest.raises(Cancelled):submissions[0][0][1]()
+    assert not calls

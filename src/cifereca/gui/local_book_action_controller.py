@@ -5,6 +5,8 @@ widgets and TaskRunner remain owned by the MainWindow facade (#1129).
 """
 from __future__ import annotations
 
+from ..plugin_api import Cancelled
+
 
 def _add_owned_download(window, detail, item, TaskPriority):
     resolve = getattr(window.service, 'owned_library_download_target', None)
@@ -44,6 +46,8 @@ def _add_owned_download(window, detail, item, TaskPriority):
                 raise RuntimeError('Le contexte du téléchargement a changé.')
             try:
                 return window.service.obtain_owned_library_item(target)
+            except Cancelled:
+                raise
             except Exception:
                 raise RuntimeError(failure) from None
         def done(result):
