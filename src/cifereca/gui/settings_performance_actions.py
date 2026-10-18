@@ -39,7 +39,10 @@ def bind_settings_performance_actions(
             return
         active = monitor.detailed_capture_enabled is True
         # The report is a local in-memory snapshot, not a provider call.
-        report = monitor.performance_report()
+        try:
+            report = monitor.performance_report()
+        except Exception:
+            report = {}
         stats = report.get("stats", {}) if isinstance(report, dict) else {}
         count = sum(
             row["count"] for row in stats.values()
@@ -80,6 +83,26 @@ def bind_settings_performance_actions(
             window.show_error("Impossible de modifier la capture de performances.")
         refresh_status()
 
+    def record_export(code: str, *, success: bool = False) -> None:
+        """Only closed reason codes reach Diagnostics; never log the destination."""
+        diagnostics = getattr(window, "diagnostics", None)
+        add = getattr(diagnostics, "add", None)
+        if not callable(add):
+            return
+        try:
+            add(
+                "UI", "performance export", "ok" if success else "error",
+                detail={"code": code}, level="detailed",
+            )
+        except Exception:
+            # Diagnostics may be disabled; exporting remains independent.
+            pass
+
+    def export_error(code: str, message: str) -> None:
+        record_export(code)
+        if alive():
+            window.show_error(f"{message} ({code}).")
+
     def export_performance(_button=None) -> None:
         if not alive():
             return
@@ -88,47 +111,113 @@ def bind_settings_performance_actions(
             return
         try:
             report = monitor.performance_report()
-            if not isinstance(report, dict) or report.get("schema") != "cifereca.performance.phases/1":
-                raise ValueError("invalid_performance_schema")
-            # Serialize *only* the Core monitor's bounded, pre-redacted
-            # structured schema. No diagnostics text, paths, labels or logs.
+        except Exception:
+            export_error("report_invalid", "Rapport de performances indisponible")
+            return
+        if not isinstance(report, dict) or report.get("schema") != "cifereca.performance.phases/1":
+            export_error("report_invalid", "Rapport de performances indisponible")
+            return
+        try:
+            # The monitor owns this versioned, bounded, pre-redacted schema.
+            # Non-finite values and non-JSON objects are rejected, not coerced.
             content = json.dumps(
                 report, ensure_ascii=False, sort_keys=True, indent=2,
                 allow_nan=False,
             ) + "\n"
-        except (TypeError, ValueError, OverflowError):
-            window.show_error("Rapport de performances indisponible.")
+        except (TypeError, ValueError, OverflowError, RecursionError):
+            export_error("serialization_failed", "Rapport de performances indisponible")
             return
 
-        chooser = Gtk.FileChooserNative.new(
-            "Exporter les mesures de performances",
-            window, Gtk.FileChooserAction.SAVE,
-            "Exporter", "Annuler",
-        )
-        chooser.set_current_name("cifereca-performances.json")
+        chooser = None
+        try:
+            chooser = Gtk.FileChooserNative.new(
+                "Exporter les mesures de performances",
+                window, Gtk.FileChooserAction.SAVE,
+                "Exporter", "Annuler",
+            )
+            chooser.set_current_name("cifereca-performances.json")
 
-        def chosen(dialog, response):
-            try:
-                # A response to a stale Settings instance must never write a
-                # local file or announce a successful export.
-                if not alive() or response != Gtk.ResponseType.ACCEPT:
-                    return
-                selected = dialog.get_file()
-                path = selected.get_path() if selected is not None else None
-                if not path:
-                    raise ValueError("invalid_destination")
-                Path(path).write_text(content, encoding="utf-8")
-                window.toast("Mesures de performances exportées localement")
-            except Exception:
-                # Never embed a filename, provider path or arbitrary error in
-                # a toast, log or diagnostic notification.
-                if alive():
-                    window.show_error("Impossible d’exporter les mesures de performances.")
-            finally:
-                dialog.destroy()
+            def chosen(dialog, response):
+                try:
+                    # A stale Settings reply must never export or notify.
+                    if not alive() or response != Gtk.ResponseType.ACCEPT:
+                        return
+                    try:
+                        selected = dialog.get_file()
+                    except Exception:
+                        export_error(
+                            "destination_unavailable",
+                            "Destination de l’export indisponible",
+                        )
+                        return
+                    if selected is None:
+                        export_error(
+                            "destination_unavailable",
+                            "Destination de l’export indisponible",
+                        )
+                        return
 
-        chooser.connect("response", chosen)
-        chooser.show()
+                    writer = getattr(selected, "replace_contents", None)
+                    if callable(writer):
+                        # Gtk returns a Gio.File, not necessarily a POSIX
+                        # path. Gio handles portal/virtual backends correctly;
+                        # never turn a URI into a Path or print its value.
+                        try:
+                            from gi.repository import Gio
+                            result = writer(
+                                content.encode("utf-8"), None, False,
+                                Gio.FileCreateFlags.NONE, None,
+                            )
+                            if result is False or (
+                                isinstance(result, tuple)
+                                and result and result[0] is False
+                            ):
+                                raise OSError("gio_write_failed")
+                        except Exception:
+                            export_error(
+                                "write_failed",
+                                "Impossible d’exporter les mesures de performances",
+                            )
+                            return
+                    else:
+                        # Compatible with non-GI local chooser doubles and
+                        # backends exposing only a local filesystem path.
+                        get_path = getattr(selected, "get_path", None)
+                        try:
+                            path = get_path() if callable(get_path) else None
+                        except Exception:
+                            path = None
+                        if not path:
+                            export_error(
+                                "destination_unavailable",
+                                "Destination de l’export indisponible",
+                            )
+                            return
+                        try:
+                            Path(path).write_text(content, encoding="utf-8")
+                        except Exception:
+                            export_error(
+                                "write_failed",
+                                "Impossible d’exporter les mesures de performances",
+                            )
+                            return
+                    record_export("completed", success=True)
+                    window.toast("Mesures de performances enregistrées à l’emplacement choisi")
+                finally:
+                    try:
+                        dialog.destroy()
+                    except Exception:
+                        pass
+
+            chooser.connect("response", chosen)
+            chooser.show()
+        except Exception:
+            if chooser is not None:
+                try:
+                    chooser.destroy()
+                except Exception:
+                    pass
+            export_error("chooser_failed", "Sélecteur de fichier indisponible")
 
     capture_button.connect("clicked", toggle_capture)
     export_button.connect("clicked", export_performance)
