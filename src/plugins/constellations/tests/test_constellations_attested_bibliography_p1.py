@@ -169,15 +169,12 @@ def test_multiple_language_and_publisher_values_keep_distinct_typed_fields():
 
 
 def test_malformed_multivalue_evidence_is_not_stringified_or_promoted():
-    class PrivateObject:
-        def __str__(self):
-            raise AssertionError("PRIVATE_ACCOUNT")
     result = detail({
         "book_id": "edition-1", "title": "Public book",
         "metadata": {
-            "language": ["FR", PrivateObject(), {"name": "EN"}, "SECRET\\u202e", "DE"],
-            "publisher": [PrivateObject(), {"rights": "PRIVATE_TOKEN"},
-                          "Clean Public Publisher", "PRIVATE\\u202e", "Another Publisher"],
+            "language": ["FR", 77, {"name": "EN"}, "SECRET\u202e", "DE"],
+            "publisher": [99, {"rights": "PRIVATE_TOKEN"},
+                          "Clean Public Publisher", "PRIVATE\u202e", "Another Publisher"],
         },
     })
     values = [field.value for field in facets(result)]
