@@ -52,6 +52,7 @@ def test_capabilities_disclose_general_only_search_and_page_scope():
     assert capability.scopes == ("all", "digital")
     assert capability.pagination == "page"
     assert capability.page_size == 50
+    assert capability.max_pages == 101
     assert capability.supports_field("all")
     assert not capability.supports_field("author")
     assert not capability.supports_field("isbn")
@@ -96,6 +97,31 @@ def test_general_query_paginates_and_never_marks_public_books_owned():
         }})]
     finally:
         session.close()
+
+
+
+@pytest.mark.parametrize("page", (-1, True, False, "2", "garbage", 1.5, None, 101, 10**100))
+def test_invalid_page_is_typed_and_never_triggers_public_http(page):
+    client = FakeClient()
+    session = session_for_test(client)
+    try:
+        with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+            session.search("Sample", page=page)
+        assert client.calls == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("page,upstream_page", ((0, 1), (2, 3), (100, 101)))
+def test_valid_page_is_forwarded_without_silent_clamp(page, upstream_page):
+    client = FakeClient()
+    session = session_for_test(client)
+    try:
+        assert len(session.search("Sample", page=page)) == 1
+        assert client.calls[0][1]["params"]["page"] == upstream_page
+    finally:
+        session.close()
+
 
 
 def test_zero_results_and_service_failure_are_distinct():
