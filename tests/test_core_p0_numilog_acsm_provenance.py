@@ -251,3 +251,113 @@ def test_changed_acsm_output_bytes_or_symlink_never_adopts_purchase(
                and p["provider_id"] == "numilog" for p in placed)
     assert storage.acquisition_get(receipt_id)["status"] == "attention_required"
     assert len(case.deliveries) == 1
+
+
+@pytest.mark.parametrize(("media_format", "preexisting"), [
+    ("epub", False), ("pdf", False), ("epub", True), ("pdf", True),
+])
+def test_real_core_acsm_import_complete_or_unchanged_reconciles_private_purchase(
+    case, monkeypatch, tmp_path, media_format, preexisting,
+):
+    """Actual LibraryService.import_acsm, not a forged manual ledger.
+
+    The DRM runtime and provider HTTP alone are replaced with deterministic
+    local fixtures. Core performs its real staging, receipt, catalogue and
+    two distinct acquisition-lock operations.
+    """
+    import cifereca.services as facade
+
+    service = case.service
+    source = tmp_path / "fictional-acsm.acsm"
+    provider_format = (
+        "application/pdf" if media_format == "pdf"
+        else "application/epub+zip"
+    )
+    source.write_bytes(
+        ("<fulfillment><id>fake-order</id><format>" + provider_format
+         + "</format></fulfillment>").encode()
+    )
+    monkeypatch.setattr(
+        facade, "data_dir", lambda: tmp_path / "staging-runtime",
+    )
+    monkeypatch.setattr(
+        service, "resolve_adept_profile_for_identity",
+        lambda identity_id: ("synthetic-adept", "identity"),
+    )
+    monkeypatch.setattr(
+        service, "_originating_adept_profile_id", lambda *_a: None,
+    )
+    drm_calls = []
+    def synthetic_drm(request):
+        drm_calls.append(request)
+        destination = Path(request["destination"])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if media_format == "epub":
+            _write_epub(destination)
+        else:
+            destination.write_bytes(
+                b"%PDF-1.4\n% synthetic output\n"
+                b"1 0 obj << /Type /Catalog >> endobj\n%%EOF\n"
+            )
+        return {"ok": True, "artifact": {"path": str(destination)}}
+    monkeypatch.setattr(
+        service, "execute_acquisition_request", synthetic_drm,
+    )
+
+    def core_import():
+        return service.import_acsm(
+            source, provider_id="numilog",
+            identity_id=case.account.identity_id,
+            title="Fictional purchase",
+        )
+
+    first = core_import() if preexisting else None
+    if first is not None:
+        assert first["status"] == "complete"
+        assert len(drm_calls) == 1
+
+    download_calls = []
+    def download(item, directory):
+        download_calls.append(item.record_id)
+        returned = core_import()
+        assert returned["status"] == (
+            "unchanged" if preexisting else "complete"
+        )
+        path = Path(returned["path"])
+        assert path.parent.parent == Path(directory)
+        return path, "https://private.invalid?auth=SIGNED_NEVER_STORE"
+    case.session.download_direct = download
+
+    acquired = service.acquire_direct_item(case.item)
+    checkpoint = acquired.metadata["numilog_checkpoint_id"]
+    initial = service.storage.placement_for_path(acquired.path)
+    assert initial is not None
+    assert initial["source_item_id"] == hashlib.sha256(
+        source.read_bytes(),
+    ).hexdigest()
+    assert acquired.path.parent.name.startswith("acsm-")
+    assert acquired.path.suffix == "." + media_format
+    assert len(drm_calls) == 1 and len(download_calls) == 1
+
+    indexed = service.resume_numilog_materialization(checkpoint)
+    assert indexed.indexed["status"] == "indexed"
+    assert service.storage.placement_for_path(acquired.path)[
+        "source_item_id"
+    ] == case.item.record_id
+    assert service.storage.acquisition_get(checkpoint)["status"] == "complete"
+
+    for scan in (False, True):
+        library = service.library_entries(
+            identity_id=case.account.identity_id, scan=scan,
+        )
+        local = [
+            row for row in library
+            if row.get("artifact_id") == initial["artifact_id"]
+            and row.get("local") is True
+        ]
+        assert len(local) == 1
+        assert any(
+            p.get("entitlement_id") == case.right["entitlement_id"]
+            for p in local[0]["possessions"]
+        )
+    assert len(drm_calls) == len(download_calls) == 1
