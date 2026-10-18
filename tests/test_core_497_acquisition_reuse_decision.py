@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 
 from cifereca.core.acquisition_decision import decide_artifact_reuse
@@ -86,27 +85,52 @@ def test_no_previous_artifact_requires_normal_acquisition():
     assert decision.source == 'none'
 
 
-def test_service_logs_one_structured_decision_before_provider_call():
-    tree = ast.parse(SERVICES.read_text(encoding='utf-8'))
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'LibraryService')
-    method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == '_acquire_active_loan_automatically_guarded')
-    source = ast.unparse(method)
-    assert 'decide_artifact_reuse' in source
-    assert 'TRACE download loan_auto decision' in source
-    assert source.index('TRACE download loan_auto decision') < source.index('self.acquire_digital_loan')
+def test_service_logs_one_structured_decision_before_provider_call(tmp_path, monkeypatch, caplog):
+    import logging
+    from tests.test_core_0977_adept_retry_guard import _service, _loan
+    service = _service(tmp_path)
+    caplog.set_level(logging.INFO)
+    calls = []
+    def acquire(*args, **kwargs):
+        decisions = [r for r in caplog.records if r.getMessage().startswith('TRACE download loan_auto decision ')]
+        assert len(decisions) == 1
+        assert 'action=acquire' in decisions[0].getMessage()
+        calls.append('provider')
+        raise RuntimeError('synthetic provider failure')
+    monkeypatch.setattr(service, 'acquire_digital_loan', acquire)
+    try:
+        result = service._acquire_active_loan_automatically(_loan())
+        assert result['status'] == 'retryable_error'
+        assert calls == ['provider']
+    finally:
+        service.close()
 
 
-def test_reuse_returns_before_provider_call_and_exposes_reason():
-    source = SERVICES.read_text(encoding='utf-8')
-    start = source.index('def _acquire_active_loan_automatically_guarded')
-    end = source.index('\n    def ', start + 10)
-    method = source[start:end]
-    reuse = method.index('if decision.action == "reuse"')
-    provider = method.index('self.acquire_digital_loan')
-    assert reuse < provider
-    assert '"decision": decision.action' in method
-    assert '"reason": decision.reason' in method
-    assert '"source": decision.source' in method
+def test_reuse_returns_before_provider_call_and_exposes_reason(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import pytest
+    from tests.test_core_0977_adept_retry_guard import _service, _loan, _seed
+    service = _service(tmp_path)
+    path = tmp_path / 'retained.epub'
+    path.write_bytes(b'synthetic local artifact')
+    _seed(service, status='complete', executor='provider', metadata={'path': str(path)})
+    before = service.storage.acquisitions()
+    monkeypatch.setattr('cifereca.services.inspect_artifact',
+                        lambda *a: SimpleNamespace(valid=True, protected=False))
+    monkeypatch.setattr(service, 'catalog_index_path', lambda *a, **kw: {'status': 'indexed'})
+    def forbidden(*a, **kw): pytest.fail('reuse cannot acquire, fulfill or rewrite ledger')
+    monkeypatch.setattr(service, 'acquire_digital_loan', forbidden)
+    monkeypatch.setattr(service, 'execute_acquisition_request', forbidden)
+    monkeypatch.setattr(service.storage, 'acquisition_put', forbidden)
+    try:
+        assert service._acquire_active_loan_automatically(_loan()) == {
+            'status': 'unchanged', 'loan_id': 'loan-a', 'decision': 'reuse',
+            'reason': 'valid_ledger_artifact', 'source': 'ledger',
+        }
+        assert service.storage.acquisitions() == before
+        assert path.read_bytes() == b'synthetic local artifact'
+    finally:
+        service.close()
 
 
 def test_successful_acquisition_persists_decision_metadata():

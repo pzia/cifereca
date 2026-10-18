@@ -931,7 +931,11 @@ Numilog** tolère désormais le changement *directionnel*
 `m=('dwld',)` sur le lien *MesLivres* → `m=('stream',)` sur l'ancre
 de la carte de confirmation. Le `lid` numérique doit être identique
 et **tous les autres paramètres**, clés, valeurs et répétitions
-incluses, doivent correspondre exactement. L'ancienne égalité
+incluses, doivent correspondre exactement. Les URLs `readBook`
+participant à cette preuve sont limitées à **4096 caractères** et
+**32 paramètres**, et les fragments de query malformés (`&cle`
+sans valeur) sont refusés au lieu d'être supprimés silencieusement.
+L'ancienne égalité
 stricte reste inchangée partout ailleurs (autres pages, catalogues,
 livraisons directes, autres modes).
 
