@@ -77,58 +77,62 @@ def periodic_identities_due(
             if not isinstance(rows, (tuple, list)) or len(rows) > _MAX_SOURCES:
                 continue
             for source in rows:
-                if (
-                    getattr(source, "identity_id", None) != identity_id
-                    or getattr(source, "provider_id", None) not in {"kobo", "numilog"}
-                    or getattr(source, "sync_capable", None) is not True
-                ):
-                    continue
-                sid = getattr(source, "source_id", None)
-                if type(sid) is not str or not sid.startswith("sync:"):
-                    continue
-                policy = _policy(broker.inventory_refresh_schedule(sid))
-                if policy is None:
-                    continue
-                # The source-level clock is shared with opening/loan sync.
-                # Only discover_rights phase evidence may throttle a private-store
-                # inventory refresh. Legacy test/dummy brokers without phase
-                # states keep their original passive source projection.
-                phase_rows = getattr(source, "phase_states", ())
-                if phase_rows:
-                    if not isinstance(phase_rows, (tuple, list)) or len(phase_rows) > 8:
-                        continue
-                    matches = [
-                        phase for phase in phase_rows
-                        if getattr(phase, "phase", None) == "discover_rights"
-                    ]
-                    if len(matches) != 1:
-                        continue
-                    last_inventory_attempt = getattr(matches[0], "last_attempt", None)
-                    inventory_status = getattr(matches[0], "status", None)
+                try:
                     if (
-                        type(last_inventory_attempt) is not str
-                        or inventory_status not in {
-                            "idle", "running", "success", "partial", "failed",
-                        }
+                        getattr(source, "identity_id", None) != identity_id
+                        or getattr(source, "provider_id", None) not in {"kobo", "numilog"}
+                        or getattr(source, "sync_capable", None) is not True
                     ):
                         continue
-                else:
-                    if getattr(source, "provider_id", None) == "numilog":
-                        continue  # Numilog requires its own attested inventory clock.
-                    last_inventory_attempt = getattr(source, "last_attempt", "")
-                    inventory_status = getattr(source, "status", "idle")
-                if getattr(source, "status", None) == "running":
-                    inventory_status = "running"
-                if source_refresh_due(
-                    policy, trigger="periodic", now=instant,
-                    last_attempt=last_inventory_attempt,
-                    phase_status=inventory_status,
-                    enabled=getattr(source, "enabled", None),
-                    connected=getattr(source, "connected", None),
-                    capable=True,
-                ):
-                    due.append(identity_id)
-                    break
+                    sid = getattr(source, "source_id", None)
+                    if type(sid) is not str or not sid.startswith("sync:"):
+                        continue
+                    policy = _policy(broker.inventory_refresh_schedule(sid))
+                    if policy is None:
+                        continue
+                    # The source-level clock is shared with opening/loan sync.
+                    # Only discover_rights phase evidence may throttle a private-store
+                    # inventory refresh. Legacy test/dummy brokers without phase
+                    # states keep their original passive source projection.
+                    phase_rows = getattr(source, "phase_states", ())
+                    if phase_rows:
+                        if not isinstance(phase_rows, (tuple, list)) or len(phase_rows) > 8:
+                            continue
+                        matches = [
+                            phase for phase in phase_rows
+                            if getattr(phase, "phase", None) == "discover_rights"
+                        ]
+                        if len(matches) != 1:
+                            continue
+                        last_inventory_attempt = getattr(matches[0], "last_attempt", None)
+                        inventory_status = getattr(matches[0], "status", None)
+                        if (
+                            type(last_inventory_attempt) is not str
+                            or inventory_status not in {
+                                "idle", "running", "success", "partial", "failed",
+                            }
+                        ):
+                            continue
+                    else:
+                        if getattr(source, "provider_id", None) == "numilog":
+                            continue  # Numilog requires its own attested inventory clock.
+                        last_inventory_attempt = getattr(source, "last_attempt", "")
+                        inventory_status = getattr(source, "status", "idle")
+                    if getattr(source, "status", None) == "running":
+                        inventory_status = "running"
+                    if source_refresh_due(
+                        policy, trigger="periodic", now=instant,
+                        last_attempt=last_inventory_attempt,
+                        phase_status=inventory_status,
+                        enabled=getattr(source, "enabled", None),
+                        connected=getattr(source, "connected", None),
+                        capable=True,
+                    ):
+                        due.append(identity_id)
+                        break
+                except Exception:
+                    # One malformed or unavailable source must not starve siblings.
+                    continue
         except Exception:
             # Missing/broken identity state never authorizes scheduled I/O.
             continue
@@ -219,19 +223,23 @@ def configure(
             if not isinstance(rows, (list, tuple)) or len(rows) > _MAX_SOURCES:
                 continue
             for source in rows:
-                if (
-                    getattr(source, "identity_id", None) == identity_id
-                    and getattr(source, "provider_id", None) in {"kobo", "numilog"}
-                    and getattr(source, "enabled", None) is True
-                    and getattr(source, "connected", None) is True
-                    and getattr(source, "sync_capable", None) is True
-                ):
-                    sid = getattr(source, "source_id", None)
-                    if type(sid) is str and sid.startswith("sync:"):
-                        policy = _policy(broker.inventory_refresh_schedule(sid))
-                        if policy is not None and policy.mode == "periodic":
-                            periodic = True
-                            break
+                try:
+                    if (
+                        getattr(source, "identity_id", None) == identity_id
+                        and getattr(source, "provider_id", None) in {"kobo", "numilog"}
+                        and getattr(source, "enabled", None) is True
+                        and getattr(source, "connected", None) is True
+                        and getattr(source, "sync_capable", None) is True
+                    ):
+                        sid = getattr(source, "source_id", None)
+                        if type(sid) is str and sid.startswith("sync:"):
+                            policy = _policy(broker.inventory_refresh_schedule(sid))
+                            if policy is not None and policy.mode == "periodic":
+                                periodic = True
+                                break
+                except Exception:
+                    # One malformed or unavailable source must not starve siblings.
+                    continue
         except Exception:
             continue
         if periodic:
