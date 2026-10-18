@@ -254,7 +254,7 @@ def test_shared_login_widget_does_not_block_exact_owned_confirmation_acsm(tmp_pa
 
 @pytest.mark.parametrize('mutation', (
     'different_product', 'different_copy', 'different_readbook',
-    'missing_modal', 'duplicate_signed', 'unqualified_landing',
+    'missing_modal', 'duplicate_signed', 'missing_links_array', 'unqualified_landing',
 ))
 def test_shared_login_widget_confirmation_refuses_unbound_acsm(tmp_path, mutation):
     """A login form plus ONE plausible signed link is never enough."""
@@ -274,6 +274,8 @@ def test_shared_login_widget_confirmation_refuses_unbound_acsm(tmp_path, mutatio
         html = html.replace('ModalDownload(9001, 1)', 'UnrelatedAction(9001, 1)')
     elif mutation == 'duplicate_signed':
         html = html.replace('</body>', '<script>const extra = "' + SECOND + '";</script></body>')
+    elif mutation == 'missing_links_array':
+        html = html.replace('const Links = [', 'const OtherLinks = [')
     landing = (
         'https://www.numilog.com/Pages/Compte/Landing.aspx'
         if mutation == 'unqualified_landing' else CONFIRMATION
@@ -302,6 +304,30 @@ def test_shared_login_widget_confirmation_refuses_unbound_acsm(tmp_path, mutatio
         assert not importer.calls
         assert session.connected is True
         assert diagnostics.events
+        # The failure has one bounded, discriminating html_selection event.
+        # The terminal public code remains login_form_detected because a
+        # password widget alone never proves that the cookie expired.
+        selections = [
+            kw['detail'] for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+            and kw['detail'].get('phase') == 'html_selection'
+        ]
+        expected_selection = (
+            'login_form_detected' if mutation == 'unqualified_landing'
+            else 'html_delivery_link_missing' if mutation == 'missing_links_array'
+            else 'html_delivery_ambiguous'
+        )
+        assert len(selections) == 1
+        assert selections[0]['code'] == expected_selection
+        assert selections[0]['html_kind'] == 'login'
+        assert selections[0].get('candidates', 0) <= 10000
+        terminal = [
+            kw['detail'] for args, kw in diagnostics.events
+            if args[:2] == ('NUMILOG', 'acquisition_delivery')
+            and kw['detail'].get('phase') == 'completed'
+        ]
+        assert len(terminal) == 1
+        assert terminal[0]['code'] == 'login_form_detected'
         assert 'SYNTHETIC_NOT_A_CREDENTIAL' not in repr(diagnostics.events)
         assert diagnostics.events[-1]
         _assert_clean(tmp_path)
