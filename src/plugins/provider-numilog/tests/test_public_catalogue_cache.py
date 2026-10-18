@@ -75,7 +75,9 @@ def test_clear_during_inflight_is_nonblocking_and_late_response_never_repopulate
         cache.clear()  # Must not wait for load or hold the request mutex.
         with pytest.raises(ProviderError,match='in_progress'):
             cache.get('other',lambda:pytest.fail('no duplicate in-flight GET'))
-        finish.set();assert task.result(timeout=2)=={'late':True}
+        finish.set()
+        with pytest.raises(ProviderError, match='public_catalog_request_invalidated'):
+            task.result(timeout=2)
     assert not cache._entries
     assert cache.get('page',lambda:{'fresh':True})=={'fresh':True}
 
@@ -100,3 +102,63 @@ def test_public_provider_reuses_only_own_cache_and_clear_invalidates(monkeypatch
     s.close();s.connect();s.search('jefferson')
     assert len(calls)==2
     other=session();other.search('jefferson');assert len(calls)==3
+
+
+
+@pytest.mark.parametrize("transition", ("close", "reconnect"))
+def test_public_search_started_before_session_transition_cannot_return_old_rows(
+    monkeypatch, transition,
+):
+    """The response from an old session epoch must not reach Search/Core UI."""
+    import json
+    from pathlib import Path
+    from cifereca_numilog_public import parse_public_search
+    import cifereca_numilog_public_provider as provider
+
+    root = Path(__file__).parent / "fixtures"
+    expected = json.loads(
+        (root / "public_search_jefferson_20261016.expected.json").read_text()
+    )
+    page = parse_public_search(
+        (root / "public_search_jefferson_20261016.html").read_text(),
+        expected["source_url"],
+    )
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def fetch(*_args, **_kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(3)
+        return page
+
+    monkeypatch.setattr(provider, "fetch_public_search", fetch)
+    session = provider.NumilogPublicSession(
+        credential_id="__public__", label="Public", credentials={}, options={},
+    )
+    session.connect()
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stale = pool.submit(session.search, "jefferson")
+            assert entered.wait(3)
+            if transition == "close":
+                session.close()
+            else:
+                session.connect()
+            release.set()
+            with pytest.raises(ProviderError, match="public_catalog_request_invalidated"):
+                stale.result(timeout=3)
+
+        assert not session._public_cache._entries
+        if transition == "close":
+            with pytest.raises(ProviderError, match="non connecté"):
+                session.search("jefferson")
+            session.connect()
+        fresh = session.search("jefferson")
+        assert len(fresh) == 20
+        assert all(r.owned is False and r.downloadable is False for r in fresh)
+        assert len(calls) == 2  # new session, new explicit search
+    finally:
+        release.set()
+        session.close()

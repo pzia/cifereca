@@ -613,3 +613,17 @@ automatique n'est introduit.
 
 Cela ne prouve ni l'authentification acceptée par le serveur, ni un
 téléchargement fonctionnel. La recette réelle #2024 reste indispensable.
+
+
+## Cache catalogue public et résultats asynchrones périmés (#1886, 0.1.40)
+
+Une recherche publique ou une fiche commencée avant fermeture ou reconnexion
+ne peut plus restituer son ancienne réponse au Core après `clear()`.
+L'invalidation de génération, déjà présente pour le cache, rejette désormais
+**aussi la valeur retournée à l'appelant** avec le code fixe
+`public_catalog_request_invalidated`. Aucun contenu de réponse, requête,
+identité ou URL n'est journalisé par ce refus. Le verrou du cache n'est pas
+tenu pendant HTTP ; une requête déjà en cours peut se terminer mais ne sera
+ni mise en cache, ni présentée comme résultat de la nouvelle session.
+Un appel ultérieur explicite réinterroge normalement le catalogue sous
+le budget/cooldown existant, sans retry automatique ni réseau supplémentaire.
