@@ -549,22 +549,43 @@ class KoboAdeptRuntime:
         if not isinstance(rows, list) or len(rows) > 5000:
             raise KoboAdeptError('Inventaire des prêts ADEPT invalide.', code='kobo_adept_invalid_loan_inventory')
         loans = []
+        seen = set()
         for row in rows:
-            if (not isinstance(row, dict) or not isinstance(row.get('id'), str)
-                    or not row['id'].strip() or row['id'].startswith('-')
+            if (type(row) is not dict
+                    or type(row.get('id')) is not str
+                    or not 1 <= len(row['id']) <= 256
+                    or row['id'] != row['id'].strip()
+                    or row['id'].startswith('-')
+                    or any(ord(char) < 32 or ord(char) == 127 for char in row['id'])
+                    or row['id'] in seen
                     or any(type(row.get(k)) is not bool for k in ('expired', 'returned', 'token_present'))):
                 raise KoboAdeptError('Entrée de prêt ADEPT invalide.', code='kobo_adept_invalid_loan_inventory')
+            seen.add(row['id'])
             if expired and (not row['expired'] or row['returned']):
                 raise KoboAdeptError('Inventaire expiré incohérent.', code='kobo_adept_invalid_loan_inventory')
             loan = {k: row[k] for k in ('id', 'expired', 'returned', 'token_present')}
-            # Technical token_path/operator_url and arbitrary fields are tolerated,
-            # but never become an application dependency or copied diagnostics.
-            for key in ('title', 'validity', 'local_book', 'fetched_at', 'returned_at'):
-                field = row.get(key)
-                if isinstance(field, str) and len(field) <= 8192:
-                    loan[key] = field
-            if isinstance(row.get('devices'), list) and len(row['devices']) <= 100:
-                loan['devices'] = row['devices']
+            # Only these optional fields are consumed by Core inventory and
+            # the explicit, user-selected loan binding UI. Do not forward
+            # opaque vendor dictionaries in devices or incidental timestamps.
+            # These can contain certificate paths, signed URLs and tokens.
+            title = row.get('title')
+            if (type(title) is str and 1 <= len(title) <= 512
+                    and not any(ord(char) < 32 or ord(char) == 127 for char in title)):
+                loan['title'] = title
+            validity = row.get('validity')
+            # An unknown/untyped validity is omitted, never interpreted as
+            # a verified expiry date. Preserve only an ISO calendar date.
+            if (type(validity) is str and len(validity) == 10
+                    and validity[4] == '-' and validity[7] == '-'
+                    and validity[:4].isascii() and validity[:4].isdigit()
+                    and validity[5:7].isascii() and validity[5:7].isdigit()
+                    and validity[8:].isascii() and validity[8:].isdigit()):
+                loan['validity'] = validity
+            local_book = row.get('local_book')
+            # Core needs the exact path for *local*, non-inferred artifact
+            # matching. It is never used in diagnostics or thrown in errors.
+            if type(local_book) is str and 0 < len(local_book) <= 8192:
+                loan['local_book'] = local_book
             loans.append(loan)
         self.last_run_diagnostic.update(loan_count=len(loans), inventory_valid=True)
         return {'loans': loans}
