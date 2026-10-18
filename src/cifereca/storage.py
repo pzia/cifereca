@@ -2536,6 +2536,146 @@ class Storage:
                 ),
             )
 
+    def numilog_checkpoint_adopt_acsm_placement(
+        self, acquisition_id: str, *, expected_path: str,
+    ) -> bool:
+        """Bind a broker-indexed Numilog ACSM file to one proven owned receipt.
+
+        The ADEPT import initially indexes the ACSM sha as its source item.
+        Only the *later* exact-purchase receipt may replace that provenance,
+        and only when both independent ledgers, the artifact, placement and
+        catalogue all attest the same existing bytes and identity. A matching
+        title, ACSM hash alone or legacy source label never permits adoption.
+        No network call or filesystem mutation is performed here.
+        """
+        import hashlib
+        import re
+        from pathlib import Path
+
+        if (type(acquisition_id) is not str
+                or re.fullmatch(r"numilog-materialization:[0-9a-f]{32}",
+                                acquisition_id) is None
+                or type(expected_path) is not str
+                or not expected_path or "\0" in expected_path):
+            return False
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            record = db.execute(
+                "SELECT identity_id,credential_id,account_id,item_id,status,"
+                "metadata_json FROM acquisition_ledger WHERE acquisition_id=? "
+                "AND provider_id='numilog'",
+                (acquisition_id,),
+            ).fetchone()
+            if record is None:
+                return False
+            identity, credential, account, item_id, status, receipt_raw = record
+            from .core.numilog_manifest_rights import _scoped_record_id
+            if (not all(type(v) is str and v for v in
+                        (identity, credential, account, item_id))
+                    or _scoped_record_id(item_id, credential) is None
+                    or status not in {"acquiring", "retryable_error", "attention_required"}
+                    or acquisition_id != self._stable_id(
+                        "numilog-materialization", identity, credential, account, item_id,
+                    )):
+                return False
+            receipt = self._json_load(receipt_raw)
+            if (type(receipt) is not dict
+                    or receipt.get("kind") != "numilog_delivered_artifact_v1"
+                    or receipt.get("phase") != "index_pending"
+                    or receipt.get("path") != expected_path
+                    or type(receipt.get("sha256")) is not str
+                    or re.fullmatch(r"[0-9a-f]{64}", receipt["sha256"]) is None
+                    or type(receipt.get("size")) is not int
+                    or receipt["size"] <= 0):
+                return False
+            source_root = receipt.get("root")
+            if type(source_root) is not str:
+                return False
+            path = Path(expected_path)
+            parent = path.parent
+            if (not path.is_absolute() or str(parent.parent) != source_root
+                    or re.fullmatch(r"acsm-([0-9a-f]{64})", parent.name) is None):
+                return False
+            acsm_sha = parent.name[5:]
+            manual_id = "manual-acsm:" + hashlib.sha256(
+                (identity + ":" + acsm_sha).encode("utf-8"),
+            ).hexdigest()[:32]
+            manual_row = db.execute(
+                "SELECT provider_id,credential_id,identity_id,item_id,status,"
+                "artifact_id,metadata_json FROM acquisition_ledger "
+                "WHERE acquisition_id=?",
+                (manual_id,),
+            ).fetchone()
+            if manual_row is None:
+                return False
+            m_provider, m_credential, m_identity, m_item, m_status, m_artifact, m_raw = manual_row
+            m_meta = self._json_load(m_raw)
+            artifact_id = "sha256:" + receipt["sha256"]
+            if (m_provider != "numilog" or m_credential != "manual"
+                    or m_identity != identity or m_item != acsm_sha
+                    or m_status != "complete" or m_artifact != artifact_id
+                    or type(m_meta) is not dict
+                    or m_meta.get("source_acsm_sha256") != acsm_sha
+                    or m_meta.get("path") != expected_path):
+                return False
+            art = db.execute(
+                "SELECT sha256,size FROM artifacts WHERE artifact_id=?",
+                (artifact_id,),
+            ).fetchone()
+            if art != (receipt["sha256"], receipt["size"]):
+                return False
+            placements = db.execute(
+                "SELECT placement_id,artifact_id,identity_id,provider_id,"
+                "source_item_id,state FROM placements WHERE path=?",
+                (expected_path,),
+            ).fetchall()
+            if len(placements) != 1:
+                return False
+            pid, pa, pi, pp, pitem, state = placements[0]
+            if (pa != artifact_id or pi != identity or pp != "numilog"
+                    or pitem != acsm_sha or state != "present"):
+                return False
+            catalogs = db.execute(
+                "SELECT catalog_entry_id,artifact_id,identity_id,provider_id,"
+                "item_id,local_state FROM catalog_entries WHERE placement_id=? LIMIT 2",
+                (pid,),
+            ).fetchall()
+            if (len(catalogs) != 1
+                    or catalogs[0][1:] != (
+                        artifact_id, identity, "numilog", acsm_sha, "local"
+                    )):
+                return False
+            other = db.execute(
+                "SELECT 1 FROM placements WHERE artifact_id=? AND path<>? "
+                "AND source_item_id IS NOT NULL LIMIT 1",
+                (artifact_id, expected_path),
+            ).fetchone()
+            if other is not None:
+                return False
+            competitors = db.execute(
+                "SELECT acquisition_id FROM acquisition_ledger WHERE "
+                "provider_id='numilog' AND credential_id=? AND item_id=? LIMIT 2",
+                (credential, item_id),
+            ).fetchall()
+            if len(competitors) != 1 or competitors[0][0] != acquisition_id:
+                return False
+            # Both provenance rows change together. A crash/SQL error cannot
+            # leave a placement adopted without its matching catalog entry.
+            stamp = int(time.time())
+            updated = db.execute(
+                "UPDATE placements SET source_item_id=?,updated_at=? "
+                "WHERE placement_id=? AND source_item_id=? AND artifact_id=?",
+                (item_id, stamp, pid, acsm_sha, artifact_id),
+            )
+            changed = db.execute(
+                "UPDATE catalog_entries SET item_id=?,updated_at=? "
+                "WHERE catalog_entry_id=? AND item_id=? AND artifact_id=?",
+                (item_id, stamp, catalogs[0][0], acsm_sha, artifact_id),
+            )
+            if updated.rowcount != 1 or changed.rowcount != 1:
+                raise ValueError("stale_numilog_acsm_provenance")
+            return True
+
     def numilog_checkpoint_complete(
         self, acquisition_id: str, *, identity_id: str, credential_id: str,
         account_id: str, item_id: str, path: str, sha256: str, size: int, artifact_id: str,
