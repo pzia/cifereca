@@ -40,7 +40,8 @@ def _redact_url(url):
     from urllib.parse import urlsplit
     try:
         parsed = urlsplit(url)
-        if parsed.query or parsed.fragment or parsed.username or re.search(r"(?i)/(?:LOAN|URLLink\.acsm)(?:/|$)", parsed.path):
+        # Provider paths can contain opaque account IDs even without a query.
+        if parsed.path not in {"", "/"} or parsed.query or parsed.fragment or parsed.username:
             return f"{parsed.scheme}://{parsed.hostname}/<redacted>"
         return url
     except ValueError:
