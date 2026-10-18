@@ -996,3 +996,35 @@ est prise en charge par CoreUI dans
 La version Numilog 0.1.48 assure le transport ; cette validation
 de contrat plugin ne modifie ni l'API, ni le package binaire, ni
 le flux de droits et n'introduit aucun appel réseau.
+
+
+## Numilog 0.1.50 — l’inventaire privé reste sur l’origine du compte
+
+`connect()` et chaque page de `MesLivres.aspx` doivent désormais
+provenir de **l’origine exacte** de la bibliothèque privée configurée.
+Les origines supplémentaires autorisées pour le transport d’EPUB/ACSM
+(`services.numilog.com`, `edenlivres.fr`, certains hôtes de stockage
+et l’entrepôt ADEPT) **ne certifient jamais une possession**.
+
+Le client vérifie **avant d’émettre le GET suivant** que la cible d’une
+redirection 301/302/303/307/308 d’inventaire reste sur cette origine,
+même si l’autre hôte est déjà présent dans l’allowlist réseau et expose
+un chemin `/Pages/Compte/MesLivres.aspx` identique. Le parseur continue
+à exiger la structure MesLivres et les liens de pagination sur la même
+origine. Une cible rejetée ne provoque ni POST d’authentification
+supplémentaire, ni GET externe, ni droit `owned`, ni acquisition.
+Le blocage d’origine n’est **pas** présenté comme preuve d’expiration
+de session.
+
+Les redirects habituels `MesLivres → MesLivres?page=N` de la **même
+origine** restent pris en charge ; la configuration HTTP de simulation
+locale `127.0.0.1` conserve son origine sans promouvoir automatiquement
+un domaine de production. La validation des origines de **livraison
+ACSM**, distincte de l’inventaire, n’est pas élargie ni modifiée.
+
+Tests exclusivement `httpx.MockTransport` : redirection de la première
+page et d’une page paginée vers trois hôtes partenaires/CDN autorisés
+(parcours bloqué avant GET), confirmation de connexion rejetée si
+la redirection MesLivres change d’origine, simulation loopback et
+pagination/redirection normale. Aucun cookie, mot de passe, identifiant
+d’achat ou HTML privé ne rejoint les diagnostics.
