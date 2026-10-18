@@ -112,7 +112,7 @@ class DeliveryTrace:
         self, phase: str, code: str, *, status: object = None,
         mime: object = None, html_kind: object = None, hops: object = None,
         destination: object = None, candidates: object = None,
-        cookie_header_present: object = None,
+        cookie_header_present: object = None, redirect_target: object = None,
     ) -> None:
         if phase not in _PUBLIC_PHASES or code not in _PUBLIC_CODES:
             return
@@ -127,6 +127,13 @@ class DeliveryTrace:
             detail["mime"] = mime_group(mime)
         if destination is not None:
             detail["origin_kind"], detail["path_kind"] = destination_category(destination)
+        # Only a previously checked/allowlisted URL should be supplied by
+        # callers. Even then, export fixed enums only, never Location/query.
+        # A rejected/unverified redirect must omit both fields entirely.
+        if type(redirect_target) is str:
+            detail["redirect_target_origin_kind"], detail["redirect_target_kind"] = (
+                destination_category(redirect_target)
+            )
         if html_kind is not None:
             detail["html_kind"] = (
                 html_kind if type(html_kind) is str and html_kind in _PUBLIC_HTML
