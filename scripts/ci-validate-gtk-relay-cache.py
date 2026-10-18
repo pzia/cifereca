@@ -8,6 +8,7 @@ only enforces the artifact boundary and refuses unexpected local files.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 from pathlib import Path
 import re
@@ -65,7 +66,17 @@ def build(cache: Path, output: Path) -> int:
         raise ValueError("unsafe artifact destination")
     # Emit only allowlisted files; never tar -C cache . or git archive HEAD.
     with tarfile.open(output, mode="x:gz") as archive:
-        for path in [marker, *sorted(packages)]:
+        # Re-serialize the reviewed marker from constants, never copy raw
+        # bytes: JSON can hide private values in duplicate keys or padding
+        # even when json.loads(raw) equals PROFILE.
+        safe_marker = (json.dumps(PROFILE, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+        marker_info = tarfile.TarInfo(f".gtk-deb-cache/{MARKER}")
+        marker_info.size = len(safe_marker)
+        marker_info.mode = 0o644
+        marker_info.mtime = 0
+        marker_info.uid = marker_info.gid = 0
+        archive.addfile(marker_info, io.BytesIO(safe_marker))
+        for path in sorted(packages):
             metadata = tarfile.TarInfo(f".gtk-deb-cache/{path.name}")
             metadata.size = path.stat().st_size
             metadata.mode = 0o644
