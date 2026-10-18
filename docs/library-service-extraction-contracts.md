@@ -302,5 +302,23 @@ local artifacts; locks and the existing facade entry points remain unchanged.
 `core/adept_borrower.py` resolves the proven Paris borrower/account context and
 checks competing identity evidence in the existing acquisition and entitlement
 ledgers. It reuses facade-owned accounts and bindings and performs no writes or
-network operation. The service retains mutations, locks, fulfillment and return
-orchestration. Historical status proof remains in `adept_return_origin.py`.
+network operation. The service retains acquisition mutations, locks and fulfillment. Explicit
+ADEPT acquisition return orchestration is delegated as described below. Historical status proof remains in `adept_return_origin.py`.
+
+
+## Explicit ADEPT acquisition return boundary (#1120)
+
+`core/adept_acquisition_return.py` owns the existing guarded return body for an
+acquisition with a recorded ADEPT origin. `LibraryService.return_adept_acquisition`
+keeps the global inter-process lock, its path and busy error; the private facade
+method keeps its signature. Exception classes, DRM request constructor and clock
+are injected at call time from `cifereca.services` so historical monkeypatches
+remain effective.
+
+The extracted executable body is AST-identical to its pre-extraction form,
+including fresh exact-loan inventory before/after mutation, origin-profile
+selection, pending/failure/confirmed writes, diagnostics and artifact preservation.
+No acquisition, profile creation, retry policy, provider payload or return rule is
+changed. The automatic-loan acquisition handler and the Paris return orchestrator
+remain at their existing boundaries. Validation uses synthetic registry/runtime
+responses and real local SQLite; it does not attest a real Adobe/Paris return.
