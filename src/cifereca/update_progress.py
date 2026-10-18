@@ -68,7 +68,8 @@ class UpdateProgress:
         self.started = clock()
 
     def emit(self, stage: str, status: str, *, since: float | None = None,
-             outcome: str | None = None, reason_code: str | None = None) -> None:
+             outcome: str | None = None, reason_code: str | None = None,
+             plugin_index: int | None = None, plugin_total: int | None = None) -> None:
         if stage not in STAGES or status not in STATES:
             raise ValueError("invalid_update_event")
         now = self.clock()
@@ -87,6 +88,13 @@ class UpdateProgress:
         }
         if status == "ERROR" and reason_code in FAILURE_CODES:
             event["reason_code"] = reason_code
+        # The ordinal is a *position*, not an installed count or a guessed
+        # percent. Accept only bounded exact ints, never plugin names/paths.
+        if (stage == "plugin_install"
+                and type(plugin_index) is int and type(plugin_total) is int
+                and 1 <= plugin_index <= plugin_total <= 2048):
+            event["plugin_index"] = plugin_index
+            event["plugin_total"] = plugin_total
         if outcome in {"success", "failed"} and status == "DONE":
             event["outcome"] = outcome
         # Observability must not change the installation's outcome. A GUI
@@ -105,6 +113,8 @@ class UpdateProgress:
                     f"duration={event['duration_ms']}ms"
                     + (f" outcome={event['outcome']}" if "outcome" in event else "")
                     + (f" reason={event['reason_code']}" if "reason_code" in event else "")
+                    + (f" plugin={event['plugin_index']}/{event['plugin_total']}"
+                       if "plugin_index" in event else "")
                     + "\n"
                 )
                 self.stream.flush()
@@ -112,18 +122,22 @@ class UpdateProgress:
                 pass
 
     @contextmanager
-    def phase(self, stage: str) -> Iterator[None]:
+    def phase(
+        self, stage: str, *, plugin_index: int | None = None,
+        plugin_total: int | None = None,
+    ) -> Iterator[None]:
         if stage not in STAGES:
             raise ValueError("invalid_update_stage")
         started = self.clock()
-        self.emit(stage, "ROLLBACK" if stage == "rollback" else "RUNNING")
+        ordinal = {"plugin_index": plugin_index, "plugin_total": plugin_total}
+        self.emit(stage, "ROLLBACK" if stage == "rollback" else "RUNNING", **ordinal)
         try:
             yield
         except BaseException as exc:
-            self.emit(stage, "ERROR", since=started, reason_code=failure_code(exc))
+            self.emit(stage, "ERROR", since=started, reason_code=failure_code(exc), **ordinal)
             raise
         else:
-            self.emit(stage, "OK", since=started)
+            self.emit(stage, "OK", since=started, **ordinal)
 
 
 @contextmanager
@@ -152,13 +166,18 @@ def update_operation(
 
 
 @contextmanager
-def update_phase(stage: str) -> Iterator[None]:
+def update_phase(
+    stage: str, *, plugin_index: int | None = None,
+    plugin_total: int | None = None,
+) -> Iterator[None]:
     """Zero-I/O in API calls which did not opt in to progress reporting."""
     current = _CURRENT.get()
     if current is None:
         yield
     else:
-        with current.phase(stage):
+        with current.phase(
+            stage, plugin_index=plugin_index, plugin_total=plugin_total,
+        ):
             yield
 
 
