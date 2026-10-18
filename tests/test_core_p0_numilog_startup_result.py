@@ -18,7 +18,7 @@ def test_numilog_claim_and_completion_are_durable_and_strictly_single_use(tmp_pa
         _authorize(broker, sid)
         clock = int(time())
         assert service.storage.numilog_materialization_run_status(sid)["status"] == "never"
-        assert service.storage.numilog_materialization_claim_startup(source_id=sid, now=clock)
+        assert service.storage.numilog_materialization_claim_startup(source_id=sid, now=clock, expected_revision=service.storage.numilog_materialization_consent_revision(sid))
         started = service.storage.numilog_materialization_run_status(sid)
         assert started == {
             "status": "running", "started_at": clock,
@@ -48,9 +48,10 @@ def test_late_result_cannot_overwrite_newer_numilog_startup(tmp_path):
     try:
         _authorize(broker, sid)
         first = int(time())
-        assert service.storage.numilog_materialization_claim_startup(source_id=sid, now=first)
+        assert service.storage.numilog_materialization_claim_startup(source_id=sid, now=first, expected_revision=service.storage.numilog_materialization_consent_revision(sid))
         assert service.storage.numilog_materialization_claim_startup(
             source_id=sid, now=first + 3600,
+            expected_revision=service.storage.numilog_materialization_consent_revision(sid),
         )
         assert not service.storage.numilog_materialization_finish_startup(
             source_id=sid, started_at=first, status="complete",
@@ -75,7 +76,7 @@ def test_corrupt_numilog_result_metadata_is_never_rendered(tmp_path, field, valu
     try:
         _authorize(broker, sid)
         clock = int(time())
-        assert service.storage.numilog_materialization_claim_startup(source_id=sid, now=clock)
+        assert service.storage.numilog_materialization_claim_startup(source_id=sid, now=clock, expected_revision=service.storage.numilog_materialization_consent_revision(sid))
         key = "sync.source.numilog.materialization.result.v1." + sid
         original = json.loads(service.storage.metadata_get(key))
         original[field] = value
@@ -182,6 +183,7 @@ def test_contradictory_numilog_backup_result_is_never_persisted(
         clock = int(time())
         assert service.storage.numilog_materialization_claim_startup(
             source_id=sid, now=clock,
+            expected_revision=service.storage.numilog_materialization_consent_revision(sid),
         )
         with pytest.raises(ValueError, match="invalid_numilog_materialization_receipt"):
             service.storage.numilog_materialization_finish_startup(
@@ -203,6 +205,7 @@ def test_corrupted_public_success_with_failed_count_is_shown_as_unknown(tmp_path
         clock = int(time())
         assert service.storage.numilog_materialization_claim_startup(
             source_id=sid, now=clock,
+            expected_revision=service.storage.numilog_materialization_consent_revision(sid),
         )
         key = "sync.source.numilog.materialization.result.v1." + sid
         payload = json.loads(service.storage.metadata_get(key))

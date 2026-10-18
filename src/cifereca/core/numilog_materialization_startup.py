@@ -77,11 +77,20 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         # A persisted "on_start" may be revoked and explicitly re-enabled
         # while this batch is in flight. Its new consent is NOT a grant to
         # revive this earlier job (or to reuse an already-fetched manifest).
-        consent_revision = (
-            broker.service.storage.numilog_materialization_consent_revision(
+        try:
+            consent_revision = broker.service.storage.numilog_materialization_consent_revision(
                 source_id,
             )
-        )
+        except Cancelled:
+            raise
+        except Exception:
+            failures += 1
+            continue
+        if type(consent_revision) is not str:
+            # An active policy without its confirmation epoch is incomplete.
+            # Block only this source and never consume a startup claim for it.
+            failures += 1
+            continue
         if control is not None and callable(getattr(control, "check_cancelled", None)):
             control.check_cancelled()
         # Counters and receipts are per source, not leaked across accounts.
@@ -94,7 +103,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             # transaction, before any network I/O or ADEPT. No blind retry.
             attempt_clock = int(time())
             if not broker.service.storage.numilog_materialization_claim_startup(
-                source_id=source_id, now=attempt_clock,
+                source_id=source_id, now=attempt_clock, expected_revision=consent_revision,
             ):
                 continue
             started_at = attempt_clock

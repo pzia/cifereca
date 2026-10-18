@@ -149,19 +149,24 @@ def test_startup_claim_is_atomic_throttled_and_not_retried_on_failure(tmp_path):
         now = int(time())
         assert service.storage.numilog_materialization_claim_startup(
             source_id=sid, now=now,
+            expected_revision=service.storage.numilog_materialization_consent_revision(sid),
         )
         assert not service.storage.numilog_materialization_claim_startup(
             source_id=sid, now=now,
+            expected_revision=service.storage.numilog_materialization_consent_revision(sid),
         )
         assert not service.storage.numilog_materialization_claim_startup(
             source_id=sid, now=now + 3599,
+            expected_revision=service.storage.numilog_materialization_consent_revision(sid),
         )
         assert service.storage.numilog_materialization_claim_startup(
             source_id=sid, now=now + 3600,
+            expected_revision=service.storage.numilog_materialization_consent_revision(sid),
         )
         broker.revoke_numilog_materialization_consent(sid)
         assert not service.storage.numilog_materialization_claim_startup(
             source_id=sid, now=now + 7200,
+            expected_revision=service.storage.numilog_materialization_consent_revision(sid),
         )
         assert calls == []
     finally:
@@ -178,6 +183,7 @@ def test_corrupt_attempt_clock_blocks_automatic_retry(tmp_path, corrupt):
         )
         assert not service.storage.numilog_materialization_claim_startup(
             source_id=sid, now=int(time()),
+            expected_revision=service.storage.numilog_materialization_consent_revision(sid),
         )
         assert calls == []
     finally:
