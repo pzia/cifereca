@@ -16,10 +16,6 @@ from tests.test_sync_state_contract import _service
 PRIVATE = "https://private.invalid/LOAN/reader.acsm?auth=SECRET_OPENING_LOANS"
 
 
-def _forbidden(_value):
-    raise AssertionError("Raw provider exception string is not allowed")
-
-
 def test_opening_exception_is_safe_in_log_export_and_sqlite(tmp_path, monkeypatch, caplog):
     service = _service(tmp_path)
     try:
@@ -88,8 +84,7 @@ def test_partial_upstream_errors_are_counted_without_exporting_raw_error_fields(
             service.storage.latest_sync_run("default")) + caplog.text
         assert PRIVATE not in visible
         assert "loan_partial_failure count=2" in caplog.text
-        assert "paris-private" not in [
-            line for line in caplog.text.splitlines() if "TRACE loans sync" in line
-        ]
+        assert all("paris-private" not in line for line in caplog.text.splitlines()
+                   if "TRACE loans sync" in line)
     finally:
         service.close()
