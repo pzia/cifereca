@@ -321,6 +321,23 @@ and event recording through the existing facade-owned dependencies.
 these reads do not trigger authentication, scans or acquisition. Inter-process
 lock factories and paths are supplied by the facade to preserve coordination.
 
+### Return verification boundary (#1120)
+
+`core/loan_return_verification.py` groups PNB-return verification, the fresh Paris
+inventory check following Adobe return, and Adobe inventory-only crash recovery.
+All three `LibraryService` signatures remain unchanged. The logger and exception
+seams are injected at call time; public guard imports and branch-local datetime
+imports retain their execution points. Executable bodies are AST-identical after
+adjusting relative import namespaces.
+
+The existing 180-second in-flight POST guard, uncached exact borrower reads,
+DILICOM completeness checks, checkpoint transitions, loan ID/provider matching,
+origin-profile resolution and exact returned/token predicates retain their order.
+These functions never send a return command, acquire content or delete a file;
+PNB checkpoint verification still persists its original transition. Public return
+wrappers retain the shared locks and all callers keep their historical seams.
+Tests use synthetic inventories/local SQLite; they do not attest a real return.
+
 ### Provider loan return orchestration (#1120)
 
 `core/provider_loan_return.py` contains the existing guarded PNB-only return
