@@ -576,3 +576,20 @@ La combinaison `connected_initial=true`, présence/absence de Cookie et
 `login_form_detected` peut orienter le diagnostic, **pas prouver une expiration**.
 Ces traces ne modifient ni les règles de redirection, ni l'authentification, ni
 les téléchargements. Validation live toujours nécessaire pour #2024.
+
+## Referer du premier saut readBook (#2024, 0.1.38)
+
+Lors du GET ciblé `/Pages/Compte/readBook.ashx` sur l'origine **exacte**
+de la bibliothèque configurée, la première requête utilise désormais
+`/Pages/Compte/MesLivres.aspx` (sans query) comme `Referer`.
+Ce comportement reproduit la navigation normale depuis la liste des
+livres, au lieu de présenter artificiellement l'accueil comme source.
+Pour les autres chemins, autres origines et **tous les sauts suivants**
+(HTML et ACSM signés), le `Referer` reste la racine publique du site.
+Le `lid` privé, les paramètres `auth`, l'URL de fulfillment et le
+contenu de réponse ne sont jamais transmis en `Referer` ni en diagnostic.
+Aucun nouveau GET, retry, cookie, connexion ou droit n'est ajouté.
+
+Cela corrige un écart client/navigateur plausible, **pas** une preuve que
+Numilog rejette l'ancien en-tête : seule une recette authentifiée du
+même achat permet de déclarer #2024 effectivement réparé.
