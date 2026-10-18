@@ -179,7 +179,7 @@ class GutenbergSession(ProviderSession):
         self.prefer_images = bool(self.options.get("prefer_images", True))
         self.max_download_bytes = int(self.options.get("max_download_bytes", 100 * 1024 * 1024))
         self.contact = self._normalize_contact(str(self.options.get("contact") or ""))
-        user_agent = "cifereca-gutenberg/1.2.18"
+        user_agent = "cifereca-gutenberg/1.2.19"
         if self.contact:
             user_agent += f" (+{self.contact})"
         self.user_agent = user_agent
@@ -605,8 +605,11 @@ class GutenbergSession(ProviderSession):
         query, field, filter_query = _search_facet(query, field)
         if len(query) < 2:
             _LOG.info("TRACE gutenberg search skipped reason=query-too-short query_len=%s", len(query)); return []
-        page = max(0, int(page))
-        if page >= MAX_REQUESTED_PAGES: raise ProviderError("Project Gutenberg : numéro de page hors limite")
+        if type(page) is not int or not 0 <= page < MAX_REQUESTED_PAGES:
+            # The Core pagination contract is a zero-indexed, bounded page.
+            # Never reinterpret a negative/boolean/fractional page as page 0
+            # or leak an untyped int() failure to the search UI.
+            raise ProviderCapabilityError("Project Gutenberg : invalid_page")
         self._require_contact(); started = time.perf_counter(); rows_cache=self._page_cache(query)
         cached_indexes=[i for i,u in enumerate(rows_cache) if u and i<=page]
         if cached_indexes:
