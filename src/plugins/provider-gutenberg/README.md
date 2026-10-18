@@ -47,3 +47,15 @@ les règles d'accès et de fréquence Gutenberg le permettent.
 disponible pour test sur demande ; aucun endpoint OPDS2 n'est inventé
 par cet incrément. Une migration spécifique doit être qualifiée
 auprès de Gutenberg avant l'extinction éventuelle d'OPDS XML.
+
+
+## Contrat strict des index de page OPDS (#1917, 1.2.19)
+
+La pagination par lien `rel=next` reste bornée à 101 pages, indexées
+`0..100`. Le provider refuse désormais toute valeur `page` non entière
+au sens strict (booléens, chaînes, nombres flottants), négative ou
+supérieure à 100 avec `ProviderCapabilityError('Project Gutenberg : invalid_page')`,
+avant d'envoyer une requête. Il ne convertit plus les pages négatives en zéro.
+Une erreur de page efface les avertissements de recherche précédents.
+Cela n'ajoute aucun GET et ne prétend pas garantir que 101 pages existent
+côté fournisseur.

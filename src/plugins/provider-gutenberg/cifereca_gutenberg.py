@@ -179,7 +179,7 @@ class GutenbergSession(ProviderSession):
         self.prefer_images = bool(self.options.get("prefer_images", True))
         self.max_download_bytes = int(self.options.get("max_download_bytes", 100 * 1024 * 1024))
         self.contact = self._normalize_contact(str(self.options.get("contact") or ""))
-        user_agent = "cifereca-gutenberg/1.2.18"
+        user_agent = "cifereca-gutenberg/1.2.19"
         if self.contact:
             user_agent += f" (+{self.contact})"
         self.user_agent = user_agent
@@ -602,11 +602,13 @@ class GutenbergSession(ProviderSession):
             raise ProviderCapabilityError("Project Gutenberg : unsupported_field")
         if type(scope) is not str or scope.strip().casefold() not in DESCRIPTOR.search_capabilities.scopes:
             raise ProviderCapabilityError("Project Gutenberg : unsupported_scope")
+        if type(page) is not int or not 0 <= page < MAX_REQUESTED_PAGES:
+            # Validate even an otherwise empty/too-short query: no malformed
+            # page may be misreported as a successful empty search.
+            raise ProviderCapabilityError("Project Gutenberg : invalid_page")
         query, field, filter_query = _search_facet(query, field)
         if len(query) < 2:
             _LOG.info("TRACE gutenberg search skipped reason=query-too-short query_len=%s", len(query)); return []
-        page = max(0, int(page))
-        if page >= MAX_REQUESTED_PAGES: raise ProviderError("Project Gutenberg : numéro de page hors limite")
         self._require_contact(); started = time.perf_counter(); rows_cache=self._page_cache(query)
         cached_indexes=[i for i,u in enumerate(rows_cache) if u and i<=page]
         if cached_indexes:

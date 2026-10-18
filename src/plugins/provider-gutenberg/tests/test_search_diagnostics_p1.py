@@ -121,3 +121,51 @@ def test_opds_http_denial_and_throttle_are_typed_and_redacted(status, code):
         assert session.last_search_warnings == []
     finally:
         session.close()
+
+
+
+@pytest.mark.parametrize("page", (-1, True, False, "1", "bad", 0.5, None, 101, 10**100))
+def test_invalid_opds_page_rejected_before_any_network(page):
+    session, calls = make_session()
+    try:
+        with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+            session.search("writer", page=page)
+        assert calls == []
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("page", (-1, True, "1", None, 101))
+def test_invalid_page_with_short_query_is_not_a_successful_empty_search(page):
+    session, calls = make_session()
+    try:
+        with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+            session.search("x", page=page)
+        assert calls == []
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+def test_invalid_page_clears_previous_local_filter_warning():
+    session, calls = make_session()
+    try:
+        assert session.search("Writer", field="author") == []
+        assert session.last_search_warnings
+        count = len(calls)
+        with pytest.raises(ProviderCapabilityError, match="invalid_page"):
+            session.search("Writer", field="author", page=-1)
+        assert len(calls) == count
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+def test_page_zero_still_fetches_only_one_opds_page():
+    session, calls = make_session()
+    try:
+        assert session.search("Writer", page=0) == []
+        assert len(calls) == 1
+    finally:
+        session.close()
