@@ -7,15 +7,17 @@ aucun test GTK ni capture UX sur GitHub Actions**. Il prépare uniquement les
 dépendances Debian 13 (trixie, amd64), à utiliser ensuite localement avec
 `environnements/openai-chat-debian/bootstrap.py --offline`.
 
-Le fichier s'appelle « on approval » pour rappeler qu'un déclenchement
-nécessite une autorisation dédiée ; il ne possède ni déclencheur `push`
-général ni `workflow_dispatch`.
+Le workflow ne possède **aucun** déclencheur `push` ou `pull_request`.
+Il ne peut lancer les téléchargements réseau que par `workflow_dispatch`
+après validation affirmative du booléen `confirm_relay` (désactivé par défaut).
 
 ## Autorisation et déclenchement
 
-- Seule une synchronisation de PR qui modifie
-  `.github/gtk-e2e-run-request.txt` peut démarrer ce relais.
-- **Ne pas créer/modifier la sentinelle sans accord explicite.**
+- L'opérateur choisit manuellement **Run workflow** dans GitHub Actions,
+  sélectionne le commit de référence, puis coche `confirm_relay`.
+- Ne jamais déclencher ce relais sans autorisation explicite.
+- Les PR et modifications de la sentinelle historique
+  `.github/gtk-e2e-run-request.txt` ne le déclenchent plus.
 - Aucune exécution de ce relais n'est nécessaire pour vérifier ses tests
   d'allowlist (entièrement offline).
 - La suspension budgétaire consignée le 11 octobre 2026 reste une raison
