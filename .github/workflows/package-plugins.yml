@@ -41,3 +41,4 @@ jobs:
           name: cifereca-plugin-packages
           path: dist/*.zip
           if-no-files-found: error
+          retention-days: 7

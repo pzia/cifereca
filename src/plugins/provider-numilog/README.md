@@ -962,3 +962,37 @@ du lien streaming ainsi que les droits/fichiers ADEPT de l'utilisateur
 ne sont pas accessibles au test. Le ticket P0 #2024 reste ouvert
 jusqu'à un ACSM véritablement récupéré puis validé par le broker
 avec la version **réellement installée**, distincte du Core.
+
+
+## Recette P0 #2024 — frontière `acsm_complete` et cache local (18/10/2026)
+
+**Preuve fournisseur live :** un achat Numilog a réussi le 18/10/2026,
+de `readBook 302` à `ConfirmationPaiement 200`, l'ACSM
+`entrepot2r` puis `adept_fulfillment=acsm_complete`,
+`completed status=ok`. Le plugin a donc remis au broker un ACSM
+valide et reçu un **chemin de fichier existant** en retour. Ce succès
+ne prouve pas que le reçu d'achat et le cache Bibliothèque/Recherches
+aient été rapprochés ultérieurement.
+
+Le contrat public du broker permet `status=complete` **ou**
+`status=unchanged` et peut retourner un EPUB **ou PDF** dans un
+sous-répertoire de l'identité et du fournisseur tel que
+`<identité>/numilog/acsm-<empreinte>/<livre>.epub`. Le provider
+**renvoie le fichier à son emplacement original sans le déplacer**
+vers le nom provisoire `numilog-<hash>.epub`, ne déclare pas
+`core_index_complete`, et ne scanne ni ne réindexe lui-même la
+bibliothèque : seules les primitives officielles Core sont autorisées
+à attribuer ce fichier à l'achat. Les tests synthétiques valident les
+quatre combinaisons `complete/unchanged × epub/pdf`, sans publier le
+chemin, le titre, la signature ACSM ou l'empreinte privée dans le flux
+`NUMILOG`.
+
+Les conflits de rattachement **ACSM-digest vs. identifiant d'achat**
+et la conservation de `source_item_id` lors de `catalog_scan` sont
+traités côté Core dans [#2112](https://github.com/pzia/cifereca/issues/2112).
+L'invalidation du cache Recherche locale après indexation complète
+est prise en charge par CoreUI dans
+[#2114](https://github.com/pzia/cifereca/issues/2114).
+La version Numilog 0.1.48 assure le transport ; cette validation
+de contrat plugin ne modifie ni l'API, ni le package binaire, ni
+le flux de droits et n'introduit aucun appel réseau.

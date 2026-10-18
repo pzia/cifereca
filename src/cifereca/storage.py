@@ -2209,6 +2209,74 @@ class Storage:
             )
             return True
 
+    def numilog_materialization_disable_source(self, source_id: str) -> None:
+        """Atomically disable a Numilog source and revoke its backup grant.
+
+        A two-transaction disable could leave acquisition consent enabled if
+        the second write failed. A later inventory re-enable would silently
+        resurrect that grant. Commit all three changes or none, with a fresh
+        consent epoch that invalidates pending confirmations across processes.
+        """
+        import re
+        import secrets
+        from .core.numilog_materialization_consent import _MANUAL, policy_key
+        if (type(source_id) is not str
+                or re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is None):
+            raise ValueError("invalid_numilog_source")
+        keys = (
+            ("sync.source.enabled." + source_id, "0"),
+            ("sync.source.numilog.materialization.epoch.v1." + source_id,
+             secrets.token_hex(16)),
+            (policy_key(source_id), _MANUAL),
+        )
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for key, value in keys:
+                db.execute(
+                    "INSERT INTO metadata(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (key, value),
+                )
+
+    def numilog_materialization_enable_source(self, source_id: str) -> None:
+        """Re-enable inventory without resurrecting any previously disabled grant.
+
+        Older two-step disables could leave source.enabled='0' and acquisition
+        consent='on_start:v1'. A subsequent toggle must not turn that stale
+        consent into new network permission. All changes share one SQLite
+        transaction and rotate the epoch on disabled/corrupt -> enabled.
+        """
+        import re
+        import secrets
+        from .core.numilog_materialization_consent import _MANUAL, policy_key
+        if (type(source_id) is not str
+                or re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is None):
+            raise ValueError("invalid_numilog_source")
+        key = "sync.source.enabled." + source_id
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previous = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (key,),
+            ).fetchone()
+            if previous is not None and previous[0] != "1":
+                # A past explicit disable, including a malformed disabled
+                # flag, cannot retain any backup acquisition permission.
+                for pref, value in (
+                    ("sync.source.numilog.materialization.epoch.v1." + source_id,
+                     secrets.token_hex(16)),
+                    (policy_key(source_id), _MANUAL),
+                ):
+                    db.execute(
+                        "INSERT INTO metadata(key,value) VALUES(?,?) "
+                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        (pref, value),
+                    )
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, "1"),
+            )
+
     def numilog_materialization_claim_startup(
         self, *, source_id: str, now: int, expected_revision: str,
     ) -> bool:

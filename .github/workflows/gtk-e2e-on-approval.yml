@@ -33,9 +33,10 @@ jobs:
           test -f .gtk-deb-cache/.gtk4-cache-profile.json
           test "$(find .gtk-deb-cache -name '*.deb' | wc -l)" -gt 10
           tar -czf /tmp/gtk4-debian13-rootless-offline.tar.gz -C "$GITHUB_WORKSPACE" .gtk-deb-cache
-          # Local workspace here is only the source carrier for the offline
-          # host; GTK execution always happens locally, not in Actions.
-          tar --exclude=.git --exclude=.gtk-deb-cache -czf /tmp/cifereca-gtk-source.tar.gz -C "$GITHUB_WORKSPACE" .
+          # Only version-controlled source is forwarded. Never bundle runner
+          # workspace extras, generated files, caches or private runtime data.
+          # GTK execution still happens on the local host, not in Actions.
+          git archive --format=tar.gz --output=/tmp/cifereca-gtk-source.tar.gz HEAD
           sha256sum /tmp/gtk4-debian13-rootless-offline.tar.gz /tmp/cifereca-gtk-source.tar.gz > /tmp/SHA256SUMS
       - name: Upload offline bundle only
         if: success()
