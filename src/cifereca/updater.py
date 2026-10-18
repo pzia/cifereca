@@ -195,8 +195,7 @@ def _create_venv(release: Path, python: str) -> Path:
         command = [str(py), "-m", "pip", "install", "--disable-pip-version-check", str(release)]
     proc = subprocess.run(command, text=True, capture_output=True, check=False)
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise UpdateError(f"Installation du package dans le venv impossible: {detail[-1200:]}")
+        raise UpdateError("Installation du package dans le venv impossible")
     return venv
 
 
@@ -234,7 +233,7 @@ def _smoke(release: Path) -> dict[str, Any]:
     return {
         "core_ready": True,
         "desktop_ready": gtk.returncode == 0,
-        "desktop_error": "" if gtk.returncode == 0 else (gtk.stderr.strip() or gtk.stdout.strip() or "GTK/PyGObject indisponible")[-800:],
+        "desktop_error": "" if gtk.returncode == 0 else "GTK/PyGObject indisponible",
     }
 
 
@@ -340,7 +339,7 @@ def _backup_persistent_state(label: str) -> Path:
         return target
     except Exception as exc:
         shutil.rmtree(tmp, ignore_errors=True)
-        raise UpdateError(f"Sauvegarde pré-activation impossible: {exc}") from exc
+        raise UpdateError("Sauvegarde pré-activation impossible") from exc
 
 
 def _release_plugin_manifest(source: Path) -> dict[str, str]:
@@ -871,30 +870,26 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
         text=True, capture_output=True, timeout=30, check=False,
     )
     if resolved.returncode != 0 or not resolved.stdout.strip():
-        detail = (resolved.stderr or resolved.stdout or "").strip()
-        raise UpdateError(f"Branche, tag ou commit GitHub introuvable ou accès refusé: {detail[-800:]}")
+        raise UpdateError("Branche, tag ou commit GitHub introuvable ou accès refusé")
     sha = resolved.stdout.strip().splitlines()[-1]
     clone = step("clone", subprocess.run,
         [gh, "repo", "clone", repository, str(destination), "--", "--filter=blob:none", "--no-checkout"],
         text=True, capture_output=True, timeout=180, check=False,
     )
     if clone.returncode != 0:
-        detail = (clone.stderr or clone.stdout or "").strip()
-        raise UpdateError(f"Clone GitHub impossible: {detail[-800:]}")
+        raise UpdateError("Clone GitHub impossible")
     fetched = step("fetch", subprocess.run,
         [git, "-C", str(destination), "fetch", "--depth", "1", "origin", sha],
         text=True, capture_output=True, timeout=180, check=False,
     )
     if fetched.returncode != 0:
-        detail = (fetched.stderr or fetched.stdout or "").strip()
-        raise UpdateError(f"Fetch GitHub impossible: {detail[-800:]}")
+        raise UpdateError("Fetch GitHub impossible")
     checkout = step("checkout", subprocess.run,
         [git, "-C", str(destination), "checkout", "--detach", "FETCH_HEAD"],
         text=True, capture_output=True, timeout=60, check=False,
     )
     if checkout.returncode != 0:
-        detail = (checkout.stderr or checkout.stdout or "").strip()
-        raise UpdateError(f"Checkout GitHub impossible: {detail[-800:]}")
+        raise UpdateError("Checkout GitHub impossible")
     return sha
 
 
