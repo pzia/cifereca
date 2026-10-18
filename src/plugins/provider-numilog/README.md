@@ -1157,3 +1157,28 @@ Preuves : capture publique expurgée Blackbone du 17 octobre 2026 et
 tests déterministes d'offres invalides, provenance falsifiée, couverture
 externe, URLs signées et séparation papier/EPUB. Disponibilité live,
 conditions robots/CGU et moteur multi-attributs serveur restent à qualifier.
+
+
+## Numilog 0.1.56 — EAN dans la fiche canonique uniquement (#1072)
+
+Les identifiants publics typés `paper`, `epub`, `pdf` et
+`digital_unspecified` ne sont désormais retenus par
+`parse_public_detail_jsonld` que si les étiquettes appartiennent
+au **formulaire WebForms public exact** (`aspnetForm`, `POST`, action =
+chemin canonique du produit), entièrement fermé, avec **un seul H1**
+concordant avec le titre du `Book` JSON-LD sélectionné.
+
+Les ISBN placés hors du formulaire (navigation, autre produit, pied de
+page, résultats connexes), après sa fermeture, dans un formulaire
+étranger ou sur une page sans wrapper attesté, sont ignorés.
+Une seconde fiche canonique reste ambiguë et provoque un refus à code fixe.
+L'extraction directe hors réseau conserve son mode historique pour les
+tests de fragments ; le pipeline de fiche publique réclame explicitement
+le mode strict.
+
+Tests : extrait public expurgé Blackbone (EAN papier différent de l'EPUB),
+en-tête/pied de page hostiles, wrapper absent ou non clos, action/méthode
+étrangère, H1 divergent, double formulaire. Aucun réseau supplémentaire,
+aucune promotion des ISBN publics en format acheté ni propriété/droit
+de téléchargement. Le couplage **achat authentifié → édition numérique**
+continue à nécessiter une preuve réelle distincte.
