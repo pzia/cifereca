@@ -414,6 +414,24 @@ phase. It never falls back to the current UI identity. Tests cover 0/1/N rights,
 unbound/linked borrowers and cross-identity evidence from both ledger and rights,
 with the real caller bridge preserving refusals and leaving state unchanged.
 
+## ADEPT artifact validation and publication (#1120)
+
+`core/adept_artifact_publication.py` receives the runtime result and the already
+selected destination inside the existing guarded attempt. It preserves exact
+path checking, actual-format inspection, suffix correction, second validation,
+protected-artifact refusal and the original replacement/deletion order. It
+returns only the successful final path and artifact/hook facts. The facade
+retains borrower/profile selection, runtime execution, both locks, exception
+handling, indexing, ledger completion and ACSM cleanup. Profile/destination
+locals used for failure evidence remain in the facade.
+
+The extracted executable block is AST-identical before its added success tuple.
+Inspector, path/error classes, path plans, UUID module and logger are injected
+from services to preserve historical seams. This does not add transactional
+rollback or change failure semantics of existing filesystem mutations. Tests
+use synthetic local bytes and runtime responses; Adobe/Paris is not validated
+in real conditions.
+
 ## Read-only ADEPT borrower boundary
 
 `core/adept_borrower.py` resolves the proven Paris borrower/account context and
