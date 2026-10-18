@@ -49,7 +49,7 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
             focus_widget, saved_identity = saved
             explicit_valid = (
                 saved_identity == current_identity
-                and youth_widget.is_ancestor(focus_widget)
+                and focus_widget.is_ancestor(youth_widget)
                 and focus_widget.get_mapped() and focus_widget.get_sensitive()
             )
         if not explicit_valid:
@@ -60,7 +60,7 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
             button_type = getattr(Gtk, "Button", None)
             if (
                 button_type is not None and isinstance(current_focus, button_type)
-                and youth_widget is not None and youth_widget.is_ancestor(current_focus)
+                and youth_widget is not None and current_focus.is_ancestor(youth_widget)
                 and current_focus.get_mapped() and current_focus.get_sensitive()
             ):
                 window._youth_return_focus = (current_focus, current_identity)
@@ -149,7 +149,7 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
             youth_widget = window._plugin_page_widgets.get("youth")
             if (
                 identity_id == current_identity and youth_widget is not None
-                and youth_widget.is_ancestor(focus_widget)
+                and focus_widget.is_ancestor(youth_widget)
                 and focus_widget.get_mapped() and focus_widget.get_sensitive()
             ):
                 focus_widget.grab_focus()
@@ -168,7 +168,7 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
                             not getattr(window, "_closed", False)
                             and visible == "youth" and active_identity == identity_id
                             and current_youth is not None
-                            and current_youth.is_ancestor(focus_widget)
+                            and focus_widget.is_ancestor(current_youth)
                             and focus_widget.get_mapped() and focus_widget.get_sensitive()
                         ):
                             focus_widget.grab_focus()
