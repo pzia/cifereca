@@ -511,3 +511,39 @@ def test_revoke_and_reopt_in_cannot_resume_stale_startup_batch(
         assert calls == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("change", ["connection_rebound", "account_reassigned", "session_disconnected"])
+def test_startup_claim_rechecks_owner_before_first_private_library_request(
+    tmp_path, monkeypatch, change,
+):
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        session.library = lambda: pytest.fail("invalid owner cannot fetch purchases")
+        original = service.storage.numilog_materialization_claim_startup
+
+        def change_after_claim(**kwargs):
+            ok = original(**kwargs)
+            assert ok
+            if change == "connection_rebound":
+                service.storage.provider_connection_put({
+                    "identity_id": "alex", "provider_id": "numilog",
+                    "credential_id": account.credential_id, "enabled": True,
+                })
+            elif change == "account_reassigned":
+                account.unique_id = "reassigned-after-claim"
+            else:
+                session.connected = False
+            return ok
+
+        monkeypatch.setattr(
+            service.storage, "numilog_materialization_claim_startup",
+            change_after_claim,
+        )
+        response = execute(broker, account.identity_id, "startup")
+        assert response.ok and response.changed == 0
+        assert response.facts["attempted"] == 0
+        assert calls == []
+    finally:
+        service.close()
