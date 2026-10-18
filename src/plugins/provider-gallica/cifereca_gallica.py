@@ -71,6 +71,7 @@ DESCRIPTOR = ProviderDescriptor(
             "all utilise OpenSearch/OPDS pour les livres EPUB ; les champs title/author/subject/isbn utilisent les index SRU EPUB.",
             "Audio SRU indépendant, optionnel ; les défaillances de branche donnent des résultats partiels explicitement signalés.",
             "Les résultats sont paginés par branche, 50 documents par requête ; aucune recherche physique ni collection privée.",
+            "Un filtre de format sans branche EPUB/audio activée ne constitue pas un zéro de catalogue ; avertissement explicite, aucun HTTP.",
         ),
     ),
     homepage="https://gallica.bnf.fr",
@@ -536,6 +537,14 @@ class GallicaSession(ProviderSession):
             branches.append(("OPDS", "catalogue livres numériques temporairement indisponible", self._search_ebooks))
         if audio:
             branches.append(("audio", "recherche audio temporairement indisponible", self._search_audio))
+        if not branches:
+            # The user requested only media formats unsupported by this
+            # configured provider. This is NOT a successful empty search:
+            # no remote catalogue was queried and Core must see the limit.
+            self.last_search_warnings = [
+                "unsupported_content_type : aucune branche Gallica disponible pour les formats demandés"
+            ]
+            return []
         rows: list[SearchResult] = []
         errors: list[str] = []
         causes = []
