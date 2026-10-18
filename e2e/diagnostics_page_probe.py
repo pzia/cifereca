@@ -15,6 +15,8 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from concurrent.futures import Future
+from threading import Event, Thread, get_ident
 from time import monotonic
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -121,6 +123,89 @@ class Tasks:
         return ImmediateHandle(fn(None))
 
 
+class SelectionBroker(Broker):
+    """Minimal public-broker fixture for the plugin's bulk-selection contract."""
+    def __init__(self):
+        super().__init__()
+        self.bulk = False
+        self.error_count = 55
+        self.ui_thread = get_ident()
+        self.scan_threads = []
+
+    def events(self, **query):
+        if not self.bulk:
+            return super().events(**query)
+        self.event_queries.append(dict(query))
+        if query.get("severity") in {"error", "critical"}:
+            self.scan_threads.append(get_ident())
+        rows = [{"event_id": f"bulk-{i:03d}", "timestamp":"2026-10-18T12:00:00+00:00",
+                 "source":"core_events", "module":"core.sync",
+                 "severity": "error" if i < self.error_count else
+                             ("critical" if i < self.error_count + 2 else "warning"),
+                 "status":"partial", "message":f"Événement fictif {i} token=SECRET-SELECTION"}
+                for i in range(self.error_count + 10)]
+        level = query.get("severity")
+        if level:
+            rows = [row for row in rows if row["severity"] == level]
+        module = query.get("module", "").strip().casefold()
+        if module and not "core.sync".startswith(module):
+            rows = []
+        if query.get("source") not in {None, "all", "core_events"}:
+            rows = []
+        offset, limit = query.get("offset", 0), query.get("limit", 50)
+        batch = rows[offset:offset + limit]
+        return {"events":batch, "offset":offset, "total":len(rows),
+                "next_offset":offset + len(batch) if offset + len(batch) < len(rows) else None,
+                "sources":[{"source":"core_events","status":"available"},
+                           {"source":"app_log","status":"unavailable"}]}
+
+
+class SelectionHandle:
+    def __init__(self, fn, gate=None):
+        self.future = Future()
+        self.cancel_event = Event()
+        self.started = Event()
+        def work():
+            self.started.set()
+            try:
+                if gate is not None and not gate.wait(5):
+                    raise RuntimeError("fixture gate timed out")
+                self.future.set_result(fn(self))
+            except BaseException as exc:
+                self.future.set_exception(exc)
+        Thread(target=work, daemon=True).start()
+
+    def add_done_callback(self, callback):
+        self.future.add_done_callback(lambda _future: callback(self))
+
+    def result(self):
+        return self.future.result()
+
+    def done(self):
+        return self.future.done()
+
+    def cancelled(self):
+        return self.cancel_event.is_set()
+
+    def cancel(self):
+        self.cancel_event.set()
+
+
+class SelectionTasks(Tasks):
+    def __init__(self):
+        super().__init__()
+        self.gate = None
+        self.selection_handle = None
+
+    def submit(self, fn, *, label, kind):
+        if label != "Sélection expurgée des journaux":
+            return super().submit(fn, label=label, kind=kind)
+        self.calls.append((label, kind))
+        gate, self.gate = self.gate, None
+        self.selection_handle = SelectionHandle(fn, gate)
+        return self.selection_handle
+
+
 class Context:
     def __init__(self, broker, tasks):
         self._broker = broker
@@ -157,7 +242,7 @@ def main():
     git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"],
                                       cwd=ROOT, text=True).strip()
     module = importlib.import_module("cifereca_diagnostics_page")
-    broker, tasks, host = Broker(), Tasks(), Host()
+    broker, tasks, host = SelectionBroker(), SelectionTasks(), Host()
     plugin = module.DiagnosticsPagePlugin().activate(Context(broker, tasks))
     start = monotonic()
     report = {"status": "RUNNING", "git_sha": git_sha, "width": args.width,
@@ -435,10 +520,156 @@ def main():
         pass_scenario()
 
     def pass_scenario():
+        later(begin_bulk_selection)
+
+    def complete_scenario():
         report["status"] = "PASS"
         save()
         rc[0] = 0
         app.quit()
+
+    def keyboard_action(label, done):
+        button = find_button(label)
+        assert button.get_sensitive(), label
+        content = page[0].get_child()
+        ok, bounds = button.compute_bounds(content)
+        assert ok
+        outer = page[0].get_vadjustment()
+        outer.set_value(max(0, min(float(bounds.get_y()) - 60,
+                                 outer.get_upper() - outer.get_page_size())))
+        def focused():
+            assert button.grab_focus() is not False
+            until(button.has_focus, activate, seconds=4)
+        def activate():
+            assert button.has_focus()
+            press("space")
+            later(done, 100)
+        later(focused, 100)
+
+    def selection_count(count):
+        return find_label(f"{count} sélectionné(s) · portée :")
+
+    def begin_bulk_selection():
+        report["stage"] = "P0_2140_bulk_fixture"
+        broker.bulk = True
+        assert entry_with_placeholder("Préfixe module (Entrée pour appliquer)").get_text() == ""
+        refresh = [w for w in walk(page[0]) if isinstance(w, Gtk.Button)
+                   and w.get_tooltip_text() == "Actualiser les journaux sans synchronisation"]
+        assert len(refresh) == 1
+        refresh[0].emit("clicked")
+        until(lambda: find_label("50 événements affichés"),
+              lambda: keyboard_action("Erreurs + critiques (filtres)", wait_bulk_errors))
+
+    def wait_bulk_errors():
+        report["stage"] = "P0_2140_wait_57_errors"
+        until(lambda: selection_count(57), verify_bulk_errors)
+
+    def selection_preview():
+        expander = find_expander("Aperçu des événements expurgés sélectionnés")
+        assert expander.get_expanded()
+        views = [w for w in walk(expander) if isinstance(w, Gtk.TextView)]
+        assert len(views) == 1
+        buf = views[0].get_buffer()
+        return buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+
+    def verify_bulk_errors():
+        payload = selection_preview()
+        value = json.loads(payload)
+        assert len(value["events"]) == 57
+        assert {e["severity"] for e in value["events"]} == {"error", "critical"}
+        assert len({e["event_id"] for e in value["events"]}) == 57
+        assert value["selection"]["scope"] == "all_accessible_filtered_pages"
+        assert value["selection"]["pagination_consistency"] == "first_page_rechecked_non_atomic"
+        assert value["selection"]["sources_partial_or_unavailable"] is True
+        assert "SECRET-SELECTION" not in payload
+        assert broker.scan_threads and all(t != broker.ui_thread for t in broker.scan_threads)
+        assert any(q.get("severity") == "error" and q["offset"] == 50 for q in broker.event_queries)
+        report["checks"]["P0_2140_errors_57_across_pages_keyboard_background_redacted"] = True
+        screenshot("14-bulk-errors-57")
+        keyboard_action("Copier la sélection", lambda: read_bulk_clipboard(payload))
+
+    def read_bulk_clipboard(expected):
+        def copied(clipboard, task):
+            try:
+                assert clipboard.read_text_finish(task) == expected
+                report["checks"]["P0_2140_clipboard_exact_bulk_preview"] = True
+                keyboard_action("Suivant", wait_bulk_page)
+            except Exception as exc:
+                fail(f"Bulk clipboard: {type(exc).__name__}: {exc}")
+        Gdk.Display.get_default().get_clipboard().read_text_async(None, copied)
+
+    def wait_bulk_page():
+        until(lambda: find_label("15 événements affichés"), verify_bulk_page)
+
+    def verify_bulk_page():
+        assert selection_count(57)
+        assert len(json.loads(selection_preview())["events"]) == 57
+        report["checks"]["P0_2140_pagination_preserves_frozen_bulk_selection"] = True
+        keyboard_action("Inverser cette page", wait_bulk_invert)
+
+    def wait_bulk_invert():
+        until(lambda: selection_count(15), verify_bulk_invert)
+
+    def verify_bulk_invert():
+        assert find_label("Inversion limitée à cette page")
+        report["checks"]["P0_2140_invert_replaces_bulk_with_current_page"] = True
+        keyboard_action("Effacer la sélection", wait_bulk_clear)
+
+    def wait_bulk_clear():
+        until(lambda: selection_count(0), verify_bulk_clear)
+
+    def verify_bulk_clear():
+        assert not find_button("Copier la sélection").get_sensitive()
+        report["checks"]["P0_2140_clear_disables_export"] = True
+        keyboard_action("Tout sélectionner (filtres)", wait_bulk_all)
+
+    def wait_bulk_all():
+        until(lambda: selection_count(65), verify_bulk_all)
+
+    def verify_bulk_all():
+        assert len(json.loads(selection_preview())["events"]) == 65
+        assert {e["severity"] for e in json.loads(selection_preview())["events"]} == {
+            "error", "critical", "warning"}
+        report["checks"]["P0_2140_all_65_includes_warnings"] = True
+        entry_with_placeholder("Rechercher dans cette page").set_text("no-match-fixture")
+        assert selection_count(0)
+        assert find_label("Sélection effacée après changement de filtres")
+        assert not find_button("Copier la sélection").get_sensitive()
+        report["checks"]["P0_2140_filter_change_explicitly_invalidates"] = True
+        entry_with_placeholder("Rechercher dans cette page").set_text("")
+        tasks.gate = Event()
+        gate = tasks.gate
+        keyboard_action("Erreurs + critiques (filtres)", lambda: wait_delayed_bulk(gate))
+
+    def wait_delayed_bulk(gate):
+        handle = tasks.selection_handle
+        assert handle is not None and handle.started.is_set() and not handle.done()
+        assert find_label("Sélection filtrée multi-page en cours")
+        # GTK remains responsive while the real worker waits. Invalidate its
+        # generation before releasing the delayed response, never by timing.
+        entry_with_placeholder("Rechercher dans cette page").set_text("obsolete-fixture")
+        assert handle.cancelled()
+        gate.set()
+        until(handle.done, lambda: later(verify_obsolete_bulk, 150))
+
+    def verify_obsolete_bulk():
+        assert selection_count(0)
+        assert not find_button("Copier la sélection").get_sensitive()
+        report["checks"]["P0_2140_late_cancelled_response_cannot_restore_selection"] = True
+        entry_with_placeholder("Rechercher dans cette page").set_text("")
+        broker.error_count = 201
+        keyboard_action("Erreurs + critiques (filtres)", wait_bulk_refusal)
+
+    def wait_bulk_refusal():
+        until(lambda: find_label("diagnostic selection exceeds 200 events"), verify_bulk_refusal)
+
+    def verify_bulk_refusal():
+        assert selection_count(0)
+        assert not find_button("Copier la sélection").get_sensitive()
+        report["checks"]["P0_2140_over_200_explicit_refusal_no_partial_export"] = True
+        assert broker.checks == 0 and plugin.llm is None
+        screenshot("15-bulk-limit-refused")
+        complete_scenario()
 
     def press(key):
         device[0].key(key, True)
