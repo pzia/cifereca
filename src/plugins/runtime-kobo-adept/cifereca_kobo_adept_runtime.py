@@ -30,6 +30,15 @@ _ACSM_CODES = frozenset({
     'adept_error',
 })
 
+# The external CLI is a process boundary, not a trusted message formatter.
+# Only these *observed in the local contract simulator* profile errors have
+# safe, stable semantics. All other codes and messages stay opaque until
+# explicitly qualified with the upstream CLI contract.
+_KNOWN_NON_ACSM_ERRORS = {
+    'profile_missing': 'Profil Kobo-Adept introuvable.',
+    'invalid_profile': 'Profil Kobo-Adept invalide.',
+}
+
 
 def classified_adept_failure(error, exit_code):
     """Classify a FAILED, proven ACSM download request only.
@@ -190,9 +199,19 @@ class KoboAdeptRuntime:
                         and error['code'] in _ACSM_CODES)):
                 fail('Échec Kobo-Adept ; cause non qualifiée pour cette opération.',
                      'kobo_adept_failed', returncode=proc.returncode)
-            fail(safe_message(error.get('message') or 'Échec Kobo-Adept'),
-                str(error.get('code') or 'kobo_adept_failed'),
-                returncode=proc.returncode, retryable=error.get('retryable') is True)
+            # An unrecognized structured `error.code` may itself contain
+            # private URLs, XML, tokens or human-readable identities. Neither
+            # that raw key nor the vendor message crosses the Core boundary.
+            # Preserve existing machine-readable profile_missing semantics
+            # without trusting vendor wording or invented retry semantics for
+            # unknown failures.
+            vendor_code = error.get('code')
+            if type(vendor_code) is str and vendor_code in _KNOWN_NON_ACSM_ERRORS:
+                fail(_KNOWN_NON_ACSM_ERRORS[vendor_code], vendor_code,
+                     returncode=proc.returncode,
+                     retryable=error.get('retryable') is True)
+            fail('Échec Kobo-Adept ; code fournisseur non qualifié.',
+                 'kobo_adept_failed', returncode=proc.returncode)
         self._report(f"Kobo-Adept {self.last_run_diagnostic.get('operation') or 'operation'}", "ok")
         return value
 
