@@ -33,12 +33,25 @@ jobs:
       - name: Build cifereca-update-dev snapshot
         run: python scripts/package-dev-snapshot.py
 
-      - name: List artifacts
-        run: unzip -l dist/cifereca-dev-plugins-*.zip | head -80
+      - name: Verify exact distribution archives
+        id: archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse --short=12 HEAD)"
+          for archive in "dist/cifereca-dev-plugins-$sha.zip" "dist/cifereca-plugins-all-in-one-$sha.zip"; do
+            test -s "$archive"
+            unzip -tqq "$archive"
+          done
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
           name: cifereca-plugin-packages
-          path: dist/*.zip
+          # Only the two reviewed build products; never archive the entire
+          # dist directory or an unrelated ZIP dropped by a future step.
+          path: |
+            dist/cifereca-dev-plugins-${{ steps.archives.outputs.sha }}.zip
+            dist/cifereca-plugins-all-in-one-${{ steps.archives.outputs.sha }}.zip
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 2
