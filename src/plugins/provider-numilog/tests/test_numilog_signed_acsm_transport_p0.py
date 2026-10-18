@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 import httpx
 import pytest
+import zipfile
 
 from cifereca.plugin_api import AccountRef, ProviderCapabilityError, ProviderError
 from cifereca_numilog import NumilogSession
@@ -393,5 +394,100 @@ def test_other_allowed_readbook_origin_cannot_claim_private_library_referrer(tmp
         assert seen == [(foreign_readbook, session.base_url)]
         assert acquisition.calls == []
         assert "PRIVATE_REFERRER_MARKER" not in repr(diag.events)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("broker_status,media_format", (
+    ("complete", "epub"),
+    ("unchanged", "epub"),
+    ("complete", "pdf"),
+    ("unchanged", "pdf"),
+))
+def test_acsm_broker_returns_nested_identity_artifact_without_flattening_or_index_claim(
+    tmp_path, broker_status, media_format,
+):
+    """A provider's ACSM success is NOT a durable Core purchase index.
+
+    The real Core broker puts fulfilled artifacts inside an identity/provider
+    acsm-<source_sha>/ directory and indexes them under an ACSM digest
+    before Numilog's distinct purchase-ID checkpoint runs. A provider must
+    relay the EXACT returned file, neither flattening/moving it nor claiming
+    it was attached to an owned right. All inputs are fictional.
+    """
+    visited = []
+
+    def handler(request):
+        url = str(request.url)
+        visited.append(url)
+        if url == READ_BOOK:
+            return httpx.Response(302, headers={"location": SIGNED})
+        assert url == SIGNED
+        return httpx.Response(
+            200, content=ACSM,
+            headers={"content-type": "application/vnd.adobe.adept+xml"},
+        )
+
+    session, diag, broker = setup(tmp_path, handler)
+    nested = (
+        tmp_path / "identity" / "numilog" / "acsm-FICTIONAL_SOURCE_SHA"
+        / ("Livre-fictif." + media_format)
+    )
+    nested.parent.mkdir(parents=True)
+    if media_format == "pdf":
+        payload = b"%PDF-1.4\n% Fictional, not a real purchase\n"
+        nested.write_bytes(payload)
+    else:
+        with zipfile.ZipFile(nested, "w") as archive:
+            archive.writestr(
+                "mimetype", "application/epub+zip",
+                compress_type=zipfile.ZIP_STORED,
+            )
+            archive.writestr(
+                "META-INF/container.xml",
+                '<?xml version="1.0"?><container version="1.0"/>',
+            )
+        payload = nested.read_bytes()
+    assert nested.is_file()
+
+    calls = []
+
+    def import_acsm(path, **kwargs):
+        assert Path(path).is_file() and Path(path).read_bytes() == ACSM
+        assert kwargs["identity_id"] == "fictional-reader"
+        assert kwargs["provider_id"] == "numilog"
+        calls.append((Path(path), kwargs))
+        # Simulate the *public* Core broker response. Existing artifact
+        # provenance is intentionally out of this provider's authority.
+        return {"status": broker_status, "path": str(nested)}
+
+    broker.import_acsm = import_acsm
+    try:
+        output, source = session._download(
+            READ_BOOK, tmp_path / "should-not-flatten.epub",
+            title="PRIVATE_BOOK_TITLE",
+        )
+        assert output == nested and output.read_bytes() == payload
+        assert source == session.library_url
+        assert not (tmp_path / "should-not-flatten.epub").exists()
+        assert visited == [READ_BOOK, SIGNED] and len(calls) == 1
+        # The Numilog trace proves the broker returned an existing local
+        # file, but cannot attest Core's later purchase-ID index/checkpoint.
+        events = [
+            kw["detail"] for args, kw in diag.events
+            if args[:2] == ("NUMILOG", "acquisition_delivery")
+        ]
+        assert events[-1]["phase"] == "completed"
+        assert events[-1]["code"] == "acsm_complete"
+        assert events[-1]["status"] == "ok"
+        assert not any(event.get("phase") == "core_index_complete" for event in events)
+        for sensitive in (
+            "FICTIONAL_SOURCE_SHA", "PRIVATE_BOOK_TITLE",
+            "SYNTHETIC_NOT_A_CREDENTIAL", "auth=",
+            "orderid=", "resid=", "source_acsm_sha256",
+        ):
+            assert sensitive not in repr(diag.events)
+        assert list(tmp_path.rglob("*.acsm")) == []
+        _assert_clean(tmp_path)
     finally:
         session.close()
