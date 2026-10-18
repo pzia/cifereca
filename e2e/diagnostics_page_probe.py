@@ -290,6 +290,13 @@ def main():
             try:
                 callback()
             except Exception as exc:
+                frames = []
+                trace = exc.__traceback__
+                while trace is not None:
+                    if trace.tb_frame.f_code.co_filename == __file__:
+                        frames.append(trace.tb_lineno)
+                    trace = trace.tb_next
+                print(json.dumps({"probe":"P0_2140_assertion", "source_line": frames[-1] if frames else 0}), flush=True)
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         return wrapped
@@ -588,6 +595,18 @@ def main():
         screenshot("14-bulk-errors-57")
         if args.width == 1366:
             report["stage"] = "P0_2140_resize_selected_window_760"
+            content = page[0].get_child()
+            rows = []
+            child = content.get_first_child()
+            while child is not None:
+                rows.append(min(10000, max(0, child.measure(Gtk.Orientation.HORIZONTAL, -1)[0])))
+                child = child.get_next_sibling()
+            # Only geometry of this synthetic probe, never labels, widget
+            # objects, paths or exceptions. Needed to attribute a genuine
+            # minimum-size failure without publishing raw GTK evidence.
+            print(json.dumps({"probe":"P0_2140_narrow_minimum", "row_minima":rows[:128],
+                  "window_minimum": min(10000, max(0, window[0].measure(Gtk.Orientation.HORIZONTAL, -1)[0])),
+                  "page_minimum": min(10000, max(0, page[0].measure(Gtk.Orientation.HORIZONTAL, -1)[0]))}), flush=True)
             window[0].set_default_size(760, 790)
             until(lambda: window[0].get_width() <= 760,
                   lambda: verify_narrow_bulk(payload), seconds=5)
