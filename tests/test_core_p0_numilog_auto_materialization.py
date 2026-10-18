@@ -198,7 +198,9 @@ def test_startup_empty_authenticated_library_claims_only_once(tmp_path):
         first = execute(broker, account.identity_id, "startup")
         second = execute(broker, account.identity_id, "startup")
         assert first.ok and first.facts["status"] == "complete"
-        assert second.ok and second.facts["status"] == "complete"
+        assert second.ok and second.facts["status"] == "not_due"
+        assert first.facts["sources_claimed"] == 1
+        assert second.facts["sources_claimed"] == 0
         assert first.facts["downloaded"] == second.facts["downloaded"] == 0
         assert calls == []
     finally:
@@ -548,8 +550,12 @@ def test_startup_claim_rechecks_owner_before_first_private_library_request(
             change_after_claim,
         )
         response = execute(broker, account.identity_id, "startup")
-        assert response.ok and response.changed == 0
+        assert not response.ok and response.facts["status"] == "blocked"
+        assert response.changed == 0
+        assert response.facts["sources_claimed"] == 1
+        assert response.facts["blocked"] == 1
         assert response.facts["attempted"] == 0
+        assert service.storage.numilog_materialization_run_status(sid)["status"] == "blocked"
         assert calls == []
     finally:
         service.close()
