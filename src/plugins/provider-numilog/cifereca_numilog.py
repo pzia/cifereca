@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.50'
+VERSION = '0.1.51'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -576,6 +576,7 @@ class NumilogSession(ProviderSession):
             expected_readbook = (
                 expected_readbook_url if type(expected_readbook_url) is str else url
             )
+            attested_confirmation_redirect = None
             for hop in range(12):
                 trace.fail('adept_unconfirmed')
                 if owner is not None:
@@ -643,6 +644,16 @@ class NumilogSession(ProviderSession):
                         trace.fail('origin_rejected')
                         if redirect_error is not None:
                             raise redirect_error
+                        if (
+                            hop == 0 and r.status_code == 302
+                            and source == 'readbook' and url == expected_readbook
+                            and url_origin(url) == url_origin(self.library_url)
+                            and urlsplit(url).path.casefold() == '/pages/compte/readbook.ashx'
+                            and url_origin(redirect_to) == url_origin(self.library_url)
+                            and urlsplit(redirect_to).path.casefold()
+                                == '/pages/commande/confirmationpaiement.aspx'
+                        ):
+                            attested_confirmation_redirect = redirect_to
                         url = redirect_to
                         trace.fail('redirect_limit')
                         continue
@@ -704,6 +715,10 @@ class NumilogSession(ProviderSession):
                                         evidence=evidence,
                                         expected_readbook=expected_readbook,
                                         require_bound_confirmation=True,
+                                        allow_missing_readbook=(
+                                            hop == 1 and attested_confirmation_redirect is not None
+                                            and str(r.url) == attested_confirmation_redirect
+                                        ),
                                     )
                                 except DeliverySelectionError as exc:
                                     bound_url = None
@@ -782,6 +797,10 @@ class NumilogSession(ProviderSession):
                                 html,str(r.url),allowed_origins=self.allowed_origins,
                                 evidence=evidence, expected_readbook=expected_readbook,
                                 require_bound_confirmation=confirmation_page,
+                                allow_missing_readbook=(
+                                    hop == 1 and attested_confirmation_redirect is not None
+                                    and str(r.url) == attested_confirmation_redirect
+                                ),
                             )
                         except DeliverySelectionError as exc:
                             trace.fail('html_delivery_ambiguous' if exc.code == 'ambiguous' else 'html_delivery_link_missing')
