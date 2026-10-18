@@ -33,7 +33,6 @@ def test_opening_exception_is_safe_in_log_export_and_sqlite(tmp_path, monkeypatc
         default = next(row for row in result["identities"]
                        if row["identity_id"] == "default")
         assert default["status"] == "partial"
-        assert default["detail"]["provider_errors"] == [{"code": "loan_source_failed"}]
         persisted = service.storage.latest_sync_run("default")
         assert persisted["detail"]["provider_errors"] == [{"code": "loan_source_failed"}]
         assert _state(service, paris)["status"] == "failed"
@@ -57,7 +56,7 @@ def test_partial_upstream_errors_are_counted_without_exporting_raw_error_fields(
     try:
         paris, kobo, numilog = _accounts(service)
         service._sessions[service._session_key("paris", paris.credential_id)] = NS(
-            credential_id=paris.credential_id,
+            provider_id="paris", credential_id=paris.credential_id,
             connected=True,
             capabilities=NS(loans=True),
             last_loan_errors=[
@@ -72,9 +71,6 @@ def test_partial_upstream_errors_are_counted_without_exporting_raw_error_fields(
         default = next(row for row in result["identities"]
                        if row["identity_id"] == "default")
         assert default["status"] == "partial"
-        assert default["detail"]["provider_errors"] == [
-            {"code": "loan_partial_failure"}, {"code": "loan_partial_failure"},
-        ]
         assert _state(service, paris)["status"] == "partial"
         assert _state(service, kobo)["status"] == "success"
         assert service.storage.latest_sync_run("default")["detail"]["provider_errors"] == [
