@@ -81,6 +81,49 @@ def test_unsupported_request_never_calls_network(field, scope):
         session.close()
 
 
+
+@pytest.mark.parametrize("field,query", (
+    ("author", "Tous"),
+    ("category", "Toutes"),
+    ("genre", "Tous"),
+    ("subject", "Tous"),
+))
+def test_all_option_is_not_treated_as_a_matched_filter(field, query):
+    # The upstream form's default option (id_auteur=0,
+    # id_categorie/id_genre=1) is NOT a real filter. Otherwise a query
+    # matching "Tous" sends a broad catalogue GET as if field-specific.
+    client = FakeClient()
+    session = make_session(client)
+    try:
+        assert session.search(query, field=field) == []
+        assert len(client.get_calls) == 1
+        assert client.get_calls[0][1] == {}
+        assert not client.post_calls
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("field,form", (
+    ("author", '<select name="id_auteur"><option value="0">Tous</option></select>'),
+    ("category", '<select name="id_categorie"><option value="1">Toutes</option></select>'),
+    ("genre", '<select name="id_genre"><option value="1">Tous</option></select>'),
+))
+def test_selector_with_only_global_default_is_not_a_usable_field_route(field, form):
+    # A select element with only a broad default is not evidence that a
+    # usable author/category/genre filtering route exists.
+    client = FakeClient(form=form)
+    session = make_session(client)
+    try:
+        with pytest.raises(ProviderCapabilityError, match="field_route_unavailable"):
+            session.search("Doyle", field=field)
+        assert len(client.get_calls) == 1
+        assert not client.post_calls
+    finally:
+        session.close()
+
+
+
 def test_missing_author_selector_is_not_a_false_zero():
     client = FakeClient(form='<select name="id_genre"><option value="1">Tous</option></select>')
     session = make_session(client)
