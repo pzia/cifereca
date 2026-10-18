@@ -143,3 +143,64 @@ def test_malformed_metadata_does_not_break_public_base_detail():
     assert result.subtitle == "Author"
     assert result.actions == ()
     assert "PRIVATE" not in str(result)
+
+
+def test_multiple_language_and_publisher_values_keep_distinct_typed_fields():
+    result = detail({
+        "book_id": "edition-a", "title": "Book",
+        "metadata": {
+            "languages": ["FR", "en", "FR"],
+            "publishers": [
+                {"name": "Éditions A"}, {"name": "Éditions B"},
+                {"label": "Éditions C"}, {"name": "Éditions A"},
+            ],
+        },
+    })
+    rows = [(f.id, f.label, f.value, f.kind) for f in facets(result)]
+    assert rows == [
+        ("language", "Langue", "fr", "language"),
+        ("language-1", "Langue", "en", "language"),
+        ("publisher", "Éditeur", "éditions a", "all"),
+        ("publisher-1", "Éditeur", "éditions b", "all"),
+        ("publisher-2", "Éditeur", "éditions c", "all"),
+    ]
+    assert all("[" not in f.value and "{" not in f.value for f in facets(result))
+    assert result.actions == ()
+
+
+def test_malformed_multivalue_evidence_is_not_stringified_or_promoted():
+    class PrivateObject:
+        def __str__(self):
+            raise AssertionError("PRIVATE_ACCOUNT")
+    result = detail({
+        "book_id": "edition-1", "title": "Public book",
+        "metadata": {
+            "language": ["FR", PrivateObject(), {"name": "EN"}, "SECRET\\u202e", "DE"],
+            "publisher": [PrivateObject(), {"rights": "PRIVATE_TOKEN"},
+                          "Clean Public Publisher", "PRIVATE\\u202e", "Another Publisher"],
+        },
+    })
+    values = [field.value for field in facets(result)]
+    assert values == ["fr", "en", "de", "clean public publisher", "another publisher"]
+    assert "PRIVATE" not in str(result) and "SECRET" not in str(result)
+    assert result.actions == ()
+
+
+def test_multivalue_details_are_bounded_and_dont_infer_source_rights():
+    result = detail({
+        "book_id": "edition-1", "title": "Title",
+        "metadata": {
+            "languages": [f"tag-{i}" for i in range(100)],
+            "publishers": [f"publisher-{i}" for i in range(100)],
+            "owned": True, "download_url": "https://example.org/acsm?auth=PRIVATE",
+        },
+    })
+    fields = facets(result)
+    assert [f.value for f in fields if f.label == "Langue"] == [
+        "tag-0", "tag-1", "tag-2", "tag-3",
+    ]
+    assert [f.value for f in fields if f.label == "Éditeur"] == [
+        "publisher-0", "publisher-1", "publisher-2", "publisher-3",
+    ]
+    assert result.actions == () and "possédé" not in result.badges
+    assert "PRIVATE" not in str(result)
