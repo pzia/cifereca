@@ -24,12 +24,14 @@ on:
       - 'simulation/youth_sources/**'
       - 'simulation/milan/**'
       - 'scripts/ci-install-gtk-e2e-runtime.sh'
+      - 'scripts/ci-export-e2e-summary.py'
       - 'scripts/ci-select-e2e.py'
       - 'scripts/ci-select-core-tests.py'
       - 'environnements/openai-chat-debian/capture_app.py'
       - '.github/workflows/e2e-smoke.yml'
       - 'pyproject.toml'
       - 'tests/test_e2e_runner_contract.py'
+      - 'tests/test_ci_e2e_artifact_export.py'
       - 'tests/test_e2e_ci_paths.py'
       - 'tests/test_ci_select_e2e.py'
 
@@ -68,6 +70,9 @@ jobs:
 
       - name: Test E2E scenario selector
         run: /usr/bin/python3 tests/test_ci_select_e2e.py
+
+      - name: Validate privacy-safe E2E publication policy
+        run: /usr/bin/python3 -m unittest discover -s tests -p 'test_ci_e2e_artifact_export.py'
 
       - name: Install GTK E2E runtime
         if: steps.select.outputs.count != '0'
@@ -126,7 +131,17 @@ jobs:
           PY
           exit "$status"
 
-      - name: Publish E2E summary
+      - name: Prepare privacy-safe E2E verdicts
+        if: always()
+        shell: bash
+        run: |
+          if [ -f e2e-artifacts/summary.json ]; then
+            /usr/bin/python3 scripts/ci-export-e2e-summary.py \
+              --source e2e-artifacts/summary.json \
+              --out-dir "$RUNNER_TEMP/cifereca-e2e-public"
+          fi
+
+      - name: Publish privacy-safe E2E summary
         if: always()
         shell: bash
         run: |
@@ -134,20 +149,20 @@ jobs:
             echo "## E2E GTK"
             echo "Selected: ${{ steps.select.outputs.count }}/${{ steps.select.outputs.total }} (mode: ${{ steps.select.outputs.mode }})"
             echo
-            if [ -f e2e-artifacts/summary.json ]; then
+            if [ -f "$RUNNER_TEMP/cifereca-e2e-public/summary.json" ]; then
               echo '~~~json'
-              cat e2e-artifacts/summary.json
+              cat "$RUNNER_TEMP/cifereca-e2e-public/summary.json"
               echo '~~~'
             else
-              echo "Aucun GTK demandé (documentation seule), ou échec avant le replay."
+              echo "Aucun verdict publiable (pas de scénario ou export refusé)."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload E2E debug artifacts
+      - name: Upload privacy-safe E2E verdicts only
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-core-debug
-          path: e2e-artifacts/
-          if-no-files-found: warn
-          retention-days: 7
+          name: e2e-core-summary
+          path: ${{ runner.temp }}/cifereca-e2e-public/summary.json
+          if-no-files-found: ignore
+          retention-days: 2
