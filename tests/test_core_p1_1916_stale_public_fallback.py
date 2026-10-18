@@ -291,3 +291,79 @@ def test_partial_public_provider_warning_is_redacted_without_losing_live_rows(tm
         assert summary.providers_failed == 0
     finally:
         service.close()
+
+
+def test_synchronous_search_reuses_only_attested_public_mirror_on_outage(
+    tmp_path, monkeypatch,
+):
+    service = _service(tmp_path)
+    try:
+        _known(service, provider="bad", key="old", title="Progressive Book")
+        _known(service, provider="bad", key="private", title="Progressive Book",
+               collection="library")
+        _known(service, provider="bad", identity="bob", key="foreign",
+               title="Progressive Book")
+        bad, good = _FakeSession("bad"), _FakeSession("good")
+        calls = []
+        def denied(*_args, **_kwargs):
+            calls.append("network")
+            raise httpx.ConnectError("https://secret.invalid/?auth=TOKEN_PRIVATE")
+        bad.search = denied
+        service._sessions = {"bad": bad, "good": good}
+        mirrored = []
+        monkeypatch.setattr(
+            service, "_mirror_remote_results",
+            lambda rows, **kw: mirrored.extend(rows) or len(rows),
+        )
+        rows = service.search("Progressive Book", force=True, field="title")
+        assert len(calls) == 1
+        assert len(rows) == 2
+        stale = next(row for row in rows if row.source_provider == "bad")
+        assert stale.metadata["search_provenance"] == "known_catalog_stale"
+        assert stale.owned is False and stale.downloadable is False
+        assert stale.friendly_url is stale.thumbnail_url is None
+        assert {row.source_provider for row in mirrored} == {"good"}
+        assert "résultats connus" in str(service.last_search_warnings)
+        assert "TOKEN_PRIVATE" not in str(service.last_search_warnings)
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("scenario,expected", [
+    ("forbidden", False), ("rate_limited", True),
+    ("real_zero", False), ("no_public", False),
+])
+def test_synchronous_fallback_rejects_rights_refusals_and_empty_public_cache(
+    tmp_path, scenario,
+    expected,
+):
+    service = _service(tmp_path)
+    try:
+        _known(service, provider="bad", title="Progressive Book",
+               collection="library" if scenario == "no_public" else "catalog")
+        session = _FakeSession("bad")
+        calls = []
+        def search(*_args, **_kwargs):
+            calls.append("network")
+            if scenario == "real_zero":
+                return []
+            if scenario == "no_public":
+                raise httpx.ReadTimeout("SECRET")
+            status = 403 if scenario == "forbidden" else 429
+            request = httpx.Request("GET", "https://catalog.invalid/?token=SECRET")
+            raise httpx.HTTPStatusError(
+                "SECRET", request=request,
+                response=httpx.Response(status, request=request),
+            )
+        session.search = search
+        service._sessions = {"bad": session}
+        rows = service.search("Progressive Book", force=True, field="title")
+        assert len(calls) == 1 if scenario != "real_zero" else len(calls) >= 1
+        assert bool(rows) == expected
+        assert all(row.metadata.get("search_provenance") == "known_catalog_stale"
+                   for row in rows)
+        assert "SECRET" not in str(service.last_search_warnings)
+        if scenario == "no_public":
+            assert "aucun résultat connu" in str(service.last_search_warnings)
+    finally:
+        service.close()
