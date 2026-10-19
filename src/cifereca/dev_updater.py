@@ -222,8 +222,8 @@ def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
         row for row in rows
         if package_ids is None or row["package_id"] in package_ids
     ]
-    error_count = sum(row["state"] == "error" for row in selected)
-    incompatible_count = sum(row["state"] == "incompatible" for row in selected)
+    error_count = min(2048, sum(row["state"] == "error" for row in selected))
+    incompatible_count = min(2048, sum(row["state"] == "incompatible" for row in selected))
     if error_count or incompatible_count:
         raise PluginSmokeError(
             "smoke plugins: contributions installées en erreur",
@@ -236,10 +236,10 @@ def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
         # activated just to make smoke pass. Missing active packages are
         # classified without revealing their names.
         visible = {row["package_id"] for row in rows}
-        missing_count = sum(
+        missing_count = min(2048, sum(
             package_id not in visible and _package_is_active(package_id) is not False
             for package_id in package_ids
-        )
+        ))
         if missing_count:
             raise PluginSmokeError(
                 "smoke plugins: packages actifs absents de l'inventaire",
