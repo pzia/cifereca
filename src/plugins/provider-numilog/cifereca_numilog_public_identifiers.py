@@ -58,6 +58,25 @@ class _VisibleLabels(HTMLParser):
         "script", "style", "template", "noscript", "form", "iframe",
         "nav", "footer", "header", "aside", "dialog", "svg", "button",
     })
+    _VOID = frozenset({
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    })
+
+    @staticmethod
+    def _hidden(attrs):
+        # Duplicated attributes are untrusted: any hiding declaration wins.
+        if any(key == "hidden" for key, _value in attrs):
+            return True
+        if any(key == "aria-hidden" and type(value) is str
+               and value.strip().casefold() == "true"
+               for key, value in attrs):
+            return True
+        return any(
+            "display:none" in compact or "visibility:hidden" in compact
+            for key, value in attrs if key == "style"
+            for compact in ["".join(str(value or "").casefold().split())]
+        )
 
     def __init__(self, product_url):
         super().__init__(convert_charrefs=True)
@@ -77,7 +96,7 @@ class _VisibleLabels(HTMLParser):
         # Numilog's ASP.NET root form wraps the whole public product page.
         # Admit only the observed canonical wrapper, never login/account forms
         # or a form whose target points at another product or signed endpoint.
-        if tag == 'form' and not self.ignored and (
+        if tag == 'form' and not self.ignored and not self._hidden(attrs) and (
             len(attributes) == len(attrs)
             and attributes.get('id') == 'aspnetForm'
             and attributes.get('name') == 'aspnetForm'
@@ -96,7 +115,9 @@ class _VisibleLabels(HTMLParser):
             self.title_end = None
             return
         if self.ignored:
-            if tag in self._IGNORED:
+            # Track *every* nested non-void tag. A nested <div> cannot
+            # prematurely close the hidden outer <div>, or expose its EANs.
+            if tag not in self._VOID:
                 self.ignored.append(tag)
             return
         # After the canonical form closes, no footer/recommendation can
@@ -104,8 +125,9 @@ class _VisibleLabels(HTMLParser):
         # the original conservative legacy behavior.
         if self.product_form_seen and not self.product_form_open:
             return
-        if tag in self._IGNORED:
-            self.ignored.append(tag)
+        if tag in self._IGNORED or self._hidden(attrs):
+            if tag not in self._VOID:
+                self.ignored.append(tag)
             return
         if tag == "h1":
             self.h1_count += 1
@@ -113,8 +135,12 @@ class _VisibleLabels(HTMLParser):
 
     def handle_endtag(self, tag):
         if self.ignored:
-            if tag == self.ignored[-1]:
-                self.ignored.pop()
+            # Conservative malformed-markup handling: only a matching
+            # closer releases an ignored subtree, never an unrelated tag.
+            for index in range(len(self.ignored) - 1, -1, -1):
+                if self.ignored[index] == tag:
+                    del self.ignored[index:]
+                    break
             return
         if tag == 'form' and self.product_form_open:
             self.product_form_open = False
