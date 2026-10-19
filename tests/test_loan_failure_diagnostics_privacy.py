@@ -41,7 +41,10 @@ def test_real_service_keeps_exact_public_error_retry_ledger_process_but_expurgat
             else 'Acquisition ADEPT indisponible'
         )
         assert result['error'].startswith(expected_message)
-        assert 'stdout_bytes=5' in result['error'] if stage == 'adept' else result['error'] == expected_message
+        if stage == 'adept':
+            assert 'stdout_bytes=5' in result['error']
+        else:
+            assert result['error'] == expected_message
         assert PRIVATE not in result['error'] + str(result['code'])
         assert result['status']==('retryable_error' if code=='kobo_adept_invalid_json' else 'attention_required')
         if stage=='adept':
@@ -121,5 +124,36 @@ def test_hostile_runtime_message_and_code_do_not_break_durable_failure_receipt(
         assert row["attention_code"] == "adept_error"
         assert "NEVER_ECHO_ACSM" not in result["code"] + result["error"]
         assert "NEVER_ECHO_ACSM" not in row["error_code"] + row["error_message"]
+    finally:
+        service.close()
+
+
+
+def test_pnb_plugin_version_is_numeric_only_and_cannot_expose_private_text(
+    tmp_path, monkeypatch,
+):
+    from tests.test_core_0977_adept_retry_guard import _service, _loan
+
+    service = _service(tmp_path)
+    private = "1.2.4-secret-auth-DO_NOT_EXPOSE"
+    service._plugin_manager = NS(
+        status=lambda _plugin_id: NS(descriptor=NS(version=private)),
+    )
+    monkeypatch.setattr(
+        service, "acquire_digital_loan",
+        lambda *_a, **_kw: (_ for _ in ()).throw(
+            UserFacingError("Private source https://private.invalid?auth=TOKEN",
+                            code="pnb_redirect_refused"),
+        ),
+    )
+    try:
+        result = service._acquire_active_loan_automatically(_loan())
+        assert result["status"] == "attention_required"
+        assert result["code"] == "pnb_redirect_refused"
+        assert "target_scheme / target_port" in result["error"]
+        assert "DO_NOT_EXPOSE" not in result["error"]
+        assert "TOKEN" not in result["error"]
+        [row] = service.storage.acquisitions(provider_id="paris")
+        assert row["error_message"] == result["error"]
     finally:
         service.close()
