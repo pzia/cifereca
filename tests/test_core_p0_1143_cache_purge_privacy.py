@@ -87,3 +87,39 @@ def test_clean_cache_purge_preserves_delete_contract(tmp_path, monkeypatch):
     assert result.bytes_freed > 0
     assert result.warnings == ()
     assert not (folder / "entry.json").exists()
+
+
+@pytest.mark.parametrize("plugin_id", [
+    "../outside", "..", ".hidden", "/tmp/private",
+    "plugin/subdir", "plugin\\\\outside",
+    "https://private.invalid/?token=PRIVATE_ACCOUNT_2026",
+])
+def test_untrusted_plugin_cache_ids_are_never_interpreted_as_paths(
+    plugin_id,
+):
+    with pytest.raises(ValueError, match="invalid_plugin_cache_namespace"):
+        cache_runtime.ScopedCacheBroker(NS(storage=NS()), plugin_id=plugin_id)
+
+
+def test_global_cache_purge_rejects_escaped_plugin_path_before_mutation(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(cache_runtime, "cache_dir", lambda: tmp_path / "cache")
+    sentinel = tmp_path / "sentinel"
+    sentinel.mkdir()
+    (sentinel / "private-book.epub").write_text("preserved", encoding="utf-8")
+    broker = cache_runtime.ScopedCacheBroker(
+        NS(storage=NS()), plugin_id="core", allow_global=True,
+    )
+    result = broker.purge("plugin:../../sentinel")
+    assert result.ok is False
+    assert result.warnings == ("cache_namespace_invalid",)
+    assert result.namespaces == ()
+    assert (sentinel / "private-book.epub").read_text(encoding="utf-8") == "preserved"
+
+
+def test_legal_single_component_plugin_id_remains_supported():
+    broker = cache_runtime.ScopedCacheBroker(
+        NS(storage=NS()), plugin_id="org.cifereca_123-Plugin",
+    )
+    assert broker._db_namespace == "plugin:org.cifereca_123-Plugin"
