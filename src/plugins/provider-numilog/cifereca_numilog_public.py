@@ -365,6 +365,12 @@ def parse_public_search(text, source_url):
     next_queries = {urlencode(sorted(_query(u).items())) for u in next_urls}
     if len(next_queries) > 1:
         _fail('ambiguous_pagination')
+    # A complete first-page count cannot coexist with a source-advertised
+    # later page, even when GRID_PAGE=1 is missing or malformed upstream.
+    # The absence of a *direct* next_url alone never proves exhaustion.
+    if (page_index == 0 and total == len(items)
+            and any(int(link['GRID_PAGE']) > 0 for link in pages)):
+        _fail('inconsistent_pagination')
     facets = []
     for link in _nodes(root, 'panel-sous-filtre'):
         if len(facets) >= 200 or link.tag != 'a':
