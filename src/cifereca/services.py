@@ -1773,7 +1773,10 @@ class LibraryService:
 
         try:
             adapter = self._kobo_adapter()
-        except ProviderConfigurationError as exc:
+        except ProviderConfigurationError:
+            # Adapter discovery can fail with executable paths, profile names
+            # or provider-controlled messages. Public runtime state must not
+            # echo raw exception text to Settings, Diagnostics or cache.
             state = {
                 "available": False,
                 "compatible": False,
@@ -1791,7 +1794,7 @@ class LibraryService:
                 "resolved_executable": None,
                 "minimum_supported_contract": 8,
                 "preferred_contract": 8,
-                "error": {"code": "runtime_plugin_unavailable", "message": str(exc)},
+                "error": {"code": "runtime_plugin_unavailable", "message": "Runtime Kobo-ADEPT indisponible"},
             }
             self._kobo_adept_state_cache = dict(state)
             self._kobo_adept_state_cache_at = now
