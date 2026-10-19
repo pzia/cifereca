@@ -29,7 +29,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gio, Gtk
 from PIL import ImageGrab
 
-from diagnostics_page_probe import Broker, Context, Host, Tasks, walk
+from diagnostics_page_probe import reveal_diagnostics_section, Broker, Context, Host, Tasks, walk
 from cifereca.plugin_api import LLMResult
 from x11_input import X11Input
 
@@ -235,13 +235,34 @@ def main():
     def later(fn, ms=120):
         def cb():
             try:
+                code = getattr(fn, "__code__", None)
+                if code is not None and code.co_filename == __file__:
+                    report["checkpoint_line"] = code.co_firstlineno
+                save()
                 fn()
             except Exception as exc:
+                frames = []
+                trace = exc.__traceback__
+                while trace is not None:
+                    if trace.tb_frame.f_code.co_filename == __file__:
+                        frames.append(trace.tb_lineno)
+                    trace = trace.tb_next
+                report["failure_line"] = frames[-1] if frames else 0
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(ms, cb)
 
     def until(predicate, callback, *, seconds=8):
+        # Only a source-verified call line can be published by the CI exporter.
+        from inspect import currentframe
+        frame = currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            if caller is not None and caller.f_code.co_filename == __file__:
+                report["wait_line"] = caller.f_lineno
+        finally:
+            del frame
+        save()
         deadline = monotonic() + seconds
 
         def poll():
@@ -264,7 +285,7 @@ def main():
         buttons = [w for w in walk(page[0])
                    if isinstance(w, Gtk.Button) and w.get_tooltip_text() == value]
         assert len(buttons) == 1, (value, len(buttons))
-        return buttons[0]
+        return reveal_diagnostics_section(buttons[0])
 
     def switch(state):
         if plugin[0] is not None:
@@ -553,7 +574,7 @@ def main():
         found = [w for w in walk(page[0])
                  if isinstance(w, Gtk.Button) and w.get_label() == label]
         assert len(found) == 1, ("D14 bouton absent", label, len(found))
-        return found[0]
+        return reveal_diagnostics_section(found[0])
 
     def ai_status():
         return " ".join(labels())
@@ -755,13 +776,16 @@ def main():
         assert "event-ux-001" not in ai_prompt_text()
         ai_journals_queries_before[0] = len(broker[0].event_queries)
         broker[0].refresh_gate = Event()
+        # Reading the IA button changes tabs via reveal_diagnostics_section.
+        # Verify consent BEFORE focusing the Journaux refresh target, never
+        # between the physical focus check and the XTEST Space key.
+        assert ai_button("Autoriser et analyser").get_sensitive()
         refresh = button_tooltip("Actualiser les journaux sans synchronisation")
         assert refresh.grab_focus() is not False
         later(lambda: d14_journals_refresh_xtest(refresh), 210)
 
     def d14_journals_refresh_xtest(refresh):
         assert refresh.has_focus(), "D14: bouton Journaux sans focus"
-        assert ai_button("Autoriser et analyser").get_sensitive()
         device[0].key("space", True)
         device[0].key("space", False)
         until(

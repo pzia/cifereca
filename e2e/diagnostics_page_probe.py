@@ -224,9 +224,32 @@ class Context:
         self.reports.append((args, kwargs))
 
 
+def reveal_diagnostics_section(widget):
+    """Set up legacy per-section assertions; tab navigation is tested separately."""
+    child = widget
+    parent = child.get_parent()
+    while parent is not None:
+        if isinstance(parent, Gtk.Expander):
+            parent.set_expanded(True)
+        if isinstance(parent, Gtk.Stack) and parent.get_name() == "diagnostics-sections":
+            parent.set_visible_child(child)
+            break
+        child, parent = parent, parent.get_parent()
+    return widget
+
+
 class Host:
     def __init__(self):
         self.toasts = []
+        from cifereca.gui.ui_perf import UiPerfMonitor
+        self.performance = UiPerfMonitor(measurement_origin="synthetic")
+
+    def performance_report(self):
+        return self.performance.performance_report()
+
+    def set_performance_capture(self, enabled):
+        self.performance.enable_detailed_capture(enabled)
+        return self.performance.performance_report()
 
     def toast(self, text):
         self.toasts.append(str(text))
@@ -320,21 +343,39 @@ def main():
         buttons = [w for w in walk(page[0]) if isinstance(w, Gtk.Button)
                    and w.get_label() == label]
         assert len(buttons) == 1, f"bouton {label!r}: {len(buttons)}"
-        return buttons[0]
+        return reveal_diagnostics_section(buttons[0])
 
     def find_expander(label):
         expanders = [w for w in walk(page[0]) if isinstance(w, Gtk.Expander)
                      and w.get_label() == label]
         assert len(expanders) >= 1, f"volet {label!r} absent"
-        return expanders[0]
+        return reveal_diagnostics_section(expanders[0])
 
-    def until(predicate, done, *, seconds=10):
+    def until(predicate, done, *, seconds=10, on_timeout=None):
+        # Always record the exact call site of this wait, including GI-bound
+        # methods such as button.has_focus (not Python lambdas). The CI
+        # exporter validates that numeric line against an AST `until` call.
+        from inspect import currentframe
+        frame = currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            line = (caller.f_lineno if caller is not None
+                    and caller.f_code.co_filename == __file__ else None)
+        finally:
+            del frame
+        if type(line) is int:
+            report["wait_line"] = line
+        else:
+            report.pop("wait_line", None)
+        save()
         deadline = monotonic() + seconds
 
         def check():
             if predicate():
                 done()
             elif monotonic() >= deadline:
+                if on_timeout is not None:
+                    on_timeout()
                 raise AssertionError("Timeout de la condition GTK attendue")
             else:
                 later(check, 90)
@@ -437,18 +478,164 @@ def main():
         window[0].set_default_size(
             args.width - 40, 870 if args.width == 1600 else 790
         )
-        later(report_step, 350)
+        later(capture_navigation, 350)
+
+    def activate_x11_test_window():
+        """Focus this mapped Xvfb toplevel, not a tab (XTEST remains required).
+
+        CI intentionally runs without a window manager. Gtk.Window.present()
+        is only a request, so GDK can leave is_active() false indefinitely;
+        XTEST keyboard events would then be delivered to no GTK toplevel.
+        """
+        import ctypes as C
+        from native_capture import pointer
+        surface = window[0].get_surface()
+        assert surface is not None, "GTK test window has no X11 surface"
+        gtk = C.CDLL("libgtk-4.so.1")
+        gtk.gdk_x11_surface_get_xid.argtypes = [C.c_void_p]
+        gtk.gdk_x11_surface_get_xid.restype = C.c_ulong
+        xid = gtk.gdk_x11_surface_get_xid(pointer(surface))
+        assert xid, "GTK test window has no X11 window ID"
+        x11 = device[0].x11
+        x11.XSetInputFocus.argtypes = [
+            C.c_void_p, C.c_ulong, C.c_int, C.c_ulong,
+        ]
+        x11.XSetInputFocus.restype = C.c_int
+        x11.XSetInputFocus(device[0].display, xid, 1, 0)
+        x11.XSync(device[0].display, False)
+
+    def tab_key(title, key, done):
+        switcher = next(w for w in walk(window[0].get_child())
+                        if isinstance(w, Gtk.StackSwitcher))
+        button = next(w for w in walk(switcher) if isinstance(w, Gtk.ToggleButton)
+                      and any(isinstance(v, Gtk.Label) and v.get_text() == title
+                              for v in walk(w)))
+        assert button.get_mapped() and button.get_sensitive()
+        # GTK4 may keep the former tab's focus after a window resize. Give
+        # the real toplevel focus first, then explicitly target this mapped
+        # StackSwitcher button. Space is still delivered ONLY by XTEST once
+        # real focus is observed (no clicked()/set_visible_child shortcut).
+        window[0].present()
+        if not window[0].is_active():
+            activate_x11_test_window()
+        window[0].set_focus(button)
+        assert button.grab_focus() is not False
+
+        def activate_focused_tab():
+            assert button.has_focus(), "XTEST tab target must hold keyboard focus"
+            press("space")
+            until(lambda: switcher.get_stack().get_visible_child_name() == key,
+                  lambda: later(done, 120))
+
+        # Explain this one strict XTEST focus gate by source-line only. Each
+        # fixed raise can be identified through the existing AST-reviewed
+        # public failure_line; no widget repr or private GTK content escapes.
+        def tab_focus_timeout():
+            if not window[0].is_active():
+                raise AssertionError("GTK tab focus: inactive toplevel")
+            if not button.get_focusable():
+                raise AssertionError("GTK tab focus: unfocusable toggle")
+            current = window[0].get_focus()
+            if current is None:
+                raise AssertionError("GTK tab focus: no focused widget")
+            if current is not button:
+                raise AssertionError("GTK tab focus: different focused widget")
+            raise AssertionError("GTK tab focus: target reports no focus")
+
+        # X11 focus changes are asynchronous. Do not dispatch a physical
+        # Space while GTK may still route it to the previously focused tab.
+        until(button.has_focus, lambda: later(activate_focused_tab, 120),
+              seconds=4, on_timeout=tab_focus_timeout)
+
+    def capture_navigation():
+        # New acceptance uses physical keyboard navigation, not the legacy
+        # section preconditions used for the pre-existing report assertions.
+        tab_key("Capture", "capture", capture_initial)
+
+    def capture_initial():
+        assert not host.performance.detailed_capture_enabled
+        assert find_label("Capture arrêtée")
+        button = find_button("Démarrer la capture")
+        assert button.get_mapped() and button.get_sensitive()
+        assert button.grab_focus() is not False
+        press("space")
+        until(lambda: host.performance.detailed_capture_enabled, capture_started)
+
+    def capture_started():
+        assert find_label("Capture en cours")
+        tab_key("Journaux", "journals", capture_survives_navigation)
+
+    def capture_survives_navigation():
+        assert host.performance.detailed_capture_enabled
+        assert find_label("50 événements affichés")
+        tab_key("Capture", "capture", capture_stop)
+
+    def capture_stop():
+        assert host.performance.detailed_capture_enabled
+        button = find_button("Arrêter la capture")
+        assert button.get_sensitive() and button.grab_focus() is not False
+        press("space")
+        until(lambda: not host.performance.detailed_capture_enabled, capture_export)
+
+    def capture_export():
+        assert find_label("Capture arrêtée")
+        button = find_button("Enregistrer les mesures JSON…")
+        assert button.get_sensitive() and button.grab_focus() is not False
+        press("space")
+        until(lambda: any(e.filename == "cifereca-performance.json" and e.dialog is not None
+                          for e in plugin._support_exports), capture_file_choice)
+
+    def capture_file_choice():
+        exporter = next(e for e in plugin._support_exports
+                        if e.filename == "cifereca-performance.json")
+        assert exporter.dialog.get_visible()
+        target = out / "cifereca-performance.json"
+        target.write_bytes(b"CAPTURE-EXPORT-FIXTURE")
+        assert exporter.dialog.set_file(Gio.File.new_for_path(str(target)))
+        exporter.dialog.set_current_name(target.name)
+        until(lambda: exporter.dialog.get_file() is not None
+              and exporter.dialog.get_file().get_path() == str(target),
+              lambda: capture_accept(exporter, target), seconds=5)
+
+    def capture_accept(exporter, target):
+        assert exporter.dialog.get_file().get_path() == str(target)
+        exporter.dialog.emit("response", Gtk.ResponseType.ACCEPT)
+        until(lambda: exporter.cancellable is None, lambda: capture_saved(target))
+
+    def capture_saved(target):
+        data = json.loads(target.read_text())
+        assert data["schema"] == "cifereca.performance.phases/1"
+        assert data["detailed_capture_enabled"] is False
+        assert data["remote_upload"] is False
+        assert "Mesures JSON enregistrées" in host.toasts
+        assert broker.checks == 0 and plugin.llm is None
+        report["checks"]["P0_2139_capture_keyboard_tabs_lifetime_and_local_json"] = True
+        # Fixture destination selected programmatically; opening the chooser,
+        # tab/start/stop/save activation and actual private write are real GTK.
+        tab_key("Rapports et vérifications", "reports", report_step)
 
     def initial():
         assert window[0].get_width() <= args.width, "Fenêtre trop large"
         assert page[0].get_mapped(), "Plugin non visible"
+        stack = next(w for w in walk(page[0]) if isinstance(w, Gtk.Stack)
+                     and w.get_name() == "diagnostics-sections")
+        assert stack.get_visible_child_name() == "journals"
+        assert host.performance.detailed_capture_enabled is False
+        module_entry = next(w for w in walk(page[0]) if isinstance(w, Gtk.Entry)
+                            and w.get_placeholder_text() == "Préfixe module (Entrée pour appliquer)")
+        assert module_entry.get_mapped()
+        ok, bounds = module_entry.compute_bounds(page[0])
+        assert ok and bounds.get_y() >= 0
+        assert bounds.get_y() + bounds.get_height() <= page[0].get_height()
+        report["checks"]["P0_2139_journals_default_no_implicit_capture"] = True
         assert find_label("Journaux par composant")
         assert find_label("Analyse IA")
         assert find_label("État système")
         assert find_label("Rapport support")
         assert find_label("50 événements affichés")
         assert find_label("Indisponible"), "Disponibilité des sources masquée"
-        assert not find_button("Autoriser et analyser").get_sensitive()
+        assert not next(w for w in walk(page[0]) if isinstance(w, Gtk.Button)
+                        and w.get_label() == "Autoriser et analyser").get_sensitive()
         assert broker.checks == 0, "Contrôle actif lancé à l'ouverture"
         assert len(broker.event_queries) == 1, broker.event_queries
         report["checks"]["initial_and_no_implicit_active_or_ai"] = True
@@ -497,32 +684,51 @@ def main():
         assert "SECRET-UX-TEST" not in payload
         report["checks"]["json_structured_and_redacted"] = True
         screenshot("02-structured-json")
+        detail_pane = view.get_parent()
+        while detail_pane is not None and not isinstance(detail_pane, Gtk.Expander):
+            detail_pane = detail_pane.get_parent()
+        assert detail_pane is not None
         copied_detail = [
-            w for w in walk(page[0]) if isinstance(w, Gtk.Button)
+            w for w in walk(detail_pane) if isinstance(w, Gtk.Button)
             and w.get_tooltip_text() == "Copier le détail expurgé actuellement affiché"
         ]
         assert copied_detail, "Bouton de copie expurgée absent"
-        button = copied_detail[0]
-        # The widget is keyboard activated via real XTEST events, not signal emission.
-        assert button.grab_focus() is not False
-        assert button.has_focus(), "Le focus clavier doit être visible sur Copier"
-        device[0].key("space", True)
-        device[0].key("space", False)
-        report["checks"]["copy_button_keyboard_xtest"] = True
-        expected = payload
+        button = reveal_diagnostics_section(copied_detail[0])
+        assert button.get_mapped()
+        # Expansion and viewport allocation settle on the GTK main loop.
+        # Match the other keyboard acceptance paths: reveal the actual button,
+        # wait for real focus, then retain XTEST and exact clipboard assertions.
+        content = page[0].get_child()
+        ok, bounds = button.compute_bounds(content)
+        assert ok
+        outer = page[0].get_vadjustment()
+        outer.set_value(max(0, min(float(bounds.get_y()) - 60,
+                                 outer.get_upper() - outer.get_page_size())))
 
-        def clipboard_done(clipboard, task):
-            try:
-                actual = clipboard.read_text_finish(task)
-                assert actual == expected, "Presse-papiers différent du JSON affiché"
-                assert "EXEMPLE-PRIVE-UX" not in actual
-                assert "SECRET-UX-TEST" not in actual
-                report["checks"]["clipboard_exact_redacted_json"] = True
-                later(next_page)
-            except Exception as exc:
-                fail(f"Clipboard: {type(exc).__name__}: {exc}")
+        def focus_copy():
+            assert button.grab_focus() is not False
+            until(button.has_focus, activate_copy, seconds=4)
 
-        later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(None, clipboard_done), 250)
+        def activate_copy():
+            assert button.has_focus(), "Le focus clavier doit être visible sur Copier"
+            device[0].key("space", True)
+            device[0].key("space", False)
+            report["checks"]["copy_button_keyboard_xtest"] = True
+            expected = payload
+
+            def clipboard_done(clipboard, task):
+                try:
+                    actual = clipboard.read_text_finish(task)
+                    assert actual == expected, "Presse-papiers différent du JSON affiché"
+                    assert "EXEMPLE-PRIVE-UX" not in actual
+                    assert "SECRET-UX-TEST" not in actual
+                    report["checks"]["clipboard_exact_redacted_json"] = True
+                    later(next_page)
+                except Exception as exc:
+                    fail(f"Clipboard: {type(exc).__name__}: {exc}")
+
+            later(lambda: Gdk.Display.get_default().get_clipboard().read_text_async(None, clipboard_done), 250)
+        later(focus_copy, 100)
 
     def next_page():
         find_button("Suivant").emit("clicked")
@@ -719,9 +925,17 @@ def main():
                                else "P0_2140_narrow_allocation_pending")
             if rows and max(rows) > 724:
                 report["minimum_row"] = rows.index(max(rows))
-            window[0].set_default_size(760, 790)
-            until(lambda: window[0].get_width() <= 760,
-                  lambda: verify_narrow_bulk(payload), seconds=5)
+            # Request the resize on the next GTK tick, after the current
+            # selection/measurement callback finishes. Retain the exact
+            # 760px bound and the original overflow/focus/clipboard checks.
+            def request_narrow_bulk():
+                try:
+                    window[0].set_default_size(760, 790)
+                except Exception:
+                    raise AssertionError("GTK 760px resize request rejected") from None
+                until(lambda: window[0].get_width() <= 760,
+                      lambda: verify_narrow_bulk(payload), seconds=5)
+            later(request_narrow_bulk, 120)
         else:
             keyboard_action("Copier la sélection", lambda: read_bulk_clipboard(payload))
 

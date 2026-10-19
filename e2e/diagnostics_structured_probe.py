@@ -28,7 +28,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 from PIL import ImageGrab
 
-from diagnostics_page_probe import Broker, Context, Tasks, Host, walk
+from diagnostics_page_probe import reveal_diagnostics_section, Broker, Context, Tasks, Host, walk
 from x11_input import X11Input
 
 SECRET = "SECRET-NE-JAMAIS-COPIER-D07"
@@ -141,13 +141,34 @@ def main():
     def later(callback, ms=140):
         def invoke():
             try:
+                code = getattr(callback, "__code__", None)
+                if code is not None and code.co_filename == __file__:
+                    report["checkpoint_line"] = code.co_firstlineno
+                save()
                 callback()
             except Exception as exc:
+                lines = []
+                trace = exc.__traceback__
+                while trace is not None:
+                    if trace.tb_frame.f_code.co_filename == __file__:
+                        lines.append(trace.tb_lineno)
+                    trace = trace.tb_next
+                report["failure_line"] = lines[-1] if lines else 0
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(ms, invoke)
 
     def until(predicate, then, seconds=7):
+        # CI exports only AST-reviewed source locations, never UI values.
+        from inspect import currentframe
+        frame = currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            if caller is not None and caller.f_code.co_filename == __file__:
+                report["wait_line"] = caller.f_lineno
+        finally:
+            del frame
+        save()
         deadline = monotonic() + seconds
         def poll():
             if predicate():
@@ -162,7 +183,7 @@ def main():
         panes = [w for w in walk(page[0])
                  if isinstance(w, Gtk.Expander) and w.get_label() == "Détails expurgés"]
         assert len(panes) == 1, ("Volets de détail", len(panes))
-        return panes[0]
+        return reveal_diagnostics_section(panes[0])
 
     def detail_controls():
         pane = detail()
@@ -454,6 +475,12 @@ def main():
             and w.get_label() == "Ouvrir le rapport support"
         ]
         assert len(panes) == 1
+        # The support expander is inside the Reports tab. A Gtk.Expander can
+        # be expanded but remain unmapped while its Gtk.Stack child is hidden.
+        # Reveal the containing tab *and* expand the target itself:
+        # reveal_diagnostics_section expands ancestors but not its argument.
+        # Both are required before the real mapped/clipboard assertions.
+        reveal_diagnostics_section(panes[0])
         panes[0].set_expanded(True)
         views = [w for w in walk(panes[0]) if isinstance(w, Gtk.TextView)]
         assert len(views) == 1

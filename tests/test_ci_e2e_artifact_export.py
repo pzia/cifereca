@@ -105,6 +105,110 @@ class SafeE2EExportTests(unittest.TestCase):
         self.assertNotIn("name: e2e-core-debug", content)
 
 
+def test_diagnostics_timeout_wait_line_is_ast_validated_and_never_text():
+    """Public E2E can locate a polling timeout without exposing GTK evidence."""
+    import ast
+    module = _module()
+    tree = ast.parse((ROOT / "e2e/diagnostics_page_probe.py").read_text())
+    line = next(node.lineno for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "until")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        report = root / "diagnostics-1366" / "diagnostics-1366" / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": "diagnostics-1366",
+                                      "returncode": 1}]))
+        for raw, accepted in ((line, True), (True, False),
+                              (str(line), False), (1000000000, False)):
+            report.write_text(json.dumps({"wait_line": raw,
+                "error": "PRIVATE_SIGNED_URL", "cookie": "PRIVATE_TOKEN",
+                "predicate": "<private GUI text>"}))
+            row = module.safe_summary(source)["results"][0]
+            assert row.get("wait_line") == line if accepted else "wait_line" not in row
+            assert "PRIVATE" not in repr(row)
+
+
+def test_states_failure_source_lines_are_allowlisted_and_private_data_dropped():
+    """#2139: the states E2E failure identifies code, never UI/secret text."""
+    import ast
+    module = _module()
+    tree = ast.parse((ROOT / "e2e/diagnostics_states_probe.py").read_text())
+    checkpoint = next(node.lineno for node in ast.walk(tree)
+                      if isinstance(node, ast.FunctionDef) and node.name == "d04")
+    failure = next(node.lineno for node in ast.walk(tree)
+                   if isinstance(node, ast.Assert) and node.lineno > checkpoint)
+    wait = next(node.lineno for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "until")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "diagnostics-states-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        report.write_text(json.dumps({
+            "checkpoint_line": checkpoint, "failure_line": failure,
+            "wait_line": wait, "error": "PRIVATE_ACSM_URL",
+            "secret": "PRIVATE_TOKEN", "stage": "PRIVATE_STAGE",
+        }))
+        row = module.safe_summary(source)["results"][0]
+        assert row["checkpoint_line"] == checkpoint
+        assert row["failure_line"] == failure
+        assert row["wait_line"] == wait
+        assert "PRIVATE" not in repr(row)
+        report.write_text(json.dumps({
+            "checkpoint_line": True, "failure_line": str(failure),
+            "wait_line": 10**9, "error": "PRIVATE_ACSM_URL",
+        }))
+        row = module.safe_summary(source)["results"][0]
+        assert "checkpoint_line" not in row
+        assert "failure_line" not in row
+        assert "wait_line" not in row
+        assert "PRIVATE" not in repr(row)
+
+
+def test_structured_diagnostics_reports_only_ast_verified_failure_lines():
+    """#2139: structured GTK result may expose code coordinates, never secrets."""
+    import ast
+    module = _module()
+    tree = ast.parse((ROOT / "e2e/diagnostics_structured_probe.py").read_text())
+    checkpoint = next(n.lineno for n in ast.walk(tree)
+                      if isinstance(n, ast.FunctionDef) and n.name == "readable")
+    failure = next(n.lineno for n in ast.walk(tree)
+                   if isinstance(n, ast.Assert))
+    wait = next(n.lineno for n in ast.walk(tree)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name) and n.func.id == "until")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "diagnostics-structured-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        report.write_text(json.dumps({
+            "checkpoint_line": checkpoint, "failure_line": failure,
+            "wait_line": wait, "error": "PRIVATE_SIGNED_TOKEN",
+            "status": "FAIL", "debug": {"cookie": "PRIVATE"},
+        }))
+        safe = module.safe_summary(source)["results"][0]
+        assert safe["checkpoint_line"] == checkpoint
+        assert safe["failure_line"] == failure
+        assert safe["wait_line"] == wait
+        assert "PRIVATE" not in repr(safe)
+        report.write_text(json.dumps({
+            "checkpoint_line": False, "failure_line": str(failure),
+            "wait_line": 999999, "error": "PRIVATE",
+        }))
+        invalid = module.safe_summary(source)["results"][0]
+        assert "checkpoint_line" not in invalid
+        assert "failure_line" not in invalid
+        assert "wait_line" not in invalid
+
+
 class SafeFailureDiagnosisTests(unittest.TestCase):
     def test_failed_baseline_exports_only_closed_stage_valid_line_and_bounded_duration(self):
         import ast
