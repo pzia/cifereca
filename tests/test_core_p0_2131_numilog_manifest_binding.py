@@ -30,7 +30,7 @@ class HostileString:
 
 @pytest.mark.parametrize("incorrect", [
     {"source_provider": "other"},
-    {"source_credential": "foreign-credential"},
+    {"source_credential": PRIVATE},
     {"source_collection": "catalog"},
     {"scenario": "NUMILOG_PUBLIC"},
     {"source_provider": HostileString()},
