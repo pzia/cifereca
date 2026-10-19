@@ -83,6 +83,13 @@ class PluginsOnlyWorkflowRecoveryContracts(unittest.TestCase):
         assert "--paginate --slurp" in workflow
         assert '--lookup-draft' in workflow
         assert '417619783' in workflow
+        assert '417644698' in workflow
+        assert '1c0ca31762629bdc87c69ae0c39c022ee79fee5f' in workflow
+        assert 'await_draft_state() {' in workflow
+        assert 'draft_info="$(await_draft_state present)"' in workflow
+        assert 'test "$(await_draft_state none)" = "none"' in workflow
+        assert 'sleep 2' in workflow
+        assert 'GitHub draft metadata did not converge within 24 seconds.' in workflow
         assert COMMIT in workflow
         assert 'git diff --quiet "$draft_sha" "$GITHUB_SHA" --' in workflow
         assert 'src/cifereca src/plugins' in workflow
