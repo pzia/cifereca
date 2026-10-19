@@ -193,3 +193,46 @@ def test_profile_refusal_never_persists_private_codes_or_exception_messages(unsa
     assert "NEVER_SHOW" not in repr(row) + repr(outcome)
     profiles.assert_not_called()
 
+
+
+@pytest.mark.parametrize("behavior", ["raising_property", "changing_code", "foreign_code"])
+def test_profile_resolution_untrusted_code_fails_closed_without_execution_or_retry(behavior):
+    private = "https://private.invalid/adept.acsm?token=PRIVATE_ADOBE"
+    reads = []
+
+    class UntrustedResolution(AdeptProfileResolutionError):
+        def __getattribute__(self, name):
+            if name == "code":
+                reads.append(True)
+                if behavior == "raising_property":
+                    raise RuntimeError(private)
+                if behavior == "changing_code" and len(reads) > 1:
+                    raise RuntimeError(private)
+                if behavior == "foreign_code":
+                    class ForeignCode:
+                        def __eq__(self, _other):
+                            raise AssertionError(private)
+                    return ForeignCode()
+                return "adept_profile_ambiguous"
+            return super().__getattribute__(name)
+
+        def __str__(self):
+            raise AssertionError(private)
+
+    failure = UntrustedResolution(private, code="adept_profile_ambiguous")
+    invoke, store, borrower, resolver, profiles, loan, options = _fixture(
+        profile_error=failure,
+    )
+    outcome = invoke()
+    expected = ("adept_profile_ambiguous" if behavior == "changing_code"
+                else "adept_profile_required")
+    assert outcome == {
+        "status": "attention_required", "loan_id": loan.id,
+        "code": expected, "error": "Profil ADEPT indisponible",
+    }
+    assert len(reads) == 1
+    assert store.call_count == 1
+    assert store.call_args.args[0]["attention_code"] == expected
+    assert private not in repr(outcome) + repr(store.call_args.args[0])
+    profiles.assert_not_called()
+    resolver.assert_called_once_with("identity-1")
