@@ -35,6 +35,13 @@ def test_selected_row_after_deactivation_never_builds_new_actions():
     assert UxRecommendationsView._selected_row(view, None) is None
 
 
+def test_late_summary_update_after_deactivation_never_uses_stale_filters():
+    view = inactive()
+    assert UxRecommendationsView._update_view_summary(
+        view, provisional=False
+    ) is None
+
+
 def test_progress_after_deactivation_does_not_touch_disposed_widgets():
     view = inactive()
     assert UxRecommendationsView._set_progress(
