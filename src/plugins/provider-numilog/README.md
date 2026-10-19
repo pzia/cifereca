@@ -1375,3 +1375,41 @@ Tests sur la fixture publique enregistrée `jefferson` : collection
 « Romans Junior », extrait « frissonne », combinaisons de champs,
 preuves manquantes/contradictoires et cache non muté. Cette livraison ne
 prouve ni l'accès HTTP live, ni les conditions de robots/CGU Numilog.
+
+
+## 0.1.67 — affinage local de plusieurs pages publiques déjà chargées (#1886)
+
+Le provider `numilog-catalog` expose la méthode explicite
+`refine_loaded_pages([page0, page1, ...], author=..., collection=..., ...)`
+pour réunir les correspondances **sans nouvel appel réseau** sur au plus
+**huit pages** obtenues via `browse_public_search` et/ou
+`follow_public_link`. Elle accepte exactement les critères déjà prouvés
+sur chaque page : titre, auteurs, éditeur, collection, mots du résumé, année
+et format affiché. Il ne s'agit **pas** d'une recherche serveur
+multi-attributs ; les champs ISBN, langue et âge restent indisponibles sans
+contrat amont attesté.
+
+La combinaison exige les pages **consécutives depuis la première**, de
+**la même requête et des mêmes facettes**, avec le lien `next_url` source
+exact entre pages, le même compteur public total, aucun livre en double et
+toutes les règles de provenance existantes par fiche. Un changement de
+requête, de facette ou de compteur refuse le regroupement plutôt que de
+publier une réponse ambiguë.
+
+Le résultat de type `PublicPagesRefinement` comporte notamment
+`loaded_page_indices`, `loaded_count`, `matching_count`,
+`missing_evidence_count`, `public_unfiltered_total`,
+`public_results_fully_loaded` et
+`has_uninspected_or_unverified_matches`. Un zéro local reste incertain
+tant que la recherche publique n'est pas totalement couverte et que tous
+les champs requis ne sont pas attestés. Le total publié est celui de la
+**recherche publique non filtrée**, jamais un total de résultats après
+filtrage local. Aucun droit `owned`, téléchargement, compte privé ou
+EAN d'édition n'est projeté.
+
+La recette CI utilise une séparation **synthétique et signalée** de
+20 cartes du HTML public `jefferson` enregistré : elle vérifie des
+pages successives, la provenance, les facettes contradictoires, les
+duplicatas, les preuves absentes, le résultat zéro et l'absence de HTTP.
+Cette fixture ne prouve **pas** qu'un second GET réel fonctionne avec
+Numilog : règles robots/CGU et vraie recherche avancée restent à qualifier.
