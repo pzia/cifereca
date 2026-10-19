@@ -1,3 +1,45 @@
+## 0.1.76 — genres, mots-clés et séries littérales JSON-LD (#1072/#1886 P0)
+
+Sur une **fiche publique explicitement enrichie et identifiée**, le parseur
+`Book` JSON-LD conserve désormais ses déclarations `genre`,
+`keywords`, `isPartOf` (série `BookSeries` ou `CreativeWorkSeries`)
+et `alternativeHeadline`, uniquement lorsque des textes simples,
+typés le cas échéant, bornés et sans caractère de contrôle sont présents.
+La sélection `isPartOf` n'infère jamais une série à partir d'un autre
+produit ; chaque champ garde sa preuve `public_product_jsonld_Book` et
+l'URL du produit.
+
+Les clés conservées sont `genres` (liste), `public_keywords` (liste de
+libellés **littéraux**, sans découpage des virgules), `public_series_label`
+et `public_alternative_headline`. Ce dernier n'est **pas** assimilé
+automatiquement à un sous-titre d'édition. La validation côté cache
+refuse les types, valeurs/URL et preuves contradictoires.
+
+Les filtres `refine_loaded_page(page, genre=...)`,
+`refine_loaded_page(page, series=...)` et
+`refine_loaded_page(page, keyword=...)` fonctionnent uniquement sur
+les fiches **déjà chargées explicitement** avec
+`enrich_loaded_page_product`. Ce sont des correspondances
+**positives seulement** : pour un champ manquant, une autre valeur,
+une fiche non consultée ou une provenance altérée, le livre reste
+`inconnu`, pas `absent du catalogue`. Aucun total filtré
+global ni requête serveur multi-attributs n'est annoncé ; aucune
+récupération en masse de fiches n'est effectuée.
+Avant de restituer un résultat positif, le filtre revalide également les
+identifiants typés, libellés HTML et offres commerciales annexes présents
+dans le cache de détail. Une preuve annexe modifiée ou une URL de livraison
+intruse invalide la correspondance entière.
+
+**Important :** ces mentions décrivent uniquement le **produit
+commercial**, non la classification locale d'un ouvrage, la variante
+EPUB/PDF achetée, le droit `owned`, le format acquis ou un ISBN
+numérique attesté. Aucun GET automatique, aucune mutation de droits
+ou d'artefacts. Les fixtures publiques actuelles n'attestent pas la
+présence effective de ces champs sur Numilog ; les exemples de tests
+JSON-LD sont synthétiques. Tests : `test_numilog_public_editorial_subjects_p0.py` et
+`test_numilog_public_book_topic_local_filter_p0.py`.
+Le ticket reste ouvert pour captures et recette réelle.
+
 ## 0.1.75 — budget de profondeur/largeur du DOM public (#1886 P0)
 
 Une fiche peut respecter la limite HTTP de **1 Mio** tout en saturant
