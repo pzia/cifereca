@@ -18,13 +18,13 @@ URL = (
 
 
 @pytest.mark.parametrize('payload,anchor', [
-    ('<a class="TitleBook" class="Author"', '<a class="TitleBook"'),
+    ('class="TitleBook" class="Author" href=', 'class="TitleBook" href='),
     ('<a class="Author" aria-hidden="true" aria-hidden="false"',
      '<a class="Author"'),
     ('<a class="Author" style="display:none" style="display:block"',
      '<a class="Author"'),
-    ('<a class="TitleBook" href="/123/wrong.ebook"',
-     '<a class="TitleBook"'),
+    ('class="TitleBook" href="/123/wrong.ebook" href=',
+     'class="TitleBook" href='),
     ('<a class="Author" hidden hidden', '<a class="Author"'),
 ])
 def test_duplicate_evidence_attribute_is_rejected_not_silently_overwritten(
