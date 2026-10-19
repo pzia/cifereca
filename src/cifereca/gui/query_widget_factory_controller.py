@@ -26,13 +26,21 @@ def refresh_query_providers(window):
         controls = getattr(window, route + "_controls", None)
         if controls is None:
             continue
-        updater = getattr(controls, "set_provider_choices", None)
-        if callable(updater):
-            updater(_provider_choices(window, library=library))
-        if not library:
-            setter = getattr(controls, "set_provider_search_capabilities", None)
-            if callable(setter):
-                setter(window.service.provider_search_capabilities())
+        try:
+            updater = getattr(controls, "set_provider_choices", None)
+            if callable(updater):
+                updater(_provider_choices(window, library=library))
+            if not library:
+                setter = getattr(controls, "set_provider_search_capabilities", None)
+                if callable(setter):
+                    setter(window.service.provider_search_capabilities())
+        except Exception:
+            # A custom controls factory may fail during refresh. Do not let
+            # plugin-provided error text abort account/dashboard startup.
+            window.diagnostics.add(
+                "PLUGIN", "query provider refresh", "error",
+                detail={"code": "query_provider_refresh_failed"},
+            )
 
 
 def build_query_controls(window, changed, activate, *, library=False, QueryControls):
