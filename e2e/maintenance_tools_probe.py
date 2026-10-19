@@ -644,6 +644,14 @@ def main():
             try:
                 gtk_phase_2027("maint_window_start")
                 w = MainWindow(self, core.config, core.library, core.diagnostics)
+                # P0 #2027 diagnostic A/B only: remove the vertical CSS
+                # padding of exactly one global strip in this isolated GTK
+                # process. The production stylesheet is not changed.
+                css_probe = Gtk.CssProvider()
+                css_probe.load_from_data(b".notification-bar { padding-top: 0px; padding-bottom: 0px; }")
+                Gtk.StyleContext.add_provider_for_display(
+                    w.get_display(), css_probe, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+                )
                 window[0] = w
                 w.plugin_manager = SimpleNamespace(services=lambda name: (
                     [SimpleNamespace(plugin_id="e2e.maintenance", service=tool)]
