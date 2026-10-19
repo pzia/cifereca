@@ -644,6 +644,10 @@ def main():
             try:
                 gtk_phase_2027("maint_window_start")
                 w = MainWindow(self, core.config, core.library, core.diagnostics)
+                # A/B diagnostic #2027, E2E process only. Keep the activity
+                # footer fully visible/revealed, but remove the busy label's
+                # height-for-width text wrapping to isolate its measurement.
+                w.busy_label.set_wrap(False)
                 window[0] = w
                 w.plugin_manager = SimpleNamespace(services=lambda name: (
                     [SimpleNamespace(plugin_id="e2e.maintenance", service=tool)]
