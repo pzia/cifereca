@@ -81,7 +81,7 @@ def test_closed_code_and_retryable_are_consistent_across_exception_and_diagnosti
 
 def test_invalid_json_yields_diagnostic_code_without_echoing_stdout(monkeypatch):
     runtime, received = runtime_with_reply(
-        monkeypatch, b'\\xffPRIVATE_SESSION', exit_code=10, raw=True,
+        monkeypatch, bytes([255]) + b'PRIVATE_SESSION', exit_code=10, raw=True,
     )
     with pytest.raises(KoboAdeptError) as caught:
         runtime.run_json(["download", "request", "-", "--json"],
