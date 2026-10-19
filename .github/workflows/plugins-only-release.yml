@@ -550,12 +550,14 @@ jobs:
           for asset in "$archive" "$archive.sha256" "$archive.sigstore.json"; do
             test -s "$asset" && test ! -L "$asset"
             filename="${asset##*/}"
+            # Percent-encode '+' in the authorized versioned release tag.
+            encoded_name="${filename//+/%2B}"
             response="$(curl --fail --silent --show-error \
               -X POST -H "Authorization: Bearer $GH_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "Content-Type: application/octet-stream" \
               --data-binary @"$asset" \
-              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$draft_id/assets?name=$filename")"
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$draft_id/assets?name=$encoded_name")"
             printf '%s' "$response" | python3 -c '
           import json, os, sys
           asset = json.load(sys.stdin)
