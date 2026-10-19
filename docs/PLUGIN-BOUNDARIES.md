@@ -99,3 +99,20 @@ séparément ; le Core ne lit ni HTML ni preuve spécifique au fournisseur et
 n'effectue aucun réseau pour présenter ces valeurs. Cette projection n'active
 ni enrichissement, ni source, ni acquisition et n'écrase pas les métadonnées
 privées/EPUB. Un plugin peut laisser le namespace absent si la preuve manque.
+
+
+### Observation de performances des pages techniques (#2139)
+
+Le contrat optionnel public `UiPerformanceHost` fournit
+`performance_report()` et `set_performance_capture(enabled: bool)`.
+Il délègue au **même** moniteur Core que les contrôles de secours des
+Paramètres ; lire un rapport ou construire une page n’active rien.
+Le rapport `cifereca.performance.phases/1` est local, borné et expurgé
+par le moniteur. Le choix d’un fichier et son export restent des actions
+explicites de la page, sans upload ni nouveau collecteur.
+
+Une ancienne page dont le host est périmé ou une fenêtre fermée ne peut
+plus modifier la capture. Un nouveau host retrouve la capture existante,
+qui persiste à la navigation jusqu’à arrêt explicite ou fermeture Core.
+Les plugins vérifient cette extension optionnelle et indiquent son
+indisponibilité sur un ancien Core, sans importer le moniteur privé.
