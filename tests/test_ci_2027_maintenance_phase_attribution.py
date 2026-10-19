@@ -87,3 +87,14 @@ def test_real_maintenance_probe_emits_only_fixed_phase_markers_to_both_streams()
     for label in MAINT_PHASES:
         assert label in probe
     assert '"gtk_layout_phase": gtk_phases if name.startswith(("mainwindow-baseline-", "maintenance-tools-")) else {}' in runner
+
+
+def test_p1_numeric_phase_markers_are_parsed_and_bounded():
+    raw = ("CIFERECA_E2E_GTK_PHASE:maint_p1_naming\n"
+           "Gtk-CRITICAL GtkStack 0xPRIVATE\n"
+           "CIFERECA_E2E_GTK_PHASE:maint_p1_duplicates\n"
+           "Gtk-CRITICAL GtkRevealer 0xPRIVATE\n")
+    assert GTK["gtk_layout_phase_counts"](raw) == {
+        "maint_p1_naming": {"GtkStack": 1, "GtkRevealer": 0},
+        "maint_p1_duplicates": {"GtkStack": 0, "GtkRevealer": 1},
+    }
