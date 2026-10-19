@@ -229,6 +229,8 @@ def reveal_diagnostics_section(widget):
     child = widget
     parent = child.get_parent()
     while parent is not None:
+        if isinstance(parent, Gtk.Expander):
+            parent.set_expanded(True)
         if isinstance(parent, Gtk.Stack) and parent.get_name() == "diagnostics-sections":
             parent.set_visible_child(child)
             break
@@ -608,12 +610,17 @@ def main():
         assert "SECRET-UX-TEST" not in payload
         report["checks"]["json_structured_and_redacted"] = True
         screenshot("02-structured-json")
+        detail_pane = view.get_parent()
+        while detail_pane is not None and not isinstance(detail_pane, Gtk.Expander):
+            detail_pane = detail_pane.get_parent()
+        assert detail_pane is not None
         copied_detail = [
-            w for w in walk(page[0]) if isinstance(w, Gtk.Button)
+            w for w in walk(detail_pane) if isinstance(w, Gtk.Button)
             and w.get_tooltip_text() == "Copier le détail expurgé actuellement affiché"
         ]
         assert copied_detail, "Bouton de copie expurgée absent"
-        button = copied_detail[0]
+        button = reveal_diagnostics_section(copied_detail[0])
+        assert button.get_mapped()
         # The widget is keyboard activated via real XTEST events, not signal emission.
         assert button.grab_focus() is not False
         assert button.has_focus(), "Le focus clavier doit être visible sur Copier"
