@@ -80,7 +80,11 @@ def test_local_and_known_catalogue_use_the_same_relevance_without_provider_calls
 
     def local_entries(*, identity_id, scan):
         calls.append(("local", identity_id, scan))
-        return [dict(item, identity_id=identity_id) for item in source]
+        # The fixture's books are Alice's only. A read under Bob must not
+        # manufacture Bob-owned rows from the same private source.
+        if identity_id != "alice":
+            return []
+        return [dict(item, identity_id="alice") for item in source]
 
     def catalog_entries():
         calls.append(("catalog",))
