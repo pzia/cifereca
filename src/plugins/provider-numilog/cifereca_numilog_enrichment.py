@@ -101,6 +101,8 @@ def merge_attested_public_listing(owned, public_rows):
                 or getattr(public, "source_provider", None) not in ("numilog", "numilog-catalog")
                 or getattr(public, "source_credential", None) != "__public__"
                 or getattr(public, "source_collection", None) != "public_catalog"
+                or getattr(public, "scenario", None) != "NUMILOG_PUBLIC"
+                or getattr(public, "docbase", None) != "NUMILOG"
                 or getattr(public, "owned", None) is not False
                 or getattr(public, "downloadable", None) is not False
                 or getattr(public, "download_url", None) is not None):
