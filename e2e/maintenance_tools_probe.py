@@ -644,6 +644,10 @@ def main():
             try:
                 gtk_phase_2027("maint_window_start")
                 w = MainWindow(self, core.config, core.library, core.diagnostics)
+                # Diagnostic A/B #2027 ONLY: physically exclude the existing
+                # global activity revealer from GTK layout in this isolated E2E
+                # process. Never ship this as a product fix: it hides feedback.
+                w.busy_revealer.set_visible(False)
                 window[0] = w
                 w.plugin_manager = SimpleNamespace(services=lambda name: (
                     [SimpleNamespace(plugin_id="e2e.maintenance", service=tool)]
