@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def return_key(provider_id: str, credential_id: str, borrower_id: str,
@@ -55,6 +55,21 @@ def _public_timestamp(value) -> str | None:
     return value if 2000 <= parsed.year <= 2100 and parsed.utcoffset() is not None else None
 
 
+def _verification_time_attested(value, *, now: datetime | None = None) -> bool:
+    """A fabricated future clock cannot attest a completed inventory read.
+
+    Reuse the validated public ISO timestamp policy. Allow up to three minutes
+    of ordinary clock skew; older confirmed returns remain terminal (no TTL).
+    This validation performs no network I/O and never coerces raw values.
+    """
+    stamp = _public_timestamp(value)
+    if stamp is None:
+        return False
+    checked = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    clock = datetime.now(timezone.utc) if now is None else now
+    return checked <= clock + timedelta(seconds=180)
+
+
 def provider_absence_attested(row: dict) -> bool:
     """A durable status alone is not proof of a fresh digital-loan inventory.
 
@@ -67,7 +82,7 @@ def provider_absence_attested(row: dict) -> bool:
         and row["status"] == "provider_return_confirmed"
         and type(row.get("verification")) is str
         and row["verification"] == "provider_absent"
-        and _public_timestamp(row.get("checked_at")) is not None
+        and _verification_time_attested(row.get("checked_at"))
     )
 
 
