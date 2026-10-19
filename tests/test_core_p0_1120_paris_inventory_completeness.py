@@ -102,7 +102,9 @@ def test_syracuse_only_failure_still_allows_exact_dilicom_confirmation(tmp_path)
         assert PRIVATE not in json.dumps(result)
     finally:
         service.close()
-    service2, loan2, paris2 = adept_setup(tmp_path / "other")
+    second_root = tmp_path / "other"
+    second_root.mkdir()
+    service2, loan2, paris2 = adept_setup(second_root)
     paris2.last_loan_errors = [{"upstream": "SYRACUSE", "error": PRIVATE}]
     try:
         assert service2.verify_paris_return_inventory(loan2) == {
