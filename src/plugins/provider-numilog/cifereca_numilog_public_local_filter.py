@@ -167,9 +167,33 @@ def _value(row, field):
         except ValueError:
             return None
     if field in {"author", "format_label"}:
-        if (type(value) is not list or not 1 <= len(value) <= 32
-                or any(type(x) is not str or not x or len(x) > 1000 for x in value)):
+        # Cached SearchResult objects may be mutated after parsing. The
+        # selector proof alone cannot qualify arbitrary replacement lists,
+        # including bidi/control text that would reach the detail renderer.
+        maximum = 1000 if field == "author" else 80
+        count = 32 if field == "author" else 10
+        if (type(value) is not list or not 1 <= len(value) <= count
+                or any(type(x) is not str or not x.strip()
+                       or len(x) > maximum
+                       or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"}
+                              for char in x) for x in value)):
             return None
+        if field == "author":
+            # Parser authors and flat display field must agree. Otherwise the
+            # local positive match would be for an author not actually shown.
+            if type(row.author) is not str or row.author != " ; ".join(value):
+                return None
+        else:
+            # Parser derives SearchResult.format only from a single explicit
+            # offer label, not by choosing a purchased edition. A post-cache
+            # rewrite of that label is not qualified source evidence.
+            only = value[0].casefold() if len(value) == 1 else ""
+            parsed_format = (
+                "EPUB" if only in {"epub", "epub sans drm"}
+                else "PDF" if only == "pdf" else None
+            )
+            if row.format != parsed_format:
+                return None
         return tuple(value)
     # The source parser bounds listing summaries to 16 Ki characters and
     # labelled collection values to 2000. Recheck at this cached/page input
