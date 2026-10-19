@@ -256,7 +256,7 @@ def materialize_fixture(name: str, root: Path) -> dict[str, str]:
     }
 
 
-def _event(path: Path, scenario: str, event: str, **detail) -> None:
+def _event(trace_path: Path, scenario: str, event: str, **detail) -> None:
     """Persist a bounded, scalar trace; never arbitrary GTK/error payloads."""
     if scenario not in SCENARIOS or event not in {
         "scenario_start", "xvfb_display_retry", "scenario_end",
@@ -295,7 +295,7 @@ def _event(path: Path, scenario: str, event: str, **detail) -> None:
             row["visual_change_ratio"] = round(ratio, 6)
         # Deliberately drop assertion_error, traceback, URL, nested metadata,
         # private account/session fields, file paths and all unknown keys.
-    with path.open("a", encoding="utf-8") as handle:
+    with trace_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, ensure_ascii=True, sort_keys=True) + "\n")
 
 
