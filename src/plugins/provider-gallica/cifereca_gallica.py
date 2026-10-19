@@ -534,12 +534,21 @@ class GallicaSession(ProviderSession):
         query = str(query or "").strip()
         if len(query) < 2:
             return []
-        requested = {str(value).lower() for value in content_types}
+        # Content-type restrictions are API inputs, not arbitrary values
+        # whose __str__ may disclose credentials or silently turn into a
+        # different set of requested media.
+        if (type(content_types) not in (tuple, list, set, frozenset)
+                or any(type(value) is not str or not 0 < len(value) <= 80
+                       for value in content_types)):
+            raise ProviderCapabilityError("Gallica : unsupported_content_type")
+        requested = {value.casefold() for value in content_types}
         # Core passes file formats; legacy media categories remain supported.
         audio_formats = {"audiobook", "mp3", "m4a", "ogg", "opus", "flac", "wav"}
+        ebook_formats = {"ebook", "epub", "pdf", "kepub"}
+        skipped_unknown = bool(requested - audio_formats - ebook_formats)
         audio_explicit = bool(requested & audio_formats)
         skipped_audio = audio_explicit and not self.include_audio
-        ebooks = not requested or bool(requested & {"ebook", "epub", "pdf", "kepub"})
+        ebooks = not requested or bool(requested & ebook_formats)
         audio = self.include_audio and (not requested or audio_explicit)
         branches = []
         if ebooks:
@@ -592,6 +601,13 @@ class GallicaSession(ProviderSession):
             # no audio format was explicitly requested by the caller.
             self.last_search_warnings.append(
                 "partial_results : Gallica : branche audio désactivée par configuration"
+            )
+        if skipped_unknown and successful_branches:
+            # A recognized EPUB/MP3 format can be searched successfully even
+            # while another requested format has no Gallica branch. Do not
+            # advertise the combined request as exhaustively searched.
+            self.last_search_warnings.append(
+                "partial_results : Gallica : certains formats demandés ne sont pas pris en charge"
             )
         rows = list({item.id: item for item in rows}.values())
         if errors and not successful_branches:
