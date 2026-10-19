@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 31)
+        self.assertEqual(len(mod.ALL), 22)
 
     def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
         for path in ("src/cifereca/gui/settings_ai_actions.py",
@@ -82,61 +82,11 @@ class SelectionTests(unittest.TestCase):
                      "src/cifereca/core/diagnostic_numilog_projection.py"):
             self.assertEqual(set(mod.select([path])), set(mod.DIAG))
 
-    def test_1599_youth_gtk_plugin_real_coverage_at_both_widths(self):
-        assert {"youth-1366", "youth-1600"}.issubset(set(mod.YOUTH))
-        for path in (
-            "src/plugins/youth-catalog/youth_page.py",
-            "src/plugins/youth-detail-enrichment/enrich.py",
-            "e2e/youth_page_probe.py",
-        ):
-            selected = set(mod.select([path]))
-            assert {"youth-1366", "youth-1600"}.issubset(selected), path
-
-    def test_1599_youth_edition_and_library_navigation_1600_are_selected(self):
-        expected = {
-            "youth-editions-1366", "youth-editions-1600",
-            "youth-library-search-1366", "youth-library-search-1600",
-        }
-        assert expected.issubset(set(mod.YOUTH))
-        for path in (
-            "e2e/youth_page_probe.py",
-            "src/plugins/youth-catalog/youth_page.py",
-            "src/plugins/youth-detail-enrichment/enrich.py",
-        ):
-            assert expected.issubset(set(mod.select([path]))), path
-
-    def test_youth_and_its_source_adapters(self):
-        for path in ("src/plugins/youth-catalog/page.py",
-                     "src/plugins/youth-source-milan/source.py",
-                     "src/plugins/youth-source-new/source.py",
-                     "simulation/youth_sources/fixture.py"):
-            self.assertEqual(mod.select([path]), mod.YOUTH, path)
-
     def test_1599_detail_plugin_changes_select_gtk_smoke(self):
-        self.assertEqual(
-            mod.select(["src/plugins/constellations/view_model.py"]),
-            mod.CONSTELLATIONS,
-        )
-        self.assertEqual(
-            mod.select(["src/plugins/recommendations/page.py"]),
-            mod.RECOMMENDATIONS,
-        )
-        self.assertEqual(
-            mod.select(["e2e/constellations_detail_probe.py"]),
-            mod.CONSTELLATIONS_GTK,
-        )
-        self.assertEqual(
-            mod.select(["e2e/recommendations_detail_probe.py"]),
-            mod.RECOMMENDATIONS_GTK,
-        )
-        self.assertEqual(
-            mod.select(["src/plugins/youth-detail-enrichment/enrich.py"]),
-            mod.YOUTH,
-        )
-        self.assertEqual(set(mod.select([
-            "src/plugins/constellations/view_model.py",
-            "src/plugins/youth-detail-enrichment/enrich.py",
-        ])), set(mod.CONSTELLATIONS + mod.YOUTH))
+        self.assertEqual(mod.select(["src/plugins/constellations/view_model.py"]), mod.CONSTELLATIONS)
+        self.assertEqual(mod.select(["src/plugins/recommendations/page.py"]), mod.RECOMMENDATIONS)
+        self.assertEqual(mod.select(["e2e/constellations_detail_probe.py"]), mod.CONSTELLATIONS_GTK)
+        self.assertEqual(mod.select(["e2e/recommendations_detail_probe.py"]), mod.RECOMMENDATIONS_GTK)
 
     def test_1599_constellations_real_gtk_both_widths(self):
         assert set(mod.CONSTELLATIONS_GTK) == {
@@ -159,12 +109,6 @@ class SelectionTests(unittest.TestCase):
             "src/plugins/recommendations/recommendation_engine.py",
         ):
             assert set(mod.RECOMMENDATIONS_GTK).issubset(set(mod.select([path])))
-
-    def test_922_filter_ux_in_youth_scope(self):
-        self.assertIn("youth-filter-help-1366", mod.select([
-            "src/plugins/youth-catalog/youth_page.py",
-        ]))
-        self.assertIn("youth-filter-help-1366", mod.select(["e2e/youth_page_probe.py"]))
 
     def test_mainwindow_both_baselines_and_cross_domain(self):
         self.assertEqual(set(mod.select(["src/cifereca/gui/main_window.py"])),
@@ -191,17 +135,14 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(selected), set(mod.DIAG_STATES))
         self.assertEqual(len(selected), 5)
 
-    def test_1269_query_model_includes_youth_query_state_consumers(self):
+    def test_1269_query_model_keeps_book_detail_consumers(self):
         selected = mod.select(["src/cifereca/gui/query_model.py"])
-        self.assertEqual(set(selected), set(("search-filter-p0",) + mod.BOOK_DETAIL + mod.YOUTH))
+        self.assertEqual(set(selected), set(("search-filter-p0",) + mod.BOOK_DETAIL))
 
-    def test_1269_mainwindow_imports_cover_core_youth_diagnostics_navigation(self):
+    def test_1269_mainwindow_imports_cover_core_diagnostics_navigation(self):
         selected = mod.select(["src/cifereca/gui/main_window.py"])
         self.assertEqual(set(selected), set(mod.MAINWINDOW))
-        self.assertEqual(len(selected), 22)
-        for name in mod.CORE + mod.YOUTH + (
-            "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366"
-        ):
+        for name in mod.CORE + ("diagnostics-navigation-1366", "diagnostics-navigation-slow-1366"):
             self.assertIn(name, selected)
 
     def test_1269_probe_import_graph_never_silently_omits_a_consumer(self):
@@ -228,7 +169,6 @@ class SelectionTests(unittest.TestCase):
             "gtk-diagnostics-structured": "diagnostics_structured_probe.py",
             "gtk-diagnostics-volume": "diagnostics_volume_probe.py",
             "gtk-diagnostics-navigation": "diagnostics_navigation_probe.py",
-            "gtk-youth": "youth_page_probe.py",
             "gtk-constellations": "constellations_detail_probe.py",
             "gtk-recommendations": "recommendations_detail_probe.py",
         }
@@ -274,10 +214,9 @@ class SelectionTests(unittest.TestCase):
 
     def test_cross_domain_union_and_unknown_fail_closed(self):
         selected = mod.select(["src/plugins/diagnostics-page/page.py",
-                               "src/plugins/youth-source-milan/adapter.py"])
-        self.assertEqual(set(selected), set(mod.DIAG + mod.YOUTH))
-        self.assertEqual(mod.select(["e2e/diagnostics_volume_probe.py", "unknown.cfg"]),
-                         mod.ALL)
+                               "src/plugins/recommendations/page.py"])
+        self.assertEqual(set(selected), set(mod.DIAG + mod.RECOMMENDATIONS))
+        self.assertEqual(mod.select(["e2e/diagnostics_volume_probe.py", "unknown.cfg"]), mod.ALL)
 
     def test_test_contract_full(self):
         self.assertEqual(mod.select(["tests/test_e2e_runner_contract.py"]), mod.ALL)
