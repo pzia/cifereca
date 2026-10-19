@@ -480,6 +480,30 @@ def main():
         )
         later(capture_navigation, 350)
 
+    def activate_x11_test_window():
+        """Focus this mapped Xvfb toplevel, not a tab (XTEST remains required).
+
+        CI intentionally runs without a window manager. Gtk.Window.present()
+        is only a request, so GDK can leave is_active() false indefinitely;
+        XTEST keyboard events would then be delivered to no GTK toplevel.
+        """
+        import ctypes as C
+        from native_capture import pointer
+        surface = window[0].get_surface()
+        assert surface is not None, "GTK test window has no X11 surface"
+        gtk = C.CDLL("libgtk-4.so.1")
+        gtk.gdk_x11_surface_get_xid.argtypes = [C.c_void_p]
+        gtk.gdk_x11_surface_get_xid.restype = C.c_ulong
+        xid = gtk.gdk_x11_surface_get_xid(pointer(surface))
+        assert xid, "GTK test window has no X11 window ID"
+        x11 = device[0].x11
+        x11.XSetInputFocus.argtypes = [
+            C.c_void_p, C.c_ulong, C.c_int, C.c_ulong,
+        ]
+        x11.XSetInputFocus.restype = C.c_int
+        x11.XSetInputFocus(device[0].display, xid, 1, 0)
+        x11.XSync(device[0].display, False)
+
     def tab_key(title, key, done):
         switcher = next(w for w in walk(window[0].get_child())
                         if isinstance(w, Gtk.StackSwitcher))
@@ -492,6 +516,8 @@ def main():
         # StackSwitcher button. Space is still delivered ONLY by XTEST once
         # real focus is observed (no clicked()/set_visible_child shortcut).
         window[0].present()
+        if not window[0].is_active():
+            activate_x11_test_window()
         window[0].set_focus(button)
         assert button.grab_focus() is not False
 
