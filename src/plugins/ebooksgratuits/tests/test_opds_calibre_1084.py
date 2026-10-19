@@ -289,3 +289,33 @@ def test_cops_author_navigation_resolves_matching_author_not_first_name():
                              "/index.php/feed/authors","/index.php/feed/author2"]
     finally:
         session.close()
+
+
+def test_same_origin_redirect_is_followed_and_foreign_origin_is_rejected():
+    redirects=[]
+    def allowed(req):
+        redirects.append(str(req.url))
+        if req.url.path=="/index.php/feed":
+            return httpx.Response(302,headers={"Location":"/index.php/feed/redirect"},request=req)
+        if req.url.path=="/index.php/feed/redirect":
+            return response(req,body=ROOT)
+        return route(req)
+    session=make_session(allowed)
+    try:
+        rows=session.search("livre")
+        assert len(rows)==1
+        assert redirects[:2]==[FEED, HOST+"/index.php/feed/redirect"]
+    finally:
+        session.close()
+
+    visited=[]
+    def malicious(req):
+        visited.append(str(req.url))
+        return httpx.Response(302,headers={"Location":"https://evil.example/steal"},request=req)
+    session=make_session(malicious)
+    try:
+        with pytest.raises(ProviderError,match="invalid_opds_link"):
+            session.search("livre")
+        assert visited==[FEED]
+    finally:
+        session.close()
