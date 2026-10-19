@@ -485,6 +485,12 @@ def main():
                       and any(isinstance(v, Gtk.Label) and v.get_text() == title
                               for v in walk(w)))
         assert button.get_mapped() and button.get_sensitive()
+        # GTK4 may keep the former tab's focus after a window resize. Give
+        # the real toplevel focus first, then explicitly target this mapped
+        # StackSwitcher button. Space is still delivered ONLY by XTEST once
+        # real focus is observed (no clicked()/set_visible_child shortcut).
+        window[0].present()
+        window[0].set_focus(button)
         assert button.grab_focus() is not False
 
         def activate_focused_tab():
