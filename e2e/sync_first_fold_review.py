@@ -22,6 +22,15 @@ COUNTERS = (
 DIMENSIONS = ("window_width", "window_height", "viewport_width", "viewport_height")
 FLOATS = ("scroll_content_height", "scroll_extent_viewports")
 BOOLEANS = ("global_action_visible",)
+# Optional in pre-#2141 recordings, but must be complete as a group when present.
+FULL_COUNTERS = (
+    "fully_visible_source_status_rows",
+    "fully_visible_primary_source_actions",
+    "fully_visible_enabled_primary_source_actions",
+    "fully_visible_action_buttons",
+    "horizontally_clipped_primary_source_actions",
+)
+FULL_BOOLEANS = ("global_action_fully_visible",)
 
 
 def _read_safe_json(path: Path) -> dict:
@@ -58,6 +67,37 @@ def _metric(value: dict) -> dict:
     ):
         if safe[visible] > safe[total]:
             raise ValueError("inconsistent measurements")
+    # Earlier private recordings lack these fields. Do not reject their
+    # partial/legacy comparisons, but never silently interpret missing full
+    # visibility as zero or claim an improvement from it.
+    full_fields = (*FULL_COUNTERS, *FULL_BOOLEANS)
+    has_full = any(key in value for key in full_fields)
+    if has_full:
+        if not all(key in value for key in full_fields):
+            raise ValueError("partial full-visibility observations")
+        for key in FULL_COUNTERS:
+            item = value[key]
+            if type(item) is not int or not 0 <= item <= 100_000:
+                raise ValueError("invalid full-visibility observations")
+            safe[key] = item
+        for key in FULL_BOOLEANS:
+            if type(value[key]) is not bool:
+                raise ValueError("invalid full-visibility observations")
+            safe[key] = value[key]
+        for full, partial in (
+            ("fully_visible_source_status_rows", "visible_source_status_rows"),
+            ("fully_visible_primary_source_actions", "visible_primary_source_actions"),
+            ("fully_visible_action_buttons", "visible_action_buttons"),
+            ("horizontally_clipped_primary_source_actions", "visible_primary_source_actions"),
+        ):
+            if safe[full] > safe[partial]:
+                raise ValueError("inconsistent full visibility")
+        if (safe["fully_visible_enabled_primary_source_actions"] >
+                safe["fully_visible_primary_source_actions"]):
+            raise ValueError("inconsistent enabled actions")
+        if safe["global_action_fully_visible"] and not safe["global_action_visible"]:
+            raise ValueError("inconsistent global action")
+    safe["full_visibility_recorded"] = has_full
     safe["sources_visible_percent"] = (
         round(100 * safe["visible_source_status_rows"] / safe["source_status_rows"], 1)
         if safe["source_status_rows"] else None
@@ -66,6 +106,14 @@ def _metric(value: dict) -> dict:
         round(100 * safe["visible_primary_source_actions"] / safe["primary_source_actions"], 1)
         if safe["primary_source_actions"] else None
     )
+    if has_full:
+        for name, numerator, denominator in (
+            ("sources_fully_visible_percent", "fully_visible_source_status_rows", "source_status_rows"),
+            ("primary_actions_fully_visible_percent", "fully_visible_primary_source_actions", "primary_source_actions"),
+            ("enabled_primary_actions_fully_visible_percent", "fully_visible_enabled_primary_source_actions", "primary_source_actions"),
+        ):
+            safe[name] = (round(100 * safe[numerator] / safe[denominator], 1)
+                          if safe[denominator] else None)
     return safe
 
 
@@ -106,12 +154,17 @@ def compare(before: dict, after: dict) -> dict:
             observations[name] = {"comparable": False, "reason": "missing_sample"}
             continue
         if (abs(previous["window_width"] - current["window_width"]) > 24
-                or abs(previous["window_height"] - current["window_height"]) > 48):
+                or abs(previous["window_height"] - current["window_height"]) > 48
+                or abs(previous["viewport_width"] - current["viewport_width"]) > 32
+                or abs(previous["viewport_height"] - current["viewport_height"]) > 48):
             observations[name] = {"comparable": False, "reason": "different_window_geometry"}
             continue
         if (previous["source_cards"] != current["source_cards"]
                 or previous["source_status_rows"] != current["source_status_rows"]
-                or previous["primary_source_actions"] != current["primary_source_actions"]):
+                or previous["primary_source_actions"] != current["primary_source_actions"]
+                or previous["detail_rows"] != current["detail_rows"]
+                or previous["action_buttons"] != current["action_buttons"]
+                or previous["source_summary_lines"] != current["source_summary_lines"]):
             observations[name] = {"comparable": False, "reason": "different_source_population"}
             continue
 
@@ -136,7 +189,28 @@ def compare(before: dict, after: dict) -> dict:
             "scroll_viewports_delta": difference("scroll_extent_viewports"),
             "global_action_visible_before": previous["global_action_visible"],
             "global_action_visible_after": current["global_action_visible"],
+            "full_visibility_comparable": bool(
+                previous["full_visibility_recorded"] and
+                current["full_visibility_recorded"]
+            ),
         }
+        if observations[name]["full_visibility_comparable"]:
+            observations[name].update({
+                "sources_fully_visible_points_delta": difference(
+                    "sources_fully_visible_percent"
+                ),
+                "primary_actions_fully_visible_points_delta": difference(
+                    "primary_actions_fully_visible_percent"
+                ),
+                "enabled_primary_actions_fully_visible_points_delta": difference(
+                    "enabled_primary_actions_fully_visible_percent"
+                ),
+                "horizontally_clipped_primary_actions_delta": difference(
+                    "horizontally_clipped_primary_source_actions"
+                ),
+                "global_action_fully_visible_before": previous["global_action_fully_visible"],
+                "global_action_fully_visible_after": current["global_action_fully_visible"],
+            })
     return {
         "schema": "cifereca-ux-first-fold-comparison/v1",
         "samples": observations,
