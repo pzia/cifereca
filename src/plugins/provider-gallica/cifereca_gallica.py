@@ -3,6 +3,7 @@ import html
 from cifereca_gallica_audio import download_bundle
 from concurrent.futures import ThreadPoolExecutor
 import re
+from unicodedata import category
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus, urljoin, urlsplit, urlunsplit
@@ -531,16 +532,23 @@ class GallicaSession(ProviderSession):
             # A negative, boolean or non-integer page cannot be treated as
             # page zero or reach either independent Gallica branch.
             raise ProviderCapabilityError("Gallica : invalid_page")
-        query = str(query or "").strip()
-        if len(query) < 2:
-            return []
-        # Content-type restrictions are API inputs, not arbitrary values
-        # whose __str__ may disclose credentials or silently turn into a
-        # different set of requested media.
+        # Content-type capabilities are independent of query length: an
+        # unavailable format must never become an apparently successful zero
+        # merely because the submitted text happens to be too short.
         if (type(content_types) not in (tuple, list, set, frozenset)
                 or any(type(value) is not str or not 0 < len(value) <= 80
                        for value in content_types)):
             raise ProviderCapabilityError("Gallica : unsupported_content_type")
+        # Do not stringify objects from a cache or arbitrary public caller
+        # into an OPDS/SRU query. None keeps historical empty-query behavior.
+        if query is None:
+            query = ""
+        if (type(query) is not str or len(query) > 2048
+                or any(category(char) in {"Cc", "Cf", "Cs"} for char in query)):
+            raise ProviderCapabilityError("Gallica : invalid_query")
+        query = query.strip()
+        if len(query) < 2:
+            return []
         requested = {value.casefold() for value in content_types}
         # Core passes file formats; legacy media categories remain supported.
         audio_formats = {"audiobook", "mp3", "m4a", "ogg", "opus", "flac", "wav"}
