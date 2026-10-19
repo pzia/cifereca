@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from cifereca.gui.query_widget_factory_controller import build_query_controls
+from cifereca.gui.query_widget_factory_controller import build_query_controls, refresh_query_providers
 
 
 ROOT = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
@@ -75,6 +75,11 @@ def _setup(*, catalog=None, manager=True, extra_catalog=None):
 
 EXPECTED_PROVIDERS = [
     ("remote-a", "Alpha"),
+    ("local", "Local"),
+    ("remote-z", "Zulu"),
+]
+EXPECTED_LIBRARY_PROVIDERS = [
+    ("remote-a", "Alpha"),
     ("remote-b", "Display remote-b"),
     ("local", "Local"),
     ("remote-z", "Zulu"),
@@ -112,14 +117,15 @@ def test_without_manager_uses_fallback_and_current_provider_order():
 def test_local_provider_label_is_authoritative_even_if_remote_lists_local():
     window, events, calls, changed, activate, caps, create = _setup(manager=False)
     widget = create()
-    assert widget.providers[2] == ("local", "Local")
+    assert widget.providers[1] == ("local", "Local")
     assert widget.providers.count(("local", "Local")) == 1
-    assert len([p for p, _ in widget.providers if p == "remote-b"]) == 1
+    assert all(p != "remote-b" for p, _ in widget.providers)
+    assert any(p == "remote-b" for p, _ in create(library=True).providers)
 
 
 def test_catalog_entry_without_provider_id_maps_to_local_without_duplicate():
     window, events, calls, changed, activate, caps, create = _setup(manager=False)
-    widget = create()
+    widget = create(library=True)
     assert sum(p == "local" for p, _ in widget.providers) == 1
     assert ("label", "local") in events
 
@@ -130,7 +136,7 @@ def test_catalog_provider_order_stably_sorted_by_display_name():
             {"provider_id": "x"}, {"provider_id": "b"}, {"provider_id": "x"},
         ],
     )
-    widget = create()
+    widget = create(library=True)
     assert widget.providers == [
         ("remote-a", "Alpha"), ("b", "Display b"), ("x", "Display x"),
         ("local", "Local"), ("remote-z", "Zulu"),
@@ -167,7 +173,7 @@ def test_library_fallback_keeps_library_scope_and_skips_capabilities():
     widget = create(library=True)
     assert widget.library is True
     assert widget.capability_updates == []
-    assert calls == [(EXPECTED_PROVIDERS, changed, activate, True)]
+    assert calls == [(EXPECTED_LIBRARY_PROVIDERS, changed, activate, True)]
     assert ("capabilities",) not in events
 
 
@@ -257,3 +263,42 @@ def test_library_never_touches_plugin_search_capability_registry():
     )
     create(library=True)
     window.service.provider_search_capabilities.assert_not_called()
+
+
+def test_search_excludes_historical_baen_and_library_keeps_it():
+    window, _events, _calls, _changed, _activate, _caps, create = _setup(
+        manager=False,
+        extra_catalog=[{"provider_id": "baen"}, {"provider_id": "remote-a"}],
+    )
+    window.service.provider_display_name = lambda provider: {"baen": "Baen"}.get(provider, provider)
+    assert "baen" not in dict(create().providers)
+    assert dict(create(library=True).providers)["baen"] == "Baen"
+
+
+def test_refresh_after_connection_publishes_new_ebooksgratuits_without_rebuilding():
+    window, events, calls, _changed, _activate, _caps, create = _setup()
+    active = [("remote-a", "Alpha")]
+    window.service.searchable_providers = lambda: list(active)
+    controls = NS(
+        set_provider_choices=Mock(), set_provider_search_capabilities=Mock(),
+    )
+    historical = NS(set_provider_choices=Mock())
+    window.search_controls = controls
+    window.library_controls = historical
+    active.append(("ebooksgratuits", "Ebooks libres et gratuits"))
+    refresh_query_providers(window)
+    selection = dict(controls.set_provider_choices.call_args.args[0])
+    assert "ebooksgratuits" in selection
+    assert selection["ebooksgratuits"] == "Ebooks libres et gratuits"
+    assert "remote-b" not in selection  # historical-only catalogue provider
+    assert "remote-b" in dict(historical.set_provider_choices.call_args.args[0])
+    controls.set_provider_search_capabilities.assert_called_once()
+    assert calls == []  # no page rebuild
+
+
+def test_refresh_does_nothing_after_close():
+    window, _events, _calls, _changed, _activate, _caps, _create = _setup()
+    window._closed = True
+    window.search_controls = NS(set_provider_choices=Mock())
+    refresh_query_providers(window)
+    window.search_controls.set_provider_choices.assert_not_called()

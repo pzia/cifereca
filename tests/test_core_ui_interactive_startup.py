@@ -62,6 +62,15 @@ def test_dashboard_exposes_local_background_connection_state():
     assert "startup_coordinator.connect_configured_sources(" in facade
     assert "idle_add=GLib.idle_add" in facade
 
+def test_async_connection_refreshes_query_choices_without_rebuilding_shell():
+    source = ast.unparse(_startup_owner_method("connect_configured_sources"))
+    assert "refresh_query_providers(window)" in source
+    assert source.index("window._populate_accounts()") < source.index(
+        "refresh_query_providers(window)"
+    )
+    assert "window._rebuild_plugin_pages()" not in source
+
+
 def test_core_open_keeps_plugin_activation_enabled_by_default():
     runtime = (ROOT / "src/cifereca/core/runtime.py").read_text()
     assert "activate_plugins: bool = True" in runtime

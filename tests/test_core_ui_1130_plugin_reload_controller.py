@@ -81,6 +81,15 @@ def test_live_reload_rebuilds_in_existing_order_and_reuses_plugin_manager():
     assert window.shell_header is updated
 
 
+def test_plugin_toggle_reconnects_providers_only_after_initial_startup():
+    window, calls, _initial, _updated = _window()
+    window._source_inventory_startup_connection_seen = True
+    window._connect_sources_if_open = lambda: calls.append(("reconnect",))
+    plugins_changed(window)
+    assert calls[-1] == ("reconnect",)
+    assert calls.count(("reconnect",)) == 1
+
+
 def test_closed_or_missing_plugin_manager_skips_all_widget_and_service_access():
     window, calls, _, _ = _window()
     window._closed = True
