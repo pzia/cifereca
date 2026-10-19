@@ -630,8 +630,57 @@ def main():
         p.empty("Sans couverture", "Fixture locale sans URL")
         p._show_description("")
         assert not any(isinstance(w, Adw.PreferencesGroup) and w.get_title() == "Résumé" for w in walk(p.content))
+        # #1018: a >700-character description may occupy only one *visual*
+        # line. Combining grapheme joiners are invisible but retained by the
+        # description sanitizer; old length heuristics displayed a fake button.
+        p._show_description("Résumé compact " + "\u034f" * 710)
+        later(200, component_summary_short)
+
+    def component_summary_short():
+        p = panel("library")
+        groups = [w for w in walk(p.content)
+                  if isinstance(w, Adw.PreferencesGroup) and w.get_title() == "Résumé"]
+        assert len(groups) == 1
+        label = next(w for w in walk(groups[0]) if isinstance(w, Gtk.Label)
+                     and w.get_text().startswith("Résumé compact"))
+        toggle = next(w for w in walk(groups[0]) if isinstance(w, Gtk.Button)
+                      and w.get_label() == "Lire la suite")
+        assert label.get_width() > 0, "Résumé non alloué"
+        assert label.get_lines() == -1, "Texte intégral artificiellement tronqué"
+        assert not toggle.get_visible() and not toggle.get_mapped(), (
+            "Bouton trompeur alors que le résumé est intégralement visible"
+        )
+        report["checks"]["P2_1018_long_text_without_visual_overflow_no_toggle"] = True
+
+        # Six explicit visual lines are *not* overflow, including a newline.
+        p.empty("Résumé six lignes", "Contrat d'overflow")
+        p._show_description("Une\\nDeux\\nTrois\\nQuatre\\nCinq\\nSix")
+        later(200, component_summary_six_lines)
+
+    def component_summary_six_lines():
+        p = panel("library")
+        toggle = next(w for w in walk(p.content) if isinstance(w, Gtk.Button)
+                      and w.get_label() == "Lire la suite")
+        assert not toggle.get_visible()
+        report["checks"]["P2_1018_six_explicit_lines_no_toggle"] = True
+
+        p.empty("Résumé sept lignes", "Contrat d'overflow")
+        p._show_description("Une\\nDeux\\nTrois\\nQuatre\\nCinq\\nSix\\nSept")
+        later(200, component_summary_seven_lines)
+
+    def component_summary_seven_lines():
+        p = panel("library")
+        toggle = next(w for w in walk(p.content) if isinstance(w, Gtk.Button)
+                      and w.get_label() == "Lire la suite")
+        assert toggle.get_visible() and toggle.get_mapped(), (
+            "Sept lignes sans possibilité de déplier le résumé"
+        )
+        report["checks"]["P2_1018_seven_explicit_lines_toggle"] = True
+
+        p.empty("Résumé réellement long", "Contrat d'overflow")
         p._show_description("Résumé long de la fixture. " * 80)
-        toggle = next(w for w in walk(p.content) if isinstance(w, Gtk.Button) and w.get_label() == "Lire la suite")
+        toggle = next(w for w in walk(p.content) if isinstance(w, Gtk.Button)
+                      and w.get_label() == "Lire la suite")
         component["summary_toggle"] = toggle
         later(200, lambda: component_expand(toggle))
 
