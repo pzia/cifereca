@@ -157,11 +157,18 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             # The private catalogue can contain hundreds of purchases.
             # Bound memory without blocking ordinary 300+ book libraries.
             if (type(raw) not in {list, tuple} or len(raw) > 2048
-                    or any(type(row) is not SearchResult for row in raw)):
-                # A partial/hostile provider response wrapped in a list is
-                # not proof of a complete authenticated purchase inventory.
-                # Do not silently treat malformed rows as an empty library
-                # and finalize a false successful startup receipt.
+                    or any(type(row) is not SearchResult for row in raw)
+                    or any(
+                        row.source_provider != "numilog"
+                        or row.source_credential != account.credential_id
+                        or row.source_collection != "library"
+                        or row.scenario != "NUMILOG_LIBRARY"
+                        for row in raw
+                    )):
+                # A typed result attributed to another connection or to the
+                # public catalogue cannot prove this authenticated account's
+                # library. Never mistake a mixed/foreign manifest for an empty
+                # successful backup, mirror its rights or acquire its ACSM.
                 trace.fail("manifest_invalid")
                 failures += 1
                 continue
