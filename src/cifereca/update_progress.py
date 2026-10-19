@@ -64,7 +64,7 @@ def failure_code(exc: BaseException) -> str:
         code = getattr(exc, "reason_code", None)
         if type(code) is str and code in SMOKE_FAILURE_CODES:
             return code
-    if type(exc).__name__ in {"UpdateError", "DevUpdateError" and type(exc).__module__ in {
+    if type(exc).__name__ in {"UpdateError", "DevUpdateError"} and type(exc).__module__ in {
         "cifereca.updater", "cifereca.dev_updater",
     }:
         return "update_error"
