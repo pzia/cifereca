@@ -4,6 +4,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
+import re
 import shutil
 import threading
 from typing import Any, Callable
@@ -96,6 +97,13 @@ class ScopedCacheBroker:
     plugin_id: str
     allow_global: bool = False
     _singleflight: _SingleFlight = field(default_factory=_SingleFlight, repr=False)
+
+    def __post_init__(self) -> None:
+        # A plugin ID is a single filesystem component, never a user path.
+        # `for_plugin` may be called outside plugin-manifest validation.
+        if (type(self.plugin_id) is not str
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", self.plugin_id) is None):
+            raise ValueError("invalid_plugin_cache_namespace")
 
     @property
     def _plugin_root(self) -> Path:
@@ -242,6 +250,9 @@ class ScopedCacheBroker:
                 continue
             if ns.startswith("plugin:"):
                 owner = ns.split(":", 1)[1]
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", owner) is None:
+                    warnings.append("cache_namespace_invalid")
+                    continue
                 if expired_only:
                     warnings.append("cache_expiration_unsupported")
                     continue
