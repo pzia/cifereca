@@ -70,3 +70,45 @@ def test_source_projection_failure_does_not_log_provider_or_exception_class(
         assert all("private.invalid" not in line for line in lines)
     finally:
         service.close()
+
+
+def test_kobo_decision_metadata_failure_uses_safe_log_code_without_abort(
+    tmp_path, monkeypatch, caplog,
+):
+    service = _service(tmp_path)
+    monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
+    monkeypatch.setattr(service, "mirror_personal_libraries", lambda: {})
+    original = service.storage.metadata_set
+
+    def fail_decision(key, value):
+        if key == "kobo_backup_opening_decision_v1":
+            raise HostileError(PRIVATE)
+        return original(key, value)
+
+    monkeypatch.setattr(service.storage, "metadata_set", fail_decision)
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            report = service.opening_sync()
+        assert report["identities"]
+        lines = [x for x in caplog.text.splitlines()
+                 if "TRACE kobo backup decision persistence error" in x]
+        assert len(lines) == 1
+        assert lines[0].endswith("code=decision_save_failed")
+        assert "SIGNED_SYNC_AUXILIARY" not in lines[0]
+    finally:
+        service.close()
+
+
+def test_optional_statistics_error_never_reflects_action_label_or_exception(
+    tmp_path, monkeypatch,
+):
+    service = _service(tmp_path)
+    monkeypatch.setattr(service.storage, "action_event_put", _fail)
+    try:
+        service._record_action("default", PRIVATE, "failed")
+        detail = [row["detail"] for row in service.diagnostics.snapshot()
+                  if row["operation"] == "action event"]
+        assert detail == [{"code": "action_event_failed"}]
+        assert "SIGNED_SYNC_AUXILIARY" not in str(detail)
+    finally:
+        service.close()
