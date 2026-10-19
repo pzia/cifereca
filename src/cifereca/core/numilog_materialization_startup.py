@@ -188,7 +188,7 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 type(row.owned) is not bool
                 or type(row.downloadable) is not bool
                 or (
-                    row.owned is True and row.downloadable is True
+                    row.owned is True
                     and (
                         type(row.id) is not str
                         or type(row.record_id) is not str

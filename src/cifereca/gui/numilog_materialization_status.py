@@ -58,6 +58,12 @@ def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
     # Auxiliary observation never changes the durable receipt or authorizes I/O.
     from ..core.numilog_startup_diagnostics import public_fields
     detail = public_fields(data.get("diagnostic"))
+    if detail and detail["status"] == "complete" and status != "complete":
+        # The auxiliary diagnostic never finalizes SQLite. A crashed or
+        # stale worker may have emitted a "complete" diagnostic while the
+        # durable receipt is still running/failed/unknown. Never turn that
+        # observation into a public success or hide its unresolved state.
+        detail = {}
     if detail:
         status = detail["status"]
         data = dict(data, **{key: detail[key] for key in counts})
