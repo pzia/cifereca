@@ -398,18 +398,40 @@ class NumilogSession(ProviderSession):
             return [self._normalize(row) for row in rows]
 
     def public_product_detail(self, product_url):
-        """Explicit anonymous metadata read; never invoked by sync or purchase flows."""
+        """Explicit anonymous product GET, sharing the public session HTTP budget.
+
+        Both public entrypoints previously skipped the budget used by owned
+        enrichment. A caller could issue unlimited uncached GETs against the
+        commercial site, or bypass a 429 cooldown by switching entrypoints.
+        """
         from cifereca_numilog_public_client import fetch_public_detail
-        return fetch_public_detail(product_url)
+        # Qualify *before* the cache: a hit is not permission to accept an
+        # untrusted URL that the HTTP transport would refuse on a miss.
+        if (type(product_url) is not str
+                or public_book_url(product_url, base_url='https://www.numilog.com/') != product_url
+                or not product_url.startswith('https://www.numilog.com/')):
+            raise ProviderCapabilityError('Numilog : invalid_public_product_url')
+        return self._owned_public_cache.get(
+            ('detail', product_url), lambda: fetch_public_detail(product_url),
+        )
 
     def search_public(self, query, *, page=0, field='all'):
-        """Explicit public-catalogue lookup with no private-session I/O.
+        """Explicit anonymous search with ONE shared public HTTP/cache budget.
 
-        The brSimple HTML fixture only proves general text search; no native
-        author/ISBN field mode is claimed. Public rows never prove ownership.
+        The brSimple HTML fixture proves text-only search. This path shares
+        cache, cooldown and in-flight budget with explicit owned enrichment,
+        but never uses account cookies, private library or download URLs.
         """
-        from cifereca_numilog_public_client import fetch_public_search
-        return list(fetch_public_search(query, page=page, field=field).items)
+        from cifereca_numilog_public_client import fetch_public_search, public_search_url
+        if type(field) is not str or field != 'all':
+            raise ProviderCapabilityError('Numilog : unsupported_public_field')
+        # Parse and bound the query/page before the shared cache is consulted.
+        url = public_search_url(query, page)
+        result = self._owned_public_cache.get(
+            ('search', url),
+            lambda: fetch_public_search(query, page=page, field=field),
+        )
+        return list(result.items)
 
     def search(self,query,scope='all',page=0,field='all'):
         # Do not silently coerce or clamp untrusted page selectors. Validate
