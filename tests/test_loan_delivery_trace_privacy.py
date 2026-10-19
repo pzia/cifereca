@@ -58,7 +58,8 @@ def test_index_keeps_coordinates_and_refusal_but_logs_only_bounded_facts(tmp_pat
     if status == 'indexed':
         assert execute() == (inspection, scan)
     else:
-        with pytest.raises(ProviderConfigurationError, match=PRIVATE): execute()
+        with pytest.raises(ProviderConfigurationError, match="^Indexation locale impossible$"):
+            execute()
     assert calls == [(path, {'title': loan.title, 'item_id': loan.record_id,
                            'identity_id': loan.identity_id, 'provider_id': loan.source_provider})]
     logs = _messages(caplog)
