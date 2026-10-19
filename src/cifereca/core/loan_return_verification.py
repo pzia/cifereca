@@ -157,11 +157,12 @@ def adobe_return_inventory_confirmed(self, acquisition: dict[str, Any]) -> bool:
         inventory = self._kobo_adapter().loans(self._adept_profile_name(profile))
         if type(inventory) is not dict or type(inventory.get("loans")) is not list:
             return False
-        matches = [
-            row for row in inventory["loans"]
-            if type(row) is dict and type(row.get("id")) is str
-            and row["id"] == loan_id
-        ]
+        rows = inventory["loans"]
+        if any(type(row) is not dict or type(row.get("id")) is not str
+               for row in rows):
+            # A partial/hostile registry cannot prove the exact transaction.
+            return False
+        matches = [row for row in rows if row["id"] == loan_id]
         return (
             len(matches) == 1
             and matches[0].get("returned") is True
