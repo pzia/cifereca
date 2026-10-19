@@ -1,0 +1,13 @@
+{
+  "kind": "authorized-plugins-only-release",
+  "release_tag": "plugins-v0.9.44+dev.12-001",
+  "package_ids": [
+    "org.cifereca.ui.page.diagnostics",
+    "org.cifereca.youth-source-discovery"
+  ],
+  "purpose": "P0 #787 / #839: publish signed plugins-only artifacts for the distinct officially released Core v0.9.44+dev.12; after verifying the published Core wheel, runtime and rollback.",
+  "authorized_on": "2026-10-09",
+  "request_revision": 4,
+  "requires_published_core_tag": "v0.9.44+dev.12",
+  "archive_reason": "#2331: source package Jeunesse retiré par #2318; ceci est une autorisation historique non exécutable."
+}
