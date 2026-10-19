@@ -438,8 +438,10 @@ def _opds_fetch(session,url):
         for _ in range(4):
             response=session.client.get(checked,follow_redirects=False,
                                         headers={'Accept':'application/atom+xml, application/opensearchdescription+xml'})
-            response.raise_for_status()
+            # httpx.raise_for_status() treats 3xx as failures too: inspect the
+            # redirect first, then validate its destination before the next GET.
             if response.status_code not in {301,302,303,307,308}:
+                response.raise_for_status()
                 return _xml_root(response),checked
             target=_safe_opds_link(session.opds_feed_url,response.headers.get('location',''),'feed')
             if not target:
