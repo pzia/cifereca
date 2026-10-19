@@ -106,6 +106,22 @@ def test_exact_budget_is_not_rejected_before_xml_validation():
         s.close()
 
 
+def test_prebuffered_mock_response_still_enforces_xml_size_bound():
+    # Several long-lived Core/Plugin tests construct Response(content=...)
+    # rather than a streaming body. They are trusted test fixtures, NOT a
+    # network buffering strategy, and still must respect the XML cap.
+    payload = b"x" * (OPDS_MAX_FEED_BYTES + 1)
+    s, seen = session(lambda req: httpx.Response(
+        200, content=payload, request=req,
+    ))
+    try:
+        with pytest.raises(ProviderError, match="invalid_opds_feed"):
+            _opds_fetch(s, ROOT)
+        assert seen == [(ROOT, "identity")]
+    finally:
+        s.close()
+
+
 def test_gzip_response_is_rejected_without_decompressing_any_bytes():
     # Even a few encoded bytes could inflate far above the 2 MiB XML cap.
     compressed = gzip.compress(XML + b" " * (OPDS_MAX_FEED_BYTES + 1))
