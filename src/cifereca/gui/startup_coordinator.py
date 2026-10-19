@@ -32,6 +32,12 @@ def connect_configured_sources(
             window.dashboard_loading_status.set_visible(False)
         _TRACE_LOG.info("TRACE gui populate-accounts begin")
         window._populate_accounts()
+        # Providers finish connecting after the Search page was constructed.
+        # Update choices on GTK's completion callback, not from a worker.
+        from .query_widget_factory_controller import refresh_query_providers
+        refresh_query_providers(window)
+        if getattr(window, "_closed", False):
+            return
         _TRACE_LOG.info("TRACE gui populate-accounts end")
         _TRACE_LOG.info("TRACE gui populate-loans begin count=%s", len(window.service.last_loans))
         window._populate_loans(window.service.last_loans)
