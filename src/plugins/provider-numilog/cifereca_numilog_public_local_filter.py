@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
+from urllib.parse import urlsplit
 import unicodedata
 
 from cifereca.plugin_api import ProviderCapabilityError
@@ -49,8 +50,15 @@ def _fold(value: str) -> str:
 
 
 def _validate_page(page):
-    if type(page) is not PublicSearchPage or len(page.items) > 100:
-        raise ProviderCapabilityError("Numilog public : unverified_local_page")
+    error = "Numilog public : unverified_local_page"
+    if (type(page) is not PublicSearchPage
+            or type(page.items) is not tuple or len(page.items) > 100
+            or type(page.page_index) is not int or not 0 <= page.page_index <= 100
+            or type(page.total_results) is not int or page.total_results < len(page.items)
+            or type(page.complete) is not bool):
+        raise ProviderCapabilityError(error)
+    source_url = None
+    seen_ids = set()
     for row in page.items:
         if (getattr(row, "source_provider", None) != "numilog-catalog"
                 or getattr(row, "source_credential", None) != "__public__"
@@ -65,11 +73,29 @@ def _validate_page(page):
         if type(m) is not dict or type(m.get("source_url")) is not str:
             raise ProviderCapabilityError("Numilog public : unverified_local_page")
         try:
-            _query(m["source_url"])
+            query = _query(m["source_url"])
         except PublicSearchParseError:
-            raise ProviderCapabilityError("Numilog public : unverified_local_page") from None
+            raise ProviderCapabilityError(error) from None
+        # A local refinement cannot combine rows from different searches,
+        # facet states or page indices: the counters and provenance would lie.
+        if (int(query.get("GRID_PAGE", "0")) != page.page_index
+                or type(m.get("page_index")) is not int
+                or m["page_index"] != page.page_index
+                or (source_url is not None and m["source_url"] != source_url)):
+            raise ProviderCapabilityError(error)
+        source_url = m["source_url"]
+        product_url = getattr(row, "friendly_url", None)
+        product_id = m.get("source_item_id")
+        if (type(product_url) is not str or type(product_id) is not str
+                or not product_id.isascii() or not product_id.isdigit()
+                or not 1 <= len(product_id) <= 12
+                or urlsplit(product_url).path.split("/")[1:2] != [product_id]
+                or getattr(row, "record_id", None) != "numilog:public:" + product_id
+                or row.record_id in seen_ids):
+            raise ProviderCapabilityError(error)
+        seen_ids.add(row.record_id)
         if type(m.get("field_evidence")) is not dict:
-            raise ProviderCapabilityError("Numilog public : unverified_local_page")
+            raise ProviderCapabilityError(error)
 
 
 def _value(row, field):
@@ -129,7 +155,13 @@ def refine_loaded_public_page(page: PublicSearchPage, **filters) -> PublicPageRe
               or any(unicodedata.category(c) in {"Cc", "Cf", "Cs"} for c in value)):
             raise ProviderCapabilityError("Numilog public : invalid_local_filter")
         else:
-            qualified[field] = _fold(value.strip())
+            folded = _fold(value.strip())
+            # Punctuation-only, combining-only or symbol-only input folds
+            # to empty; "" in any title/author is True and would make an
+            # invalid filter appear to match the entire loaded page.
+            if not folded:
+                raise ProviderCapabilityError("Numilog public : invalid_local_filter")
+            qualified[field] = folded
     _validate_page(page)
     found = []
     unverified = 0
