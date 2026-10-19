@@ -256,7 +256,7 @@ class EbooksSession(ProviderSession):
             timeout=float(self.options.get('timeout_seconds',30)),
             follow_redirects=True, trust_env=False,
             headers={
-                'User-Agent':'Cifereca-EbooksGratuits/0.1.21',
+                'User-Agent':'Cifereca-EbooksGratuits/0.1.22',
                 'Accept-Language':'fr-FR,fr;q=0.9',
             },
         )
@@ -772,6 +772,33 @@ def _opds_public_html_link(feed_url, raw):
     return safe
 
 
+def _opds_author_match(query, names):
+    """Match a declared Atom author, never a title or mixed contributors.
+
+    OPDS names may be displayed as "SURNAME, Forename" while the reader
+    searches "Forename SURNAME". Preserve the existing case/accent-insensitive
+    substring match; for 2+ tokens permit a same-author exact-token
+    permutation. Do not infer aliases or join two distinct authors together.
+    """
+    if type(query) is not str or type(names) not in (list, tuple):
+        return False
+    wanted = _fold(query).strip()
+    if not wanted:
+        return False
+    words = tuple(re.findall(r'[^\\W_]+', wanted, flags=re.UNICODE))
+    for name in names[:16]:
+        if type(name) is not str or not 1 <= len(name) <= 512:
+            continue
+        attested = _fold(name)
+        if wanted in attested:
+            return True
+        if len(words) >= 2:
+            parts = set(re.findall(r'[^\\W_]+', attested, flags=re.UNICODE))
+            if all(word in parts for word in words):
+                return True
+    return False
+
+
 def _opds_items(session,feed,feed_url):
     items=[]
     for entry in feed.findall(ATOM+'entry'):
@@ -813,6 +840,13 @@ def _opds_items(session,feed,feed_url):
                   'acquisition_source':'opds-calibre',
                   'acquisition_evidence':'opds.entry.link',
                   'catalogue_url':session.opds_feed_url}
+        if authors:
+            # Source-exact individual Atom authors, unlike the joined
+            # presentation label. These are public bibliographic facts,
+            # never private identities or inferred contributor roles.
+            metadata['opds_author_names']=[name for name in authors[:16]
+                                          if name and len(name)<=512]
+            metadata['opds_author_evidence']='opds.atom.author.name'
         if categories:
             metadata['categories']=list(dict.fromkeys(categories))
             metadata['category_evidence']='opds.atom.category'
@@ -963,7 +997,12 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
             if field=='title':
                 rows=[row for row in rows if _fold(needle) in _fold(row.title)]
             elif field=='author':
-                rows=[row for row in rows if _fold(needle) in _fold(row.author)]
+                # Compare within EACH declared Atom author. A joined display
+                # string may mix surname+forename in COPS order, or two
+                # distinct people into a fictitious author identity.
+                rows=[row for row in rows if _opds_author_match(
+                    needle,row.metadata.get('opds_author_names',())
+                )]
             elif field in {'subject','category','genre'}:
                 def tokens(row):
                     data=row.metadata
