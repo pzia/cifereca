@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import importlib.util
+import ctypes as C
 from pathlib import Path
+import sys
+from types import SimpleNamespace as NS
 
 import pytest
 
@@ -44,3 +47,34 @@ def test_valid_coordinates_emit_exactly_one_real_xtest_click():
         "y": 225,
         "source": "XTEST pointer/button events",
     }
+
+
+@pytest.mark.parametrize("transform,origin,expected", [
+    ((0, 0), (20, 30), (55, 78)),
+    ((5, 5), (0, 0), (40, 53)),
+    ((-3, -7), (100, 200), (132, 241)),
+])
+def test_native_widget_center_includes_surface_render_offset(
+    monkeypatch, transform, origin, expected,
+):
+    class Function:
+        def __init__(self, operation): self.operation = operation
+        def __call__(self, *args): return self.operation(*args)
+    def translate(_display, _xid, _root, _x, _y, out_x, out_y, _child):
+        out_x._obj.value, out_y._obj.value = origin
+        return 1
+    device = object.__new__(_x11_class())
+    device.display = 1
+    device.x11 = NS(
+        XDefaultRootWindow=Function(lambda *_: 99),
+        XTranslateCoordinates=Function(translate),
+    )
+    monkeypatch.setitem(sys.modules, "native_capture", NS(pointer=lambda obj: 42))
+    monkeypatch.setattr(C, "CDLL", lambda *_: NS(
+        gdk_x11_surface_get_xid=Function(lambda *_: 7),
+    ))
+    native = NS(get_surface=lambda: object(), get_surface_transform=lambda: transform)
+    rect = NS(get_x=lambda: 10, get_y=lambda: 40,
+              get_width=lambda: 50, get_height=lambda: 16)
+    widget = NS(get_native=lambda: native, compute_bounds=lambda target: (True, rect))
+    assert device.widget_point(widget) == expected
