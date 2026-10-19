@@ -1,3 +1,24 @@
+## 0.1.75 — budget de profondeur/largeur du DOM public (#1886 P0)
+
+Une fiche peut respecter la limite HTTP de **1 Mio** tout en saturant
+les seuils du parseur commun (**100 niveaux / 25 000 nœuds**) avec
+des nœuds sans contenu. Les parcours récursifs de `extract_public_metadata` étaient
+jusqu'ici exposés à une erreur de récursion avant de vérifier les
+libellés de la fiche.
+
+Le plugin qualifie désormais le DOM **avant** ces parcours, avec une
+borne indépendante de **80 niveaux et 12 000 nœuds**. Une page
+disproportionnée est refusée par `PublicMetadataError` (message fixe),
+sans erreur de récursion brute et sans prétendre que les métadonnées
+sont absentes du produit. L'analyse des identifiants, les droits
+`owned`, les URLs de livraison et le chemin HTTP ne changent pas.
+
+Tests hors réseau sur fiche publique expurgée et HTML de profondeur/
+largeur adversariales :
+`tests/test_numilog_public_visible_dom_bounds_p0.py`.
+Cette garde ne constitue ni validation du contrat de recherche avancée
+ni autorisation de crawl Numilog.
+
 ## 0.1.74 — attribution stricte des rôles de fiche Numilog (#1072 P0)
 
 Les champs publics JSON-LD `translator`, `illustrator` et `contributor`

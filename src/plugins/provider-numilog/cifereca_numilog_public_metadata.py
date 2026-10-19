@@ -44,6 +44,25 @@ class _Reader(Parser):
         super().handle_starttag(tag, attrs)
 
 
+# The common HTML Parser permits up to 25k nodes / 100 levels, which is
+# still costly for repeated recursive DOM walks. A 1 MiB response may contain
+# many empty elements or deep ancestry. Bound both earlier than the
+# common parser's limits, independently of bytes, before any recursive walk.
+_MAX_DOM_NODES = 12000
+_MAX_DOM_DEPTH = 80
+
+
+def _qualify_dom(root):
+    stack = [(root, 0)]
+    visited = 0
+    while stack:
+        node, depth = stack.pop()
+        visited += 1
+        if visited > _MAX_DOM_NODES or depth > _MAX_DOM_DEPTH:
+            raise PublicMetadataError()
+        stack.extend((child, depth + 1) for child in node.children)
+
+
 def _hidden(node):
     # HTML attributes are case-insensitive in their relevant token values,
     # while CSS can separate property/value with tabs or newlines.
@@ -88,7 +107,8 @@ def extract_public_metadata(html, product_url, expected_title):
     empty = {'product_url': product_url, 'fields': {}, 'field_evidence': {}}
     try:
         root = _Reader(html).root
-    except (ParseError, RecursionError):
+        _qualify_dom(root)
+    except (ParseError, RecursionError, OverflowError):
         raise PublicMetadataError() from None
     def forms_in(node):
         # A canonical-looking wrapper in an ignored/foreign form is no
