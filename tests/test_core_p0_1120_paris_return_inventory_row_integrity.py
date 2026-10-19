@@ -17,11 +17,13 @@ from tests.test_core_0984_adept_first_paris_reconcile import setup as adept_setu
 
 
 class HostileRow:
-    def __getattribute__(self, name):
-        # Pytest legitimately inspects __class__ while collecting parameters.
-        if name == "__class__":
-            return object.__getattribute__(self, name)
-        raise AssertionError("Untrusted row attribute access: " + name)
+    @property
+    def id(self):
+        raise AssertionError("Untrusted row id must not be read")
+
+    @property
+    def provider(self):
+        raise AssertionError("Untrusted row provider must not be read")
 
     def __str__(self):
         raise AssertionError("Untrusted row must never be stringified")
