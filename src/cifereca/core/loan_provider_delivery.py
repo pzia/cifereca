@@ -39,7 +39,7 @@ def index_local_loan_artifact(
         raise ProviderConfigurationError("L'acquisition automatique n'a produit aucun artefact local")
     final_inspection = inspect_artifact(final_path)
     if final_path.suffix.casefold() in {".epub", ".pdf"} and not final_inspection.valid:
-        raise ProviderConfigurationError(f"Artefact local invalide: {final_inspection.reason or 'validation'}")
+        raise ProviderConfigurationError("Artefact local invalide")
     _TRACE_LOG.info(
         "TRACE download artifact ready loan_ref=%s bytes=%s format=%s protected=%s",
         trace_ref, final_path.stat().st_size,
@@ -53,5 +53,5 @@ def index_local_loan_artifact(
     )
     _TRACE_LOG.info("TRACE download catalog index end loan_ref=%s indexed=%s dt=%.3fs", trace_ref, scan.get("status") == "indexed", time.monotonic()-index_started)
     if scan.get("status") != "indexed":
-        raise ProviderConfigurationError(f"Indexation locale impossible: {scan.get('reason') or scan.get('status')}")
+        raise ProviderConfigurationError("Indexation locale impossible")
     return final_inspection, scan
