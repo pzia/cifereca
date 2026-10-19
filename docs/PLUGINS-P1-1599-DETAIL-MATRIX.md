@@ -1,79 +1,69 @@
-# Plugins P1 #1599 — matrice de conformité des fiches bibliographiques
+# Plugins P1 #1599 — conformité du détail Recommandations (19 octobre 2026)
 
-État du code de `main` examiné le 15 octobre 2026. Parent : #1596 ;
-contrat et matrice CoreUI : `docs/COREUI-P1-1598-DETAIL-MATRIX.md` (#1598).
+Parent : [#1596](https://github.com/pzia/cifereca/issues/1596). Contrat public
+CoreUI : [#1598](https://github.com/pzia/cifereca/issues/1598) et
+`docs/COREUI-P1-1598-DETAIL-MATRIX.md`.
 
-## Invariant commun
+**Périmètre P1 strict : le seul plugin actif Recommandations.**
+Jeunesse a été retiré du code (#741 P3, PR #2318) ;
+Constellations est désactivé par défaut et suivi en #700 P2
+(avec #1042, #706 et #705 selon responsabilités). Aucun de ces deux volets
+ne bloque la sortie de #1599 ; ne pas réintroduire de rendu ni de source
+Jeunesse et ne pas créer de second volet Constellations ici.
 
-Les trois vues s'appuient déjà sur `host.build_book_master_detail`,
-`UiBookDetailPresentation`, `DetailSection`, `DetailField` et
-`show_detail`. Le rendu GTK est celui du **DetailPanel du CoreUI**.
-Ne pas créer un panneau parallèle, importer `cifereca.gui` privé,
-inventer un ISBN, assimiler un rapprochement à une possession ou
-déclencher une acquisition depuis une recommandation.
+La [matrice détaillée, tenue dans le plugin](../src/plugins/recommendations/DETAIL-CONTRACT-1599.md)
+est la référence pour la projection et les limites. La présente vue
+transversale facilite sa comparaison avec Recherche/Bibliothèque.
 
-## Matrice par plugin
+## Comparaison stricte avec Recherche et Bibliothèque
 
-| Contrat | Jeunesse (`youth_page.py`) | Constellations (`constellations_page.py`) | Recommandations (`recommendations.py`) |
-| --- | --- | --- | --- |
-| Liste / vide | Cache jeunesse de l'identité active ; détail vide explicite ; pas de collecte sans action | Liste de nœuds bornée, aucun livre central arbitraire ; `empty_detail` sans centre | Liste de candidats classés et `empty_detail` si aucune sélection / ligne périmée |
-| Titre et auteurs | Titre de la notice, auteurs distincts en champs `kind=author` | Titre du nœud et champs auteur individuels `kind=author` | Titre du candidat, auteurs multivalués en champs `kind=author` |
-| Couverture | `cover_url` uniquement après `public_url` | `cover_url` / `thumbnail_url` de la notice brute, validées par `public_url` | `thumbnail_url` / `cover_url` explicites après `_external_book_url` |
-| Métadonnées | Âges attestés par nature/provenance ; édition/ISBN, langue, formats, thèmes, éditeurs, année, collection, résumé et sources si présents | ISBN/language/éditeur/séries/formats/sujets **attestés par cette notice** ; voisinage distinct ; disponibilité sans droit inféré | Affinité/raisons/sources ; formats et publication ; éditions distinctes **seulement avec coordonnées attestées** ; description facultative |
-| Liens | `friendly_url` puis `notice_url` sûre, `DocumentLink` ; aucun lien d'acquisition | Notice publique de `node.url` seulement ; `friendly_url` seule sur `main`, repli explicite `notice_url` proposé dans PR #1800 | `friendly_url` puis `notice_url` sûre via action externe explicite ; pas de téléchargement ni URL signée |
-| Actions | Ouverture locale via hôte, recherche locale explicite, collecte distante volontaire et contrôlée | Voisinage / historique A→B→C ; `open_book_detail` du centre ou du livre d'origine avec l'identité mémorisée | Recherche **locale** d'un ISBN vérifié et rattaché à une notice source ; pas d'action d'acquisition, droits à vérifier dans Recherche |
-| Identité | Cache filtré par identité ; profil disparu non remplacé implicitement, annulation des tâches et invalidation de sélection | Chargement par identité, sélection GTK invalide rejetée, cache borné par profil, résultats tardifs rejetés par génération | Recommandations et recherche d'édition liées au profil ; race de changement d'identité durant un calcul corrigée dans PR #1798 (non fusionnée à cette date) |
-| Arrêt / réactivation | Callbacks et sélection révoqués lors des changements ; voir tests de cycle de vie | `dispose` annule les tâches et invalide la génération ; ancienne vue inerte | Annulation et générations de calcul/LLM ; validation GTK multi-profils finale encore à établir |
+| Contrat de détail | Recherche / Bibliothèque (#1598) | Recommandations (#1599) |
+| --- | --- | --- |
+| Rendu | `UiBookDetailPresentation` → `DetailPanel` du CoreUI | `host.build_book_master_detail` → `UiBookListEntry` et `UiBookDetailPresentation` → **même** `DetailPanel` ; aucun import `cifereca.gui` |
+| Identité bibliographique | Notice sélectionnée / livre local, champs à provenance explicite | Candidat classé ; titre/plusieurs auteurs/description uniquement si chaînes publiques sûres ; variantes sources distinctes si coordonnées attestées |
+| Métadonnées bibliographiques | Auteurs, support, langue, date, couverture, notice et identifiants prouvés | Champs auteurs indépendants `kind=author`, langues attestées `kind=language`, format/publication facultatifs, couverture HTTP(S) publique non signée, description facultative |
+| Sections spécifiques | « Essentiel » / « Bibliothèque » / disponibilité, prêt et acquisition **selon origine et preuve** | « Recommandation » (affinité entière 0–100, classement diversifié, raisons attestées), « Catalogue » (sources indépendantes), « Notice », « Éditions et sources distinctes » ; LLM facultatif étiqueté **généré, non attesté** |
+| Liens/actions | Navigation et droits décidés par le Core/les comptes | « Voir en ligne » seulement pour `friendly_url` ou `notice_url` vérifiée ; recherche ISBN **locale et explicite** d'une édition vérifiée ; jamais prêt, achat ni acquisition à partir d'une proximité |
+| Profil / sélection | Identité exacte de la notice, pas de repli vers le compte courant | Capturer `identity_id` et générations de calcul/sélection ; invalider les actions après A→B→A, re-filtrage, disparition du profil, désactivation ou callback tardif |
 
-Les sections métier doivent rester distinctes : **« Âges attestés »**,
-**« Provenance / Métadonnées bibliographiques »** et
-**« Recommandation / Éditions et sources distinctes »**. Une différence de
-section métier n'est pas un défaut de factorisation. Les champs communs
-doivent cependant conserver leur sens (titre, auteur, ISBN attesté,
-langue, source, couverture et URL publique sûre) sans valeur fabriquée.
+**Divergences légitimes :** aucun champ disponibilité, `owned`,
+exemplaire, statut de prêt, chemin local ou état d'acquisition ne doit
+apparaître dans Recommandations faute de droit attesté. Les sections métier
+ne sont pas une divergence de renderer. #1354 (convergence métier des actions)
+reste hors #1599.
 
-## Tests déjà présents, sans surinterprétation
+## Preuves disponibles et limites
 
-- **Jeunesse** : `test_youth_public_url_boundary_p1.py`,
-  `test_youth_profile_reload_p1.py`,
-  `test_youth_sticky_missing_identity_p1.py`,
-  `test_youth_stale_selection_profile_p1.py` et
-  `test_youth_detail_dispose_lifecycle_p1.py`.
-- **Constellations** : `test_public_detail_multivalue_p1.py`,
-  `test_constellations_attested_bibliography_p1.py`,
-  `test_constellations_detail_attested_covers_p1.py`,
-  `test_constellations_profile_reload_p1.py`,
-  `test_constellations_sticky_missing_identity_p1.py`,
-  `test_detail_foreign_identity_seed_p1.py` et
-  `test_constellations_disposed_actions_p1.py`.
-- **Recommandations** : projections et garde-fous dans
-  `src/plugins/recommendations/tests/` ; la correction de course
-  identité/calcul et ses quatre scénarios headless sont dans PR #1798.
+- **Code :** `src/plugins/recommendations/recommendations.py` produit
+  `UiBookDetailPresentation`, `DetailField`, `DetailSection` et
+  `UiBookDetailAction` exclusivement via les API publiques.
+- **Headless :** `test_recommendation_detail_projection_contract_p1.py`,
+  `test_recommendation_catalogue_navigation_p1.py`,
+  `test_recommendation_ranked_provenance_public_p1.py`,
+  `test_recommendation_identity_switch_while_busy_p1.py`,
+  `test_recommendations_provider_filter_public_p1.py` ;
+  le durcissement de la reformulation LLM et ses cas hostiles sont suivis
+  dans la PR #2400. Ces tests ne valent pas recette GTK réelle.
+- **Probe GTK préparé :** `e2e/recommendations_detail_probe.py` utilise
+  GTK4/XTEST réels avec candidats **synthétiques** et hôte public réel ;
+  couvre sélection, édition, clic clavier ISBN local, action périmée,
+  liste vide, changement de profil et désactivation. Le probe ne démontre
+  ni disponibilité d'un provider distant ni bon fonctionnement sur un poste
+  utilisateur.
 
-**Important :** l'existence de ces tests ne prouve ni une recette GTK
-end-to-end des trois plugins, ni la conformité sur le HEAD fusionné.
+## Gates encore nécessaires pour fermer #1599
 
-## Écarts / dépendances et ordre de sortie
+1. Vérifier les suites plugins et les scénarios GTK **1366 et 1600 px**
+   sur le SHA **final fusionné**, avec preuves de focus/clavier/scroll/retour,
+   (dés)activation, identité A→B, callbacks tardifs et 0/1/N.
+2. Comparer les champs communs effectivement rendus par
+   Recherche/Bibliothèque au contrat #1598 fusionné ; conserver les
+   sections métier et signaler toute lacune de l'API publique au CoreUI.
+3. Vérifier install/packaging/E2E et la confidentialité : aucun
+   URL signé, compte, donnée arbitraire ou droit inventé ; aucune
+   acquisition ni requête LLM sans consentement explicite.
 
-1. **En cours côté Plugins :** PR #1798 (invalidation immédiate après
-   changement d'identité) et PR #1800 (repli Constellations sur
-   `notice_url` indépendante et sûre). Ne pas les déclarer livrées
-   tant que CI/CD ne les a pas fusionnées.
-2. **Côté CoreUI #1598 :** comparer sur HEAD final les champs communs
-   Recherche/Bibliothèque avec les trois projections publiques, sans
-   réutiliser les détails de disponibilité, prêts ou possession lorsque
-   la source plugin ne les atteste pas.
-3. **Recette UX/CI/CD :** plugins réels activés, GTK 1366 **et** 1600 ;
-   0/1/N livres, homonymes/éditions distinctes, auteurs multiples,
-   liens invalides, liste→détail→retour, navigation au clavier/focus,
-   scroll, A→B→C→origine, sélection rapide, identité A→B, suppression
-   d'un profil, désactivation/réactivation et fermeture pendant tâche.
-   Confronter les captures et journaux expurgés aux comportements, pas
-   seulement au déclenchement de workflow (PR #1797).
-4. **Limite de périmètre :** actions métier Recommandations #1354
-   expressément hors #1599 ; aucune mutation de droits, backend LLM,
-   scraper externe ou second renderer.
-
-**Décision de clôture :** #1599 reste ouvert tant que les deux corrections,
-la comparaison structurelle sur #1598 fusionné et la recette GTK finale
-ne sont pas établies ; #1596 attend les clôtures des deux enfants.
+**Ne pas fermer automatiquement** #1599 ni #1596 sur la seule base de cette
+matrice ou des tests hors réseau. Les anciennes mentions de PR #1798 et
+#1800 « non fusionnées » dataient du 15/10 : elles ont depuis été fusionnées ;
+le volet Constellations associé à #1800 n'est plus P1.
