@@ -1413,3 +1413,47 @@ pages successives, la provenance, les facettes contradictoires, les
 duplicatas, les preuves absentes, le résultat zéro et l'absence de HTTP.
 Cette fixture ne prouve **pas** qu'un second GET réel fonctionne avec
 Numilog : règles robots/CGU et vraie recherche avancée restent à qualifier.
+
+
+## 0.1.68 — enrichissement explicite des achats par lien produit direct (#1072)
+
+Nouvelle opération **opt-in**
+`NumilogSession.enrich_owned_direct_public_detail(item)` : un lien
+`https://www.numilog.com/ID/slug.ebook` présent directement **dans la carte
+du titre acheté de Mes Livres** suffit à choisir la fiche du **produit
+commercial** à consulter, même lorsque celui-ci ne figure pas dans la
+première page d'une recherche publique par titre.
+
+Avant toute requête publique, la session vérifie le rattachement de
+`record_id` au compte courant, **recharge les pages de Mes Livres**
+avec le sélecteur strict de la carte d'origine et exige **exactement une**
+édition achetée correspondante ; un compte tiers, un prêt révoqué, une
+duplication ambiguë ou l'absence d'URL canonique bloquent tout GET public.
+La valeur du lien ou la prétendue preuve passée dans l'objet d'appel est
+ignorée. L'opération effectue au plus **un GET anonyme de fiche publique**
+via le cache/budget partagé existant (TTL 60 secondes, 429, refus des
+redirections), **aucune recherche publique préalable**, aucune requête
+d'acquisition, téléchargement ou consultation de lien de livraison signé.
+
+La fiche doit valider le même **lien canonique et titre** dans le Book
+JSON-LD avant projection. Champs et preuves suivent la même validation
+stricte que le parcours existant liste → fiche. L'origine de
+l'association est enregistrée :
+`public_enrichment.status=attested_owned_title_link`,
+`scope=owned_library_title_link_only`, et
+`public_detail_enrichment.association_evidence=numilog.library_title_link`.
+**Le lien prouve seulement le produit, jamais la variante EPUB/PDF**
+effectivement achetée, ni la correspondance entre EAN papier et EAN
+numérique. `format_unverified=True`, `owned` (droit provenant de
+Mes Livres uniquement) et `download_url=None` sont conservés ;
+les identifiants papier/EPUB/PDF attestés restent *distincts dans des
+métadonnées commerciales* et ne deviennent pas un droit.
+
+Ce chemin est **distinct** de
+`enrich_owned_public_detail()` (recherche puis fiche) et n'est
+**pas appelé** par `library()`, `search()`, `holdings()`, la
+synchronisation ou l'ouverture automatique d'une fiche. Tests synthétiques
+offline : deux achats, produits homonymes, premier résultat public absent,
+compte tiers, révocation, doublons, titre public contradictoire et preuve
+falsifiée. Une vraie recette avec deux pages de Mes Livres authentifiées
+**expurgées** reste nécessaire avant de clore le P0 #1072.

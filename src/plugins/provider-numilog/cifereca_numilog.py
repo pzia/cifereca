@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.67, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.68, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.67'
+VERSION = '0.1.68'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -516,6 +516,36 @@ class NumilogSession(ProviderSession):
                 lambda: fetch_public_detail(owned.friendly_url),
             )
             return merge_attested_owned_public_detail(owned, detail)
+
+    def enrich_owned_direct_public_detail(self, item):
+        """Explicit owned library title link -> canonical public Book metadata.
+
+        This path does NOT search brSimple for the owned title. An explicit
+        product URL selected within a freshly parsed, authenticated Mes Livres
+        title card is the association; a missing first-page search result
+        does not invalidate that direct link. The public Book must still
+        confirm exactly the same canonical URL and title before any field
+        is projected, and it cannot prove the purchased EPUB/PDF variant.
+        """
+        with self.lock:
+            from dataclasses import replace
+            self._canonical_item(replace(item))
+            rows = self._rows(enrichment_record_id=item.record_id)
+            matches = [row for row in rows if self._id(row) == item.record_id]
+            if len(matches) != 1:
+                raise ProviderError(
+                    'Numilog : édition achetée non attestée dans le compte courant'
+                )
+            # Never accept caller-supplied public links, cached entitlement or
+            # arbitrary private delivery references. Only fresh Mes Livres.
+            owned = self._normalize(matches[0])
+            if owned.friendly_url is None:
+                return owned
+            from cifereca_numilog_enrichment import merge_attested_owned_direct_public_detail
+            # One explicit, anonymous product GET, sharing the existing
+            # bounded public cache, cooldown and 429 response handling.
+            detail = self.public_product_detail(owned.friendly_url)
+            return merge_attested_owned_direct_public_detail(owned, detail)
 
     def holdings(self,item,search_terms=''):
         self._canonical_item(item)
