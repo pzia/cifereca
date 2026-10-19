@@ -1039,6 +1039,26 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             safe = _safe_public_search_text(name, raw_meta.get(name))
             if safe is not None:
                 allowed_meta[name] = safe
+        # The generic youth-age contract is also edition-scoped and already
+        # structured. Keep only its validated bounds/kind and harmless original
+        # label; never persist a raw nested provider age object, provenance
+        # URL, signed token, other edition's range, or inferred age.
+        from .attested_age_filter import attested_age_ranges
+        verified_ages = attested_age_ranges({
+            "provider_id": row.source_provider, "item_id": row.record_id,
+            "metadata": {"youth_age_ranges": raw_meta.get("youth_age_ranges")},
+        })
+        public_ages = []
+        for proof in verified_ages:
+            label = proof.source_label
+            if label and _safe_public_search_text("age_label", label) is None:
+                continue
+            public_ages.append({
+                "age_min": proof.age_min, "age_max": proof.age_max,
+                "age_kind": proof.age_kind, "source_label": label,
+            })
+        if public_ages:
+            allowed_meta["youth_age_ranges"] = public_ages
         cover_url = (
             _numilog_public_catalog_url(row.thumbnail_url, cover=True)
             if row.source_provider == "numilog" else row.thumbnail_url
