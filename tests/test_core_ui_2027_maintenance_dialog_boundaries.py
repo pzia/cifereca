@@ -39,7 +39,7 @@ def test_p1_labels_closed_and_unknown_marker_ends_prior_phase():
 
 def test_fixture_emits_at_dialog_response_boundary_without_weakening_xtest():
     src = (ROOT / "e2e/maintenance_tools_probe.py").read_text()
-    assert 'gtk_phase_2027("maint_dialog_visible")' not in src or 'def respond(' in src
+    assert 'gtk_phase_2027("maint_p1_dialog_visible" if tool.tool_id' in src
     assert 'gtk_phase_2027("maint_p1_dialog_response" if tool.tool_id' in src
     assert 'physical(response)' in src
     assert 'until(allocated, click_then_continue, timeout=6.0)' in src
