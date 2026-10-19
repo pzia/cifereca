@@ -400,7 +400,7 @@ class EbooksSession(ProviderSession):
                     != item.friendly_url)):
             raise ProviderCapabilityError('Ebooks libres et gratuits : invalid_catalog_link')
         if self.transport is None: raise ProviderError('Ebooks libres et gratuits : transport.http indisponible')
-        d=Path(target_dir); d.mkdir(parents=True,exist_ok=True); dest=d/((re.sub(r'[^\\w .-]','_',item.title).strip() or item.record_id)+'.epub')
+        d=Path(target_dir); d.mkdir(parents=True,exist_ok=True); dest=d/((re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub')
         headers={
             'Accept':'application/epub+zip, application/zip;q=0.8, application/octet-stream;q=0.5, */*;q=0.2',
             # Never send a historical www-site referer to the OPDS origin.
