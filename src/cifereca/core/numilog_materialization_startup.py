@@ -218,12 +218,21 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             # performs its own account/session re-admission before writing.
             # This is still NOT permission to acquire: each edition passes
             # preflight plus the locked admission after this read.
-            mirror_numilog_manifest_rights(
+            mirrored = mirror_numilog_manifest_rights(
                 broker.service, raw,
                 identity_id=identity_id,
                 credential_id=account.credential_id,
                 account_id=account.unique_id,
             )
+            # The authenticated inventory is the authority for the number
+            # of owned editions. An account rebind, collision or silent mirror
+            # refusal is not a successful empty backup; never acquire until
+            # every attested purchase has been recorded as a local right.
+            expected_rights = sum(row.owned is True for row in raw)
+            if type(mirrored) is not int or mirrored != expected_rights:
+                trace.fail("rights_mirror_failed")
+                failures += 1
+                continue
             if (
                 not same_source()
                 or mode(broker, source_id) != "on_start"
