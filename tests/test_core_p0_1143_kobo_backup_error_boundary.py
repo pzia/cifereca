@@ -45,10 +45,9 @@ def test_kobo_vault_failure_is_typed_in_logs_and_constant_in_sqlite(
         saved = service.storage.backup_get("kobo", "vault-1", ITEM)
         assert saved["status"] == "error"
         assert saved["error"] == "Sauvegarde Kobo impossible"
-        # The in-process progress summary is a separate, historical API.
-        # Its raw error fields are NOT serialized to Diagnostics.
+        # The in-process summary is now typed and redacted too.
         diagnostic = service.diagnostics.snapshot()[-1]["detail"]
-        assert diagnostic["error_summary"][0]["code"] == "other"
+        assert diagnostic["error_summary"][0]["code"] == "provider_http_error"
         assert SIGNED not in json.dumps(diagnostic)
         failures = [
             line for line in caplog.text.splitlines()
