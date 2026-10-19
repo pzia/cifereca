@@ -1597,8 +1597,12 @@ class LibraryNamingBrokerImpl:
 
 
 def build_public_brokers(service: Any) -> dict[str, object]:
+    from .core.release_update_read import ReleaseUpdateReadBrokerImpl
     artifact_execution = ArtifactExecutionBrokerImpl(service)
     return {
+        # Deliberately read-only: the trusted updater transaction has no
+        # public plugin entrypoint until byte provenance and locks are proven.
+        "release.update.read": ReleaseUpdateReadBrokerImpl(),
         "catalog": CatalogBrokerImpl(service),
         "acquisition": AcquisitionBrokerImpl(service),
         "sync": SynchronizationBrokerImpl(service),
