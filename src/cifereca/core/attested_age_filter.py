@@ -52,8 +52,13 @@ def attested_age_ranges(row: Mapping[str, Any]) -> tuple[YouthAgeRange, ...]:
             provenance = record.provenance
             if provenance is not None and (
                 type(provenance) is not Provenance
-                or provenance.source != provider
-                or (provenance.source_id and provenance.source_id != edition)
+                or type(provenance.source) is not str
+                or not provenance.source
+                # A provenance keyed to the same provider may not point at
+                # another edition. A distinct publisher/authority may carry
+                # its own source record ID and must retain that provenance.
+                or (provenance.source == provider and provenance.source_id
+                    and provenance.source_id != edition)
             ):
                 continue
             if record.age_kind in _AGE_KINDS and (
