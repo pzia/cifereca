@@ -27,6 +27,20 @@ def sample():
     }
 
 
+def full_sample():
+    observation = sample()
+    observation.update({
+        "fully_visible_source_status_rows": 1,
+        "fully_visible_primary_source_actions": 1,
+        "fully_visible_enabled_primary_source_actions": 1,
+        "fully_visible_action_buttons": 2,
+        "horizontally_clipped_primary_source_actions": 0,
+        "global_action_fully_visible": True,
+        "opaque_account_name": "PRIVATE_SOURCE_ACCOUNT do not export",
+    })
+    return observation
+
+
 class FirstFoldReviewTests(unittest.TestCase):
     def setUp(self):
         self.tmp = TemporaryDirectory()
@@ -139,6 +153,66 @@ class FirstFoldReviewTests(unittest.TestCase):
         self.assertNotIn(str(earlier), out.getvalue())
         self.assertNotIn("PRIVATE_SYNC_ERROR", out.getvalue())
         self.assertNotIn("secret", out.getvalue().lower())
+
+
+    def test_full_visibility_bounded_and_private_fields_ignored(self):
+        self.write(sync_first_fold_ux=full_sample())
+        result = review(self.file)["samples"]["baseline"]
+        self.assertTrue(result["full_visibility_recorded"])
+        self.assertEqual(result["sources_fully_visible_percent"], 9.1)
+        self.assertEqual(result["primary_actions_fully_visible_percent"], 9.1)
+        self.assertEqual(result["enabled_primary_actions_fully_visible_percent"], 9.1)
+        self.assertNotIn("PRIVATE_SOURCE_ACCOUNT", json.dumps(result))
+
+    def test_partial_extended_sample_and_inconsistent_geometry_fail_closed(self):
+        bad = full_sample()
+        del bad["global_action_fully_visible"]
+        self.write(sync_first_fold_ux=bad)
+        with self.assertRaises(ValueError):
+            review(self.file)
+        for field, value in (
+            ("fully_visible_primary_source_actions", 3),
+            ("fully_visible_enabled_primary_source_actions", 2),
+            ("horizontally_clipped_primary_source_actions", 3),
+            ("global_action_fully_visible", 1),
+        ):
+            bad = full_sample()
+            bad[field] = value
+            self.write(sync_first_fold_ux=bad)
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                review(self.file)
+
+    def test_legacy_to_full_comparison_never_claims_full_visibility_delta(self):
+        self.write(sync_first_fold_ux=sample())
+        before = review(self.file)
+        self.write(sync_first_fold_ux=full_sample())
+        result = compare(before, review(self.file))["samples"]["baseline"]
+        self.assertTrue(result["comparable"])
+        self.assertFalse(result["full_visibility_comparable"])
+        self.assertNotIn("primary_actions_fully_visible_points_delta", result)
+
+    def test_full_to_full_comparison_and_geometry_population_guards(self):
+        self.write(sync_first_fold_ux=full_sample())
+        before = review(self.file)
+        improved = full_sample()
+        improved["fully_visible_source_status_rows"] = 2
+        improved["fully_visible_primary_source_actions"] = 2
+        improved["fully_visible_action_buttons"] = 3
+        self.write(sync_first_fold_ux=improved)
+        comparison = compare(before, review(self.file))["samples"]["baseline"]
+        self.assertTrue(comparison["full_visibility_comparable"])
+        self.assertEqual(comparison["sources_fully_visible_points_delta"], 9.1)
+        self.assertEqual(comparison["primary_actions_fully_visible_points_delta"], 9.1)
+        narrow = full_sample()
+        narrow["viewport_width"] = 1050
+        self.write(sync_first_fold_ux=narrow)
+        refused = compare(before, review(self.file))["samples"]["baseline"]
+        self.assertEqual(refused["reason"], "different_window_geometry")
+        changed = full_sample()
+        changed["detail_rows"] += 1
+        self.write(sync_first_fold_ux=changed)
+        refused = compare(before, review(self.file))["samples"]["baseline"]
+        self.assertEqual(refused["reason"], "different_source_population")
 
 
 if __name__ == "__main__":

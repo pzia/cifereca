@@ -2934,7 +2934,15 @@ class LibraryService:
                 "TRACE download provider error loan_ref=%s reason=provider_or_artifact_failure dt=%.3fs",
                 trace_ref, time.monotonic()-started,
             )
-            attention_code = self._provider_attention_code(exc)
+            try:
+                # Classification uses the provider's message only to detect a
+                # known *bounded* quota code; the original text must never
+                # enter a persistent receipt or a public error.
+                attention_code = self._provider_attention_code(exc)
+            except Exception:
+                # A plugin may supply an exception with a hostile __str__.
+                # Optional classification cannot break ledger finalization.
+                attention_code = None
             # "Quota dépassé" from DownloadDigitalDocument is not a reliable
             # indication that the already-active loan or its ACSM is unavailable
             # (manual ACSM retrieval can still succeed). Keep it observable but
@@ -2946,11 +2954,15 @@ class LibraryService:
             )
             self.storage.acquisition_put({
                 **ledger_base, "status": "retryable_error", "strategy": "loan_auto", "executor": failure_executor,
-                "error_code": "artifact_invalid" if validation_failure else type(exc).__name__, "error_message": str(exc),
+                "error_code": "artifact_invalid" if validation_failure else "provider_acquisition_failed",
+                "error_message": "Acquisition du prêt indisponible",
                 "attention_code": None,
                 "metadata": metadata,
             })
-            return {"status": "retryable_error", "loan_id": loan.id, "code": attention_code, "error": str(exc)}
+            return {
+                "status": "retryable_error", "loan_id": loan.id,
+                "code": attention_code, "error": "Acquisition du prêt indisponible",
+            }
 
     def _synchronize_account_source_impl(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
         """Synchronize one explicit account/source without changing account selection.

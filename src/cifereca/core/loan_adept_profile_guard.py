@@ -44,9 +44,16 @@ def check(
     try:
         profile_name, profile_source = self.resolve_adept_profile_for_identity(adept_borrower_identity_id)
     except AdeptProfileResolutionError as exc:
+        # Profile-resolution exceptions may be provided by runtime extensions.
+        # Their message and even their code are untrusted: neither belongs in
+        # the durable acquisition ledger or the public loan receipt.
+        code = (exc.code if type(exc.code) is str and exc.code in {
+            "adept_profile_required", "adept_profile_ambiguous",
+        } else "adept_profile_required")
+        message = "Profil ADEPT indisponible"
         self.storage.acquisition_put({
             **ledger_base, "status": "attention_required", "strategy": "loan_auto", "executor": "kobo-adept",
-            "attention_code": exc.code, "error_message": str(exc),
+            "attention_code": code, "error_message": message,
             "metadata": {**previous_meta, "provider_loan_id": loan.id,
                          "acsm_staging_path": str(retained_acsm)},
         })
@@ -54,7 +61,7 @@ def check(
             "TRACE download acsm cleanup loan_ref=%s action=keep reason=profile_unresolved",
             trace_ref,
         )
-        return {"status": "attention_required", "loan_id": loan.id, "code": exc.code, "error": str(exc)}
+        return {"status": "attention_required", "loan_id": loan.id, "code": code, "error": message}
     _TRACE_LOG.info(
         "TRACE download adept profile-resolved loan_ref=%s",
         trace_ref,

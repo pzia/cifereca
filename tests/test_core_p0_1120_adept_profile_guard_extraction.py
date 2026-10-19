@@ -83,12 +83,12 @@ def test_unresolved_profile_keeps_exact_refusal_and_staged_receipt():
     outcome = invoke()
     assert outcome == {
         "status": "attention_required", "loan_id": loan.id,
-        "code": "adept_profile_ambiguous", "error": "Profil non choisi",
+        "code": "adept_profile_ambiguous", "error": "Profil ADEPT indisponible",
     }
     profiles.assert_not_called()
     [row] = [c.args[0] for c in store.call_args_list]
     assert row["attention_code"] == "adept_profile_ambiguous"
-    assert row["error_message"] == "Profil non choisi"
+    assert row["error_message"] == "Profil ADEPT indisponible"
     assert row["metadata"]["acsm_staging_path"] == str(opts["retained_acsm"])
 
 
@@ -160,3 +160,36 @@ def test_service_lock_and_profile_runtime_guards_remain_ordered_in_one_method():
     for forbidden in ("execute_acquisition_request", "acquire_digital_loan",
                       "download_digital", "source_request", "request.get(", "profile_binding_set"):
         assert forbidden not in helper
+
+
+@pytest.mark.parametrize("unsafe_code", [
+    "https://private.invalid/ebook?auth=NEVER_SHOW",
+    "adept_profile_required_PRIVATE",
+    None, True, {"profile": "secret"},
+])
+def test_profile_refusal_never_persists_private_codes_or_exception_messages(unsafe_code):
+    private = "https://private.invalid/path/Adobe?token=NEVER_SHOW"
+    class HostileResolution(AdeptProfileResolutionError):
+        def __str__(self):
+            raise AssertionError("Raw profile exception must never be stringified")
+        def __repr__(self):
+            raise AssertionError("Raw profile exception must never be repr'ed")
+
+    failure = HostileResolution(private, code=unsafe_code)
+    invoke, store, _borrower, _resolver, profiles, loan, _opts = _fixture(
+        profile_error=failure,
+    )
+    outcome = invoke()
+    assert outcome == {
+        "status": "attention_required",
+        "loan_id": loan.id,
+        "code": "adept_profile_required",
+        "error": "Profil ADEPT indisponible",
+    }
+    row = store.call_args.args[0]
+    assert row["attention_code"] == "adept_profile_required"
+    assert row["error_message"] == "Profil ADEPT indisponible"
+    assert private not in repr(row) + repr(outcome)
+    assert "NEVER_SHOW" not in repr(row) + repr(outcome)
+    profiles.assert_not_called()
+

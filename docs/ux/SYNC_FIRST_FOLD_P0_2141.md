@@ -57,6 +57,40 @@ pour contourner cette restriction. Une projection publique de seules
 mesures agrégées serait une évolution distincte, **rôle CI/CD**,
 à vérifier selon #1143.
 
+## Distinguer intersection et action réellement affichée (mesures V2)
+
+Un bouton dont **un seul pixel** touche le viewport est compté dans
+`visible_primary_source_actions`, ce qui **surestime** potentiellement
+l'accès aux actions. Le relevé GTK contient désormais aussi :
+
+- `fully_visible_source_status_rows` : sources dont toute la ligne de
+  statut tient dans le viewport (pas seulement son début) ;
+- `fully_visible_primary_source_actions` : premier bouton de la ligne
+  complètement affiché horizontalement **et** verticalement ;
+- `fully_visible_enabled_primary_source_actions` : sous-ensemble de ces
+  premiers boutons qui sont actifs (`get_sensitive()`) ; *activation
+  possible* ne veut pas dire réellement cliquable ou bien nommée ;
+- `fully_visible_action_buttons` : tous les boutons complètement affichés ;
+- `horizontally_clipped_primary_source_actions` : boutons principaux
+  partiellement hors viewport horizontal (le contenu interne du libellé
+  n'est **pas** mesuré) ;
+- `global_action_fully_visible` : la commande globale tient-elle
+  entièrement dans l'écran ?
+
+L'analyseur fournit des pourcentages de **visibilité complète** séparés
+des anciennes intersections, et des deltas si **les deux** rapports ont
+ces métriques. Il conserve la lecture des anciens rapports mais **n'invente
+jamais** des zéros ou une amélioration quand un seul rapport dispose
+des champs V2 (`full_visibility_comparable=false`).
+
+Pour éviter de comparer des configurations incomparables, les dimensions du
+**viewport** (tolérances : 32×48 px) et le nombre de lignes de détail,
+boutons et lignes de résumé sont maintenant vérifiés en plus de la
+fenêtre et de la population de sources. Garder une fixture constante entre
+avant/après. En présence d'une refonte qui réduit volontairement les lignes,
+ces mesures deviennent non comparables : cela demande une **revue
+visuelle**, pas une note artificielle.
+
 ## Grille d'interprétation
 
 | Mesure | Interprétation, à confronter au PNG |
@@ -64,6 +98,9 @@ mesures agrégées serait une évolution distincte, **rôle CI/CD**,
 | `window_width`, `target_width_reached` | La largeur réelle est-elle dans la plage 1240–1300 px lors du test 1280 ? |
 | `sources_visible_percent` | Part des cartes sources au moins partiellement dans le premier viewport ; **un seul pixel compte** |
 | `primary_actions_visible_percent` | Part des premiers boutons des cartes visibles au moins partiellement, sans jugement de cliquabilité ni d'intelligibilité |
+| `primary_actions_fully_visible_percent` | Part des premiers boutons **entièrement** contenus dans le premier viewport ; plus exigeant qu'une intersection partielle |
+| `enabled_primary_actions_fully_visible_percent` | Part des premiers boutons entièrement affichés et sensibles, sans préjuger du consentement ou de l'activation XTEST |
+| `horizontally_clipped_primary_source_actions` | Premier bouton de carte intersectant le viewport mais hors de ses limites horizontales ; ne détecte pas un libellé tronqué *dans* le bouton |
 | `source_summary_lines`, `detail_rows` | Charge descriptive par rapport aux sources ; n'indique pas la lisibilité de chaque bloc |
 | `scroll_extent_viewports` | Volume vertical restant en multiples de hauteur du viewport |
 | `global_action_visible` | La commande globale intersecte le viewport ; pas une preuve de son accès au clavier |
