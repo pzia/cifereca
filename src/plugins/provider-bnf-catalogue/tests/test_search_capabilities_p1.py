@@ -21,7 +21,7 @@ class FakeClient:
         if self.fail:
             raise httpx.ConnectError("PRIVATE_CREDENTIAL")
         return SimpleNamespace(
-            content=b'<searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/"/>',
+            content=b'<searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/"><numberOfRecords>0</numberOfRecords></searchRetrieveResponse>',
             raise_for_status=lambda: None,
         )
 

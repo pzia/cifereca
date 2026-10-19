@@ -28,6 +28,7 @@ def _session(transport):
 def test_search_success_survives_diagnostic_sink_failure():
     xml = b"""<?xml version="1.0" encoding="UTF-8"?>
 <searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/">
+  <numberOfRecords>1</numberOfRecords>
   <records>
     <record>
       <recordData>

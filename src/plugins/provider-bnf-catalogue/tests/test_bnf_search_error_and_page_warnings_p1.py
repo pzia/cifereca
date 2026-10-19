@@ -10,7 +10,7 @@ import pytest
 from cifereca.plugin_api import ProviderCapabilityError, ProviderError
 from cifereca_bnf_catalogue import BnfCatalogueSession
 
-EMPTY_SRU = b'<searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/"/>'
+EMPTY_SRU = b'<searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/"><numberOfRecords>0</numberOfRecords></searchRetrieveResponse>'
 
 
 def _session(handler):
