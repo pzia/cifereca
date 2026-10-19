@@ -327,3 +327,26 @@ valides et la sémantique `complete=False` lors d'une erreur restent
 inchangés. Les tests utilisent exclusivement des exceptions synthétiques
 contenant jeton, URI et XML : aucune erreur de la CLI amont n'est
 requalifiée, aucune opération de restitution n'est activée.
+
+
+## #979 P0 — code fermé dans le diagnostic technique (`run_json`)
+
+Le callback `PluginContext.report_diagnostic` reçoit désormais en cas
+**d'échec de commande** deux champs supplémentaires : `error_code` et
+`retryable`. Le code est strictement issu d'une table fermée de causes déjà
+qualifiées **par le plugin** (pas du code arbitraire `error.code` du JSON
+fournisseur) ; l'indicateur est le booléen décidé par cette même
+classification. Exception `KoboAdeptError`, détails techniques locaux et
+callback publient la **même** valeur. Une commande réussie remet ces deux
+champs à l'état absent ; aucune cause précédente n'est héritée.
+
+Cette instrumentation n'introduit **ni** parsing des logs libgourou,
+**ni** code Adobe supposé, **ni** stdout/stderr, profil, identité, token,
+URL ACSM, licence ou argument CLI dans le diagnostic. Les producteurs
+intermédiaires Core et Diagnostics peuvent limiter la projection de ces champs :
+la présence dans le callback plugin ne prouve pas l'affichage par la page
+Diagnostics finale (#2380). La validation réelle de `kobo-adept-next` et
+d'une licence Adobe demeure bloquante pour clore #979.
+
+Tests synthétiques hors réseau :
+`tests/test_adept_closed_diagnostic_codes_p0.py`.

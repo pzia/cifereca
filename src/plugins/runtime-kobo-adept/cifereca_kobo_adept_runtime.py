@@ -41,6 +41,18 @@ _KNOWN_NON_ACSM_ERRORS = {
     'invalid_profile': 'Profil Kobo-Adept invalide.',
 }
 
+# Diagnostics must carry a CLOSED public vocabulary, not vendor JSON values,
+# stderr fragments or arbitrary exception.code. Only codes produced by our
+# own run_json failure classifier can cross the support/export boundary.
+_RUNTIME_DIAGNOSTIC_FAILURE_CODES = frozenset({
+    'adept_error',
+    'adept_license_already_fulfilled_by_another_user',
+    'profile_missing', 'invalid_profile',
+    'kobo_adept_failed', 'kobo_adept_timeout', 'kobo_adept_launch_error',
+    'kobo_adept_invalid_json', 'kobo_adept_invalid_utf8',
+    'kobo_adept_invalid_response', 'kobo_adept_output_too_large',
+})
+
 # This bound applies to *every* JSON command, not only loan inventory reads.
 # subprocess.run still captures process output before this check; it prevents
 # unbounded UTF-8 decoding, JSON parsing and returning oversized vendor data.
@@ -122,6 +134,7 @@ class KoboAdeptRuntime:
             "operation", "duration_ms", "stdout_bytes", "stderr_bytes", "returncode",
             "stdout_mode", "stdout_summary", "stderr_summary", "json_line", "json_column",
             "launch_error", "loan_count", "inventory_valid",
+            "error_code", "retryable",
         }
         detail = {key: value for key, value in self.last_run_diagnostic.items() if key in allowed}
         reporter = getattr(self.context, "report_diagnostic", None)
@@ -177,14 +190,24 @@ class KoboAdeptRuntime:
             return out, err
 
         def fail(message, code, *, returncode=None, retryable=False):
+            # The caller branches translate untrusted CLI values into fixed
+            # codes. Revalidate here: one future branch must not accidentally
+            # copy a vendor code or a signed URL into diagnostics/support.
+            safe_code = (
+                code if type(code) is str
+                and code in _RUNTIME_DIAGNOSTIC_FAILURE_CODES
+                else 'kobo_adept_failed'
+            )
+            self.last_run_diagnostic['error_code'] = safe_code
+            self.last_run_diagnostic['retryable'] = retryable is True
             detail = dict(self.last_run_diagnostic)
             context = []
             if returncode is not None:context.append(f'code retour={returncode}')
             context.append('stdout=' + detail.get('stdout_summary', 'inconnu'))
             context.append('stderr=' + detail.get('stderr_summary', 'inconnu'))
             self._report(f"Kobo-Adept {detail.get('operation') or 'operation'}", "error", level="normal")
-            raise KoboAdeptError(message + ' (' + '; '.join(context) + ')', code=code,
-                exit_code=returncode, retryable=retryable, details=detail,
+            raise KoboAdeptError(message + ' (' + '; '.join(context) + ')', code=safe_code,
+                exit_code=returncode, retryable=retryable is True, details=detail,
                 technical_detail=json.dumps(detail, ensure_ascii=False)) from None
 
         try:
