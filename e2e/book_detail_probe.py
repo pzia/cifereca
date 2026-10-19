@@ -653,7 +653,7 @@ def main():
 
         # Six explicit visual lines are *not* overflow, including a newline.
         p.empty("Résumé six lignes", "Contrat d'overflow")
-        p._show_description("Une\\nDeux\\nTrois\\nQuatre\\nCinq\\nSix")
+        p._show_description("Une\nDeux\nTrois\nQuatre\nCinq\nSix")
         later(200, component_summary_six_lines)
 
     def component_summary_six_lines():
@@ -664,7 +664,7 @@ def main():
         report["checks"]["P2_1018_six_explicit_lines_no_toggle"] = True
 
         p.empty("Résumé sept lignes", "Contrat d'overflow")
-        p._show_description("Une\\nDeux\\nTrois\\nQuatre\\nCinq\\nSix\\nSept")
+        p._show_description("Une\nDeux\nTrois\nQuatre\nCinq\nSix\nSept")
         later(200, component_summary_seven_lines)
 
     def component_summary_seven_lines():
