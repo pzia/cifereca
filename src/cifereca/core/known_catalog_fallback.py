@@ -80,8 +80,12 @@ def known_public_fallback(
         catalog_id = entry.get("catalog_entry_id")
         if not all(type(v) is str and v and len(v) < 512 for v in (item_id, catalog_id)):
             continue
-        public_meta = {key: value for key, value in meta.items() if key in _PUBLIC_META}
-        for name in _PUBLIC_SEARCH_TEXT_FIELDS:
+        # Legacy catalogue rows may predate the validated Core mirror or
+        # originate in an external importer. Retain only typed bibliographic
+        # text; never re-export nested metadata, embedded signed links, paths,
+        # credentials or error strings as a stale public catalogue record.
+        public_meta: dict[str, Any] = {}
+        for name in _PUBLIC_META | frozenset(_PUBLIC_SEARCH_TEXT_FIELDS):
             if name not in meta:
                 continue
             verified = _safe_public_search_text(name, meta[name])
