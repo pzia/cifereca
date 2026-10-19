@@ -1,6 +1,7 @@
 """Public BnF bibliographic catalogue, Provider Plugin API v1 only."""
 from __future__ import annotations
 import re
+from unicodedata import category
 from typing import Any
 from urllib.parse import urlsplit
 from xml.etree import ElementTree as ET
@@ -112,7 +113,6 @@ class BnfCatalogueSession(ProviderSession):
         # A previous partial search must not pollute subsequent requests,
         # including rejected fields, too-short queries and network failures.
         self.last_search_warnings = []
-        query = str(query or "").strip()
         if type(field) is not str or field not in FIELDS:
             raise ProviderCapabilityError("BnF : unsupported_field")
         if type(scope) is not str or scope not in {"all", "physical", "digital"}:
@@ -121,6 +121,15 @@ class BnfCatalogueSession(ProviderSession):
             # Never silently transform a requested negative/boolean/fractional
             # page into page 0 and call that a valid search result.
             raise ProviderCapabilityError("BnF : invalid_page")
+        # An arbitrary cached object must not be serialized into an SRU CQL
+        # query or silently converted to a successful short-query zero.
+        # None retains the existing empty-search behavior.
+        if query is None:
+            query = ""
+        if (type(query) is not str or len(query) > 2048
+                or any(category(char) in {"Cc", "Cf", "Cs"} for char in query)):
+            raise ProviderCapabilityError("BnF : invalid_query")
+        query = query.strip()
         if field == "isbn":
             # Validate ISBN syntax before the general short-query exit.
             # A malformed one-character/empty ISBN is not a legitimate
