@@ -110,7 +110,8 @@ def test_absent_field_is_unknown_not_an_exhaustive_negative(monkeypatch):
         proof.pop("publisher")
         metadata["field_evidence"] = proof
         unknown = replace(page, items=(replace(row, metadata=metadata),),
-                          complete=True, total_results=1, next_url=None)
+                          complete=True, total_results=1, next_url=None,
+                          pagination_links=())
         result = s.refine_loaded_page(unknown, publisher="Gallimard")
         assert result.matching_count == 0
         assert result.missing_evidence_count == 1
@@ -126,7 +127,8 @@ def test_complete_observed_page_positive_and_negative_are_local_only(monkeypatch
     s, _ = session(monkeypatch)
     try:
         p = s.browse_public_search("jefferson")
-        one = replace(p, items=p.items[:1], total_results=1, complete=True, next_url=None)
+        one = replace(p, items=p.items[:1], total_results=1,
+                      complete=True, next_url=None, pagination_links=())
         found = s.refine_loaded_page(one, author="Jean-Claude")
         missing = s.refine_loaded_page(one, author="unrelated-name")
         assert found.matching_count == 1
@@ -191,7 +193,8 @@ def test_missing_provenance_cannot_turn_absent_author_into_false_exhaustiveness(
         }
         metadata["field_evidence"] = evidence
         fake = replace(page, items=(replace(row, metadata=metadata),),
-                       total_results=1, complete=True, next_url=None)
+                       total_results=1, complete=True, next_url=None,
+                       pagination_links=())
         result = s.refine_loaded_page(fake, author="Mourlevat")
         assert not result.items
         assert result.missing_evidence_count == 1
