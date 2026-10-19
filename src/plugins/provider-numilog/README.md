@@ -1350,3 +1350,28 @@ La valeur finie est transmise sans nouveau retry ni contournement du cooldown.
 ### 0.1.64 — budget anonyme commun (P0 #1886)
 
 `NumilogSession.search_public(query)` (y compris `search(scope="catalog")`) et `NumilogSession.public_product_detail(url)` partagent désormais **le même cache mémoire anonyme** que l’enrichissement explicite des achats : au plus deux GET en rafale, ensuite un jeton/seconde, **un seul GET en vol**, TTL 60 secondes, refus sans boucle de retry, refroidissement HTTP 429 commun et préservé après reconnexion. Les URL de détail et les champs de recherche sont vérifiés **avant** consultation du cache. Les réponses commerciales n’utilisent ni cookies ni bibliothèque privée, et aucun droit de téléchargement n’est déduit. Ce jalon ne qualifie pas la recherche distante multi-attributs.
+
+
+## 0.1.66 — collection et extrait descriptif en filtres locaux (#1886)
+
+`NumilogPublicSession.refine_loaded_page(page, collection=..., summary=...)`
+peut désormais affiner **une page commerciale anonyme déjà chargée**
+sur le nom de collection publié dans
+`.product_meta .LabelInfos[Collection]` et les mots contenus dans
+`p.list-group-item-text` (extrait de résumé). Les champs existants
+`title`, `author`, `publisher`, `year` et `format_label`
+restent combinables.
+
+Chaque valeur requiert sa preuve HTML d'origine exacte (URL de la recherche,
+sélecteur et `observed_public_html`), ses types et ses limites d'origine
+(collection au plus 2 000 caractères ; extrait au plus 16 000).
+Un champ absent ou non qualifié augmente
+`missing_evidence_count` au lieu d'être déclaré incompatible. Les compteurs
+conservent le **total non filtré** de la page source et le statut
+`loaded_public_page_only` : jamais d'API distante auteur/collection/résumé,
+de globalité déduite, d'accès privé ou de droits d'acquisition imaginés.
+
+Tests sur la fixture publique enregistrée `jefferson` : collection
+« Romans Junior », extrait « frissonne », combinaisons de champs,
+preuves manquantes/contradictoires et cache non muté. Cette livraison ne
+prouve ni l'accès HTTP live, ni les conditions de robots/CGU Numilog.
