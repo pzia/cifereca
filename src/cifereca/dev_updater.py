@@ -21,7 +21,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from . import updater
-from .update_progress import step, update_phase, update_operation, skip_update_phase, jsonl_progress_writer
+from .update_progress import step, update_phase, update_operation, skip_update_phase, jsonl_progress_writer, SMOKE_FAILURE_CODES
 from .update_child import PROGRESS_ENV
 from .paths import data_dir, state_dir
 from .install_paths import ArchiveNotFoundError, resolve_archive
@@ -37,6 +37,35 @@ MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
 
 class DevUpdateError(RuntimeError):
     pass
+
+
+class PluginSmokeError(DevUpdateError):
+    """Only closed smoke evidence may cross the updater/rollback boundary."""
+
+    def __init__(self, message: str, *, reason_code: str,
+                 contributions_error: int = 0, contributions_incompatible: int = 0,
+                 active_packages_missing: int = 0):
+        if reason_code not in SMOKE_FAILURE_CODES:
+            raise ValueError("invalid_smoke_failure_code")
+        counts = {
+            "contributions_error": contributions_error,
+            "contributions_incompatible": contributions_incompatible,
+            "active_packages_missing": active_packages_missing,
+        }
+        if any(type(value) is not int or not 0 <= value <= 2048 for value in counts.values()):
+            raise ValueError("invalid_smoke_failure_counts")
+        # Even the constructor message is not an authority for public output.
+        # Smoke failures are always emitted from a literal closed vocabulary.
+        messages = {
+            "smoke_cli_failed": "smoke plugins échoué",
+            "smoke_json_invalid": "smoke plugins: JSON invalide",
+            "smoke_inventory_invalid": "smoke plugins: liste JSON attendue",
+            "smoke_contributions_failed": "smoke plugins: contributions installées en erreur",
+            "smoke_active_missing": "smoke plugins: packages actifs absents de l'inventaire",
+        }
+        super().__init__(messages[reason_code])
+        self.reason_code = reason_code
+        self.smoke_counts = counts
 
 
 def _safe_member(info: zipfile.ZipInfo) -> PurePosixPath:
@@ -186,35 +215,45 @@ def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
         [str(cli), "plugin", "list"], text=True, capture_output=True, timeout=120, check=False,
     )
     if proc.returncode != 0:
-        raise DevUpdateError("smoke plugins échoué")
+        raise PluginSmokeError("smoke plugins échoué", reason_code="smoke_cli_failed")
     try:
         rows = json.loads(proc.stdout)
-    except Exception as exc:
-        raise DevUpdateError("smoke plugins: JSON invalide") from exc
-    if not isinstance(rows, list):
-        raise DevUpdateError("smoke plugins: liste JSON attendue")
-    failed = [row.get('plugin_id') for row in rows if isinstance(row, dict)
-        and (package_ids is None or row.get('package_id') in package_ids)
-        and row.get('state') in {'error', 'incompatible'}]
-    if failed:
-        raise DevUpdateError('smoke plugins: contributions installées en erreur')
+    except (ValueError, TypeError, RecursionError):
+        raise PluginSmokeError("smoke plugins: JSON invalide", reason_code="smoke_json_invalid") from None
+    if (type(rows) is not list or len(rows) > 4096
+            or any(type(row) is not dict
+                   or type(row.get("package_id")) is not str
+                   or type(row.get("state")) is not str for row in rows)):
+        raise PluginSmokeError("smoke plugins: liste JSON attendue", reason_code="smoke_inventory_invalid")
+    # Match only exact package IDs and closed states. Do not propagate plugin
+    # names, IDs, version text, exception details or CLI stdout into errors.
+    selected = [
+        row for row in rows
+        if package_ids is None or row["package_id"] in package_ids
+    ]
+    error_count = min(2048, sum(row["state"] == "error" for row in selected))
+    incompatible_count = min(2048, sum(row["state"] == "incompatible" for row in selected))
+    if error_count or incompatible_count:
+        raise PluginSmokeError(
+            "smoke plugins: contributions installées en erreur",
+            reason_code="smoke_contributions_failed",
+            contributions_error=error_count,
+            contributions_incompatible=incompatible_count,
+        )
     if package_ids is not None:
-        # An install command may return success while its package is absent
-        # from the runtime inventory (e.g. broken activation/discovery).
-        # Inactive packages intentionally have no active contribution; never
-        # activate them just to make the smoke pass.
-        visible = {
-            str(row.get("package_id"))
-            for row in rows if isinstance(row, dict) and row.get("package_id")
-        }
-        missing = sorted({
-            package_id for package_id in package_ids
-            if package_id not in visible and _package_is_active(package_id) is not False
-        })
-        if missing:
-            raise DevUpdateError(
-                "smoke plugins: packages actifs absents de l'inventaire: "
-                + ", ".join(missing)
+        # Inactive packages have no active contribution and must never be
+        # activated just to make smoke pass. Missing active packages are
+        # classified without revealing their names.
+        visible = {row["package_id"] for row in rows}
+        missing_count = min(2048, sum(
+            package_id not in visible and _package_is_active(package_id) is not False
+            for package_id in package_ids
+        ))
+        if missing_count:
+            raise PluginSmokeError(
+                "smoke plugins: packages actifs absents de l'inventaire",
+                reason_code="smoke_active_missing",
+                active_packages_missing=missing_count,
             )
     return {"plugin_count": len(rows)}
 
@@ -609,7 +648,11 @@ def main(argv: list[str] | None = None) -> int:
                "message": "Délai dépassé pour un sous-processus de mise à jour"}}, args.json)
         return 1
     except (DevUpdateError, updater.UpdateError) as exc:
-        _print({"ok": False, "error": {"code": "dev_update_error", "message": str(exc)}}, args.json)
+        error = {"code": "dev_update_error", "message": str(exc)}
+        if type(exc) is PluginSmokeError:
+            error["reason_code"] = exc.reason_code
+            error["smoke_counts"] = dict(exc.smoke_counts)
+        _print({"ok": False, "error": error}, args.json)
         return 1
 
 

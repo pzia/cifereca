@@ -160,7 +160,8 @@ class PluginsOnly(unittest.TestCase):
         response = type('Response', (), {'returncode': 0, 'stdout': '[]', 'stderr': ''})()
         with patch.object(dev.subprocess, 'run', return_value=response), \
              patch.object(dev, '_package_is_active', return_value=None):
-            with self.assertRaisesRegex(dev.DevUpdateError, 'test.provider'):
+            # Package identifiers must never enter a public smoke failure.
+            with self.assertRaisesRegex(dev.DevUpdateError, 'packages actifs absents'):
                 dev._smoke_plugins(['test.provider'])
 
     def test_smoke_allows_intentionally_inactive_package_not_in_inventory(self):
@@ -177,5 +178,6 @@ class PluginsOnly(unittest.TestCase):
         })()
         with patch.object(dev.subprocess, 'run', return_value=response), \
              patch.object(dev, '_package_is_active', return_value=True):
-            with self.assertRaisesRegex(dev.DevUpdateError, 'other.provider'):
+            # Missing package IDs must not leak through public smoke exceptions.
+            with self.assertRaisesRegex(dev.DevUpdateError, 'packages actifs absents'):
                 dev._smoke_plugins(['test.provider', 'other.provider'])

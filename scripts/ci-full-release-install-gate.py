@@ -142,6 +142,20 @@ def run_gate(source: Path) -> None:
               f"{len(broken_contributions)} broken")
         print(f"Installed inventory OK: {len(packages)} packages / {count} contributions", flush=True)
 
+        # #2290: the clean first install is insufficient. Reproduce a second
+        # full update with a real pre-existing 25-package store and one
+        # intentionally disabled provider. Never alter a developer HOME.
+        disabled_package = "org.cifereca.provider.gutenberg"
+        check(disabled_package in packages, "test provider absent from full release")
+        pointer = store.root / disabled_package / "current.json"
+        payload = json.loads(pointer.read_text(encoding="utf-8"))
+        check(payload.get("active") is not None, "test provider was not active")
+        payload["active"] = None
+        pointer.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        check(store.active_version(disabled_package) is None,
+              "disabled package remains active")
+        prior_rows = inventory(cli, root)
+
         old_links = {
             name: updater._symlink_target(paths["CIFERECA_INSTALL_ROOT"] / name)
             for name in ("current", "previous")
@@ -151,19 +165,39 @@ def run_gate(source: Path) -> None:
         old_plugins = digest_tree(store.root)
         old_markers = {p: p.read_bytes() for p in markers}
 
-        # This deliberately fails *after* the real Core switch, without
-        # touching the plugin store; plugins-only rollback is tested elsewhere.
+        # Run the REAL child through the 25 installed packages and smoke,
+        # then synthesize a closed nonzero smoke result at the subprocess
+        # boundary. Parent rollback must restore both Core and the complete
+        # plugin store, including the original inactive activation pointer.
+        real_child = updater.run_plugin_child
+        def simulated_failed_smoke(command, *, timeout, on_line):
+            completed = real_child(command, timeout=timeout, on_line=on_line)
+            check(completed.returncode == 0, "real plugin smoke already failed")
+            return subprocess.CompletedProcess(
+                command, 1, json.dumps({
+                    "ok": False,
+                    "error": {
+                        "code": "dev_update_error",
+                        "reason_code": "smoke_contributions_failed",
+                        "smoke_counts": {
+                            "contributions_error": 1,
+                            "contributions_incompatible": 0,
+                            "active_packages_missing": 0,
+                        },
+                    },
+                }), "",
+            )
         with mock.patch.object(
-            updater, "_apply_release_plugin_snapshot",
-            side_effect=updater.UpdateError("P0 forced post-switch failure"),
+            updater, "run_plugin_child", side_effect=simulated_failed_smoke,
         ) as failed:
             try:
                 updater.install_source(source, keep=3)
-            except updater.UpdateError as exc:
-                check("P0 forced" in str(exc), f"unexpected failure: {exc}")
+            except updater.ReleasePluginSmokeError as exc:
+                check(exc.reason_code == "smoke_contributions_failed",
+                      "wrong sanitized child smoke failure reason")
             else:
-                raise AssertionError("failed Core update unexpectedly returned success")
-        check(failed.call_count == 1, "failure injection was not reached")
+                raise AssertionError("failed full update unexpectedly returned success")
+        check(failed.call_count == 1, "real child install did not run")
         for name, old in old_links.items():
             check(updater._symlink_target(paths["CIFERECA_INSTALL_ROOT"] / name) == old,
                   f"Core {name} not restored")
@@ -173,8 +207,22 @@ def run_gate(source: Path) -> None:
         check(digest_tree(store.root) == old_plugins, "plugins changed after rollback")
         check(all(p.read_bytes() == b for p, b in old_markers.items()),
               "user XDG markers changed after rollback")
-        check(inventory(cli, root) == original_rows, "installed inventory changed after rollback")
-        print("Core rollback OK; plugin store and XDG data preserved", flush=True)
+        check(inventory(cli, root) == prior_rows, "installed inventory changed after rollback")
+        check(store.active_version(disabled_package) is None,
+              "disabled plugin activation not restored after rollback")
+        print("Real child + forced smoke failure: Core/plugins/activations rollback OK", flush=True)
+
+        # After proving rollback on the same source SHA and isolated XDG
+        # state, a normal second update with preserved activation MUST work.
+        repaired = updater.install_source(source, keep=3)
+        check(repaired.get("ok") is True and repaired["plugins"].get("ok") is True,
+              "full update over previous active/inactive state did not recover")
+        check(store.active_version(disabled_package) is None,
+              "successful update activated an intentionally disabled package")
+        check(all(p.read_bytes() == b for p, b in old_markers.items()),
+              "user XDG markers changed after recovery")
+        inventory(Path(repaired["current"]) / ".venv" / "bin" / "cifereca-cli", root)
+        print("Full release re-update OK with pre-existing disabled plugin", flush=True)
 
 
 if __name__ == "__main__":

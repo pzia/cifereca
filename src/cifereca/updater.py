@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import re
 import sqlite3
@@ -20,7 +21,8 @@ from urllib.parse import quote
 
 from .install_paths import ArchiveNotFoundError, resolve_archive
 from .paths import config_dir, data_dir, database_file, state_dir
-from .update_progress import step, update_phase, update_operation, skip_update_phase, child_progress_receiver
+from .update_progress import (step, update_phase, update_operation, skip_update_phase,
+                              child_progress_receiver, SMOKE_FAILURE_CODES, SMOKE_COUNT_FIELDS)
 from .update_child import run_plugin_child, ChildOutputError
 
 PROJECT_NAME = "cifereca"
@@ -41,6 +43,20 @@ TRANSACTION_SCHEMA = 1
 
 class UpdateError(RuntimeError):
     pass
+
+
+class ReleasePluginSmokeError(UpdateError):
+    """Sanitized child smoke failure, never raw subprocess output."""
+
+    def __init__(self, *, reason_code: str, smoke_counts: dict[str, int]):
+        if (reason_code not in SMOKE_FAILURE_CODES
+                or type(smoke_counts) is not dict or set(smoke_counts) != SMOKE_COUNT_FIELDS
+                or any(type(v) is not int or not 0 <= v <= 2048
+                       for v in smoke_counts.values())):
+            raise ValueError("invalid_child_smoke_evidence")
+        super().__init__("Upgrade des plugins de release échoué")
+        self.reason_code = reason_code
+        self.smoke_counts = dict(smoke_counts)
 
 
 def _run_bounded_process(command: list[str], *, timeout: int, **kwargs: Any) -> subprocess.CompletedProcess:
@@ -721,6 +737,62 @@ def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | N
     return snapshot
 
 
+def _snapshot_package_ids(snapshot: Path) -> list[str]:
+    """Read exactly the packages the generated child snapshot will install.
+
+    The frozen publication inventory is NOT the generated source snapshot:
+    newer packages can be present in src/plugins before a formal release.
+    Rollback must cover every package mutated by the real child, including
+    packages absent from plugin-release.json, and no unrelated installed ones.
+    Never echo archive paths, package names or parser errors on failure.
+    """
+    try:
+        with zipfile.ZipFile(snapshot) as archive:
+            names = archive.namelist()
+            manifests = [
+                name for name in names
+                if len(PurePosixPath(name).parts) == 2
+                and PurePosixPath(name).name == "cifereca-dev.json"
+            ]
+            if len(manifests) != 1:
+                raise ValueError("snapshot manifest count")
+            base = PurePosixPath(manifests[0]).parts[0]
+            manifest_info = archive.getinfo(manifests[0])
+            if manifest_info.file_size > 1024 * 1024:
+                raise ValueError("oversized manifest")
+            manifest = json.loads(archive.read(manifests[0]))
+            rows = manifest.get("plugins") if type(manifest) is dict else None
+            if type(rows) is not list or not 1 <= len(rows) <= 128:
+                raise ValueError("invalid snapshot plugin list")
+            ids: set[str] = set()
+            for row in rows:
+                rel = row.get("path") if type(row) is dict else None
+                if type(rel) is not str or "\\" in rel or "\x00" in rel:
+                    raise ValueError("invalid package member")
+                p = PurePosixPath(rel)
+                if (p.is_absolute() or ".." in p.parts or len(p.parts) != 2
+                        or p.parts[0] != "packages" or p.suffix != ".zip"):
+                    raise ValueError("invalid package member")
+                info = archive.getinfo(base + "/" + p.as_posix())
+                if not 0 < info.file_size <= 64 * 1024 * 1024:
+                    raise ValueError("oversized package archive")
+                with zipfile.ZipFile(io.BytesIO(archive.read(info))) as plugin:
+                    member = plugin.getinfo("cifereca-plugin.json")
+                    if not 0 < member.file_size <= 1024 * 1024:
+                        raise ValueError("oversized package manifest")
+                    package_manifest = json.loads(plugin.read(member))
+                package = package_manifest.get("package") if type(package_manifest) is dict else None
+                package_id = package.get("id") if type(package) is dict else None
+                if (type(package_id) is not str or not 1 <= len(package_id) <= 128
+                        or _safe_package_id(package_id) != package_id
+                        or package_id in ids):
+                    raise ValueError("invalid package identity")
+                ids.add(package_id)
+            return sorted(ids)
+    except Exception:
+        raise UpdateError("Inventaire des packages du snapshot de release invalide") from None
+
+
 def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, Any]:
     command = _command_path(release, DEV_COMMAND)
     if not command.is_file():
@@ -735,6 +807,26 @@ def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, A
     except (OSError, ChildOutputError, UnicodeError):
         raise UpdateError("Sous-processus plugins de mise à jour indisponible") from None
     if proc.returncode != 0:
+        # Child stdout is already size-limited. Admit only the fixed error
+        # schema, closed cause code and three bounded counters; never publish
+        # stderr, arbitrary exception text, package IDs or plugin labels.
+        if type(proc.stdout) is str and len(proc.stdout) <= 16384:
+            try:
+                failed = json.loads(proc.stdout)
+            except (ValueError, RecursionError):
+                failed = None
+            if type(failed) is dict and failed.get("ok") is False:
+                detail = failed.get("error")
+                if (type(detail) is dict and detail.get("code") == "dev_update_error"
+                        and type(detail.get("reason_code")) is str
+                        and detail["reason_code"] in SMOKE_FAILURE_CODES):
+                    counts = detail.get("smoke_counts")
+                    if (type(counts) is dict and set(counts) == SMOKE_COUNT_FIELDS
+                            and all(type(v) is int and 0 <= v <= 2048
+                                    for v in counts.values())):
+                        raise ReleasePluginSmokeError(
+                            reason_code=detail["reason_code"], smoke_counts=counts,
+                        ) from None
         raise UpdateError("Upgrade des plugins de release échoué")
     try:
         value = json.loads(proc.stdout)
@@ -826,7 +918,8 @@ def install_source(
                 json.dumps(install_metadata, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
-            managed_packages = sorted(_release_plugin_manifest(release))
+            managed_packages = (_snapshot_package_ids(plugin_snapshot)
+                                if plugin_snapshot is not None else [])
             transaction_path, transaction = step(
                 "transaction_prepare", _create_update_transaction,
                 root, release, old_current, old_previous, managed_packages,
@@ -1153,8 +1246,11 @@ def main(argv: list[str] | None = None) -> int:
                "message": "Délai dépassé pour un sous-processus de mise à jour"}}, a.json)
         return 1
     except UpdateError as exc:
-        error = {"ok": False, "error": {"code": "update_error", "message": str(exc)}}
-        _print(error, a.json)
+        detail = {"code": "update_error", "message": str(exc)}
+        if type(exc) is ReleasePluginSmokeError:
+            detail["reason_code"] = exc.reason_code
+            detail["smoke_counts"] = dict(exc.smoke_counts)
+        _print({"ok": False, "error": detail}, a.json)
         return 1
 
 
