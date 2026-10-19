@@ -1242,6 +1242,10 @@ class UxRecommendationsView:
         return False
 
     def refresh(self):
+        # Detached pages can still receive late identity/toolbar signals
+        # after deactivate(). No task, list or action may be resurrected.
+        if getattr(self, "_disposed", False):
+            return False
         # A manual/profile refresh consumes any queued overview refresh because
         # this computation will already read the latest local projection.
         self._clear_overview_refresh()
@@ -1284,7 +1288,7 @@ class UxRecommendationsView:
         return value
 
     def _set_progress(self, generation: int, label: str) -> bool:
-        if generation != self._generation:
+        if getattr(self, "_disposed", False) or generation != self._generation:
             return False
 
         if label == "Classement des résultats…":
@@ -1427,6 +1431,8 @@ class UxRecommendationsView:
         self._summary.set_label(" · ".join(parts))
 
     def _render(self, preserve_summary: bool = False) -> None:
+        if getattr(self, "_disposed", False):
+            return
         visible = [row for row in self._ranked if self._matches(row)]
 
         rows = []
@@ -1495,6 +1501,8 @@ class UxRecommendationsView:
             self._update_view_summary(provisional=self._provisional_active)
 
     def _selected_row(self, row: UiBookListEntry | None) -> None:
+        if getattr(self, "_disposed", False):
+            return
         # Invalidate all callbacks from prior presentations, even on an
         # A→B→A revisit or when two editions reuse the same list key.
         self._detail_selection_generation = (
