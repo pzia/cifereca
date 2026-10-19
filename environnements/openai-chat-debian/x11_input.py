@@ -21,8 +21,13 @@ class X11Input:
         if not self.display:
             raise RuntimeError("Could not open the X11 display.")
 
-    def click(self, x: int, y: int) -> None:
+    def move(self, x: int, y: int) -> None:
+        """Move a *real* XTEST pointer before its GTK hit-test is accepted."""
         self.xtst.XTestFakeMotionEvent(self.display, -1, x, y, 0)
+        self.x11.XSync(self.display, False)
+
+    def click(self, x: int, y: int) -> None:
+        self.move(x, y)
         self.xtst.XTestFakeButtonEvent(self.display, 1, True, 0)
         self.xtst.XTestFakeButtonEvent(self.display, 1, False, 0)
         self.x11.XSync(self.display, False)
