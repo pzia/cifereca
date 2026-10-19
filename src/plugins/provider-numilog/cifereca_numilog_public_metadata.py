@@ -167,10 +167,24 @@ def validated_public_metadata(detail, product_url):
                     'selector_id': _SELECTORS[field], 'kind': 'observed_public_html',
                     'edition_proven': False, 'rights_proven': False}
         if (type(value) is not str or not 0 < len(value) <= 256
+                or not value.strip()
+                or value.casefold().strip() in {
+                    'n.c', 'n.c.', 'non communiqué', 'non communiquée',
+                }
                 or any(unicodedata.category(c) in {'Cc', 'Cf', 'Cs'} for c in value)
                 or proof != expected or type(proof) is not dict
                 or proof.get('edition_proven') is not False
                 or proof.get('rights_proven') is not False):
             raise PublicMetadataError()
+        # The extractor validates visible ISO dates. Revalidate them after
+        # the cache/plugin boundary too, before trusting an edition field
+        # supplied in a dict that a caller might have mutated.
+        if field == 'publication_date':
+            try:
+                if (re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', value) is None
+                        or date.fromisoformat(value).isoformat() != value):
+                    raise ValueError
+            except ValueError:
+                raise PublicMetadataError() from None
     return {'product_url': product_url, 'fields': dict(data['fields']),
             'field_evidence': {k: dict(v) for k, v in data['field_evidence'].items()}}
