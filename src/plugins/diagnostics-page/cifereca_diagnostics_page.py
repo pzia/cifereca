@@ -501,6 +501,11 @@ class DiagnosticsPagePlugin:
         if broker is None:
             raise RuntimeError("plugin Diagnostics non activé")
 
+        # Rebuilding a page revokes file actions belonging to its old widgets.
+        # The shared Core capture itself deliberately remains untouched.
+        for exporter in getattr(self, "_support_exports", ()):
+            exporter.close()
+        self._support_exports = []
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -510,6 +515,7 @@ class DiagnosticsPagePlugin:
         # A parent capture controller must run before GTK4's outer scroller
         # when a pointer wheel is inside the long support report.
         page_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._page_root = page_root
         scroll.set_hexpand(True)
         scroll.set_vexpand(True)
         page_root.append(scroll)
@@ -996,12 +1002,18 @@ class DiagnosticsPagePlugin:
             self._support_exports.append(json_export)
 
             def on_detail_unmap(*_args):
-                # Journal pagination and local search rebuild widgets often.
-                # Close pending dialogs/writes and release the stale exporter
-                # instead of retaining every old detail in the page lifetime.
-                json_export.close()
-                if json_export in self._support_exports:
-                    self._support_exports.remove(json_export)
+                # A tab change unmaps a live detail too. Check attachment on
+                # idle, after GTK finishes an actual pagination/removal, so
+                # returning to a tab does not permanently disable its export.
+                def release_if_detached():
+                    if (getattr(self, "_page_root", None) is page_root
+                            and expander.is_ancestor(page_root)):
+                        return False
+                    json_export.close()
+                    if json_export in self._support_exports:
+                        self._support_exports.remove(json_export)
+                    return False
+                GLib.idle_add(release_if_detached)
 
             expander.connect("unmap", on_detail_unmap)
             selector.connect("notify::selected", change_view)
