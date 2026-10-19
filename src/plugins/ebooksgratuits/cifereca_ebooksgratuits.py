@@ -583,6 +583,60 @@ def _opds_items(session,feed,feed_url):
     return items
 
 
+def _opds_load_acquisition(session,initial,field,needle):
+    """Follow bounded COPS navigation: search -> Books/Authors/Tags -> entries.
+
+    COPS search is commonly a *navigation* feed listing result scopes, not a
+    list of acquisitions. A search with zero entries is distinct from that.
+    Never recursively crawl the catalogue or claim union of result scopes.
+    """
+    url=initial
+    seen=set()
+    wanted=('author','auteur') if field=='author' else (
+        ('tag','étiquette','etiquette','genre','catégor') if field in {'subject','category','genre'}
+        else ('book','livre','ebook'))
+    for _ in range(5):
+        if url in seen:
+            raise ProviderError('Ebooks libres et gratuits : invalid_opds_pagination')
+        seen.add(url)
+        feed,actual=_opds_fetch(session,url)
+        if feed.tag!=ATOM+'feed':
+            raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+        entries=feed.findall(ATOM+'entry')
+        has_acquisition=any(
+            any('/acquisition' in rel for rel,_,_,_ in _opds_links(entry,actual))
+            for entry in entries
+        )
+        if has_acquisition or not entries:
+            return feed,actual
+        links=[]
+        for entry in entries:
+            label=_fold(_opds_text(entry,ATOM+'title'))
+            identifier=_fold(_opds_text(entry,ATOM+'id'))
+            for rel,mime,raw,_ in _opds_links(entry,actual):
+                if 'atom+xml' not in mime:
+                    continue
+                href=_safe_opds_link(session.opds_feed_url,raw,'feed')
+                if not href:continue
+                if any(token in label or token in identifier for token in wanted):
+                    rank=0
+                elif needle and _fold(needle) in label:
+                    rank=1
+                elif any(token in label or token in identifier for token in ('book','livre','ebook')):
+                    rank=2
+                else:
+                    rank=3
+                links.append((rank,href))
+        if not links:
+            # Unexpected non-empty navigation is never an empty hit list.
+            raise ProviderCapabilityError('Ebooks libres et gratuits : browse_route_unavailable')
+        links.sort()
+        if links[0][0]>2:
+            raise ProviderCapabilityError('Ebooks libres et gratuits : browse_route_unavailable')
+        url=links[0][1]
+    raise ProviderError('Ebooks libres et gratuits : navigation_limit')
+
+
 def _opds_search(session,query,scope='all',page=0,field='all'):
     session.last_search_warnings=[]
     if not isinstance(field,str) or field.strip().lower() not in DESCRIPTOR.search_capabilities.fields:
@@ -611,9 +665,7 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
     for index in range(page+1):
         if url in seen:raise ProviderError('Ebooks libres et gratuits : invalid_opds_pagination')
         seen.add(url)
-        feed,current=_opds_fetch(session,url)
-        if feed.tag!=ATOM+'feed':
-            raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+        feed,current=_opds_load_acquisition(session,url,field,needle)
         if index==page:
             rows=_opds_items(session,feed,current)
             if field=='title':
@@ -624,7 +676,7 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
                 def tokens(row):
                     data=row.metadata
                     if field=='category':return data.get('categories',[])
-                    if field=='genre':return data.get('genres',[])
+                    if field=='genre':return data.get('genres',[])+data.get('categories',[])
                     return data.get('categories',[])+data.get('genres',[])
                 rows=[row for row in rows if any(_fold(needle) in _fold(x) for x in tokens(row))]
             return rows[:session.page_size]
