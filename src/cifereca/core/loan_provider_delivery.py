@@ -7,6 +7,7 @@ No background work, provider network, or profile change is introduced.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from .loan_safe_trace import loan_trace_ref
@@ -20,11 +21,25 @@ def acquire_provider_loan(
     provider_started = time.monotonic()
     _TRACE_LOG.info("TRACE download provider begin loan_ref=%s", trace_ref)
     acquisition = service.acquire_digital_loan(loan, force_refresh=True) if force_refresh else service.acquire_digital_loan(loan)
+    # Once the provider call returned, best-effort TRACE reads must not
+    # reclassify a completed acquisition as a failed download. The decision,
+    # artifact checks and ledger remain owned by the caller's later stages.
+    try:
+        raw_kind = acquisition.kind
+    except Exception:
+        raw_kind = None
+    kind = raw_kind if type(raw_kind) is str and raw_kind in {
+        "direct", "acsm", "external", "command",
+    } else "unknown"
+    try:
+        path = acquisition.path
+        artifact_bytes = (path.stat().st_size if isinstance(path, Path)
+                          and path.is_file() else 0)
+    except Exception:
+        artifact_bytes = 0
     _TRACE_LOG.info(
         "TRACE download provider end loan_ref=%s kind=%s bytes=%s dt=%.3fs",
-        trace_ref, acquisition.kind if type(acquisition.kind) is str and acquisition.kind in {"direct", "acsm", "external", "command"} else "unknown",
-        acquisition.path.stat().st_size if acquisition.path and acquisition.path.is_file() else 0,
-        time.monotonic()-provider_started,
+        trace_ref, kind, artifact_bytes, time.monotonic()-provider_started,
     )
     return acquisition
 
