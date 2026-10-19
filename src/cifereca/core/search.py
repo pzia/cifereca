@@ -288,6 +288,8 @@ def filter_loaded_results(
     languages: Sequence[str] | None = None,
     scope: str = "all",
     field: str = "all",
+    age: int | None = None,
+    age_kind: str | None = None,
 ) -> list[dict[str, Any]]:
     """Pure in-memory filtering for UI state changes.
 
@@ -317,6 +319,10 @@ def filter_loaded_results(
         medium = support_kind(row)
         if wanted_scope in {"physical", "digital", "unknown"} and medium != wanted_scope:
             continue
+        if age is not None:
+            from .attested_age_filter import attested_age_status
+            if attested_age_status(row, age, age_kind=age_kind) != "match":
+                continue
         if rank_local:
             score, _fields = local_search_evidence(row, query)
             if not score:
@@ -346,6 +352,8 @@ class LocalLibrarySearch:
         identity_id: str | None = None,
         scope: str = "all",
         field: str = "all",
+        age: int | None = None,
+        age_kind: str | None = None,
     ) -> list[dict[str, Any]]:
         text = str(query or "").strip()
         if len(text) < 2:
@@ -353,7 +361,9 @@ class LocalLibrarySearch:
         if str(scope or "all").strip().lower() == "physical":
             return []
         rows = self._entries(identity_id=identity_id, scan=False)
-        return filter_loaded_results(rows, text, scope=scope, field=field)
+        return filter_loaded_results(
+            rows, text, scope=scope, field=field, age=age, age_kind=age_kind,
+        )
 
 
 class KnownCatalogSearch:
@@ -381,6 +391,8 @@ class KnownCatalogSearch:
         field: str = "all",
         providers: Sequence[str] | None = None,
         content_types: Sequence[str] | None = None,
+        age: int | None = None,
+        age_kind: str | None = None,
     ) -> list[dict[str, Any]]:
         text = str(query or "").strip()
         if len(text) < 2:
@@ -422,7 +434,8 @@ class KnownCatalogSearch:
             previous = merged.get(key, {})
             merged[key] = {**previous, **row, "metadata": {**_metadata(previous), **_metadata(row)}}
         return filter_loaded_results(
-            merged.values(), text, providers=providers, content_types=content_types, scope=scope, field=field,
+            merged.values(), text, providers=providers, content_types=content_types,
+            scope=scope, field=field, age=age, age_kind=age_kind,
         )
 
 
