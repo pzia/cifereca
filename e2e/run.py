@@ -509,7 +509,7 @@ def main() -> int:
                 "visual_change_ratio": visual_change_ratio,
                 "assertion_error": assertion_error,
                 "gtk_layout_critical": gtk_critical,
-                "gtk_layout_phase": gtk_phases if name.startswith("mainwindow-baseline-") else {},
+                "gtk_layout_phase": gtk_phases if name.startswith(("mainwindow-baseline-", "maintenance-tools-")) else {},
                 "report": str(report),
                 "screenshot": str(png) if png.exists() else None,
                 "stdout": str(stdout_path),
