@@ -69,30 +69,6 @@
     "org.cifereca.transport.http": {
       "version": "1.0.4",
       "name": "Transport HTTP"
-    },
-    "org.cifereca.youth-bibliography-openlibrary": {
-      "version": "0.2.0",
-      "name": "Jeunesse — Open Library"
-    },
-    "org.cifereca.youth-catalog": {
-      "version": "0.4.2",
-      "name": "Jeunesse"
-    },
-    "org.cifereca.youth-detail-enrichment": {
-      "version": "0.2.0",
-      "name": "Jeunesse — enrichissement des fiches"
-    },
-    "org.cifereca.youth-source-discovery": {
-      "version": "0.2.1",
-      "name": "Jeunesse — Découverte de sources"
-    },
-    "org.cifereca.youth-source-ecole-loisirs": {
-      "version": "0.2.0",
-      "name": "Jeunesse — l'école des loisirs"
-    },
-    "org.cifereca.youth-source-milan": {
-      "version": "0.1.0",
-      "name": "Jeunesse — Éditions Milan"
     }
   }
 }

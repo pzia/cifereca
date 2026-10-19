@@ -78,26 +78,12 @@ gap = "États ADEPT factices et CLI subprocess v8 couverts ; pas de vrai provisi
 data = []
 gap = "Faux serveur HTTP 429/503, timeout, redirections, types MIME et tailles avec vrai transport ; pas de GTK ni annulation"
 
-[package.youth-bibliography-openlibrary]
+
+
+
+
+
+
+[package.browser-recorder]
 data = []
-gap = "Réponses OpenLibrary structurées en HTTP local, sans vrai E2E d’enrichissement"
-
-[package.youth-catalog]
-data = ["specialized-seed"]
-gap = "JSON exposé en HTTP local mais pas consommé par la page Jeunesse ; filtre âge GUI non recetté"
-
-[package.youth-detail-enrichment]
-data = ["specialized-seed"]
-gap = "Scénarios forts/ambiguës/identités en cache uniquement ; pas de vrais caches GTK ni latences"
-
-[package.youth-source-discovery]
-data = ["specialized-seed"]
-gap = "Fixtures métarecherche et dossiers qualification, sans réseau réel ni activation automatique"
-
-[package.youth-source-ecole-loisirs]
-data = []
-gap = "Fixture HTTP avancée testée avec vrai parseur ; aucun parcours GTK complet"
-
-[package.youth-source-milan]
-data = []
-gap = "Faux catalogue et fiches HTML via HTTP loopback ; vrais tests adaptateur ; GTK E2E non vérifié"
+gap = "Playwright/Chromium opt-in ; tests hors ligne sans navigateur réel ni validation de parcours authentifié live"

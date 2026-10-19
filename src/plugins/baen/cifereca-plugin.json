@@ -46,7 +46,8 @@
       "recommends": [],
       "system_requires": [],
       "requires_brokers": [],
-      "requires_contracts": []
+      "requires_contracts": [],
+      "enabled_by_default": false
     }
   ]
 }

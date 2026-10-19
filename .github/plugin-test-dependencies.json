@@ -1,18 +1,4 @@
 {
-  "audited_product_packages": [
-    "youth-catalog",
-    "youth-detail-enrichment",
-    "youth-source-milan"
-  ],
-  "dependencies": {
-    "youth-catalog": [
-      "youth-source-milan"
-    ],
-    "youth-detail-enrichment": [
-      "youth-catalog"
-    ],
-    "youth-source-milan": [
-      "youth-catalog"
-    ]
-  }
+  "audited_product_packages": [],
+  "dependencies": {}
 }

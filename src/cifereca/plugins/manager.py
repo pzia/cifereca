@@ -28,6 +28,12 @@ from .packages import InstalledPackage, PackageInstaller, PackageStore
 _RETIRED_YOUTH_SOURCE_PACKAGES = frozenset({
     "org.cifereca.youth-source-usborne",
     "org.cifereca.youth-source-booktrust",
+    "org.cifereca.youth-catalog",
+    "org.cifereca.youth-bibliography-openlibrary",
+    "org.cifereca.youth-detail-enrichment",
+    "org.cifereca.youth-source-discovery",
+    "org.cifereca.youth-source-ecole-loisirs",
+    "org.cifereca.youth-source-milan",
 })
 from .requirements import check_system_requirements
 from .python_dependencies import PythonDependencyManager, PythonDependencyTransaction
