@@ -211,6 +211,12 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
         if batch.results:
             self._remote_search_results = merge_results(self._remote_search_results, list(batch.results))
             self._populate_search(self._remote_search_results, announce=False)
+        elif status is not None:
+            # An unavailable/empty provider contributes no rows, but its
+            # closed verdict must be visible now, not only after every other
+            # federated provider has completed. Render the current request's
+            # results (possibly empty); do not display a stale prior query.
+            self._populate_search(self._remote_search_results, announce=False)
         return False
     def on_batch(batch):
         GLib.idle_add(deliver_batch, batch)
