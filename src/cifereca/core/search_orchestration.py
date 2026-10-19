@@ -367,8 +367,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 # variant as a verified empty catalogue. Keep a fixed warning
                 # on every failed variant; it also prevents a fresh TTL cache.
                 warnings.append(
-                    f"{session.descriptor.display_name}: recherche en ligne indisponible"
-                    if code else f"{session.descriptor.display_name}: échec de recherche"
+                    f"{session.descriptor.display_name}: "
+                    f"{_search_problem_label(code or 'ProviderSearchFailed')}"
                 )
                 self.diagnostics.add(
                     "PLUGIN", "search", "error",
@@ -451,6 +451,21 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     return rows
 
 
+def _search_problem_label(code: str) -> str:
+    """Fixed user-facing search status; never include a provider exception.
+
+    Authorization refusal is not evidence of a public-service outage. In
+    particular, it must neither suggest stale fallback nor a network retry.
+    """
+    if code == "SearchAuthenticationRequired":
+        return "authentification requise"
+    if code == "SearchAccessDenied":
+        return "accès refusé"
+    if code == "SearchTemporarilyUnavailable":
+        return "recherche en ligne indisponible"
+    return "échec de recherche"
+
+
 def _search_provider_session(self, session: ProviderSession, query: str, scope: str, *, field: str='all', content_types: tuple[str, ...]=(), facade_type) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
 
@@ -515,8 +530,10 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
             # so the caller can use the same bounded, read-only public
             # catalogue fallback as for a failure on the first attempt.
             terminal_error_code = failure_code
-            terminal_error_message = "Recherche en ligne indisponible"
-            warnings.append(f"{session.descriptor.display_name}: recherche en ligne indisponible")
+            terminal_error_message = _search_problem_label(failure_code)
+            warnings.append(
+                f"{session.descriptor.display_name}: {terminal_error_message}"
+            )
             self.diagnostics.add(
                 "PLUGIN", "search", "error",
                 detail={"provider": session.provider_id, "attempt": attempt + 1, "q_len": len(variant),
@@ -756,9 +773,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     # A failed future can bypass the worker's normal sanitized
                     # error boundary. Preserve only a fixed reason code.
                     error_code = search_failure_code(exc) or "ProviderSearchFailed"
-                    error_message = "Recherche en ligne indisponible"
+                    error_message = _search_problem_label(error_code)
                     provider_rows, provider_warnings = [], [
-                        f"{session.descriptor.display_name}: recherche en ligne indisponible"
+                        f"{session.descriptor.display_name}: {error_message}"
                     ]
                 if request_cancelled():
                     cancelled = True
