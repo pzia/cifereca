@@ -41,7 +41,7 @@ def session():
 
 @pytest.mark.parametrize("bad", [
     NonTextQuery(), PrivateString("PRIVATE_PROFILE"), {}, [], 23, False,
-    b"SECRET", "x" * 2049, "x\\ny", "x\\x00y", "x\\u202ePRIVATE",
+    b"SECRET", "x" * 2049, "x\ny", "x\x00y", "x\u202ePRIVATE",
 ])
 @pytest.mark.parametrize("field", ["all", "author", "isbn"])
 def test_invalid_query_is_typed_before_sru_access(bad, field):
