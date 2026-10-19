@@ -1159,3 +1159,25 @@ class CatalogueSourceCapability:
     personal_inventory_available: bool
     acquisition: str = "separate_explicit"
     schema_version: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseInstallationSnapshot:
+    """#1005: safe read-only view, no local paths or plugin credentials."""
+    state: str  # installed | not_installed | unknown
+    version: str = ""
+    schema_version: int = 1
+    can_apply: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseUpdatePreview:
+    """#1005: untrusted GitHub release announcement is never an apply ticket."""
+    state: str  # blocked
+    reason_code: str  # closed vocabulary
+    version: str = ""
+    schema_version: int = 1
+    dry_run: bool = True
+    provenance_verified: bool = False
+    bytes_sha256_verified: bool = False
+    can_apply: bool = False
