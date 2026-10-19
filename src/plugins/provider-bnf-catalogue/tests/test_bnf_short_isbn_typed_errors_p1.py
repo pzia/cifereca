@@ -37,7 +37,7 @@ def test_malformed_short_or_empty_isbn_has_typed_error_without_http(invalid):
             provider.search(invalid, field="isbn")
         assert provider.client.calls == []
         assert provider.last_search_warnings == []
-        assert invalid not in str(err.value)
+        assert str(err.value) == "BnF : ISBN attendu sur 10 ou 13 caractères"
     finally:
         provider.close()
 
