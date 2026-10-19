@@ -438,14 +438,19 @@ class NumilogSession(ProviderSession):
         # before private library I/O or public HTTP, for every search scope.
         if type(page) is not int or not 0 <= page <= 100:
             raise ProviderCapabilityError('Numilog : invalid_page')
+        if type(scope) is not str or scope not in {'catalog', 'all', 'digital'}:
+            # #1917: an unsupported scope is not a legitimate empty result.
+            # Reject before private library I/O and public HTTP, including
+            # malformed unhashable inputs that must not raise TypeError.
+            raise ProviderCapabilityError('Numilog : unsupported_scope')
         if scope == 'catalog':
             # Strictly separate public commercial results from purchased books.
             # No _rows(), authentication cookies, or ACSM acquisition here.
             return self.search_public(query, page=page, field=field)
-        if field not in {'all','title','titre'}:
-            raise ProviderCapabilityError('Numilog : recherche par titre uniquement dans cette version')
-        if scope not in {'all','digital'}:
-            return []
+        if type(field) is not str or field not in {'all','title','titre'}:
+            raise ProviderCapabilityError('Numilog : unsupported_field')
+        if type(query) is not str:
+            raise ProviderCapabilityError('Numilog : invalid_query')
         def fold(value):
             return ''.join(c for c in unicodedata.normalize('NFKD',value.casefold()) if not unicodedata.combining(c))
         terms = fold(query).split()
