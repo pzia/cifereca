@@ -11,6 +11,23 @@ from typing import Any
 from ..models import Loan
 
 
+def _paris_digital_inventory_complete(session: Any) -> bool:
+    """Only SYRACUSE errors are demonstrably unrelated to digital DILICOM.
+
+    Paris's official adapter always returns a list of error dictionaries
+    labelled DILICOM or SYRACUSE. Missing, malformed or unknown error entries
+    cannot attest a complete digital inventory. Inspect only exact types and
+    known codes; never stringify or invoke provider-controlled comparisons.
+    """
+    errors = getattr(session, "last_loan_errors", None)
+    return type(errors) in (list, tuple) and all(
+        type(error) is dict
+        and type(error.get("upstream")) is str
+        and error["upstream"] == "SYRACUSE"
+        for error in errors
+    )
+
+
 def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
     """Re-read the exact borrower with NO cache and NO second POST."""
     from .loan_return_guard import public_return_state, return_ref
@@ -41,16 +58,10 @@ def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
         loans = session.loans(account)  # ALWAYS direct provider; bypass cached account reads
         if not isinstance(loans, list):
             raise ValueError("provider inventory has no complete list")
-        # Paris can recover from an unrelated SYRACUSE failure; a failed
-        # DILICOM leg NEVER proves absence of a digital loan.
-        upstream_errors = getattr(session, "last_loan_errors", None)
-        if loan.source_provider == "paris" and upstream_errors is None:
-            raise ValueError("Paris session lacks inventory-verification capability")
-        if upstream_errors and any(
-            type(e.get("upstream")) is str and e["upstream"] == "DILICOM"
-            for e in upstream_errors if type(e) is dict
-        ):
-            raise ValueError("digital-loan inventory was incomplete")
+        # A failed SYRACUSE leg is unrelated to digital loans. Any missing
+        # or unrecognized provider error is ambiguous and fails closed.
+        if loan.source_provider == "paris" and not _paris_digital_inventory_complete(session):
+            raise ValueError("Paris digital-loan inventory incomplete")
         match = any(
             candidate.id == loan.id and candidate.provider == loan.provider
             for candidate in loans
@@ -85,11 +96,7 @@ def verify_paris_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE
         rows = session.loans(account)
         if not isinstance(rows, list):
             raise ValueError("Paris inventory incomplete")
-        errors = getattr(session, "last_loan_errors", None)
-        if errors is None or any(
-            isinstance(error, dict) and error.get("upstream") == "DILICOM"
-            for error in errors
-        ):
+        if not _paris_digital_inventory_complete(session):
             raise ValueError("Paris digital inventory unverified")
         present = any(
             row.id == loan.id and row.provider == loan.provider for row in rows
