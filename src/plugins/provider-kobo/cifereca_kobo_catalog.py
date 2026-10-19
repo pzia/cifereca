@@ -417,11 +417,34 @@ class KoboCatalogService:
                 "type": "invalid_scope",
                 "reason": "personal_search_denied",
             })
-        self.last_search_rejections.extend(
-            dict(row)
-            for row in getattr(self.client, "last_search_merge_rejections", ())
-            if isinstance(row, dict)
-        )
+        # Diagnostics from the Vault client cross into Core and may be
+        # exported to users. Retain only the finite, already-attested public
+        # vocabulary, not arbitrary private fields/vendor error strings.
+        merge_rejections = getattr(self.client, "last_search_merge_rejections", ())
+        if type(merge_rejections) in (tuple, list):
+            for row in merge_rejections[:128]:
+                if type(row) is not dict:
+                    continue
+                source = row.get("source")
+                kind = row.get("type")
+                reason = row.get("reason")
+                if (type(source) is not str or source not in {"catalog", "library"}
+                        or type(kind) is not str
+                        or kind not in {"invalid_shape", "invalid_scope"}):
+                    continue
+                known_reasons = {
+                    "item_not_object", "items_not_list", "missing_product_id",
+                    "unverifiable_product_id", "duplicate_product_id",
+                    "tainted_product_id",
+                }
+                self.last_search_rejections.append({
+                    "source": source,
+                    "type": kind,
+                    "reason": (
+                        reason if type(reason) is str and reason in known_reasons
+                        else "unverified_rejection"
+                    ),
+                })
         if scope == "catalog":
             # Public-only projection is obligatory even with a substitute
             # client that returns forged personal rights on /catalog/search.
