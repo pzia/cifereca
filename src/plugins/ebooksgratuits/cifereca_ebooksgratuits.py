@@ -720,8 +720,8 @@ def _opds_load_acquisition(session,initial,field,needle):
                 'atom+xml' in mime and '/acquisition' not in rel
                 and _safe_opds_link(session.opds_feed_url,raw,'feed')
                 for entry in entries
-                for rel,mime,raw,_ in _opds_links(entry,actual)
                 if not _opds_entry_is_book(session,entry,actual)
+                for rel,mime,raw,_ in _opds_links(entry,actual)
             )
             warning = (
                 'partial_results : livres et sous-catalogues OPDS mélangés ; '
