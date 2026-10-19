@@ -211,6 +211,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.set_content(self.window_root)
         self.root_stack = Gtk.Stack()
         self.root_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        # #2027 isolation: active startup/main page determines the current
+        # height request; the hidden page must not enforce its full minimum.
+        self.root_stack.set_vhomogeneous(False)
         self.root_stack.set_vexpand(True)
         self.window_root.append(self.root_stack)
 
