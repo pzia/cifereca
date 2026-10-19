@@ -498,6 +498,8 @@ class UxRecommendationsView:
     OVERVIEW_REFRESH_COALESCE_MS = 350
 
     def __init__(self, plugin, host, Gtk, GLib):
+        # A queued GTK first-map callback must not resurrect a disposed view.
+        self._disposed = False
         # These fields are deliberately ready before the parent reloads identities:
         # Gtk.DropDown::notify::selected may call refresh() during construction.
         self._provider_labels: dict[str, str] = {"": "Tous les catalogues"}
@@ -1939,6 +1941,9 @@ class UxRecommendationsView:
         self._unsubscribe = None
 
     def dispose(self) -> None:
+        # Set before cancelling work: idle callbacks already queued may still
+        # execute after deactivation, even when their sources are removed.
+        self._disposed = True
         self._reset_llm_selection(None)
         self._clear_overview_refresh()
         if self._task_handle is not None:
@@ -1958,12 +1963,18 @@ def _refresh_on_first_map(view, widget, GLib):
     """Schedule exactly one initial refresh when the page becomes visible."""
     scheduled = False
 
+    def refresh_if_active():
+        if getattr(view, "_disposed", False):
+            return False
+        view.refresh()
+        return False
+
     def on_map(_widget):
         nonlocal scheduled
-        if scheduled:
+        if scheduled or getattr(view, "_disposed", False):
             return
         scheduled = True
-        GLib.idle_add(view.refresh)
+        GLib.idle_add(refresh_if_active)
 
     widget.connect("map", on_map)
     get_mapped = getattr(widget, "get_mapped", None)
