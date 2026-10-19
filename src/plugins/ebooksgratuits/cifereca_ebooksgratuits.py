@@ -586,7 +586,24 @@ def _opds_browse_url(session,root,base):
         # A root feed with no books or navigable catalogues is not a verified
         # empty search result.
         raise ProviderCapabilityError('Ebooks libres et gratuits : browse_route_unavailable')
-    return min(candidates,key=lambda item:item[0])[1]
+    # A generic navigation root does not prove its branches form a union.
+    # In particular, choosing the first Authors/Recent/Genres catalogue
+    # must never masquerade as an exhaustive field=all browse. A uniquely
+    # labelled "All books" route is the only root selection which does not
+    # require an explicit partial-coverage warning.
+    best_rank, selected = min(candidates, key=lambda item: item)
+    best_urls = {href for rank, href in candidates if rank == best_rank}
+    if best_rank != 0:
+        session.last_search_warnings.append(
+            'partial_results : aucune branche Tous les livres attestée ; '
+            'un seul sous-catalogue OPDS parcouru'
+        )
+    elif len(best_urls) > 1:
+        session.last_search_warnings.append(
+            'partial_results : plusieurs branches Tous les livres ; '
+            'une seule interrogée'
+        )
+    return selected
 
 
 def _opds_text(elem,tag):
