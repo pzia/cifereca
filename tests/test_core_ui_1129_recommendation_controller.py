@@ -85,3 +85,63 @@ def test_closed_window_never_resolves_service_or_creates_button():
     )
     add_book_recommendation_action(window, detail, {})
     assert calls == []
+
+def test_recommendation_provider_exception_cannot_expose_private_data():
+    private = "https://private.invalid/LOAN/?auth=SECRET_RECOMMENDATION"
+
+    class Hostile(RuntimeError):
+        def __str__(self):
+            raise AssertionError("Untrusted exception must not be stringified")
+
+        def __repr__(self):
+            raise AssertionError("Untrusted exception must not be repr'd")
+
+    window, detail, button, calls = _context(failure=Hostile(private))
+    observed = []
+    window.show_error = lambda message, title: observed.append((message, title))
+    add_book_recommendation_action(window, detail, {})
+    button.click()
+    assert observed == [(
+        "Service de recommandation indisponible", "Recommandation impossible",
+    )]
+    assert all(row[0] != "navigate" for row in calls)
+    assert "SECRET_RECOMMENDATION" not in str(observed)
+
+
+def test_explicitly_user_facing_recommendation_error_keeps_only_public_message():
+    from cifereca.plugin_api import UserFacingError
+
+    error = UserFacingError(
+        "Configurez d'abord le plugin de recommandations",
+        code="recommendation_config_required",
+        technical_detail="Bearer SECRET_RECOMMENDATION",
+    )
+    window, detail, button, calls = _context(failure=error)
+    observed = []
+    window.show_error = lambda message, title: observed.append((message, title))
+    add_book_recommendation_action(window, detail, {})
+    button.click()
+    assert observed == [(
+        "Configurez d'abord le plugin de recommandations",
+        "Recommandation impossible",
+    )]
+    assert "SECRET_RECOMMENDATION" not in str(observed)
+    assert all(row[0] != "navigate" for row in calls)
+
+
+def test_context_change_during_plugin_exception_does_not_show_error():
+    window, detail, button, calls = _context()
+    window._identity_context_generation = 1
+
+    def late(_book):
+        window._identity_context_generation = 2
+        raise RuntimeError("Bearer SECRET_RECOMMENDATION")
+
+    window._book_recommendation_target = lambda _item: (
+        NS(recommend_from_book=late), NS(book_id="a")
+    )
+    window.show_error = lambda *_args: calls.append(("ERROR",))
+    add_book_recommendation_action(window, detail, {})
+    button.click()
+    assert ("ERROR",) not in calls
+    assert all(row[0] != "navigate" for row in calls)
