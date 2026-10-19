@@ -427,8 +427,9 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             if not isinstance(row.metadata, dict)
             or row.metadata.get("search_provenance") != "known_catalog_stale"
         ])
-    except Exception as exc:
-        logger.warning("TRACE catalog mirror search error=%s", type(exc).__name__)
+    except Exception:
+        # Mirror exceptions may be dynamically named by untrusted plugins.
+        logger.warning("TRACE catalog mirror search code=mirror_failed")
     if not warnings:
         self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
     self.last_search = rows
@@ -555,8 +556,10 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         return self._search_provider_session(
             session, query, scope, field=field, content_types=content_types,
         )
-    except Exception as exc:
-        return [], [f"{session.descriptor.display_name}: stream error"], type(exc).__name__, type(exc).__name__
+    except Exception:
+        # Stream faults must never echo plugin class names or descriptor labels.
+        # Preserve a typed terminal failure for the caller without its payload.
+        return [], ["Recherche en flux indisponible"], "StreamProviderFailed", "Recherche en flux indisponible"
 
 
 def search_progressive(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', provider_ids: tuple[str, ...] | list[str] | None=None, field: str='all', content_types: tuple[str, ...] | list[str] | None=None, on_batch: Callable[[Any], None] | None=None, control: Any=None, on_event: Callable[[ProviderSearchEvent], None] | None=None, include_redundant_merged: bool=False, executor, logger):
@@ -684,10 +687,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 continue
             try:
                 on_event(event)
-            except Exception as exc:
+            except Exception:
                 self.diagnostics.add(
                     "SEARCH", "stream callback", "error",
-                    detail={"provider": event.provider_id, "error": type(exc).__name__},
+                    detail={"code": "stream_callback_failed"},
                 )
 
     if searchable:
@@ -827,7 +830,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             if row.metadata.get("search_provenance") != "known_catalog_stale"
         ]
         try: self._mirror_remote_results(live_results, identity_id=identity.identity_id)
-        except Exception as exc: logger.warning("TRACE catalog mirror progressive search error=%s", type(exc).__name__)
+        except Exception: logger.warning("TRACE catalog mirror progressive search code=mirror_failed")
     cancelled = cancelled or request_cancelled()
     if not cancelled and not warnings and failed == 0:
         self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
