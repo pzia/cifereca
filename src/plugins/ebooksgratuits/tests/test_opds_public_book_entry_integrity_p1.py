@@ -35,6 +35,9 @@ BAD_PRIVATE = """<entry><id>urn:fake:private</id><title>Faux livre privé</title
 BAD_MIME = """<entry><id>urn:fake:html</id><title>Faux livre HTML</title>
 <link rel="http://opds-spec.org/acquisition/open-access"
  type="text/html" href="/index.php/fetch/42.epub"/></entry>"""
+BAD_MIME_SUFFIX = """<entry><id>urn:fake:spoofed-epub</id><title>Faux type EPUB</title>
+<link rel="alternate" type="application/epub+zip-malformed"
+ href="/index.php/fetch/42.epub"/></entry>"""
 BAD_ALTERNATE = """<entry><id>urn:fake:alternate</id><title>Faux livre alternatif</title>
 <link rel="alternate" type="application/epub+zip"
  href="/index.php/account/private.epub"/></entry>"""
@@ -74,7 +77,7 @@ def session(root, *, all_books=None):
     return s, visited
 
 
-@pytest.mark.parametrize("forged", [BAD_FOREIGN, BAD_PRIVATE, BAD_MIME, BAD_ALTERNATE])
+@pytest.mark.parametrize("forged", [BAD_FOREIGN, BAD_PRIVATE, BAD_MIME, BAD_ALTERNATE, BAD_MIME_SUFFIX])
 def test_unqualified_root_acquisition_does_not_hide_all_books_route(forged):
     s, visited = session(feed(forged + branch()), all_books=feed(BOOK))
     try:
@@ -89,7 +92,7 @@ def test_unqualified_root_acquisition_does_not_hide_all_books_route(forged):
         s.close()
 
 
-@pytest.mark.parametrize("forged", [BAD_FOREIGN, BAD_PRIVATE, BAD_MIME, BAD_ALTERNATE])
+@pytest.mark.parametrize("forged", [BAD_FOREIGN, BAD_PRIVATE, BAD_MIME, BAD_ALTERNATE, BAD_MIME_SUFFIX])
 def test_only_unqualified_root_entries_fail_as_unavailable_not_zero(forged):
     s, visited = session(feed(forged))
     try:
