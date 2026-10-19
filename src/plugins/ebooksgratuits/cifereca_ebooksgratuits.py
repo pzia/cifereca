@@ -422,11 +422,14 @@ def _safe_opds_link(feed_url, href, kind):
                        for ch in decoded_query)):
             return None
         path=dst.path.lower()
-        # Calibre COPS supplies /index.php/fetch/... downloads; do not infer
-        # ebook URLs by book ID, nor admit arbitrary same-origin action paths.
+        # Calibre/COPS publishes a dedicated fetch route. A suffix .epub
+        # alone is not enough: /index.php/account/private.epub can otherwise
+        # masquerade as a public acquisition endpoint on the same origin.
+        # Keep the historically recognized /fetch.php alias, but refuse
+        # other action URLs even when their name contains "fetch".
         if kind=='download' and not (
-            path.endswith('.epub') or '/index.php/fetch' in path
-            or path.endswith('/fetch.php')
+            path.startswith('/index.php/fetch/')
+            or path in {'/index.php/fetch', '/fetch.php', '/index.php/fetch.php'}
         ):
             return None
         if kind=='feed' and not (
@@ -538,10 +541,26 @@ def _opds_search_url(session,root,base,query):
     raise ProviderCapabilityError('Ebooks libres et gratuits : search_route_unavailable')
 
 
+def _opds_entry_is_book(session, entry, base):
+    """Follow the same definition of a book at the root and search scopes.
+
+    OPDS acquisition entries can be PDF-only (still catalogue notices), and
+    EPUB alternate links are accepted only if their URL is qualified as a
+    same-origin public download. Navigation entries are not books.
+    """
+    return any(
+        '/acquisition' in rel
+        or (rel == 'alternate'
+            and mime.startswith('application/epub+zip')
+            and _safe_opds_link(session.opds_feed_url, raw, 'download'))
+        for rel, mime, raw, _ in _opds_links(entry, base)
+    )
+
+
 def _opds_browse_url(session,root,base):
     candidates=[]
     for entry in root.findall(ATOM+'entry'):
-        if any(m.startswith('application/epub+zip') for _,m,_,_ in _opds_links(entry,base)):
+        if _opds_entry_is_book(session,entry,base):
             return base
         title=(entry.findtext(ATOM+'title') or '').casefold()
         for r,m,raw,_ in _opds_links(entry,base):
@@ -640,9 +659,13 @@ def _opds_load_acquisition(session,initial,field,needle):
         if feed.tag!=ATOM+'feed':
             raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
         entries=feed.findall(ATOM+'entry')
+        # The item projector supports an EPUB with rel=alternate as well
+        # as OPDS acquisition links. The navigation detector must agree:
+        # otherwise a valid page of books becomes browse_route_unavailable.
+        # Only a checked public EPUB URL counts, not an arbitrary rel or a
+        # same-looking untrusted URL to another origin.
         has_acquisition=any(
-            any('/acquisition' in rel for rel,_,_,_ in _opds_links(entry,actual))
-            for entry in entries
+            _opds_entry_is_book(session, entry, actual) for entry in entries
         )
         if has_acquisition or not entries:
             return feed,actual

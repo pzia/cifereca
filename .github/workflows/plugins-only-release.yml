@@ -17,6 +17,8 @@ on:
       - "scripts/test_partial_plugin_release.py"
       - "scripts/test_ci_plugins_release_request.py"
       - "scripts/ci_plugins_release_request.py"
+      - "scripts/ci_numilog_core_release_gate.py"
+      - "scripts/test_ci_numilog_core_release_gate.py"
       - "scripts/package_partial_plugins.py"
       - "scripts/plugin_packaging.py"
       - "src/cifereca/dev_updater.py"
@@ -66,9 +68,26 @@ jobs:
       - name: Validate packaging and strict updater tests
         run: |
           python scripts/verify-packaging.py
-          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_plugins_release_request
+          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_plugins_release_request scripts.test_ci_numilog_core_release_gate
           python3 -m scripts.ci_plugins_release_request --event push
           python -m pytest -q tests/test_dev_partial_plugin_updates.py
+
+      - name: Attest published historic Core is too old for Numilog (#2095)
+        # Read-only negative gate, no release, tag or artifact mutation.
+        shell: bash
+        run: |
+          set -euo pipefail
+          historical="$(git rev-list -n 1 'v0.9.44+dev.12')"
+          set +e
+          result="$(python -m scripts.ci_numilog_core_release_gate \
+            --package-ids 'org.cifereca.provider.numilog' \
+            --core-tag-commit "$historical")"
+          code=$?
+          set -e
+          if [[ "$code" -ne 2 || "$result" != *"does not contain all required Numilog fixes"* ]]; then
+            echo "Historic published Core compatibility refusal not attested." >&2
+            exit 1
+          fi
 
       - name: Build deterministic PR plugins-only snapshot
         id: build
@@ -203,7 +222,7 @@ jobs:
       - name: Validate packaging and updater regressions
         run: |
           python scripts/verify-packaging.py
-          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release
+          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_numilog_core_release_gate
           python -m pytest -q tests/test_dev_partial_plugin_updates.py
 
       - name: Build selected official plugins-only snapshot
@@ -241,6 +260,13 @@ jobs:
             echo "Published Core tag $core_tag is not an ancestor of this plugins release." >&2
             exit 1
           }
+          # #2095: a new Numilog ZIP cannot make #2081/#2112/#2114 appear
+          # in a Core wheel published before those fixes were merged.
+          # Fail before signing/draft publication, regardless of plugin API.
+          python -m scripts.ci_numilog_core_release_gate \
+            --package-ids "$PACKAGE_IDS" \
+            --core-tag-commit "$tag_sha"
+
 
           # Cross-check GitHub's release digest, downloaded SHA256SUMS and
           # actual wheel bytes, plus the published tag's immutable source SHA.
