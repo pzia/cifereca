@@ -179,15 +179,18 @@ class CoverView(Gtk.Overlay):
             self.picture.set_paintable(texture)
             self.placeholder.set_visible(False)
             loader.note_ui_applied()
-        except Exception as exc:
+        except Exception:
             loader.note_ui_failed()
             self.picture.set_paintable(None)
             self.placeholder.set_visible(True)
             loader.invalidate(path, decode_failure=True)
             if loader.diagnostics is not None:
+                # GTK decoders can embed private cache paths or a plugin's
+                # signed cover URL in exception messages. The error class is
+                # also not a public diagnostic contract. No str/repr escapes.
                 loader.diagnostics.add(
                     "COVER", "ui decode", "error",
-                    detail={"error": type(exc).__name__, "message": str(exc)[:180]},
+                    detail={"code": "cover_decode_failed"},
                     level="detailed",
                 )
             if not self._decode_retry and self._loader is not None and self._url:
