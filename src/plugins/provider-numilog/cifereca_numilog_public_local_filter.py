@@ -112,6 +112,26 @@ def _validate_page(page):
         seen_ids.add(row.record_id)
         if type(m.get("field_evidence")) is not dict:
             raise ProviderCapabilityError(error)
+    if page.complete:
+        # A source-issued pager contradicting complete=True cannot be
+        # ignored merely because a mutated page sets total=len(items) and
+        # next_url=None. A false complete flag becomes a false exact zero
+        # when refining by author/ISBN on the current page.
+        if type(page.pagination_links) is not tuple:
+            raise ProviderCapabilityError(error)
+        for link in page.pagination_links:
+            if type(link) is not dict or type(link.get("url")) is not str:
+                raise ProviderCapabilityError(error)
+            try:
+                target = _query(link["url"])
+            except PublicSearchParseError:
+                raise ProviderCapabilityError(error) from None
+            if (int(target.get("GRID_PAGE", "0")) != page.page_index
+                    or (source_url is not None
+                        and {k: v for k, v in target.items() if k != "GRID_PAGE"}
+                        != {k: v for k, v in _query(source_url).items()
+                            if k != "GRID_PAGE"})):
+                raise ProviderCapabilityError(error)
 
 
 def _value(row, field):
