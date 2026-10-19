@@ -923,20 +923,14 @@ class LibraryService:
         return search_orchestration.search_progressive(self, query, scope, force, provider_id=provider_id, provider_ids=provider_ids, field=field, content_types=content_types, on_batch=on_batch, control=control, on_event=on_event, include_redundant_merged=include_redundant_merged, executor=_SEARCH_EXECUTOR, logger=_TRACE_LOG)
 
     def search_local_library(
-        self, query: str, scope: str = "all", *, field: str = "all",
-        identity_id: str | None = None, age: int | None = None,
-        age_kind: str | None = None,
+        self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        return search_orchestration.search_local_library(
-            self, query, scope, field=field, identity_id=identity_id,
-            age=age, age_kind=age_kind, logger=_TRACE_LOG,
-        )
+        return search_orchestration.search_local_library(self, query, scope, field=field, identity_id=identity_id, logger=_TRACE_LOG)
 
     def search_known_catalog(
         self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
         provider_ids: list[str] | tuple[str, ...] | None = None,
         content_types: list[str] | tuple[str, ...] | None = None,
-        age: int | None = None, age_kind: str | None = None,
     ) -> list[dict[str, Any]]:
         """Search the already-known SQLite universe without provider I/O.
 
@@ -944,24 +938,29 @@ class LibraryService:
         rights and progressively mirrored catalogue facts. ``search()`` remains
         the explicit online extension operation.
         """
-        return search_orchestration.search_known_catalog(
-            self, query, scope, field=field, identity_id=identity_id,
-            provider_ids=provider_ids, content_types=content_types,
-            age=age, age_kind=age_kind, logger=_TRACE_LOG,
-        )
+        return search_orchestration.search_known_catalog(self, query, scope, field=field, identity_id=identity_id, provider_ids=provider_ids, content_types=content_types, logger=_TRACE_LOG)
 
     @staticmethod
     def filter_loaded_search_results(
         rows: list[dict[str, Any]], query: str = "", *, field: str = "all", scope: str = "all",
         provider_ids: list[str] | tuple[str, ...] | None = None,
         content_types: list[str] | tuple[str, ...] | None = None,
-        age: int | None = None, age_kind: str | None = None,
     ) -> list[dict[str, Any]]:
         """Apply current Search controls without network or cache mutation."""
-        return search_orchestration.filter_loaded_search_results(
-            rows, query, field=field, scope=scope, provider_ids=provider_ids,
-            content_types=content_types, age=age, age_kind=age_kind,
-        )
+        return search_orchestration.filter_loaded_search_results(rows, query, field=field, scope=scope, provider_ids=provider_ids, content_types=content_types)
+
+    @staticmethod
+    def filter_attested_search_results(
+        rows: list[dict[str, Any]], age: int | None = None, *,
+        age_kind: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Opt-in offline youth-age filter without changing historical signatures.
+
+        Call on the loaded rows from search_known_catalog or library search;
+        records with unknown ages remain visible if age is None.
+        """
+        from .core.attested_age_filter import filter_attested_age
+        return list(filter_attested_age(rows, age, age_kind=age_kind))
 
     def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None = None) -> int:
         """Persist progressively discovered remote catalog metadata (0.8.3)."""
