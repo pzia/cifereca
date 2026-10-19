@@ -319,3 +319,27 @@ def test_same_origin_redirect_is_followed_and_foreign_origin_is_rejected():
         assert visited==[FEED]
     finally:
         session.close()
+
+
+def test_epub_transport_disables_redirects_for_opds_items(tmp_path):
+    from pathlib import Path
+
+    class Transport:
+        def __init__(self):
+            self.sources=[]
+        def fetch(self,source,dest):
+            self.sources.append(source)
+            Path(dest).write_bytes(b"synthetic")
+            return dest
+
+    session=make_session(route)
+    transport=Transport()
+    session.transport=transport
+    try:
+        book=session.search('livre')[0]
+        path,_=session.download_direct(book,tmp_path)
+        assert path.is_file()
+        assert transport.sources[0]["max_redirects"]==0
+        assert transport.sources[0]["expected_format"]=="epub"
+    finally:
+        session.close()
