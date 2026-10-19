@@ -589,7 +589,15 @@ def test_first_seen_purchase_is_mirrored_only_from_authenticated_numilog_library
             lambda *_args, **_kwargs: None,
         )
         result = execute(broker, account.identity_id, "startup")
-        assert result.ok
+        if private_owned:
+            assert result.ok and result.facts["status"] == "complete"
+        else:
+            # A public-catalogue row in an authenticated private manifest
+            # is a failed inventory, not evidence of an empty owned library.
+            assert not result.ok and result.facts["status"] == "failed"
+            assert result.facts["attempted"] == 0
+            status = broker.numilog_materialization_run_status(sid)
+            assert status["diagnostic"]["code"] == "manifest_invalid"
         assert result.changed == int(private_owned)
         assert len(acquired) == int(private_owned)
         rights = service.storage.entitlements(provider_id="numilog")
