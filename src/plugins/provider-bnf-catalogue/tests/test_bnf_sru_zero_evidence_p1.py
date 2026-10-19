@@ -41,9 +41,7 @@ def test_unqualified_or_malformed_sru_total_never_proves_zero(inner):
 
 
 def test_explicit_zero_is_valid_no_results():
-    assert BnfCatalogueSession.parse_records(
-        envelope("<numberOfRecords>0</numberOfRecords>")
-    ) == []
+    assert parse(envelope("<numberOfRecords>0</numberOfRecords>")) == []
 
 
 def test_service_diagnostic_remains_distinct_from_zero():
