@@ -477,9 +477,11 @@ def main():
         assert len(panes) == 1
         # The support expander is inside the Reports tab. A Gtk.Expander can
         # be expanded but remain unmapped while its Gtk.Stack child is hidden.
-        # Reveal the containing tab before asserting the *real* mapped view
-        # and verifying its complete expurgated clipboard contents via XTEST.
+        # Reveal the containing tab *and* expand the target itself:
+        # reveal_diagnostics_section expands ancestors but not its argument.
+        # Both are required before the real mapped/clipboard assertions.
         reveal_diagnostics_section(panes[0])
+        panes[0].set_expanded(True)
         views = [w for w in walk(panes[0]) if isinstance(w, Gtk.TextView)]
         assert len(views) == 1
         until(lambda: views[0].get_mapped() and text(views[0]) == SUPPORT_REPORT,
