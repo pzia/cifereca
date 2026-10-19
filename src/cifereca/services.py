@@ -1294,7 +1294,10 @@ class LibraryService:
         try:
             account, _session, _key = self._return_loan_identity(loan)
         except AttentionRequired as exc:
-            return {"status": "failed", "scope": "adobe_first_paris", "code": exc.code}
+            return {
+                "status": "failed", "scope": "adobe_first_paris",
+                "code": return_adept_orchestrator.return_preflight_code(exc),
+            }
         key = adept_return_key(
             loan.source_provider, loan.source_credential,
             str(account.unique_id or "primary"), str(loan.id),
