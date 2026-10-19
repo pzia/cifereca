@@ -79,7 +79,7 @@ def test_429_header_caps_monotonic_deadline_and_recovers_after_cap(
 
 
 @pytest.mark.parametrize("delay,expected", [
-    (10**1000, CAP), (float("inf"), CAP),
+    (10**1000, CAP), (float("inf"), FLOOR),
     (float("-inf"), FLOOR), (float("nan"), FLOOR),
     (-1, FLOOR), (True, FLOOR), ("999999999999999", FLOOR),
     (0, FLOOR), (120, 120), (CAP+50, CAP),
