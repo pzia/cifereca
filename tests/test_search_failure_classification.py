@@ -57,6 +57,39 @@ def test_cyclic_wrappers_terminate_without_inventing_an_outage(outage):
     assert is_technical_search_error(outer) is outage
 
 
+class _UntrustedSearchError(Exception):
+    @property
+    def code(self):
+        raise RuntimeError("https://private.invalid/token?secret=DO_NOT_ECHO")
+
+
+class _UntrustedValue:
+    def __eq__(self, _other):
+        raise AssertionError("never compare an untrusted code")
+
+
+def test_untrusted_error_properties_never_authorize_stale_fallback():
+    private = _UntrustedSearchError("PRIVATE_ACCOUNT")
+    assert search_failure_code(private) is None
+    assert not is_technical_search_error(private)
+    assert not public_service_unavailable(private)
+
+    foreign = ProviderError("PRIVATE_ACCOUNT")
+    foreign.code = _UntrustedValue()
+    assert search_failure_code(foreign) is None
+    assert not public_service_unavailable(foreign)
+
+    # Known transport and access-refusal evidence in a wrapped cause is still
+    # authoritative, independently of a corrupt outer plugin property.
+    private.__cause__ = httpx.ReadTimeout("PRIVATE")
+    assert search_failure_code(private) == "SearchTemporarilyUnavailable"
+    assert public_service_unavailable(private)
+
+    private.__cause__ = _http_error(403)
+    assert search_failure_code(private) == "SearchAccessDenied"
+    assert not public_service_unavailable(private)
+
+
 @pytest.mark.parametrize("status", [400, 404, 422])
 def test_semantic_http_failure_does_not_authorize_stale_catalogue(status):
     error = _wrapped(_http_error(status))
