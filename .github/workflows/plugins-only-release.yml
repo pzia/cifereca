@@ -514,8 +514,7 @@ jobs:
               # Both prior incomplete runs have independently attested
               # immutable IDs and zero assets. No arbitrary draft deletion.
               case "$draft_id:$draft_sha" in
-                "417619783:20212b37be5f963aed35eee45b338bcdc188aede"|
-                "417644698:1c0ca31762629bdc87c69ae0c39c022ee79fee5f") ;;
+                "417619783:20212b37be5f963aed35eee45b338bcdc188aede"|"417644698:1c0ca31762629bdc87c69ae0c39c022ee79fee5f") ;;
                 *) echo "Unknown source draft; refusing recovery." >&2; exit 1 ;;
               esac
               git merge-base --is-ancestor "$draft_sha" "$GITHUB_SHA"
