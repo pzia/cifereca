@@ -44,7 +44,8 @@ class ReleaseRequestTests(unittest.TestCase):
         # remain possible, but no removed Jeunesse package may be selected.
         self.assertIn(active["kind"], {INACTIVE_KIND, ACTIVE_KIND})
         self.assertNotIn(RETIRED, active.get("package_ids", []))
-        archived = json.loads((ROOT / active["historical_request"]).read_text(encoding="utf-8"))
+        archive_path = ROOT / "docs/release-history/plugins-only-v0.9.44-dev.12-001-request.json"
+        archived = json.loads(archive_path.read_text(encoding="utf-8"))
         self.assertEqual(archived["kind"], ACTIVE_KIND)
         self.assertEqual(archived["request_revision"], 4)
         self.assertEqual(archived["authorized_on"], "2026-10-09")
