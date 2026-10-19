@@ -9,6 +9,8 @@ import hashlib
 import json
 from typing import Any
 
+from .loan_return_guard import _public_timestamp
+
 
 def adept_return_key(provider_id: str, credential_id: str,
                      account_id: str, loan_id: str) -> str:
@@ -19,22 +21,40 @@ def adept_return_key(provider_id: str, credential_id: str,
     return "loan.adept.return.v1:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+_ADEPT_RETURN_STATES = frozenset({
+    "request_sent", "adobe_return_requested", "adobe_return_confirmed",
+    "paris_check_pending", "partial", "paris_return_confirmed", "failed",
+})
+_ADEPT_RETURN_VERIFICATIONS = frozenset({
+    "not_checked", "adobe_pending", "adobe_confirmed", "adobe_unavailable",
+    "still_present", "provider_absent", "unavailable",
+})
+
+
 def public_state(row: dict[str, Any]) -> dict[str, Any]:
-    status = str(row.get("status") or "failed")
-    verified = row.get("adobe_verified") is True
-    verification = str(row.get("verification") or "not_checked")
+    """Project only closed ADEPT/Paris checkpoint fields to the UI."""
+    raw_status = row.get("status")
+    status = (raw_status if type(raw_status) is str
+              and raw_status in _ADEPT_RETURN_STATES else "failed")
+    # An unknown disk status must not certify an Adobe return merely because
+    # the old record also contains a truthy verification flag.
+    verified = (status != "failed" and row.get("adobe_verified") is True)
+    raw_verification = row.get("verification")
+    verification = (raw_verification if type(raw_verification) is str
+                    and raw_verification in _ADEPT_RETURN_VERIFICATIONS
+                    else "not_checked")
     return {
         "status": status,
         "scope": "adobe_first_paris",
         "adobe_return_confirmed": verified,
-        "provider_return_confirmed": status == "paris_return_confirmed",
+        "provider_return_confirmed": status == "paris_return_confirmed" and verified,
         "paris_verification": verification if verification in {
             "still_present", "provider_absent", "unavailable"
         } else "not_checked",
-        "requested_at": row.get("requested_at"),
-        "checked_at": row.get("checked_at"),
+        "requested_at": _public_timestamp(row.get("requested_at")),
+        "checked_at": _public_timestamp(row.get("checked_at")),
         "retry": (
-            "none" if status == "paris_return_confirmed" else
+            "none" if status == "paris_return_confirmed" and verified else
             "provider_action_explicit" if verified and status == "partial"
             and verification == "still_present" else
             "verification_only"
