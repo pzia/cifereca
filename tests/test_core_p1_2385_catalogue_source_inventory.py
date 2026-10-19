@@ -50,7 +50,7 @@ def _rig():
         _plugin("numilog", search=True, personal=True, authenticated=True),
         _plugin("numilog-catalog", search=True),  # disabled public plugin
         _plugin("paris", search=True, loans=True, authenticated=True),
-        _plugin("account-only", personal=True, authenticated=True),
+        _plugin("rights-only", personal=True, authenticated=True),
         _plugin("technical", search=False, personal=False),
         _plugin("disabled", search=True, state="skeleton"),
     ])
@@ -63,7 +63,7 @@ def _rig():
         NS(provider_id="kobo", credential_id="a-kobo", connected=True),
         NS(provider_id="numilog", credential_id="a-numilog", connected=True),
         NS(provider_id="paris", credential_id="a-paris", connected=False),
-        NS(provider_id="account-only", credential_id="b-only", connected=True),
+        NS(provider_id="rights-only", credential_id="b-only", connected=True),
     ]
     service = NS(
         registry=registry,
@@ -79,7 +79,7 @@ def _rig():
             attempts.append(("accounts", identity)) or
             ([NS(provider_id=n, credential_id=f"a-{n}", identity_id="alice")
               for n in ("kobo", "numilog", "paris")] if identity == "alice" else
-             [NS(provider_id="account-only", credential_id="b-only",
+             [NS(provider_id="rights-only", credential_id="b-only",
                  identity_id="bob")])
         ),
     )
@@ -97,7 +97,7 @@ def test_all_active_catalogues_present_even_without_public_accounts():
     names = [x.provider_id for x in sources]
     assert names == sorted(names)
     assert names == [
-        "account-only", "bnf-catalogue", "ebooksgratuits", "gallica",
+        "rights-only", "bnf-catalogue", "ebooksgratuits", "gallica",
         "gutenberg", "kobo", "numilog", "paris",
     ]
     gallica = next(x for x in sources if x.provider_id == "gallica")
@@ -136,8 +136,8 @@ def test_identity_scope_applies_to_public_plugin_and_private_account_connections
     assert not numilog.catalog_search_available
     assert numilog.personal_inventory_supported
     assert not numilog.personal_inventory_available
-    assert "account-only" in names
-    assert next(row for row in rows if row.provider_id == "account-only").personal_inventory_available
+    assert "rights-only" in names
+    assert next(row for row in rows if row.provider_id == "rights-only").personal_inventory_available
     assert catalogue_source_capabilities(service, identity_id="stranger") == ()
     assert catalogue_source_capabilities(service, identity_id="alice:private") == ()
 
