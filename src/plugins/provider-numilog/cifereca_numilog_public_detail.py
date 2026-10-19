@@ -283,8 +283,9 @@ def parse_public_detail_jsonld(html, product_url):
                 break
             kind = contributor.get("@type")
             if (kind is not None
-                    and kind not in eligible_types
-                    and kind not in {"https://schema.org/" + item for item in eligible_types}):
+                    and (type(kind) is not str
+                         or (kind not in eligible_types
+                             and kind not in {"https://schema.org/" + item for item in eligible_types}))):
                 names = []
                 break
             name = contributor.get("name")
