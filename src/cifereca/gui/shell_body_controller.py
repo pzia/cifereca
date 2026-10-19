@@ -38,7 +38,9 @@ def build_main_shell(window, *, Gtk, add_css, version):
     window._nav_groups = {}
     window._nav_group_expanded = {}
     window.view_stack = Gtk.Stack()
-    window.view_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+    # #2027 measurement experiment: isolate crossfade measurement in the
+    # full-window GtkStack; page routing and visibility stay unchanged.
+    window.view_stack.set_transition_type(Gtk.StackTransitionType.NONE)
     window.view_stack.set_hhomogeneous(False)
     window.view_stack.set_hexpand(True); window.view_stack.set_vexpand(True)
     body.append(window.view_stack)
