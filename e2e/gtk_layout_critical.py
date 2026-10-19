@@ -9,8 +9,8 @@ import re
 
 _MAX_STREAM = 1_000_000
 _CRITICAL = re.compile(r"(?i)gtk-critical")
-_STACK = re.compile(r"(?i)\\b(?:GtkStack|gtk_stack)\\b")
-_REVEALER = re.compile(r"(?i)\\b(?:GtkRevealer|gtk_revealer)\\b")
+_STACK = re.compile(r"(?i)\b(?:GtkStack|gtk_stack)\b")
+_REVEALER = re.compile(r"(?i)\b(?:GtkRevealer|gtk_revealer)\b")
 
 
 def gtk_layout_critical_counts(*streams: str) -> dict[str, int | bool]:
