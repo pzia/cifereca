@@ -40,8 +40,36 @@ def _safe_text(value, maximum):
             and not any(unicodedata.category(c) in {'Cc', 'Cf', 'Cs'} for c in value))
 
 
+# Public field proof must never come from a hidden/template subtree.
+_HIDDEN_TAGS = {'script', 'style', 'template', 'noscript', 'iframe', 'svg'}
+
+
+def _hidden(node):
+    style = ''.join((node.attrs.get('style') or '').lower().split())
+    return (node.tag in _HIDDEN_TAGS or 'hidden' in node.attrs
+            or (node.attrs.get('aria-hidden') or '').lower() == 'true'
+            or 'display:none' in style or 'visibility:hidden' in style)
+
+
+def _visible_walk(node):
+    if _hidden(node):
+        return
+    yield node
+    for child in node.children:
+        yield from _visible_walk(child)
+
+
+def _selected_text(node):
+    # Node.text() contains accumulated descendant text. Hidden child text
+    # must be rejected, not accidentally projected through its parent.
+    if any(_hidden(child) and child.text()
+           for child in node.walk() if child is not node):
+        _fail('hidden_field')
+    return node.text()
+
+
 def _nodes(node, name):
-    return [n for n in node.walk() if name in classes(n) and n.tag not in {'script', 'style'}]
+    return [n for n in _visible_walk(node) if name in classes(n)]
 
 
 def _optional(node, name, maximum=2000):
@@ -50,7 +78,7 @@ def _optional(node, name, maximum=2000):
         _fail('ambiguous_field')
     if not matches:
         return None
-    value = matches[0].text()
+    value = _selected_text(matches[0])
     if not _safe_text(value, maximum):
         _fail('invalid_field')
     return value or None
@@ -140,7 +168,7 @@ def _card(card, source_url, rank, page_index):
         _fail('ambiguous_metadata')
     if metas:
         for node in _nodes(metas[0], 'LabelInfos'):
-            text = node.text()
+            text = _selected_text(node)
             for prefix, key in (('Parution :', 'published_at'), ('Format(s) :', 'formats'),
                                 ('Éditeur :', 'publisher'), ('Collection :', 'collection')):
                 if text.startswith(prefix):
@@ -150,12 +178,12 @@ def _card(card, source_url, rank, page_index):
                     if not _safe_text(value, 2000):
                         _fail('invalid_field')
                     info[key] = value or None
-    authors = [n.text() for n in _nodes(card, 'Author')]
+    authors = [_selected_text(n) for n in _nodes(card, 'Author')]
     if len(authors) > 32 or any(not a or not _safe_text(a, 1000) for a in authors):
         _fail('invalid_authors')
     summary = _optional(card, 'list-group-item-text', 16000)
     cover = None
-    images = [n for n in card.walk() if n.tag == 'img' and 'lazy-image' in classes(n)]
+    images = [n for n in _visible_walk(card) if n.tag == 'img' and 'lazy-image' in classes(n)]
     if len(images) > 1:
         _fail('ambiguous_cover')
     warnings = []
@@ -182,7 +210,7 @@ def _card(card, source_url, rank, page_index):
         selected = None
     options = []
     for option in _nodes(card, 'AvailableFormat'):
-        label = option.text()
+        label = _selected_text(option)
         if len(options) >= 10 or not _safe_text(label, 80):
             _fail('invalid_formats')
         # Only qualified attribute values are copied; never an arbitrary
@@ -262,17 +290,17 @@ def parse_public_search(text, source_url):
         root = Parser(text).root
     except ParseError:
         _fail('html_structure')
-    grids = [n for n in root.walk() if n.tag == 'table' and n.attrs.get('id') == GRID_ID]
+    grids = [n for n in _visible_walk(root) if n.tag == 'table' and n.attrs.get('id') == GRID_ID]
     if len(grids) != 1:
         _fail('unknown_search_layout')
     cards = _nodes(grids[0], 'LivreDuThemeDetail')
-    empty_markers = [n for n in grids[0].walk()
+    empty_markers = [n for n in _visible_walk(grids[0])
                      if n.attrs.get('id') == GRID_ID + '_ctl01_lblAucunLivre']
     explicit_empty = (len(empty_markers) == 1
                       and empty_markers[0].tag == 'span'
                       and {'alert', 'alert-warning'}.issubset(classes(empty_markers[0]))
-                      and empty_markers[0].text() == 'Aucun livre trouvé avec ces critères.')
-    totals = [n.text() for n in _nodes(root, 'ResultatDetail') if re.fullmatch(r'[0-9]{1,9}', n.text())]
+                      and _selected_text(empty_markers[0]) == 'Aucun livre trouvé avec ces critères.')
+    totals = [_selected_text(n) for n in _nodes(root, 'ResultatDetail') if re.fullmatch(r'[0-9]{1,9}', _selected_text(n))]
     if not totals and explicit_empty and not cards and not _nodes(root, 'pagination'):
         total = 0  # Observed upstream empty result, never a generic missing count.
     elif len(totals) == 1:
@@ -294,7 +322,7 @@ def parse_public_search(text, source_url):
         current = _optional(pagers[0], 'PagerCurrentPage', 8)
         if current != str(page_index + 1):
             _fail('inconsistent_page')
-        for link in (n for n in pagers[0].walk() if n.tag == 'a'):
+        for link in (n for n in _visible_walk(pagers[0]) if n.tag == 'a'):
             if len(pages) >= 100:
                 _fail('excessive_pagination')
             url, target = _search_link(link.attrs.get('href'), source_url)
@@ -302,7 +330,7 @@ def parse_public_search(text, source_url):
             # validates explicit page values and all other query parameters.
             if {k: v for k, v in target.items() if k != 'GRID_PAGE'} != {k: v for k, v in query.items() if k != 'GRID_PAGE'}:
                 _fail('pagination_query_changed')
-            label = link.text()
+            label = _selected_text(link)
             if not _safe_text(label, 32):
                 _fail('invalid_pagination')
             pages.append({'label': label, 'url': url, 'GRID_PAGE': target.get('GRID_PAGE', '0')})
@@ -332,17 +360,17 @@ def parse_public_search(text, source_url):
                 or target.get('GRID_PAGE', '0') != '0'):
             _fail('invalid_facets')
         key = changed[0]
-        label = link.text()
+        label = _selected_text(link)
         if not _safe_text(label, 2000):
             _fail('invalid_facets')
         facets.append({'label': label, 'parameter': key, 'value': target[key], 'url': url})
-    sorts = [n for n in root.walk() if n.tag == 'select' and n.attrs.get('id') == 'ListeTrier']
+    sorts = [n for n in _visible_walk(root) if n.tag == 'select' and n.attrs.get('id') == 'ListeTrier']
     if len(sorts) > 1:
         _fail('ambiguous_sort')
     sort_options = []
     if sorts:
-        for option in (n for n in sorts[0].walk() if n.tag == 'option'):
-            value, label = option.attrs.get('value'), option.text()
+        for option in (n for n in _visible_walk(sorts[0]) if n.tag == 'option'):
+            value, label = option.attrs.get('value'), _selected_text(option)
             if len(sort_options) >= 20 or not _safe_text(value, 80) or not _safe_text(label, 200):
                 _fail('invalid_sort')
             sort_options.append({'value': value, 'label': label})
