@@ -139,7 +139,8 @@ def refine_loaded_public_pages(pages, **filters) -> PublicPagesRefinement:
                 raise ProviderCapabilityError(_ERROR)
             if int(parsed.get("GRID_PAGE", "0")) > last.page_index:
                 forward_pager = True
-    full = (loaded == total and last.next_url is None and not forward_pager)
+    full = (loaded == total and last.next_url is None and not forward_pager
+            and (len(pages) > 1 or last.complete is True))
     return PublicPagesRefinement(
         items=tuple(matches),
         applied_fields=fields,
