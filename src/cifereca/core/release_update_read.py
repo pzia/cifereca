@@ -32,7 +32,7 @@ def _version(value: object) -> str:
     return value
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class ReleaseUpdateReadBrokerImpl:
     """A small, optional broker exposed at context.broker('release.update.read').
 
