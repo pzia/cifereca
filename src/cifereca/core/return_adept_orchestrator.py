@@ -135,7 +135,10 @@ def return_loan_prefer_adept(
     except AttentionRequired as exc:
         # Only the three Core return-preflight codes are public evidence.
         # A plugin may carry a URL in a subclass's arbitrary .code.
-        code = getattr(exc, "code", None)
+        try:
+            code = getattr(exc, "code", None)
+        except Exception:
+            code = None
         if type(code) is not str or code not in {
             "loan_return_borrower_unproven", "loan_return_borrower_mismatch",
             "loan_return_source_unavailable",
