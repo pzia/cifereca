@@ -1866,6 +1866,7 @@ class DiagnosticsPagePlugin:
             return False
 
         def run_checks(_button) -> None:
+            sections.set_visible_child_name("reports")
             if self._check_handle is not None and not self._check_handle.done():
                 return
             clear_container(check_box)

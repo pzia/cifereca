@@ -513,10 +513,13 @@ def main():
         exporter = next(e for e in plugin._support_exports
                         if e.filename == "cifereca-performance.json")
         assert exporter.dialog.get_visible()
-        target = out / "performance-export.json"
+        target = out / "cifereca-performance.json"
         target.write_bytes(b"CAPTURE-EXPORT-FIXTURE")
         assert exporter.dialog.set_file(Gio.File.new_for_path(str(target)))
-        later(lambda: capture_accept(exporter, target), 500)
+        exporter.dialog.set_current_name(target.name)
+        until(lambda: exporter.dialog.get_file() is not None
+              and exporter.dialog.get_file().get_path() == str(target),
+              lambda: capture_accept(exporter, target), seconds=5)
 
     def capture_accept(exporter, target):
         assert exporter.dialog.get_file().get_path() == str(target)
@@ -542,6 +545,12 @@ def main():
                      and w.get_name() == "diagnostics-sections")
         assert stack.get_visible_child_name() == "journals"
         assert host.performance.detailed_capture_enabled is False
+        module_entry = next(w for w in walk(page[0]) if isinstance(w, Gtk.Entry)
+                            and w.get_placeholder_text() == "Préfixe module (Entrée pour appliquer)")
+        assert module_entry.get_mapped()
+        ok, bounds = module_entry.compute_bounds(page[0])
+        assert ok and bounds.get_y() >= 0
+        assert bounds.get_y() + bounds.get_height() <= page[0].get_height()
         report["checks"]["P0_2139_journals_default_no_implicit_capture"] = True
         assert find_label("Journaux par composant")
         assert find_label("Analyse IA")
