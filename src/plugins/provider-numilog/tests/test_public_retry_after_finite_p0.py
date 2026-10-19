@@ -29,7 +29,7 @@ def test_large_valid_retry_after_seconds_always_finite_and_bounded(value):
 
 
 def test_extreme_http_date_does_not_create_forever_cooldown():
-    later = formatdate(2_000_000_000_000, usegmt=True)
+    later = formatdate(10_000_000_000, usegmt=True)
     assert client._retry_after_seconds(later, now=1000) == CAP
     assert client._retry_after_seconds(formatdate(1120, usegmt=True), now=1000) == 120
 
@@ -41,7 +41,7 @@ def test_429_header_caps_monotonic_deadline_and_recovers_after_cap(
     monotonic = [0.0]
     cache = PublicCatalogueCache(clock=lambda: monotonic[0])
     if header == "http-date":
-        header = formatdate(2_000_000_000_000, usegmt=True)
+        header = formatdate(10_000_000_000, usegmt=True)
     monkeypatch.setattr(client.time, "time", lambda: 1000)
     requests = []
     original_client = httpx.Client
