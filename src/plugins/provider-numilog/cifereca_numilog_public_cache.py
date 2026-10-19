@@ -87,10 +87,12 @@ class PublicCatalogueCache:
                         numeric = float(delay)
                     except (OverflowError, ValueError):
                         numeric = float(MAX_RATE_LIMIT_PAUSE_SECONDS)
+                    # Nonfinite *float* values are malformed headers/errors
+                    # and keep the historical 60-second floor. Only an
+                    # enormous but valid integer gets the finite upper cap.
                     bounded = (
                         min(numeric, MAX_RATE_LIMIT_PAUSE_SECONDS)
-                        if math.isfinite(numeric)
-                        else (float(MAX_RATE_LIMIT_PAUSE_SECONDS) if numeric > 0 else 0.0)
+                        if math.isfinite(numeric) else 0.0
                     )
                 with self._lock:
                     self._paused_until = max(
