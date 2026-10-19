@@ -72,7 +72,11 @@ def test_real_orchestration_keeps_outcomes_files_and_requests_but_not_private_tr
             assert result['error'] == 'Profil ADEPT indisponible'
             assert PRIVATE not in result['code'] + result['error']
         if scenario == 'borrower_changed': assert result['code'] == PRIVATE+'-borrower-code'
-        if scenario == 'adept_failure': assert result['code'] == PRIVATE+'-runtime-code'
+        if scenario == 'adept_failure':
+            assert result['code'] == 'adept_error'
+            assert result['error'].startswith('Acquisition ADEPT indisponible')
+            assert result['error'].endswith('(artifact_present=False)')
+            assert PRIVATE not in result['code'] + result['error']
         if scenario == 'unready': assert result['code'] == 'adept_profile_acsm_not_ready'
         if scenario == 'success':
             assert Path(result['path']).read_bytes() == PDF and not source.exists()
