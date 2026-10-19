@@ -462,10 +462,9 @@ def main():
         window._library_entries_cache = [dict(entry, key="ux942-library")]
         window._render_library()
         window.library_page.selection.set_selected(0)
-        if args.component_contracts:
-            later(160, component_summaries)
-        else:
-            finish()
+        # Every Core book-detail E2E width executes #1018's real GTK
+        # allocation/overflow checks, not only the optional component suite.
+        later(160, component_summaries)
 
     def finish():
         later(80, audit_mixed_security_values)
@@ -676,6 +675,9 @@ def main():
             "Sept lignes sans possibilité de déplier le résumé"
         )
         report["checks"]["P2_1018_seven_explicit_lines_toggle"] = True
+        if not args.component_contracts:
+            finish()
+            return
 
         p.empty("Résumé réellement long", "Contrat d'overflow")
         p._show_description("Résumé long de la fixture. " * 80)
