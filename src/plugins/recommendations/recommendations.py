@@ -1403,6 +1403,8 @@ class UxRecommendationsView:
         return False
 
     def _update_view_summary(self, *, provisional: bool) -> None:
+        if getattr(self, "_disposed", False):
+            return
         total = len(self._ranked)
         visible = sum(1 for row in self._ranked if self._matches(row))
         if not total:
