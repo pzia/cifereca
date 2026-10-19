@@ -1,6 +1,8 @@
 """Identity-safe recommendation action orchestration (#1129)."""
 from __future__ import annotations
 
+from ..plugin_api import UserFacingError
+
 
 def add_book_recommendation_action(window, detail, item) -> None:
     if getattr(window, '_closed', False):
@@ -39,7 +41,12 @@ def add_book_recommendation_action(window, detail, item) -> None:
             route = str(service.recommend_from_book(book) or "").strip()
         except Exception as exc:
             if current():
-                window.show_error(str(exc), "Recommandation impossible")
+                # External recommendation engines may raise with signed URLs,
+                # prompts, private local paths or HTTP response bodies. Only
+                # the public UI exception contract owns a safe user_message.
+                message = (exc.user_message if isinstance(exc, UserFacingError)
+                           else "Service de recommandation indisponible")
+                window.show_error(message, "Recommandation impossible")
             return
         if not current():
             return
