@@ -14,9 +14,12 @@ from datetime import datetime, timedelta, timezone
 
 def return_key(provider_id: str, credential_id: str, borrower_id: str,
                provider_loan_id: str) -> str:
-    parts = [provider_id.casefold(), credential_id, borrower_id, provider_loan_id]
-    if any(not str(part) for part in parts):
+    values = (provider_id, credential_id, borrower_id, provider_loan_id)
+    # Reject foreign objects before casefold/json encoding: neither __str__
+    # nor an overridden str subclass method is trusted for a return identity.
+    if any(type(value) is not str or not value for value in values):
         raise ValueError("loan return needs exact provider, credential, borrower and loan ID")
+    parts = [provider_id.casefold(), credential_id, borrower_id, provider_loan_id]
     raw = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
     return "loan.return.v1:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

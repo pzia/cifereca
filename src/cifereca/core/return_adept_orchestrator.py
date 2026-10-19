@@ -14,9 +14,10 @@ from .loan_return_guard import _public_timestamp, _verification_time_attested
 
 def adept_return_key(provider_id: str, credential_id: str,
                      account_id: str, loan_id: str) -> str:
-    parts = [provider_id.casefold(), credential_id, account_id, loan_id, "ADEPT"]
-    if not all(str(part or "").strip() for part in parts):
+    coordinates = (provider_id, credential_id, account_id, loan_id)
+    if any(type(value) is not str or not value.strip() for value in coordinates):
         raise ValueError("exact Paris borrower and loan provenance required")
+    parts = [provider_id.casefold(), credential_id, account_id, loan_id, "ADEPT"]
     raw = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
     return "loan.adept.return.v1:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
