@@ -390,6 +390,10 @@ OPDS_FEED = 'https://opds2.ebooksgratuits.org/index.php/feed'
 ATOM = '{http://www.w3.org/2005/Atom}'
 DC = '{http://purl.org/dc/terms/}'
 OPDS_MAX_FEED_BYTES = 2 * 1024 * 1024
+# 2 MiB of XML can still contain thousands of tiny nodes or deep nesting.
+# Bound the parser independently from the wire size before building a tree.
+OPDS_MAX_ELEMENTS = 12000
+OPDS_MAX_DEPTH = 96
 
 
 def _safe_opds_link(feed_url, href, kind):
@@ -455,16 +459,41 @@ def _safe_opds_link(feed_url, href, kind):
         return None
 
 
+class _BoundedOPDSTree(ET.TreeBuilder):
+    """Deny DTDs (including UTF-16) and unbounded XML element trees."""
+
+    def __init__(self):
+        super().__init__()
+        self.depth=0
+        self.count=0
+
+    def doctype(self, name, pubid, system):
+        # A raw b'<!DOCTYPE' byte scan misses UTF-16/XML encodings.
+        # This parser callback rejects the declaration before entity use.
+        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+
+    def start(self, tag, attrs):
+        self.depth+=1
+        self.count+=1
+        if self.depth>OPDS_MAX_DEPTH or self.count>OPDS_MAX_ELEMENTS:
+            raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+        return super().start(tag,attrs)
+
+    def end(self, tag):
+        result=super().end(tag)
+        self.depth-=1
+        return result
+
+
 def _xml_root(content):
     if type(content) is not bytes or len(content)>OPDS_MAX_FEED_BYTES:
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
-    # Reject DTDs and internal entities before stdlib XML parsing.
-    if b'<!doctype' in content.lower() or b'<!entity' in content.lower():
-        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
     try:
-        return ET.fromstring(content)
-    except ET.ParseError as e:
-        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed') from e
+        # Enforce DTD/entity, depth and element budgets during XML parsing.
+        # A prior byte-pattern scan alone cannot qualify non-UTF8 XML.
+        return ET.fromstring(content,parser=ET.XMLParser(target=_BoundedOPDSTree()))
+    except (ET.ParseError, RecursionError, OverflowError):
+        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed') from None
 
 
 def _opds_fetch(session,url):
