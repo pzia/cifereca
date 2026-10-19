@@ -25,6 +25,18 @@ Le module Python livré ici est un **contrat offline non installé**, sans manif
 
 **Invariants :** copie disponible ≠ quota lecteur ≠ autorisation Pass ; ressource catalogue ≠ prêt personnel, jamais owned ; lien de prêt/ACSM signé absent des notices, logs et sorties ; pas de « Renouveler » ; suppression de fichier local ≠ restitution. Un retour ADEPT accepté ne prouve ni retour BnF en ligne ni quota libéré. Le return_url décrit par la doc est un paramètre du POST de création, pas un endpoint appelable arbitrairement par le client.
 
+## Découverte complémentaire — candidat OPDS 2.0 (19/10/2026)
+
+URL signalée : **https://pret.bnf.fr/v1/home.opds2**. La convention d'extension suggère un flux OPDS 2 mais **aucune réponse HTTP en provenance de cet endpoint n'a été obtenue** dans l'environnement d'investigation (outil Web : accès désactivé à ce document ; test local : résolution DNS indisponible). **Ni HTTP 200, ni Content-Type, ni mode de connexion anonyme/SSO n'ont été confirmés.**
+
+Cette piste est **distincte** de l'API REST v1 à clé HTTP Basic ci-dessus et de Gallica OPDS 1 / BnF Catalogue SRU. Si le serveur retourne un vrai flux OPDS 2, les collections navigation, groups, publications, les liens search templated, next et les couvertures constituent une voie de lecture du catalogue à tester **en GET non authentifié autorisé d'abord**, puis avec le mécanisme d'authentification documenté par le flux s'il existe. Une réponse HTML de login, un 401 ou un 403 n'est **pas** un catalogue public. Aucun lien borrow OPDS ne vaut habilitation au POST, acquisition ou ACSM.
+
+Le module cifereca_bnf_pret_opds2.py fournit **uniquement le normaliseur hors réseau** : origines exactes de navigation https://pret.bnf.fr/v1/, paramètres de recherche connus, bornes de collections, groupes, pages, notices/titres/auteurs/couvertures, erreurs typées et signal d'authentification ; il exclut les URL de prêt, liens signés et toute conversion en droit personnel (owned=false, borrowable=false). Aucun manifeste n'active encore ce provider. Tests : pytest -q tests/test_bnf_pret_opds2_2054.py dans la CI existante.
+
+**Qualification live encore nécessaire :** collecter pour l'URL fournie statut/Content-Type/Location, réponse JSON expurgée (seulement clés et liens sans tokens), différence sans session vs session lecteur consentie, document d'authentification OPDS éventuel, et réponse d'une recherche GET. Ne jamais collecter de cookie, nom de compte, token, lien ACSM signé. Le périmètre lecture seule ne doit être promu dans #2055 qu'après preuve du parcours et des droits.
+
+Sources OPDS : https://specs.opds.io/opds-2.0 ; https://registry.opds.io/rel.html ; https://drafts.opds.io/best-practices/borrowing.html .
+
 ## Prototype et tests
 
 - Contrats sur pages 0/1/N, métadonnées auteur/éditeur/média/ISBN, disponibilité explicite ou inconnue, extrémités numériques et pagination incohérente ; pas de requête réseau.
