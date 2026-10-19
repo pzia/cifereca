@@ -126,7 +126,7 @@ def verify_plugin_scroll(window, later, done, *, width: int):
         assert len(changed) == 2
         # Real package expansion and family hierarchy must survive both writes.
         assert len(page._plugin_widgets) == 36
-        assert "fixture.plugin.16" in page._family_expansion
+        assert page._family_navigation_open is True
         test_window.destroy()
         done()
 
