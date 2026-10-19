@@ -235,7 +235,7 @@ def _validated_public_query(query):
 
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.18','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.19','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
         self.acquisition_backend=str(self.options.get('acquisition_backend') or 'opds').strip().lower()
         if self.acquisition_backend not in {'opds','html'}: raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_backend')
         self.opds_feed_url=str(self.options.get('opds_feed_url') or OPDS_FEED)
@@ -455,9 +455,8 @@ def _safe_opds_link(feed_url, href, kind):
         return None
 
 
-def _xml_root(response):
-    content=response.content
-    if not isinstance(content,bytes) or len(content)>OPDS_MAX_FEED_BYTES:
+def _xml_root(content):
+    if type(content) is not bytes or len(content)>OPDS_MAX_FEED_BYTES:
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
     # Reject DTDs and internal entities before stdlib XML parsing.
     if b'<!doctype' in content.lower() or b'<!entity' in content.lower():
@@ -472,20 +471,35 @@ def _opds_fetch(session,url):
     checked=_safe_opds_link(session.opds_feed_url,url,'feed')
     if checked != url:
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
-    # HTTP redirects are never allowed to escape the public feed origin.
+    # A GET eagerly buffers the ENTIRE response before _xml_root gets to
+    # enforce the 2 MiB limit. Stream the decoded HTTP body under that bound,
+    # including gzip decompression, with no retries or read of a redirect body.
+    # HTTP redirects remain strictly same-origin public feed routes.
     try:
         for _ in range(4):
-            response=session.client.get(checked,follow_redirects=False,
-                                        headers={'Accept':'application/atom+xml, application/opensearchdescription+xml'})
-            # httpx.raise_for_status() treats 3xx as failures too: inspect the
-            # redirect first, then validate its destination before the next GET.
-            if response.status_code not in {301,302,303,307,308}:
+            with session.client.stream(
+                'GET',checked,follow_redirects=False,
+                headers={'Accept':'application/atom+xml, application/opensearchdescription+xml'}
+            ) as response:
+                if response.status_code in {301,302,303,307,308}:
+                    target=_safe_opds_link(
+                        session.opds_feed_url,response.headers.get('location',''),'feed'
+                    )
+                    if not target:
+                        raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
+                    checked=target
+                    continue
                 response.raise_for_status()
-                return _xml_root(response),checked
-            target=_safe_opds_link(session.opds_feed_url,response.headers.get('location',''),'feed')
-            if not target:
-                raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
-            checked=target
+                size=0
+                chunks=[]
+                # Content-Length is advisory, may be compressed or absent.
+                # The actual decoded bytes are ALWAYS counted, not the header.
+                for chunk in response.iter_bytes():
+                    size+=len(chunk)
+                    if size>OPDS_MAX_FEED_BYTES:
+                        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+                    chunks.append(chunk)
+                return _xml_root(b''.join(chunks)),checked
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
     except httpx.HTTPError as e:
         raise _public_search_error(e) from e
