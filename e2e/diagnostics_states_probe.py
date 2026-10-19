@@ -776,13 +776,16 @@ def main():
         assert "event-ux-001" not in ai_prompt_text()
         ai_journals_queries_before[0] = len(broker[0].event_queries)
         broker[0].refresh_gate = Event()
+        # Reading the IA button changes tabs via reveal_diagnostics_section.
+        # Verify consent BEFORE focusing the Journaux refresh target, never
+        # between the physical focus check and the XTEST Space key.
+        assert ai_button("Autoriser et analyser").get_sensitive()
         refresh = button_tooltip("Actualiser les journaux sans synchronisation")
         assert refresh.grab_focus() is not False
         later(lambda: d14_journals_refresh_xtest(refresh), 210)
 
     def d14_journals_refresh_xtest(refresh):
         assert refresh.has_focus(), "D14: bouton Journaux sans focus"
-        assert ai_button("Autoriser et analyser").get_sensitive()
         device[0].key("space", True)
         device[0].key("space", False)
         until(
