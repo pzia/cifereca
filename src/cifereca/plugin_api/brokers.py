@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 from .models import (
     AccountRef, ActionStatistics, AdeptProfileRef, ArtifactFormat, ArtifactInputLease, ArtifactOutputLease, ArtifactRef, ArtifactRoutePlan,
-    ArtifactRouteRequest, ArtifactRouteTarget, ArtifactTransferResult, ArtifactVariant, CacheNamespaceInfo, CachePurgeResult, CatalogSearchBatch, CatalogSearchSummary, LibraryMutationPlan,
+    ArtifactRouteRequest, ArtifactRouteTarget, ArtifactTransferResult, ArtifactVariant, CacheNamespaceInfo, CachePurgeResult, CatalogSearchBatch, CatalogSearchSummary, CatalogueSourceCapability, LibraryMutationPlan,
     HealthCheckResult, LibraryMutationRequest, LibraryMutationResult, LogicalBookArtifacts, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncSourceRef,
     TaskControl, TaskHandle, TransformRequest, TransformResult,
 )
@@ -15,6 +15,18 @@ class CatalogBroker(Protocol):
     def holdings(self, item: Any, **options: Any) -> Any: ...
     def searchable_providers(self) -> list[tuple[str, str]]: ...
     def catalog_entries(self, **options: Any) -> list[Mapping[str, Any]]: ...
+
+@runtime_checkable
+class CatalogueSourceInventoryBroker(Protocol):
+    """Optional additive read-only facet on the existing catalog broker.
+
+    This is NOT a catalogue refresh or installation capability. Clients must
+    feature-detect; historical CatalogBroker remains source-compatible.
+    """
+    def catalogue_source_capabilities(
+        self, identity_id: str | None = None,
+    ) -> tuple[CatalogueSourceCapability, ...]: ...
+
 
 @runtime_checkable
 class AcquisitionBroker(Protocol):
@@ -167,5 +179,5 @@ class ArtifactRoutingBroker(Protocol):
     def plan(self, request: ArtifactRouteRequest) -> ArtifactRoutePlan: ...
     def transfer(self, plan: ArtifactRoutePlan, control: TaskControl | None = None) -> ArtifactTransferResult: ...
 
-__all__ = ["CatalogBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
+__all__ = ["CatalogBroker", "CatalogueSourceInventoryBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
     "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker"]

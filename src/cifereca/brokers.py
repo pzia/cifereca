@@ -72,6 +72,9 @@ class CatalogBrokerImpl:
     def holdings(self, item: Any, **options: Any): return self.service.holdings(item, **options)
     def searchable_providers(self): return self.service.searchable_providers()
     def catalog_entries(self, **options: Any): return self.service.catalog_entries(**options)
+    def catalogue_source_capabilities(self, identity_id: str | None = None):
+        """Optional additive Core inventory; legacy CatalogBroker stays unchanged."""
+        return self.service.catalogue_source_capabilities(identity_id=identity_id)
 
 
 @dataclass(slots=True)

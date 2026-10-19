@@ -1140,3 +1140,22 @@ __all__ = [
     "PluginLifecycle", "PluginContext",
 ]
 
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogueSourceCapability:
+    """#2385: read-only catalog vs personal-inventory projection, contract v1.
+
+    A search-enabled provider is not necessarily a synchronizable catalogue.
+    This type contains only closed technical facts, never labels, accounts,
+    credentials, query URLs, entitlements or user-owned material.
+    """
+    provider_id: str
+    identity_scope: str  # public | authenticated
+    catalog_search_supported: bool
+    catalog_search_available: bool
+    catalog_refresh: str  # unsupported until a separate verified contract exists
+    personal_inventory_supported: bool
+    personal_inventory_available: bool
+    acquisition: str = "separate_explicit"
+    schema_version: int = 1
