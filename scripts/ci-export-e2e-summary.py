@@ -207,6 +207,29 @@ def safe_summary(source: Path) -> dict:
                     or not 0 <= counters["GtkRevealer"] <= 100000):
                 raise ValueError("invalid GTK geometry counters")
             row["gtk_layout_critical"] = counters
+        phases = item.get("gtk_layout_phases")
+        if phases is not None:
+            allowed_phases = {
+                "pre_phase", "shell_ready", "sync_narrow", "numilog_consent",
+                "numilog_dialog", "maintenance_begin", "maintenance_preview",
+                "maintenance_execute", "maintenance_finish",
+            }
+            approved_scenarios = {
+                "mainwindow-baseline-1366", "mainwindow-baseline-1600",
+                "maintenance-tools-1366", "maintenance-tools-1600",
+            }
+            if (scenario not in approved_scenarios or type(phases) is not dict
+                    or len(phases) > len(allowed_phases)
+                    or not set(phases).issubset(allowed_phases)):
+                raise ValueError("invalid GTK layout phases")
+            for name, numbers in phases.items():
+                if (type(numbers) is not dict
+                        or set(numbers) != {"GtkStack", "GtkRevealer"}
+                        or any(type(numbers[key]) is not int
+                               or not 0 <= numbers[key] <= 100000
+                               for key in ("GtkStack", "GtkRevealer"))):
+                    raise ValueError("invalid GTK phase counters")
+            row["gtk_layout_phases"] = phases
         # Deliberately discard every other field, including raw assertion
         # messages, personal paths, URLs, JSON/JSONL, logs, pixels and images.
         if code != 0:
