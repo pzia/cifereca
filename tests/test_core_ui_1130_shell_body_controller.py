@@ -61,7 +61,7 @@ GTK = NS(
     Orientation=NS(VERTICAL="vertical", HORIZONTAL="horizontal"),
     SelectionMode=NS(SINGLE="single"),
     StackTransitionType=NS(CROSSFADE="crossfade"),
-    RevealerTransitionType=NS(SLIDE_UP="slide-up"),
+    RevealerTransitionType=NS(SLIDE_UP="slide-up", NONE="none"),
 )
 
 
@@ -219,3 +219,9 @@ def test_shell_builder_does_not_activate_plugins_or_poll_service():
     assert not hasattr(window, "plugin_manager")
     build_main_shell(window, Gtk=GTK, add_css=css, version="dev")
     assert events == ["header", "pages", ("navigate", "dashboard")]
+
+
+def test_2027_activity_revealer_isolation_disables_only_shell_slide_animation():
+    window, _, _, _, _ = _render()
+    assert window.busy_revealer.properties["transition_type"] == "none"
+    assert window.view_stack.properties["transition_type"] == "crossfade"
