@@ -45,10 +45,11 @@ def _purge_tree(root: Path) -> tuple[int, int, tuple[str, ...]]:
                     child.unlink(missing_ok=True)
                 elif child.is_dir():
                     shutil.rmtree(child)
-            except OSError as exc:
-                warnings.append(f"{child.name}: {exc}")
-    except OSError as exc:
-        warnings.append(str(exc))
+            except OSError:
+                # Never publish private filenames or raw filesystem errors.
+                warnings.append("cache_entry_delete_failed")
+    except OSError:
+        warnings.append("cache_enumeration_failed")
     after_entries, after_size = _tree_stats(root)
     return max(0, entries - after_entries), max(0, size - after_size), tuple(warnings)
 
@@ -223,7 +224,7 @@ class ScopedCacheBroker:
         warnings: list[str] = []
         for ns in requested:
             if not self._allowed(ns):
-                warnings.append(f"namespace interdit: {ns}")
+                warnings.append("cache_namespace_forbidden")
                 continue
             if ns.startswith("db:"):
                 count, size = self.service.storage.cache_delete_namespace_counted(ns[3:], expired_only=expired_only)
@@ -231,10 +232,10 @@ class ScopedCacheBroker:
                 continue
             if ns == "core:epub-covers":
                 if not self.allow_global:
-                    warnings.append(f"namespace interdit: {ns}")
+                    warnings.append("cache_namespace_forbidden")
                     continue
                 if expired_only:
-                    warnings.append("core:epub-covers: pas de notion d'expiration")
+                    warnings.append("cache_expiration_unsupported")
                     continue
                 count, size, extra = _purge_tree(cache_dir() / "epub-covers-v1")
                 removed += count; freed += size; warnings.extend(extra); done.append(ns)
@@ -242,12 +243,12 @@ class ScopedCacheBroker:
             if ns.startswith("plugin:"):
                 owner = ns.split(":", 1)[1]
                 if expired_only:
-                    warnings.append(f"{ns}: pas de notion d'expiration")
+                    warnings.append("cache_expiration_unsupported")
                     continue
                 count, size, extra = _purge_tree(cache_dir() / "plugins" / owner)
                 removed += count; freed += size; warnings.extend(extra); done.append(ns)
                 continue
-            warnings.append(f"namespace inconnu: {ns}")
+            warnings.append("cache_namespace_unknown")
         return CachePurgeResult(not warnings, removed, freed, tuple(done), tuple(warnings))
 
 
