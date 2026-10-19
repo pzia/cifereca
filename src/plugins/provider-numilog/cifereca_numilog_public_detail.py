@@ -30,6 +30,14 @@ def _valid_text(value, limit):
             and not any(unicodedata.category(c) in {"Cc", "Cf", "Cs"} for c in value))
 
 
+# HTML void elements cannot establish hidden ancestry for a later script.
+_VOID_ELEMENTS = frozenset({
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+})
+_INERT_ANCESTORS = frozenset({"template", "noscript", "iframe", "svg"})
+
+
 class _Scripts(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -37,16 +45,39 @@ class _Scripts(HTMLParser):
         self.active = False
         self.parts = []
         self.parts_bytes = 0
-        self.non_evidence_depth = 0
+        self._elements = []
+        self._hidden_depth = 0
+
+    @staticmethod
+    def _invisible(tag, attrs):
+        if tag in _INERT_ANCESTORS:
+            return True
+        # An HTML attribute list can contain duplicates. Any explicit
+        # non-evidence marker wins rather than allowing a later attribute
+        # to silently undo the first one through dict conversion.
+        if any(key == "hidden" for key, _ in attrs):
+            return True
+        if any(key == "aria-hidden" and isinstance(value, str)
+               and value.strip().casefold() == "true" for key, value in attrs):
+            return True
+        styles = [str(value or "").casefold() for key, value in attrs
+                  if key == "style"]
+        for style in styles:
+            compact = "".join(style.split())
+            if "display:none" in compact or "visibility:hidden" in compact:
+                return True
+        return False
 
     def handle_starttag(self, tag, attrs):
-        # Script nodes under inert HTML/template fallbacks are not published
-        # Product/Book evidence. In particular, never choose a hidden edition
-        # when a different visible JSON-LD Book is available.
-        if tag in {"template", "noscript", "iframe", "svg"}:
-            self.non_evidence_depth += 1
-            return
-        if tag != "script" or self.non_evidence_depth:
+        invisible = self._invisible(tag, attrs)
+        if tag not in _VOID_ELEMENTS:
+            self._elements.append((tag, invisible))
+            if invisible:
+                self._hidden_depth += 1
+        # Only scripts in an active, unhidden HTML ancestor chain are
+        # evidence for the visible public product. Ordinary head JSON-LD
+        # remains eligible, unlike inert template/fallback descendants.
+        if tag != "script" or self._hidden_depth:
             return
         if sum(key == "type" for key, _value in attrs) > 1:
             raise PublicDetailError("ambiguous_jsonld_type")
@@ -74,8 +105,18 @@ class _Scripts(HTMLParser):
             self.scripts.append("".join(self.parts))
             self.parts = []
             self.active = False
-        elif tag in {"template", "noscript", "iframe", "svg"}:
-            self.non_evidence_depth = max(0, self.non_evidence_depth - 1)
+        # HTMLParser does not supply ancestor state. Unwind up to the
+        # closest matching open tag (including intervening malformed
+        # descendants), without letting an unrelated close unblock a
+        # hidden product/script prematurely.
+        for index in range(len(self._elements) - 1, -1, -1):
+            if self._elements[index][0] == tag:
+                self._hidden_depth -= sum(
+                    1 for _name, invisible in self._elements[index:]
+                    if invisible
+                )
+                del self._elements[index:]
+                break
 
 
 def _nodes(obj, depth=0):
