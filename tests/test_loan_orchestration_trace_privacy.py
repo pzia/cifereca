@@ -67,7 +67,10 @@ def test_real_orchestration_keeps_outcomes_files_and_requests_but_not_private_tr
         expected = ('retryable_error' if scenario == 'provider_failure' else
                     'complete' if scenario == 'success' else 'attention_required')
         assert result['status'] == expected and result['loan_id'] == loan.id, result
-        if scenario == 'profile_missing': assert result['code'] == PRIVATE+'-profile-code'
+        if scenario == 'profile_missing':
+            assert result['code'] == 'adept_profile_required'
+            assert result['error'] == 'Profil ADEPT indisponible'
+            assert PRIVATE not in result['code'] + result['error']
         if scenario == 'borrower_changed': assert result['code'] == PRIVATE+'-borrower-code'
         if scenario == 'adept_failure': assert result['code'] == PRIVATE+'-runtime-code'
         if scenario == 'unready': assert result['code'] == 'adept_profile_acsm_not_ready'
