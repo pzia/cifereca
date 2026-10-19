@@ -407,7 +407,7 @@ class MainWindow(Adw.ApplicationWindow):
     # ---------- shell / navigation ----------
     def _build_main_shell(self) -> Gtk.Widget:
         return shell_body_controller.build_main_shell(
-            self, Gtk=Gtk, add_css=add_css, version=__version__,
+            self, Gtk=Gtk, Pango=Pango, add_css=add_css, version=__version__,
         )
 
     _UiHost = _UiHost
