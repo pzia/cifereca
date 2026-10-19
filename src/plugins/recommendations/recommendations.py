@@ -55,6 +55,11 @@ def _public_candidate_text(value: Any, *, limit: int = 180) -> str:
     return cleaned
 
 
+def _public_affinity_score(value: Any) -> int | None:
+    """A displayed affinity must be the engine's bounded integer, not repr()."""
+    return value if type(value) is int and 0 <= value <= 100 else None
+
+
 def _public_ranked_values(raw: Any, *, limit: int = 32) -> tuple[str, ...]:
     """Bound public rank explanations and provider provenance.
 
@@ -970,7 +975,11 @@ class UxRecommendationsView:
             self._render()
 
     def _matches(self, ranked: RankedCandidate) -> bool:
-        if ranked.score < int(self._score.get_value()):
+        # A corrupted score from a stale cache is not a legitimate ranking.
+        # It must not execute an arbitrary comparison or become a selected
+        # catalogue record with an invented affinity.
+        score = _public_affinity_score(ranked.score)
+        if score is None or score < int(self._score.get_value()):
             return False
         provider = self.selected_provider_id()
         if provider and provider not in ranked.sources:
@@ -1459,7 +1468,9 @@ class UxRecommendationsView:
                     title=_candidate_public_field(item, "title", limit=2048) or "Sans titre",
                     subtitle=author,
                     meta=" · ".join(meta_parts),
-                    badge=f"Affinité {ranked.score}/100",
+                    badge=(f"Affinité {score}/100"
+                           if (score := _public_affinity_score(ranked.score)) is not None
+                           else ""),
                     thumbnail_url=_public_cover_url(item),
                 )
             )
@@ -1522,8 +1533,13 @@ class UxRecommendationsView:
         ))
         description = _public_candidate_description(item)
 
+        verified_score = _public_affinity_score(ranked.score)
         recommendation_fields = [
-            DetailField("affinity", "Affinité", f"{ranked.score}/100"),
+            DetailField(
+                "affinity", "Affinité",
+                f"{verified_score}/100" if verified_score is not None
+                else "Non attestée",
+            ),
             DetailField(
                 "ranking",
                 "Classement",
@@ -1678,7 +1694,10 @@ class UxRecommendationsView:
             )
 
         thumbnail = _public_cover_url(item)
-        badges = [f"Affinité {ranked.score}/100", *source_labels]
+        badges = (
+            ([f"Affinité {verified_score}/100"] if verified_score is not None else [])
+            + list(source_labels)
+        )
         if self._provisional_active:
             badges.append("Provisoire")
 
