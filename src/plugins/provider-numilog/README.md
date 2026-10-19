@@ -1,3 +1,23 @@
+## 0.1.70 — filtre local de langue publique attestée (#1886 P0)
+
+`NumilogPublicSession.refine_loaded_page(page, language="fr")` accepte
+désormais une **correspondance positive** de langue à partir d'une fiche
+produit explicitement enrichie, à condition que son URL, son titre, son
+`Book` JSON-LD et la provenance du champ soient vérifiés. Si la page
+publie aussi le libellé visible « Langue », cette seconde preuve peut
+être utilisée après validation stricte du DOM et des identifiants.
+
+La carte de recherche `brSimple` **ne publie pas la langue** : sans
+enrichissement explicite (ou lorsque la langue ne correspond pas),
+le résultat est `inconnu`, jamais « absent du catalogue ». Les
+totaux publics ne sont pas remplacés par des totaux filtrés, aucun
+GET n'est lancé par ce filtre, aucune page suivante n'est
+parcourue et aucun champ serveur `field=language` n'est annoncé.
+Le titre, ISBN papier/EPUB, offre et droit `owned` restent distincts.
+
+Tests hors réseau : `test_numilog_public_attested_language_p0.py`
+et régression du filtre local historique.
+
 # Numilog — provenance des URL de livres (0.1.16)
 
 ## 0.1.55 — navigation facettes sans perte silencieuse (#1886)
