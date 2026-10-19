@@ -575,7 +575,7 @@ def _opds_entry_is_book(session, entry, base):
                      'application/x-pdf',
                      'application/x-mobipocket-ebook'})
             or (rel == 'alternate'
-                and mime.startswith('application/epub+zip'))
+                and mime.split(';', 1)[0].strip() == 'application/epub+zip')
         )
         for rel, mime, raw, _ in _opds_links(entry, base)
     )
@@ -636,7 +636,9 @@ def _opds_items(session,feed,feed_url):
         if not entry_id:continue
         epub=None; alternate=None; thumbnail=None; formats=set()
         for rel,mime,raw,_ in _opds_links(entry,feed_url):
-            checked=_safe_opds_link(session.opds_feed_url,raw,'download') if mime.startswith('application/epub+zip') else None
+            checked=(_safe_opds_link(session.opds_feed_url,raw,'download')
+                     if mime.split(';',1)[0].strip()=='application/epub+zip'
+                     else None)
             if checked and ('/acquisition' in rel or rel=='alternate'):
                 epub=epub or checked; formats.add('EPUB')
             if rel=='alternate' and ('text/html' in mime or 'atom+xml' in mime):
