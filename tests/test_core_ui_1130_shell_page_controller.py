@@ -57,7 +57,8 @@ def _page(route, *, group="usage", priority=0, factory=None):
     return UiPageContribution(
         route=route, title=route.title(), group=group, priority=priority,
         order={"dashboard": 0, "search": 20, "library": 30, "settings": 40, "plugins": 50}.get(route, 100),
-        icon_name="dialog-information-symbolic",
+        icon_name=("application-x-addon-symbolic" if route == "plugins"
+                   else "dialog-information-symbolic"),
         factory=factory or (lambda _host: Widget()),
     )
 
@@ -344,3 +345,55 @@ def test_old_group_toggle_is_inert_after_rebuild_or_close(monkeypatch):
     host._closed = True
     current_callback(current_toggle)
     assert toggled == [("usage", True)]
+
+
+def test_active_core_plugin_manager_survives_full_shell_rebuild(monkeypatch):
+    host, removed, names, navigation, events = _host(
+        monkeypatch, contributions=[_page("search")], visible="plugins",
+    )
+    current = Widget()
+    current._cifereca_builtin_plugin_manager_page = True
+    current.manager = host.plugin_manager
+    current.window = host
+    host._plugin_page_widgets["plugins"] = current
+    _rebuild(host)
+    assert current in removed  # detached while the route list is rebuilt
+    assert host._plugin_page_widgets["plugins"] is current  # reattached, not recreated
+    assert navigation == ["plugins"]
+    assert "plugins" in names
+
+
+def test_old_plugin_page_is_never_reused_when_inactive_or_manager_changes(monkeypatch):
+    for active, same_manager in ((False, True), (True, False)):
+        host, removed, names, navigation, _ = _host(
+            monkeypatch, contributions=[_page("search")],
+            visible="plugins" if active else "search",
+        )
+        current = Widget()
+        current._cifereca_builtin_plugin_manager_page = True
+        current.manager = host.plugin_manager if same_manager else object()
+        current.window = host
+        host._plugin_page_widgets["plugins"] = current
+        _rebuild(host)
+        assert current in removed
+        assert host._plugin_page_widgets["plugins"] is not current
+
+
+def test_custom_plugin_route_cannot_capture_built_in_plugins_widget(monkeypatch):
+    created = []
+    custom = Widget()
+    host, removed, names, navigation, _ = _host(
+        monkeypatch, contributions=[
+            _page("plugins", priority=10, group="configuration",
+                  factory=lambda _host: (created.append(True) or custom)),
+        ], visible="plugins",
+    )
+    current = Widget()
+    current._cifereca_builtin_plugin_manager_page = True
+    current.manager = host.plugin_manager
+    current.window = host
+    host._plugin_page_widgets["plugins"] = current
+    _rebuild(host)
+    assert created == [True]
+    assert host._plugin_page_widgets["plugins"] is custom
+    assert current in removed
