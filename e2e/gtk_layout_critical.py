@@ -58,29 +58,30 @@ _PHASE_LINE = re.compile(
 )
 
 
-def gtk_layout_phase_counts(stderr: str) -> dict[str, dict[str, int]]:
-    """Count native GTK criticals between trusted fixture phase markers.
+def gtk_layout_phase_counts(*streams: str) -> dict[str, dict[str, int]]:
+    """Count GTK criticals in each capture stream between closed markers.
 
-    This is ordering evidence within one process stderr stream, not an
-    assertion that a Python callback caused a native layout warning. The
-    runner still records the global totals and stream_truncated separately.
+    Native GTK output can be routed to stdout or stderr by the test/runtime.
+    Both streams are independent, so each must carry the same safe phase
+    markers; raw messages and addresses are never stored in the result.
     """
-    if not isinstance(stderr, str):
-        return {}
-    phase = "pre_phase"
     grouped: dict[str, dict[str, int]] = {}
-    for line in stderr[:_MAX_STREAM].splitlines():
-        marker = _PHASE_LINE.fullmatch(line)
-        if marker:
-            phase = marker.group(1)
+    for stream in streams:
+        if not isinstance(stream, str):
             continue
-        if not _CRITICAL.search(line):
-            continue
-        stack = bool(_STACK.search(line))
-        revealer = bool(_REVEALER.search(line))
-        if not stack and not revealer:
-            continue
-        bucket = grouped.setdefault(phase, {"GtkStack": 0, "GtkRevealer": 0})
-        bucket["GtkStack"] = min(100000, bucket["GtkStack"] + stack)
-        bucket["GtkRevealer"] = min(100000, bucket["GtkRevealer"] + revealer)
+        phase = "pre_phase"
+        for line in stream[:_MAX_STREAM].splitlines():
+            marker = _PHASE_LINE.fullmatch(line)
+            if marker:
+                phase = marker.group(1)
+                continue
+            if not _CRITICAL.search(line):
+                continue
+            stack = bool(_STACK.search(line))
+            revealer = bool(_REVEALER.search(line))
+            if not stack and not revealer:
+                continue
+            bucket = grouped.setdefault(phase, {"GtkStack": 0, "GtkRevealer": 0})
+            bucket["GtkStack"] = min(100000, bucket["GtkStack"] + stack)
+            bucket["GtkRevealer"] = min(100000, bucket["GtkRevealer"] + revealer)
     return grouped
