@@ -5,7 +5,7 @@ Synthetic root feeds over MockTransport; no live requests or downloads.
 import httpx
 import pytest
 
-from cifereca_ebooksgratuits import EbooksSession
+from cifereca_ebooksgratuits import EbooksSession, _safe_opds_link
 
 HOST = "https://opds2.ebooksgratuits.org"
 ATOM = "http://www.w3.org/2005/Atom"
@@ -103,3 +103,23 @@ def test_unverified_root_alternate_cannot_hide_valid_browse_branch(href):
         assert visited == ["/index.php/feed", "/index.php/feed/all"]
     finally:
         obj.close()
+
+
+@pytest.mark.parametrize("href", [
+    "/index.php/account/private.epub",
+    "/index.php/account/delete.epub",
+    "/index.php/fetch-profile/42.epub",
+    "/index.php/other/fetch/42.epub",
+    "/admin/fetch.php",
+])
+def test_book_offer_must_use_an_attested_fetch_route(href):
+    assert _safe_opds_link(HOST + "/index.php/feed", href, "download") is None
+
+
+@pytest.mark.parametrize("href", [
+    "/index.php/fetch/42.epub",
+    "/index.php/fetch/42",
+    "/fetch.php?id=42",
+])
+def test_documented_fetch_routes_remain_available(href):
+    assert _safe_opds_link(HOST + "/index.php/feed", href, "download") == HOST + href
