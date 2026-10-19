@@ -65,7 +65,8 @@ def test_batch_callbacks_do_not_resurrect_stale_generation_or_identity():
     assert callback(*args) is False
     assert host._online_source_statuses == {}
     host.service.current_identity = NS(identity_id="alice")
-
+    # Explicit local search starts the next generation, clearing pending key.
+    host.run_search(False)
     host.run_search(True)
     new_request = host.requests[-1]
     new_request.work()
