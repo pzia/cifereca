@@ -35,10 +35,10 @@ def test_hidden_detail_container_never_publishes_publisher_or_language(marker):
 
 
 def test_hidden_uppercase_canonical_form_cannot_attest_any_fields():
-    assert '<form id="aspnetForm"' in HTML
+    assert '<form name="aspnetForm"' in HTML
     modified = HTML.replace(
-        '<form id="aspnetForm"',
-        '<form aria-hidden="TRUE" id="aspnetForm"', 1,
+        '<form name="aspnetForm"',
+        '<form aria-hidden="TRUE" name="aspnetForm"', 1,
     )
     assert extract_public_metadata(modified, URL, TITLE)["fields"] == {}
 
