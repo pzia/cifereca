@@ -13,6 +13,8 @@ import sys
 import tempfile
 import time
 
+from gtk_layout_critical import gtk_layout_critical_counts, gtk_layout_critical_failure
+
 ROOT = Path(__file__).resolve().parents[1]
 CAPTURE = ROOT / "environnements/openai-chat-debian/capture_app.py"
 SECRET_KEY = re.compile(r"(token|password|secret|authorization|cookie)", re.I)
@@ -429,6 +431,9 @@ def main() -> int:
                     output += "\n--- X11 display initialization retry (once) ---\n" + (second.stdout or "")
                     errors += "\n--- X11 display initialization retry (once) ---\n" + (second.stderr or "")
                     completed = second
+            # Count only fixed GTK widget classes in memory: no raw warning,
+            # widget pointer, path or text is added to CI's structured output.
+            gtk_critical = gtk_layout_critical_counts(output, errors)
             _write_redacted_log(stdout_path, output, env)
             _write_redacted_log(stderr_path, errors, env)
             report = png.with_suffix(".json")
@@ -442,6 +447,13 @@ def main() -> int:
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
+            # Even when the scenario passes its normal assertions, a GTK
+            # Stack/Revealer allocation critical is a P0 geometry failure.
+            # Never silence/ignore it and never downgrade other failures.
+            layout_problem = gtk_layout_critical_failure(gtk_critical)
+            if returncode == 0 and layout_problem:
+                returncode = 1
+                assertion_error = layout_problem
             if returncode == 0 and minimum_change is not None:
                 if visual_change_ratio is None:
                     assertion_error = "Le rapport de capture ne contient pas visual_change_ratio."
@@ -461,6 +473,7 @@ def main() -> int:
                 report=report.exists(),
                 visual_change_ratio=visual_change_ratio,
                 assertion_error=assertion_error,
+                gtk_layout_critical=gtk_critical,
             )
             results.append({
                 "scenario": name,
@@ -469,6 +482,7 @@ def main() -> int:
                 "returncode": returncode,
                 "visual_change_ratio": visual_change_ratio,
                 "assertion_error": assertion_error,
+                "gtk_layout_critical": gtk_critical,
                 "report": str(report),
                 "screenshot": str(png) if png.exists() else None,
                 "stdout": str(stdout_path),
