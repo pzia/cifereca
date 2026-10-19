@@ -241,6 +241,10 @@ def safe_summary(source: Path) -> dict:
                 "window_start", "window_shown", "sync_desktop",
                 "sync_font_desktop", "sync_narrow", "sync_font_narrow",
                 "sync_restored", "numilog_consent", "done",
+                "maint_window_start", "maint_window_shown", "maint_route",
+                "maint_busy_guard", "maint_scan", "maint_first_dialog",
+                "maint_cancel_stale", "maint_execute", "maint_refresh",
+                "maint_p1_naming", "maint_p1_duplicates", "maint_done",
             })
             if (type(phases) is not dict or len(phases) > len(allowed_phases)
                     or not set(phases).issubset(allowed_phases)):
