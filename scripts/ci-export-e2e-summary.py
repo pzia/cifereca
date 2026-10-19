@@ -245,6 +245,8 @@ def safe_summary(source: Path) -> dict:
                 "maint_busy_guard", "maint_scan", "maint_first_dialog",
                 "maint_cancel_stale", "maint_execute", "maint_refresh",
                 "maint_p1_naming", "maint_p1_duplicates", "maint_done",
+                "maint_dialog_visible", "maint_dialog_response",
+                "maint_p1_dialog_visible", "maint_p1_dialog_response",
             })
             if (type(phases) is not dict or len(phases) > len(allowed_phases)
                     or not set(phases).issubset(allowed_phases)):
