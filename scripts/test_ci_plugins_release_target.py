@@ -76,6 +76,24 @@ class PluginsDraftLookupTests(unittest.TestCase):
 
 
 class PluginsOnlyWorkflowRecoveryContracts(unittest.TestCase):
+    def test_official_draft_shell_parses_before_another_authorized_release(self):
+        """Catch a broken case/if/heredoc before a signed release workflow runs."""
+        import subprocess
+        import textwrap
+        from pathlib import Path
+
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/plugins-only-release.yml").read_text(encoding="utf-8")
+        step = workflow.split(
+            "      - name: Create or update draft GitHub Release\\n".replace("\\n", "\n"), 1,
+        )[1].split("\n      # Download the GitHub-hosted draft assets", 1)[0]
+        body = step.split("\n        run: |\n", 1)[1]
+        script = textwrap.dedent(body)
+        check = subprocess.run(
+            ["bash", "-n"], input=script, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(check.returncode, 0, "Invalid official draft release Bash script")
+
     def test_release_workflow_only_rescues_the_attested_empty_2095_draft(self):
         from pathlib import Path
         workflow = (Path(__file__).resolve().parents[1] /
