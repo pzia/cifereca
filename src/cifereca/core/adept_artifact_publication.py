@@ -30,7 +30,9 @@ def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
 
     actual_before_publish = inspect_artifact(produced_path)
     if not actual_before_publish.valid or not actual_before_publish.media_format:
-        raise ProviderConfigurationError(f"Artefact Kobo-Adept invalide: {actual_before_publish.reason or 'format inconnu'}")
+        # The inspection reason can contain untrusted file/runtime details.
+        # Never expose it in the public ADEPT failure or durable ledger.
+        raise ProviderConfigurationError("Artefact Kobo-Adept invalide")
     actual_format = actual_before_publish.media_format
     actual_suffix = ".pdf" if actual_format == "pdf" else ".epub"
     corrected = adept_acsm_plan.plan_produced_format_path(
@@ -46,7 +48,7 @@ def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
     )
     inspection = inspect_artifact(produced_path, actual_format)
     if not inspection.valid:
-        raise ProviderConfigurationError(f"Artefact final invalide: {inspection.reason or 'validation'}")
+        raise ProviderConfigurationError("Artefact final invalide")
     artifact_format = actual_format
     artifact_protected = inspection.protected
     if artifact_protected is True:
