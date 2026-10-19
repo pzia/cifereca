@@ -102,16 +102,18 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          # One GTK installation and DBus session; fail at first real assertion.
+          # Preserve the failing gate, but finish independent GTK scenarios:
+          # a flaky baseline must not erase #2027 Maintenance diagnostics.
           dbus-run-session -- bash -c '
+            failed=0
             for scenario in $E2E_SCENARIOS; do
               echo "::group::GTK/XTEST $scenario"
               if ! /usr/bin/python3 e2e/run.py --scenario "$scenario" --out "e2e-artifacts/$scenario"; then
-                echo "::endgroup::"
-                exit 1
+                failed=1
               fi
               echo "::endgroup::"
             done
+            exit "$failed"
           ' || status=$?
           # Keep each scenario's logs/screenshots and publish a combined summary.
           /usr/bin/python3 - <<'PY'
