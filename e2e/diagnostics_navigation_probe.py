@@ -2257,6 +2257,27 @@ def main() -> int:
         assert 0 <= window_bounds.get_y() and (
             window_bounds.get_y() + window_bounds.get_height() <= w.get_height()
         ), "Kobo audit action is outside the displayed window"
+        # GTK can finish a scroll allocation after compute_bounds reports an
+        # on-screen rectangle. The XTEST event is delivered after this GTK
+        # callback returns; sending it during reflow can hit another widget.
+        # Require a stable hit target on two separate main-loop iterations.
+        point_x = window_bounds.get_x() + window_bounds.get_width() / 2
+        point_y = window_bounds.get_y() + window_bounds.get_height() / 2
+        picked = w.pick(point_x, point_y, Gtk.PickFlags.DEFAULT)
+        while picked is not None and picked is not audit:
+            picked = picked.get_parent()
+        geometry = (
+            round(window_bounds.get_x()), round(window_bounds.get_y()),
+            round(window_bounds.get_width()), round(window_bounds.get_height()),
+            round(scroll.get_vadjustment().get_value()),
+        )
+        if picked is not audit or f.get("audit_stable_geometry") != geometry:
+            attempt = f.get("audit_stable_checks", 0) + 1
+            assert attempt <= 8, "Kobo audit physical hit target did not settle"
+            f["audit_stable_checks"] = attempt
+            f["audit_stable_geometry"] = geometry
+            later(130, loan_sync_audit_click)
+            return
         report["checks"]["P0_kobo_audit_XTEST_target_inside_viewport"] = True
         report["checks"]["P0_kobo_audit_offline_button_no_implicit_scan"] = True
         # A physical XTEST action is the sole trigger; rendering the row does
