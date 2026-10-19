@@ -116,6 +116,20 @@ def _public_origin_status(value: Any, *, default: str) -> str:
     return value if type(value) is str and value in _ADEPT_ORIGIN_STATUSES else default
 
 
+def return_preflight_code(exc: BaseException) -> str:
+    """Project only fixed Core borrower-refusal codes into public receipts."""
+    try:
+        code = getattr(exc, "code", None)
+    except Exception:
+        code = None
+    if type(code) is str and code in {
+        "loan_return_borrower_unproven", "loan_return_borrower_mismatch",
+        "loan_return_source_unavailable",
+    }:
+        return code
+    return "loan_return_borrower_unproven"
+
+
 # LibraryService retains the shared loan-operation lock. Dependencies and the
 # historical public guard helpers are imported/injected by its facade at call
 # time; the mutation/checkpoint/verification body below keeps its original order.
@@ -134,17 +148,7 @@ def return_loan_prefer_adept(
     try:
         account, _session, pnb_key = self._return_loan_identity(loan)
     except AttentionRequired as exc:
-        # Only the three Core return-preflight codes are public evidence.
-        # A plugin may carry a URL in a subclass's arbitrary .code.
-        try:
-            code = getattr(exc, "code", None)
-        except Exception:
-            code = None
-        if type(code) is not str or code not in {
-            "loan_return_borrower_unproven", "loan_return_borrower_mismatch",
-            "loan_return_source_unavailable",
-        }:
-            code = "loan_return_borrower_unproven"
+        code = return_preflight_code(exc)
         return {
             "status": "failed", "scope": "adobe_first_paris",
             "code": code, "retry": "resolve_identity",
