@@ -157,6 +157,7 @@ def fetch_public_detail(product_url: str, *, timeout: float = 15.0):
             or public_book_url(product_url, base_url=PUBLIC_ORIGIN + "/") != product_url
             or not product_url.startswith(PUBLIC_ORIGIN + "/")):
         raise ProviderCapabilityError("Numilog : invalid_public_product_url")
+    timeout = _checked_timeout(timeout)
     try:
         with httpx.Client(
             timeout=timeout, follow_redirects=False, trust_env=False,
