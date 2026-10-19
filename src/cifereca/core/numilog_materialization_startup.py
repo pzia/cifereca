@@ -159,9 +159,13 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             if (type(raw) not in {list, tuple} or len(raw) > 2048
                     or any(type(row) is not SearchResult for row in raw)
                     or any(
-                        row.source_provider != "numilog"
+                        type(row.source_provider) is not str
+                        or row.source_provider != "numilog"
+                        or type(row.source_credential) is not str
                         or row.source_credential != account.credential_id
+                        or type(row.source_collection) is not str
                         or row.source_collection != "library"
+                        or type(row.scenario) is not str
                         or row.scenario != "NUMILOG_LIBRARY"
                         for row in raw
                     )):
