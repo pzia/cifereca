@@ -111,7 +111,8 @@ def test_diagnostics_timeout_wait_line_is_ast_validated_and_never_text():
     module = _module()
     tree = ast.parse((ROOT / "e2e/diagnostics_page_probe.py").read_text())
     line = next(node.lineno for node in ast.walk(tree)
-                if isinstance(node, ast.Lambda))
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "until")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         report = root / "diagnostics-1366" / "diagnostics-1366" / "screen.json"

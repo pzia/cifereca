@@ -352,12 +352,22 @@ def main():
         return reveal_diagnostics_section(expanders[0])
 
     def until(predicate, done, *, seconds=10):
-        # Record only an AST-validated lambda line; never a predicate repr,
-        # provider data, widget text or an exception in public CI evidence.
-        wait_code = getattr(predicate, "__code__", None)
-        if wait_code is not None and wait_code.co_filename == __file__:
-            report["wait_line"] = wait_code.co_firstlineno
-            save()
+        # Always record the exact call site of this wait, including GI-bound
+        # methods such as button.has_focus (not Python lambdas). The CI
+        # exporter validates that numeric line against an AST `until` call.
+        from inspect import currentframe
+        frame = currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            line = (caller.f_lineno if caller is not None
+                    and caller.f_code.co_filename == __file__ else None)
+        finally:
+            del frame
+        if type(line) is int:
+            report["wait_line"] = line
+        else:
+            report.pop("wait_line", None)
+        save()
         deadline = monotonic() + seconds
 
         def check():

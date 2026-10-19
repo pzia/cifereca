@@ -85,12 +85,15 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
             result["checkpoint_line"] = line
             if checkpoint_helper:
                 result["checkpoint_source"] = "activity_feedback"
-        # A Diagnostics wait may time out inside the generic polling closure.
-        # Publish only the numeric source line of a literal reviewed lambda.
+        # A Diagnostics wait can poll a bound GTK method as well as a lambda.
+        # Publish only an AST-reviewed `until(...)` call-site line, never a
+        # predicate name, user data, GTK repr, status text or traceback.
         if probes[scenario] == "diagnostics_page_probe.py":
             wait_line = data.get("wait_line")
             allowed_waits = {n.lineno for n in ast.walk(probe)
-                             if isinstance(n, ast.Lambda)}
+                             if isinstance(n, ast.Call)
+                             and isinstance(n.func, ast.Name)
+                             and n.func.id == "until"}
             if type(wait_line) is int and wait_line in allowed_waits:
                 result["wait_line"] = wait_line
         # A callback checkpoint may be a lambda calling another function.
