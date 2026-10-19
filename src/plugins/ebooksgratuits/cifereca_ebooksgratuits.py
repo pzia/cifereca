@@ -342,6 +342,9 @@ class EbooksSession(ProviderSession):
             'url':item.download_url,
             'headers':{'Accept':'application/epub+zip, application/zip;q=0.8, application/octet-stream;q=0.5, */*;q=0.2','Referer':item.friendly_url or self.base_url},
             'max_bytes':self.maximum,
+            # A same-origin OPDS offer must not turn into an arbitrary
+            # cross-origin request through the generic transport broker.
+            'max_redirects':0 if opds_item else None,
             'allowed_content_types':('application/epub+zip','application/zip','application/octet-stream'),
             'expected_format':'epub',
             'overwrite':True,
