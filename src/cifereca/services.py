@@ -147,8 +147,13 @@ class LibraryService:
                 result = self._identity_directory_engine().run()
             self.diagnostics.add("IDENTITY", "directory migration recovery", "ok", detail=result)
             return result
-        except Exception as exc:
-            raise ProviderConfigurationError("Migration de répertoire à reprendre : " + str(exc)) from exc
+        except Exception:
+            # Directory migration failures can include absolute library paths,
+            # personal profile names and SQLite locations. None of their raw
+            # text or chained exception context belongs in startup feedback.
+            raise ProviderConfigurationError(
+                "Migration de répertoire à reprendre"
+            ) from None
 
     def save_diagnostic_preferences(self, *, enabled: bool, level: str) -> None:
         """Persist the immediate diagnostic controls, independently of drafts."""
