@@ -49,7 +49,7 @@ def test_failure_evidence_ignores_hostile_or_oversized_numeric_values():
         "stdout": private, "artifact_path": private,
     }
     assert process_failure_facts(raw, exc=Failure(), candidate=None, path_type=Path) == {
-        "returncode": 11, "duration_ms": 86_400_001,
+        "returncode": 11, "duration_ms": 86_400_001, "stderr_bytes": -1,
     }
     assert safe_exit_code(Failure()) is None
     assert safe_exit_code(NS(exit_code=IntSubclass(1))) is None
