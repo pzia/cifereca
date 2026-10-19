@@ -1264,6 +1264,30 @@ avancée serveur auteur/EAN et les conditions d'accès restent non
 qualifiées, indépendamment de cette barrière de projection.
 
 
+## 0.1.60 — reprise bornée après HTTP 429 Numilog public (#1886)
+
+La recherche et la fiche commerciale anonymes respectent toujours
+`Retry-After` et le cooldown monotone du cache après HTTP 429, sans
+reconnexion comme échappatoire. La durée fournie par le serveur est
+désormais explicitement **finie, positive et plafonnée à 30 jours**.
+Ce plafond empêche qu'un en-tête `Retry-After` numérique immense
+(`99999...`) ou une date HTTP anormalement lointaine bloque une
+session pour une durée infinie, y compris après reconnexion. Les
+délais courts normaux (120 s, 180 s) restent inchangés. Les valeurs
+invalides gardent le plancher prudent de 60 s.
+
+Le cache reborde indépendamment les durées injectées avec les erreurs
+HTTP (NaN, infinité, entier Python géant) sans `OverflowError` ni
+blocage permanent. Aucune relance automatique, nouvelle requête,
+lecture de compte, cookie ou exception fournisseur brute n'est ajoutée.
+Tests hors ligne avec HTTP 429 simulé sur recherche et fiche publique,
+horloge monotone déterministe et reprise au terme du plafond.
+
+Ce correctif ne qualifie ni le respect des CGU/robots, ni la
+disponibilité réelle des endpoints Numilog ni les filtres serveurs
+auteur/ISBN qui restent ouverts dans #1886.
+
+
 ## 0.1.61 — titre obligatoire pour enrichir une carte commerciale (#1886)
 
 La fiche commerciale anonyme est publiée par un identifiant/URL Numilog

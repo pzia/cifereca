@@ -47,8 +47,8 @@ def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
         if loan.source_provider == "paris" and upstream_errors is None:
             raise ValueError("Paris session lacks inventory-verification capability")
         if upstream_errors and any(
-            str(e.get("upstream") or "") == "DILICOM" for e in upstream_errors
-            if isinstance(e, dict)
+            type(e.get("upstream")) is str and e["upstream"] == "DILICOM"
+            for e in upstream_errors if type(e) is dict
         ):
             raise ValueError("digital-loan inventory was incomplete")
         match = any(
@@ -57,8 +57,10 @@ def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
         )
         verification = "still_present" if match else "provider_absent"
         status = "still_active" if match else "provider_return_confirmed"
-    except Exception as exc:
-        error_type = type(exc).__name__
+    except Exception:
+        # The provider exception class is not a public contract. A plugin can
+        # manufacture arbitrary class names, including private account data.
+        error_type = "provider_inventory_unavailable"
     row = self.storage.loan_return_transition(
         key, operation_id, status=status, verification=verification,
         error_type=error_type,

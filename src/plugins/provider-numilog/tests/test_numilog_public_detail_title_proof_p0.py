@@ -104,13 +104,17 @@ def test_normalized_case_and_whitespace_match_still_keep_commercial_scope():
     assert result.metadata["public_detail"]["format_edition_proven"] is False
 
 
-def test_different_author_and_description_still_surface_conflicts_if_title_matches():
-    row = public_card()
+def test_different_author_surfaces_conflict_while_listing_description_is_preserved():
+    # Keep the parsed product and its parallel evidence coherent. The
+    # searched listing may disagree without forging a JSON-LD proof.
+    row = replace(public_card(), author="Auteur de la carte différent",
+                  description="Autre description de la carte.")
     details = deepcopy(PRODUCT)
-    details["fields"]["authors"] = ["Auteur commercial différent"]
-    details["fields"]["description"] = "Autre texte public attesté."
     result = merge_public_detail(row, details)
     assert result.record_id == row.record_id
     assert result.owned is False
-    assert "title" not in result.metadata["public_detail"]["listing_conflicts"]
+    conflicts = result.metadata["public_detail"]["listing_conflicts"]
+    assert "authors" in conflicts
+    assert "title" not in conflicts
+    assert result.author == row.author and result.description == row.description
     assert result.metadata["public_detail"]["rights_proven"] is False

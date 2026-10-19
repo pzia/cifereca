@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import httpx
 
 from cifereca.plugin_api import ProviderCapabilityError, ProviderError
+from cifereca_numilog_public_cache import MAX_RATE_LIMIT_PAUSE_SECONDS
 from cifereca_numilog_public import (
     SEARCH_PATH, MAX_HTML_BYTES, PublicSearchParseError, parse_public_search,
 )
@@ -35,12 +36,18 @@ def _retry_after_seconds(value, *, now=None):
         return 0.0
     value = value.strip()
     if re.fullmatch(r'[0-9]+', value):
-        return float(value)
+        # int() safely parses <=128 digits. float() on "9"*100 can yield
+        # astronomically large deadlines; longer input previously became
+        # infinity and blocked even a freshly reconnected session.
+        return float(min(int(value), MAX_RATE_LIMIT_PAUSE_SECONDS))
     try:
         date = parsedate_to_datetime(value)
         if date.tzinfo is None:
             return 0.0
-        return max(0.0, date.timestamp() - (time.time() if now is None else now))
+        return float(min(
+            MAX_RATE_LIMIT_PAUSE_SECONDS,
+            max(0.0, date.timestamp() - (time.time() if now is None else now)),
+        ))
     except (TypeError, ValueError, OverflowError):
         return 0.0
 
