@@ -9,7 +9,7 @@ from __future__ import annotations
 from .navigation_history import NavigationHistory
 
 
-def build_main_shell(window, *, Gtk, add_css, version):
+def build_main_shell(window, *, Gtk, Pango, add_css, version):
     root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
     window.shell_root = root
     window._navigation_history = NavigationHistory()
@@ -52,7 +52,21 @@ def build_main_shell(window, *, Gtk, add_css, version):
     window.activity_status_icon = Gtk.Image.new_from_icon_name("emblem-ok-symbolic")
     window.activity_status_icon.set_visible(False); busy.append(window.activity_status_icon)
     window.busy_label = Gtk.Label(label="", xalign=0)
-    window.busy_label.set_hexpand(True); window.busy_label.set_wrap(True); busy.append(window.busy_label)
+    window.busy_label.set_hexpand(True)
+    # P0 #2027: a wrapping label inside a revealing footer changes its
+    # height-for-width minimum while GtkStack is measuring the main shell.
+    # One bounded line keeps the footer stable at narrow/desktop widths.
+    window.busy_label.set_wrap(False)
+    window.busy_label.set_ellipsize(Pango.EllipsizeMode.END)
+    window.busy_label.set_max_width_chars(72)
+    # All existing presenters call set_label(). A single property signal
+    # keeps the complete, *already user-visible* status available via tooltip
+    # even when the on-screen single-line text is visually ellipsized.
+    window.busy_label.connect(
+        "notify::label",
+        lambda label, _param: label.set_tooltip_text(label.get_label()),
+    )
+    busy.append(window.busy_label)
 
     window.activity_history_button = Gtk.MenuButton(label="Historique")
     window.activity_history_button.set_icon_name("view-list-symbolic")
