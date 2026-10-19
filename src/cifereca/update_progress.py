@@ -30,7 +30,28 @@ METHODS = frozenset({
     "dev_plugins_only",
 })
 STATES = frozenset({"START", "RUNNING", "OK", "ERROR", "SKIPPED", "ROLLBACK", "DONE"})
-FAILURE_CODES = frozenset({"interrupted", "timeout", "update_error", "internal_error"})
+SMOKE_FAILURE_CODES = frozenset({
+    "smoke_cli_failed", "smoke_json_invalid", "smoke_inventory_invalid",
+    "smoke_contributions_failed", "smoke_active_missing",
+})
+SMOKE_COUNT_FIELDS = frozenset({
+    "contributions_error", "contributions_incompatible", "active_packages_missing",
+})
+FAILURE_CODES = frozenset({"interrupted", "timeout", "update_error", "internal_error"}) | SMOKE_FAILURE_CODES
+
+
+def smoke_evidence(exc: BaseException) -> dict[str, int] | None:
+    """Trust only local updater exceptions and exact bounded smoke counters."""
+    if (type(exc).__name__, type(exc).__module__) not in {
+        ("PluginSmokeError", "cifereca.dev_updater"),
+        ("ReleasePluginSmokeError", "cifereca.updater"),
+    }:
+        return None
+    values = getattr(exc, "smoke_counts", None)
+    if (type(values) is not dict or set(values) != SMOKE_COUNT_FIELDS
+            or any(type(v) is not int or not 0 <= v <= 2048 for v in values.values())):
+        return None
+    return dict(values)
 
 
 def failure_code(exc: BaseException) -> str:
@@ -39,7 +60,11 @@ def failure_code(exc: BaseException) -> str:
         return "interrupted"
     if isinstance(exc, TimeoutError):
         return "timeout"
-    if type(exc).__name__ in {"UpdateError", "DevUpdateError"} and type(exc).__module__ in {
+    if smoke_evidence(exc) is not None:
+        code = getattr(exc, "reason_code", None)
+        if type(code) is str and code in SMOKE_FAILURE_CODES:
+            return code
+    if type(exc).__name__ in {"UpdateError", "DevUpdateError" and type(exc).__module__ in {
         "cifereca.updater", "cifereca.dev_updater",
     }:
         return "update_error"
@@ -106,7 +131,8 @@ class UpdateProgress:
 
     def emit(self, stage: str, status: str, *, since: float | None = None,
              outcome: str | None = None, reason_code: str | None = None,
-             plugin_index: int | None = None, plugin_total: int | None = None) -> None:
+             plugin_index: int | None = None, plugin_total: int | None = None,
+             smoke_counts: dict[str, int] | None = None) -> None:
         if stage not in STAGES or status not in STATES:
             raise ValueError("invalid_update_event")
         now = self.clock()
@@ -125,6 +151,12 @@ class UpdateProgress:
         }
         if status == "ERROR" and reason_code in FAILURE_CODES:
             event["reason_code"] = reason_code
+        if (stage in {"smoke", "plugin_activation"} and status == "ERROR"
+                and reason_code in SMOKE_FAILURE_CODES
+                and type(smoke_counts) is dict
+                and set(smoke_counts) == SMOKE_COUNT_FIELDS
+                and all(type(v) is int and 0 <= v <= 2048 for v in smoke_counts.values())):
+            event["smoke_counts"] = dict(smoke_counts)
         # The ordinal is a *position*, not an installed count or a guessed
         # percent. Accept only bounded exact ints, never plugin names/paths.
         if (stage == "plugin_install"
@@ -152,6 +184,10 @@ class UpdateProgress:
                     + (f" reason={event['reason_code']}" if "reason_code" in event else "")
                     + (f" plugin={event['plugin_index']}/{event['plugin_total']}"
                        if "plugin_index" in event else "")
+                    + ((" smoke_errors=" + str(event["smoke_counts"]["contributions_error"])
+                        + " smoke_incompatible=" + str(event["smoke_counts"]["contributions_incompatible"])
+                        + " smoke_missing=" + str(event["smoke_counts"]["active_packages_missing"]))
+                       if "smoke_counts" in event else "")
                     + "\n"
                 )
                 self.stream.flush()
@@ -175,7 +211,8 @@ class UpdateProgress:
         except BaseException as exc:
             with self._stage_lock:
                 self._stage_stack.pop()
-                self.emit(stage, "ERROR", since=started, reason_code=failure_code(exc), **ordinal)
+                self.emit(stage, "ERROR", since=started, reason_code=failure_code(exc),
+                          smoke_counts=smoke_evidence(exc), **ordinal)
             raise
         else:
             with self._stage_lock:
@@ -283,8 +320,14 @@ def child_progress_receiver() -> Callable[[bytes], None]:
         duration = value.get("duration_ms")
         since = (progress.clock() - duration / 1000
                  if type(duration) is int and 0 <= duration <= 86_400_000 else None)
+        counts = value.get("smoke_counts")
+        if (type(counts) is not dict or set(counts) != SMOKE_COUNT_FIELDS
+                or any(type(v) is not int or not 0 <= v <= 2048
+                       for v in counts.values())):
+            counts = None
         with progress._stage_lock:
             progress.emit(stage, status, since=since, reason_code=reason,
+                          smoke_counts=counts,
                           plugin_index=value.get("plugin_index"),
                           plugin_total=value.get("plugin_total"))
     return receive
