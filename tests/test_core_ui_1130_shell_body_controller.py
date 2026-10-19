@@ -61,7 +61,7 @@ GTK = NS(
     Orientation=NS(VERTICAL="vertical", HORIZONTAL="horizontal"),
     SelectionMode=NS(SINGLE="single"),
     StackTransitionType=NS(CROSSFADE="crossfade"),
-    RevealerTransitionType=NS(SLIDE_UP="slide-up"),
+    RevealerTransitionType=NS(SLIDE_UP="slide-up", NONE="none"),
 )
 
 
@@ -165,7 +165,7 @@ def test_navigation_list_connects_only_one_owner_callback_with_single_click():
 
 def test_activity_widgets_initially_hidden_with_stable_labels_and_css():
     window, root, events, styles, header = _render()
-    assert window.busy_revealer.properties["transition_type"] == "slide-up"
+    assert window.busy_revealer.properties["transition_type"] == "none"
     footer_content = window.busy_revealer.child
     assert (footer_content, ("busy-bar",)) in styles
     assert window.busy_spinner.properties["visible"] is False
