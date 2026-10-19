@@ -536,7 +536,11 @@ def test_2095_kobo_audit_xtest_requires_stable_real_gtk_hit_target():
     assert "assert attempt <= 8, \"Kobo audit physical hit target did not settle\"" in probe
     assert probe.count("device[0].click_widget(audit)") == 0
     assert probe.count("device[0].window_point(w, point_x, point_y)") == 1
-    assert probe.count("device[0].click(sx, sy)") == 1\n    assert probe.count("device[0].move(screen_x, screen_y)") == 1\n    assert 'motion.connect("enter"' in probe\n    assert 'motion.connect("motion"' in probe\n    assert 'assert attempts <= 5, "Kobo audit XTEST pointer could not hit GTK button"' in probe
+    assert probe.count("device[0].click(sx, sy)") == 1
+    assert probe.count("device[0].move(screen_x, screen_y)") == 1
+    assert 'motion.connect("enter"' in probe
+    assert 'motion.connect("motion"' in probe
+    assert 'assert attempts <= 5, "Kobo audit XTEST pointer could not hit GTK button"' in probe
     assert 'f["audit_deadline"] = monotonic() + 6' in probe
     assert 'f["audit_click_signal_seen"] = False' in probe
     assert 'report["kobo_audit_observation"]' in probe
