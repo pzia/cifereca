@@ -210,7 +210,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.window_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.set_content(self.window_root)
         self.root_stack = Gtk.Stack()
-        self.root_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        # #2027 diagnostic: isolate the top-level startup/main transition.
+        self.root_stack.set_transition_type(Gtk.StackTransitionType.NONE)
         self.root_stack.set_vexpand(True)
         self.window_root.append(self.root_stack)
 
