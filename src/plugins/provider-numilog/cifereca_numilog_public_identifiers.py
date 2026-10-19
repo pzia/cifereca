@@ -62,6 +62,16 @@ class _VisibleLabels(HTMLParser):
         "area", "base", "br", "col", "embed", "hr", "img", "input",
         "link", "meta", "param", "source", "track", "wbr",
     })
+    # The product HTML byte bound does not prevent tens of thousands of
+    # nested empty nodes inside a hidden subtree. Close-tag processing
+    # must never grow quadratically on untrusted commercial HTML.
+    _MAX_IGNORED_DEPTH = 512
+
+    def _push_ignored(self, tag):
+        if tag not in self._VOID:
+            if len(self.ignored) >= self._MAX_IGNORED_DEPTH:
+                raise PublicIdentifierError("hidden_html_too_deep")
+            self.ignored.append(tag)
 
     @staticmethod
     def _hidden(attrs):
@@ -115,10 +125,9 @@ class _VisibleLabels(HTMLParser):
             self.title_end = None
             return
         if self.ignored:
-            # Track *every* nested non-void tag. A nested <div> cannot
-            # prematurely close the hidden outer <div>, or expose its EANs.
-            if tag not in self._VOID:
-                self.ignored.append(tag)
+            # Track every nested non-void tag, but bound the stack even
+            # if an upstream public page contains deeply hostile markup.
+            self._push_ignored(tag)
             return
         # After the canonical form closes, no footer/recommendation can
         # append another ISBN; direct parser snippets without a form retain
@@ -126,8 +135,7 @@ class _VisibleLabels(HTMLParser):
         if self.product_form_seen and not self.product_form_open:
             return
         if tag in self._IGNORED or self._hidden(attrs):
-            if tag not in self._VOID:
-                self.ignored.append(tag)
+            self._push_ignored(tag)
             return
         if tag == "h1":
             self.h1_count += 1
