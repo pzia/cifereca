@@ -150,14 +150,18 @@ class LocalCatalog:
         now = int(time.time())
         try:
             manifest = load_bundle_manifest(root, verify=True)
-        except BundleError as exc:
+        except BundleError:
+            # A manifest is controlled by a plugin or external archive. Its
+            # validation exception may contain filenames, signed references
+            # or raw manifest values. Persist only an explicit closed reason.
+            reason = "bundle_manifest_invalid"
             self.storage.placement_put({
                 "placement_id": placement_id, "artifact_id": None, "path": path_text,
                 "identity_id": identity_hint, "provider_id": provider_hint,
                 "source_item_id": item_id, "state": "invalid", "last_seen_at": now,
-                "metadata": {"invalid_reason": str(exc), "artifact_kind": "bundle"},
+                "metadata": {"invalid_reason": reason, "artifact_kind": "bundle"},
             })
-            return {"status": "invalid", "path": path_text, "reason": str(exc), "artifact_kind": "bundle"}
+            return {"status": "invalid", "path": path_text, "reason": reason, "artifact_kind": "bundle"}
 
         artifact = Artifact.from_bundle(
             manifest, metadata={"discovered_by": "targeted_catalog_index", "bundle_manifest_file": BUNDLE_MANIFEST_NAME}
