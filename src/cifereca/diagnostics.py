@@ -125,20 +125,19 @@ class Diagnostics:
         )
         if not self.enabled:
             return
-        if self.level == "errors" or self.LEVELS.get(self.level, 1) >= 1:
-            slug = canonical_public_provider_id(provider_id) or UNKNOWN_PROVIDER
-            time_ms = (duration_ms if type(duration_ms) is int
-                       and 0 <= duration_ms <= 600000 else None)
-            entry = DiagnosticEntry(
-                timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-                category="PLUGIN",
-                operation="public provider connect" if singleton else "provider connect",
-                status="error", duration_ms=time_ms,
-                detail={"code": CONNECT_FAILURE_CODE, "provider_id": slug},
-                verified_public_provider_id=slug,
-            )
-            with self._lock:
-                self._items.append(entry)
+        slug = canonical_public_provider_id(provider_id) or UNKNOWN_PROVIDER
+        time_ms = (duration_ms if type(duration_ms) is int
+                   and 0 <= duration_ms <= 600000 else None)
+        entry = DiagnosticEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            category="PLUGIN",
+            operation="public provider connect" if singleton else "provider connect",
+            status="error", duration_ms=time_ms,
+            detail={"code": CONNECT_FAILURE_CODE, "provider_id": slug},
+            verified_public_provider_id=slug,
+        )
+        with self._lock:
+            self._items.append(entry)
 
     def clear(self) -> None:
         with self._lock:
