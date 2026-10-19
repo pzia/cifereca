@@ -422,11 +422,14 @@ def _safe_opds_link(feed_url, href, kind):
                        for ch in decoded_query)):
             return None
         path=dst.path.lower()
-        # Calibre COPS supplies /index.php/fetch/... downloads; do not infer
-        # ebook URLs by book ID, nor admit arbitrary same-origin action paths.
+        # Calibre/COPS publishes a dedicated fetch route. A suffix .epub
+        # alone is not enough: /index.php/account/private.epub can otherwise
+        # masquerade as a public acquisition endpoint on the same origin.
+        # Keep the historically recognized /fetch.php alias, but refuse
+        # other action URLs even when their name contains "fetch".
         if kind=='download' and not (
-            path.endswith('.epub') or '/index.php/fetch' in path
-            or path.endswith('/fetch.php')
+            path.startswith('/index.php/fetch/')
+            or path in {'/index.php/fetch', '/fetch.php', '/index.php/fetch.php'}
         ):
             return None
         if kind=='feed' and not (
