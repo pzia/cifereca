@@ -125,6 +125,36 @@ class NumilogPublicSession(ProviderSession):
         detail = self._public_cache.get(("detail", url), lambda: fetch_public_detail(url))
         return merge_public_detail(item, detail)
 
+    def enrich_loaded_page_product(self, page, record_id):
+        """Explicitly enrich ONE public search card, retaining page provenance.
+
+        This performs at most one budgeted anonymous product GET through the
+        existing cache. It never eagerly loads other cards to answer an ISBN
+        filter or changes the page's unfiltered public total/pagination.
+        """
+        if not self.connected:
+            raise ProviderError("Numilog public : catalogue non connecté")
+        from copy import deepcopy
+        from cifereca_numilog_public_local_filter import _validate_page
+        _validate_page(page)
+        if type(record_id) is not str:
+            raise ProviderCapabilityError("Numilog public : unverified_product_selection")
+        indices = [
+            index for index, item in enumerate(page.items)
+            if item.record_id == record_id
+        ]
+        if len(indices) != 1:
+            raise ProviderCapabilityError("Numilog public : unverified_product_selection")
+        epoch = self._navigation_epoch_snapshot()
+        # This operation intentionally does NOT loop over page.items.
+        item = self.enrich_public_detail(page.items[indices[0]])
+        with self._navigation_lock:
+            if not self.connected or self._navigation_epoch != epoch:
+                raise ProviderError("Numilog public : navigation_invalidated")
+        updated = list(deepcopy(page.items))
+        updated[indices[0]] = deepcopy(item)
+        return replace(page, items=tuple(updated))
+
     def _validate_search(self, query, page, field, scope):
         if type(field) is not str or field != "all":
             raise ProviderCapabilityError("Numilog public : unsupported_field")
