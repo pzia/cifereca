@@ -34,13 +34,27 @@ def test_real_service_keeps_exact_public_error_retry_ledger_process_but_expurgat
     monkeypatch.setattr(service,'runtime_diagnostic',lambda *_:raw)
     try:
         result=service._acquire_active_loan_automatically(loan)
-        assert result['loan_id']==loan.id and PRIVATE in result['error']
+        assert result['loan_id']==loan.id
+        expected_message = (
+            'Redirection PNB refusée ; consulter les traces PNB target_scheme / target_port'
+            if code == 'pnb_redirect_refused'
+            else 'Acquisition ADEPT indisponible'
+        )
+        assert result['error'].startswith(expected_message)
+        if stage == 'adept':
+            assert 'stdout_bytes=5' in result['error']
+        else:
+            assert result['error'] == expected_message
+        assert PRIVATE not in result['error'] + str(result['code'])
         assert result['status']==('retryable_error' if code=='kobo_adept_invalid_json' else 'attention_required')
         if stage=='adept':
             assert result['process']['returncode']==2**100 and result['process']['duration_ms']==-1
             assert result['process']['stdout_bytes']==5
         ledger=service.storage.acquisitions(provider_id=loan.source_provider)
-        assert len(ledger)==1 and ledger[0]['error_code']==code and PRIVATE in ledger[0]['error_message']
+        safe_code = code if code != PRIVATE else 'adept_error'
+        assert len(ledger)==1 and ledger[0]['error_code']==safe_code
+        assert ledger[0]['error_message'] == result['error']
+        assert PRIVATE not in ledger[0]['error_code'] + ledger[0]['error_message']
         assert ledger[0]['metadata']['provider_loan_id']==loan.id
         assert source.is_file()
         events=[e for e in service.diagnostics.snapshot() if e['operation'] in {'acquisition failed','redirect refused'}]
@@ -51,7 +65,7 @@ def test_real_service_keeps_exact_public_error_retry_ledger_process_but_expurgat
             assert 'message' not in event['detail'] and 'provider_loan_id' not in event['detail']
             assert 'plugin_version' not in event['detail']
             if event['category']=='KOBO-ADEPT':
-                assert event['detail']['code']==('unclassified_error' if code==PRIVATE else code)
+                assert event['detail']['code']==safe_code
                 assert event['detail']['stdout_bytes']==5
                 assert not set(event['detail']) & {'returncode','duration_ms','stderr_bytes','stdout_mode'}
     finally:service.close()
@@ -78,3 +92,68 @@ def test_projection_has_fixed_meaning_for_all_valid_bounds_and_never_stringifies
         def __eq__(self,_):raise AssertionError('must not compare untrusted types')
     assert failure_fields(code=Hostile(),process=Hostile(),loan_ref=Hostile())=={
         'phase':'adept_fulfillment','code':'unclassified_error'}
+
+
+
+def test_hostile_runtime_message_and_code_do_not_break_durable_failure_receipt(
+    tmp_path, monkeypatch,
+):
+    from tests.test_core_0977_adept_retry_guard import _service, _loan
+
+    class Hostile(UserFacingError):
+        def __str__(self):
+            raise AssertionError("Never stringify plugin error for publication")
+        def __repr__(self):
+            raise AssertionError("Never repr plugin error for publication")
+
+    service = _service(tmp_path)
+    loan = _loan()
+    private = "https://private.invalid/adept?auth=NEVER_ECHO_ACSM"
+    def failed(*_args, **_kwargs):
+        raise Hostile(private, code=private)
+    monkeypatch.setattr(service, "acquire_digital_loan", failed)
+    try:
+        result = service._acquire_active_loan_automatically(loan)
+        assert result["status"] == "attention_required"
+        assert result["code"] == "adept_error"
+        assert result["error"] == "Acquisition du prêt indisponible"
+        [row] = service.storage.acquisitions(provider_id="paris")
+        assert row["status"] == "attention_required"
+        assert row["error_code"] == "adept_error"
+        assert row["error_message"] == result["error"]
+        assert row["attention_code"] == "adept_error"
+        assert "NEVER_ECHO_ACSM" not in result["code"] + result["error"]
+        assert "NEVER_ECHO_ACSM" not in row["error_code"] + row["error_message"]
+    finally:
+        service.close()
+
+
+
+def test_pnb_plugin_version_is_numeric_only_and_cannot_expose_private_text(
+    tmp_path, monkeypatch,
+):
+    from tests.test_core_0977_adept_retry_guard import _service, _loan
+
+    service = _service(tmp_path)
+    private = "1.2.4-secret-auth-DO_NOT_EXPOSE"
+    service._plugin_manager = NS(
+        status=lambda _plugin_id: NS(descriptor=NS(version=private)),
+    )
+    monkeypatch.setattr(
+        service, "acquire_digital_loan",
+        lambda *_a, **_kw: (_ for _ in ()).throw(
+            UserFacingError("Private source https://private.invalid?auth=TOKEN",
+                            code="pnb_redirect_refused"),
+        ),
+    )
+    try:
+        result = service._acquire_active_loan_automatically(_loan())
+        assert result["status"] == "attention_required"
+        assert result["code"] == "pnb_redirect_refused"
+        assert "target_scheme / target_port" in result["error"]
+        assert "DO_NOT_EXPOSE" not in result["error"]
+        assert "TOKEN" not in result["error"]
+        [row] = service.storage.acquisitions(provider_id="paris")
+        assert row["error_message"] == result["error"]
+    finally:
+        service.close()

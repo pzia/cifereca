@@ -13,7 +13,7 @@ _CODES = frozenset({
     'kobo_adept_contract_old', 'kobo_adept_invalid_response',
     'kobo_adept_output_too_large', 'kobo_adept_destination_mismatch',
     'kobo_adept_drm_mutation_unsupported', 'kobo_adept_invalid_loan_inventory',
-    'adept_error', 'pnb_redirect_refused',
+    'adept_error', 'pnb_redirect_refused', 'runtime_refused',
 })
 
 
