@@ -207,6 +207,26 @@ def safe_summary(source: Path) -> dict:
                     or not 0 <= counters["GtkRevealer"] <= 100000):
                 raise ValueError("invalid GTK geometry counters")
             row["gtk_layout_critical"] = counters
+        # P0 #2027: phase labels and widget classes are reviewed literal
+        # constants, not GTK stderr, paths or dynamic provider metadata.
+        phases = item.get("gtk_layout_phase")
+        if phases is not None:
+            allowed_phases = frozenset({
+                "window_start", "window_shown", "sync_desktop",
+                "sync_font_desktop", "sync_narrow", "sync_font_narrow",
+                "sync_restored", "numilog_consent", "done",
+            })
+            if (type(phases) is not dict or len(phases) > len(allowed_phases)
+                    or not set(phases).issubset(allowed_phases)):
+                raise ValueError("invalid GTK phase labels")
+            for counts in phases.values():
+                if (type(counts) is not dict
+                        or set(counts) != {"GtkStack", "GtkRevealer"}
+                        or any(type(value) is not int or not 0 <= value <= 100000
+                               for value in counts.values())):
+                    raise ValueError("invalid GTK phase counts")
+            if phases:
+                row["gtk_layout_phase"] = phases
         # Deliberately discard every other field, including raw assertion
         # messages, personal paths, URLs, JSON/JSONL, logs, pixels and images.
         if code != 0:
