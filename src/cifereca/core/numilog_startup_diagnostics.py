@@ -40,7 +40,15 @@ def public_fields(detail):
     if any(type(detail.get(k)) is not int or not 0 <= detail[k] <=
            (2048 if k == "skipped" else 9 if k == "failed" else 8) for k in COUNTS):
         return {}
-    if detail["downloaded"] > detail["attempted"]:
+    # The auxiliary schema must not turn a terminal failure into success
+    # or advertise impossible totals, even when read outside the GTK view.
+    if (detail["downloaded"] > detail["attempted"]
+            or detail["failed"] > detail["attempted"] + 2
+            or detail["status"] == "complete" and detail["failed"] != 0
+            or detail["status"] == "not_due" and (
+                detail["attempted"] != 0 or detail["downloaded"] != 0
+                or detail["failed"] != 0
+            )):
         return {}
     for key in ("task_ref", "run_ref"):
         if key in detail and (type(detail[key]) is not str or
