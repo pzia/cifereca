@@ -196,3 +196,26 @@ def test_legacy_missing_broker_keeps_explicit_account_record_id_guards(monkeypat
         assert result.download_url is None
     finally:
         s.close()
+
+
+def test_owner_rebinding_during_final_projection_refuses_old_edition(monkeypatch):
+    """#1072: guard *after* field projection, not only after the HTTP GET."""
+    import cifereca_numilog_enrichment as enrichment
+
+    s, broker, row = make_session()
+    monkeypatch.setattr(client, "fetch_public_detail", lambda *_a: detail(row))
+    original = enrichment.merge_attested_owned_direct_public_detail
+
+    def rebind_after_merge(*args):
+        result = original(*args)
+        broker.owner = "identity-bob"
+        return result
+
+    monkeypatch.setattr(enrichment, "merge_attested_owned_direct_public_detail",
+                        rebind_after_merge)
+    try:
+        with pytest.raises(ProviderCapabilityError) as caught:
+            s.enrich_owned_direct_public_detail(s._normalize(row))
+        check_rejected(caught.value)
+    finally:
+        s.close()
