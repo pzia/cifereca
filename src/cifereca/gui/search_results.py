@@ -186,7 +186,7 @@ def _update_search_count(self, shown: int) -> None:
         context = (state.text, state.field, state.scope,
                    getattr(identity, "identity_id", None))
         if getattr(self, "_online_source_context", None) == context:
-            from .search_batch_feedback import safe_source_statuses
+            from cifereca.gui.search_batch_feedback import safe_source_statuses
             suffix, tooltip = safe_source_statuses(
                 getattr(self, "_online_source_statuses", None)
             )
