@@ -15,6 +15,7 @@ from diagnostics_explorer import (
     empty_observation,
 )
 from diagnostics_selection import collect_filtered_selection, page_selection_ids
+from diagnostics_performance import PerformanceCapture, performance_bytes
 from diagnostics_support import (
     SupportReportExport, diagnostic_json_bytes, preserve_report_selection,
 )
@@ -513,12 +514,32 @@ class DiagnosticsPagePlugin:
         scroll.set_vexpand(True)
         page_root.append(scroll)
 
+        sections = Gtk.Stack()
+        sections.set_name("diagnostics-sections")
+        sections.set_hhomogeneous(False)
+        sections.set_vhomogeneous(False)
+        journals_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        capture_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        system_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        reports_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        for key, title, content in (
+            ("journals", "Journaux", journals_tab),
+            ("capture", "Capture", capture_tab),
+            ("system", "État système", system_tab),
+            ("reports", "Rapports et vérifications", reports_tab),
+        ):
+            sections.add_titled(content, key, title)
+        sections.set_visible_child_name("journals")
+        switcher = Gtk.StackSwitcher()
+        switcher.set_stack(sections)
+        page_root.prepend(switcher)
+
         intro = Gtk.Label(
             label="État technique expurgé fourni par le Core. Les plugins ne lisent ni fichiers internes, ni cookies, ni secrets."
         )
         intro.set_wrap(True)
         intro.set_xalign(0)
-        outer.append(intro)
+        system_tab.append(intro)
 
         action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
@@ -534,10 +555,11 @@ class DiagnosticsPagePlugin:
         save_report.set_tooltip_text("Exporter le rapport support expurgé vers un fichier choisi")
         action_row.append(save_report)
         outer.append(action_row)
+        outer.append(sections)
 
         status_title = Gtk.Label(label="État système", xalign=0)
         status_title.add_css_class("heading")
-        outer.append(status_title)
+        system_tab.append(status_title)
         status_grid = Gtk.FlowBox()
         status_grid.set_selection_mode(Gtk.SelectionMode.NONE)
         status_grid.set_homogeneous(True)
@@ -545,21 +567,21 @@ class DiagnosticsPagePlugin:
         status_grid.set_max_children_per_line(3)
         status_grid.set_column_spacing(10)
         status_grid.set_row_spacing(8)
-        outer.append(status_grid)
+        system_tab.append(status_grid)
 
 
         # Journals remain inside the existing Diagnostics page. Every refresh
         # is an asynchronous call to the read-only public Diagnostics broker.
         journals_title = Gtk.Label(label="Journaux par composant", xalign=0)
         journals_title.add_css_class("heading")
-        outer.append(journals_title)
+        journals_tab.append(journals_title)
         journals_hint = Gtk.Label(
             label="Flux expurgé et borné du Core ; aucune collecte réseau. "
                   "La recherche texte et le tri agissent sur la page chargée.",
             xalign=0,
         )
         journals_hint.set_wrap(True)
-        outer.append(journals_hint)
+        journals_tab.append(journals_hint)
 
         filters_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         source_selector = Gtk.DropDown.new_from_strings(
@@ -578,7 +600,7 @@ class DiagnosticsPagePlugin:
         filters_top.append(source_selector)
         filters_top.append(severity_selector)
         filters_top.append(period_selector)
-        outer.append(filters_top)
+        journals_tab.append(filters_top)
 
         filters_bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         module_filter = Gtk.Entry()
@@ -594,7 +616,7 @@ class DiagnosticsPagePlugin:
         filters_bottom.append(module_filter)
         filters_bottom.append(search_filter)
         filters_bottom.append(sort_latest)
-        outer.append(filters_bottom)
+        journals_tab.append(filters_bottom)
 
         journals_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         journals_refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
@@ -606,7 +628,7 @@ class DiagnosticsPagePlugin:
         journals_actions.append(journals_previous)
         journals_actions.append(journals_next)
         journals_actions.append(journals_copy)
-        outer.append(journals_actions)
+        journals_tab.append(journals_actions)
 
         # FlowBox wraps four actions even in narrow 760px windows.
         journals_select_actions = Gtk.FlowBox()
@@ -629,11 +651,11 @@ class DiagnosticsPagePlugin:
         journals_select_all.set_tooltip_text(
             "Toutes les pages du périmètre filtré, dans les limites sûres d'export"
         )
-        outer.append(journals_select_actions)
+        journals_tab.append(journals_select_actions)
         journals_selection = Gtk.Label(label="0 sélectionné · portée : cette page", xalign=0)
         journals_selection.set_wrap(True)
         journals_selection.add_css_class("dim-label")
-        outer.append(journals_selection)
+        journals_tab.append(journals_selection)
         journals_preview = Gtk.Expander(label="Aperçu des événements expurgés sélectionnés")
         journals_preview_scroll = Gtk.ScrolledWindow()
         journals_preview_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -644,7 +666,7 @@ class DiagnosticsPagePlugin:
         journals_preview_text.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         journals_preview_scroll.set_child(journals_preview_text)
         journals_preview.set_child(journals_preview_scroll)
-        outer.append(journals_preview)
+        journals_tab.append(journals_preview)
         journals_limits = Gtk.Label(
             label="Page : 50 événements / 24 Ko. Sélection filtrée multi-page : "
                   "200 événements / 96 Ko maximum, 8 pages par niveau. "
@@ -653,43 +675,43 @@ class DiagnosticsPagePlugin:
         )
         journals_limits.set_wrap(True)
         journals_limits.add_css_class("dim-label")
-        outer.append(journals_limits)
+        journals_tab.append(journals_limits)
 
         journals_sources = Gtk.Label(label="Sources non alimentées", xalign=0)
         journals_sources.set_wrap(True)
         journals_sources.add_css_class("dim-label")
-        outer.append(journals_sources)
+        journals_tab.append(journals_sources)
         journals_summary = Gtk.Label(label="Actualisation requise", xalign=0)
         journals_summary.set_wrap(True)
-        outer.append(journals_summary)
+        journals_tab.append(journals_summary)
         journals_scroll = Gtk.ScrolledWindow()
         journals_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         journals_scroll.set_min_content_height(200)
         journals_scroll.set_size_request(-1, 350)
         journals_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         journals_scroll.set_child(journals_box)
-        outer.append(journals_scroll)
+        journals_tab.append(journals_scroll)
 
         ai_title = Gtk.Label(label="Analyse IA (facultative)", xalign=0)
         ai_title.add_css_class("heading")
-        outer.append(ai_title)
+        reports_tab.append(ai_title)
         ai_notice = Gtk.Label(
             label="Aucune donnée transmise par défaut. Prévisualiser les événements expurgés, "
                   "vérifier la destination, puis autoriser chaque analyse explicitement.",
             xalign=0,
         )
         ai_notice.set_wrap(True)
-        outer.append(ai_notice)
+        reports_tab.append(ai_notice)
         ai_snapshot = Gtk.CheckButton(
             label="Inclure les diagnostics structurés Core (lecture seule)"
         )
         ai_snapshot.set_active(False)
-        outer.append(ai_snapshot)
+        reports_tab.append(ai_snapshot)
         ai_support_report = Gtk.CheckButton(
             label="Inclure le rapport support Core (lecture seule)"
         )
         ai_support_report.set_active(False)
-        outer.append(ai_support_report)
+        reports_tab.append(ai_support_report)
         manual_log_path = None  # Only from explicit Gtk.FileChooserNative acceptance.
         manual_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         manual_choose = Gtk.Button(label="Choisir un journal local…")
@@ -701,8 +723,8 @@ class DiagnosticsPagePlugin:
         manual_state.set_wrap(True)
         manual_row.append(manual_choose)
         manual_row.append(manual_clear)
-        outer.append(manual_row)
-        outer.append(manual_state)
+        reports_tab.append(manual_row)
+        reports_tab.append(manual_state)
         # Do not impose five button minima on the journal-selection page.
         ai_controls = Gtk.FlowBox()
         ai_controls.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -723,10 +745,10 @@ class DiagnosticsPagePlugin:
         ai_controls.insert(ai_cancel, -1)
         ai_controls.insert(ai_export, -1)
         ai_controls.insert(ai_export_json, -1)
-        outer.append(ai_controls)
+        reports_tab.append(ai_controls)
         ai_status = Gtk.Label(label="IA non configurée ou non consultée", xalign=0)
         ai_status.set_wrap(True)
-        outer.append(ai_status)
+        reports_tab.append(ai_status)
         ai_expander = Gtk.Expander(label="Données expurgées proposées à l’IA")
         ai_expander.set_expanded(False)
         ai_scroller = Gtk.ScrolledWindow()
@@ -738,7 +760,7 @@ class DiagnosticsPagePlugin:
         ai_input.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         ai_scroller.set_child(ai_input)
         ai_expander.set_child(ai_scroller)
-        outer.append(ai_expander)
+        reports_tab.append(ai_expander)
         ai_report = Gtk.TextView()
         ai_report.set_editable(False)
         ai_report.set_monospace(True)
@@ -747,29 +769,29 @@ class DiagnosticsPagePlugin:
         ai_report_scroll.set_min_content_height(160)
         ai_report_scroll.set_size_request(-1, 280)
         ai_report_scroll.set_child(ai_report)
-        outer.append(ai_report_scroll)
+        reports_tab.append(ai_report_scroll)
 
         diag_title = Gtk.Label(label="Diagnostics", xalign=0)
         diag_title.add_css_class("heading")
-        outer.append(diag_title)
+        reports_tab.append(diag_title)
         diag_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         diag_expander = Gtk.Expander(label="Afficher les détails techniques")
         diag_expander.set_expanded(False)
         diag_expander.set_child(diag_box)
-        outer.append(diag_expander)
+        reports_tab.append(diag_expander)
 
         check_title = Gtk.Label(label="Vérification active", xalign=0)
         check_title.add_css_class("heading")
-        outer.append(check_title)
+        reports_tab.append(check_title)
         check_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        outer.append(check_box)
+        reports_tab.append(check_box)
         check_hint = Gtk.Label(label="Lancez la vérification pour contrôler les connexions connues et runtimes sans synchroniser ni télécharger.", xalign=0)
         check_hint.set_wrap(True)
         check_box.append(check_hint)
 
         export_title = Gtk.Label(label="Rapport support (copie expurgée)", xalign=0)
         export_title.add_css_class("heading")
-        outer.append(export_title)
+        reports_tab.append(export_title)
         report_expander = Gtk.Expander(label="Ouvrir le rapport support")
         report_expander.set_expanded(False)
         report_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -792,7 +814,85 @@ class DiagnosticsPagePlugin:
         report_scroll.set_child(export_view)
         report_container.append(report_scroll)
         report_expander.set_child(report_container)
-        outer.append(report_expander)
+        reports_tab.append(report_expander)
+
+        capture = PerformanceCapture(host)
+        capture_note = Gtk.Label(
+            label="Capture locale volontaire. Elle continue pendant la navigation et "
+                  "s’arrête à la fermeture de l’application. Aucun envoi automatique.",
+            xalign=0,
+        )
+        capture_note.set_wrap(True)
+        capture_tab.append(capture_note)
+        capture_status = Gtk.Label(label="Capture non consultée", xalign=0)
+        capture_status.set_wrap(True)
+        capture_tab.append(capture_status)
+        capture_actions = Gtk.FlowBox()
+        capture_actions.set_selection_mode(Gtk.SelectionMode.NONE)
+        capture_actions.set_min_children_per_line(1)
+        capture_actions.set_max_children_per_line(4)
+        capture_start = Gtk.Button(label="Démarrer la capture")
+        capture_stop = Gtk.Button(label="Arrêter la capture")
+        capture_refresh = Gtk.Button(label="Actualiser les mesures")
+        capture_save = Gtk.Button(label="Enregistrer les mesures JSON…")
+        for button in (capture_start, capture_stop, capture_refresh, capture_save):
+            capture_actions.insert(button, -1)
+        capture_tab.append(capture_actions)
+        capture_view = Gtk.TextView()
+        capture_view.set_editable(False)
+        capture_view.set_monospace(True)
+        capture_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        capture_scroll = Gtk.ScrolledWindow()
+        capture_scroll.set_min_content_height(240)
+        capture_scroll.set_child(capture_view)
+        capture_tab.append(capture_scroll)
+
+        def render_capture(report=None):
+            try:
+                report = capture.read() if report is None else report
+                data = performance_bytes(report)
+            except Exception:
+                capture_status.set_text("Capture indisponible avec ce Core ou cette page périmée")
+                capture_view.get_buffer().set_text("")
+                for button in (capture_start, capture_stop, capture_save):
+                    button.set_sensitive(False)
+                return
+            enabled = report["detailed_capture_enabled"]
+            capture_status.set_text("Capture en cours · locale" if enabled
+                                    else "Capture arrêtée · mesures locales")
+            capture_start.set_sensitive(not enabled)
+            capture_stop.set_sensitive(enabled)
+            capture_save.set_sensitive(True)
+            capture_view.get_buffer().set_text(data.decode("utf-8"))
+
+        def change_capture(enabled):
+            try:
+                report = capture.set_enabled(enabled)
+            except Exception:
+                host.toast("Modification de capture indisponible")
+                render_capture()
+            else:
+                render_capture(report)
+
+        capture_export = SupportReportExport(
+            Gtk, Gio, capture_save, scroll.get_root, capture.read, host.toast,
+            filename="cifereca-performance.json", title="Enregistrer les mesures locales",
+            success_message="Mesures JSON enregistrées", prepare_bytes=performance_bytes,
+        )
+        if not hasattr(self, "_support_exports"):
+            self._support_exports = []
+        self._support_exports.append(capture_export)
+        capture_save.connect("clicked", capture_export.choose)
+        capture_start.connect("clicked", lambda *_: change_capture(True))
+        capture_stop.connect("clicked", lambda *_: change_capture(False))
+        capture_refresh.connect("clicked", lambda *_: render_capture())
+
+        def section_changed(*_args):
+            scroll.get_vadjustment().set_value(0)
+            if sections.get_visible_child_name() == "capture":
+                render_capture()
+
+        sections.connect("notify::visible-child-name", section_changed)
 
         def toggle_report_size(_button):
             is_big = report_resize.get_label() == "Agrandir"

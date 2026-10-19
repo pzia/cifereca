@@ -28,7 +28,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 from PIL import ImageGrab
 
-from diagnostics_page_probe import Broker, Context, Tasks, Host, walk
+from diagnostics_page_probe import reveal_diagnostics_section, Broker, Context, Tasks, Host, walk
 from x11_input import X11Input
 
 SECRET = "SECRET-NE-JAMAIS-COPIER-D07"
@@ -162,7 +162,7 @@ def main():
         panes = [w for w in walk(page[0])
                  if isinstance(w, Gtk.Expander) and w.get_label() == "Détails expurgés"]
         assert len(panes) == 1, ("Volets de détail", len(panes))
-        return panes[0]
+        return reveal_diagnostics_section(panes[0])
 
     def detail_controls():
         pane = detail()

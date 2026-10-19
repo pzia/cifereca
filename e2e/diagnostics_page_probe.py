@@ -224,9 +224,30 @@ class Context:
         self.reports.append((args, kwargs))
 
 
+def reveal_diagnostics_section(widget):
+    """Set up legacy per-section assertions; tab navigation is tested separately."""
+    child = widget
+    parent = child.get_parent()
+    while parent is not None:
+        if isinstance(parent, Gtk.Stack) and parent.get_name() == "diagnostics-sections":
+            parent.set_visible_child(child)
+            break
+        child, parent = parent, parent.get_parent()
+    return widget
+
+
 class Host:
     def __init__(self):
         self.toasts = []
+        from cifereca.gui.ui_perf import UiPerfMonitor
+        self.performance = UiPerfMonitor(measurement_origin="synthetic")
+
+    def performance_report(self):
+        return self.performance.performance_report()
+
+    def set_performance_capture(self, enabled):
+        self.performance.enable_detailed_capture(enabled)
+        return self.performance.performance_report()
 
     def toast(self, text):
         self.toasts.append(str(text))
@@ -320,13 +341,13 @@ def main():
         buttons = [w for w in walk(page[0]) if isinstance(w, Gtk.Button)
                    and w.get_label() == label]
         assert len(buttons) == 1, f"bouton {label!r}: {len(buttons)}"
-        return buttons[0]
+        return reveal_diagnostics_section(buttons[0])
 
     def find_expander(label):
         expanders = [w for w in walk(page[0]) if isinstance(w, Gtk.Expander)
                      and w.get_label() == label]
         assert len(expanders) >= 1, f"volet {label!r} absent"
-        return expanders[0]
+        return reveal_diagnostics_section(expanders[0])
 
     def until(predicate, done, *, seconds=10):
         deadline = monotonic() + seconds
@@ -437,18 +458,99 @@ def main():
         window[0].set_default_size(
             args.width - 40, 870 if args.width == 1600 else 790
         )
-        later(report_step, 350)
+        later(capture_navigation, 350)
+
+    def tab_key(title, key, done):
+        switcher = next(w for w in walk(window[0].get_child())
+                        if isinstance(w, Gtk.StackSwitcher))
+        button = next(w for w in walk(switcher) if isinstance(w, Gtk.ToggleButton)
+                      and any(isinstance(v, Gtk.Label) and v.get_text() == title
+                              for v in walk(w)))
+        assert button.grab_focus() is not False
+        press("space")
+        until(lambda: switcher.get_stack().get_visible_child_name() == key,
+              lambda: later(done, 120))
+
+    def capture_navigation():
+        # New acceptance uses physical keyboard navigation, not the legacy
+        # section preconditions used for the pre-existing report assertions.
+        tab_key("Capture", "capture", capture_initial)
+
+    def capture_initial():
+        assert not host.performance.detailed_capture_enabled
+        assert find_label("Capture arrêtée")
+        button = find_button("Démarrer la capture")
+        assert button.get_mapped() and button.get_sensitive()
+        assert button.grab_focus() is not False
+        press("space")
+        until(lambda: host.performance.detailed_capture_enabled, capture_started)
+
+    def capture_started():
+        assert find_label("Capture en cours")
+        tab_key("Journaux", "journals", capture_survives_navigation)
+
+    def capture_survives_navigation():
+        assert host.performance.detailed_capture_enabled
+        assert find_label("50 événements affichés")
+        tab_key("Capture", "capture", capture_stop)
+
+    def capture_stop():
+        assert host.performance.detailed_capture_enabled
+        button = find_button("Arrêter la capture")
+        assert button.get_sensitive() and button.grab_focus() is not False
+        press("space")
+        until(lambda: not host.performance.detailed_capture_enabled, capture_export)
+
+    def capture_export():
+        assert find_label("Capture arrêtée")
+        button = find_button("Enregistrer les mesures JSON…")
+        assert button.get_sensitive() and button.grab_focus() is not False
+        press("space")
+        until(lambda: any(e.filename == "cifereca-performance.json" and e.dialog is not None
+                          for e in plugin._support_exports), capture_file_choice)
+
+    def capture_file_choice():
+        exporter = next(e for e in plugin._support_exports
+                        if e.filename == "cifereca-performance.json")
+        assert exporter.dialog.get_visible()
+        target = out / "performance-export.json"
+        target.write_bytes(b"CAPTURE-EXPORT-FIXTURE")
+        assert exporter.dialog.set_file(Gio.File.new_for_path(str(target)))
+        later(lambda: capture_accept(exporter, target), 500)
+
+    def capture_accept(exporter, target):
+        assert exporter.dialog.get_file().get_path() == str(target)
+        exporter.dialog.emit("response", Gtk.ResponseType.ACCEPT)
+        until(lambda: exporter.cancellable is None, lambda: capture_saved(target))
+
+    def capture_saved(target):
+        data = json.loads(target.read_text())
+        assert data["schema"] == "cifereca.performance.phases/1"
+        assert data["detailed_capture_enabled"] is False
+        assert data["remote_upload"] is False
+        assert "Mesures JSON enregistrées" in host.toasts
+        assert broker.checks == 0 and plugin.llm is None
+        report["checks"]["P0_2139_capture_keyboard_tabs_lifetime_and_local_json"] = True
+        # Fixture destination selected programmatically; opening the chooser,
+        # tab/start/stop/save activation and actual private write are real GTK.
+        tab_key("Rapports et vérifications", "reports", report_step)
 
     def initial():
         assert window[0].get_width() <= args.width, "Fenêtre trop large"
         assert page[0].get_mapped(), "Plugin non visible"
+        stack = next(w for w in walk(page[0]) if isinstance(w, Gtk.Stack)
+                     and w.get_name() == "diagnostics-sections")
+        assert stack.get_visible_child_name() == "journals"
+        assert host.performance.detailed_capture_enabled is False
+        report["checks"]["P0_2139_journals_default_no_implicit_capture"] = True
         assert find_label("Journaux par composant")
         assert find_label("Analyse IA")
         assert find_label("État système")
         assert find_label("Rapport support")
         assert find_label("50 événements affichés")
         assert find_label("Indisponible"), "Disponibilité des sources masquée"
-        assert not find_button("Autoriser et analyser").get_sensitive()
+        assert not next(w for w in walk(page[0]) if isinstance(w, Gtk.Button)
+                        and w.get_label() == "Autoriser et analyser").get_sensitive()
         assert broker.checks == 0, "Contrôle actif lancé à l'ouverture"
         assert len(broker.event_queries) == 1, broker.event_queries
         report["checks"]["initial_and_no_implicit_active_or_ai"] = True

@@ -29,7 +29,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gio, Gtk
 from PIL import ImageGrab
 
-from diagnostics_page_probe import Broker, Context, Host, Tasks, walk
+from diagnostics_page_probe import reveal_diagnostics_section, Broker, Context, Host, Tasks, walk
 from cifereca.plugin_api import LLMResult
 from x11_input import X11Input
 
@@ -264,7 +264,7 @@ def main():
         buttons = [w for w in walk(page[0])
                    if isinstance(w, Gtk.Button) and w.get_tooltip_text() == value]
         assert len(buttons) == 1, (value, len(buttons))
-        return buttons[0]
+        return reveal_diagnostics_section(buttons[0])
 
     def switch(state):
         if plugin[0] is not None:
@@ -553,7 +553,7 @@ def main():
         found = [w for w in walk(page[0])
                  if isinstance(w, Gtk.Button) and w.get_label() == label]
         assert len(found) == 1, ("D14 bouton absent", label, len(found))
-        return found[0]
+        return reveal_diagnostics_section(found[0])
 
     def ai_status():
         return " ".join(labels())
