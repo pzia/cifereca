@@ -254,6 +254,7 @@ def main():
         until(allocated, click_then_continue, timeout=6.0)
 
     def ready():
+        print('CIFERECA_E2E_GTK_PHASE:maintenance_begin', file=sys.stderr, flush=True)
         w = window[0]
         assert "tools" in w.nav_rows
         # The technical navigation section can be collapsed in GTK; selecting
@@ -309,6 +310,7 @@ def main():
         return report["status"] == "RUNNING"
 
     def preview_pending():
+        print('CIFERECA_E2E_GTK_PHASE:maintenance_preview', file=sys.stderr, flush=True)
         assert modal() is None, "GTK dialog opened before slow plan finished"
         assert tool.run_calls == 0
         assert_line("Analyse…", busy=True)
@@ -561,6 +563,7 @@ def main():
         p1_begin_run()
 
     def p1_begin_run():
+        print('CIFERECA_E2E_GTK_PHASE:maintenance_execute', file=sys.stderr, flush=True)
         mode = p1_modes[p1_mode_index[0]]
         tool.result_ok = mode != "partial"
         tool.progress_sent.clear()
@@ -613,6 +616,7 @@ def main():
         verify_p1_tool_rows()
 
     def finish():
+        print('CIFERECA_E2E_GTK_PHASE:maintenance_finish', file=sys.stderr, flush=True)
         report["status"] = "PASS"
         result[0] = 0
         save()
