@@ -7,6 +7,7 @@ No background work, provider network, or profile change is introduced.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from .loan_safe_trace import loan_trace_ref
@@ -32,7 +33,6 @@ def acquire_provider_loan(
     } else "unknown"
     try:
         path = acquisition.path
-        from pathlib import Path
         artifact_bytes = (path.stat().st_size if isinstance(path, Path)
                           and path.is_file() else 0)
     except Exception:
