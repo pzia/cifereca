@@ -9,6 +9,22 @@ from typing import Any
 from ..models import Loan
 
 
+# This read-only resolver emits exactly these four refusal codes. A caller
+# cannot use an arbitrary plugin-provided object/string as a public status,
+# durable ledger attention_code, or reason to bypass the grant check.
+_BORROWER_REFUSAL_CODES = frozenset({
+    "adept_borrower_ambiguous",
+    "adept_borrower_binding_required",
+    "adept_borrower_connection_changed",
+    "adept_borrower_profile_changed",
+})
+
+
+def public_borrower_refusal_code(value: Any) -> str:
+    return (value if type(value) is str and value in _BORROWER_REFUSAL_CODES
+            else "adept_borrower_ambiguous")
+
+
 def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: str) -> tuple[str | None, str | None]:
     """Resolve the Adobe borrower separately from the Paris connection.
 
