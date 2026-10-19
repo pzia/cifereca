@@ -42,7 +42,7 @@ def stub_contract(instance, value):
 def test_typed_contract_version_remains_compatible(value, version):
     adapter = runtime()
     commands = stub_contract(adapter, value)
-    assert adapter.contract()["contract_version"] == value
+    assert adapter.contract()["contract_version"] == version
     assert adapter.contract_version == version
     assert commands == [(["contract", "--json"], {"timeout": 20})]
 
@@ -106,3 +106,24 @@ def test_real_subprocess_dispatch_still_uses_actual_config(monkeypatch):
     assert adapter.run_json(["contract", "--json"])["ok"] is True
     assert calls == [[*command, "contract", "--json"]]
     assert PRIVATE not in repr(adapter.configured_command())
+
+
+@pytest.mark.parametrize("version", [8, "8", "009"])
+def test_legacy_contract_reaches_real_core_as_compatible_without_mutating_cli(version, monkeypatch):
+    from cifereca.services import LibraryService
+    adapter = runtime()
+    payload = {"ok": True, "name": "kobo-adept", "contract_version": version,
+               "capabilities": ["download_acsm_adept", "strict_json_stdout"]}
+    adapter.run_json = lambda *_args, **_kwargs: payload
+    adapter.capabilities = lambda: {"ok": True, "capabilities": {}}
+    monkeypatch.setattr(module.shutil, "which", lambda *_args: "/synthetic/kobo-adept")
+    service = LibraryService.__new__(LibraryService)
+    service._kobo_adept_state_cache = None
+    service._kobo_adept_state_cache_at = 0
+    service._kobo_adapter = lambda: adapter
+    state = service.kobo_adept_state(force=True)
+    assert state["contract_version"] == int(version)
+    assert state["compatible"] is True
+    assert state["operational"] is True
+    assert type(payload["contract_version"]) is type(version)
+    assert payload["contract_version"] == version

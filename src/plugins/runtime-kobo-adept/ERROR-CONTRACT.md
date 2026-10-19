@@ -261,3 +261,8 @@ Tests hors réseau : contrat v8 numérique ou chaîne décimale historique,
 versions malformées, codes fixes et argv privé sans impact sur la
 commande réellement exécutée. La qualification des véritables codes
 métier Adobe/libgourou n'est toujours pas revendiquée.
+
+Après validation, `contract()` publie une copie dont `contract_version`
+est l’entier canonique. Le probe strict et le véritable consommateur Core
+restent compatibles avec les chaînes historiques `"8"` et `"009"` ; le
+dictionnaire original de la CLI/cache n’est pas modifié en place.

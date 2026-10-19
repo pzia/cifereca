@@ -279,7 +279,9 @@ class KoboAdeptRuntime:
                 code='kobo_adept_contract_old',
             )
         self.contract_version = version
-        return value
+        # Publish the already validated canonical int to the strict Core
+        # probe, without changing the external CLI/cache dictionary in place.
+        return {**value, 'contract_version': version}
 
     def capabilities(self):
         value = self.run_json(['capabilities', '--json'])
