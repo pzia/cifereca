@@ -170,6 +170,45 @@ def test_states_failure_source_lines_are_allowlisted_and_private_data_dropped():
         assert "PRIVATE" not in repr(row)
 
 
+def test_structured_diagnostics_reports_only_ast_verified_failure_lines():
+    """#2139: structured GTK result may expose code coordinates, never secrets."""
+    import ast
+    module = _module()
+    tree = ast.parse((ROOT / "e2e/diagnostics_structured_probe.py").read_text())
+    checkpoint = next(n.lineno for n in ast.walk(tree)
+                      if isinstance(n, ast.FunctionDef) and n.name == "readable")
+    failure = next(n.lineno for n in ast.walk(tree)
+                   if isinstance(n, ast.Assert))
+    wait = next(n.lineno for n in ast.walk(tree)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name) and n.func.id == "until")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "diagnostics-structured-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        report.write_text(json.dumps({
+            "checkpoint_line": checkpoint, "failure_line": failure,
+            "wait_line": wait, "error": "PRIVATE_SIGNED_TOKEN",
+            "status": "FAIL", "debug": {"cookie": "PRIVATE"},
+        }))
+        safe = module.safe_summary(source)["results"][0]
+        assert safe["checkpoint_line"] == checkpoint
+        assert safe["failure_line"] == failure
+        assert safe["wait_line"] == wait
+        assert "PRIVATE" not in repr(safe)
+        report.write_text(json.dumps({
+            "checkpoint_line": False, "failure_line": str(failure),
+            "wait_line": 999999, "error": "PRIVATE",
+        }))
+        invalid = module.safe_summary(source)["results"][0]
+        assert "checkpoint_line" not in invalid
+        assert "failure_line" not in invalid
+        assert "wait_line" not in invalid
+
+
 class SafeFailureDiagnosisTests(unittest.TestCase):
     def test_failed_baseline_exports_only_closed_stage_valid_line_and_bounded_duration(self):
         import ast
