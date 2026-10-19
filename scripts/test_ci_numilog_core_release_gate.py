@@ -79,6 +79,15 @@ class NumilogCoreGateTests(unittest.TestCase):
         ):
             self.validate(runner=lambda *a, **kw: (_ for _ in ()).throw(OSError()))
 
+    def test_git_result_without_a_valid_success_exit_code_is_rejected(self):
+        """A missing git result must never be interpreted as ancestry success."""
+        for result in (None, object(), SimpleNamespace(returncode=None)):
+            with self.subTest(result=type(result).__name__):
+                with self.assertRaisesRegex(
+                    NumilogReleaseRefused, "does not contain"
+                ):
+                    self.validate(runner=lambda *_a, **_k: result)
+
     def test_old_numilog_version_cannot_proceed_even_with_new_core(self):
         self.write_version("0.1.50")
         def unexpected(*args, **kwargs):
