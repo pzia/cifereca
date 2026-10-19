@@ -122,6 +122,15 @@ def test_existing_public_age_model_is_reused_without_parsing_titles_or_prose():
     assert attested_age_status(book("edition", ages=[
         {**statement(10, 12), "provider_id": "other"},
     ]), 11) == "unknown"
+    publisher = youth_age_from_label(
+        "10-12 ans", age_kind="publisher",
+        provenance=Provenance("éditeur-cité", source_id="éditeur-record"),
+    )
+    # A publisher may have an independent source-record identifier; its
+    # provenance is preserved rather than silently remapped to the provider.
+    allowed = attested_age_ranges(book("edition", ages=[publisher]))
+    assert allowed == (publisher,)
+    assert allowed[0].provenance.source == "éditeur-cité"
 
 
 def test_no_scan_or_network_and_bounded_input_inventory():
