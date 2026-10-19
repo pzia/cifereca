@@ -6,6 +6,7 @@ private library URLs, fulfillment or downloads cross this boundary.
 from __future__ import annotations
 
 from email.utils import parsedate_to_datetime
+import math
 import re
 import time
 import unicodedata
@@ -21,6 +22,19 @@ from cifereca_numilog_public import (
 
 PUBLIC_ORIGIN = "https://www.numilog.com"
 _PUBLIC_FIELDS = frozenset({"all"})
+
+def _checked_timeout(timeout):
+    """Reject non-finite or hostile HTTP budgets before opening a socket."""
+    if type(timeout) not in (int, float):
+        raise ProviderCapabilityError("Numilog : invalid_public_timeout")
+    try:
+        numeric = float(timeout)
+    except (OverflowError, ValueError):
+        raise ProviderCapabilityError("Numilog : invalid_public_timeout") from None
+    if not math.isfinite(numeric) or not 0 < numeric <= 30:
+        raise ProviderCapabilityError("Numilog : invalid_public_timeout")
+    return numeric
+
 
 
 class PublicRateLimitError(ProviderError):
@@ -92,6 +106,7 @@ def fetch_public_search_url(url: str, *, timeout: float = 15.0):
     # The parser accepts a wider set of page values for offline inspection;
     # live requests must retain the narrower provider budget.
     public_search_url(parsed["query"], int(parsed.get("GRID_PAGE", "0")))
+    timeout = _checked_timeout(timeout)
     try:
         with httpx.Client(
             timeout=timeout, follow_redirects=False, trust_env=False,
