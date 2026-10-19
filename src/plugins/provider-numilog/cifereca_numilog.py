@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.60, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.61, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.60'
+VERSION = '0.1.61'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,

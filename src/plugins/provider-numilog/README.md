@@ -1286,3 +1286,32 @@ horloge monotone déterministe et reprise au terme du plafond.
 Ce correctif ne qualifie ni le respect des CGU/robots, ni la
 disponibilité réelle des endpoints Numilog ni les filtres serveurs
 auteur/ISBN qui restent ouverts dans #1886.
+
+
+## 0.1.61 — titre obligatoire pour enrichir une carte commerciale (#1886)
+
+La fiche commerciale anonyme est publiée par un identifiant/URL Numilog
+canonique, mais **l'identité bibliographique peut diverger** de la carte de
+recherche au même URL (évolution du catalogue, cache, données contradictoires).
+Auparavant, une contradiction sur `JSON-LD Book.name` désactivait seulement
+la copie de certains champs visibles ; les ISBN papier/EPUB, prix publics,
+couvertures et offres JSON-LD de l'autre titre étaient quand même placés dans
+`metadata.public_detail`.
+
+L'enrichissement explicite vérifie maintenant la présence d'un
+`Book.name` structuré, dont le titre concorde avec celui de la
+carte après normalisation Unicode NFKC, casse et espaces. Un titre absent
+ou contradictoire refuse **entièrement** la projection avec le code public
+fixe `detail_title_conflict`. Aucun ISBN, offre commerciale, couverture,
+éditeur, auteur ni champ de détail étranger n'est attaché à la carte.
+La ligne originale et ses droits inchangés restent disponibles.
+
+Les divergences **non identitaires** entre livre et carte (description,
+auteur, éditeur) demeurent visibles comme `listing_conflicts`, sans
+écrasement arbitraire. Tests hors ligne à partir de la fiche expurgée
+Blackbone avec EAN EPUB/papier distincts, prix et couverture publics.
+Aucun réseau, DRM, nouveau lien marchand, compte ou téléchargement.
+
+Ce garde-fou n'atteste ni que la fiche soit possédée ni le format
+exact acheté ; les critères de #1886 et #1072 nécessitant des preuves
+externes et la recette UX restent ouverts. **Fusion après 0.1.60**.
