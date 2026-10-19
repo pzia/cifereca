@@ -37,10 +37,19 @@ class _Scripts(HTMLParser):
         self.active = False
         self.parts = []
         self.parts_bytes = 0
+        self.non_evidence_depth = 0
 
     def handle_starttag(self, tag, attrs):
-        if tag != "script":
+        # Script nodes under inert HTML/template fallbacks are not published
+        # Product/Book evidence. In particular, never choose a hidden edition
+        # when a different visible JSON-LD Book is available.
+        if tag in {"template", "noscript", "iframe", "svg"}:
+            self.non_evidence_depth += 1
             return
+        if tag != "script" or self.non_evidence_depth:
+            return
+        if sum(key == "type" for key, _value in attrs) > 1:
+            raise PublicDetailError("ambiguous_jsonld_type")
         attributes = dict(attrs)
         declared = attributes.get("type")
         kind = (declared or "").split(";", 1)[0].strip().lower() if isinstance(declared, (str, type(None))) else ""
@@ -65,6 +74,8 @@ class _Scripts(HTMLParser):
             self.scripts.append("".join(self.parts))
             self.parts = []
             self.active = False
+        elif tag in {"template", "noscript", "iframe", "svg"}:
+            self.non_evidence_depth = max(0, self.non_evidence_depth - 1)
 
 
 def _nodes(obj, depth=0):
