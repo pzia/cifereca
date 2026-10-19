@@ -180,7 +180,7 @@ def _update_search_count(self, shown: int) -> None:
     noun = "résultat" if count == 1 else "résultats"
     scope = "Connu" if self._search_mode == "local" else "Étendu"
     suffix, tooltip = "", ""
-    if self._search_mode == "global":
+    if self._search_mode == "global" and getattr(self, "search_controls", None) is not None:
         state = self.search_controls.state()
         identity = getattr(self.service, "current_identity", None)
         context = (state.text, state.field, state.scope,
