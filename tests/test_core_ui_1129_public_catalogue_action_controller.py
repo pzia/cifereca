@@ -182,7 +182,7 @@ def test_browser_error_is_reported_using_existing_public_dialog():
     add_catalogue_action(window, detail, item, Gio=Gio)
     buttons[0].click()
     assert events[-1] == (
-        "error", "URL indisponible", "Ouverture de la page publique impossible"
+        "error", "Ouverture du lien indisponible", "Ouverture de la page publique impossible"
     )
 
 
@@ -194,7 +194,7 @@ def test_service_classification_error_during_click_is_reported_once():
     )
     buttons[0].click()
     assert events[-1] == (
-        "error", "lien supprimé", "Ouverture de la page publique impossible"
+        "error", "Ouverture du lien indisponible", "Ouverture de la page publique impossible"
     )
     assert links == []
 
@@ -217,3 +217,60 @@ def test_action_never_uses_a_second_provider_link_resolver():
     assert not hasattr(window, "plugin_manager")
     assert not hasattr(window, "runner")
     assert links == [("https://books.example/notice/123", None)]
+
+
+@pytest.mark.parametrize("failure_origin", ["service", "browser"])
+def test_provider_and_launcher_error_cannot_disclose_signed_url(failure_origin):
+    window, detail, item, state, events, buttons, links, Gio = _harness()
+    add_catalogue_action(window, detail, item, Gio=Gio)
+    def fail(*_args):
+        raise RuntimeError(
+            "https://private.invalid/LOAN/book?auth=PRIVATE_BROWSER_TOKEN"
+        )
+    if failure_origin == "service":
+        window.service.public_catalogue_target = fail
+    else:
+        Gio.AppInfo.launch_default_for_uri = fail
+    buttons[0].click()
+    assert events[-1] == (
+        "error", "Ouverture du lien indisponible",
+        "Ouverture de la page publique impossible",
+    )
+    assert "PRIVATE_BROWSER_TOKEN" not in repr(events)
+    assert "private.invalid" not in repr(events)
+    assert links == []
+
+
+def test_hostile_exception_does_not_require_str_or_repr():
+    window, detail, item, state, events, buttons, links, Gio = _harness()
+    add_catalogue_action(window, detail, item, Gio=Gio)
+    class HostileError(RuntimeError):
+        def __str__(self):
+            raise AssertionError("Never stringify provider exceptions")
+        def __repr__(self):
+            raise AssertionError("Never repr provider exceptions")
+    Gio.AppInfo.launch_default_for_uri = lambda *_args: (_ for _ in ()).throw(HostileError())
+    buttons[0].click()
+    assert events[-1] == (
+        "error", "Ouverture du lien indisponible",
+        "Ouverture de la page publique impossible",
+    )
+
+
+def test_explicit_userfacing_message_keeps_only_safe_public_text():
+    from cifereca.plugin_api import UserFacingError
+    window, detail, item, state, events, buttons, links, Gio = _harness()
+    add_catalogue_action(window, detail, item, Gio=Gio)
+    Gio.AppInfo.launch_default_for_uri = lambda *_args: (_ for _ in ()).throw(
+        UserFacingError(
+            "Cette page publique est indisponible",
+            code="external_link_down",
+            technical_detail="https://private.invalid/?token=PRIVATE_BROWSER_TOKEN",
+        )
+    )
+    buttons[0].click()
+    assert events[-1] == (
+        "error", "Cette page publique est indisponible",
+        "Ouverture de la page publique impossible",
+    )
+    assert "PRIVATE_BROWSER_TOKEN" not in repr(events)
