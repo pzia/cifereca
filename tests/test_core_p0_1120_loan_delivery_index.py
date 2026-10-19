@@ -156,3 +156,42 @@ def test_automatic_loan_facade_still_records_original_provider_and_catalog_contr
         assert saved[0]["metadata"]["acquisition_decision"]["action"] == "acquire"
     finally:
         service.close()
+
+
+PRIVATE = "https://private.invalid/LOAN/file.epub?auth=PRIVATE_INDEX_TOKEN"
+
+
+@pytest.mark.parametrize("stage", ["inspect", "catalog"])
+def test_untrusted_artifact_failure_reason_is_not_exposed_to_caller_or_logs(
+    tmp_path, monkeypatch, caplog, stage,
+):
+    service = _service(tmp_path)
+    file = tmp_path / "local.epub"
+    file.write_bytes(b"offline fixture")
+    catalog = []
+    def index(path, **kwargs):
+        catalog.append((path, kwargs))
+        return {"status": "invalid", "reason": PRIVATE}
+    monkeypatch.setattr(service, "catalog_index_path", index)
+    inspector = lambda _path: NS(
+        valid=stage == "catalog", media_format="epub", protected=False,
+        reason=PRIVATE,
+    )
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            with pytest.raises(ProviderConfigurationError) as failure:
+                loan_provider_delivery.index_local_loan_artifact(
+                    service, _loan(), NS(identity_id="alex"), file,
+                    time=facade.time, _TRACE_LOG=facade._TRACE_LOG,
+                    inspect_artifact=inspector,
+                    ProviderConfigurationError=facade.ProviderConfigurationError,
+                )
+        assert str(failure.value) == (
+            "Artefact local invalide" if stage == "inspect"
+            else "Indexation locale impossible"
+        )
+        assert len(catalog) == (1 if stage == "catalog" else 0)
+        assert PRIVATE not in str(failure.value) + caplog.text
+        assert file.read_bytes() == b"offline fixture"
+    finally:
+        service.close()
