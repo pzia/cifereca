@@ -430,6 +430,10 @@ class ParisProviderSession(ProviderSession):
             # A malformed index is not a valid empty page and must never
             # reach the Syracuse SearchService or its retry/fallback route.
             raise ProviderCapabilityError("Bibliothèques de Paris : invalid_page")
+        # The public capability validator accepts case/whitespace variants,
+        # but ParisClient dispatches exact tokens. Pass the validated scope
+        # rather than implicitly widening " DIGITAL " to all catalogues.
+        scope = scope.strip().casefold()
         try:
             rows = self._decorate(
                 self.client.search(query, scope, page),
