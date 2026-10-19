@@ -115,7 +115,13 @@ class KoboAdeptRuntime:
             raise AttentionRequired('Commande Kobo-Adept invalide.', code='kobo_adept_invalid_command')
         return list(value)
 
-    def configured_command(self): return self.command
+    def configured_command(self):
+        # The Core reads this *only* for its unavailable-runtime status.
+        # Passing full argv exposes private home directories and user-supplied
+        # command arguments via diagnostics, even without invoking the CLI.
+        self.command  # Validate the configuration without publishing it.
+        return ['<commande Kobo-Adept configurée ; arguments masqués>']
+
     def available(self): return bool(shutil.which(self.command[0]))
 
     def run_json(self, args, *, payload=None, timeout=60, max_output_bytes=None):
@@ -248,15 +254,34 @@ class KoboAdeptRuntime:
 
     def contract(self):
         value = self.run_json(['contract', '--json'], timeout=20)
-        try: version = int(value.get('contract_version') or 0)
-        except (ValueError, TypeError) as exc:
-            raise KoboAdeptError('Version de contrat Kobo-Adept invalide.',code='kobo_adept_invalid_contract') from exc
+        # Older CLIs may serialize a numeric contract version as a short
+        # decimal string; retain this compatibility without applying int()
+        # to opaque supplier values or publishing them on a failure.
+        raw = value.get('contract_version')
+        if type(raw) is int and 0 <= raw <= 1000:
+            version = raw
+        elif (type(raw) is str and 1 <= len(raw) <= 3
+              and raw.isascii() and raw.isdecimal()):
+            version = int(raw)
+        else:
+            raise KoboAdeptError(
+                'Version de contrat Kobo-Adept invalide.',
+                code='kobo_adept_invalid_contract',
+            ) from None
         if value.get('name') != 'kobo-adept':
-            raise AttentionRequired('Le programme ne publie pas le contrat Kobo-Adept.',code='kobo_adept_invalid_contract')
+            raise AttentionRequired(
+                'Le programme ne publie pas le contrat Kobo-Adept.',
+                code='kobo_adept_invalid_contract',
+            )
         if version < self.required_contract:
-            raise AttentionRequired(f'Kobo-Adept contract v{version} est trop ancien.',code='kobo_adept_contract_old')
+            raise AttentionRequired(
+                'Le contrat Kobo-Adept est trop ancien.',
+                code='kobo_adept_contract_old',
+            )
         self.contract_version = version
-        return value
+        # Publish the already validated canonical int to the strict Core
+        # probe, without changing the external CLI/cache dictionary in place.
+        return {**value, 'contract_version': version}
 
     def capabilities(self):
         value = self.run_json(['capabilities', '--json'])
