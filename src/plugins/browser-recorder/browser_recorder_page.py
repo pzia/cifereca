@@ -29,6 +29,8 @@ class BrowserRecorderPage:
         self.handle = None
         self.stop_event = None
         self.advance = None
+        self.save_requested = None
+        self.mode = None
         self.generation = 0
         self.last_filename = ""
 
@@ -128,7 +130,9 @@ class BrowserRecorderPage:
             generation = self.generation
             self.stop_event = Event()
             self.advance = Semaphore(0)
-            stop_event, advance = self.stop_event, self.advance
+            self.save_requested = Event()
+            self.mode = mode
+            stop_event, advance, save_requested = self.stop_event, self.advance, self.save_requested
             buttons(mode)
             state.set_label("Ouverture du navigateur ; connexion manuelle possible…")
 
@@ -147,7 +151,8 @@ class BrowserRecorderPage:
 
             def task(control):
                 if mode == "record":
-                    return record(start_url, directory, stop_event, status=signal)
+                    return record(start_url, directory, stop_event,
+                                  save_requested=save_requested, status=signal)
                 return replay(directory, capture_name, origin, stop_event, advance, status=signal)
 
             handle = self.tasks.submit(task, kind="browser-recorder",
@@ -173,6 +178,8 @@ class BrowserRecorderPage:
                         self.handle = None
                     self.stop_event = None
                     self.advance = None
+                    self.save_requested = None
+                    self.mode = None
                     buttons()
                     if message:
                         state.set_label(message)
@@ -190,7 +197,13 @@ class BrowserRecorderPage:
 
         start.connect("clicked", lambda *_: launch("record"))
         replay_button.connect("clicked", lambda *_: launch("replay"))
-        stop.connect("clicked", lambda *_: self.stop_event.set() if self.stop_event else None)
+        def stop_clicked(*_):
+            if self.stop_event is not None:
+                if self.mode == "record" and self.save_requested is not None:
+                    self.save_requested.set()
+                self.stop_event.set()
+
+        stop.connect("clicked", stop_clicked)
         next_button.connect("clicked", lambda *_: self.advance.release() if self.advance else None)
         return box
 
@@ -200,6 +213,8 @@ class BrowserRecorderPage:
             self.stop_event.set()
         self.stop_event = None
         self.advance = None
+        self.save_requested = None
+        self.mode = None
         self.handle = None
         self.tasks = None
         self.context = None
