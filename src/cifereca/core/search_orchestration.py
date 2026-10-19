@@ -466,6 +466,32 @@ def _search_problem_label(code: str) -> str:
     return "échec de recherche"
 
 
+def _search_batch_status(
+    rows: list[SearchResult] | tuple[SearchResult, ...],
+    warnings: list[str] | tuple[str, ...],
+    error_code: str,
+    *,
+    cached: bool = False,
+) -> str:
+    """Compute a closed Core verdict; never use arbitrary provider error text.
+
+    A stale notice is not a successful live result. Access refusal stays
+    distinguishable by the *existing* machine error_code, never relabelled as
+    a public transport outage or evidence of a purchase.
+    """
+    if any(
+        isinstance(getattr(row, "metadata", None), dict)
+        and row.metadata.get("search_provenance") == "known_catalog_stale"
+        for row in rows
+    ):
+        return "known_catalog_stale"
+    if error_code:
+        return "partial" if rows else "unavailable"
+    if warnings:
+        return "partial"
+    return "cached" if cached else "live"
+
+
 def _search_provider_session(self, session: ProviderSession, query: str, scope: str, *, field: str='all', content_types: tuple[str, ...]=(), facade_type) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
 
@@ -670,7 +696,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             for pid in sorted(groups):
                 if request_cancelled():
                     break
-                emit(CatalogSearchBatch(pid, self.provider_display_name(pid), tuple(groups[pid]), cached=True))
+                emit(CatalogSearchBatch(
+                    pid, self.provider_display_name(pid), tuple(groups[pid]),
+                    cached=True, result_status="cached",
+                ))
             cancelled = request_cancelled()
             if not cancelled:
                 with self._search_generation_lock:
@@ -826,6 +855,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                         session.provider_id, session.descriptor.display_name, tuple(provider_rows),
                         tuple(provider_warnings), error_code, error_message, False,
                         int((time.monotonic() - provider_started) * 1000),
+                        _search_batch_status(provider_rows, provider_warnings, error_code),
                     ))
                 if control is not None and callable(getattr(control, "report", None)):
                     try:
