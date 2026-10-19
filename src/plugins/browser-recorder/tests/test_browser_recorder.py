@@ -234,3 +234,23 @@ def test_replay_requires_confirmation(tmp_path):
                   factory=lambda: FakePW(ctx)) == 0
     assert ctx.visits == [ORIGIN + "/"]
 
+
+
+def test_unconfirmed_stop_discards_all_capture_artifacts(tmp_path):
+    stopped = Event()
+    context = FakeContext(record_stop=stopped)
+    save_requested = Event()
+    with pytest.raises(RecorderError, match="capture_interrupted"):
+        record(ORIGIN + "/library", tmp_path, stopped,
+               save_requested=save_requested, factory=lambda: FakePW(context))
+    assert not list(tmp_path.glob("*.har"))
+
+
+def test_explicit_save_request_allows_har(tmp_path):
+    stopped = Event()
+    save_requested = Event()
+    save_requested.set()
+    context = FakeContext(record_stop=stopped)
+    filename = record(ORIGIN + "/books", tmp_path, stopped,
+                      save_requested=save_requested, factory=lambda: FakePW(context))
+    assert (tmp_path / filename).is_file()
