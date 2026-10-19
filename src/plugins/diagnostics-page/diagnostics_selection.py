@@ -14,7 +14,7 @@ import json
 from cifereca.plugin_api import ProviderError
 from diagnostics_explorer import (
     PAGE_SIZE, PERIODS, SEVERITIES, SOURCES, export_selected_events,
-    fetch_explorer_page, next_page_offset, sanitized_rows, selectable_event_ids,
+    explorer_since, fetch_explorer_page, next_page_offset, sanitized_rows, selectable_event_ids,
     source_summaries,
 )
 
@@ -63,12 +63,13 @@ def _redacted_page_fingerprint(rows):
     return tuple(tuple(row[field] for field in _EXPORTED_EVENT_FIELDS) for row in rows)
 
 
-def _check_selected_scope(rows, *, source: str, module: str, severity: str):
-    """Validate the broker response against the actual query, not just its IDs.
+def _check_selected_scope(rows, *, source: str, module: str, severity: str,
+                          since: datetime | None):
+    """Reject all events contradicting a requested Core broker filter.
 
-    The Core applies these filters, but treating a partial/malformed provider
-    response as truth could include a warning under the "all errors" action.
-    Never silently drop those rows: incomplete selection must fail explicitly.
+    A malformed/old timestamp must not count as "all errors this hour".
+    The upper bound is intentionally absent, as in Core's actual since-only
+    query; do not invent a future-time filter that Core never requested.
     """
     module_prefix = module.strip().casefold()
     for row in rows:
@@ -78,6 +79,17 @@ def _check_selected_scope(rows, *, source: str, module: str, severity: str):
                 or (severity and row["severity"] != severity)
                 or (module_prefix and not row["module"].casefold().startswith(module_prefix))):
             raise ValueError("diagnostic selection contains out-of-scope events")
+        if since is not None:
+            try:
+                timestamp = datetime.fromisoformat(
+                    row["timestamp"].replace("Z", "+00:00"),
+                )
+                if timestamp.tzinfo is None or timestamp.astimezone(timezone.utc) < since:
+                    raise ValueError("out of range")
+            except (ValueError, OverflowError, TypeError):
+                # No text from an invalid timestamp crosses the UI, report,
+                # clipboard or task failure boundary.
+                raise ValueError("diagnostic selection contains out-of-period events") from None
 
 
 def _checked_page(payload: Mapping, offset: int, expected_total: int | None):
@@ -127,6 +139,8 @@ def collect_filtered_selection(
     levels = ("error", "critical") if mode == "errors" else (severity,)
     # Capture the relative-period boundary for ALL requests in this scan.
     reference_time = datetime.now(timezone.utc)
+    floor = explorer_since(period, now=reference_time)
+    period_start = datetime.fromisoformat(floor) if floor is not None else None
     results: list[dict[str, str]] = []
     seen: set[str] = set()
     inspected = 0
@@ -146,7 +160,8 @@ def collect_filtered_selection(
                 period=period, offset=offset, reference_time=reference_time,
             )
             rows, total, following = _checked_page(page, offset, total_expected)
-            _check_selected_scope(rows, source=source, module=module, severity=level)
+            _check_selected_scope(rows, source=source, module=module,
+                                  severity=level, since=period_start)
             total_expected = total
             if first_page_fingerprint is None:
                 first_page_fingerprint = _redacted_page_fingerprint(rows)
@@ -181,7 +196,8 @@ def collect_filtered_selection(
             period=period, offset=0, reference_time=reference_time,
         )
         reread, _total, _next = _checked_page(current, 0, total_expected)
-        _check_selected_scope(reread, source=source, module=module, severity=level)
+        _check_selected_scope(reread, source=source, module=module,
+                              severity=level, since=period_start)
         if _redacted_page_fingerprint(reread) != first_page_fingerprint:
             raise ValueError("diagnostic selection changed during pagination")
 
