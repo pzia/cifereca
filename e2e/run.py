@@ -453,7 +453,7 @@ def main() -> int:
             gtk_critical = gtk_layout_critical_counts(output, errors)
             # Per-process stderr phase markers carry closed labels only. This
             # does not claim which GTK widget generated a native warning.
-            gtk_phases = (gtk_layout_phase_counts(errors)
+            gtk_phases = (gtk_layout_phase_counts(output, errors)
                           if scenario.get('runner') in {'gtk-diagnostics-navigation', 'gtk-maintenance'}
                           else {})
             _write_redacted_log(stdout_path, output, env)
