@@ -305,3 +305,25 @@ locales fixes.
 Le présent incrément est couvert par des erreurs synthétiques contenant
 des URL, adresses, certificats, chemins et éléments de licence. Il ne
 requalifie pas les codes Adobe inconnus, ni les garanties du logiciel amont.
+
+
+## 1.2.27 — erreurs d'inventaire multi-profils à vocabulaire fermé
+
+L'agrégateur `loan_inventories(profiles)` continuait à exposer
+`exc.code` et `safe_message(str(exc))` dans
+`errors[].code/message`. Une exception structurée n'est pas
+nécessairement une valeur publique : code fournisseur et message peuvent
+contenir une identité, un chemin privé, une URL signée ou le XML d'une
+licence. Une substitution heuristique par regex ne garantit pas
+l'absence de fuite.
+
+Les entrées d'erreur agrégées sont maintenant projetées sur une **table
+fermée** de codes métier déjà reconnus, avec leurs messages constants.
+Pour une erreur inconnue, non textuelle, ou dont la propriété de code
+échoue, seule la paire
+`adept_inventory_unavailable` / message public fixe est émise.
+Aucune conversion de l'exception en texte n'est faite. Les inventaires
+valides et la sémantique `complete=False` lors d'une erreur restent
+inchangés. Les tests utilisent exclusivement des exceptions synthétiques
+contenant jeton, URI et XML : aucune erreur de la CLI amont n'est
+requalifiée, aucune opération de restitution n'est activée.
