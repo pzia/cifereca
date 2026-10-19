@@ -20,7 +20,11 @@ _HTML_TYPES = {"text/html", "application/xhtml+xml"}
 
 def _origin(url: str) -> tuple[str, str, int | None]:
     parsed = urlsplit(url)
-    return parsed.scheme.casefold(), (parsed.hostname or "").casefold(), parsed.port
+    scheme = parsed.scheme.casefold()
+    port = parsed.port if parsed.port is not None else (
+        443 if scheme == "https" else 80 if scheme == "http" else None
+    )
+    return scheme, (parsed.hostname or "").casefold(), port
 
 
 def _validate_url(value: Any) -> str:
@@ -125,6 +129,15 @@ class HttpTransport:
             if str(value or "").strip()
         }
         allow_downgrade = bool(source.get("allow_downgrade", False))
+        # Opt-in. Legacy callers retain their ordinary redirect policy.
+        redirect_policy = source.get("redirect_policy", "any")
+        if type(redirect_policy) is not str or redirect_policy not in {
+            "any", "same_origin"
+        }:
+            raise UnsupportedOperation("transport.http: politique de redirection invalide")
+        report_http_status = source.get("classify_http_status", False)
+        if type(report_http_status) is not bool:
+            raise UnsupportedOperation("transport.http: classification HTTP invalide")
         overwrite = bool(source.get("overwrite", False))
         destination = Path(destination)
         if not destination.name:
@@ -161,6 +174,15 @@ class HttpTransport:
                             if redirect_index >= max_redirects:
                                 raise TemporaryUnavailable("transport.http: trop de redirections")
                             next_url = _validate_url(urljoin(str(response.url), location))
+                            if (redirect_policy == "same_origin"
+                                    and _origin(next_url) != _origin(url)):
+                                # OPDS fetches may redirect inside their
+                                # public origin, never to a private network,
+                                # unrelated host or downgrade. No redirect
+                                # body or next-target response is consumed.
+                                raise UnsupportedOperation(
+                                    "transport.http: redirection hors origine refusée"
+                                )
                             if urlsplit(str(response.url)).scheme.casefold() == "https" and urlsplit(next_url).scheme.casefold() == "http" and not allow_downgrade:
                                 raise UnsupportedOperation("transport.http: redirection HTTPS vers HTTP refusée")
                             if _origin(str(response.url)) != _origin(next_url):
@@ -193,6 +215,18 @@ class HttpTransport:
                             output.flush()
                             os.fsync(output.fileno())
                         break
+                except httpx.HTTPStatusError as exc:
+                    if report_http_status:
+                        status = exc.response.status_code
+                        code = ("auth_required" if status == 401 else
+                                "access_denied" if status == 403 else
+                                "not_found" if status in {404, 410} else
+                                "rate_limited" if status == 429 else
+                                "service_unavailable")
+                        raise TemporaryUnavailable(
+                            f"transport.http: {code}"
+                        ) from None
+                    raise TemporaryUnavailable("transport.http: erreur réseau (HTTPStatusError)") from exc
                 except httpx.HTTPError as exc:
                     raise TemporaryUnavailable(f"transport.http: erreur réseau ({type(exc).__name__})") from exc
             else:
