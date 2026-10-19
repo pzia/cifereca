@@ -179,5 +179,23 @@ def _update_search_count(self, shown: int) -> None:
     count = max(0, int(shown))
     noun = "résultat" if count == 1 else "résultats"
     scope = "Connu" if self._search_mode == "local" else "Étendu"
-    self.search_page.count_label.set_label(f"{count} {noun} · {scope}")
+    suffix, tooltip = "", ""
+    if self._search_mode == "global":
+        state = self.search_controls.state()
+        identity = getattr(self.service, "current_identity", None)
+        context = (state.text, state.field, state.scope,
+                   getattr(identity, "identity_id", None))
+        if getattr(self, "_online_source_context", None) == context:
+            from .search_batch_feedback import safe_source_statuses
+            suffix, tooltip = safe_source_statuses(
+                getattr(self, "_online_source_statuses", None)
+            )
+    self.search_page.count_label.set_label(
+        f"{count} {noun} · {scope}{suffix}"
+    )
+    # Tooltip contains closed public status counts only. Older headless
+    # adapters without GTK tooltip support retain the unchanged count.
+    label = self.search_page.count_label
+    if hasattr(label, "set_tooltip_text"):
+        label.set_tooltip_text(tooltip or None)
 
