@@ -9,6 +9,7 @@ on:
       - ".github/plugins-only-release-request.json"
   pull_request:
     paths:
+      - ".github/plugins-only-release-request.json"
       - ".github/workflows/plugins-only-release.yml"
       - "scripts/ci-plugins-only-runtime-gate.sh"
       - "scripts/ci-plugins-only-historical-core-gate.sh"
@@ -66,6 +67,7 @@ jobs:
         run: |
           python scripts/verify-packaging.py
           python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_plugins_release_request
+          python3 -m scripts.ci_plugins_release_request --event push
           python -m pytest -q tests/test_dev_partial_plugin_updates.py
 
       - name: Build deterministic PR plugins-only snapshot
