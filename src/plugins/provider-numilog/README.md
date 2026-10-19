@@ -1,3 +1,29 @@
+## 0.1.77 — invalidation des résultats publics après reconnexion (#1886 P0)
+
+Les parcours publics `browse_public_search` et `follow_public_link`
+vérifiaient déjà la génération de navigation lors d'une requête longue.
+Le chemin générique `search()` et l'enrichissement direct
+`enrich_public_detail()` ne faisaient pas cette vérification **après**
+l'utilisation du cache et la projection : un callback terminé pendant
+`close()` ou `connect()` pouvait encore fournir une ancienne notice.
+
+Ces deux parcours capturent désormais la génération de session avant
+lecture et valident, **juste avant de restituer la réponse**, qu'elle
+n'a pas changé et que la session est toujours connectée. Sinon, ils
+refusent le résultat avec le message fixe
+`Numilog public : navigation_invalidated`, sans URL ni corps HTTP.
+C'est une garde de cycle de vie, **pas une transaction UI** : si une
+fermeture survient après le retour, le Core/UI doit lui-même jeter ses
+callbacks obsolètes. Aucun nouvel HTTP, aucune recherche implicite et
+aucune modification des achats, droits, cookies ou ACSM.
+
+Tests entièrement hors réseau :
+`test_numilog_public_session_generation_guard_p0.py` couvre fermeture
+et reconnexion en fin de chargement, fin de projection et après un
+**cache hit**, ainsi que les parcours normaux et l'absence de GET
+supplémentaire. Le P0 #1886 reste ouvert pour la qualification de la
+recherche avancée réelle et l'intégration UX.
+
 ## 0.1.76 — genres, mots-clés et séries littérales JSON-LD (#1072/#1886 P0)
 
 Sur une **fiche publique explicitement enrichie et identifiée**, le parseur
