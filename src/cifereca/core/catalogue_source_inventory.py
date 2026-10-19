@@ -7,25 +7,10 @@ existing cache rows or direct-download/holdings flags.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
+from ..plugin_api.models import CatalogueSourceCapability
 from .public_provider_diagnostics import registered_public_provider_id, UNKNOWN_PROVIDER
-
-
-@dataclass(frozen=True, slots=True)
-class CatalogueSourceCapability:
-    """Closed, versioned Core projection: no credential, title, URL or label."""
-
-    provider_id: str
-    identity_scope: str  # public | authenticated
-    catalog_search_supported: bool
-    catalog_search_available: bool
-    catalog_refresh: str  # unsupported: no existing provider contract proves it
-    personal_inventory_supported: bool
-    personal_inventory_available: bool
-    acquisition: str = "separate_explicit"
-    schema_version: int = 1
 
 
 def catalogue_source_capabilities(
