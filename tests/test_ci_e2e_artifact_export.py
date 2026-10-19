@@ -387,3 +387,53 @@ class NativeAbortDiagnosisTests(unittest.TestCase):
             log.unlink()
             log.write_bytes(b"malloc():" + b"x" * module.MAX_BYTES)
             self.assertEqual(kind(), "unclassified_native_abort")
+
+
+class SharedHelperFailureTests(unittest.TestCase):
+    def test_only_reviewed_helper_source_and_its_ast_lines_cross_export(self):
+        import ast
+        module = _module()
+        helper = ast.parse((ROOT / "e2e/activity_feedback_acceptance.py").read_text())
+        checkpoint = next(n.lineno for n in ast.walk(helper)
+                          if isinstance(n, ast.FunctionDef) and n.name == "close_dialog")
+        failure = next(n.lineno for n in ast.walk(helper) if isinstance(n, ast.Assert))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = "mainwindow-baseline-1600"
+            report = root / scenario / scenario / "screen.json"
+            report.parent.mkdir(parents=True)
+            source = root / "summary.json"
+            source.write_text(json.dumps([{"scenario":scenario,"returncode":1}]))
+            for tag in ("activity_feedback", "PRIVATE", {"source":"PRIVATE"}):
+                report.write_text(json.dumps({"failure_source":tag, "failure_line":failure,
+                    "checkpoint_source":tag, "checkpoint_line":checkpoint,
+                    "error":"PRIVATE-TOKEN", "frame":"/home/PRIVATE"}))
+                out = module.safe_summary(source)["results"][0]
+                if tag == "activity_feedback":
+                    self.assertEqual(out["failure_source"], tag)
+                    self.assertEqual(out["failure_line"], failure)
+                    self.assertEqual(out["checkpoint_source"], tag)
+                    self.assertEqual(out["checkpoint_line"], checkpoint)
+                else:
+                    self.assertNotIn("failure_source", out)
+                    self.assertNotIn("checkpoint_source", out)
+                self.assertNotIn("PRIVATE", repr(out))
+
+    def test_trace_location_walk_keeps_only_closed_source_identifier(self):
+        import ast
+        path = ROOT / "e2e/diagnostics_navigation_probe.py"
+        tree = ast.parse(path.read_text())
+        helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                      and n.name == "probe_failure_location")
+        ns = {"__file__":str(path), "ROOT":ROOT}
+        exec(compile(ast.Module(body=[helper], type_ignores=[]), str(path), "exec"), ns)
+        source = ROOT / "e2e/activity_feedback_acceptance.py"
+        exec(compile('def fail():\n    assert False, "PRIVATE"\n', str(source), "exec"), ns)
+        try:
+            ns["fail"]()
+        except AssertionError as exc:
+            self.assertEqual(ns["probe_failure_location"](exc), ("activity_feedback", 2))
+        try:
+            raise RuntimeError("PRIVATE")
+        except RuntimeError as exc:
+            self.assertIsNone(ns["probe_failure_location"](exc))

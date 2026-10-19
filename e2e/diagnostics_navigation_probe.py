@@ -53,6 +53,19 @@ def probe_failure_line(exc):
     return line
 
 
+def probe_failure_location(exc):
+    """Closed source ID + deepest reviewed source line, never traceback data."""
+    allowed = {__file__: "navigation", str(ROOT / "e2e/activity_feedback_acceptance.py"): "activity_feedback"}
+    location = None
+    trace = exc.__traceback__
+    while trace is not None:
+        source = allowed.get(trace.tb_frame.f_code.co_filename)
+        if source is not None:
+            location = (source, trace.tb_lineno)
+        trace = trace.tb_next
+    return location
+
+
 def present_offline_fixture_error(present_error, error, *, dialogs):
     """Tag only a new dialog proven to originate in this exact offline fixture."""
     from cifereca.providers import ProviderConfigurationError
@@ -483,9 +496,16 @@ def main() -> int:
                 code = getattr(callback, "__code__", None)
                 if code is not None and code.co_filename == __file__:
                     report["checkpoint_line"] = code.co_firstlineno
+                    report.pop("checkpoint_source", None)
+                elif code is not None and code.co_filename == str(ROOT / "e2e/activity_feedback_acceptance.py"):
+                    report["checkpoint_line"] = code.co_firstlineno
+                    report["checkpoint_source"] = "activity_feedback"
                 callback()
             except Exception as exc:
-                report["failure_line"] = probe_failure_line(exc)
+                location = probe_failure_location(exc)
+                report["failure_line"] = location[1] if location is not None else None
+                if location is not None and location[0] == "activity_feedback":
+                    report["failure_source"] = "activity_feedback"
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(delay_ms, call)
