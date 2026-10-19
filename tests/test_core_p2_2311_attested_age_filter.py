@@ -1,8 +1,6 @@
 """#2311: general Search may filter only proven ages of the exact edition."""
 from __future__ import annotations
 
-from dataclasses import asdict
-
 import pytest
 
 from cifereca.core.attested_age_filter import (
@@ -61,7 +59,7 @@ def test_age_kind_is_not_conflated_and_inference_is_never_attested():
     assert attested_age_status(record, 9, age_kind="interest") == "match"
     assert attested_age_status(record, 9, age_kind="reading") == "incompatible"
     assert attested_age_status(record, 13, age_kind="reading") == "match"
-    assert attested_age_status(record, 7) == "unknown" or attested_age_status(record, 7) == "incompatible"
+    assert attested_age_status(record, 7) == "incompatible"
     assert attested_age_status(record, 7, age_kind="publisher") == "unknown"
     assert attested_age_status(record, 9, age_kind="unknown") == "unknown"
 
@@ -112,6 +110,18 @@ def test_existing_public_age_model_is_reused_without_parsing_titles_or_prose():
     assert attested_age_status(structured, 11) == "match"
     assert attested_age_ranges(structured)[0] is attest
     assert attested_age_status(book("another", title="10-12 ans et jeunes lecteurs"), 11) == "unknown"
+    # Even an exact title match may not transfer an age from the other edition.
+    foreign = youth_age_from_label(
+        "10-12 ans", age_kind="publisher",
+        provenance=Provenance("bnf", source_id="another-edition"),
+    )
+    assert attested_age_status(book("edition", ages=[foreign]), 11) == "unknown"
+    assert attested_age_status(book("edition", ages=[
+        {**statement(10, 12), "item_id": "another-edition"},
+    ]), 11) == "unknown"
+    assert attested_age_status(book("edition", ages=[
+        {**statement(10, 12), "provider_id": "other"},
+    ]), 11) == "unknown"
 
 
 def test_no_scan_or_network_and_bounded_input_inventory():
