@@ -46,6 +46,35 @@ _KNOWN_NON_ACSM_ERRORS = {
 # unbounded UTF-8 decoding, JSON parsing and returning oversized vendor data.
 _MAX_JSON_RESPONSE_BYTES = 4 * 1024 * 1024
 
+# Multi-profile inventory results are returned to Core. Error messages and
+# even machine-looking exception codes are untrusted at this plugin boundary:
+# neither vendor text nor arbitrary error.code may enter persisted receipts.
+_INVENTORY_PUBLIC_ERRORS = {
+    'adept_profile_required': 'Profil ADEPT requis.',
+    'kobo_adept_missing': 'Exécutable Kobo-Adept indisponible.',
+    'kobo_adept_timeout': 'Inventaire ADEPT : délai dépassé.',
+    'kobo_adept_launch_error': 'Exécution Kobo-Adept impossible.',
+    'kobo_adept_invalid_json': 'Inventaire ADEPT : JSON invalide.',
+    'kobo_adept_invalid_utf8': 'Inventaire ADEPT : UTF-8 invalide.',
+    'kobo_adept_invalid_response': 'Inventaire ADEPT : réponse invalide.',
+    'kobo_adept_invalid_loan_inventory': 'Inventaire ADEPT : entrées invalides.',
+    'kobo_adept_output_too_large': 'Inventaire ADEPT : réponse trop volumineuse.',
+    'kobo_adept_failed': 'Lecture de l’inventaire ADEPT échouée.',
+}
+_INVENTORY_FALLBACK_ERROR = 'adept_inventory_unavailable'
+_INVENTORY_FALLBACK_MESSAGE = 'Inventaire ADEPT indisponible ; vérifier le profil et les diagnostics.'
+
+
+def _public_inventory_error(exc):
+    """Fixed-code projection; never read str(exc), repr(exc) or vendor fields."""
+    try:
+        code = getattr(exc, 'code', None)
+    except Exception:
+        code = None
+    if type(code) is str and code in _INVENTORY_PUBLIC_ERRORS:
+        return {'code': code, 'message': _INVENTORY_PUBLIC_ERRORS[code]}
+    return {'code': _INVENTORY_FALLBACK_ERROR, 'message': _INVENTORY_FALLBACK_MESSAGE}
+
 
 def classified_adept_failure(error, exit_code):
     """Classify a FAILED, proven ACSM download request only.
@@ -661,7 +690,10 @@ class KoboAdeptRuntime:
                 result['profiles'].append({'profile': name, 'loans': inventory['loans']})
             except UserFacingError as exc:
                 result['complete'] = False
-                result['errors'].append({'profile': name, 'code': exc.code, 'message': safe_message(str(exc))})
+                # A provider error may include credentials, license XML,
+                # device identity or signed URLs. safe_message(str(exc))
+                # is heuristic redaction, not an export authorization.
+                result['errors'].append({'profile': name, **_public_inventory_error(exc)})
         return result
 
     def probe_core(self):
