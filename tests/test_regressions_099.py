@@ -121,7 +121,7 @@ class DigitalDefault(unittest.TestCase):
 
 class SummaryRegression(unittest.TestCase):
     def test_summary_remains_when_holdings_replace_initial_view(self):
-        gtk=NS(Label=Widget,Spinner=Widget);adw=NS(PreferencesGroup=Widget,ActionRow=Widget)
+        gtk=NS(Label=Widget,Spinner=Widget,Box=Widget,Button=Widget,Orientation=NS(VERTICAL=1),Align=NS(START=1));adw=NS(PreferencesGroup=Widget,ActionRow=Widget)
         helpers=functions('main_window.py',{'book_detail_presentation','compact_detail_rows','text_or_dash'},{'DetailField':DetailField,'DetailSection':DetailSection,'UiBookDetailPresentation':UiBookDetailPresentation,'detail_metadata_items':lambda _metadata:(), 'safe_detail_value':lambda value:str(value or '')})
         funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:str(s or '').lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':helpers['book_detail_presentation'],'compact_detail_rows':helpers['compact_detail_rows'],'text_or_dash':helpers['text_or_dash'],'detail_language':lambda _metadata:'','compact_availability_label':lambda value:value,'document_links':lambda _row:(),'result_row':lambda _item:{},'Pango':NS(WrapMode=NS(WORD_CHAR=0),EllipsizeMode=NS(END=1,NONE=0))})
         service=NS(content_type_for=lambda _: 'ebook',provider_display_name=lambda _: 'Paris',availability_display_label=lambda *_:'Indisponible',can_direct_download=lambda _:False)
@@ -132,7 +132,7 @@ class SummaryRegression(unittest.TestCase):
         item=NS(title='Livre',author=None,thumbnail_url=None,source_provider='paris',medium='digital',type='Livre numérique',format='EPUB',publisher=None,published_at=None,description='Résumé durable.',owned=False,metadata={})
         detail=NS(title='Livre',author=None,thumbnail_url=None,type=None,year=None,holdings=[])
         funcs['show_search'](host,item,loading=True)
-        def summaries():return [w.children[0].props['label'] for w in host.content.children if w.props.get('title')=='Résumé']
+        def summaries():return [w.children[0].children[0].props['label'] for w in host.content.children if w.props.get('title')=='Résumé']
         self.assertEqual(summaries(),['Résumé durable.'])
         funcs['show_item_detail'](host,item,detail)
         self.assertEqual(summaries(),['Résumé durable.'])
