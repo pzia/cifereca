@@ -108,7 +108,8 @@ class UiPerfMonitor:
         self._resource_end: dict[str, float | int | None] | None = None
         self._resource_stopped_at: float | None = None
         self._measurement_origin = (
-            measurement_origin if measurement_origin in {"observed", "simulated"}
+            measurement_origin if type(measurement_origin) is str
+            and measurement_origin in {"observed", "simulated"}
             else "unknown"
         )
 
@@ -183,9 +184,14 @@ class UiPerfMonitor:
         Passive statistics remain process-wide. Buffered samples from an old
         opt-in probe must not enter a new capture's detailed timeline.
         """
+        # Plugin and GTK callback values are not conversion instructions.
+        # Only exact built-in numeric types are trusted; never invoke a
+        # provider object's __float__, which could raise or do arbitrary I/O.
         try:
-            # bool is an int subclass but never a measured duration.
-            elapsed = float(duration_ms) if type(duration_ms) is not bool else float("nan")
+            elapsed = (
+                float(duration_ms) if type(duration_ms) in (int, float)
+                else float("nan")
+            )
         except (TypeError, ValueError, OverflowError):
             elapsed = float("nan")
         if not math.isfinite(elapsed) or not 0 <= elapsed <= 86_400_000:
@@ -207,7 +213,10 @@ class UiPerfMonitor:
         # preserve when it was observed rather than misdating it at flush.
         if observed_at_ms is not None:
             try:
-                observed_at_ms = float(observed_at_ms)
+                observed_at_ms = (
+                    float(observed_at_ms)
+                    if type(observed_at_ms) in (int, float) else None
+                )
             except (TypeError, ValueError, OverflowError):
                 observed_at_ms = None
             if observed_at_ms is not None and (
@@ -215,6 +224,11 @@ class UiPerfMonitor:
                 or not 0 <= observed_at_ms <= 86_400_000
             ):
                 observed_at_ms = None
+        # Never invoke a user-defined __eq__ inside the monitor lock.
+        # Malformed capture epochs may still feed passive statistics, but
+        # must never leak into a new opt-in chronology.
+        if capture_generation is not None and type(capture_generation) is not int:
+            capture_generation = -1
         key = f"{category}.{phase}"
         with self._lock:
             self._phase_samples[key].append(elapsed)
@@ -415,7 +429,10 @@ class UiPerfMonitor:
         an unbounded cardinality of retained series.
         """
         try:
-            value = float(duration_ms) if type(duration_ms) is not bool else float("nan")
+            value = (
+                float(duration_ms) if type(duration_ms) in (int, float)
+                else float("nan")
+            )
         except (TypeError, ValueError, OverflowError):
             value = float("nan")
         if not math.isfinite(value) or not 0 <= value <= 86_400_000:
