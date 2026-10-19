@@ -472,14 +472,18 @@ def _opds_fetch(session,url):
     if checked != url:
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
     # A GET eagerly buffers the ENTIRE response before _xml_root gets to
-    # enforce the 2 MiB limit. Stream the decoded HTTP body under that bound,
-    # including gzip decompression, with no retries or read of a redirect body.
-    # HTTP redirects remain strictly same-origin public feed routes.
+    # enforce the 2 MiB limit. Stream the raw HTTP body under that bound.
+    # Require identity encoding: a compressed 2 MiB body could decompress
+    # into an unbounded XML bomb before iter_bytes() returns its first chunk.
+    # Do not read a redirect body; no new retries or origins.
     try:
         for _ in range(4):
             with session.client.stream(
                 'GET',checked,follow_redirects=False,
-                headers={'Accept':'application/atom+xml, application/opensearchdescription+xml'}
+                headers={
+                    'Accept':'application/atom+xml, application/opensearchdescription+xml',
+                    'Accept-Encoding':'identity',
+                }
             ) as response:
                 if response.status_code in {301,302,303,307,308}:
                     target=_safe_opds_link(
@@ -490,11 +494,16 @@ def _opds_fetch(session,url):
                     checked=target
                     continue
                 response.raise_for_status()
+                # Identity response only: httpx decompresses entire chunks
+                # before applying our byte bound otherwise. Do not accept a
+                # server ignoring the explicit Accept-Encoding request.
+                if response.headers.get('content-encoding','').strip().casefold() not in {'','identity'}:
+                    raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
                 size=0
                 chunks=[]
-                # Content-Length is advisory, may be compressed or absent.
-                # The actual decoded bytes are ALWAYS counted, not the header.
-                for chunk in response.iter_bytes():
+                # Content-Length is advisory and may be false or absent.
+                # Always enforce the cap on the bytes read from the stream.
+                for chunk in response.iter_raw(chunk_size=65536):
                     size+=len(chunk)
                     if size>OPDS_MAX_FEED_BYTES:
                         raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
