@@ -68,7 +68,7 @@ jobs:
       - name: Validate packaging and strict updater tests
         run: |
           python scripts/verify-packaging.py
-          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_numilog_core_release_gate scripts.test_ci_plugins_release_request scripts.test_ci_numilog_core_release_gate
+          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_plugins_release_request scripts.test_ci_numilog_core_release_gate
           python3 -m scripts.ci_plugins_release_request --event push
           python -m pytest -q tests/test_dev_partial_plugin_updates.py
 
@@ -205,7 +205,7 @@ jobs:
       - name: Validate packaging and updater regressions
         run: |
           python scripts/verify-packaging.py
-          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release
+          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_numilog_core_release_gate
           python -m pytest -q tests/test_dev_partial_plugin_updates.py
 
       - name: Build selected official plugins-only snapshot
