@@ -6,6 +6,8 @@ code, network lookup or identity-mutating behaviour is introduced.
 """
 from __future__ import annotations
 
+from ..plugin_api import UserFacingError
+
 
 def add_catalogue_action(window, detail, item, *, Gio):
     if getattr(window, "_closed", False):
@@ -48,9 +50,12 @@ def add_catalogue_action(window, detail, item, *, Gio):
                 window.toast("La destination du lien a changé ; actualisez la fiche.")
         except Exception as exc:
             if not getattr(window, "_closed", False):
-                window.show_error(
-                    str(exc), "Ouverture de la page publique impossible"
-                )
+                # An OS launcher or provider error can contain a signed URL,
+                # filesystem path or full command line. Only the public
+                # exception contract may supply UI-safe text.
+                message = (exc.user_message if isinstance(exc, UserFacingError)
+                           else "Ouverture du lien indisponible")
+                window.show_error(message, "Ouverture de la page publique impossible")
 
     button.connect("clicked", open_catalogue)
     detail.add_actions([button])
