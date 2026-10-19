@@ -11,6 +11,14 @@ SCHEMA=2
 MAX_XML=2*1024*1024
 MAX_IMAGE=8*1024*1024
 MAX_ENTRIES=10000
+# Only our own fixed rejection codes may be returned to the catalog/UI.
+# Third-party ZIP/XML/EPUB exceptions can include absolute paths and contents.
+_SAFE_EPUB_REJECTION_CODES=frozenset({
+    'unsafe_xml', 'ambiguous_or_missing_entry', 'oversized_or_symlink_entry',
+    'oversized_entry', 'external_resource', 'invalid_member',
+    'escaping_member', 'unsafe_cache_path', 'too_many_entries',
+    'missing_opf', 'missing_metadata',
+})
 
 def cover_cache_dir():
     root=cache_dir()/'epub-covers-v1';root.mkdir(parents=True,exist_ok=True);return root
@@ -187,7 +195,14 @@ def inspect_epub(path):
                         if publish(member,method) or page_image(member,method):break
                     except (ValueError,OSError,ET.ParseError,KeyError,zipfile.BadZipFile,RuntimeError):continue
     except (ValueError,OSError,ET.ParseError,KeyError,zipfile.BadZipFile,RuntimeError) as exc:
-        result['epub_status']=str(exc) if isinstance(exc,ValueError) else 'unreadable_metadata'
+        # ValueError is not a safe text contract: a ZIP/EPUB parser may
+        # incorporate filenames or manifest values. Keep our own exact
+        # codes only, without ever invoking exception __str__/__repr__.
+        code=(exc.args[0] if type(exc) is ValueError
+              and len(exc.args)==1 and type(exc.args[0]) is str
+              and exc.args[0] in _SAFE_EPUB_REJECTION_CODES
+              else 'unreadable_metadata')
+        result['epub_status']=code
         result['epub_cover_status']='metadata_unreadable'
     return result
 
