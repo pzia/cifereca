@@ -47,6 +47,7 @@ class _Scripts(HTMLParser):
         self.parts_bytes = 0
         self._elements = []
         self._hidden_depth = 0
+        self._open_tags = {}
 
     @staticmethod
     def _invisible(tag, attrs):
@@ -71,7 +72,12 @@ class _Scripts(HTMLParser):
     def handle_starttag(self, tag, attrs):
         invisible = self._invisible(tag, attrs)
         if tag not in _VOID_ELEMENTS:
+            # A hostile 1 MiB HTML document can contain 100k nested tags.
+            # Bound the ancestry and reverse-scan cost independently of bytes.
+            if len(self._elements) >= 512:
+                raise PublicDetailError("html_too_deep")
             self._elements.append((tag, invisible))
+            self._open_tags[tag] = self._open_tags.get(tag, 0) + 1
             if invisible:
                 self._hidden_depth += 1
         # Only scripts in an active, unhidden HTML ancestor chain are
@@ -109,12 +115,18 @@ class _Scripts(HTMLParser):
         # closest matching open tag (including intervening malformed
         # descendants), without letting an unrelated close unblock a
         # hidden product/script prematurely.
+        if not self._open_tags.get(tag):
+            return  # Ignore unmatched end tags in O(1).
         for index in range(len(self._elements) - 1, -1, -1):
             if self._elements[index][0] == tag:
-                self._hidden_depth -= sum(
-                    1 for _name, invisible in self._elements[index:]
-                    if invisible
-                )
+                for name, invisible in self._elements[index:]:
+                    if invisible:
+                        self._hidden_depth -= 1
+                    count = self._open_tags[name] - 1
+                    if count:
+                        self._open_tags[name] = count
+                    else:
+                        del self._open_tags[name]
                 del self._elements[index:]
                 break
 
