@@ -61,12 +61,24 @@ def verify_plugin_scroll(window, later, done, *, width: int):
     assert width in (1024, 1366)
     manager = FixtureManager()
     changed = []
-    page = PluginManagerPage(window, manager, on_changed=lambda: changed.append(True))
+    shell = Gtk.Stack()
+
+    def on_changed():
+        # Model the real shell's whole-page detach/reattach. Prior to the
+        # reuse fix, a fresh PluginManagerPage would start at scroll=0 here.
+        changed.append(True)
+        shell.remove(page)
+        shell.add_named(page, "plugins")
+        shell.set_visible_child_name("plugins")
+
+    page = PluginManagerPage(window, manager, on_changed=on_changed)
     test_window = Gtk.Window()
     test_window.set_application(window.get_application())
     test_window.set_transient_for(window)
     test_window.set_default_size(width, 650)
-    test_window.set_child(page)
+    shell.add_named(page, "plugins")
+    shell.set_visible_child_name("plugins")
+    test_window.set_child(shell)
     test_window.present()
 
     target = "fixture.plugin.15"
