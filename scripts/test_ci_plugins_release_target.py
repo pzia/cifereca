@@ -122,8 +122,10 @@ class PluginsOnlyWorkflowRecoveryContracts(unittest.TestCase):
                         if line.strip() == "- name: Create or update draft GitHub Release")
         run = next(i for i in range(position + 1, len(lines))
                    if lines[i] == "        run: |")
+        # The step is followed by YAML comments at job indentation 6,
+        # before the next "- name"; stop at that boundary too.
         stop = next(i for i in range(run + 1, len(lines))
-                    if lines[i].startswith("      - name: "))
+                    if lines[i] and not lines[i].startswith("          "))
         block = lines[run + 1:stop]
         assert block and all(line.startswith("          ") or line == ""
                              for line in block)
