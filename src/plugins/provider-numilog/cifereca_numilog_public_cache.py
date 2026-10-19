@@ -14,6 +14,9 @@ from cifereca.plugin_api import ProviderError
 TTL_SECONDS = 60.0
 MAX_ENTRIES = 16
 RATE_LIMIT_PAUSE_SECONDS = 60.0
+# Never let an untrusted 429 response poison a session with an infinite or
+# astronomically distant deadline. 30 days is an explicit conservative cap.
+MAX_RATE_LIMIT_PAUSE_SECONDS = 30 * 24 * 60 * 60
 
 
 class PublicCatalogueCache:
@@ -74,11 +77,26 @@ class PublicCatalogueCache:
             if str(exc) in {'Numilog : public_catalog_rate_limited',
                             'Numilog : public_detail_rate_limited'}:
                 delay = getattr(exc, 'retry_after_seconds', 0.0)
-                if type(delay) not in (int, float) or not math.isfinite(delay) or delay < 0:
-                    delay = 0.0
+                # The exception is a remote transport boundary too: a huge
+                # integer can overflow float() and an infinite duration would
+                # permanently poison this cache across reconnects.
+                if type(delay) not in (int, float) or delay < 0:
+                    bounded = 0.0
+                else:
+                    try:
+                        numeric = float(delay)
+                    except (OverflowError, ValueError):
+                        numeric = float(MAX_RATE_LIMIT_PAUSE_SECONDS)
+                    bounded = (
+                        min(numeric, MAX_RATE_LIMIT_PAUSE_SECONDS)
+                        if math.isfinite(numeric)
+                        else (float(MAX_RATE_LIMIT_PAUSE_SECONDS) if numeric > 0 else 0.0)
+                    )
                 with self._lock:
-                    self._paused_until = max(self._paused_until, self._clock() +
-                                             max(RATE_LIMIT_PAUSE_SECONDS, delay))
+                    self._paused_until = max(
+                        self._paused_until,
+                        self._clock() + max(RATE_LIMIT_PAUSE_SECONDS, bounded),
+                    )
             raise
         finally:
             with self._lock:
