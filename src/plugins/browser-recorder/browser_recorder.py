@@ -232,7 +232,8 @@ def _playwright(factory=None):
     return sync_playwright()
 
 
-def record(start_url: str, directory: Path, stop: Event, *, status=None, factory=None) -> str:
+def record(start_url: str, directory: Path, stop: Event, *, save_requested: Event | None = None,
+           status=None, factory=None) -> str:
     """Manual browser session: only save after the operator clicks Stop."""
     origin = site_origin(start_url)
     capture = Capture(origin)
@@ -263,7 +264,7 @@ def record(start_url: str, directory: Path, stop: Event, *, status=None, factory
                 context.close()
         finally:
             browser.close()
-    if not stop.is_set():
+    if not stop.is_set() or (save_requested is not None and not save_requested.is_set()):
         raise RecorderError("capture_interrupted")
     return save_capture(directory, capture)
 
