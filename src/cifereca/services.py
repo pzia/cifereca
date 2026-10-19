@@ -949,6 +949,19 @@ class LibraryService:
         """Apply current Search controls without network or cache mutation."""
         return search_orchestration.filter_loaded_search_results(rows, query, field=field, scope=scope, provider_ids=provider_ids, content_types=content_types)
 
+    @staticmethod
+    def filter_attested_search_results(
+        rows: list[dict[str, Any]], age: int | None = None, *,
+        age_kind: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Opt-in offline youth-age filter without changing historical signatures.
+
+        Call on the loaded rows from search_known_catalog or library search;
+        records with unknown ages remain visible if age is None.
+        """
+        from .core.attested_age_filter import filter_attested_age
+        return list(filter_attested_age(rows, age, age_kind=age_kind))
+
     def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None = None) -> int:
         """Persist progressively discovered remote catalog metadata (0.8.3)."""
         return search_orchestration._mirror_remote_results(self, rows, identity_id=identity_id)

@@ -869,12 +869,13 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     return CatalogSearchSummary(query, len(rows), len(searchable), completed_count, failed, cancelled, tuple(warnings), started_dt.isoformat(timespec="seconds"), completed_at)
 
 
-def search_local_library(self, query: str, scope: str='all', *, field: str='all', identity_id: str | None=None, logger) -> list[dict[str, Any]]:
+def search_local_library(self, query: str, scope: str='all', *, field: str='all', identity_id: str | None=None, age: int | None=None, age_kind: str | None=None, logger) -> list[dict[str, Any]]:
     from ..core.search import LocalLibrarySearch
 
     resolved_identity = identity_id or (self.current_identity.identity_id if self.current_identity else None)
     rows = LocalLibrarySearch(self.library_entries).search(
         query, identity_id=resolved_identity, scope=scope, field=field,
+        age=age, age_kind=age_kind,
     )
     logger.info(
         "TRACE search local identity=%s query_len=%s scope=%s field=%s results=%s",
@@ -883,7 +884,7 @@ def search_local_library(self, query: str, scope: str='all', *, field: str='all'
     return rows
 
 
-def search_known_catalog(self, query: str, scope: str='all', *, field: str='all', identity_id: str | None=None, provider_ids: list[str] | tuple[str, ...] | None=None, content_types: list[str] | tuple[str, ...] | None=None, logger) -> list[dict[str, Any]]:
+def search_known_catalog(self, query: str, scope: str='all', *, field: str='all', identity_id: str | None=None, provider_ids: list[str] | tuple[str, ...] | None=None, content_types: list[str] | tuple[str, ...] | None=None, age: int | None=None, age_kind: str | None=None, logger) -> list[dict[str, Any]]:
     """Search the already-known SQLite universe without provider I/O.
 
     This is the first stage of the Search screen: local artifacts, current
@@ -896,6 +897,7 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
     rows = KnownCatalogSearch(self.catalog_entries, self.library_entries).search(
         query, identity_id=resolved_identity, scope=scope, field=field,
         providers=provider_ids, content_types=content_types,
+        age=age, age_kind=age_kind,
     )
     logger.info(
         "TRACE search known identity=%s query_len=%s scope=%s field=%s results=%s",
@@ -904,11 +906,12 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
     return rows
 
 
-def filter_loaded_search_results(rows: list[dict[str, Any]], query: str='', *, field: str='all', scope: str='all', provider_ids: list[str] | tuple[str, ...] | None=None, content_types: list[str] | tuple[str, ...] | None=None) -> list[dict[str, Any]]:
+def filter_loaded_search_results(rows: list[dict[str, Any]], query: str='', *, field: str='all', scope: str='all', provider_ids: list[str] | tuple[str, ...] | None=None, content_types: list[str] | tuple[str, ...] | None=None, age: int | None=None, age_kind: str | None=None) -> list[dict[str, Any]]:
     """Apply current Search controls without network or cache mutation."""
     from ..core.search import filter_loaded_results
     return filter_loaded_results(
-        rows, query, providers=provider_ids, content_types=content_types, scope=scope, field=field,
+        rows, query, providers=provider_ids, content_types=content_types,
+        scope=scope, field=field, age=age, age_kind=age_kind,
     )
 
 
@@ -1053,6 +1056,26 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             safe = _safe_public_search_text(name, raw_meta.get(name))
             if safe is not None:
                 allowed_meta[name] = safe
+        # The generic youth-age contract is also edition-scoped and already
+        # structured. Keep only its validated bounds/kind and harmless original
+        # label; never persist a raw nested provider age object, provenance
+        # URL, signed token, other edition's range, or inferred age.
+        from .attested_age_filter import attested_age_ranges
+        verified_ages = attested_age_ranges({
+            "provider_id": row.source_provider, "item_id": row.record_id,
+            "metadata": {"youth_age_ranges": raw_meta.get("youth_age_ranges")},
+        })
+        public_ages = []
+        for proof in verified_ages:
+            label = proof.source_label
+            if label and _safe_public_search_text("age_label", label) is None:
+                continue
+            public_ages.append({
+                "age_min": proof.age_min, "age_max": proof.age_max,
+                "age_kind": proof.age_kind, "source_label": label,
+            })
+        if public_ages:
+            allowed_meta["youth_age_ranges"] = public_ages
         cover_url = (
             _numilog_public_catalog_url(row.thumbnail_url, cover=True)
             if row.source_provider == "numilog" else row.thumbnail_url
