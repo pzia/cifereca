@@ -51,3 +51,16 @@ def test_rearm_keeps_authorized_version_and_release_is_push_scoped():
     workflow = RELEASE.read_text(encoding="utf-8")
     assert '      - ".github/release-trigger"' in workflow
     assert "  workflow_dispatch:\n" in workflow
+
+
+def test_release_notes_are_bounded_and_never_use_unlimited_github_generation():
+    """Release's title and bytes are explicit, avoiding GitHub's 125k cap."""
+    content = RELEASE.read_text(encoding="utf-8")
+    assert '--generate-notes' not in content
+    assert 'notes_file="$RUNNER_TEMP/core-release-notes.md"' in content
+    assert content.count('--notes-file "$notes_file"') == 2
+    assert 'test "$(wc -c < "$notes_file")" -le 8192' in content
+    assert 'src/cifereca/plugin-release.json' in content
+    # A retry must not relax the source/tag/asset identity safeguards.
+    assert "Recheck immutable Core release target before draft mutation" in content
+    assert "Verify downloaded Core release draft assets" in content
