@@ -2247,7 +2247,608 @@ def main() -> int:
         if phase == "cancel-dialog":
             assert not f["materialize_calls"]
             label = "Annuler"
-            next_step…7836 tokens truncated…dination["renders"].append((identity, (monotonic()-start)*1000))
+            next_step = kobo_download_dialog_cancelled
+        else:
+            label = "Télécharger pour ce compte"
+            next_step = kobo_download_running if phase == "cancel-running" else kobo_download_finished
+        button = next(node for node in walk(dialog) if isinstance(node, Gtk.Button)
+                      and str(node.get_label()).replace("_", "") == label)
+        # GTK can report a modal as mapped before its button has real X11
+        # coordinates. A (-5, -5) XTEST click was observed before an unintended
+        # Kobo materialization in two separate CI runs. Never send that click.
+        try:
+            target = device[0].widget_point(button) if button.get_mapped() else (-1, -1)
+        except RuntimeError:
+            target = (-1, -1)
+        if target[0] < 0 or target[1] < 0:
+            assert monotonic() < f["download_deadline"], (
+                "Kobo confirmation button has no on-screen XTEST coordinates"
+            )
+            later(80, kobo_download_dialog)
+            return
+        capture("03k-kobo-explicit-source-confirmation-" + phase)
+        report["pointer_actions"].append(device[0].click_widget(button))
+        f["download_deadline"] = monotonic() + 6
+        later(120, next_step)
+
+    def kobo_download_dialog_cancelled():
+        f = loan_sync_fixture
+        # Cancellation must never reach materialization, including while GTK
+        # animates the modal closure. Do not mistake a delayed redraw for a
+        # failed cancellation; retain a bounded hard failure if it stays open.
+        assert not f["materialize_calls"], "Kobo cancellation triggered acquisition"
+        if f["dialog"].get_visible():
+            assert monotonic() < f["download_deadline"], (
+                "Kobo confirmation still visible after cancel deadline"
+            )
+            later(80, kobo_download_dialog_cancelled)
+            return
+        report["checks"]["P0_1347_Kobo_XTEST_prepare_cancel_zero_acquisition"] = True
+        f["download_phase"] = "cancel-running"
+        kobo_download_prepare_click()
+
+    def kobo_download_running():
+        f = loan_sync_fixture
+        if not f["download_started"].is_set():
+            assert monotonic() < f["download_deadline"], "Worker Kobo absent"
+            later(100, kobo_download_running)
+            return
+        assert f["materialize_calls"] == ["p0-kobo-target-2"]
+        f["cancel_future"] = f.get("latest_task_future")
+        assert f["cancel_future"] is not None
+        kobo_click_visible(f["stop_button"], kobo_download_release)
+
+    def kobo_download_release():
+        f = loan_sync_fixture
+        assert "Annulation demandée" in f["download_row"].get_subtitle()
+        # The prior deadline covered the confirmation dialog and scrolling
+        # to the real stop button. Start a distinct bounded deadline only
+        # after XTEST cancellation has reached GTK and the worker is released.
+        # Otherwise a slow 1600px layout can time out before GTK processes
+        # the worker's terminal result, without actually failing acquisition.
+        f["download_release"].set()
+        # A worker has its own strict 10-second wait for the cancellation
+        # event. Allow that bound plus GTK delivery on loaded CI runners;
+        # never declare cancellation without the actual terminal receipt.
+        f["download_deadline"] = monotonic() + 12
+        later(120, kobo_download_cancelled)
+
+    def kobo_download_cancelled():
+        f = loan_sync_fixture
+        subtitle = f["download_row"].get_subtitle()
+        if not subtitle.startswith("Annulé ·"):
+            # Explain whether the release event failed, the fake worker did
+            # not return, or TaskRunner/GTK has not rendered completion.
+            # The assertion is intentionally retained and remains fatal.
+            future = f.get("cancel_future")
+            evidence = {
+                "future_running": bool(future is not None and future.running()),
+                "future_done": bool(future is not None and future.done()),
+                "release_set": f["download_release"].is_set(),
+                "worker_entered": f["cancel_worker_entered"].is_set(),
+                "worker_woke": f["cancel_worker_woke"].is_set(),
+                "worker_returning": f["cancel_worker_returning"].is_set(),
+                "task_active": bool(getattr(window[0].runner, "_count", 0)),
+            }
+            assert monotonic() < f["download_deadline"], (
+                f"Résultat annulé absent · {evidence}"
+            )
+            later(100, kobo_download_cancelled)
+            return
+        assert "1 fichier(s) acquis durablement" in subtitle
+        assert "Relancer une préparation" in subtitle
+        assert not f["stop_button"].get_sensitive()
+        report["checks"]["P0_1347_Kobo_XTEST_cancel_keeps_partial_count"] = True
+        capture("03l-kobo-cancelled-result")
+        f["download_phase"] = "retry"
+        kobo_download_prepare_click()
+
+    def kobo_download_finished():
+        f = loan_sync_fixture
+        subtitle = f["download_row"].get_subtitle()
+        if not subtitle.startswith("Téléchargement terminé ·"):
+            assert monotonic() < f["download_deadline"], "Résultat terminé absent"
+            later(100, kobo_download_finished)
+            return
+        assert "1 fichier(s) acquis durablement" in subtitle
+        assert f["prepare_calls"] == ["p0-kobo-target-2"] * 3
+        assert f["materialize_calls"] == ["p0-kobo-target-2"] * 2
+        assert not f["mutations"] and not f["stop_button"].get_sensitive()
+        report["checks"]["P0_1347_Kobo_XTEST_three_accounts_only_second_confirmed"] = True
+        report["checks"]["P0_1347_Kobo_XTEST_retry_requires_new_preparation"] = True
+        report["kobo_confirmation_scope"] = (
+            "real GTK/TaskRunner/XTEST; three synthetic accounts and observed broker boundary; "
+            "no live provider, file or DRM acquisition claimed")
+        capture("03m-kobo-single-account-completed-result")
+        cleanup_loan_sync()
+        later(100, continue_baseline_settings)
+
+    def cleanup_loan_sync():
+        f = loan_sync_fixture
+        if not f.get("overrides"):
+            return
+        w = window[0]
+        if f.get("download_release") is not None:
+            f["download_release"].set()
+        dialog = f.get("dialog")
+        if dialog is not None and dialog.get_visible():
+            dialog.close()
+        for owner, name, existed, original in reversed(f["overrides"]):
+            if existed:
+                setattr(owner, name, original)
+            else:
+                delattr(owner, name)
+        f["overrides"] = []
+        # Revoke fixture callbacks by rebuilding with the original broker (or
+        # None for isolated shell contributions), then restore its exact owner.
+        if f.get("proxy") is not None:
+            f["proxy"].active = False
+            w._refresh_sync_page()
+        w.plugin_manager = f["manager"]
+        w._populate_loans(f["loans"])
+        w._displayed_loan = f["displayed"]
+        if f["selected"] is not None:
+            assert w.loan_page.select_key(f["selected"])
+
+    def continue_baseline_settings():
+        w = window[0]
+        assert w.service.current_identity.identity_id == "camille"
+        # Reuse both existing 1366/1600 MainWindow/XTEST baselines.
+        # No extra workflow/scenario, provider activation or HTTP request.
+        report["pointer_actions"].append(
+            device[0].click_widget(w.nav_rows["settings"])
+        )
+        await_route("settings", check_settings_shell)
+
+    SETTINGS_SECTIONS = (
+        "accounts", "library", "sync", "interface", "ai", "diagnostic",
+    )
+
+    def settings_rows(section, kind):
+        return [node for node in walk(section) if isinstance(node, kind)]
+
+    def check_settings_shell():
+        w = window[0]
+        stack = w._settings_tabs
+        assert stack.get_visible_child_name() == "accounts"
+        assert w._settings_main_lifetime.alive
+        assert all(stack.get_child_by_name(key) is not None
+                   for key in SETTINGS_SECTIONS)
+        report["checks"]["settings_six_real_gtk_sections"] = True
+        inspect_settings_section(0)
+
+    def inspect_settings_section(index):
+        w = window[0]
+        if index == len(SETTINGS_SECTIONS):
+            begin_settings_persisted_edit()
+            return
+        key = SETTINGS_SECTIONS[index]
+        w._settings_tabs.set_visible_child_name(key)
+        later(130, lambda: assert_settings_section(index, key))
+
+    def assert_settings_section(index, key):
+        w = window[0]
+        assert w.view_stack.get_visible_child_name() == "settings"
+        assert w._settings_tabs.get_visible_child_name() == key
+        section = w._settings_tabs.get_visible_child()
+        assert section.get_mapped() and section.get_visible(), (
+            "Onglet Paramètres non rendu", key
+        )
+        # The outer scroller must fit at 1366 and 1600 px. The horizontal
+        # tab-switcher scroller is intentionally independent from this check.
+        viewport = w.view_stack.get_child_by_name("settings")
+        adjustment = viewport.get_hadjustment()
+        overflow = max(0.0, adjustment.get_upper() - adjustment.get_page_size())
+        assert adjustment.get_page_size() > 100, ("Viewport sans allocation", key)
+        assert overflow < 5, ("Débordement horizontal Paramètres", key, overflow)
+        checks = {
+            "accounts": lambda: (
+                len([row for row in settings_rows(section, Adw.EntryRow)
+                     if row.get_title() == "Nom affiché"]) == 2
+                and len([row for row in settings_rows(section, Adw.ActionRow)
+                         if row.get_title() ==
+                         "Parcours normal · Paris principal et ADEPT"]) == 2
+            ),
+            "library": lambda: any(
+                row.get_title() == "Répertoire global"
+                for row in settings_rows(section, Adw.EntryRow)
+            ),
+            "sync": lambda: any(
+                row.get_title() == "Ancien réglage global Kobo (compatibilité)"
+                and "ne lance plus de téléchargements" in row.get_subtitle()
+                for row in settings_rows(section, Adw.ActionRow)
+            ),
+            "interface": lambda: any(
+                row.get_title() == "Actions expérimentales"
+                for row in settings_rows(section, Adw.ActionRow)
+            ),
+            "ai": lambda: any(
+                row.get_title() == "Modèle installé sur le serveur"
+                for row in settings_rows(section, Adw.EntryRow)
+            ),
+            "diagnostic": lambda: any(
+                row.get_title() == "Diagnostic système"
+                for row in settings_rows(section, Adw.PreferencesGroup)
+            ),
+        }
+        assert checks[key](), ("Widgets Paramètres absents", key)
+        report["checks"]["settings_" + key + "_rendered"] = True
+        capture("08-settings-" + key)
+        later(75, lambda: inspect_settings_section(index + 1))
+
+    # P0 #1127: a physical GTK Save click must persist a harmless setting
+    # to the E2E runner's disposable XDG_CONFIG_HOME; no provider or network.
+    def begin_settings_persisted_edit():
+        w = window[0]
+        w._settings_tabs.set_visible_child_name("interface")
+        later(180, change_persisted_interface_switch)
+
+    def change_persisted_interface_switch():
+        w = window[0]
+        section = w._settings_tabs.get_visible_child()
+        row = next((node for node in settings_rows(section, Adw.ActionRow)
+                    if node.get_title() == "Actions expérimentales"), None)
+        assert row is not None and row.get_mapped()
+        switches = settings_rows(row, Gtk.Switch)
+        assert len(switches) == 1 and switches[0].get_mapped()
+        setting = switches[0]
+        old_value = bool(core.config.get("experimental_actions", False))
+        assert setting.get_active() == old_value
+        report["settings_original_experimental_actions"] = old_value
+        report["pointer_actions"].append(device[0].click_widget(setting))
+        later(140, lambda: save_persisted_interface_change(setting, old_value))
+
+    def save_persisted_interface_change(setting, old_value):
+        w = window[0]
+        assert setting.get_active() is (not old_value), "GTK Switch not toggled by XTEST"
+        assert bool(core.config.get("experimental_actions", False)) == old_value, (
+            "Unsaved GTK change leaked to live Core configuration"
+        )
+        viewport = w.view_stack.get_child_by_name("settings")
+        saves = [node for node in settings_rows(viewport, Gtk.Button)
+                 if node.get_tooltip_text() ==
+                 "Enregistrer les modifications de configuration en attente"]
+        assert len(saves) == 2, "Missing desktop/footer Save actions"
+        save = next((node for node in saves
+                     if node.get_mapped() and node.get_sensitive()), None)
+        assert save is not None, "Edited Interface tab cannot be saved"
+        checks_before = broker.checks
+        queries_before = len(broker.event_queries)
+        report["pointer_actions"].append(device[0].click_widget(save))
+        deadline = monotonic() + 12
+
+        def saved():
+            # Check the **durable JSON**, not merely the Gtk.Switch state.
+            try:
+                on_disk = json.loads(core.config.path.read_text(encoding="utf-8"))
+                persisted = on_disk.get("experimental_actions")
+            except (OSError, ValueError):
+                persisted = None
+            target = not old_value
+            ui_finished = all(not node.get_sensitive() for node in saves)
+            if persisted is target and ui_finished:
+                assert core.config.get("experimental_actions") is target
+                assert broker.checks == checks_before
+                assert len(broker.event_queries) == queries_before
+                report["checks"]["settings_real_gtk_save_persists_xdg_json"] = True
+                capture("08f-settings-saved-interface")
+                begin_settings_reconnect_proof()
+            elif monotonic() >= deadline:
+                raise AssertionError(
+                    "GTK Save did not commit an isolated Interface setting",
+                    persisted, target, ui_finished,
+                )
+            else:
+                later(100, saved)
+        later(150, saved)
+
+    # P0 #1127: real GTK Reconnect is an explicit Save-then-Reconnect,
+    # even without pending edits. Intercept only the final provider invocation
+    # so this offline recipe cannot contact any configured source.
+    def begin_settings_reconnect_proof():
+        w = window[0]
+        w._settings_tabs.set_visible_child_name("accounts")
+        later(180, click_settings_reconnect)
+
+    def click_settings_reconnect():
+        w = window[0]
+        assert w._settings_tabs.get_visible_child_name() == "accounts"
+        viewport = w.view_stack.get_child_by_name("settings")
+        saves = [node for node in settings_rows(viewport, Gtk.Button)
+                 if node.get_tooltip_text() ==
+                 "Enregistrer les modifications de configuration en attente"]
+        assert len(saves) == 2 and all(not node.get_sensitive() for node in saves), (
+            "Reconnect baseline must not have any pending Settings edits"
+        )
+        reconnects = [node for node in settings_rows(viewport, Gtk.Button)
+                      if node.get_tooltip_text() ==
+                      "Enregistrer les modifications en attente puis reconnecter les sources"]
+        assert len(reconnects) == 2, "Missing desktop/footer Reconnect"
+        button = next((node for node in reconnects
+                       if node.get_mapped() and node.get_sensitive()), None)
+        assert button is not None, "Reconnect must be offered from Accounts"
+        initial_config = core.config.path.read_bytes()
+        expected_identities = core.config.identities()
+        checks_before = broker.checks
+        events_before = len(broker.event_queries)
+        reconnect_calls = []
+        original_reconnect = w.reconnect_sources
+
+        def offline_reconnect():
+            # Invoked only after the save worker has completed and its callback
+            # has applied the result. No provider, token, or HTTP call occurs.
+            reconnect_calls.append((
+                core.config.path.read_bytes(), core.config.identities(),
+            ))
+
+        w.reconnect_sources = offline_reconnect
+        report["pointer_actions"].append(device[0].click_widget(button))
+        deadline = monotonic() + 12
+
+        def check_reconnect():
+            if reconnect_calls:
+                w.reconnect_sources = original_reconnect
+                assert len(reconnect_calls) == 1, "Duplicate Reconnect requests"
+                assert reconnect_calls[0][0] == initial_config, (
+                    "Unchanged Settings persisted differently before Reconnect"
+                )
+                assert reconnect_calls[0][1] == expected_identities
+                assert broker.checks == checks_before
+                assert len(broker.event_queries) == events_before
+                report["checks"]["settings_real_gtk_reconnect_after_save_offline"] = True
+                capture("08i-settings-reconnect-offline")
+                begin_settings_unsaved_edit()
+            elif monotonic() >= deadline:
+                w.reconnect_sources = original_reconnect
+                raise AssertionError(
+                    "GTK Reconnect did not follow successful Settings commit"
+                )
+            else:
+                later(100, check_reconnect)
+        later(140, check_reconnect)
+
+    def begin_settings_unsaved_edit():
+        w = window[0]
+        stack = w._settings_tabs
+        stack.set_visible_child_name("accounts")
+        later(130, settings_unsaved_edit)
+
+    def settings_unsaved_edit():
+        w = window[0]
+        section = w._settings_tabs.get_visible_child()
+        label_rows = [
+            row for row in settings_rows(section, Adw.EntryRow)
+            if row.get_title() == "Nom affiché"
+        ]
+        assert len(label_rows) == 2
+        original = label_rows[0].get_text()
+        expected_config = core.config.identities()[0]["label"]
+        assert original == expected_config
+        # No provider call and no save: dirty state must be a GTK-only draft.
+        label_rows[0].set_text(original + " [brouillon E2E]")
+        assert core.config.identities()[0]["label"] == expected_config
+        report["checks"]["settings_unsaved_identity_draft_not_persisted"] = True
+        assert label_rows[0].grab_focus()
+        device[0].key("Tab", True); device[0].key("Tab", False)
+        later(190, settings_dirty_and_keyboard)
+
+    def settings_dirty_and_keyboard():
+        w = window[0]
+        assert w.get_focus() is not None, "Focus clavier perdu sur Paramètres"
+        viewport = w.view_stack.get_child_by_name("settings")
+        saves = [
+            b for b in settings_rows(viewport, Gtk.Button)
+            if (b.get_tooltip_text() or "")
+            == "Enregistrer les modifications de configuration en attente"
+        ]
+        assert len(saves) == 2, ("Boutons Enregistrer desktop/footer", len(saves))
+        assert any(b.get_sensitive() for b in saves), "Brouillon non détecté"
+        assert core.config.identities()[0]["label"] == "Camille"
+        report["checks"]["settings_keyboard_and_dirty_actions"] = True
+        # Separate standalone Settings lifetime from the mapped main page.
+        main_lifetime = w._settings_main_lifetime
+        first = w._build_settings_page(standalone=True)
+        first_lifetime = w._settings_standalone_lifetime
+        assert isinstance(first, Gtk.Widget) and first_lifetime.alive
+        second = w._build_settings_page(standalone=True)
+        assert isinstance(second, Gtk.Widget)
+        assert not first_lifetime.alive and w._settings_standalone_lifetime.alive
+        assert w._settings_main_lifetime is main_lifetime and main_lifetime.alive
+        report["checks"]["settings_standalone_rebuild_revokes_old_callbacks"] = True
+        # P0 #1127: the two unmounted pages above test reconstruction,
+        # but only a real mapped Adw.Window exercises the close-request
+        # signal and releases its callback lifetime.
+        second_lifetime = w._settings_standalone_lifetime
+        w._open_prelogin_diagnostics()
+        standalone = w._standalone_settings_window
+        assert isinstance(standalone, Adw.Window)
+        assert second_lifetime is not w._settings_standalone_lifetime
+        assert not second_lifetime.alive
+        actual_lifetime = w._settings_standalone_lifetime
+        assert actual_lifetime.alive
+        later(240, lambda: settings_standalone_mapped(
+            standalone, actual_lifetime, main_lifetime
+        ))
+
+    def settings_standalone_mapped(standalone, lifetime, main_lifetime):
+        w = window[0]
+        assert standalone.get_mapped(), "Fenêtre autonome Paramètres non affichée"
+        assert w._standalone_settings_window is standalone
+        assert w._settings_standalone_lifetime is lifetime and lifetime.alive
+        assert w._settings_main_lifetime is main_lifetime and main_lifetime.alive
+        assert w.view_stack.get_visible_child_name() == "settings"
+        assert core.config.identities()[0]["label"] == "Camille"
+        report["checks"]["settings_standalone_real_gtk_window_mapped"] = True
+        capture("08g-settings-standalone-window")
+        closers = [
+            node for node in walk(standalone)
+            if isinstance(node, Gtk.Button) and node.get_tooltip_text() == "Fermer"
+        ]
+        assert closers, "Bouton de fermeture GTK autonome introuvable"
+        report["pointer_actions"].append(device[0].click_widget(closers[0]))
+        later(220, lambda: settings_standalone_closed(lifetime, main_lifetime))
+
+    def settings_standalone_closed(lifetime, main_lifetime):
+        w = window[0]
+        assert not lifetime.alive, "Callbacks Paramètres toujours actifs après fermeture"
+        assert w._standalone_settings_window is None
+        assert w._settings_standalone_lifetime is None
+        assert w._settings_main_lifetime is main_lifetime and main_lifetime.alive
+        assert w.view_stack.get_visible_child_name() == "settings"
+        assert core.config.identities()[0]["label"] == "Camille"
+        assert broker.checks == 1
+        report["checks"]["settings_standalone_real_close_revokes_callbacks"] = True
+        capture("08h-settings-after-standalone-close")
+        report["pointer_actions"].append(
+            device[0].click_widget(w.nav_rows["library"])
+        )
+        await_route("library", settings_returned_to_library)
+
+    def settings_returned_to_library():
+        w = window[0]
+        assert w.nav_list.get_selected_row() is w.nav_rows["library"]
+        assert w.service.current_identity.identity_id == "camille"
+        assert core.config.identities()[0]["label"] == "Camille"
+        assert broker.checks == 1, "Naviguer Paramètres a relancé Diagnostics"
+        report["checks"]["settings_return_keeps_identity_and_no_extra_diagnostics"] = True
+        capture("09-library-after-settings")
+        assert w.identity_dropdown.grab_focus()
+        device[0].key("Tab", True); device[0].key("Tab", False)
+        later(180, focus_after_tab)
+
+    def focus_after_tab():
+        w = window[0]
+        assert w.get_focus() is not None
+        report["checks"]["window_keyboard_focus"] = True
+        assert w.identity_dropdown.grab_focus()
+        device[0].key("space", True); device[0].key("space", False)
+        later(220, lambda: select_identity_key("End", verify_second_identity))
+
+    def select_identity_key(key, callback):
+        for k in [key, "Return"]:
+            device[0].key(k, True); device[0].key(k, False)
+        later(500, callback)
+
+    def verify_second_identity():
+        w = window[0]
+        assert w.service.current_identity.identity_id == "alex"
+        assert w.identity_dropdown.get_selected() == 1
+        assert w.view_stack.get_visible_child_name() == "library"
+        report["checks"]["physical_second_identity_context"] = True
+        capture("06-second-identity-library")
+        assert w.identity_dropdown.grab_focus()
+        device[0].key("space", True); device[0].key("space", False)
+        later(220, lambda: select_identity_key("Home", verify_first_identity))
+
+    def verify_first_identity():
+        w = window[0]
+        assert w.service.current_identity.identity_id == "camille"
+        assert w.identity_dropdown.get_selected() == 0
+        assert w.view_stack.get_visible_child_name() == "library"
+        report["checks"]["physical_identity_context_restored"] = True
+        capture("07-first-identity-restored")
+        # P0 #1130: an orphaned history entry must not leak its old query
+        # into the currently selected identity or navigate away from Library.
+        # This uses the real GTK MainWindow/controls; no identity is deleted,
+        # no source is contacted, and the missing ID is entirely fictional.
+        from dataclasses import replace
+        assert w.service.identity_by_id("ux-removed-identity") is None
+        original_search = w.search_controls.state()
+        original_library = w.library_controls.state()
+        original_route = w.view_stack.get_visible_child_name()
+        checks_before = broker.checks
+        events_before = len(broker.event_queries)
+        # Reuse MainWindow's existing dataclass types instead of adding
+        # new direct module imports to the E2E dependency-selection graph.
+        orphaned_state = replace(
+            w._navigation_state("search"),
+            identity_id="ux-removed-identity",
+            query_state=replace(
+                original_search,
+                text="UX_STALE_IDENTITY_FILTER_MUST_NOT_APPEAR",
+                providers=("local",),
+            ),
+        )
+        w._restore_navigation_state(orphaned_state)
+        assert w.service.current_identity.identity_id == "camille"
+        assert w.view_stack.get_visible_child_name() == original_route == "library"
+        assert w.nav_list.get_selected_row() is w.nav_rows["library"]
+        assert w.search_controls.state() == original_search
+        assert w.library_controls.state() == original_library
+        assert not w._restoring_navigation
+        assert broker.checks == checks_before
+        assert len(broker.event_queries) == events_before
+        report["checks"]["P0_stale_identity_history_preserves_gtk_filters"] = True
+        capture("07b-stale-identity-history-rejected")
+        begin_sync_progress_checks()
+
+    def begin_sync_progress_checks():
+        # Acceptance for #1132: real MainWindow, TaskRunner worker and GTK
+        # footer. Only the provider operation is an offline fixture. Hold it
+        # open until GTK has actually displayed the producer's identity text.
+        w = window[0]
+        # Earlier baseline identity changes can report the absent synthetic
+        # local provider. Acknowledge that exact offline-fixture notification
+        # physically; never ignore an arbitrary product error or blocked click.
+        dialogs = [node for node in Gtk.Window.list_toplevels()
+                   if isinstance(node, Adw.MessageDialog) and node.get_visible()]
+        if dialogs:
+            assert all(
+                node.get_body() == "Traitement indisponible"
+                and getattr(node, "_cifereca_attested_offline_fixture", False) is True
+                for node in dialogs
+            ), "Unattested product dialog blocks the offline fixture"
+            button = next(node for node in walk(dialogs[-1])
+                          if isinstance(node, Gtk.Button)
+                          and str(node.get_label()).replace("_", "") == "Fermer")
+            report["pointer_actions"].append(device[0].click_widget(button))
+            report["offline_fixture_notifications_acknowledged"] = report.get("offline_fixture_notifications_acknowledged", 0) + 1
+            later(150, begin_sync_progress_checks)
+            return
+        sync_progress_check["original"] = w.service.opening_sync
+        start_sync_progress_mode(False)
+
+    def cleanup_sync_coordination():
+        if not coordination.get("overrides"):
+            return
+        w = window[0]
+        for owner, name, existed, original in reversed(coordination["overrides"]):
+            if existed:
+                setattr(owner, name, original)
+            else:
+                delattr(owner, name)
+        coordination["overrides"] = []
+        w.service.identities[:] = coordination["identities"]
+        if not getattr(w, "_closed", False):
+            w._populate_accounts()
+
+    def begin_sync_coordination(task_id, completed):
+        """#981: real GTK/TaskRunner, synthetic producer, real local reads."""
+        w = window[0]
+        coordination.update(identities=list(w.service.identities), overrides=[],
+                            reads=[], renders=[], source_calls=[], measurements=[], errors=[])
+        def override(owner, name, value):
+            coordination["overrides"].append((owner, name, name in vars(owner), vars(owner).get(name)))
+            setattr(owner, name, value)
+        original_read = w.service.library_entries
+        original_render = w._render_library
+        def measured_read(**kwargs):
+            start = monotonic()
+            try:
+                assert kwargs.get("scan") is False
+                return original_read(**kwargs)
+            except BaseException as exc:
+                coordination["errors"].append((type(exc).__name__, kwargs.get("scan")))
+                raise
+            finally:
+                coordination["reads"].append((kwargs.get("identity_id"), (monotonic()-start)*1000))
+        def measured_render(*args, **kwargs):
+            start = monotonic()
+            identity = w.service.current_identity.identity_id
+            try:
+                return original_render(*args, **kwargs)
+            finally:
+                coordination["renders"].append((identity, (monotonic()-start)*1000))
         override(w.service, "library_entries", measured_read)
         override(w, "_render_library", measured_render)
         # Only the provider refresh is synthetic in this no-plugins fixture;
