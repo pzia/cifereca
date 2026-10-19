@@ -78,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         payload = json.load(sys.stdin)
         if args.lookup_draft:
+            if re.fullmatch(r"[0-9a-f]{40}", args.commit) is None:
+                raise ReleaseTargetRefused("Invalid plugins-only source SHA")
             found = lookup_draft(payload, args.tag)
             if found is None:
                 print("none")
