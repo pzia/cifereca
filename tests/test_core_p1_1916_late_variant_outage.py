@@ -65,8 +65,11 @@ def test_progressive_reports_late_outage_without_retrying_same_failed_service(
         elif expected_code:
             assert batches[0].warnings
         assert "NEVER_PUBLISH" not in str(batches) + str(summary)
-        assert not any(row["namespace"] == "search"
-                       for row in service.storage.cache_namespace_stats())
+        if expected_code:
+            # Failed, partial or stale batches must never be cached as a
+            # successful fresh search. A true all-zero 200 remains cacheable.
+            assert not any(row["namespace"] == "search"
+                           for row in service.storage.cache_namespace_stats())
     finally:
         service.close()
 
