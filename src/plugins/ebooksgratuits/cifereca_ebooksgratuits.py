@@ -785,7 +785,7 @@ def _opds_author_match(query, names):
     wanted = _fold(query).strip()
     if not wanted:
         return False
-    words = tuple(re.findall(r'[^\\W_]+', wanted, flags=re.UNICODE))
+    words = tuple(re.findall(r'[^\W_]+', wanted, flags=re.UNICODE))
     for name in names[:16]:
         if type(name) is not str or not 1 <= len(name) <= 512:
             continue
@@ -793,7 +793,7 @@ def _opds_author_match(query, names):
         if wanted in attested:
             return True
         if len(words) >= 2:
-            parts = set(re.findall(r'[^\\W_]+', attested, flags=re.UNICODE))
+            parts = set(re.findall(r'[^\W_]+', attested, flags=re.UNICODE))
             if all(word in parts for word in words):
                 return True
     return False
