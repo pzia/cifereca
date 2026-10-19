@@ -119,7 +119,8 @@ def test_local_provider_label_is_authoritative_even_if_remote_lists_local():
     widget = create()
     assert widget.providers[1] == ("local", "Local")
     assert widget.providers.count(("local", "Local")) == 1
-    assert len([p for p, _ in widget.providers if p == "remote-b"]) == 1
+    assert all(p != "remote-b" for p, _ in widget.providers)
+    assert any(p == "remote-b" for p, _ in create(library=True).providers)
 
 
 def test_catalog_entry_without_provider_id_maps_to_local_without_duplicate():
