@@ -224,6 +224,16 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 credential_id=account.credential_id,
                 account_id=account.unique_id,
             )
+            if (
+                not same_source()
+                or mode(broker, source_id) != "on_start"
+                or broker.service.storage.numilog_materialization_consent_revision(
+                    source_id,
+                ) != consent_revision
+            ):
+                trace.fail("consent_revoked")
+                failures += 1
+                continue
             required_rights = sum(
                 row.owned is True and row.downloadable is True
                 for row in raw
@@ -233,16 +243,6 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 # private manifest was not durably mirrored. Reporting a clean
                 # zero-download success would hide an initial backup failure.
                 trace.fail("rights_mirror_failed")
-                failures += 1
-                continue
-            if (
-                not same_source()
-                or mode(broker, source_id) != "on_start"
-                or broker.service.storage.numilog_materialization_consent_revision(
-                    source_id,
-                ) != consent_revision
-            ):
-                trace.fail("consent_revoked")
                 failures += 1
                 continue
             # The checked manifest snapshot already has bounded, typed IDs
