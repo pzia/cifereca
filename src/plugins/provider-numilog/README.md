@@ -1481,9 +1481,13 @@ lien signé. Il n'y a ni requête réseau supplémentaire dans le filtre, ni
 récupération automatique de toutes les fiches, ni prétendue recherche
 **serveur** par ISBN.
 
-**Utilisation opt-in** : consulter explicitement la fiche d'un livre avec
-`enrich_public_detail`, puis insérer la nouvelle notice enrichie à la
-même position dans la `PublicSearchPage` existante avant de filtrer.
+**Utilisation opt-in** : appeler
+`enrich_loaded_page_product(page, record_id)` pour enrichir **une seule**
+carte de la page déjà chargée, puis filtrer la page retournée. Cette
+opération réutilise `enrich_public_detail`, le cache et le budget réseau
+anonyme commun, préserve le total et les liens de pagination, et refuse
+une sélection étrangère ou une réponse tardive après déconnexion. Aucun
+GET de détail n'est effectué pour les autres cartes.
 Les tests offline utilisent une carte `jefferson` réellement enregistrée
 et des balises EAN **synthétiques** ; aucune relation réelle entre le livre
 Jefferson et ces numéros de test n'est revendiquée. La recette serveur
