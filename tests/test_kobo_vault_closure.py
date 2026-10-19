@@ -275,7 +275,7 @@ def test_real_adept_failure_is_counted_only_in_adept_errors(tmp_path: Path, monk
             "phase": "adept",
             "code": "invalid_epub",
             "status_code": None,
-            "message": "Kobo-Adept : EPUB invalide",
+            "message": "Sauvegarde Kobo impossible",
             "count": 1,
         }]
 
