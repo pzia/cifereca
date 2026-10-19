@@ -6,7 +6,15 @@ from .models import (
     ArtifactRouteRequest, ArtifactRouteTarget, ArtifactTransferResult, ArtifactVariant, CacheNamespaceInfo, CachePurgeResult, CatalogSearchBatch, CatalogSearchSummary, CatalogueSourceCapability, LibraryMutationPlan,
     HealthCheckResult, LibraryMutationRequest, LibraryMutationResult, LogicalBookArtifacts, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncSourceRef,
     TaskControl, TaskHandle, TransformRequest, TransformResult,
+    ReleaseInstallationSnapshot, ReleaseUpdatePreview,
 )
+
+@runtime_checkable
+class ReleaseUpdateReadBroker(Protocol):
+    """#1005: optional read-only public broker. No apply operation exists."""
+    def installation(self) -> ReleaseInstallationSnapshot: ...
+    def preview_release(self, announcement: Mapping[str, object]) -> ReleaseUpdatePreview: ...
+
 
 @runtime_checkable
 class CatalogBroker(Protocol):
@@ -179,5 +187,5 @@ class ArtifactRoutingBroker(Protocol):
     def plan(self, request: ArtifactRouteRequest) -> ArtifactRoutePlan: ...
     def transfer(self, plan: ArtifactRoutePlan, control: TaskControl | None = None) -> ArtifactTransferResult: ...
 
-__all__ = ["CatalogBroker", "CatalogueSourceInventoryBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
+__all__ = ["ReleaseUpdateReadBroker", "CatalogBroker", "CatalogueSourceInventoryBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
     "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker"]
