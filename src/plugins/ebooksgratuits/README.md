@@ -1,3 +1,37 @@
+## #1917 — auteurs OPDS conservés individuellement (0.1.22, 19/10/2026)
+
+Retour utilisateur : la recherche par auteur est « partielle ou inefficace ».
+La réponse OPDS peut afficher `HUGO, Victor`, tandis que l'utilisateur
+saisit `Victor Hugo`. Le post-filtre historique cherchait la chaîne
+complète dans le seul libellé `author`, ce qui refusait silencieusement
+cette permutation pourtant valide.
+
+Le plugin conserve désormais la liste des **noms individuels**
+`opds_author_names` issus exclusivement des `<author><name>` Atom
+de la notice. Le filtre `field=author` compare une chaîne
+insensible à la casse et aux accents, puis, pour **deux mots ou plus**,
+accepte la permutation des mots attestés **dans le même auteur**.
+Aucune jointure de deux personnes pour créer un faux auteur, aucune
+inférence depuis le titre/éditeur, aucun alias inventé et aucune
+requête réseau supplémentaire. Les noms et leur preuve
+`opds.atom.author.name` restent des **métadonnées publiques**.
+
+**Attention :** c'est un **filtre local sur la page OPDS effectivement
+reçue**, pas une route serveur auteur qualifiée. Le signal
+`partial_results` est conservé, y compris si la page filtrée est
+vide. Une recherche nom complet/prénom inversé ne prouve ni le
+contenu des pages suivantes, ni l'exhaustivité du catalogue COPS.
+Tester la route live autorisée, les sous-catalogues et l'UI Core
+reste nécessaire pour fermer #1917.
+
+Tests hors réseau `test_opds_author_order_p1_1917.py` :
+auteurs inversés, accents, plusieurs auteurs distincts, titres
+trompeurs, absence de preuve et absence de GET supplémentaires.
+Ne pas considérer ces fixtures synthétiques comme une capture
+XML réelle de COPS.
+
+---
+
 ## #2460 — fiche HTML distincte du flux OPDS et acquisition EPUB (0.1.21)
 
 Correctif du **retour utilisateur** « Voir en ligne ouvre le XML » :
