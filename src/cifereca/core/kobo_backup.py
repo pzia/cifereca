@@ -1934,7 +1934,9 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
                 "local_path": str(artifact_path) if artifact_path else None,
                 "size": details.get("artifact_size"),
                 "sha256": details.get("artifact_sha256"),
-                "error": str(exc),
+                # Reconciliation status is the evidence. Arbitrary runtime
+                # exception text may include a signed URL or personal path.
+                "error": "Rapprochement Kobo nécessaire",
                 "updated_at": int(time.time()),
             })
             summary["reconcile_pending"] += 1
@@ -1980,14 +1982,19 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
                 title=title, item_id=product_id, code="archived_book", message=message,
             )
             return False
-        message = str(exc)
+        # Provider/Kobo runtime errors and even their code can be attacker
+        # controlled. Keep typed phase + bounded HTTP status in TRACE, but
+        # never a traceback, title, account, product ID, signed URL or body.
+        raw_phase = info.get("phase")
+        phase = raw_phase if raw_phase in {"vault", "adept", "integration"} else "other"
+        raw_status = info.get("status_code")
+        http_status = raw_status if type(raw_status) is int and 100 <= raw_status <= 599 else 0
         logger.warning(
-            "TRACE kobo acquisition failed identity=%s credential=%s item_id=%s exception=%s code=%s phase=%s status=%s error=%s",
-            session_identity.identity_id, session.credential_id, product_id, type(exc).__name__,
-            info.get("code"), info.get("phase"), info.get("status_code"), message,
+            "TRACE kobo acquisition failed code=backup_item_failed phase=%s http_status=%s",
+            phase, http_status,
         )
         self.storage.backup_put({
-            **base_record, "status": "error", "error": message,
+            **base_record, "status": "error", "error": "Sauvegarde Kobo impossible",
             "attempt_count": attempt_count, "last_attempt_at": attempted_at,
             "executor": "kobo-adept", "updated_at": int(time.time()),
         })
