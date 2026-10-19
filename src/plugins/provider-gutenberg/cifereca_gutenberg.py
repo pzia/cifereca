@@ -267,18 +267,20 @@ class GutenbergSession(ProviderSession):
         started = time.perf_counter()
         try:
             root = ET.fromstring(content)
-        except ET.ParseError as exc:
+        except ET.ParseError:
+            # XML parser details (and its exception chain) are not safe
+            # public diagnostics. Keep a closed reason and byte count.
             _LOG.warning(
-                "TRACE gutenberg parse failed bytes=%s base=%s error=%s",
-                len(content), _safe_url(base_url), exc,
+                "TRACE gutenberg parse failed bytes=%s reason=invalid_opds_feed",
+                len(content),
             )
             self._diagnostic(
                 "GUTENBERG", "OPDS parse", "error",
                 duration_ms=int((time.perf_counter() - started) * 1000),
-                detail={"bytes": len(content), "base_url": _safe_url(base_url), "error": str(exc)},
+                detail={"bytes": len(content), "reason": "invalid_opds_feed"},
                 level="detailed",
             )
-            raise ProviderError(f"Project Gutenberg OPDS : XML invalide ({exc})") from exc
+            raise ProviderError("Project Gutenberg OPDS : XML invalide (invalid_opds_feed)") from None
 
         entries = root.findall(f"{{{ATOM}}}entry")
         stats = {
@@ -653,7 +655,7 @@ class GutenbergSession(ProviderSession):
                     "rate_limited" if status == 429 else
                     "service_unavailable"
                 )
-                raise ProviderError(f"Project Gutenberg : recherche OPDS indisponible ({code})") from exc
+                raise ProviderError(f"Project Gutenberg : recherche OPDS indisponible ({code})") from None
             self._remember_page(rows_cache,page_index,str(response.url))
             next_url=self._next_page_url(response.content,str(response.url))
             if next_url: self._remember_page(rows_cache,page_index+1,next_url)
@@ -684,8 +686,8 @@ class GutenbergSession(ProviderSession):
     def _epub_candidates(self, content: bytes, base_url: str) -> list[tuple[str, str]]:
         try:
             root = ET.fromstring(content)
-        except ET.ParseError as exc:
-            raise ProviderError(f"Project Gutenberg OPDS détail : XML invalide ({exc})") from exc
+        except ET.ParseError:
+            raise ProviderError("Project Gutenberg OPDS détail : XML invalide (invalid_opds_feed)") from None
         rows: list[tuple[str, str]] = []
         for link in root.iter():
             if str(link.tag).split("}")[-1] != "link":
@@ -723,12 +725,19 @@ class GutenbergSession(ProviderSession):
         try:
             content, response_url = self._detail_feed(detail_url)
         except httpx.HTTPError as exc:
-            _LOG.warning(
-                "TRACE gutenberg detail failed record_id=%s status=%s dt_ms=%s error=%s",
-                item.record_id, getattr(getattr(exc, "response", None), "status_code", None),
-                int((time.perf_counter() - started) * 1000), exc,
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            code = (
+                "auth_required" if status == 401 else
+                "access_denied" if status == 403 else
+                "rate_limited" if status == 429 else
+                "service_unavailable"
             )
-            raise ProviderError(f"Project Gutenberg : détail OPDS indisponible ({exc})") from exc
+            _LOG.warning(
+                "TRACE gutenberg detail failed status=%s reason=%s dt_ms=%s",
+                status if type(status) is int else None, code,
+                int((time.perf_counter() - started) * 1000),
+            )
+            raise ProviderError(f"Project Gutenberg : détail OPDS indisponible ({code})") from None
         candidates = self._epub_candidates(content, response_url)
         if not candidates:
             _LOG.warning(
