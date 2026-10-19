@@ -130,14 +130,19 @@ def refine_loaded_public_pages(pages, **filters) -> PublicPagesRefinement:
     # unfiltered counter match, contiguous navigation, and no forward pager
     # justify treating the search results as fully loaded.
     forward_pager = False
-    if last.pagination_links:
-        for link in last.pagination_links:
+    for page in pages:
+        if type(page.pagination_links) is not tuple:
+            raise ProviderCapabilityError(_ERROR)
+        for link in page.pagination_links:
             if type(link) is not dict or type(link.get("url")) is not str:
                 raise ProviderCapabilityError(_ERROR)
             parsed, link_scope = _source(link["url"])
             if link_scope != basis:
                 raise ProviderCapabilityError(_ERROR)
-            if int(parsed.get("GRID_PAGE", "0")) > last.page_index:
+            # An earlier page may expose a link beyond the final loaded
+            # page even when the last page no longer advertises "next".
+            # In that case the aggregation can never claim full coverage.
+            if int(parsed.get("GRID_PAGE", "0")) >= len(pages):
                 forward_pager = True
     full = (loaded == total and last.next_url is None and not forward_pager
             and (len(pages) > 1 or last.complete is True))
