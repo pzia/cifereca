@@ -263,7 +263,15 @@ class EbooksSession(ProviderSession):
 
     def connect(self):
         if self.client.is_closed:
-            self.client=self._new_client()
+            try:
+                self.client=self._new_client()
+            except (OSError, ValueError, TypeError, httpx.HTTPError):
+                # A runtime/proxy error might include a path or credentials.
+                # Do not turn a failed reopen into a connected public source
+                # or show exception text in the Core/GTK status.
+                raise ProviderError(
+                    'Ebooks libres et gratuits : transport_unavailable'
+                ) from None
         # This is a local session registration, NOT a successful OPDS probe.
         self.connected=True
         self._accounts=[Account(
