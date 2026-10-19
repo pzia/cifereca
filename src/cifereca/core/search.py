@@ -134,7 +134,9 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
          + _bundle_member_values(row, "author")),
         ("subject", 50, _values(meta.get("subjects")) + _values(meta.get("subject"))
          + _values(meta.get("themes")) + _values(meta.get("keywords"))
-         + _values(search.get("subjects")) + _bundle_member_values(row, "subject")),
+         + _values(meta.get("tags")) + _values(meta.get("genres"))
+         + _values(meta.get("categories")) + _values(search.get("subjects"))
+         + _bundle_member_values(row, "subject")),
         ("award", 45, _values(meta.get("awards")) + _values(meta.get("prizes"))
          + _values(meta.get("literary_prizes")) + _values(search.get("awards"))),
         ("description", 30, _values(row.get("description"))
