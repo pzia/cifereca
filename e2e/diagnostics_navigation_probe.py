@@ -2292,16 +2292,55 @@ def main() -> int:
             lambda _button: f.__setitem__("audit_click_signal_seen", True),
         )
         report["stage"] = "P0_1347_kobo_audit_pointer_dispatch"
-        # Dispatch exactly the center whose MainWindow hit-test was verified
-        # across two GTK frames. Using widget_point(audit) independently can
-        # calculate a different X11 position for nested, scrolled ActionRows
-        # under rootless Xvfb (observed clicked=false, broker_calls=0).
-        # Still genuine physical XTEST; never emit the audit via GTK API.
+        # A GTK hit-test on the window does not prove that X11/GDK actually
+        # delivered pointer motion to the button. Place the *physical* pointer
+        # first, return to GTK's main loop, and accept only a real GTK motion
+        # or enter signal on this exact button before pressing. No synthetic
+        # GTK activation or second button click is allowed.
+        if f.get("audit_motion_button") is not audit:
+            motion = Gtk.EventControllerMotion()
+            motion.connect("enter", lambda *_: f.__setitem__("audit_motion_seen", True))
+            motion.connect("motion", lambda *_: f.__setitem__("audit_motion_seen", True))
+            audit.add_controller(motion)
+            f["audit_motion_controller"] = motion
+            f["audit_motion_button"] = audit
+        f["audit_motion_seen"] = False
         screen_x, screen_y = device[0].window_point(w, point_x, point_y)
-        device[0].click(screen_x, screen_y)
+        device[0].move(screen_x, screen_y)
+        f["audit_motion_target"] = (audit, geometry, point_x, point_y, screen_x, screen_y)
+        later(130, loan_sync_audit_after_motion)
+
+    def loan_sync_audit_after_motion():
+        w = window[0]
+        f = loan_sync_fixture
+        audit, geometry, px, py, sx, sy = f["audit_motion_target"]
+        ok, rect = audit.compute_bounds(w)
+        current = (
+            round(rect.get_x()), round(rect.get_y()),
+            round(rect.get_width()), round(rect.get_height()),
+            round(f["sync_scroll"].get_vadjustment().get_value()),
+        ) if ok else None
+        picked = w.pick(px, py, Gtk.PickFlags.DEFAULT)
+        while picked is not None and picked is not audit:
+            picked = picked.get_parent()
+        current_screen = device[0].window_point(w, px, py)
+        if (not f["audit_motion_seen"] or current != geometry
+                or picked is not audit or current_screen != (sx, sy)
+                or not audit.get_mapped() or not audit.get_sensitive()):
+            # We have not clicked. Retry *pointer placement* only, with a
+            # closed bound; never misreport a missed physical click as success.
+            attempts = f.get("audit_motion_attempts", 0) + 1
+            f["audit_motion_attempts"] = attempts
+            assert attempts <= 5, "Kobo audit XTEST pointer could not hit GTK button"
+            f["audit_stable_geometry"] = None
+            f["audit_stable_checks"] = 0
+            later(130, loan_sync_audit_click)
+            return
+        # Exactly one genuine XTEST press/release on a proven GTK hover target.
+        device[0].click(sx, sy)
         report["pointer_actions"].append({
-            "widget": audit.get_name(), "x": screen_x, "y": screen_y,
-            "source": "XTEST pointer/button events (verified MainWindow hit-test)",
+            "widget": audit.get_name(), "x": sx, "y": sy,
+            "source": "XTEST pointer/button events (verified GTK pointer motion)",
         })
         report["stage"] = "P0_1347_kobo_audit_result_wait"
         f["audit_deadline"] = monotonic() + 6
