@@ -973,7 +973,7 @@ def _safe_public_search_text(key: str, value: Any) -> str | list[str] | None:
     importing raw URLs, account fields, cookie headers or nested dictionaries
     from an untrusted catalogue search result.
     """
-    limit = 4000 if key in {"summary", "synopsis"} else 240
+    limit = 4000 if key in {"description", "summary", "synopsis"} else 240
 
     def clean(raw: Any) -> str | None:
         if type(raw) is not str or not 0 < len(raw) <= limit:
