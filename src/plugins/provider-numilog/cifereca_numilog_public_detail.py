@@ -282,10 +282,15 @@ def parse_public_detail_jsonld(html, product_url):
                 names = []
                 break
             kind = contributor.get("@type")
-            if (kind is not None
-                    and (type(kind) is not str
-                         or (kind not in eligible_types
-                             and kind not in {"https://schema.org/" + item for item in eligible_types}))):
+            allowed_types = (
+                eligible_types
+                | {"https://schema.org/" + item for item in eligible_types}
+                | {"http://schema.org/" + item for item in eligible_types}
+            )
+            # An untyped {"name": "..."} object is not evidence of a
+            # Person/Organization role. Never infer contributor identity from
+            # its name or from an incidental occurrence in Book JSON-LD.
+            if type(kind) is not str or kind not in allowed_types:
                 names = []
                 break
             name = contributor.get("name")

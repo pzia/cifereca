@@ -1,3 +1,23 @@
+## 0.1.74 — attribution stricte des rôles de fiche Numilog (#1072 P0)
+
+Les champs publics JSON-LD `translator`, `illustrator` et `contributor`
+n'attestent désormais un rôle que si chaque objet de la liste fournit
+explicitement `@type=Person` ou, pour les rôles éligibles,
+`@type=Organization`. Les URI officielles
+`http://schema.org/Person` et `https://schema.org/Person` (ou
+`Organization`) sont acceptées avec leur équivalent court.
+Une simple map `{"name": "..."}`, même accompagnée d'un URL produit
+et d'un titre valide, est **omise** : elle n'est ni un contributeur
+attribuable ni un auteur substitutif. Listes hétérogènes, types imbriqués
+ou types non attendus restent non probants.
+
+Le rejet concerne seulement les **champs de rôles optionnels** :
+il ne modifie ni la preuve de possession, ni un ISBN d'édition achetée,
+ni le téléchargement, ni les auteur(s) déjà qualifiés. Tests hors
+réseau `test_numilog_owned_public_editorial_roles_p0.py` avec
+fiches JSON-LD synthétiques ; la présence réelle de ces propriétés
+sur Numilog est toujours à confirmer sous #1072.
+
 ## 0.1.73 — intégrité des filtres locaux auteur et format (#1886 P0)
 
 Le filtre facultatif `refine_loaded_page` travaille sur une **page
