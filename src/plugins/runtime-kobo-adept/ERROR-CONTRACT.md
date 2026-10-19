@@ -286,3 +286,22 @@ URL signée, un XML ou un identifiant. La journalisation de la phase continue
 de n'utiliser que le code métier fermé. Les tests couvrent des références
 malveillantes et un échec d'inventaire synthétique ; aucune restitution Adobe
 réelle ni nouveau code fournisseur n'est revendiqué.
+
+
+## 1.2.26 — messages expurgés dans la page Profils Adobe
+
+La page GTK **Profils Adobe** affichait auparavant directement
+`str(exception)[:240]` dans ses notifications. Cette troncature ne masque
+ni le début d'une URL signée, ni une identité, un jeton ou le contenu privé
+des erreurs du broker/projet externe. Les échecs de chargement, de création,
+d'association et de suppression utilisent désormais seulement une
+**table fermée de messages publics**, indexée par un `error.code` exact
+parmi les codes déjà qualifiés. Pour tout code inconnu, de type inattendu,
+ou une exception inaccessible/non sérialisable, un message fixe indique
+d'utiliser Diagnostics. Aucun texte ni `repr` d'exception n'est affiché
+ou journalisé par le widget. Le chemin de succès conserve ses confirmations
+locales fixes.
+
+Le présent incrément est couvert par des erreurs synthétiques contenant
+des URL, adresses, certificats, chemins et éléments de licence. Il ne
+requalifie pas les codes Adobe inconnus, ni les garanties du logiciel amont.

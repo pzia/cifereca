@@ -3,6 +3,38 @@ from __future__ import annotations
 from cifereca.plugin_api import UiPageContribution
 
 
+# The ADEPT profile broker/runtime can fail with exceptions that include
+# external CLI messages, signed URLs, Adobe addresses, certificates or paths.
+# A toast is a CoreUI/public surface, not a safe place for str(exception).
+_PROFILE_ERROR_TOASTS = {
+    "profile_missing": "Profil ADEPT introuvable.",
+    "invalid_profile": "Profil ADEPT invalide.",
+    "adept_profile_required": "Nom de profil ADEPT requis.",
+    "adept_profile_provisioning_unsupported": "Création de profil ADEPT indisponible.",
+    "adept_profile_provisioning_incomplete": "Profil créé, mais non prêt pour les ACSM.",
+    "adept_profile_association_unsupported": "Association de liseuse ADEPT indisponible.",
+    "adept_profile_remove_unsupported": "Suppression de profil ADEPT indisponible.",
+    "adept_mount_invalid": "Point de montage de liseuse invalide.",
+    "kobo_adept_missing": "Kobo-Adept n'est pas installé.",
+    "kobo_adept_timeout": "Délai d'exécution de Kobo-Adept dépassé.",
+    "kobo_adept_failed": "L'opération Kobo-Adept a échoué.",
+    "kobo_adept_invalid_response": "Réponse Kobo-Adept non conforme.",
+    "kobo_adept_invalid_json": "Réponse JSON Kobo-Adept invalide.",
+    "kobo_adept_invalid_utf8": "Réponse Kobo-Adept non conforme à UTF-8.",
+    "kobo_adept_launch_error": "Kobo-Adept ne peut pas être exécuté.",
+}
+_PROFILE_ERROR_FALLBACK = "Gestion ADEPT impossible ; consultez les diagnostics."
+
+
+def _safe_profile_error_toast(error):
+    """Project only qualified public error codes; never stringify exceptions."""
+    try:
+        code = getattr(error, "code", None)
+    except Exception:
+        code = None
+    return _PROFILE_ERROR_TOASTS.get(code, _PROFILE_ERROR_FALLBACK) if type(code) is str else _PROFILE_ERROR_FALLBACK
+
+
 def _run_once_on_first_map(widget, callback):
     """Run a callback once, and only when the page is effectively mapped."""
     fired = False
@@ -137,7 +169,7 @@ class AdeptProfilesPagePlugin:
                         return False
                     set_busy(False)
                     if error is not None:
-                        host.toast(str(error)[:240])
+                        host.toast(_safe_profile_error_toast(error))
                     else:
                         if success_message: host.toast(success_message)
                         render(profile_payload)
