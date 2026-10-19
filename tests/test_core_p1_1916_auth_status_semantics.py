@@ -70,7 +70,9 @@ def test_progressive_search_explains_failure_without_claiming_wrong_scope(
     (401, "authentification requise"),
     (403, "accès refusé"),
 ])
-def test_sync_search_refusal_does_not_claim_outage_or_cache(tmp_path, http_status):
+def test_sync_search_refusal_does_not_claim_outage_or_cache(
+    tmp_path, http_status, expected_label,
+):
     service = _service(tmp_path)
     try:
         _known(service, provider="bad", title="Maritime Book")
