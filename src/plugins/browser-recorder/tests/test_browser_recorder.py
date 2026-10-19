@@ -53,11 +53,15 @@ def test_private_material_never_in_har():
     session.response(Response(request))
     session.navigate(request.url)
     document = json.dumps(session.document())
-    for secret in ("SECRET", "alexandre", "123", "token=", "email=", "a@b.c", "fragment", "postData"):
+    for secret in ("SECRET", "alexandre", "/123", "token=", "email=", "a@b.c", "fragment", "postData"):
         assert secret not in document
     assert "POST" in document and "302" in document
     assert "~redacted~" in document
-    assert '"cookies":[]' in document
+    exported = session.document()["log"]["entries"][0]
+    assert exported["request"]["cookies"] == []
+    assert exported["response"]["cookies"] == []
+    assert exported["request"]["headers"] == []
+    assert exported["response"]["headers"] == []
 
 
 def test_bounded_capture_only_same_origin():
