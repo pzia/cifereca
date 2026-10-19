@@ -1,3 +1,23 @@
+## 0.1.73 — intégrité des filtres locaux auteur et format (#1886 P0)
+
+Le filtre facultatif `refine_loaded_page` travaille sur une **page
+commerciale déjà chargée**, parfois issue d'un cache recopié. Les
+sélecteurs HTML et leur preuve ne suffisent pas si un appelant modifie
+ensuite `metadata.authors` ou `metadata.format_labels`.
+
+Avant toute correspondance positive, le plugin revérifie les listes,
+les caractères Unicode de contrôle/format/surrogate, les limites
+observées (32 auteurs ou 10 formats, 1 000/80 caractères), et la cohérence
+entre noms détaillés et affichage `author`, ainsi qu'entre labels de
+formats et `SearchResult.format` dérivé du parseur. Une incohérence
+rend ce champ **inconnu** et n'autorise aucun faux résultat exhaustif.
+Le filtre reste sans GET, sans accès privé ni achat. Le produit
+commercial multi-format n'est jamais converti en variante acquise.
+
+Tests synthétiques : `test_numilog_public_filter_cache_proof_p0.py`.
+Les champs de recherche avancée serveur (titre/auteur/EAN/format) restent
+à qualifier et ne sont pas annoncés par ce filtre.
+
 ## 0.1.72 — rattachement d'identité stable pendant un enrichissement (#1072 P0)
 
 Dans les parcours **explicitement demandés** `enrich_owned_public_listing`,
