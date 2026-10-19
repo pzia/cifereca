@@ -49,12 +49,28 @@ def attested_age_ranges(row: Mapping[str, Any]) -> tuple[YouthAgeRange, ...]:
     source = Provenance(source=provider, source_id=edition)
     for record in supplied:
         if type(record) is YouthAgeRange:
+            provenance = record.provenance
+            if provenance is not None and (
+                type(provenance) is not Provenance
+                or provenance.source != provider
+                or (provenance.source_id and provenance.source_id != edition)
+            ):
+                continue
             if record.age_kind in _AGE_KINDS and (
                 record.age_min is not None or record.age_max is not None
             ):
                 out.append(record)
             continue
         if type(record) is not dict:
+            continue
+        # Embedded source/edition provenance must never contradict the
+        # surrounding already-identified bibliographic edition.
+        declared_provider = record.get("provider_id")
+        declared_edition = record.get("item_id")
+        if (declared_provider is not None
+            and (type(declared_provider) is not str or declared_provider != provider)
+        ) or (declared_edition is not None
+              and (type(declared_edition) is not str or declared_edition != edition)):
             continue
         kind = record.get("age_kind")
         low, high = record.get("age_min"), record.get("age_max")
