@@ -96,10 +96,10 @@ def test_e2e_phase_markers_are_in_both_real_gtk_probes_and_parsed_in_runner():
 
 
 def test_independent_stdout_and_stderr_markers_are_attributed_without_cross_contamination():
-    stdout = ("CIFERECA_E2E_GTK_PHASE:maintenance_preview\\n"
-              "(app): Gtk-CRITICAL GtkStack 0xPRIVATE_A\\n")
-    stderr = ("CIFERECA_E2E_GTK_PHASE:maintenance_execute\\n"
-              "(app): Gtk-CRITICAL GtkRevealer 0xPRIVATE_B\\n")
+    stdout = ("CIFERECA_E2E_GTK_PHASE:maintenance_preview\n"
+              "(app): Gtk-CRITICAL GtkStack 0xPRIVATE_A\n")
+    stderr = ("CIFERECA_E2E_GTK_PHASE:maintenance_execute\n"
+              "(app): Gtk-CRITICAL GtkRevealer 0xPRIVATE_B\n")
     assert phase_counts(stdout, stderr) == {
         "maintenance_preview": {"GtkStack": 1, "GtkRevealer": 0},
         "maintenance_execute": {"GtkStack": 0, "GtkRevealer": 1},
