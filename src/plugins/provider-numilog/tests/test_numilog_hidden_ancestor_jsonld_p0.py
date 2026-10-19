@@ -75,3 +75,9 @@ def test_malformed_unrelated_end_tag_cannot_unhide_a_book():
     reader.close()
     assert len(reader.scripts) == 1
     assert "Genuine" in reader.scripts[0]
+
+
+def test_unbounded_dom_nesting_rejected_without_scanning_quadratically():
+    nested = "<div>" * 513 + book("Wrong") + "</div>" * 513
+    with pytest.raises(PublicDetailError, match="html_too_deep"):
+        parse_public_detail_jsonld(nested, URL)
