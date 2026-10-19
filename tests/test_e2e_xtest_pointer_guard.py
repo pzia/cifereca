@@ -121,7 +121,36 @@ def test_kobo_audit_still_uses_real_x11_and_fails_on_missing_clicked_signal():
     source = (root / "e2e/diagnostics_navigation_probe.py").read_text()
     assert 'picked = w.pick(point_x, point_y, Gtk.PickFlags.DEFAULT)' in source
     assert 'screen_x, screen_y = device[0].window_point(w, point_x, point_y)' in source
-    assert 'device[0].click(screen_x, screen_y)' in source
+    assert 'device[0].move(screen_x, screen_y)' in source
+    assert 'device[0].click(sx, sy)' in source
+    assert 'loan_sync_audit_after_motion' in source
+    assert 'assert attempts <= 5' in source
     assert 'f["audit_click_signal_seen"] = False' in source
     assert 'f["audit_deadline"] = monotonic() + 6' in source
     assert 'device[0].click_widget(audit)' not in source
+
+
+def test_xtest_move_sends_only_motion_and_synchronizes_before_button_press():
+    device = object.__new__(_x11_class())
+    calls = []
+    class _Motion:
+        def __call__(self, *args):
+            calls.append(("motion", args))
+    class _Button:
+        def __call__(self, *args):
+            calls.append(("button", args))
+    class _Sync:
+        def __call__(self, *args):
+            calls.append(("sync", args))
+    device.display = 123
+    device.xtst = NS(XTestFakeMotionEvent=_Motion(), XTestFakeButtonEvent=_Button())
+    device.x11 = NS(XSync=_Sync())
+    device.move(300, 400)
+    assert [name for name, _args in calls] == ["motion", "sync"]
+    assert calls[0][1][2:4] == (300, 400)
+    calls.clear()
+    device.click(300, 400)
+    assert [name for name, _args in calls] == [
+        "motion", "sync", "button", "button", "sync",
+    ]
+    assert [args[2] for name, args in calls if name == "button"] == [True, False]
