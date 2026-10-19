@@ -262,7 +262,10 @@ class EbooksSession(ProviderSession):
         )
 
     def connect(self):
-        if self.client.is_closed:
+        # Lightweight test transports may expose get() but no HTTPX
+        # is_closed property. Only a positively closed real client requires
+        # replacement; do not hide invalid-query tests behind a new GET.
+        if getattr(self.client, 'is_closed', False) is True:
             try:
                 self.client=self._new_client()
             except (OSError, ValueError, TypeError, httpx.HTTPError):
