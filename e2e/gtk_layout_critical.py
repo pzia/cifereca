@@ -57,7 +57,7 @@ GTK_PHASES_2027 = (
     "maint_p1_naming", "maint_p1_duplicates", "maint_done",
 )
 _PHASE_MARKER = re.compile(
-    r"^CIFERECA_E2E_GTK_PHASE:(?P<phase>[a-z_]+)$"
+    r"^CIFERECA_E2E_GTK_PHASE:(?P<phase>[a-z0-9_]+)$"
 )
 
 
