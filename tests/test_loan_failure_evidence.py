@@ -21,7 +21,8 @@ def test_process_uses_typed_allowlist_and_keeps_exception_override(exit_code, ex
     result = process_failure_facts(raw, exc=NS(exit_code=exit_code), candidate=None, path_type=Path)
     assert result == {"returncode": expected, "duration_ms": 25}
     assert raw == before
-    # Only a native bounded integer from the provider may override a raw returncode.
+    # Valid native integers keep their historical value; the exception
+    # override must be a native bounded integer rather than an arbitrary object.
     assert type(result["returncode"]) is type(expected)
 
 
@@ -48,7 +49,7 @@ def test_failure_evidence_ignores_hostile_or_oversized_numeric_values():
         "stdout": private, "artifact_path": private,
     }
     assert process_failure_facts(raw, exc=Failure(), candidate=None, path_type=Path) == {
-        "returncode": 11,
+        "returncode": 11, "duration_ms": 86_400_001,
     }
     assert safe_exit_code(Failure()) is None
     assert safe_exit_code(NS(exit_code=IntSubclass(1))) is None
