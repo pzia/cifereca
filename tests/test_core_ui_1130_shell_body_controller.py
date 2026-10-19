@@ -224,5 +224,5 @@ def test_shell_builder_does_not_activate_plugins_or_poll_service():
     window, events, styles, css, header = _window()
     assert not hasattr(window, "service")
     assert not hasattr(window, "plugin_manager")
-    build_main_shell(window, Gtk=GTK, add_css=css, version="dev")
+    build_main_shell(window, Gtk=GTK, Pango=PANGO, add_css=css, version="dev")
     assert events == ["header", "pages", ("navigate", "dashboard")]
