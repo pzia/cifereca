@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cifereca"
-version = "0.9.44+dev.12"
+version = "0.9.44+dev.13"
 description = "Core desktop GTK4/libadwaita extensible pour bibliothèque numérique et acquisition par plugins"
 readme = "README.md"
 requires-python = ">=3.11"
