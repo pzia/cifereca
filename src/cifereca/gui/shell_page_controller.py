@@ -30,6 +30,22 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
     previous = window.view_stack.get_visible_child_name() or "dashboard"
     if not is_current():
         return
+    # #908: PluginManagerPage.refresh already replaced its own cards and
+    # scheduled a viewport/focus restore. Destroying the *whole page* here
+    # loses both, even though the activation succeeded. Reuse only the
+    # active Core-owned manager bound to the same window/manager instance.
+    retained_plugins = None
+    if previous == "plugins":
+        try:
+            candidate = window._plugin_page_widgets.get("plugins")
+            if (candidate is not None
+                    and getattr(candidate, "_cifereca_builtin_plugin_manager_page", False) is True
+                    and getattr(candidate, "manager", None) is window.plugin_manager
+                    and getattr(candidate, "window", None) is window):
+                retained_plugins = candidate
+        except Exception:
+            # Plugin-contributed widgets must never prevent shell recovery.
+            retained_plugins = None
     for widget in tuple(window._plugin_page_widgets.values()):
         window.view_stack.remove(widget)
         if not is_current():
@@ -65,7 +81,16 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
         if not is_current():
             return
         try:
-            widget = page.factory(host)
+            core_plugins_route = (
+                page.route == "plugins" and page.title == "Plugins"
+                and page.icon_name == "application-x-addon-symbolic"
+                and page.group == "configuration" and page.priority <= 0
+            )
+            widget = (
+                retained_plugins
+                if core_plugins_route and retained_plugins is not None
+                else page.factory(host)
+            )
             if not is_current():
                 return
             if not isinstance(widget, Gtk.Widget):
