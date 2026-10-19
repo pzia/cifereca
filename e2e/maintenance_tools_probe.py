@@ -26,10 +26,19 @@ from gi.repository import Adw, Gio, GLib, Gtk
 from PIL import ImageGrab
 
 from x11_input import X11Input
+from gtk_layout_critical import GTK_PHASES_2027
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
 from cifereca.locking import InterProcessLock
 from cifereca.paths import acquisition_lock_file
+
+
+def gtk_phase_2027(phase: str) -> None:
+    """Emit only reviewed, constant, privacy-safe action boundaries on both streams."""
+    assert phase in GTK_PHASES_2027
+    marker = f"CIFERECA_E2E_GTK_PHASE:{phase}"
+    print(marker, file=sys.stdout, flush=True)
+    print(marker, file=sys.stderr, flush=True)
 
 
 def walk(widget):
@@ -254,6 +263,7 @@ def main():
         until(allocated, click_then_continue, timeout=6.0)
 
     def ready():
+        gtk_phase_2027("maint_route")
         w = window[0]
         assert "tools" in w.nav_rows
         # The technical navigation section can be collapsed in GTK; selecting
@@ -279,6 +289,7 @@ def main():
         )
 
     def begin_busy():
+        gtk_phase_2027("maint_busy_guard")
         assert_line("Au repos")
         report["checks"]["cache_progress_attached_to_real_tool_row"] = True
         lock[0] = InterProcessLock(acquisition_lock_file())
@@ -287,6 +298,7 @@ def main():
         until(lambda: bool(errors), busy_refused)
 
     def busy_refused():
+        gtk_phase_2027("maint_scan")
         assert "Synchronisation en cours" in errors[-1], errors
         assert tool.plan_calls == 0 and tool.run_calls == 0
         assert modal() is None
@@ -309,6 +321,7 @@ def main():
         return report["status"] == "RUNNING"
 
     def preview_pending():
+        gtk_phase_2027("maint_first_dialog")
         assert modal() is None, "GTK dialog opened before slow plan finished"
         assert tool.run_calls == 0
         assert_line("Analyse…", busy=True)
@@ -389,6 +402,7 @@ def main():
         respond(dialog, "Annuler", lambda: later(after_cancel, 190))
 
     def after_cancel():
+        gtk_phase_2027("maint_cancel_stale")
         assert tool.run_calls == 0
         report["checks"]["physical_cancel_never_runs_destructive_tool"] = True
         until(lambda: modal() is None and preview_button[0].get_sensitive()
@@ -434,6 +448,7 @@ def main():
         until(lambda: modal() is None and preview_button[0].get_sensitive(), begin_final)
 
     def begin_final():
+        gtk_phase_2027("maint_execute")
         physical(preview_button[0])
         until(lambda: modal() is not None and preview_button[0].get_sensitive(), final_dialog)
 
@@ -454,6 +469,7 @@ def main():
         until(lambda: tool.run_finished.is_set() and line_is("Terminé · 100 %"), completed)
 
     def completed():
+        gtk_phase_2027("maint_refresh")
         assert tool.run_calls == 1
         assert lock[0] is None
         report["checks"]["only_explicit_confirmed_safe_simulation_executes"] = True
@@ -509,6 +525,7 @@ def main():
             finish()
             return
         tool_id, title, label = p1_variants[p1_index[0]]
+        gtk_phase_2027("maint_p1_naming" if p1_index[0] == 0 else "maint_p1_duplicates")
         tool.tool_id = tool_id
         p1_runs[0] = tool.run_calls
         p1_mode_index[0] = 0
@@ -613,6 +630,7 @@ def main():
         verify_p1_tool_rows()
 
     def finish():
+        gtk_phase_2027("maint_done")
         report["status"] = "PASS"
         result[0] = 0
         save()
@@ -624,6 +642,7 @@ def main():
 
         def do_activate(self):
             try:
+                gtk_phase_2027("maint_window_start")
                 w = MainWindow(self, core.config, core.library, core.diagnostics)
                 window[0] = w
                 w.plugin_manager = SimpleNamespace(services=lambda name: (
@@ -633,6 +652,7 @@ def main():
                 w.show_error = lambda message, _title=None: errors.append(str(message))
                 w.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
                 w.present()
+                gtk_phase_2027("maint_window_shown")
                 device[0] = X11Input()
                 GLib.timeout_add(45, heartbeat_tick)
                 later(ready, 500)

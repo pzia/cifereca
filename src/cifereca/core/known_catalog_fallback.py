@@ -5,6 +5,7 @@ This is not a purchase, loan, holding, download or fresh provider result.
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -22,6 +23,33 @@ _PUBLIC_META = frozenset({
     "language", "isbn", "isbns", "authors", "contributors", "genre",
     "genres", "categories", "medium", "description", "published_at",
 })
+
+
+_PUBLIC_STALE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,510}")
+
+
+def _safe_stale_identifier(value: Any) -> bool:
+    """Legacy SQLite IDs can be URLs, filesystem paths or signed handles.
+
+    Stale public fallback is best-effort. Refuse any record whose opaque
+    identifier is not safely representable without those private values.
+    """
+    return type(value) is str and _PUBLIC_STALE_ID.fullmatch(value) is not None
+
+
+def _safe_stale_bibliographic_text(value: Any, *, field: str) -> str | None:
+    """Never project legacy, previously unvalidated SQLite free-text as public."""
+    from .search_orchestration import _safe_public_search_text
+    checked = _safe_public_search_text(field, value)
+    if type(checked) is not str:
+        return None
+    # A path is not a bibliographic source identifier. Backslashes are
+    # forbidden conservatively, even for rare legitimate book titles.
+    if checked.startswith(("/", "~/", "file:", "\\")) or "\\" in checked:
+        return None
+    if re.match(r"^[A-Za-z]:[/\\]", checked):
+        return None
+    return checked
 
 
 def public_service_unavailable(exc: BaseException) -> bool:
@@ -108,8 +136,23 @@ def known_public_fallback_page(
             continue
         item_id = entry.get("item_id")
         catalog_id = entry.get("catalog_entry_id")
-        if not all(type(v) is str and v and len(v) < 512 for v in (item_id, catalog_id)):
+        if not (_safe_stale_identifier(item_id)
+                and _safe_stale_identifier(catalog_id)):
             continue
+        safe_title = _safe_stale_bibliographic_text(entry.get("title"), field="title")
+        if safe_title is None:
+            continue
+        raw_author = entry.get("author")
+        safe_author = _safe_stale_bibliographic_text(raw_author, field="author")
+        # Discard an untrusted author without discarding an otherwise attested
+        # public notice; author-specific queries must not match that value.
+        safe_format = entry.get("media_format")
+        if (type(safe_format) is not str or len(safe_format) > 48
+                or not re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9+._-]*(?:/[A-Za-z0-9][A-Za-z0-9+._-]*)?",
+                    safe_format,
+                )):
+            safe_format = None
         # Legacy catalogue rows may predate the validated Core mirror or
         # originate in an external importer. Retain only typed bibliographic
         # text; never re-export nested metadata, embedded signed links, paths,
@@ -123,9 +166,9 @@ def known_public_fallback_page(
                 public_meta[name] = verified
         candidates.append({
             "key": catalog_id, "item_id": item_id,
-            "title": entry.get("title"), "author": entry.get("author"),
+            "title": safe_title, "author": safe_author,
             "provider_id": provider_id, "identity_id": identity_id,
-            "media_format": entry.get("media_format"),
+            "media_format": safe_format,
             "medium": str(public_meta.get("medium") or "unknown"),
             "metadata": public_meta, "mirrored_at": mirrored,
         })
