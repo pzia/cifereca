@@ -249,6 +249,6 @@ def parse_catalog(payload: Any, *, url: str = HOME_URL, status: int = 200,
             next_url = _safe_link(link.get("href"), base=base)
         if "search" in rel and _is_feed_type(link.get("type")) and link.get("templated") is True:
             search = _search_template(link.get("href"), base=base)
-    if not (navigation or publications or groups):
+    if not (navigation or publications):
         raise OPDS2ContractError("empty_catalog")
     return Catalog(title, tuple(navigation), tuple(publications), next_url, search, auth)
