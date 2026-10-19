@@ -2261,7 +2261,16 @@ def main() -> int:
         report["checks"]["P0_kobo_audit_offline_button_no_implicit_scan"] = True
         # A physical XTEST action is the sole trigger; rendering the row does
         # not authorize or start any inspection.
+        # Observe the real GTK "clicked" signal without invoking the action
+        # programmatically. A missed XTEST hit must remain a test failure.
+        f["audit_click_signal_seen"] = False
+        audit.connect(
+            "clicked",
+            lambda _button: f.__setitem__("audit_click_signal_seen", True),
+        )
+        report["stage"] = "P0_1347_kobo_audit_pointer_dispatch"
         report["pointer_actions"].append(device[0].click_widget(audit))
+        report["stage"] = "P0_1347_kobo_audit_result_wait"
         f["audit_deadline"] = monotonic() + 6
         later(100, loan_sync_audit_result)
 
@@ -2275,7 +2284,21 @@ def main() -> int:
         )
         subtitle = audit_row.get_subtitle()
         if "Fichiers locaux vérifiés par SHA : 3" not in subtitle:
-            assert monotonic() < f["audit_deadline"], (
+            now = monotonic()
+            if now >= f["audit_deadline"]:
+                # Closed fixture facts only. Never publish account/source IDs,
+                # GTK text, coordinates, worker exceptions, or raw traces.
+                report["kobo_audit_observation"] = {
+                    "clicked_signal": f["audit_click_signal_seen"] is True,
+                    "broker_calls": min(len(f["audit_calls"]), 2),
+                    "subtitle_phase": (
+                        "in_progress" if subtitle == "Inspection locale en cours (lecture seule)…"
+                        else "initial" if subtitle == (
+                            "Non consulté · aucun téléchargement, déplacement ou suppression"
+                        ) else "other"
+                    ),
+                }
+            assert now < f["audit_deadline"], (
                 "Le résultat GTK de l'audit Kobo n'est pas apparu"
             )
             later(100, loan_sync_audit_result)
