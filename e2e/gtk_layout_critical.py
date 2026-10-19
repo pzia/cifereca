@@ -44,6 +44,22 @@ def gtk_layout_critical_failure(counts: dict[str, int | bool]) -> str | None:
     return None
 
 
+# This gate becomes enforceable only after product fix #2466 yielded 0/0
+# on both MainWindow baselines and both Maintenance reproductions.
+# Other scenarios retain observational telemetry, not an implicit new gate.
+GTK_LAYOUT_ZERO_GATE_2027 = frozenset({
+    "mainwindow-baseline-1366", "mainwindow-baseline-1600",
+    "maintenance-tools-1366", "maintenance-tools-1600",
+})
+
+
+def gtk_layout_zero_gate(scenario: str, counts: dict[str, int | bool]) -> str | None:
+    """Fail closed on known #2027 reproductions, never expose raw GTK logs."""
+    if type(scenario) is not str or scenario not in GTK_LAYOUT_ZERO_GATE_2027:
+        return None
+    return gtk_layout_critical_failure(counts)
+
+
 # Marker values are literal constants emitted only by the reviewed E2E probe.
 # The tool never republishes the underlying GTK log or arbitrary marker text.
 GTK_PHASES_2027 = (

@@ -103,3 +103,33 @@ def test_runtime_trace_only_emits_closed_widget_counters(tmp_path):
             },
         )
     assert output.read_text() == raw
+
+
+def test_post_fix_geometry_gate_is_closed_and_only_on_attested_repro_scenarios():
+    gate = parser["gtk_layout_zero_gate"]
+    covered = parser["GTK_LAYOUT_ZERO_GATE_2027"]
+    assert covered == frozenset({
+        "mainwindow-baseline-1366", "mainwindow-baseline-1600",
+        "maintenance-tools-1366", "maintenance-tools-1600",
+    })
+    clean = {"GtkStack": 0, "GtkRevealer": 0, "stream_truncated": False}
+    critical = {"GtkStack": 2, "GtkRevealer": 3, "stream_truncated": False}
+    truncated = {"GtkStack": 0, "GtkRevealer": 0, "stream_truncated": True}
+    for scenario in covered:
+        assert gate(scenario, clean) is None
+        assert gate(scenario, critical) == "GTK layout P0 #2027 : GtkStack=2, GtkRevealer=3"
+        assert "tronqué" in gate(scenario, truncated)
+    assert gate("startup", critical) is None
+    assert gate("core-navigation", critical) is None
+    assert gate("PRIVATE_TOKEN", critical) is None
+
+
+def test_runner_restores_zero_geometry_gate_after_live_product_fix():
+    source = (MODULE.parent / "run.py").read_text()
+    assert "gtk_layout_zero_gate(name, gtk_critical)" in source
+    assert 'if geometry_regression is not None:' in source
+    assert "assertion_error = geometry_regression" in source
+    assert "returncode = 1" in source
+    assert 'layout_problem = gtk_layout_critical_failure(gtk_critical)' in source
+    assert "_write_redacted_log(stderr_path, errors, env)" in source
+

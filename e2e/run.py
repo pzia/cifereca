@@ -20,7 +20,7 @@ if _E2E_DIR not in sys.path:
     sys.path.insert(0, _E2E_DIR)
 from gtk_layout_critical import (
     gtk_layout_critical_counts, gtk_layout_critical_failure,
-    gtk_layout_phase_counts,
+    gtk_layout_phase_counts, gtk_layout_zero_gate,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -470,12 +470,10 @@ def main() -> int:
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
-            # #2027 is reproducible in the existing baseline. Until its
-            # geometry root cause is fixed, capture the closed counters but
-            # keep functional E2E gates authoritative. A mandatory zero-warning
-            # gate now would block every unrelated Core PR. Do not suppress
-            # the actual GTK log output, downgrade an existing failure or
-            # claim that zero in other fixtures proves a field fix.
+            # Keep observed counters on every scenario. After product fix
+            # #2466 proved zero criticals in the four former reproductions,
+            # those scenarios additionally enforce zero as a regression gate.
+            # No log filtering and no raw GTK payloads in public verdicts.
             layout_problem = gtk_layout_critical_failure(gtk_critical)
             if layout_problem:
                 _event(trace_path, name, "gtk_layout_critical_observed",
@@ -492,6 +490,11 @@ def main() -> int:
                     returncode = 1
                     with stderr_path.open("a", encoding="utf-8") as stderr:
                         stderr.write(assertion_error + "\n")
+            if returncode == 0:
+                geometry_regression = gtk_layout_zero_gate(name, gtk_critical)
+                if geometry_regression is not None:
+                    assertion_error = geometry_regression
+                    returncode = 1
             _event(
                 trace_path, name, "scenario_end",
                 returncode=returncode,
