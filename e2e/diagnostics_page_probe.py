@@ -332,6 +332,105 @@ def main():
                 later(check, 90)
         later(check, 100)
 
+    def diagnostics_entry_observation():
+        """UX #2139: observe access to Journaux without grading GTK usability.
+
+        All lookup names are fixed here; the stored report contains only
+        geometry, booleans and fixed semantic IDs, never label/event text.
+        """
+        scroll = page[0]
+        viewport_width = max(1, scroll.get_width())
+        viewport_height = max(1, scroll.get_height())
+        adjustment = scroll.get_vadjustment()
+        nodes = list(walk(scroll))
+
+        def label_named(name):
+            return next(
+                (node for node in nodes if isinstance(node, Gtk.Label)
+                 and (node.get_text() or "") == name),
+                None,
+            )
+
+        def button_named(name):
+            return next(
+                (node for node in nodes if isinstance(node, Gtk.Button)
+                 and node.get_label() == name),
+                None,
+            )
+
+        def entry_named(placeholder):
+            return next(
+                (node for node in nodes if isinstance(node, Gtk.Entry)
+                 and node.get_placeholder_text() == placeholder),
+                None,
+            )
+
+        def geometry(node):
+            if node is None:
+                return {"present": False}
+            ok, bounds = node.compute_bounds(scroll)
+            if not ok:
+                return {"present": True, "allocated": False}
+            x, y = float(bounds.get_x()), float(bounds.get_y())
+            width, height = float(bounds.get_width()), float(bounds.get_height())
+            visible_width = max(0.0, min(x + width, viewport_width) - max(x, 0.0))
+            visible_height = max(0.0, min(y + height, viewport_height) - max(y, 0.0))
+            fully = (
+                node.get_mapped() and visible_width >= width > 0
+                and visible_height >= height > 0
+            )
+            return {
+                "present": True,
+                "allocated": bool(node.get_mapped() and width > 0 and height > 0),
+                "intersects_first_screen": bool(
+                    node.get_mapped() and visible_width > 0 and visible_height > 0
+                ),
+                "fully_in_first_screen": bool(fully),
+                "horizontal_clipping": bool(width > 0 and visible_width < width),
+                "vertical_visible_percent": round(
+                    100.0 * visible_height / height, 1
+                ) if height > 0 and node.get_mapped() else 0.0,
+                "top_offset_viewports": round(y / viewport_height, 2),
+            }
+
+        dropdowns = [node for node in nodes if isinstance(node, Gtk.DropDown)]
+        targets = {
+            "system_heading": label_named("État système"),
+            "journals_heading": label_named("Journaux par composant"),
+            "severity_filter": dropdowns[1] if len(dropdowns) > 1 else None,
+            "source_filter": dropdowns[0] if dropdowns else None,
+            "period_filter": dropdowns[2] if len(dropdowns) > 2 else None,
+            "module_filter": entry_named("Préfixe module (Entrée pour appliquer)"),
+            "search_filter": entry_named("Rechercher dans cette page"),
+            "select_errors": button_named("Erreurs + critiques (filtres)"),
+            "select_all": button_named("Tout sélectionner (filtres)"),
+            "copy_selection": button_named("Copier la sélection"),
+            "ai_heading": label_named("Analyse IA (facultative)"),
+        }
+        return {
+            "window_width": int(window[0].get_width()),
+            "window_height": int(window[0].get_height()),
+            "viewport_width": int(scroll.get_width()),
+            "viewport_height": int(scroll.get_height()),
+            "vertical_scroll_extent_viewports": round(
+                max(0.0, float(adjustment.get_upper()) -
+                    float(adjustment.get_page_size()))
+                / max(1.0, float(adjustment.get_page_size())), 2
+            ),
+            "controls": {key: geometry(target) for key, target in targets.items()},
+        }
+
+    def diagnostics_entry_at_1280():
+        # Capture actual allocated width; set_default_size() is only a request.
+        report["diagnostics_entry_ux"]["requested_1280"] = (
+            diagnostics_entry_observation()
+        )
+        screenshot("00b-diagnostics-entry-1280")
+        window[0].set_default_size(
+            args.width - 40, 870 if args.width == 1600 else 790
+        )
+        later(report_step, 350)
+
     def initial():
         assert window[0].get_width() <= args.width, "Fenêtre trop large"
         assert page[0].get_mapped(), "Plugin non visible"
@@ -346,7 +445,13 @@ def main():
         assert len(broker.event_queries) == 1, broker.event_queries
         report["checks"]["initial_and_no_implicit_active_or_ai"] = True
         screenshot("00-diagnostics-loaded")
-        report_step()
+        report["diagnostics_entry_ux"] = {
+            "baseline": diagnostics_entry_observation()
+        }
+        # The target is near 1300px, not the 1600px test display.
+        # The original window size and all existing XTEST gates are restored.
+        window[0].set_default_size(1280, 850)
+        later(diagnostics_entry_at_1280, 350)
 
     def report_step():
         expander = find_expander("Ouvrir le rapport support")
