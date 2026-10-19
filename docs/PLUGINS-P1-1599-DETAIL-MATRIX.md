@@ -51,6 +51,37 @@ reste hors #1599.
   ni disponibilité d'un provider distant ni bon fonctionnement sur un poste
   utilisateur.
 
+## Relecture de clôture — dépendance CoreUI #1598 satisfaite
+
+[#1598](https://github.com/pzia/cifereca/issues/1598) est **clôturé
+`completed` depuis le 19/10/2026** : la projection commune
+Recherche/Bibliothèque passe par `DetailPanel` et
+`UiBookDetailPresentation`. Le plugin actif Recommandations utilise
+la **même** présentation via `host.build_book_master_detail`, avec
+champs `author/language/source` séparés, section de provenance,
+score/raisons non convertis en droits et actions ISBN locales
+exclusivement sur édition attestée. Le helper des données **locales**
+de #1598 n'a pas à être importé par le plugin.
+
+Le probe `e2e/recommendations_detail_probe.py` a été étendu sur les
+**deux largeurs 1366 et 1600** sans créer de renderer : il exige une
+**désactivation puis réactivation** réelle du plugin via l'hôte public,
+vérifie qu'aucune sélection/action de l'ancienne instance ne traverse,
+présente un détail nouveau avec texte long dans le
+`DetailPanel.body_scroll`, teste le déplacement effectif du défilement
+puis le **retour à la liste sans action obsolète**. Les contrôles initiaux
+restent : 0/2 résultats, sélection A→B, clavier XTEST réel sur
+recherche ISBN locale, identité A→B, ancienne action inerte,
+capture Xvfb d'écran et absence d'acquisition/réseau.
+
+La PR de cette tranche doit produire des **rapports E2E `PASS` sur le
+SHA exact** (pas seulement un test qui sélectionne les scénarios). Les
+captures sont **synthétiques** avec vrai GTK ; aucune recette de données
+réelles/production, crédit d'achat ou requête LLM n'en découle.
+La clôture stricte de #1599 requiert encore son **intégration sur
+`main`** et la validation effective des deux E2E ; tant qu'une PR
+reste ouverte, la documentation ne prétend pas l'avoir achevée.
+
 ## Gates encore nécessaires pour fermer #1599
 
 1. Vérifier les suites plugins et les scénarios GTK **1366 et 1600 px**
