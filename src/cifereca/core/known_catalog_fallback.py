@@ -147,7 +147,11 @@ def known_public_fallback_page(
         # Discard an untrusted author without discarding an otherwise attested
         # public notice; author-specific queries must not match that value.
         safe_format = entry.get("media_format")
-        if type(safe_format) is not str or not re.fullmatch(r"[A-Za-z0-9+._/-]{1,48}", safe_format):
+        if (type(safe_format) is not str or len(safe_format) > 48
+                or not re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9+._-]*(?:/[A-Za-z0-9][A-Za-z0-9+._-]*)?",
+                    safe_format,
+                )):
             safe_format = None
         # Legacy catalogue rows may predate the validated Core mirror or
         # originate in an external importer. Retain only typed bibliographic
