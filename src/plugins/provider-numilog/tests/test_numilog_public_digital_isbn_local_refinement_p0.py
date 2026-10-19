@@ -13,7 +13,9 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from cifereca.plugin_api import ProviderCapabilityError
+from cifereca.plugin_api import ProviderCapabilityError, ProviderError
+import cifereca_numilog_public_client as client
+import cifereca_numilog_public_provider as public_provider
 from cifereca_numilog_public import parse_public_search
 from cifereca_numilog_public_detail import parse_public_detail_jsonld, merge_public_detail
 from cifereca_numilog_public_local_filter import refine_loaded_public_page
@@ -165,3 +167,88 @@ def test_isbn_with_separators_is_normalized_to_an_exact_13_digit_match():
     )
     result = refine_loaded_public_page(page, isbn_digital="978-2-09259-109-3")
     assert_partial_unknown(result, matches=1, unknown=19)
+
+
+def make_session():
+    s = public_provider.PLUGIN.create_session(
+        credential_id="__public__", label="Numilog public", credentials={},
+        options={}, config={}, storage=None, diagnostics=None,
+    )
+    s.connect()
+    return s
+
+
+def test_explicit_page_enrichment_fetches_only_selected_product(monkeypatch):
+    page = listing()
+    selected = page.items[0]
+    seen = []
+    proof = synthetic_detail(
+        selected, visible="<dt>EAN EPUB</dt><dd>" + EPUB + "</dd>",
+    )
+
+    def load_detail(url):
+        seen.append(url)
+        return proof
+
+    monkeypatch.setattr(client, "fetch_public_detail", load_detail)
+    session = make_session()
+    try:
+        # No eager detail I/O to open a page or inspect a local ISBN filter.
+        before = session.refine_loaded_page(page, isbn_digital=EPUB)
+        assert before.matching_count == 0
+        assert seen == []
+        updated = session.enrich_loaded_page_product(page, selected.record_id)
+        assert seen == [selected.friendly_url]  # ONE public fetch, never N+1.
+        assert updated.total_results == page.total_results == 242
+        assert updated.page_index == page.page_index
+        assert updated.next_url == page.next_url
+        assert updated.pagination_links == page.pagination_links
+        assert updated.items[1:] == page.items[1:]
+        assert "public_detail" not in page.items[0].metadata
+
+        matched = session.refine_loaded_page(updated, isbn_digital=EPUB)
+        assert_partial_unknown(matched, matches=1, unknown=19)
+        assert seen == [selected.friendly_url]  # filtering stays offline
+        # Re-selecting the same item reuses the bounded per-session detail cache.
+        again = session.enrich_loaded_page_product(page, selected.record_id)
+        assert seen == [selected.friendly_url]
+        assert again.items[0].record_id == selected.record_id
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("selection", [
+    "numilog:public:not-in-page", "numilog:private:secret", None, True, {},
+])
+def test_unqualified_selected_product_is_refused_before_any_fetch(monkeypatch, selection):
+    page = listing()
+    seen = []
+    monkeypatch.setattr(client, "fetch_public_detail", lambda url: seen.append(url))
+    session = make_session()
+    try:
+        with pytest.raises(ProviderCapabilityError, match="unverified_product_selection"):
+            session.enrich_loaded_page_product(page, selection)
+        assert not seen
+    finally:
+        session.close()
+
+
+def test_disconnection_during_public_detail_cannot_restore_stale_page(monkeypatch):
+    page = listing()
+    selected = page.items[0]
+    session = make_session()
+    proof = synthetic_detail(
+        selected, visible="<dt>EAN EPUB</dt><dd>" + EPUB + "</dd>",
+    )
+    seen = []
+
+    def load_and_close(url):
+        seen.append(url)
+        session.close()
+        return proof
+
+    monkeypatch.setattr(client, "fetch_public_detail", load_and_close)
+    with pytest.raises(ProviderError, match="invalidated"):
+        session.enrich_loaded_page_product(page, selected.record_id)
+    assert seen == [selected.friendly_url]
+    assert "public_detail" not in page.items[0].metadata
