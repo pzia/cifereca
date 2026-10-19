@@ -676,7 +676,13 @@ def main():
         )
         report["checks"]["P2_1018_seven_explicit_lines_toggle"] = True
         if not args.component_contracts:
-            finish()
+            # #908: the same Core E2E checks a real GTK 36-module inventory
+            # at 1024/1366 pixels without touching installed plugins.
+            from plugin_manager_scroll_contract import verify_plugin_scroll
+            verify_plugin_scroll(
+                window, later, finish,
+                width=1024 if args.width == 1366 else 1366,
+            )
             return
 
         p.empty("Résumé réellement long", "Contrat d'overflow")
