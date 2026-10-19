@@ -32,18 +32,16 @@ def process_failure_facts(
 ) -> dict[str, Any]:
     """Keep bounded native process facts; never stringify provider values."""
     process = {}
-    limits = (
-        ("returncode", -255, 255),
-        ("duration_ms", 0, 86_400_000),
-        ("stdout_bytes", 0, 2**63 - 1),
-        ("stderr_bytes", 0, 2**63 - 1),
-    )
-    for key, minimum, maximum in limits:
+    # Existing durable receipts retain native integers exactly (even when
+    # out of the bounded *diagnostic* projection's range). The public
+    # failure_fields() already validates its own smaller ranges separately.
+    # Never invoke conversions/comparisons on plugin-defined numeric types.
+    for key in ("returncode", "duration_ms", "stdout_bytes", "stderr_bytes"):
         try:
             value = raw.get(key)
         except Exception:
             continue
-        if type(value) is int and minimum <= value <= maximum:
+        if type(value) is int:
             process[key] = value
     exit_code = safe_exit_code(exc)
     if exit_code is not None:
