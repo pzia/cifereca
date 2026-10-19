@@ -675,6 +675,39 @@ def main():
             "Sept lignes sans possibilité de déplier le résumé"
         )
         report["checks"]["P2_1018_seven_explicit_lines_toggle"] = True
+        # #1916: exercise the real GTK count label without any provider call.
+        # Visible text is made solely of closed Core status counts, even if a
+        # provider key resembles a token/URL, and old identity state vanishes.
+        state = window.search_controls.state()
+        identity = getattr(window.service, "current_identity", None)
+        identity_id = getattr(identity, "identity_id", None)
+        prior_mode = window._search_mode
+        prior_context = getattr(window, "_online_source_context", None)
+        prior_statuses = getattr(window, "_online_source_statuses", None)
+        try:
+            window._search_mode = "global"
+            window._online_source_context = (
+                state.text, state.field, state.scope, identity_id,
+            )
+            window._online_source_statuses = {
+                "https://private.invalid/?token=HIDDEN_1916": "known_catalog_stale",
+                "provider.public": "unavailable",
+            }
+            window._update_search_count(0)
+            actual = window.search_page.count_label.get_label()
+            assert "secours local" in actual and "indisponible" in actual
+            assert "HIDDEN_1916" not in actual and "private.invalid" not in actual
+            window._online_source_context = (
+                state.text, state.field, state.scope, "outdated-identity",
+            )
+            window._update_search_count(0)
+            assert "secours local" not in window.search_page.count_label.get_label()
+            report["checks"]["P1_1916_search_status_closed_and_identity_scoped"] = True
+        finally:
+            window._search_mode = prior_mode
+            window._online_source_context = prior_context
+            window._online_source_statuses = prior_statuses or {}
+            window._update_search_count(window.search_page.store.get_n_items())
         if not args.component_contracts:
             # #908: the same Core E2E checks a real GTK 36-module inventory
             # at 1024/1366 pixels without touching installed plugins.
