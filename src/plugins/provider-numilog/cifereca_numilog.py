@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.71, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.72, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.71'
+VERSION = '0.1.72'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -471,7 +471,9 @@ class NumilogSession(ProviderSession):
             # promoted to owned merely by asking for enrichment.
             from dataclasses import replace
             self._canonical_item(replace(item))
+            binding = self._enrichment_identity_snapshot()
             rows = self._rows(enrichment_record_id=item.record_id)
+            self._ensure_enrichment_identity(binding)
             matches = [row for row in rows if self._id(row) == item.record_id]
             if len(matches) != 1:
                 raise ProviderError(
@@ -493,9 +495,11 @@ class NumilogSession(ProviderSession):
                 ('search', public_url),
                 lambda: fetch_public_search(title, page=0, field='all'),
             )
+            self._ensure_enrichment_identity(binding)
             enriched, _status = merge_attested_public_listing(
                 owned, public_page.items,
             )
+            self._ensure_enrichment_identity(binding)
             return enriched
 
     def enrich_owned_public_detail(self, item):
@@ -506,7 +510,9 @@ class NumilogSession(ProviderSession):
         to query an unverified product URL. Neither search nor sync calls this.
         """
         with self.lock:
+            binding = self._enrichment_identity_snapshot()
             owned = self.enrich_owned_public_listing(item)
+            self._ensure_enrichment_identity(binding)
             attestation = (owned.metadata or {}).get('public_enrichment')
             if (type(attestation) is not dict
                     or attestation.get('status') != 'attested_listing_match'):
@@ -520,7 +526,10 @@ class NumilogSession(ProviderSession):
                 ('detail', owned.friendly_url),
                 lambda: fetch_public_detail(owned.friendly_url),
             )
-            return merge_attested_owned_public_detail(owned, detail)
+            self._ensure_enrichment_identity(binding)
+            result = merge_attested_owned_public_detail(owned, detail)
+            self._ensure_enrichment_identity(binding)
+            return result
 
     def enrich_owned_direct_public_detail(self, item):
         """Explicit owned library title link -> canonical public Book metadata.
@@ -535,7 +544,9 @@ class NumilogSession(ProviderSession):
         with self.lock:
             from dataclasses import replace
             self._canonical_item(replace(item))
+            binding = self._enrichment_identity_snapshot()
             rows = self._rows(enrichment_record_id=item.record_id)
+            self._ensure_enrichment_identity(binding)
             matches = [row for row in rows if self._id(row) == item.record_id]
             if len(matches) != 1:
                 raise ProviderError(
@@ -550,7 +561,10 @@ class NumilogSession(ProviderSession):
             # One explicit, anonymous product GET, sharing the existing
             # bounded public cache, cooldown and 429 response handling.
             detail = self.public_product_detail(owned.friendly_url)
-            return merge_attested_owned_direct_public_detail(owned, detail)
+            self._ensure_enrichment_identity(binding)
+            result = merge_attested_owned_direct_public_detail(owned, detail)
+            self._ensure_enrichment_identity(binding)
+            return result
 
     def holdings(self,item,search_terms=''):
         self._canonical_item(item)
@@ -579,6 +593,34 @@ class NumilogSession(ProviderSession):
         # Re-check links restored from older persisted catalogue objects:
         # they are not proof of a public product URL and may carry tokens.
         item.friendly_url = public_book_url(item.friendly_url, self.library_url)
+
+    def _enrichment_identity_snapshot(self):
+        """Optionally pin the owning identity for ONE explicit metadata read.
+
+        Unlike acquisition, old plugin-only clients may not have an identity
+        broker. When one is connected, never export a refreshed private
+        purchase after the account binding changes while public HTTP runs.
+        """
+        if self.identity_broker is None:
+            return None
+        try:
+            return self._identity_id()
+        except Exception:
+            raise ProviderCapabilityError(
+                'Numilog : identité propriétaire indisponible ; enrichissement arrêté'
+            ) from None
+
+    def _ensure_enrichment_identity(self, expected):
+        if expected is None:
+            return  # Legacy no-broker path; credential/record ID still checked.
+        try:
+            current = self._identity_id()
+        except Exception:
+            current = None
+        if current != expected:
+            raise ProviderCapabilityError(
+                'Numilog : identité propriétaire modifiée ; enrichissement arrêté'
+            ) from None
 
     def _identity_id(self):
         if self.identity_broker is None:
