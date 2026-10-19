@@ -31,13 +31,60 @@ def validate(release: object, tag: str, commit: str) -> None:
         )
 
 
-def main() -> int:
+def lookup_draft(pages: object, tag: str) -> tuple[int, str, int] | None:
+    """Resolve a draft by exact tag from paginated REST collections.
+
+    GitHub's /releases/tags/<tag> endpoint is unreliable for untagged drafts.
+    All pages are authenticated and the result is reduced to three validated
+    scalars: release ID, source SHA and number of uploaded assets.
+    """
+    if type(tag) is not str or re.fullmatch(r"plugins-v[0-9A-Za-z.+_-]+", tag) is None:
+        raise ReleaseTargetRefused("Invalid plugins-only release tag")
+    if type(pages) is not list:
+        raise ReleaseTargetRefused("Invalid GitHub releases collection")
+    matches: list[dict] = []
+    for page in pages:
+        if type(page) is not list:
+            raise ReleaseTargetRefused("Invalid GitHub releases page")
+        for entry in page:
+            if type(entry) is not dict:
+                raise ReleaseTargetRefused("Invalid GitHub release entry")
+            if entry.get("tag_name") == tag:
+                matches.append(entry)
+                if len(matches) > 1:
+                    raise ReleaseTargetRefused("Ambiguous duplicate release drafts")
+    if not matches:
+        return None
+    release = matches[0]
+    release_id = release.get("id")
+    source = release.get("target_commitish")
+    assets = release.get("assets")
+    if (release.get("draft") is not True
+            or type(release_id) is not int or release_id <= 0
+            or type(source) is not str
+            or re.fullmatch(r"[0-9a-f]{40}", source) is None
+            or type(assets) is not list
+            or any(type(asset) is not dict for asset in assets)):
+        raise ReleaseTargetRefused("Untrusted draft release metadata")
+    return release_id, source, len(assets)
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", required=True)
     parser.add_argument("--commit", required=True)
-    args = parser.parse_args()
+    parser.add_argument("--lookup-draft", action="store_true")
+    args = parser.parse_args(argv)
     try:
-        validate(json.load(sys.stdin), args.tag, args.commit)
+        payload = json.load(sys.stdin)
+        if args.lookup_draft:
+            found = lookup_draft(payload, args.tag)
+            if found is None:
+                print("none")
+            else:
+                print(f"{found[0]} {found[1]} {found[2]}")
+            return 0
+        validate(payload, args.tag, args.commit)
     except (ValueError, TypeError) as exc:
         print("Plugins-only release refused: " + str(exc), file=sys.stderr)
         return 2
