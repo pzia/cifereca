@@ -1286,3 +1286,28 @@ horloge monotone déterministe et reprise au terme du plafond.
 Ce correctif ne qualifie ni le respect des CGU/robots, ni la
 disponibilité réelle des endpoints Numilog ni les filtres serveurs
 auteur/ISBN qui restent ouverts dans #1886.
+
+
+## 0.1.62 — requalification des valeurs d'une fiche publique avant copie dans Mes achats (#1072)
+
+Le sélecteur HTML de chaque champ public est déjà validé, mais la
+`SearchResult` publique peut avoir été réutilisée ou modifiée entre
+son parsing, son cache et l'enrichissement du livre acheté.
+Un sélecteur correct **ne qualifie pas automatiquement sa valeur courante**.
+
+La jointure explicite de la fiche achetée au même produit et au même
+titre reste obligatoire ; puis, à l'instant de copier, les champs de
+carte commerciale sont vérifiés à nouveau :
+- auteur : texte borné, sans contrôles Unicode, correspondant exactement
+  aux noms structurés du HTML (32 auteurs maximum) ;
+- éditeur, résumé, collection : textes bornés sans contrôles Unicode ;
+- date : format ISO `YYYY-MM-DD` et date réelle ;
+- couverture : uniquement `https://couverture.numilog.com/<id>_GRANDE.jpg`,
+  sans URL alternative, suffixe de session ni redirection.
+
+Une valeur non qualifiée provoque le code constant
+`public_edition_value_unverified`, sans exposer de contenu privé.
+Il n'y a **ni publication du prix d'achat**, ni promotion d'un ISBN
+papier/EPUB, ni téléchargement ou attribution de droits.
+La validation des champs n'est pas une preuve de l'édition numérique
+effectivement achetée ; la recette réelle #1072 demeure nécessaire.
