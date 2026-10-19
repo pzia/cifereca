@@ -9,5 +9,5 @@
   "authorized_on": "2026-10-09",
   "request_revision": 4,
   "requires_published_core_tag": "v0.9.44+dev.12",
-  "archive_reason": "#2331: source package Jeunesse retiré par #2318; ceci est une autorisation historique non exécutable."
+  "archive_reason": "#2331: source Jeunesse retirée via #2318 ; Diagnostics est conservé uniquement comme trace historique, sans autorisation actuelle de release Diagnostics-only."
 }
