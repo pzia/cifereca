@@ -174,15 +174,19 @@ class HttpTransport:
                             if redirect_index >= max_redirects:
                                 raise TemporaryUnavailable("transport.http: trop de redirections")
                             next_url = _validate_url(urljoin(str(response.url), location))
-                            if (redirect_policy == "same_origin"
-                                    and _origin(next_url) != _origin(url)):
-                                # OPDS fetches may redirect inside their
-                                # public origin, never to a private network,
-                                # unrelated host or downgrade. No redirect
-                                # body or next-target response is consumed.
-                                raise UnsupportedOperation(
-                                    "transport.http: redirection hors origine refusée"
-                                )
+                            if redirect_policy == "same_origin":
+                                try:
+                                    same_origin = _origin(next_url) == _origin(url)
+                                except ValueError:
+                                    raise UnsupportedOperation(
+                                        "transport.http: destination de redirection invalide"
+                                    ) from None
+                                # OPDS redirects must remain on the original
+                                # public origin. No other host is contacted.
+                                if not same_origin:
+                                    raise UnsupportedOperation(
+                                        "transport.http: redirection hors origine refusée"
+                                    )
                             if urlsplit(str(response.url)).scheme.casefold() == "https" and urlsplit(next_url).scheme.casefold() == "http" and not allow_downgrade:
                                 raise UnsupportedOperation("transport.http: redirection HTTPS vers HTTP refusée")
                             if _origin(str(response.url)) != _origin(next_url):
