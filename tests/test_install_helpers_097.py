@@ -178,5 +178,6 @@ class PluginsOnly(unittest.TestCase):
         })()
         with patch.object(dev.subprocess, 'run', return_value=response), \
              patch.object(dev, '_package_is_active', return_value=True):
-            with self.assertRaisesRegex(dev.DevUpdateError, 'other.provider'):
+            # Missing package IDs must not leak through public smoke exceptions.
+            with self.assertRaisesRegex(dev.DevUpdateError, 'packages actifs absents'):
                 dev._smoke_plugins(['test.provider', 'other.provider'])
