@@ -41,6 +41,10 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         super().__init__()
         self.window = window
         self.manager = manager
+        # The shell may rebuild all page contributions after a user toggle.
+        # This identifies the Core-owned manager widget for safe retention
+        # while the active Plugins route is detached and reattached (#908).
+        self._cifereca_builtin_plugin_manager_page = True
         self.on_changed = on_changed or (lambda: None)
         self._view_query = ""
         self._view_filter = "all"
