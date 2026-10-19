@@ -162,6 +162,59 @@ def test_explicit_detail_drops_result_if_session_changes_on_cached_hit(
         s.close()
 
 
+@pytest.mark.parametrize("transition", ["close", "reconnect"])
+def test_search_rejects_rebinding_during_input_validation_before_http(
+    monkeypatch, transition,
+):
+    s = make_session()
+    checked = s._validate_search
+    queries = []
+
+    def validate(query, page, field, scope):
+        target = checked(query, page, field, scope)
+        s.close()
+        if transition == "reconnect":
+            s.connect()
+        return target
+
+    monkeypatch.setattr(s, "_validate_search", validate)
+    monkeypatch.setattr(s, "_get_page",
+                        lambda *_args: queries.append("private_stale_get"))
+    try:
+        with pytest.raises(ProviderError, match="navigation_invalidated"):
+            s.search("jefferson")
+        assert queries == []  # Reject BEFORE any anonymous GET/cache access.
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("transition", ["close", "reconnect"])
+def test_detail_rejects_rebinding_during_item_validation_before_http(
+    monkeypatch, transition,
+):
+    s = make_session()
+    item = replace(PAGE.items[0], source_provider="numilog-catalog")
+    original = detail_module.validate_public_detail_item
+    attempted = []
+
+    def validate(row):
+        checked = original(row)
+        s.close()
+        if transition == "reconnect":
+            s.connect()
+        return checked
+
+    monkeypatch.setattr(detail_module, "validate_public_detail_item", validate)
+    monkeypatch.setattr(client, "fetch_public_detail",
+                        lambda *_args: attempted.append("should-not-fetch"))
+    try:
+        with pytest.raises(ProviderError, match="navigation_invalidated"):
+            s.enrich_public_detail(item)
+        assert attempted == []
+    finally:
+        s.close()
+
+
 def test_unmodified_search_and_detail_still_work_without_extra_http(monkeypatch):
     s = make_session()
     item = replace(PAGE.items[0], source_provider="numilog-catalog")
