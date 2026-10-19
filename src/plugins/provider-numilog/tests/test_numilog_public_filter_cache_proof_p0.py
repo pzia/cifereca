@@ -13,7 +13,12 @@ from cifereca_numilog_public_local_filter import refine_loaded_public_page
 FIX = Path(__file__).parent / "fixtures" / "public_search_jefferson_20261016.html"
 SOURCE = ("https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx"
           "?mode=brSimple&query=jefferson")
-PAGE = parse_public_search(FIX.read_text(), SOURCE)
+_RAW_PAGE = parse_public_search(FIX.read_text(), SOURCE)
+PAGE = replace(
+    _RAW_PAGE,
+    items=tuple(replace(row, source_provider="numilog-catalog")
+                for row in _RAW_PAGE.items),
+)
 
 
 def singleton(index, *, field=None, value=None, display=None, fmt=None):
