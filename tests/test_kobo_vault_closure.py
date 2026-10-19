@@ -282,6 +282,9 @@ def test_real_adept_failure_is_counted_only_in_adept_errors(tmp_path: Path, monk
         row = service.storage.backup_get("kobo", "vault-1", "book-1")
         assert row is not None
         assert row["status"] == "error"
-        assert "EPUB invalide" in str(row["error"])
+        # Durable receipts are public diagnostic data; the typed in-process
+        # summary above retains the ADEPT decision detail.
+        assert row["error"] == "Sauvegarde Kobo impossible"
+        assert "EPUB invalide" not in row["error"]
     finally:
         service.close()
