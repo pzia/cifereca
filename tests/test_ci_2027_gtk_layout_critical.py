@@ -58,10 +58,12 @@ def test_closed_machine_aliases_and_type_validation():
     )
 
 
-def test_e2e_runner_attaches_counter_to_trace_and_summary_and_fails_before_success():
+def test_e2e_runner_attaches_counter_to_trace_and_summary_without_masking_warnings():
     source = (MODULE.parent / "run.py").read_text()
     assert "gtk_layout_critical_counts(output, errors)" in source
     assert "layout_problem = gtk_layout_critical_failure(gtk_critical)" in source
-    assert "if returncode == 0 and layout_problem:" in source
+    assert 'gtk_layout_critical_observed' in source
     assert '"gtk_layout_critical": gtk_critical' in source
     assert "gtk_layout_critical=gtk_critical" in source
+    assert "if returncode == 0 and layout_problem:" not in source
+    assert "_write_redacted_log(stderr_path, errors, env)" in source
