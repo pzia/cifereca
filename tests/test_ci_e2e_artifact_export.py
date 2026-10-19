@@ -105,6 +105,30 @@ class SafeE2EExportTests(unittest.TestCase):
         self.assertNotIn("name: e2e-core-debug", content)
 
 
+def test_diagnostics_timeout_wait_line_is_ast_validated_and_never_text():
+    """Public E2E can locate a polling timeout without exposing GTK evidence."""
+    import ast
+    module = _module()
+    tree = ast.parse((ROOT / "e2e/diagnostics_page_probe.py").read_text())
+    line = next(node.lineno for node in ast.walk(tree)
+                if isinstance(node, ast.Lambda))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        report = root / "diagnostics-1366" / "diagnostics-1366" / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": "diagnostics-1366",
+                                      "returncode": 1}]))
+        for raw, accepted in ((line, True), (True, False),
+                              (str(line), False), (1000000000, False)):
+            report.write_text(json.dumps({"wait_line": raw,
+                "error": "PRIVATE_SIGNED_URL", "cookie": "PRIVATE_TOKEN",
+                "predicate": "<private GUI text>"}))
+            row = module.safe_summary(source)["results"][0]
+            assert row.get("wait_line") == line if accepted else "wait_line" not in row
+            assert "PRIVATE" not in repr(row)
+
+
 class SafeFailureDiagnosisTests(unittest.TestCase):
     def test_failed_baseline_exports_only_closed_stage_valid_line_and_bounded_duration(self):
         import ast

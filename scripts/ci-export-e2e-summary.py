@@ -85,6 +85,14 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
             result["checkpoint_line"] = line
             if checkpoint_helper:
                 result["checkpoint_source"] = "activity_feedback"
+        # A Diagnostics wait may time out inside the generic polling closure.
+        # Publish only the numeric source line of a literal reviewed lambda.
+        if probes[scenario] == "diagnostics_page_probe.py":
+            wait_line = data.get("wait_line")
+            allowed_waits = {n.lineno for n in ast.walk(probe)
+                             if isinstance(n, ast.Lambda)}
+            if type(wait_line) is int and wait_line in allowed_waits:
+                result["wait_line"] = wait_line
         # A callback checkpoint may be a lambda calling another function.
         # Publish the actual failure location only when it is a reviewed
         # assertion/raise statement in this exact probe, never traceback text.
