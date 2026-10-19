@@ -105,3 +105,28 @@ def test_oversized_e2e_subprocess_log_is_bounded_and_sanitized(tmp_path):
     assert text.endswith("[TRUNCATED]\n")
     assert "PRIVATE" not in text
     assert len(text) <= runner.MAX_E2E_LOG_CHARS + 15
+
+
+def test_trace_jsonl_never_serializes_unreviewed_payloads_even_on_failure(tmp_path):
+    """#1143: a recursive/private report is never copied into CI trace files."""
+    runner = _module()
+    trace = tmp_path / "trace.jsonl"
+    runner._event(
+        trace, "startup", "scenario_end", returncode=1,
+        screenshot=True, report=False, visual_change_ratio=0.25,
+        assertion_error="https://private.invalid/?token=NEVER_WRITE",
+        private_account={"email": "reader@example.test", "password": "SECRET"},
+        xdg_path="/home/reader/.config",
+        future_metadata=[{"authorization": "Bearer SECRET"}],
+    )
+    rows = [runner.json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["returncode"] == 1
+    assert rows[0]["visual_change_ratio"] == 0.25
+    assert rows[0]["screenshot"] is True and rows[0]["report"] is False
+    assert set(rows[0]) == {
+        "timestamp_utc", "scenario", "event", "returncode",
+        "visual_change_ratio", "screenshot", "report",
+    }
+    assert "SECRET" not in trace.read_text()
+    assert "reader@example.test" not in trace.read_text()
+    assert "private.invalid" not in trace.read_text()
