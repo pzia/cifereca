@@ -19,7 +19,10 @@ def account_for_loan(loan, *, accounts, current_account_get, configuration_error
         for account in candidates:
             if account.unique_id == loan.source_account_id:
                 return account
-        raise configuration_error(f'Compte emprunteur introuvable pour le prêt {loan.id}: {loan.source_provider}/{loan.source_credential}/{loan.source_account_id!r}')
+        # The original lookup error interpolated borrower ID, credential,
+        # provider and loan ID directly into a UI-facing exception. This
+        # information may include signed URLs or personal account data.
+        raise configuration_error('Compte emprunteur introuvable pour ce prêt')
     # Legacy cache compatibility only; strict return preflight rejects missing provenance.
     if current_account_get() in candidates:
         return current_account_get()
@@ -28,7 +31,7 @@ def account_for_loan(loan, *, accounts, current_account_get, configuration_error
         return primary
     if candidates:
         return candidates[0]
-    raise configuration_error(f'Aucun compte connecté pour {loan.source_provider}/{loan.source_credential}')
+    raise configuration_error('Aucun compte connecté pour ce prêt')
 
 
 def return_loan_identity(loan, *, resolve_account, session_key, lookup_session, attention_error):
