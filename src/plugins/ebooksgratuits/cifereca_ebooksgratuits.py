@@ -476,7 +476,9 @@ def _opds_find_link(node,base,rel):
     for r,mime,raw,_checked in _opds_links(node,base):
         if r != rel:
             continue
-        checked=_safe_opds_link(base,raw,'feed')
+        # A backslash is not a valid route separator in the attested
+        # COPS Atom next-link contract; URL parsers disagree on its meaning.
+        checked=_safe_opds_link(base,raw,'feed') if '\\' not in raw else None
         if not checked:
             raise ProviderError('Ebooks libres et gratuits : invalid_opds_pagination')
         matches.append((checked,mime,raw))
