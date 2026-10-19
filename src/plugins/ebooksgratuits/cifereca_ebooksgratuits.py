@@ -432,11 +432,24 @@ def _safe_opds_link(feed_url, href, kind):
             or path in {'/index.php/fetch', '/fetch.php', '/index.php/fetch.php'}
         ):
             return None
-        if kind=='feed' and not (
-            '/index.php/' in path or path.endswith('/feed')
-            or path.endswith('.xml') or path.endswith('/feed.php')
-        ):
-            return None
+        if kind=='feed':
+            # A same-origin URL is not necessarily a feed. Previously any
+            # /index.php/* action qualified, including /index.php/account/*
+            # and mutating routes linked from untrusted OPDS XML.
+            allowed_feed = (
+                path == '/index.php/feed'
+                or path.startswith('/index.php/feed/')
+                or path in {'/feed', '/feed.php', '/index.php/feed.php',
+                            '/index.php/opensearch.xml'}
+            )
+            # Encoded dot segments/slashes must not turn an apparent feed
+            # route into an account/admin action after server decoding.
+            parts = decoded_path.casefold().split('/')
+            if (not allowed_feed or '\\' in decoded_path
+                    or any(segment in {'.', '..'} for segment in parts)
+                    or '%25' in path
+                    or '%2f' in path or '%5c' in path):
+                return None
         return dst.geturl()
     except ValueError:
         return None
