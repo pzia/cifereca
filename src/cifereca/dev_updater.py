@@ -33,6 +33,15 @@ PARTIAL_KIND = "cifereca-plugins-only-preview"
 DEV_FORMAT = 1
 MAX_FILES = 30000
 MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+# Only fixed, non-personal Core runtime classifications may accompany an
+# identity attested independently from the selected package manifest.
+SMOKE_FAILURE_REASONS = frozenset({
+    "activation_failed", "contract_mismatch", "missing_service",
+    "dependency_missing", "dependency_version", "dependency_disabled",
+    "dependency_cycle", "conflict", "configuration", "system_requirement",
+    "missing_broker", "plugin_api", "unknown",
+})
+MAX_SMOKE_FAILURE_DETAILS = 8
 
 
 class DevUpdateError(RuntimeError):
@@ -44,7 +53,8 @@ class PluginSmokeError(DevUpdateError):
 
     def __init__(self, message: str, *, reason_code: str,
                  contributions_error: int = 0, contributions_incompatible: int = 0,
-                 active_packages_missing: int = 0):
+                 active_packages_missing: int = 0,
+                 failed_contributions: list[dict[str, str]] | None = None):
         if reason_code not in SMOKE_FAILURE_CODES:
             raise ValueError("invalid_smoke_failure_code")
         counts = {
@@ -66,6 +76,15 @@ class PluginSmokeError(DevUpdateError):
         super().__init__(messages[reason_code])
         self.reason_code = reason_code
         self.smoke_counts = counts
+        failures = failed_contributions if failed_contributions is not None else []
+        if (type(failures) is not list or len(failures) > MAX_SMOKE_FAILURE_DETAILS
+                or any(type(row) is not dict or set(row) != {
+                    "package_id", "plugin_id", "reason_code",
+                } or any(type(v) is not str for v in row.values())
+                    or row["reason_code"] not in SMOKE_FAILURE_REASONS
+                    for row in failures)):
+            raise ValueError("invalid_smoke_failure_details")
+        self.failed_contributions = [dict(row) for row in failures]
 
 
 def _safe_member(info: zipfile.ZipInfo) -> PurePosixPath:
@@ -209,6 +228,48 @@ def _install_plugin_replace(archive: Path, *, activate: bool) -> None:
         raise DevUpdateError("installation plugin dev échouée")
 
 
+def _verified_smoke_failures(
+    rows: list[dict[str, Any]], package_ids: list[str] | None,
+) -> list[dict[str, str]]:
+    """Allowlist only plugin identities from actually installed manifests.
+
+    The CLI's state/reason are never trusted to mint an ID. Even on failure,
+    no free-form error, display label, path, credential, URL or log is copied.
+    """
+    if package_ids is None:
+        return []
+    try:
+        from .plugins.packages import PackageStore
+        store = PackageStore(_plugin_store_root())
+        allowed: set[tuple[str, str]] = set()
+        for package_id in package_ids:
+            if store.active_version(package_id) is None:
+                continue
+            manifest = store.load(package_id).manifest
+            if manifest.package.id != package_id:
+                return []
+            allowed.update((package_id, item.id) for item in manifest.plugins)
+    except Exception:
+        return []
+    found: list[dict[str, str]] = []
+    for row in rows:
+        if row["state"] not in {"error", "incompatible"}:
+            continue
+        package_id, plugin_id = row["package_id"], row.get("plugin_id")
+        if type(plugin_id) is not str or (package_id, plugin_id) not in allowed:
+            continue
+        raw_reason = row.get("reason_code")
+        reason = (raw_reason if type(raw_reason) is str
+                  and raw_reason in SMOKE_FAILURE_REASONS else "unknown")
+        item = {"package_id": package_id, "plugin_id": plugin_id,
+                "reason_code": reason}
+        if item not in found:
+            found.append(item)
+        if len(found) > MAX_SMOKE_FAILURE_DETAILS:
+            return []
+    return found
+
+
 def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
     cli = _new_cli()
     proc = updater._run_bounded_process(
@@ -239,6 +300,7 @@ def _smoke_plugins(package_ids: list[str] | None = None) -> dict[str, Any]:
             reason_code="smoke_contributions_failed",
             contributions_error=error_count,
             contributions_incompatible=incompatible_count,
+            failed_contributions=_verified_smoke_failures(selected, package_ids),
         )
     if package_ids is not None:
         # Inactive packages have no active contribution and must never be
@@ -652,6 +714,8 @@ def main(argv: list[str] | None = None) -> int:
         if type(exc) is PluginSmokeError:
             error["reason_code"] = exc.reason_code
             error["smoke_counts"] = dict(exc.smoke_counts)
+            if exc.failed_contributions:
+                error["failed_contributions"] = [dict(row) for row in exc.failed_contributions]
         _print({"ok": False, "error": error}, args.json)
         return 1
 
