@@ -23,6 +23,7 @@ from .sync_view import (
 from .task_runner import TaskPriority
 from .sync_action_scope import capture_sync_action_scope, sync_action_scope_current
 from .sync_action_layout import add_sync_action, sync_action_row
+from .sync_source_details import add_sync_detail
 
 
 def _build_sync_page(self):
@@ -39,17 +40,19 @@ def _build_sync_page(self):
     title.set_wrap(True)
     title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
     title.set_width_chars(1)
-    refresh = self.action_button("Actualiser", "view-refresh-symbolic")
+    refresh = self.action_button("Actualiser l’affichage", "view-refresh-symbolic")
     all_now = self.action_button("Synchroniser les sources", "emblem-synchronizing-symbolic", suggested=True)
     self._sync_all_button = all_now
     heading.append(title)
+    self._sync_summary = Gtk.Label(label="Sélectionnez une identité", xalign=0)
+    self._sync_summary.set_wrap(True)
+    heading.append(self._sync_summary)
     add_sync_action(heading, refresh)
     add_sync_action(heading, all_now)
     outer.append(sync_action_row(heading))
     scope_note = Gtk.Label(
-        label="Actualiser les sources met à jour les notices et droits en ligne. "
-        "Ce bouton ne télécharge aucun ebook. L’acquisition locale Kobo est "
-        "une opération distincte qui requiert un compte et une confirmation explicites.",
+        label="Synchroniser met à jour les notices et droits en ligne, sans télécharger de livre. "
+        "Les outils et téléchargements se trouvent dans chaque compte.",
         xalign=0,
     )
     scope_note.set_wrap(True)
@@ -106,6 +109,9 @@ def _refresh_sync_page(self) -> None:
     broker = self.plugin_manager.broker("sync") if self.plugin_manager else None
     identity = self.service.current_identity
     all_now = getattr(self, "_sync_all_button", None)
+    summary = getattr(self, "_sync_summary", None)
+    if summary is not None:
+        summary.set_label("État des sources indisponible")
     global_label = sync_identity_action_label(identity)
     if all_now is not None:
         all_now._cifereca_action_label = global_label
@@ -124,6 +130,8 @@ def _refresh_sync_page(self) -> None:
         self, page_token=page_token, preview_generation=preview_generation,
     )
     if scope is None:
+        if summary is not None:
+            summary.set_label("Sélectionnez une identité")
         if all_now is not None:
             all_now.set_sensitive(False)
         box.append(Gtk.Label(
@@ -140,11 +148,26 @@ def _refresh_sync_page(self) -> None:
         if getattr(source, "identity_id", None) == scope.identity_id
     ]
     presentations = [sync_source_presentation(source) for source in rows]
+    # Keep a user's open account tools across passive refreshes, but never
+    # carry that disclosure state into another identity or retain stale rows.
+    open_tools = (getattr(self, "_sync_tools_state", {})
+                  if getattr(self, "_sync_tools_identity", None) == scope.identity_id
+                  else {})
+    self._sync_tools_identity = scope.identity_id
+    self._sync_tools_state = {
+        source.source_id: open_tools.get(source.source_id, False) is True
+        for source in rows
+    }
     # Number genuinely indistinguishable same-provider connections without
     # exposing any private credential/account/source ID. Unique titles stay
     # unchanged to preserve existing keyboard navigation and accessible names.
     row_titles = sync_source_row_labels(rows)
     actionable = any(item.action_enabled for item in presentations)
+    if summary is not None:
+        summary.set_label(
+            f"{len(rows)} source(s) · "
+            f"{sum(item.action_enabled for item in presentations)} synchronisable(s) maintenant"
+        )
     if all_now is not None:
         all_now.set_sensitive(actionable)
         all_now.set_tooltip_text(
@@ -163,6 +186,8 @@ def _refresh_sync_page(self) -> None:
         # The scoped broker order determines ephemeral labels only; sid remains
         # the opaque, separate source route for each row.
         group = Adw.PreferencesGroup(); box.append(group)
+        group._cifereca_sync_tools_state = self._sync_tools_state
+        group._cifereca_sync_source_id = source.source_id
         row = Adw.ActionRow(); row.set_title(display_label)
         row.set_subtitle(presentation.summary)
         row.set_subtitle_lines(0)
@@ -269,7 +294,7 @@ def _refresh_sync_page(self) -> None:
                 )
             preflight.connect("clicked", preview_one)
             group.add(sync_action_row(row))
-            group.add(sync_action_row(preview_row))
+            add_sync_detail(group, preview_row, action=preflight, source_row=row)
 
             # #1345/#1347: explicit, offline, identity-scoped SHA audit.
             # Unlike a backup or source refresh, it does not require a live
@@ -333,7 +358,7 @@ def _refresh_sync_page(self) -> None:
                     priority=TaskPriority.USER_ACTION, kind="sync-audit",
                 )
             audit_button.connect("clicked", audit_one)
-            group.add(sync_action_row(audit_row))
+            add_sync_detail(group, audit_row, action=audit_button, source_row=row)
 
             # #1347: this is the *only* GUI entry for confirmed Kobo local
             # acquisitions. Unlike the advisory local preview above, the
@@ -370,7 +395,7 @@ def _refresh_sync_page(self) -> None:
             add_sync_action(acquisition_row, download_button)
             stop_download.set_valign(Gtk.Align.CENTER)
             add_sync_action(acquisition_row, stop_download)
-            group.add(sync_action_row(acquisition_row))
+            add_sync_detail(group, acquisition_row)
             acquisition_state = {"serial": 0, "cancel": None}
 
             def download_current(expected_identity=source.identity_id, captured_scope=scope):
@@ -663,7 +688,7 @@ def _refresh_sync_page(self) -> None:
             )
             schedule_button.set_valign(Gtk.Align.CENTER)
             add_sync_action(schedule_row, schedule_button)
-            group.add(sync_action_row(schedule_row))
+            add_sync_detail(group, schedule_row)
 
             def schedule_change(
                 button, sid=source.source_id, account_label=display_label,
@@ -778,7 +803,7 @@ def _refresh_sync_page(self) -> None:
                     )
                 button.connect("clicked", preview_numilog)
                 add_sync_action(local_row, button)
-            group.add(sync_action_row(local_row))
+            add_sync_detail(group, local_row)
 
             # Numilog materialization is NOT inventory synchronization. Never
             # infer consent from source enabled, the Kobo switch, or preview.
@@ -1081,7 +1106,7 @@ def _refresh_sync_page(self) -> None:
             )
             inventory_button.set_valign(Gtk.Align.CENTER)
             add_sync_action(inventory_row, inventory_button)
-            group.add(sync_action_row(inventory_row))
+            add_sync_detail(group, inventory_row)
 
             def change_inventory_schedule(
                 button, sid=source.source_id, account_label=display_label,

@@ -1441,6 +1441,83 @@ def main() -> int:
         await_route("sync", loan_sync_sources_rendered)
 
     def loan_sync_sources_rendered():
+        # #2141 acceptance: the initial page exposes status and one primary
+        # source action, while account tools start closed. Preserve the full
+        # expanded-page acceptance below after testing this new disclosure.
+        w = window[0]
+        f = loan_sync_fixture
+        expanders = [node for node in walk(w._sync_sources_box)
+                     if isinstance(node, Gtk.Expander)]
+        assert len(expanders) == 5
+        assert all(not node.get_expanded() for node in expanders)
+        assert all(not node.get_child().get_mapped() for node in expanders)
+        source_rows = [node for node in walk(w._sync_sources_box)
+                       if isinstance(node, Adw.ActionRow)
+                       and node.get_title() in {
+                           "Kobo audit hors ligne", "Kobo ciblé 1", "Kobo ciblé 2",
+                           "Kobo ciblé 3", "Source partielle fictive",
+                           "Source déconnectée fictive", "Achats Numilog fictifs",
+                       }]
+        assert len(source_rows) == 7
+        for row in source_rows:
+            buttons = [node for node in walk(sync_action_row(row))
+                       if isinstance(node, Gtk.Button)]
+            assert len(buttons) == 1 and row.get_mapped()
+            assert "Synchronisation :" in row.get_subtitle()
+        backup = next(node for node in walk(w._sync_sources_box)
+                      if isinstance(node, Adw.ActionRow)
+                      and node.get_title() == "Sauvegarde automatique des achats Numilog")
+        assert backup.get_mapped(), "Durable backup status must remain outside tools"
+        assert "11 source(s)" in w._sync_summary.get_label()
+        f["sync_tools"] = expanders
+        f["sync_tools_font"] = Gtk.Settings.get_default().get_property("gtk-font-name")
+        scroll = w._sync_sources_box.get_parent()
+        while not isinstance(scroll, Gtk.ScrolledWindow):
+            scroll = scroll.get_parent()
+        f["sync_scroll"] = scroll
+        capture("03h-sync-collapsed-source-tools")
+        w.set_default_size(1280, 850)
+        later(350, lambda: sync_collapsed_desktop(False))
+
+    def sync_collapsed_desktop(large_font):
+        w = window[0]
+        f = loan_sync_fixture
+        assert w.get_width() <= 1300
+        assert all(not node.get_expanded() for node in f["sync_tools"])
+        assert not f["source_sync_calls"] and not f["prepare_calls"]
+        assert not f["materialize_calls"] and not f["audit_calls"]
+        capture("03h-sync-collapsed-1280-" + ("large" if large_font else "normal"))
+        if not large_font:
+            Gtk.Settings.get_default().set_property("gtk-font-name", "Sans 12")
+            later(350, lambda: sync_collapsed_desktop(True))
+            return
+        Gtk.Settings.get_default().set_property("gtk-font-name", f["sync_tools_font"])
+        w.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
+        later(350, lambda: kobo_click_visible(
+            f["sync_tools"][0].get_label_widget().get_parent().get_first_child(),
+            sync_tools_opened,
+        ))
+
+    def sync_tools_opened():
+        f = loan_sync_fixture
+        # Observe GTK's disclosure allocation after the one physical click;
+        # never replace it with set_expanded(), clicked() or an input retry.
+        deadline = f.setdefault("sync_tools_deadline", monotonic() + 2)
+        if not f["sync_tools"][0].get_expanded() and monotonic() < deadline:
+            later(80, sync_tools_opened)
+            return
+        assert f["sync_tools"][0].get_expanded(), "XTEST must open account tools"
+        assert not f["source_sync_calls"] and not f["prepare_calls"]
+        assert not f["materialize_calls"] and not f["audit_calls"]
+        report["checks"]["P0_2141_source_status_primary_action_and_explicit_tools"] = True
+        # Prepare the remaining existing geometry/action tests. The first
+        # disclosure above was physical XTEST; no business callback ran.
+        for expander in f["sync_tools"]:
+            expander.set_expanded(True)
+        f["sync_scroll"].get_vadjustment().set_value(0)
+        later(350, loan_sync_tools_rendered)
+
+    def loan_sync_tools_rendered():
         w = window[0]
         f = loan_sync_fixture
         rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
