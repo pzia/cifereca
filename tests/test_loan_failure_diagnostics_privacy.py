@@ -87,3 +87,37 @@ def test_projection_has_fixed_meaning_for_all_valid_bounds_and_never_stringifies
         def __eq__(self,_):raise AssertionError('must not compare untrusted types')
     assert failure_fields(code=Hostile(),process=Hostile(),loan_ref=Hostile())=={
         'phase':'adept_fulfillment','code':'unclassified_error'}
+
+
+
+def test_hostile_runtime_message_and_code_do_not_break_durable_failure_receipt(
+    tmp_path, monkeypatch,
+):
+    from tests.test_core_0977_adept_retry_guard import _service, _loan
+
+    class Hostile(UserFacingError):
+        def __str__(self):
+            raise AssertionError("Never stringify plugin error for publication")
+        def __repr__(self):
+            raise AssertionError("Never repr plugin error for publication")
+
+    service = _service(tmp_path)
+    loan = _loan()
+    private = "https://private.invalid/adept?auth=NEVER_ECHO_ACSM"
+    def failed(*_args, **_kwargs):
+        raise Hostile(private, code=private)
+    monkeypatch.setattr(service, "acquire_digital_loan", failed)
+    try:
+        result = service._acquire_active_loan_automatically(loan)
+        assert result["status"] == "attention_required"
+        assert result["code"] == "adept_error"
+        assert result["error"] == "Acquisition du prêt indisponible"
+        [row] = service.storage.acquisitions(provider_id="paris")
+        assert row["status"] == "attention_required"
+        assert row["error_code"] == "adept_error"
+        assert row["error_message"] == result["error"]
+        assert row["attention_code"] == "adept_error"
+        assert "NEVER_ECHO_ACSM" not in result["code"] + result["error"]
+        assert "NEVER_ECHO_ACSM" not in row["error_code"] + row["error_message"]
+    finally:
+        service.close()
