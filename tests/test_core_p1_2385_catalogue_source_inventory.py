@@ -18,6 +18,10 @@ from cifereca.providers.base import (
 )
 from cifereca.providers.registry import ProviderRegistry
 from cifereca.services import LibraryService
+from cifereca.plugin_api import (
+    CatalogueSourceCapability as PublicCatalogueSourceCapability,
+    CatalogueSourceInventoryBroker,
+)
 
 
 def _plugin(name, *, search=False, loans=False, personal=False, state="ready",
@@ -171,7 +175,9 @@ def test_core_library_service_facade_additive_without_legacy_broker_change():
     assert values == catalogue_source_capabilities(service, identity_id="alice")
     from cifereca.plugin_api.brokers import CatalogBroker
     assert not hasattr(CatalogBroker, "catalogue_source_capabilities")
+    assert PublicCatalogueSourceCapability is CatalogueSourceCapability
     assert hasattr(CatalogBrokerImpl, "catalogue_source_capabilities")
+    assert isinstance(CatalogBrokerImpl(service), CatalogueSourceInventoryBroker)
 
 
 def test_uncanonical_registry_entry_and_forged_caps_are_not_published():
