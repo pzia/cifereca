@@ -1,3 +1,106 @@
+## 0.1.76 — genres, mots-clés et séries littérales JSON-LD (#1072/#1886 P0)
+
+Sur une **fiche publique explicitement enrichie et identifiée**, le parseur
+`Book` JSON-LD conserve désormais ses déclarations `genre`,
+`keywords`, `isPartOf` (série `BookSeries` ou `CreativeWorkSeries`)
+et `alternativeHeadline`, uniquement lorsque des textes simples,
+typés le cas échéant, bornés et sans caractère de contrôle sont présents.
+La sélection `isPartOf` n'infère jamais une série à partir d'un autre
+produit ; chaque champ garde sa preuve `public_product_jsonld_Book` et
+l'URL du produit.
+
+Les clés conservées sont `genres` (liste), `public_keywords` (liste de
+libellés **littéraux**, sans découpage des virgules), `public_series_label`
+et `public_alternative_headline`. Ce dernier n'est **pas** assimilé
+automatiquement à un sous-titre d'édition. La validation côté cache
+refuse les types, valeurs/URL et preuves contradictoires.
+
+Les filtres `refine_loaded_page(page, genre=...)`,
+`refine_loaded_page(page, series=...)` et
+`refine_loaded_page(page, keyword=...)` fonctionnent uniquement sur
+les fiches **déjà chargées explicitement** avec
+`enrich_loaded_page_product`. Ce sont des correspondances
+**positives seulement** : pour un champ manquant, une autre valeur,
+une fiche non consultée ou une provenance altérée, le livre reste
+`inconnu`, pas `absent du catalogue`. Aucun total filtré
+global ni requête serveur multi-attributs n'est annoncé ; aucune
+récupération en masse de fiches n'est effectuée.
+Avant de restituer un résultat positif, le filtre revalide également les
+identifiants typés, libellés HTML et offres commerciales annexes présents
+dans le cache de détail. Une preuve annexe modifiée ou une URL de livraison
+intruse invalide la correspondance entière.
+
+**Important :** ces mentions décrivent uniquement le **produit
+commercial**, non la classification locale d'un ouvrage, la variante
+EPUB/PDF achetée, le droit `owned`, le format acquis ou un ISBN
+numérique attesté. Aucun GET automatique, aucune mutation de droits
+ou d'artefacts. Les fixtures publiques actuelles n'attestent pas la
+présence effective de ces champs sur Numilog ; les exemples de tests
+JSON-LD sont synthétiques. Tests : `test_numilog_public_editorial_subjects_p0.py` et
+`test_numilog_public_book_topic_local_filter_p0.py`.
+Le ticket reste ouvert pour captures et recette réelle.
+
+## 0.1.75 — budget de profondeur/largeur du DOM public (#1886 P0)
+
+Une fiche peut respecter la limite HTTP de **1 Mio** tout en saturant
+les seuils du parseur commun (**100 niveaux / 25 000 nœuds**) avec
+des nœuds sans contenu. Les parcours récursifs de `extract_public_metadata` étaient
+jusqu'ici exposés à une erreur de récursion avant de vérifier les
+libellés de la fiche.
+
+Le plugin qualifie désormais le DOM **avant** ces parcours, avec une
+borne indépendante de **80 niveaux et 12 000 nœuds**. Une page
+disproportionnée est refusée par `PublicMetadataError` (message fixe),
+sans erreur de récursion brute et sans prétendre que les métadonnées
+sont absentes du produit. L'analyse des identifiants, les droits
+`owned`, les URLs de livraison et le chemin HTTP ne changent pas.
+
+Tests hors réseau sur fiche publique expurgée et HTML de profondeur/
+largeur adversariales :
+`tests/test_numilog_public_visible_dom_bounds_p0.py`.
+Cette garde ne constitue ni validation du contrat de recherche avancée
+ni autorisation de crawl Numilog.
+
+## 0.1.74 — attribution stricte des rôles de fiche Numilog (#1072 P0)
+
+Les champs publics JSON-LD `translator`, `illustrator` et `contributor`
+n'attestent désormais un rôle que si chaque objet de la liste fournit
+explicitement `@type=Person` ou, pour les rôles éligibles,
+`@type=Organization`. Les URI officielles
+`http://schema.org/Person` et `https://schema.org/Person` (ou
+`Organization`) sont acceptées avec leur équivalent court.
+Une simple map `{"name": "..."}`, même accompagnée d'un URL produit
+et d'un titre valide, est **omise** : elle n'est ni un contributeur
+attribuable ni un auteur substitutif. Listes hétérogènes, types imbriqués
+ou types non attendus restent non probants.
+
+Le rejet concerne seulement les **champs de rôles optionnels** :
+il ne modifie ni la preuve de possession, ni un ISBN d'édition achetée,
+ni le téléchargement, ni les auteur(s) déjà qualifiés. Tests hors
+réseau `test_numilog_owned_public_editorial_roles_p0.py` avec
+fiches JSON-LD synthétiques ; la présence réelle de ces propriétés
+sur Numilog est toujours à confirmer sous #1072.
+
+## 0.1.73 — intégrité des filtres locaux auteur et format (#1886 P0)
+
+Le filtre facultatif `refine_loaded_page` travaille sur une **page
+commerciale déjà chargée**, parfois issue d'un cache recopié. Les
+sélecteurs HTML et leur preuve ne suffisent pas si un appelant modifie
+ensuite `metadata.authors` ou `metadata.format_labels`.
+
+Avant toute correspondance positive, le plugin revérifie les listes,
+les caractères Unicode de contrôle/format/surrogate, les limites
+observées (32 auteurs ou 10 formats, 1 000/80 caractères), et la cohérence
+entre noms détaillés et affichage `author`, ainsi qu'entre labels de
+formats et `SearchResult.format` dérivé du parseur. Une incohérence
+rend ce champ **inconnu** et n'autorise aucun faux résultat exhaustif.
+Le filtre reste sans GET, sans accès privé ni achat. Le produit
+commercial multi-format n'est jamais converti en variante acquise.
+
+Tests synthétiques : `test_numilog_public_filter_cache_proof_p0.py`.
+Les champs de recherche avancée serveur (titre/auteur/EAN/format) restent
+à qualifier et ne sont pas annoncés par ce filtre.
+
 ## 0.1.72 — rattachement d'identité stable pendant un enrichissement (#1072 P0)
 
 Dans les parcours **explicitement demandés** `enrich_owned_public_listing`,

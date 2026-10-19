@@ -51,7 +51,7 @@
       "name": "Kobo Suite Provider"
     },
     "org.cifereca.provider.numilog": {
-      "version": "0.1.72",
+      "version": "0.1.76",
       "name": "Numilog"
     },
     "org.cifereca.provider.paris": {
