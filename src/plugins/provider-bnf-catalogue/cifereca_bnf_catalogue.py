@@ -121,12 +121,15 @@ class BnfCatalogueSession(ProviderSession):
             # Never silently transform a requested negative/boolean/fractional
             # page into page 0 and call that a valid search result.
             raise ProviderCapabilityError("BnF : invalid_page")
-        if len(query) < 2:
-            return []
         if field == "isbn":
+            # Validate ISBN syntax before the general short-query exit.
+            # A malformed one-character/empty ISBN is not a legitimate
+            # negative bibliographic search: SRU was never queried.
             query = re.sub(r"[\s-]", "", query)
             if not re.fullmatch(r"(?:\d{9}[\dXx]|\d{13})", query):
                 raise ProviderError("BnF : ISBN attendu sur 10 ou 13 caractères")
+        if len(query) < 2:
+            return []
         relation = "adj" if field == "isbn" else "all"
         try:
             response = self.client.get(self.sru_url, params={
