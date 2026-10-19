@@ -362,11 +362,14 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 # Provider exceptions may carry signed URLs, query terms,
                 # cookies or private account identities. Never interpolate
                 # them into warnings or diagnostics.
-                if attempt == 0 or len(variants) == 1:
-                    warnings.append(
-                        f"{session.descriptor.display_name}: recherche en ligne indisponible"
-                        if code else f"{session.descriptor.display_name}: échec de recherche"
-                    )
+                # A successful-but-empty first variant does not authorize
+                # treating an auth refusal or transport failure of a later
+                # variant as a verified empty catalogue. Keep a fixed warning
+                # on every failed variant; it also prevents a fresh TTL cache.
+                warnings.append(
+                    f"{session.descriptor.display_name}: recherche en ligne indisponible"
+                    if code else f"{session.descriptor.display_name}: échec de recherche"
+                )
                 self.diagnostics.add(
                     "PLUGIN", "search", "error",
                     detail={
