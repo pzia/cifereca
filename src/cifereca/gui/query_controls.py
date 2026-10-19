@@ -23,6 +23,7 @@ class MultiSelect(Gtk.MenuButton):
         reset = Gtk.Button(label='Tous')
         reset.connect('clicked', lambda _b: self.set_values(()))
         box.append(reset)
+        self._choices_box = box
         for value, title in choices:
             button = Gtk.CheckButton(label=title)
             self.buttons[value] = button
@@ -50,6 +51,29 @@ class MultiSelect(Gtk.MenuButton):
             return
         self._last_notified_values = values
         self._changed_callback()
+
+    def set_choices(self, choices):
+        """Replace available sources without clearing surviving selections."""
+        choices = tuple(choices)
+        labels = dict(choices)
+        if list(self.buttons) == list(labels) and self.choice_labels == labels:
+            return
+        selected = set(self.values())
+        self._programmatic_update = True
+        try:
+            for button in self.buttons.values():
+                self._choices_box.remove(button)
+            self.buttons = {}
+            self.choice_labels = labels
+            for value, title in choices:
+                button = Gtk.CheckButton(label=title)
+                button.set_active(value in selected)
+                button.connect('toggled', lambda _b: self._changed())
+                self._choices_box.append(button)
+                self.buttons[value] = button
+        finally:
+            self._programmatic_update = False
+        self._changed()
 
     def values(self):
         return tuple(key for key, button in self.buttons.items() if button.get_active())
@@ -127,6 +151,9 @@ class QueryControls(Gtk.Box):
         self.capability_hint.set_visible(False)
         self.append(self.capability_hint)
         self._last_notified_state = self.state()
+
+    def set_provider_choices(self, choices):
+        self.provider.set_choices(choices)
 
     def set_provider_search_capabilities(self, capabilities):
         self._provider_search_capabilities = dict(capabilities or {})
