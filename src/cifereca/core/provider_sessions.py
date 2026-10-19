@@ -501,6 +501,19 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     return session
 
 
+def _publish_connection_failure(diagnostics: Any, failure: dict[str, str], *,
+                                singleton: bool = False, duration_ms: int | None = None) -> None:
+    """Prefer the Core-attested producer; legacy diagnostics mocks stay usable."""
+    publish = getattr(diagnostics, "add_core_provider_connect_failure", None)
+    if callable(publish):
+        publish(failure["provider_id"], singleton=singleton, duration_ms=duration_ms)
+    else:
+        diagnostics.add(
+            "PLUGIN", "public provider connect" if singleton else "provider connect",
+            "error", detail=failure,
+        )
+
+
 def connect_configured(self, *, logger) -> dict[str, Any]:
     """Connect all enabled provider identities from local preferences.
 
@@ -562,6 +575,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             config=self.config, storage=self.storage, diagnostics=self.diagnostics,
         )
         key = self._session_key(provider_id, credential_id)
+        public_started = time.monotonic()
         try:
             session.connect()
             self._sessions[key] = session
@@ -579,12 +593,12 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             public_failure = public_connection_failure(self.registry, provider_id)
             failures.append(public_failure)
             logger.warning(
-                "TRACE provider connect error provider_id=%s code=provider_connect_failed",
+                "TRACE provider connect error code=provider_connect_failed provider_id=%s",
                 public_failure["provider_id"],
             )
-            self.diagnostics.add(
-                "PLUGIN", "public provider connect", "error",
-                detail=public_failure,
+            _publish_connection_failure(
+                self.diagnostics, public_failure, singleton=True,
+                duration_ms=int((time.monotonic() - public_started) * 1000),
             )
 
     logger.info("TRACE connect-configured enabled-rows=%s", len(rows))
@@ -643,7 +657,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             # endpoints, plugin credentials, response bodies and local paths.
             public_failure = public_connection_failure(self.registry, provider_id)
             logger.warning(
-                "TRACE provider connect error provider_id=%s code=provider_connect_failed dt=%.3fs",
+                "TRACE provider connect error code=provider_connect_failed provider_id=%s dt=%.3fs",
                 public_failure["provider_id"], time.monotonic()-item_started,
             )
             try:
@@ -652,9 +666,9 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 pass
             errors[key] = "Connexion à la source indisponible"
             failures.append(public_failure)
-            self.diagnostics.add(
-                "PLUGIN", "provider connect", "error",
-                detail=public_failure,
+            _publish_connection_failure(
+                self.diagnostics, public_failure,
+                duration_ms=int((time.monotonic() - item_started) * 1000),
             )
 
     self._session_errors = errors
