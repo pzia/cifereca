@@ -16,10 +16,14 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     An explicit exceptional grant takes precedence without changing that
     identity's normal profile. Linked accounts always require a grant.
     """
-    if loan.source_account_id is None:
+    # A malformed provider loan cannot attest a borrower by coercing
+    # arbitrary objects (or str subclasses) into a stored account key.
+    # Native strings retain the exact historical trim and primary semantics.
+    if (type(loan.source_account_id) is not str
+            or type(loan.source_credential) is not str):
         return None, "adept_borrower_ambiguous"
-    borrower = str(loan.source_account_id).strip()
-    credential = str(loan.source_credential or "").strip()
+    borrower = loan.source_account_id.strip()
+    credential = loan.source_credential.strip()
     if not credential:
         return None, "adept_borrower_ambiguous"
     matches = [
