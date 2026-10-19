@@ -474,10 +474,18 @@ def main():
         button = next(w for w in walk(switcher) if isinstance(w, Gtk.ToggleButton)
                       and any(isinstance(v, Gtk.Label) and v.get_text() == title
                               for v in walk(w)))
+        assert button.get_mapped() and button.get_sensitive()
         assert button.grab_focus() is not False
-        press("space")
-        until(lambda: switcher.get_stack().get_visible_child_name() == key,
-              lambda: later(done, 120))
+
+        def activate_focused_tab():
+            assert button.has_focus(), "XTEST tab target must hold keyboard focus"
+            press("space")
+            until(lambda: switcher.get_stack().get_visible_child_name() == key,
+                  lambda: later(done, 120))
+
+        # X11 focus changes are asynchronous. Do not dispatch a physical
+        # Space while GTK may still route it to the previously focused tab.
+        until(button.has_focus, lambda: later(activate_focused_tab, 120), seconds=4)
 
     def capture_navigation():
         # New acceptance uses physical keyboard navigation, not the legacy
