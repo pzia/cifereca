@@ -20,6 +20,7 @@ from .diagnostic_numilog_projection import (
 from .public_provider_diagnostics import (
     CONNECT_FAILURE_CODE, canonical_public_provider_id,
 )
+from ..diagnostics import Diagnostics
 
 _LOG_LINE = re.compile(
     r"^(?P<date>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+) "
@@ -287,12 +288,14 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         if (category == "PLUGIN"
                 and operation in {"provider connect", "public provider connect"}
                 and status in {"error", "failed"}
+                and type(diagnostics) is Diagnostics
                 and type(row.get("detail")) is dict
                 and row["detail"].get("code") == CONNECT_FAILURE_CODE):
             identifier = canonical_public_provider_id(
                 row["detail"].get("provider_id")
             )
-            if identifier is not None:
+            if (identifier is not None and
+                    row.get("verified_public_provider_id") == identifier):
                 public_detail = {
                     "provider_id": identifier,
                     "code": CONNECT_FAILURE_CODE,
