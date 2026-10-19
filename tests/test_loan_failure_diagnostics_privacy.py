@@ -35,11 +35,13 @@ def test_real_service_keeps_exact_public_error_retry_ledger_process_but_expurgat
     try:
         result=service._acquire_active_loan_automatically(loan)
         assert result['loan_id']==loan.id
-        assert result['error'] == (
-            'Redirection PNB refusée ; consulter les traces PNB'
+        expected_message = (
+            'Redirection PNB refusée ; consulter les traces PNB target_scheme / target_port'
             if code == 'pnb_redirect_refused'
             else 'Acquisition ADEPT indisponible'
         )
+        assert result['error'].startswith(expected_message)
+        assert 'stdout_bytes=5' in result['error'] if stage == 'adept' else result['error'] == expected_message
         assert PRIVATE not in result['error'] + str(result['code'])
         assert result['status']==('retryable_error' if code=='kobo_adept_invalid_json' else 'attention_required')
         if stage=='adept':
