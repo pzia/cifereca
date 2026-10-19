@@ -7,13 +7,56 @@ private readBook lid and paper ISBN are never identifiers.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date
 import unicodedata
 import re
 from urllib.parse import urlsplit
 
 from cifereca.plugin_api import ProviderCapabilityError
 from cifereca_numilog_html import public_book_url
-from cifereca_numilog_public import _query
+from cifereca_numilog_public import _query, _safe_text
+
+
+def _qualified_public_listing_value(public, field, value):
+    """Recheck parsed HTML values at the owned-library trust boundary.
+
+    The public SearchResult can be cached, passed by a caller or mutated after
+    HTML parsing. An exact selector proof does not validate its present value.
+    """
+    valid = type(value) is str and bool(value.strip())
+    if valid and field == "author":
+        names = getattr(public, "metadata", {}).get("authors")
+        valid = (
+            _safe_text(value, 32 * 1000 + 96)
+            and type(names) is list and 1 <= len(names) <= 32
+            and all(type(name) is str and bool(name.strip())
+                    and _safe_text(name, 1000) for name in names)
+            and value == " ; ".join(names)
+        )
+    elif valid and field == "publisher":
+        valid = _safe_text(value, 2000)
+    elif valid and field == "published_at":
+        valid = _safe_text(value, 10) and re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value,
+        ) is not None
+        if valid:
+            try:
+                valid = date.fromisoformat(value).isoformat() == value
+            except ValueError:
+                valid = False
+    elif valid and field == "description":
+        valid = _safe_text(value, 16000)
+    elif valid and field == "thumbnail_url":
+        valid = re.fullmatch(
+            r"https://couverture\.numilog\.com/[0-9]{1,32}_GRANDE\.jpg",
+            value,
+        ) is not None
+    elif valid and field == "collection":
+        valid = _safe_text(value, 2000)
+    else:
+        valid = False
+    if not valid:
+        raise ProviderCapabilityError("Numilog : public_edition_value_unverified")
 
 
 def merge_attested_public_listing(owned, public_rows):
@@ -114,6 +157,7 @@ def merge_attested_public_listing(owned, public_rows):
             "kind": "observed_public_html",
         }:
             raise ProviderCapabilityError("Numilog : public_edition_evidence_conflict")
+        _qualified_public_listing_value(public, owned_field, value)
         fields[owned_field] = value
         copied_evidence[owned_field] = {
             "kind": "numilog.public_search_listing",
@@ -160,7 +204,10 @@ def merge_attested_public_listing(owned, public_rows):
             "amount": price["amount"], "minor_units": price["minor_units"],
             "currency": "EUR", "applies_to": "displayed_card_offer",
         }
-    if type(meta.get("collection")) is str and meta.get("collection"):
+    # Non-textual collection metadata is not evidence of "no collection":
+    # a mutated cache result must fail closed, not silently bypass validation.
+    if meta.get("collection") is not None:
+        _qualified_public_listing_value(public, "collection", meta["collection"])
         proof = evidence.get("collection")
         if proof != {
             "source_url": source,
