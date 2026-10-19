@@ -54,7 +54,16 @@ class PluginSmokeError(DevUpdateError):
         }
         if any(type(value) is not int or not 0 <= value <= 2048 for value in counts.values()):
             raise ValueError("invalid_smoke_failure_counts")
-        super().__init__(message)
+        # Even the constructor message is not an authority for public output.
+        # Smoke failures are always emitted from a literal closed vocabulary.
+        messages = {
+            "smoke_cli_failed": "smoke plugins échoué",
+            "smoke_json_invalid": "smoke plugins: JSON invalide",
+            "smoke_inventory_invalid": "smoke plugins: liste JSON attendue",
+            "smoke_contributions_failed": "smoke plugins: contributions installées en erreur",
+            "smoke_active_missing": "smoke plugins: packages actifs absents de l'inventaire",
+        }
+        super().__init__(messages[reason_code])
         self.reason_code = reason_code
         self.smoke_counts = counts
 
