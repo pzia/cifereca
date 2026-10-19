@@ -256,7 +256,7 @@ class EbooksSession(ProviderSession):
             timeout=float(self.options.get('timeout_seconds',30)),
             follow_redirects=True, trust_env=False,
             headers={
-                'User-Agent':'Cifereca-EbooksGratuits/0.1.20',
+                'User-Agent':'Cifereca-EbooksGratuits/0.1.21',
                 'Accept-Language':'fr-FR,fr;q=0.9',
             },
         )
@@ -393,25 +393,38 @@ class EbooksSession(ProviderSession):
         else:
             epub=_safe_catalog_link(self.base_url,item.download_url,'epub')
             detail=_safe_catalog_link(self.base_url,item.friendly_url,'detail') if item.friendly_url else None
-        if epub != item.download_url or (item.friendly_url and detail != item.friendly_url):
+        if (epub != item.download_url
+                or (item.friendly_url and detail != item.friendly_url)
+                or (opds_item and item.friendly_url
+                    and _opds_public_html_link(self.opds_feed_url,item.friendly_url)
+                    != item.friendly_url)):
             raise ProviderCapabilityError('Ebooks libres et gratuits : invalid_catalog_link')
         if self.transport is None: raise ProviderError('Ebooks libres et gratuits : transport.http indisponible')
         d=Path(target_dir); d.mkdir(parents=True,exist_ok=True); dest=d/((re.sub(r'[^\w .-]','_',item.title).strip() or item.record_id)+'.epub')
+        headers={
+            'Accept':'application/epub+zip, application/zip;q=0.8, application/octet-stream;q=0.5, */*;q=0.2',
+            # Never send a historical www-site referer to the OPDS origin.
+            'Referer': (item.friendly_url or self.opds_feed_url)
+                       if opds_item else (item.friendly_url or self.base_url),
+        }
         source={
             'url':item.download_url,
-            'headers':{'Accept':'application/epub+zip, application/zip;q=0.8, application/octet-stream;q=0.5, */*;q=0.2','Referer':item.friendly_url or self.base_url},
+            'headers':headers,
             'max_bytes':self.maximum,
-            # A same-origin OPDS offer must not turn into an arbitrary
-            # cross-origin request through the generic transport broker.
-            'max_redirects':0 if opds_item else None,
+            # COPS may redirect to another public fetch URL on its own
+            # origin. Reject foreign hosts/downgrades before the second GET.
+            'max_redirects':2 if opds_item else None,
             'allowed_content_types':('application/epub+zip','application/zip','application/octet-stream'),
             'expected_format':'epub',
             'overwrite':True,
         }
+        if opds_item:
+            source['redirect_policy']='same_origin'
+            source['classify_http_status']=True
         try: dest=Path(self.transport.fetch(source,dest))
         except ProviderError: raise
         except Exception as e: raise ProviderError('Ebooks libres et gratuits : téléchargement inaccessible ou EPUB invalide') from e
-        return dest,item.friendly_url or self.base_url
+        return dest,(item.friendly_url or item.download_url) if opds_item else (item.friendly_url or self.base_url)
 class Plugin(ProviderPlugin):
     descriptor=DESCRIPTOR
     def __init__(self): self._sessions=[]; self.context=None; self.transport=None
@@ -734,6 +747,31 @@ def _opds_text(elem,tag):
     return html.unescape(' '.join(x.strip() for x in child.itertext() if x.strip()))[:12000] or None
 
 
+def _opds_public_html_link(feed_url, raw):
+    """Only a safe, explicit Atom HTML alternative is a readable book page.
+
+    An Atom/OPDS feed, fetch route, private account operation or unproved
+    query URL never qualifies. Never synthesize URLs from book IDs or titles.
+    """
+    safe = _safe_opds_link(feed_url, raw, 'detail')
+    if not safe:
+        return None
+    from urllib.parse import unquote
+    address = urlsplit(safe)
+    path = unquote(address.path).casefold()
+    segments = path.split('/')
+    if (address.query
+            or any(part in {'.', '..', 'account', 'admin', 'customer',
+                            'login', 'checkout', 'session'} for part in segments)
+            or path.endswith(('.xml', '.atom', '.opds'))
+            or path in {'/feed', '/feed.php', '/fetch.php', '/index.php/feed',
+                        '/index.php/fetch', '/index.php/feed.php',
+                        '/index.php/fetch.php', '/index.php/opensearch.xml'}
+            or path.startswith(('/index.php/feed/', '/index.php/fetch/'))):
+        return None
+    return safe
+
+
 def _opds_items(session,feed,feed_url):
     items=[]
     for entry in feed.findall(ATOM+'entry'):
@@ -752,8 +790,13 @@ def _opds_items(session,feed,feed_url):
                      else None)
             if checked and ('/acquisition' in rel or rel=='alternate'):
                 epub=epub or checked; formats.add('EPUB')
-            if rel=='alternate' and ('text/html' in mime or 'atom+xml' in mime):
-                alternate=alternate or _safe_opds_link(session.opds_feed_url,raw,'detail')
+            # Only a declared HTML alternative can become "Voir en ligne".
+            if rel=='alternate' and mime.split(';',1)[0].strip() in {
+                'text/html', 'application/xhtml+xml'
+            }:
+                alternate=alternate or _opds_public_html_link(
+                    session.opds_feed_url,raw
+                )
             if 'image/thumbnail' in rel or rel.endswith('/thumbnail'):
                 thumbnail=thumbnail or _safe_opds_link(session.opds_feed_url,raw,'detail')
         author_nodes=entry.findall(ATOM+'author')
@@ -788,7 +831,7 @@ def _opds_items(session,feed,feed_url):
             published_at=None,
             description=_opds_text(entry,ATOM+'summary') or _opds_text(entry,ATOM+'content'),
             thumbnail_url=thumbnail,
-            friendly_url=alternate or feed_url,
+            friendly_url=alternate,
             scenario='EBOOKSGRATUITS_CATALOG',
             source_provider='ebooksgratuits',
             source_credential=session.credential_id,
