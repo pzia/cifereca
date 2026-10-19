@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import re
 import sqlite3
@@ -736,6 +737,62 @@ def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | N
     return snapshot
 
 
+def _snapshot_package_ids(snapshot: Path) -> list[str]:
+    """Read exactly the packages the generated child snapshot will install.
+
+    The frozen publication inventory is NOT the generated source snapshot:
+    newer packages can be present in src/plugins before a formal release.
+    Rollback must cover every package mutated by the real child, including
+    packages absent from plugin-release.json, and no unrelated installed ones.
+    Never echo archive paths, package names or parser errors on failure.
+    """
+    try:
+        with zipfile.ZipFile(snapshot) as archive:
+            names = archive.namelist()
+            manifests = [
+                name for name in names
+                if len(PurePosixPath(name).parts) == 2
+                and PurePosixPath(name).name == "cifereca-dev.json"
+            ]
+            if len(manifests) != 1:
+                raise ValueError("snapshot manifest count")
+            base = PurePosixPath(manifests[0]).parts[0]
+            manifest_info = archive.getinfo(manifests[0])
+            if manifest_info.file_size > 1024 * 1024:
+                raise ValueError("oversized manifest")
+            manifest = json.loads(archive.read(manifests[0]))
+            rows = manifest.get("plugins") if type(manifest) is dict else None
+            if type(rows) is not list or not 1 <= len(rows) <= 128:
+                raise ValueError("invalid snapshot plugin list")
+            ids: set[str] = set()
+            for row in rows:
+                rel = row.get("path") if type(row) is dict else None
+                if type(rel) is not str or "\\" in rel or "\x00" in rel:
+                    raise ValueError("invalid package member")
+                p = PurePosixPath(rel)
+                if (p.is_absolute() or ".." in p.parts or len(p.parts) != 2
+                        or p.parts[0] != "packages" or p.suffix != ".zip"):
+                    raise ValueError("invalid package member")
+                info = archive.getinfo(base + "/" + p.as_posix())
+                if not 0 < info.file_size <= 64 * 1024 * 1024:
+                    raise ValueError("oversized package archive")
+                with zipfile.ZipFile(io.BytesIO(archive.read(info))) as plugin:
+                    member = plugin.getinfo("cifereca-plugin.json")
+                    if not 0 < member.file_size <= 1024 * 1024:
+                        raise ValueError("oversized package manifest")
+                    package_manifest = json.loads(plugin.read(member))
+                package = package_manifest.get("package") if type(package_manifest) is dict else None
+                package_id = package.get("id") if type(package) is dict else None
+                if (type(package_id) is not str or not 1 <= len(package_id) <= 128
+                        or _safe_package_id(package_id) != package_id
+                        or package_id in ids):
+                    raise ValueError("invalid package identity")
+                ids.add(package_id)
+            return sorted(ids)
+    except Exception:
+        raise UpdateError("Inventaire des packages du snapshot de release invalide") from None
+
+
 def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, Any]:
     command = _command_path(release, DEV_COMMAND)
     if not command.is_file():
@@ -861,7 +918,8 @@ def install_source(
                 json.dumps(install_metadata, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
-            managed_packages = sorted(_release_plugin_manifest(release))
+            managed_packages = (_snapshot_package_ids(plugin_snapshot)
+                                if plugin_snapshot is not None else [])
             transaction_path, transaction = step(
                 "transaction_prepare", _create_update_transaction,
                 root, release, old_current, old_previous, managed_packages,
