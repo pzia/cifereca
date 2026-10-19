@@ -170,11 +170,27 @@ class OptionalLLMService:
             return failed("unavailable")
         if not isinstance(request, LLMRequest):
             return failed("invalid_request")
-        if control is not None and control.cancelled():
-            return failed("cancelled")
-        if (not isinstance(request.prompt, str) or not request.prompt.strip()
+
+        def cancellation_state() -> bool | None:
+            """Malformed plugin controls must not abort the optional service."""
+            if control is None:
+                return False
+            try:
+                value = control.cancelled()
+            except Exception:
+                return None
+            return value if type(value) is bool else None
+
+        cancelled = cancellation_state()
+        if cancelled is not False:
+            return failed("cancelled" if cancelled is True else "invalid_request")
+        # Plugins can construct LLMRequest at runtime despite its type hints.
+        # Reject str subclasses and foreign task objects before invoking their
+        # __str__/strip/__eq__ hooks on a path that must fail safely.
+        if (type(request.prompt) is not str or not request.prompt.strip()
                 or len(request.prompt) > max_input
-                or not isinstance(request.system, str) or len(request.system) > 1000
+                or type(request.system) is not str or len(request.system) > 1000
+                or type(request.task) is not str
                 or request.task not in ("generate", "structured")
                 or type(request.max_output_tokens) is not int
                 or request.max_output_tokens < 1):
@@ -279,14 +295,16 @@ class OptionalLLMService:
             return failed("backend_unavailable")
         deadline = monotonic() + timeout
         while not done.is_set():
-            if control is not None and control.cancelled():
-                return failed("cancelled")
+            cancelled = cancellation_state()
+            if cancelled is not False:
+                return failed("cancelled" if cancelled is True else "invalid_request")
             remaining = deadline - monotonic()
             if remaining <= 0:
                 return failed("timeout")
             done.wait(timeout=min(0.05, remaining))
-        if control is not None and control.cancelled():
-            return failed("cancelled")
+        cancelled = cancellation_state()
+        if cancelled is not False:
+            return failed("cancelled" if cancelled is True else "invalid_request")
         return result[0] if result else failed("backend_unavailable")
 
 
