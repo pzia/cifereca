@@ -26,7 +26,7 @@ _PROOF = {
 }
 # A digital ISBN has no search-card evidence: it is a positive-only match
 # after an *explicitly* enriched product detail, never a server-side filter.
-_ALLOWED = frozenset(_PROOF) | {"isbn_digital"}
+_ALLOWED = frozenset(_PROOF) | {"isbn_digital", "language"}
 
 
 @dataclass(frozen=True)
@@ -223,6 +223,45 @@ def _digital_isbn_positive(row, expected):
     return True if expected in values else None
 
 
+def _detail_language_positive(row, expected):
+    """Match only a proven public-product language, never title/author heuristics.
+
+    The recorded search card has no language field. A product detail must
+    have been explicitly requested and merged for exactly this product.
+    A different or absent language means UNKNOWN, not a global negative.
+    """
+    detail = row.metadata.get("public_detail")
+    url = row.friendly_url
+    if (type(detail) is not dict or detail.get("status") != "observed_jsonld"
+            or detail.get("source_url") != url
+            or detail.get("edition_match") != "canonical_product_url_only"
+            or detail.get("rights_proven") is not False
+            or detail.get("format_edition_proven") is not False):
+        return None
+    from cifereca_numilog_public_detail import (
+        PublicDetailError, validated_public_jsonld_fields,
+    )
+    from cifereca_numilog_public_metadata import (
+        PublicMetadataError, validated_public_metadata,
+    )
+    try:
+        fields, _ = validated_public_jsonld_fields(detail, url)
+        title = fields.get("title")
+        if type(title) is not str or type(row.title) is not str:
+            return None
+        if (unicodedata.normalize("NFKC", " ".join(title.split())).casefold()
+                != unicodedata.normalize("NFKC", " ".join(row.title.split())).casefold()):
+            return None
+        html = validated_public_metadata(detail, url)
+    except (PublicDetailError, PublicMetadataError, TypeError, ValueError):
+        return None
+    values = [fields.get("language")]
+    if html is not None:
+        values.append(html["fields"].get("language_label"))
+    return True if any(type(value) is str and _fold(value) == expected
+                       for value in values) else None
+
+
 def refine_loaded_public_page(page: PublicSearchPage, **filters) -> PublicPageRefinement:
     """Filter positive, source-attested facts on one page with honest coverage.
 
@@ -267,6 +306,12 @@ def refine_loaded_public_page(page: PublicSearchPage, **filters) -> PublicPageRe
                 # product detail. A different or unpublished edition EAN is
                 # UNKNOWN, never proof that this item cannot match.
                 if _digital_isbn_positive(row, expected) is None:
+                    missing_proof = True
+                continue
+            if field == "language":
+                # No published language on listing cards. Do not fetch N
+                # details or discard other editions as proven non-matches.
+                if _detail_language_positive(row, expected) is None:
                     missing_proof = True
                 continue
             actual = _value(row, field)
