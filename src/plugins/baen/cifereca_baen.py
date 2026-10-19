@@ -1,5 +1,6 @@
 from __future__ import annotations
 import hashlib, html, re
+from unicodedata import category
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 import httpx
@@ -73,6 +74,7 @@ class BaenSession(ProviderSession):
         return item
 
     def search(self,query,scope='all',page=0,field='all'):
+        self.last_search_warnings = []
         # A direct caller must not mistake a general search for an exact
         # author/ISBN query. The Core broker also checks these declarations.
         if type(field) is not str or field.strip().casefold() != 'all':
@@ -81,6 +83,11 @@ class BaenSession(ProviderSession):
             raise ProviderCapabilityError('Baen : unsupported_scope')
         if type(page) is not int or not 0 <= page < MAX_REQUESTED_PAGES:
             raise ProviderCapabilityError('Baen : invalid_page')
+        if query is None:
+            query = ''
+        if (type(query) is not str or len(query) > 2048
+                or any(category(ch) in {'Cc', 'Cf', 'Cs'} for ch in query)):
+            raise ProviderCapabilityError('Baen : invalid_query')
         if not self.connected: raise ProviderError('Baen : connecter le catalogue')
         try:
             r=self.client.get(FREE,params=self._search_params(query,page,self.page_size))
@@ -110,6 +117,17 @@ class BaenSession(ProviderSession):
             if detail in seen: continue
             seen.add(detail); rid=hashlib.sha256(detail.encode()).hexdigest()[:24]
             out.append(SearchResult(id='baen:'+rid,record_id=rid,docbase='BAEN',medium='digital',title=plain,author=None,type='Livre numérique',format='EPUB',publisher='Baen',published_at=None,description=None,thumbnail_url=None,friendly_url=detail,scenario='BAEN_FREE_LIBRARY',source_provider='baen',source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='public',owned=False,downloadable=False))
+        if not out:
+            # The live public page presents an explicit "Showing 0-0 of 0"
+            # with "No results". Unknown 200 markup (including login and
+            # product-layout drift) is NOT evidence of a successful zero.
+            if not (
+                re.search(r'\bShowing\s+0\s*-\s*0\s+of\s+0\b', r.text, re.I)
+                and re.search(r'\bNo\s+results\b', r.text, re.I)
+            ):
+                self.last_search_warnings.append(
+                    'partial_results : Baen : absence de résultats non attestée'
+                )
         return out[:self.page_size]
     def holdings(self,item,search_terms=''):
         if item.source_provider==self.provider_id and item.friendly_url:
