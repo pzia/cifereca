@@ -20,6 +20,7 @@ def test_gallica_document_link_is_not_invented_as_catalog_cover():
     xml = b'''<srw:searchRetrieveResponse
       xmlns:srw="http://www.loc.gov/zing/srw/"
       xmlns:dc="http://purl.org/dc/elements/1.1/">
+      <srw:numberOfRecords>1</srw:numberOfRecords>
       <srw:records><srw:record><srw:recordData><dc:dc>
         <dc:identifier>https://catalogue.bnf.fr/ark:/12148/cb100000004d</dc:identifier>
         <dc:title>Titre</dc:title>
