@@ -49,7 +49,10 @@ def test_collection_is_source_attested_and_combinable_with_author():
     p = observed()
     roman = refine_loaded_public_page(p, collection="romans junior")
     assert roman.matching_count == 2
-    assert roman.missing_evidence_count == 0
+    # Seven items publish NO collection. Their absence is unknown, not an
+    # attested mismatch: never claim that only two items could match.
+    assert roman.missing_evidence_count == 7
+    assert roman.has_uninspected_or_unverified_matches is True
     assert all(r.metadata["collection"] == "Romans Junior" for r in roman.items)
     combined = refine_loaded_public_page(
         p, collection="ROMANS JUNIOR", author="Jean Claude Mourlevat",
