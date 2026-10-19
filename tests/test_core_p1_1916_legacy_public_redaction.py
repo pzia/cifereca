@@ -77,9 +77,11 @@ def test_legacy_media_format_is_reduced_to_short_public_token(tmp_path):
     service = _service(tmp_path)
     try:
         _legacy(service, key="unsafe", media_format="https://private.invalid/?token=SECRET")
+        _legacy(service, key="traversal", media_format="../PRIVATE_LOCAL_PATH")
         _legacy(service, key="valid", media_format="application/epub+zip")
         rows = {r.record_id: r for r in _fetch(service)}
         assert rows["public-unsafe"].format is None
+        assert rows["public-traversal"].format is None
         assert rows["public-valid"].format == "application/epub+zip"
         assert "SECRET" not in repr(rows)
     finally:
