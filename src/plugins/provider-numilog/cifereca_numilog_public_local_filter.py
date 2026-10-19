@@ -19,6 +19,8 @@ _PROOF = {
     "title": ("title", "a.TitleBook"),
     "author": ("authors", "a.Author"),
     "publisher": ("publisher", ".product_meta .LabelInfos[Éditeur]"),
+    "collection": ("collection", ".product_meta .LabelInfos[Collection]"),
+    "summary": ("summary", "p.list-group-item-text"),
     "year": ("published_at", ".product_meta .LabelInfos[Parution]"),
     "format_label": ("format_labels", ".product_meta .LabelInfos[Format(s)]"),
 }
@@ -127,6 +129,10 @@ def _value(row, field):
         value = meta.get("authors")
     elif field == "publisher":
         value = row.publisher
+    elif field == "collection":
+        value = meta.get("collection")
+    elif field == "summary":
+        value = row.description
     elif field == "year":
         value = row.published_at
     else:
@@ -143,7 +149,12 @@ def _value(row, field):
                 or any(type(x) is not str or not x or len(x) > 1000 for x in value)):
             return None
         return tuple(value)
-    if type(value) is not str or not value or len(value) > 2000:
+    # The source parser bounds listing summaries to 16 Ki characters and
+    # labelled collection values to 2000. Recheck at this cached/page input
+    # boundary: modified values cannot turn into trusted local matches.
+    maximum = 16000 if field == "summary" else 2000
+    if (type(value) is not str or not value.strip() or len(value) > maximum
+            or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in value)):
         return None
     return value
 
