@@ -430,6 +430,15 @@ class ParisProviderSession(ProviderSession):
             # A malformed index is not a valid empty page and must never
             # reach the Syracuse SearchService or its retry/fallback route.
             raise ProviderCapabilityError("Bibliothèques de Paris : invalid_page")
+        # Syracuse accepts general text queries only. Never stringify a
+        # cached object or forward bidi/control characters into HTTP, where
+        # a malformed input could otherwise masquerade as a catalogue zero.
+        if query is None:
+            query = ""
+        if (type(query) is not str or len(query) > 2048
+                or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"}
+                       for char in query)):
+            raise ProviderCapabilityError("Bibliothèques de Paris : invalid_query")
         # The public capability validator accepts case/whitespace variants,
         # but ParisClient dispatches exact tokens. Pass the validated scope
         # rather than implicitly widening " DIGITAL " to all catalogues.
