@@ -687,7 +687,9 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
                 def tokens(row):
                     data=row.metadata
                     if field=='category':return data.get('categories',[])
-                    if field=='genre':return data.get('genres',[])+data.get('categories',[])
+                    # #1917: a category is not proof of a published genre.
+                    # Only the broader subject facet may inspect both.
+                    if field=='genre':return data.get('genres',[])
                     return data.get('categories',[])+data.get('genres',[])
                 rows=[row for row in rows if any(_fold(needle) in _fold(x) for x in tokens(row))]
             return rows[:session.page_size]
