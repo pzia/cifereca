@@ -170,6 +170,7 @@ class OptionalLLMService:
             return failed("unavailable")
         if not isinstance(request, LLMRequest):
             return failed("invalid_request")
+
         def cancellation_state() -> bool | None:
             """Malformed plugin controls must not abort the optional service."""
             if control is None:
