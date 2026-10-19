@@ -547,8 +547,6 @@ class GallicaSession(ProviderSession):
                 or any(category(char) in {"Cc", "Cf", "Cs"} for char in query)):
             raise ProviderCapabilityError("Gallica : invalid_query")
         query = query.strip()
-        if len(query) < 2:
-            return []
         requested = {value.casefold() for value in content_types}
         # Core passes file formats; legacy media categories remain supported.
         audio_formats = {"audiobook", "mp3", "m4a", "ogg", "opus", "flac", "wav"}
@@ -570,6 +568,11 @@ class GallicaSession(ProviderSession):
             self.last_search_warnings = [
                 "unsupported_content_type : aucune branche Gallica disponible pour les formats demandés"
             ]
+            return []
+        # Classify branch availability before the historical short-text
+        # shortcut. A one-character query with only unsupported formats has
+        # *not* searched a catalogue and cannot be presented as a true zero.
+        if len(query) < 2:
             return []
         rows: list[SearchResult] = []
         errors: list[str] = []
