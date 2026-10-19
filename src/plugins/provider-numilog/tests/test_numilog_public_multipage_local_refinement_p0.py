@@ -43,6 +43,9 @@ def two_pages(*, total=20):
         items=tuple(_relabel(row, url=URL, index=0)
                     for row in source.items[:10]),
         total_results=total, page_index=0, next_url=next_url, complete=False,
+        # The original 242-result HTML has links to later pages. This test
+        # synthesizes a *two*-page 20-result snapshot, not the live pager.
+        pagination_links=({"label": "2", "url": next_url, "GRID_PAGE": "1"},),
     )
     second = replace(
         source,
@@ -98,6 +101,18 @@ def test_missing_collection_is_counted_unknown_not_discarded_or_globally_absent(
     assert result.missing_evidence_count == 7
     assert result.public_unfiltered_total == 20
     assert result.public_results_fully_loaded is True
+    assert result.has_uninspected_or_unverified_matches is True
+
+
+def test_earlier_page_forward_pager_defeats_false_exhaustiveness():
+    p, q = two_pages()
+    future = URL + "&GRID_PAGE=2"
+    first = replace(p, pagination_links=(*p.pagination_links, {
+        "label": "3", "url": future, "GRID_PAGE": "2",
+    }))
+    result = refine_loaded_public_pages((first, q), title="Jefferson")
+    assert result.loaded_count == result.public_unfiltered_total == 20
+    assert result.public_results_fully_loaded is False
     assert result.has_uninspected_or_unverified_matches is True
 
 
