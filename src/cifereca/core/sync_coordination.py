@@ -139,18 +139,23 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
         with InterProcessLock(acquisition_lock_file()):
             result = self._synchronize_account_source_impl(account, deep=deep, control=control)
         outcome = "skipped" if result.get("status") == "skipped" else "success"
+        raw_reason = result.get("reason")
+        reason = (raw_reason if type(raw_reason) is str
+                  and raw_reason in {"source_disabled"} else "")
         self._record_action(
             account.identity_id, "synchronization", outcome,
             provider_id=account.provider_id, facts={
-                "deep": bool(deep), "reason": result.get("reason", ""),
+                "deep": bool(deep), "reason": reason,
             },
         )
         return result
     except LockBusyError as exc:
         self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": "operation_busy"})
         raise ProviderConfigurationError("Synchronisation ou maintenance de la bibliothèque déjà en cours") from exc
-    except Exception as exc:
-        self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": type(exc).__name__})
+    except Exception:
+        # A provider can use a dynamically named exception whose class name
+        # contains a borrower, signed URL or local filesystem path.
+        self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": "source_sync_failed"})
         raise
 
 
@@ -348,7 +353,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 result = self._acquire_active_loan_automatically(loan)
                 if result["status"] == "complete":
                     new_acquisitions += 1
-                    self._record_action(identity.identity_id, "acquisition", "success", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id})
+                    self._record_action(identity.identity_id, "acquisition", "success", provider_id=loan.source_provider, facts={"origin": "opening_sync"})
                 elif result["status"] == "attention_required":
                     attention += 1
                     # Fixed public counters only: a completed sync task does
@@ -358,10 +363,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         detail["skipped_borrower_binding"] += 1
                     elif result.get("code") == "adept_loan_identity_conflict":
                         detail["skipped_cross_identity"] += 1
-                    self._record_action(identity.identity_id, "acquisition", "failed", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id, "status": result["status"]})
+                    self._record_action(identity.identity_id, "acquisition", "failed", provider_id=loan.source_provider, facts={"origin": "opening_sync", "status": "attention_required"})
                 elif result["status"] == "retryable_error":
                     errors += 1
-                    self._record_action(identity.identity_id, "acquisition", "failed", provider_id=loan.source_provider, facts={"origin": "opening_sync", "loan_id": loan.id, "status": result["status"]})
+                    self._record_action(identity.identity_id, "acquisition", "failed", provider_id=loan.source_provider, facts={"origin": "opening_sync", "status": "retryable_error"})
                 if result["status"] in {"retryable_error", "attention_required"}:
                     # The acquiring loan belongs to one source. Do not mark
                     # healthy siblings partial because its ADEPT action failed.
@@ -512,10 +517,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         session.credential_id, progress=progress,
                     )
                 )
-            except Exception as exc:
+            except Exception:
                 logger.warning(
-                    "TRACE kobo scheduled account sync error kind=%s",
-                    type(exc).__name__,
+                    "TRACE kobo scheduled account sync error code=kobo_scheduled_sync_failed"
                 )
                 executed.append({"status": "failed", "errors": 1, "sources": []})
         metric_keys = (
