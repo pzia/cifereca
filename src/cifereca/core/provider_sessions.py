@@ -37,10 +37,10 @@ def attach_plugin_manager(self, manager: Any) -> list[str]:
             unsub = binder("provider.collection", self._queue_virtual_collection_refresh)
             if callable(unsub):
                 self._virtual_manager_unsubscribe = unsub
-        except Exception as exc:
+        except Exception:
             self.diagnostics.add(
                 "PLUGIN", "virtual service subscription", "error",
-                detail={"error_type": type(exc).__name__}, level="detailed",
+                detail={"code": "virtual_service_subscription_failed"}, level="detailed",
             )
     if attached:
         self.diagnostics.add("PLUGIN", "external providers attached", "ok", detail={"providers": attached}, level="detailed")
@@ -82,10 +82,10 @@ def _sync_virtual_subscriptions(self, services: dict[str, object]) -> None:
             unsubscribe = subscribe(self._queue_virtual_collection_refresh)
             if callable(unsubscribe):
                 self._virtual_parent_subscriptions[parent] = (service, unsubscribe)
-        except Exception as exc:
+        except Exception:
             self.diagnostics.add(
                 "PLUGIN", "virtual inventory subscription", "error",
-                detail={"parent": parent, "error_type": type(exc).__name__},
+                detail={"parent": parent, "code": "virtual_inventory_subscription_failed"},
                 level="detailed",
             )
 
@@ -115,10 +115,10 @@ def _drain_virtual_collection_events(self) -> None:
             self._virtual_refresh_again = False
         try:
             self.refresh_virtual_collections(connect_changed=True)
-        except Exception as exc:
+        except Exception:
             self.diagnostics.add(
                 "PLUGIN", "virtual notification", "error",
-                detail={"error_type": type(exc).__name__}, level="detailed",
+                detail={"code": "virtual_notification_failed"}, level="detailed",
             )
         with self._virtual_schedule_lock:
             if not self._virtual_refresh_again or self._virtual_collection_closed:
@@ -163,16 +163,16 @@ def _connect_changed_virtual_provider(self, provider_id: str) -> None:
         session.connect()
         self._sessions[key] = session
         self._session_errors.pop(key, None)
-    except Exception as exc:
+    except Exception:
         if session is not None:
             try:
                 session.close()
             except Exception:
                 pass
-        self._session_errors[key] = type(exc).__name__
+        self._session_errors[key] = "virtual_provider_connect_failed"
         self.diagnostics.add(
             "PLUGIN", "virtual provider connection", "error",
-            detail={"provider": provider_id, "error_type": type(exc).__name__},
+            detail={"provider": provider_id, "code": "virtual_provider_connect_failed"},
             level="detailed",
         )
 
@@ -214,21 +214,21 @@ def refresh_virtual_collections(self, *, connect_changed: bool=False) -> list[st
             persisted = None
             try:
                 persisted = self._virtual_snapshot_store.load(parent_id)
-            except Exception as exc:
+            except Exception:
                 # Corrupt/tampered disk data must never become providers.
                 self.diagnostics.add(
                     "PLUGIN", "saved virtual inventory invalid", "error",
-                    detail={"parent": parent_id, "error_type": type(exc).__name__},
+                    detail={"parent": parent_id, "code": "virtual_inventory_checkpoint_invalid"},
                     level="detailed",
                 )
             try:
                 children = self.registry.reconcile_collection(
                     parent_id, service, minimum_snapshot=persisted,
                 )
-            except Exception as exc:
+            except Exception:
                 self.diagnostics.add(
                     "PLUGIN", "virtual provider inventory rejected", "error",
-                    detail={"parent": parent_id, "error_type": type(exc).__name__},
+                    detail={"parent": parent_id, "code": "virtual_inventory_rejected"},
                     level="detailed",
                 )
                 # Prefer the latest in-memory valid inventory; otherwise
@@ -246,11 +246,11 @@ def refresh_virtual_collections(self, *, connect_changed: bool=False) -> list[st
                         parent_id, service, snapshot_override=persisted,
                         minimum_snapshot=persisted,
                     )
-                except Exception as offline_exc:
+                except Exception:
                     self.diagnostics.add(
                         "PLUGIN", "virtual inventory restore failed", "error",
                         detail={"parent": parent_id,
-                                "error_type": type(offline_exc).__name__},
+                                "code": "virtual_inventory_restore_failed"},
                         level="detailed",
                     )
                     continue
@@ -268,11 +268,11 @@ def refresh_virtual_collections(self, *, connect_changed: bool=False) -> list[st
                 if accepted is not None and accepted != persisted:
                     try:
                         self._virtual_snapshot_store.save(accepted)
-                    except Exception as save_exc:
+                    except Exception:
                         self.diagnostics.add(
                             "PLUGIN", "virtual inventory checkpoint failed", "error",
                             detail={"parent": parent_id,
-                                    "error_type": type(save_exc).__name__},
+                                    "code": "virtual_inventory_checkpoint_failed"},
                             level="detailed",
                         )
             attached.extend(children)
@@ -317,10 +317,10 @@ def refresh_virtual_collections(self, *, connect_changed: bool=False) -> list[st
     for callback in listeners:
         try:
             callback()
-        except Exception as exc:
+        except Exception:
             self.diagnostics.add(
                 "PLUGIN", "virtual inventory observer", "error",
-                detail={"error_type": type(exc).__name__}, level="detailed",
+                detail={"code": "virtual_inventory_observer_failed"}, level="detailed",
             )
     return attached
 
