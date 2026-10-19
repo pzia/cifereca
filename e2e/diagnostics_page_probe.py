@@ -925,9 +925,17 @@ def main():
                                else "P0_2140_narrow_allocation_pending")
             if rows and max(rows) > 724:
                 report["minimum_row"] = rows.index(max(rows))
-            window[0].set_default_size(760, 790)
-            until(lambda: window[0].get_width() <= 760,
-                  lambda: verify_narrow_bulk(payload), seconds=5)
+            # Request the resize on the next GTK tick, after the current
+            # selection/measurement callback finishes. Retain the exact
+            # 760px bound and the original overflow/focus/clipboard checks.
+            def request_narrow_bulk():
+                try:
+                    window[0].set_default_size(760, 790)
+                except Exception:
+                    raise AssertionError("GTK 760px resize request rejected") from None
+                until(lambda: window[0].get_width() <= 760,
+                      lambda: verify_narrow_bulk(payload), seconds=5)
+            later(request_narrow_bulk, 120)
         else:
             keyboard_action("Copier la sélection", lambda: read_bulk_clipboard(payload))
 
