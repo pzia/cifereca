@@ -21,6 +21,7 @@ def _records(*records: str) -> bytes:
     return (
         '<srw:searchRetrieveResponse xmlns:srw="http://www.loc.gov/zing/srw/" '
         'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        f"<srw:numberOfRecords>{len(records)}</srw:numberOfRecords>"
         f"<srw:records>{body}</srw:records>"
         "</srw:searchRetrieveResponse>"
     ).encode()
