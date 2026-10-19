@@ -145,6 +145,7 @@ def test_main_stack_is_non_homogeneous_to_prevent_hidden_page_width_lock():
     window, *_ = _render()
     assert window.view_stack.properties["transition_type"] == "crossfade"
     assert window.view_stack.properties["hhomogeneous"] is False
+    assert window.view_stack.properties["vhomogeneous"] is False
     assert window.view_stack.properties["hexpand"] is True
     assert window.view_stack.properties["vexpand"] is True
     assert window.shell_root.children[1].properties["vexpand"] is True
