@@ -15,10 +15,18 @@ def fulfill(self, request, *, profile_name, adept_borrower_identity_id,
     result = self.execute_acquisition_request(request)
     from ..adept_binding import capture_binding
     adept_binding = capture_binding(result, profile_name=profile_name, profile_id=originating_profile_id)
+    # Keep the historical exception contract of runtime_diagnostic(): an
+    # explicit runtime failure still propagates unchanged to the caller.
+    # Only projection of unexpected return *values* is fail-closed, without
+    # invoking an untrusted mapping subclass's getter.
     diag = self.runtime_diagnostic("runtime.kobo-adept")
+
+    def runtime_fact(name):
+        return diag.get(name) if type(diag) is dict else None
+
     _TRACE_LOG.info(
         "TRACE download adept end loan_ref=%s returncode=%s duration_ms=%s dt=%.3fs",
-        trace_ref, trace_integer(diag.get("returncode"), minimum=-255, maximum=255),
-        trace_integer(diag.get("duration_ms"), minimum=0, maximum=86_400_000), time.monotonic()-adept_started,
+        trace_ref, trace_integer(runtime_fact("returncode"), minimum=-255, maximum=255),
+        trace_integer(runtime_fact("duration_ms"), minimum=0, maximum=86_400_000), time.monotonic()-adept_started,
     )
     return result, adept_binding
