@@ -341,3 +341,49 @@ class BulkFailureDiagnosisTests(unittest.TestCase):
                 for private in ("row_minima", "window_minimum", "label", "error"):
                     self.assertNotIn(private, out)
                 self.assertNotIn("PRIVATE", repr(out))
+
+
+class NativeAbortDiagnosisTests(unittest.TestCase):
+    def test_only_closed_native_markers_are_published(self):
+        module = _module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = "diagnostics-large-1600"
+            folder = root / scenario / scenario
+            folder.mkdir(parents=True)
+            source = root / "summary.json"
+            source.write_text(json.dumps([{"scenario":scenario,"returncode":134}]))
+            for marker, expected in (("malloc():", "allocator_abort_marker"),
+                    ("Gtk:ERROR:", "gtk_assertion_marker"),
+                    ("GLib:ERROR:", "glib_assertion_marker"),
+                    ("Fatal Python error:", "python_abort_marker"),
+                    ("unknown", "unclassified_native_abort")):
+                (folder / "stderr.log").write_text("PRIVATE-TOKEN /home/private " + marker)
+                out = module.safe_summary(source)["results"][0]
+                self.assertEqual(out["native_failure_kind"], expected)
+                self.assertNotIn("PRIVATE", repr(out))
+                self.assertNotIn("/home/", repr(out))
+                self.assertNotIn("stderr", out)
+            source.write_text(json.dumps([{"scenario":scenario,"returncode":1}]))
+            self.assertNotIn("native_failure_kind", module.safe_summary(source)["results"][0])
+
+    def test_native_log_symlink_oversize_and_missing_are_not_read(self):
+        module = _module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = "diagnostics-large-1600"
+            folder = root / scenario / scenario
+            folder.mkdir(parents=True)
+            source = root / "summary.json"
+            source.write_text(json.dumps([{"scenario":scenario,"returncode":134}]))
+            log = folder / "stderr.log"
+            def kind():
+                return module.safe_summary(source)["results"][0]["native_failure_kind"]
+            self.assertEqual(kind(), "unclassified_native_abort")
+            secret = root / "private"
+            secret.write_text("malloc(): PRIVATE")
+            log.symlink_to(secret)
+            self.assertEqual(kind(), "unclassified_native_abort")
+            log.unlink()
+            log.write_bytes(b"malloc():" + b"x" * module.MAX_BYTES)
+            self.assertEqual(kind(), "unclassified_native_abort")
