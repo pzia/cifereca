@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from cifereca.paths import cache_dir, data_dir
-from cifereca.plugin_release import expected_plugin_packages, package_freshness
+from cifereca.plugin_release import expected_plugin_packages, package_freshness, installed_plugin_update_receipt
 from cifereca.plugin_api import (
     PluginContext, PluginDirectories, PluginDescriptor, PluginStatus, ResolvedPluginService,
     ContractRequirement, check_service_contract, contract_version_matches,
@@ -954,6 +954,14 @@ class PluginManager:
                     package = None
             release_info = expected.get(package_id, {})
             freshness = package_freshness(package_id, active, versions)
+            # Do not report a stale receipt after a full release or manual
+            # switch changed the active package bytes/version.
+            receipt = installed_plugin_update_receipt(
+                self.packages.package_root(package_id), package_id,
+                [active] if active else versions,
+            )
+            if receipt and package and receipt["package_sha256"] != package.sha256:
+                receipt = None
             rows.append({
                 "package_id": package_id,
                 "name": package.manifest.package.name if package else release_info.get("name", package_id),
@@ -962,6 +970,7 @@ class PluginManager:
                 "previous": pointer.get("previous"),
                 "versions": versions,
                 "sha256": package.sha256 if package else "",
+                "last_plugin_update": receipt,
                 **freshness,
             })
         if self._builtin_ui:
@@ -988,6 +997,7 @@ class PluginManager:
                 "expected_package_version": package_row.get("expected_version"),
                 "package_freshness": package_row.get("freshness", "unknown"),
                 "package_freshness_reason": package_row.get("freshness_reason", "unmanaged"),
+                "last_plugin_update": package_row.get("last_plugin_update"),
                 "description": d.description, "help_text": d.help_text,
                 "enabled": status.enabled, "state": status.state,
                 "installed_at": installation_date(self._records[d.id].package.root),

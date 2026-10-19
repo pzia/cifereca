@@ -14,6 +14,7 @@ from unittest.mock import patch
 import zipfile
 
 from cifereca import dev_updater as dev
+from cifereca.plugin_release import installed_plugin_update_receipt
 from scripts.package_partial_plugins import build_partial_snapshot, verify_partial_snapshot
 from scripts.test_plugin_packaging import make_plugin
 
@@ -139,6 +140,94 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
             patch.object(dev, "_smoke_plugins", return_value={"plugin_count": 2}),
             patch.object(dev, "_install_plugin_replace", side_effect=self._fake_install),
         )
+
+    def _receipt(self, package: str):
+        target = self.store / package / ".cifereca-last-plugin-update.json"
+        return json.loads(target.read_text(encoding="utf-8")) if target.exists() else None
+
+    def test_receipt_only_after_success_is_public_and_tracks_exact_package(self) -> None:
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+            result = dev.apply_snapshot(self.snapshot)
+        for package, version in ((ALPHA, "1.2.3"), (BETA, "2.0")):
+            receipt = self._receipt(package)
+            self.assertEqual(receipt["schema"], 1)
+            self.assertEqual(receipt["scope"], "plugins-only")
+            self.assertEqual(receipt["package_id"], package)
+            self.assertEqual(receipt["version"], version)
+            self.assertEqual(receipt["snapshot_sha256"], result["sha256"])
+            self.assertRegex(receipt["package_sha256"], r"^[a-f0-9]{64}$")
+            self.assertFalse(receipt["trusted_digest_verified"])
+            self.assertIs(receipt["signature_verified"], False)
+            self.assertNotIn(str(self.root), json.dumps(receipt))
+            self.assertIsNotNone(installed_plugin_update_receipt(
+                self.store / package, package, [version],
+            ))
+        self.assertIsNone(self._receipt(UNTOUCHED))
+
+    def test_verified_digest_is_recorded_without_fabricating_signature(self) -> None:
+        digest = hashlib.sha256(self.snapshot.read_bytes()).hexdigest()
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             patch.object(dev, "_verify_strict_installed_packages"):
+            dev.apply_snapshot(
+                self.snapshot, expected_sha256=digest, require_plugins_only=True,
+            )
+        self.assertTrue(self._receipt(ALPHA)["trusted_digest_verified"])
+        self.assertFalse(self._receipt(ALPHA)["signature_verified"])
+
+    def test_smoke_error_and_failed_receipt_restore_preupdate_state(self) -> None:
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], \
+             patch.object(dev, "_smoke_plugins", side_effect=dev.DevUpdateError("test-smoke")), patches[5]:
+            with self.assertRaisesRegex(dev.DevUpdateError, "test-smoke"):
+                dev.apply_snapshot(self.snapshot)
+        self.assertIsNone(self._receipt(ALPHA))
+        self.assertIsNone(self._receipt(BETA))
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             patch.object(dev, "_record_partial_install_provenance", side_effect=OSError("test-file-io")):
+            with self.assertRaisesRegex(OSError, "test-file-io"):
+                dev.apply_snapshot(self.snapshot)
+        self.assertEqual(self._version(ALPHA), "0.9")
+        self.assertIsNone(self._version(BETA))
+        self.assertIsNone(self._receipt(ALPHA))
+
+    def test_late_partial_receipt_failure_rolls_back_first_written_receipt(self) -> None:
+        write_original = dev._record_partial_install_provenance
+
+        def partially_write(indexed, packages, **kwargs):
+            write_original(indexed, packages[:1], **kwargs)
+            assert self._receipt(ALPHA) is not None
+            raise OSError("failure writing second receipt")
+
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             patch.object(dev, "_record_partial_install_provenance", side_effect=partially_write):
+            with self.assertRaisesRegex(OSError, "second receipt"):
+                dev.apply_snapshot(self.snapshot)
+        self.assertEqual(self._version(ALPHA), "0.9")
+        self.assertIsNone(self._version(BETA))
+        self.assertIsNone(self._receipt(ALPHA))
+        self.assertIsNone(self._receipt(BETA))
+
+    def test_untrusted_or_stale_receipt_is_ignored(self) -> None:
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+            dev.apply_snapshot(self.snapshot)
+        root = self.store / ALPHA
+        receipt = root / ".cifereca-last-plugin-update.json"
+        good = receipt.read_text(encoding="utf-8")
+        self.assertIsNone(installed_plugin_update_receipt(root, ALPHA, ["0.9"]))
+        receipt.write_text(good.replace('"signature_verified": false', '"signature_verified": true'))
+        self.assertIsNone(installed_plugin_update_receipt(root, ALPHA, ["1.2.3"]))
+        receipt.write_text(good)
+        other = self.root / "outside"
+        other.write_text(good)
+        receipt.unlink()
+        receipt.symlink_to(other)
+        self.assertIsNone(installed_plugin_update_receipt(root, ALPHA, ["1.2.3"]))
+        self.assertEqual(other.read_text(), good)
 
     def test_partial_upgrade_keeps_core_and_unselected_plugin_unchanged(self) -> None:
         verify_partial_snapshot(self.snapshot)

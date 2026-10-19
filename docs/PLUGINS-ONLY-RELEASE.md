@@ -116,3 +116,33 @@ Une égalité de version seule ne prouve pas l'identité des octets du Core.
 Tester le Core **réellement distribué** ; s'il ne dispose pas du mode strict,
 la recette de fermeture globale #839 nécessite une publication Core distincte,
 sur autorisation explicite. Ne pas clore P0 par déduction.
+
+## Reçu local de dernière mise à jour (#577)
+
+Après **installation réelle**, validation de l'index, contrôle des packages et
+smoke réussi, `cifereca-update-dev` écrit pour chaque package sélectionné
+`<plugin-store>/<package-id>/.cifereca-last-plugin-update.json` **dans la
+transaction sauvegardée**. Un échec de smoke, de vérification ou d'écriture
+provoque le rollback du package et de son reçu. Aucun reçu n'est produit
+par `--dry-run` ou pour les packages non sélectionnés.
+
+Le reçu borne et valide les champs `scope`, `version`, `snapshot_id`,
+`source_git_commit`, `core_version_tested`, SHA-256 du snapshot et du
+package. Il est visible via `package_inventory.last_plugin_update` et
+`diagnostic.last_plugin_update` (sans identifiant de compte ni chemin
+local). Le lecteur refuse les symlinks, JSON anormal et les versions qui
+ne figurent plus dans l'inventaire installé.
+
+`trusted_digest_verified` signifie **uniquement** que les octets du ZIP
+correspondaient au SHA fourni au CLI. Le reçu local ne prouve ni que la
+signature **Cosign a été vérifiée**, ni que la GUI courante a rechargé le
+package ; `signature_verified: false` est explicite. Le tag/identité
+OIDC et le bundle Sigstore doivent toujours être vérifiés indépendamment
+**avant l'installation**, comme décrit plus haut. La GUI doit être
+redémarrée et inspectée dans le même HOME/XDG pour attester la version
+réellement chargée. Les installations antérieures à ce mécanisme exposent
+`last_plugin_update: null`, sans fausse provenance reconstituée.
+
+Les tests CI couvrent un et plusieurs packages, statut désactivé conservé,
+refus strict, dry-run, rollback et tampering du reçu. **Aucune release
+automatique n'est déclenchée par cette évolution.**
