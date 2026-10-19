@@ -557,13 +557,13 @@ jobs:
               --data-binary @"$asset" \
               "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$draft_id/assets?name=$filename")"
             printf '%s' "$response" | python3 -c '
-import json, os, sys
-asset = json.load(sys.stdin)
-assert type(asset) is dict and asset.get("name") == sys.argv[1]
-assert type(asset.get("id")) is int and asset["id"] > 0
-assert type(asset.get("size")) is int and asset["size"] == os.stat(sys.argv[2]).st_size
-assert asset.get("state") == "uploaded"
-' "$filename" "$asset"
+          import json, os, sys
+          asset = json.load(sys.stdin)
+          assert type(asset) is dict and asset.get("name") == sys.argv[1]
+          assert type(asset.get("id")) is int and asset["id"] > 0
+          assert type(asset.get("size")) is int and asset["size"] == os.stat(sys.argv[2]).st_size
+          assert asset.get("state") == "uploaded"
+          ' "$filename" "$asset"
           done
 
       # Download the GitHub-hosted draft assets, not the local build output.
@@ -580,26 +580,26 @@ assert asset.get("state") == "uploaded"
           # depend on tag lookup for untagged drafts.
           gh api "repos/$GITHUB_REPOSITORY/releases/$P0_RELEASE_ID/assets?per_page=100" |
             python3 -c '
-import json, sys
-rows = json.load(sys.stdin)
-tag = sys.argv[1]
-expected = {tag + ".zip", tag + ".zip.sha256", tag + ".zip.sigstore.json"}
-if type(rows) is not list or len(rows) != 3:
-    raise SystemExit("Unexpected number of plugins-only draft assets")
-seen = set()
-for row in rows:
-    if type(row) is not dict or row.get("name") not in expected:
-        raise SystemExit("Unreviewed plugins-only draft asset")
-    name = row["name"]
-    if name in seen or type(row.get("id")) is not int or row["id"] <= 0:
-        raise SystemExit("Ambiguous plugins-only draft asset")
-    if type(row.get("size")) is not int or row["size"] <= 0:
-        raise SystemExit("Invalid plugins-only draft asset size")
-    seen.add(name)
-    print(str(row["id"]) + " " + name)
-if seen != expected:
-    raise SystemExit("Missing plugins-only draft asset")
-' "$RELEASE_TAG" > "$artifact_dir/asset-ids"
+          import json, sys
+          rows = json.load(sys.stdin)
+          tag = sys.argv[1]
+          expected = {tag + ".zip", tag + ".zip.sha256", tag + ".zip.sigstore.json"}
+          if type(rows) is not list or len(rows) != 3:
+              raise SystemExit("Unexpected number of plugins-only draft assets")
+          seen = set()
+          for row in rows:
+              if type(row) is not dict or row.get("name") not in expected:
+                  raise SystemExit("Unreviewed plugins-only draft asset")
+              name = row["name"]
+              if name in seen or type(row.get("id")) is not int or row["id"] <= 0:
+                  raise SystemExit("Ambiguous plugins-only draft asset")
+              if type(row.get("size")) is not int or row["size"] <= 0:
+                  raise SystemExit("Invalid plugins-only draft asset size")
+              seen.add(name)
+              print(str(row["id"]) + " " + name)
+          if seen != expected:
+              raise SystemExit("Missing plugins-only draft asset")
+          ' "$RELEASE_TAG" > "$artifact_dir/asset-ids"
           while read -r asset_id asset_name; do
             case "$asset_name" in
               "$RELEASE_TAG.zip"|"$RELEASE_TAG.zip.sha256"|"$RELEASE_TAG.zip.sigstore.json") ;;
