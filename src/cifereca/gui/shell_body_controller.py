@@ -40,6 +40,10 @@ def build_main_shell(window, *, Gtk, add_css, version):
     window.view_stack = Gtk.Stack()
     window.view_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
     window.view_stack.set_hhomogeneous(False)
+    # #2027 experiment: hidden Sync/Diagnostics pages have variable minimum
+    # height, especially after narrow-window/large-font reflows. Gtk.Stack
+    # must measure the active page, not retain an unrelated page's height.
+    window.view_stack.set_vhomogeneous(False)
     window.view_stack.set_hexpand(True); window.view_stack.set_vexpand(True)
     body.append(window.view_stack)
     window._rebuild_plugin_pages()
