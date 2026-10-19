@@ -132,7 +132,8 @@ def test_relinked_local_artifact_path_is_not_traced(
 
 
 @pytest.mark.parametrize("prior_code", [
-    "adept_error", "adept_profile_ambiguous",
+    "adept_error", "adept_profile_ambiguous", "adept_profile_missing",
+    "kobo_adept_failed", "kobo_adept_timeout", "kobo_adept_invalid_contract",
     "adept_license_fulfilled_by_other_user",
 ])
 def test_known_adept_remediation_codes_still_reach_repeat_loan_feedback(
