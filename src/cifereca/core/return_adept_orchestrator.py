@@ -31,30 +31,64 @@ _ADEPT_RETURN_VERIFICATIONS = frozenset({
 })
 
 
+_ADEPT_ATTESTED_PHASES = frozenset({
+    "adobe_return_confirmed", "paris_check_pending",
+    "partial", "paris_return_confirmed",
+})
+
+
+def adobe_return_attested(row: dict[str, Any]) -> bool:
+    """A bare True flag on a pre-mutation checkpoint is not Adobe evidence."""
+    status = row.get("status")
+    return (
+        type(status) is str
+        and status in _ADEPT_ATTESTED_PHASES
+        and row.get("adobe_verified") is True
+    )
+
+
+def paris_return_attested(row: dict[str, Any]) -> bool:
+    """Trust final success only with Adobe proof and fresh Paris absence."""
+    return (
+        type(row.get("status")) is str
+        and row["status"] == "paris_return_confirmed"
+        and adobe_return_attested(row)
+        and type(row.get("verification")) is str
+        and row["verification"] == "provider_absent"
+        and _public_timestamp(row.get("checked_at")) is not None
+    )
+
+
 def public_state(row: dict[str, Any]) -> dict[str, Any]:
     """Project only closed ADEPT/Paris checkpoint fields to the UI."""
     raw_status = row.get("status")
     status = (raw_status if type(raw_status) is str
               and raw_status in _ADEPT_RETURN_STATES else "failed")
-    # An unknown disk status must not certify an Adobe return merely because
-    # the old record also contains a truthy verification flag.
-    verified = (status != "failed" and row.get("adobe_verified") is True)
+    # A boolean flag on request_sent/adobe_return_requested is not evidence
+    # that Adobe was called or independently verified after a crash.
+    verified = adobe_return_attested(row)
     raw_verification = row.get("verification")
     verification = (raw_verification if type(raw_verification) is str
                     and raw_verification in _ADEPT_RETURN_VERIFICATIONS
                     else "not_checked")
+    confirmed = paris_return_attested(row)
+    if status == "paris_return_confirmed" and not confirmed:
+        # A contradictory historical row must not show a completed return
+        # or authorize an explicit provider action before a fresh read.
+        status = "partial" if verified else "failed"
+        verification = "not_checked"
     return {
         "status": status,
         "scope": "adobe_first_paris",
         "adobe_return_confirmed": verified,
-        "provider_return_confirmed": status == "paris_return_confirmed" and verified,
+        "provider_return_confirmed": confirmed,
         "paris_verification": verification if verification in {
             "still_present", "provider_absent", "unavailable"
         } else "not_checked",
         "requested_at": _public_timestamp(row.get("requested_at")),
         "checked_at": _public_timestamp(row.get("checked_at")),
         "retry": (
-            "none" if status == "paris_return_confirmed" and verified else
+            "none" if confirmed else
             "provider_action_explicit" if verified and status == "partial"
             and verification == "still_present" else
             "verification_only"
@@ -123,10 +157,10 @@ def return_loan_prefer_adept(
         if not claimed:
             previous = record
     if previous is not None:
-        if previous.get("status") == "paris_return_confirmed":
+        if paris_return_attested(previous):
             return public_state(previous)
         op_id = str(previous.get("operation_id") or "")
-        if previous.get("adobe_verified") is not True:
+        if not adobe_return_attested(previous):
             if not self._adobe_return_inventory_confirmed(acquisition):
                 return public_state(previous)
             record = self.storage.loan_return_transition(
