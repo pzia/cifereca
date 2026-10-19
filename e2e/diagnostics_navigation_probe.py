@@ -807,6 +807,7 @@ def main() -> int:
         finish()
 
     def begin_baseline():
+        print('CIFERECA_E2E_GTK_PHASE:shell_ready', file=sys.stderr, flush=True)
         w = window[0]
         assert w.service.current_identity.identity_id == "camille"
         assert w.identity_dropdown.get_model().get_n_items() == 2
@@ -1824,6 +1825,7 @@ def main() -> int:
         later(80, wait_sync_narrow)
 
     def sync_narrow_allocations(large_font):
+        print('CIFERECA_E2E_GTK_PHASE:sync_narrow', file=sys.stderr, flush=True)
         w = window[0]
         f = loan_sync_fixture
         scroll = f["sync_scroll"]
@@ -1896,6 +1898,7 @@ def main() -> int:
         later(350, begin_numilog_inventory_acceptance)
 
     def begin_numilog_inventory_acceptance():
+        print('CIFERECA_E2E_GTK_PHASE:numilog_consent', file=sys.stderr, flush=True)
         w = window[0]
         f = loan_sync_fixture
         scroll = f["sync_scroll"]
@@ -2012,6 +2015,7 @@ def main() -> int:
         later(250, numilog_inventory_schedule_dialog)
 
     def numilog_inventory_schedule_dialog():
+        print('CIFERECA_E2E_GTK_PHASE:numilog_dialog', file=sys.stderr, flush=True)
         report["stage"] = "P0_1905_numilog_inventory_dialog_preflight"
         f = loan_sync_fixture
         dialogs = [node for node in Gtk.Window.list_toplevels()
