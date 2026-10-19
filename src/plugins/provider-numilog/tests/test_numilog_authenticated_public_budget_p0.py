@@ -6,6 +6,8 @@ requests, real product GET, downloads, ACSM or ownership inference.
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -183,3 +185,37 @@ def test_anonymous_cache_is_per_account_but_has_no_account_payload(monkeypatch):
     finally:
         for s in sessions:
             s.close()
+
+
+def test_search_in_flight_blocks_detail_and_is_invalidated_on_disconnect(monkeypatch):
+    """Switching public entrypoints cannot create a second concurrent GET."""
+    s = session()
+    entered, release = threading.Event(), threading.Event()
+    fetched = []
+
+    def blocked_search(query, *, page, field):
+        fetched.append("search")
+        entered.set()
+        assert release.wait(5)
+        return PAGE
+
+    monkeypatch.setattr(client, "fetch_public_search", blocked_search)
+    monkeypatch.setattr(client, "fetch_public_detail",
+                        lambda url: fetched.append("detail") or {"unreachable": True})
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(s.search_public, "jefferson")
+            assert entered.wait(5)
+            with pytest.raises(ProviderError, match="request_in_progress"):
+                s.public_product_detail(PRODUCT)
+            assert fetched == ["search"]
+            # A close never waits for a network call and prevents its stale
+            # result from reviving an old account's public search view.
+            s.close()
+            release.set()
+            with pytest.raises(ProviderError, match="request_invalidated"):
+                pending.result(timeout=5)
+        assert not s._owned_public_cache._entries
+    finally:
+        release.set()
+        s.close()
