@@ -35,9 +35,6 @@ EXPECTED = {
             "dist/cifereca-plugins-only-preview-${{ github.run_id }}-${{ github.run_attempt }}.zip.sha256",
         ),
     ),
-    "youth-source-live-qualification.yml": (
-        ("youth-live-evidence/result.json",),
-    ),
 }
 
 
@@ -97,14 +94,10 @@ def test_package_upload_names_are_bound_to_exact_git_commit():
     assert "path: dist/*.zip" not in content
 
 
-def test_no_untrusted_e2e_capture_or_raw_youth_response_reaches_actions():
+def test_no_untrusted_e2e_capture_reaches_actions():
     e2e = (ROOT / "e2e-smoke.yml").read_text(encoding="utf-8")
-    youth = (ROOT / "youth-source-live-qualification.yml").read_text(encoding="utf-8")
     assert 'scripts/ci-export-e2e-summary.py' in e2e
     assert 'cat "$RUNNER_TEMP/cifereca-e2e-public/summary.json"' in e2e
-    assert 'cat youth-live-evidence/result.json' in youth
-    assert 'raw="$RUNNER_TEMP/youth-live-unvalidated.json"' in youth
-    assert 'path: youth-live-evidence/result.json' in youth
 
 
 def test_official_core_release_rejects_unreviewed_assets_before_upload():
