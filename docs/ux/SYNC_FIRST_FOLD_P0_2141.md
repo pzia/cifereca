@@ -33,6 +33,18 @@ Les autres champs du rapport GTK (comptes, titres, erreurs, chemins, traces)
 sont écartés, pas recopiés. Un second rapport peut être comparé avec
 `--before /chemin/privé/screen.json`.
 
+La comparaison `--before` retourne désormais un objet `comparison.samples`
+à schéma fixe. Pour chaque largeur/police, elle **refuse de calculer des
+deltas** si une mesure manque, si les dimensions de fenêtre diffèrent
+de plus de 24 px en largeur ou 48 px en hauteur, ou si la population de
+sources/actions primaires change. Elle indique alors un motif fixe
+(`missing_sample`, `different_window_geometry` ou
+`different_source_population`). Sur observations comparables, les
+deltas sont *après moins avant* : hausse des intersections sources/actions
+et baisse de `scroll_viewports_delta` peuvent aider à guider la revue
+visuelle, mais ne sont ni une note d'utilisabilité ni une preuve de
+cliquabilité. Ne pas comparer des fixtures ni des états métier différents.
+
 ```bash
 python3 -m unittest discover -s e2e -p 'test_sync_first_fold_review.py' -v
 ```

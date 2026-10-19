@@ -91,6 +91,59 @@ def review(path: Path) -> dict:
             "interpretation": "geometry only; legibility and user acceptance not certified"}
 
 
+
+def compare(before: dict, after: dict) -> dict:
+    """Explain when two private GTK samples support a geometric comparison.
+
+    Increases in first-screen intersections are *not* accessibility or
+    legibility verdicts. All labels/reasons are fixed, never read from input.
+    """
+    observations = {}
+    before_samples, after_samples = before["samples"], after["samples"]
+    for name in sorted(set(before_samples) | set(after_samples)):
+        previous, current = before_samples.get(name), after_samples.get(name)
+        if previous is None or current is None:
+            observations[name] = {"comparable": False, "reason": "missing_sample"}
+            continue
+        if (abs(previous["window_width"] - current["window_width"]) > 24
+                or abs(previous["window_height"] - current["window_height"]) > 48):
+            observations[name] = {"comparable": False, "reason": "different_window_geometry"}
+            continue
+        if (previous["source_cards"] != current["source_cards"]
+                or previous["source_status_rows"] != current["source_status_rows"]
+                or previous["primary_source_actions"] != current["primary_source_actions"]):
+            observations[name] = {"comparable": False, "reason": "different_source_population"}
+            continue
+
+        def difference(key: str):
+            before_value, after_value = previous[key], current[key]
+            return round(after_value - before_value, 2) if (
+                before_value is not None and after_value is not None
+            ) else None
+
+        observations[name] = {
+            "comparable": True,
+            "source_visibility_points_delta": difference("sources_visible_percent"),
+            "primary_action_visibility_points_delta": difference(
+                "primary_actions_visible_percent"
+            ),
+            "first_screen_source_intersections_delta": difference(
+                "visible_source_status_rows"
+            ),
+            "first_screen_primary_action_intersections_delta": difference(
+                "visible_primary_source_actions"
+            ),
+            "scroll_viewports_delta": difference("scroll_extent_viewports"),
+            "global_action_visible_before": previous["global_action_visible"],
+            "global_action_visible_after": current["global_action_visible"],
+        }
+    return {
+        "schema": "cifereca-ux-first-fold-comparison/v1",
+        "samples": observations,
+        "interpretation": "geometry differences only; no human-legibility verdict",
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report", type=Path, help="private local E2E screen.json")
@@ -100,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         result = {"after": review(args.report)}
         if args.before is not None:
             result["before"] = review(args.before)
+            result["comparison"] = compare(result["before"], result["after"])
     except (OSError, UnicodeError, ValueError, TypeError, RecursionError, OverflowError):
         print("UX measurement refused: invalid or unverified private report", file=sys.stderr)
         return 2
