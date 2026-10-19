@@ -64,6 +64,17 @@ def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
         # durable receipt is still running/failed/unknown. Never turn that
         # observation into a public success or hide its unresolved state.
         detail = {}
+    if detail and status in {"complete", "partial", "failed", "blocked"}:
+        if detail["status"] == "not_due":
+            # A throttled opening is a fresh observation of *no attempt*;
+            # the previous completed SQLite receipt stays untouched.
+            pass
+        elif (detail["status"] != status or
+              any(detail[key] != data[key] for key in counts)):
+            # At a finalized clock the SQLite receipt is authoritative.
+            # Optional telemetry with a conflicting status or totals must
+            # never rewrite its displayed truth.
+            detail = {}
     if detail:
         status = detail["status"]
         data = dict(data, **{key: detail[key] for key in counts})
