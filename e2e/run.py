@@ -456,7 +456,7 @@ def main() -> int:
             gtk_critical = gtk_layout_critical_counts(output, errors)
             # These fixed phase counts correlate diagnostic warnings with
             # deterministic GUI actions; none contains timestamps or raw GTK.
-            gtk_phases = gtk_layout_phase_counts(errors)
+            gtk_phases = gtk_layout_phase_counts(output, errors)
             _write_redacted_log(stdout_path, output, env)
             _write_redacted_log(stderr_path, errors, env)
             report = png.with_suffix(".json")
