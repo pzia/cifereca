@@ -39,7 +39,14 @@ from cifereca.builtin_ui.cifereca_builtin_ui import Pages
 from diagnostics_page_probe import Broker, Context, Host, Tasks
 from diagnostics_states_probe import StateTasks
 from x11_input import X11Input
+from gtk_layout_critical import GTK_PHASES_2027
 
+
+
+def gtk_phase_2027(phase: str) -> None:
+    # Source-reviewed constants only; no widget, pointer or account data.
+    assert phase in GTK_PHASES_2027
+    print(f"CIFERECA_E2E_GTK_PHASE:{phase}", file=sys.stderr, flush=True)
 
 
 def probe_failure_line(exc):
@@ -1792,6 +1799,7 @@ def main() -> int:
         later(350, lambda: sync_desktop_first_fold(False))
 
     def sync_desktop_first_fold(large_font):
+        gtk_phase_2027("sync_desktop" if not large_font else "sync_font_desktop")
         w = window[0]
         f = loan_sync_fixture
         key = "large_font" if large_font else "normal_font"
@@ -1809,6 +1817,7 @@ def main() -> int:
         Gtk.Settings.get_default().set_property(
             "gtk-font-name", f["sync_original_font"]
         )
+        gtk_phase_2027("sync_narrow")
         w.set_default_size(760, 780)
         deadline = monotonic() + 4
 
@@ -1887,15 +1896,18 @@ def main() -> int:
             side_effects,
         )
         if not large_font:
+            gtk_phase_2027("sync_font_narrow")
             Gtk.Settings.get_default().set_property("gtk-font-name", "Sans 12")
             later(350, lambda: sync_narrow_allocations(True))
             return
+        gtk_phase_2027("sync_restored")
         Gtk.Settings.get_default().set_property("gtk-font-name", f["sync_original_font"])
         f["sync_long_name_row"].set_title(f["sync_original_title"])
         w.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
         later(350, begin_numilog_inventory_acceptance)
 
     def begin_numilog_inventory_acceptance():
+        gtk_phase_2027("numilog_consent")
         w = window[0]
         f = loan_sync_fixture
         scroll = f["sync_scroll"]
@@ -3270,6 +3282,7 @@ def main() -> int:
         finish()
 
     def finish():
+        gtk_phase_2027("done")
         report["status"] = "PASS"
         save()
         rc[0] = 0
@@ -3281,6 +3294,7 @@ def main() -> int:
 
         def do_activate(self):
             try:
+                gtk_phase_2027("window_start")
                 w = MainWindow(self, core.config, core.library, core.diagnostics)
                 window[0] = w
                 # Observe provenance before TaskRunner's intentional redaction.
@@ -3296,6 +3310,7 @@ def main() -> int:
                 w.plugin_manager = IsolatedContributions(page_plugin)
                 w._rebuild_plugin_pages()
                 w.present()
+                gtk_phase_2027("window_shown")
                 device[0] = X11Input()
                 later(500, home_summary_acceptance if args.window_baseline else initial)
             except Exception as exc:
