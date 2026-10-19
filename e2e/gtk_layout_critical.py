@@ -50,9 +50,14 @@ GTK_PHASES_2027 = (
     "window_start", "window_shown", "sync_desktop",
     "sync_font_desktop", "sync_narrow", "sync_font_narrow",
     "sync_restored", "numilog_consent", "done",
+    # The Maintenance probe uses the same privacy-safe marker vocabulary.
+    "maint_window_start", "maint_window_shown", "maint_route",
+    "maint_busy_guard", "maint_scan", "maint_first_dialog",
+    "maint_cancel_stale", "maint_execute", "maint_refresh",
+    "maint_p1_naming", "maint_p1_duplicates", "maint_done",
 )
 _PHASE_MARKER = re.compile(
-    r"^CIFERECA_E2E_GTK_PHASE:(?P<phase>[a-z_]+)$"
+    r"^CIFERECA_E2E_GTK_PHASE:(?P<phase>[a-z0-9_]+)$"
 )
 
 
@@ -69,9 +74,13 @@ def gtk_layout_phase_counts(*streams: str) -> dict[str, dict[str, int]]:
             continue
         active = None
         for line in stream[:_MAX_STREAM].splitlines():
-            marker = _PHASE_MARKER.fullmatch(line.strip())
-            if marker is not None and marker.group("phase") in counts:
-                active = marker.group("phase")
+            clean = line.strip()
+            if clean.startswith("CIFERECA_E2E_GTK_PHASE:"):
+                # Any marker-looking line (including invalid syntax) ends the
+                # previous phase; never borrow counts from a known phase.
+                marker = _PHASE_MARKER.fullmatch(clean)
+                active = (marker.group("phase") if marker is not None
+                          and marker.group("phase") in counts else None)
                 continue
             if active is None or not _CRITICAL.search(line):
                 continue

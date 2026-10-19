@@ -50,7 +50,8 @@ def test_unknown_phase_and_provider_output_never_reach_public_result():
         "CIFERECA_E2E_GTK_PHASE:evil-custom",
         "Gtk-CRITICAL GtkRevealer 0xPRIVATE",
     ))
-    assert parser(raw) == {"window_shown": {"GtkStack": 1, "GtkRevealer": 1}}
+    # A hostile marker (even syntactically invalid) ends the previous phase.
+    assert parser(raw) == {"window_shown": {"GtkStack": 1, "GtkRevealer": 0}}
     assert parser(None) == {}
     assert parser("Gtk-CRITICAL GtkStack 0xPRIVATE") == {}
 
