@@ -140,7 +140,7 @@ def test_complete_observed_page_positive_and_negative_are_local_only(monkeypatch
 
 
 @pytest.mark.parametrize("filters", [
-    {}, {"isbn": "9782075241939"}, {"language": "fr"},
+    {}, {"isbn": "9782075241939"}, {"language": "??"},
     {"author": ""}, {"title": "  "}, {"publisher": "x"*121},
     {"author": "token=PRIVATE\n"}, {"year": "2026"},
     {"year": True}, {"year": 10000}, {"format_label": 14},
