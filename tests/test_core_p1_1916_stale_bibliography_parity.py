@@ -89,6 +89,53 @@ def test_legacy_cached_metadata_never_returns_arbitrary_sensitive_award(
         service.close()
 
 
+def test_legacy_public_text_fields_are_revalidated_before_exposure(tmp_path):
+    service = _service(tmp_path)
+    try:
+        _stored(service, meta={
+            "awards": ["Prix du Quai"],
+            "description": "Provenance interne: " + SECRET,
+            "subjects": ["Roman", SECRET],
+            "publisher": "Maison d'édition",
+            "authors": [{"name": "Auteur", "account": SECRET}],
+            "series": ["Collection publique"],
+            "published_at": "2020",
+        })
+        rows = known_public_fallback(
+            service.storage, provider_id="bad", identity_id="alice",
+            query="prix du quai", scope="all", field="all", content_types=(),
+        )
+        assert len(rows) == 1
+        record = rows[0]
+        assert record.metadata["awards"] == ["Prix du Quai"]
+        assert record.metadata["publisher"] == "Maison d'édition"
+        assert record.metadata["series"] == ["Collection publique"]
+        assert record.metadata["published_at"] == "2020"
+        assert record.description is None
+        assert "description" not in record.metadata
+        assert "subjects" not in record.metadata
+        assert "authors" not in record.metadata
+        assert "SIGNED_SECRET" not in repr(record)
+        assert record.owned is False and record.downloadable is False
+    finally:
+        service.close()
+
+
+def test_normal_public_description_keeps_full_bounded_length(tmp_path):
+    service = _service(tmp_path)
+    try:
+        full = "Un roman public. " * 45
+        _stored(service, meta={"description": full})
+        rows = known_public_fallback(
+            service.storage, provider_id="bad", identity_id="alice",
+            query="prix du quai", scope="all", field="all", content_types=(),
+        )
+        assert len(rows) == 1
+        assert rows[0].description == full.strip()
+    finally:
+        service.close()
+
+
 @pytest.mark.parametrize("progressive", [False, True])
 def test_live_outage_uses_prize_only_stale_evidence_without_second_http_request(
     tmp_path, progressive,
