@@ -267,6 +267,17 @@ def main():
     def ready():
         gtk_phase_2027("maint_route")
         w = window[0]
+        # Real GTK contract: the footer remains visible and responsive, while
+        # an ellipsized status retains its full text in the native tooltip.
+        from gi.repository import Pango
+        assert w.busy_revealer.get_visible(), "activity footer widget hidden"
+        assert w.busy_label.get_wrap() is False
+        assert w.busy_label.get_ellipsize() == Pango.EllipsizeMode.END
+        assert w.busy_label.get_max_width_chars() == 72
+        w.busy_label.set_label("Statut complet de l'activité · " + "détails " * 45)
+        assert w.busy_label.get_tooltip_text() == w.busy_label.get_label()
+        w.busy_label.set_label("")
+        report["checks"]["activity_footer_single_line_full_tooltip"] = True
         assert "tools" in w.nav_rows
         # The technical navigation section can be collapsed in GTK; selecting
         # its hidden ListBox row does not necessarily switch the visible page.
