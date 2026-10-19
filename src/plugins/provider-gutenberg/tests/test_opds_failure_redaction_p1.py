@@ -61,7 +61,9 @@ def test_bad_search_xml_has_closed_error_and_no_raw_url_or_error_details(caplog)
     try:
         with caplog.at_level("WARNING", logger="cifereca.plugin.provider.gutenberg"):
             with pytest.raises(ProviderError, match="invalid_opds_feed") as caught:
-                session.search("book")
+                session._parse_feed(
+                    b'<feed><bad a="' + SECRET.encode() + b'"', SIGNED,
+                )
         assert_redacted(caught, diag, caplog)
         assert diag.events
         details = diag.events[-1][1].get("detail")
