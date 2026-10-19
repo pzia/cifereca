@@ -31,7 +31,7 @@ Le module Python livré ici est un **contrat offline non installé**, sans manif
 - Comptes multiples : chaque prêt normalisé exige le même member_id attendu, pas de mélange intercompte ; aucun historique de téléchargement ni URL signée restitué.
 - Erreurs métier explicites et erreurs 401, 403, 404, 429, 5xx avec messages sûrs ; codes inconnus jamais réémis.
 - Simulation de résultats 200/201 (existence vs création, pas de renouvellement), validation d'origine du lien avant qu'il soit **jeté**, interdiction de toute capacité tant que les droits ne sont pas établis.
-- Suite isolée : pytest -q src/plugins/provider-bnf-pret/tests ; 20 tests passés localement le 19/10/2026. Aucun test fournisseur réel ni recette CoreUI effectués.
+- Suite isolée : pytest -q tests/test_bnf_pret_contract_2054.py ; 20 tests passés localement le 19/10/2026. La suite se trouve dans tests/ pour passer dans le gate Core de la PR CI, car le package d'étude sans manifeste n'est volontairement pas découvert par le lanceur plugins. Aucun test fournisseur réel ni recette CoreUI effectués.
 
 ## Dépendances restantes / sortie #2054
 
