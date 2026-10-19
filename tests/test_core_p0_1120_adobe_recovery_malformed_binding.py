@@ -103,7 +103,7 @@ def test_invalid_original_adobe_binding_never_reaches_external_registry(acquisit
     ({"loans": [{"id": "exact-adobe-loan", "returned": True,
                   "token_present": True}]}, False),
     ({"loans": [{"id": "exact-adobe-loan", "returned": True,
-                  "token_present": False}, PRIVATE]}, True),
+                  "token_present": False}, PRIVATE]}, False),
     ({"loans": [Hostile()]}, False),
     ({"loans": {"id": "exact-adobe-loan", "returned": True}}, False),
     ({"loans": PRIVATE}, False),
