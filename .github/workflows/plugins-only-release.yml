@@ -9,11 +9,14 @@ on:
       - ".github/plugins-only-release-request.json"
   pull_request:
     paths:
+      - ".github/plugins-only-release-request.json"
       - ".github/workflows/plugins-only-release.yml"
       - "scripts/ci-plugins-only-runtime-gate.sh"
       - "scripts/ci-plugins-only-historical-core-gate.sh"
       - "scripts/ci_plugins_release_target.py"
       - "scripts/test_partial_plugin_release.py"
+      - "scripts/test_ci_plugins_release_request.py"
+      - "scripts/ci_plugins_release_request.py"
       - "scripts/package_partial_plugins.py"
       - "scripts/plugin_packaging.py"
       - "src/cifereca/dev_updater.py"
@@ -63,7 +66,8 @@ jobs:
       - name: Validate packaging and strict updater tests
         run: |
           python scripts/verify-packaging.py
-          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release
+          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_plugins_release_request
+          python3 -m scripts.ci_plugins_release_request --event push
           python -m pytest -q tests/test_dev_partial_plugin_updates.py
 
       - name: Build deterministic PR plugins-only snapshot
@@ -96,8 +100,34 @@ jobs:
           CIFERECA_P0_GATE_ROOT: ${{ runner.temp }}/cifereca-p0-pr-gate
         run: bash scripts/ci-plugins-only-historical-core-gate.sh "${{ steps.build.outputs.archive }}"
 
+  preflight-request:
+    # A historical/neutralized request must not even enter the publishing job.
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      authorized: ${{ steps.validate.outputs.authorized }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate active package inventory and explicit request
+        id: validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m scripts.ci_plugins_release_request \
+            --event push --github-output "$GITHUB_OUTPUT"
+
   release:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: preflight-request
+    # workflow_dispatch skips preflight, whereas push requires active authorization.
+    if: >-
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' &&
+        github.ref == 'refs/heads/main' &&
+        needs.preflight-request.result == 'success' &&
+        needs.preflight-request.outputs.authorized == 'true'))
     permissions:
       contents: write
       id-token: write
@@ -127,42 +157,11 @@ jobs:
           DISPATCH_PACKAGES: ${{ inputs.package_ids }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          from pathlib import Path
-
-          if os.environ["GITHUB_EVENT_NAME"] == "push":
-              request = json.loads(
-                  Path(".github/plugins-only-release-request.json").read_text(encoding="utf-8")
-              )
-              if request.get("kind") != "authorized-plugins-only-release":
-                  raise SystemExit("Invalid explicit release request")
-              tag = request["release_tag"]
-              selected = request["package_ids"]
-          elif os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch":
-              tag = os.environ["DISPATCH_TAG"]
-              selected = os.environ["DISPATCH_PACKAGES"].split(",")
-          else:
-              raise SystemExit("Publication requires an explicit dispatch or main release request")
-
-          if not isinstance(tag, str) or not re.fullmatch(r"plugins-v[0-9A-Za-z.+_-]+", tag):
-              raise SystemExit("Invalid plugins-only release tag")
-          if not isinstance(selected, list) or not selected:
-              raise SystemExit("At least one package id is required")
-          if any(
-              not isinstance(package, str)
-              or not re.fullmatch(r"org\.cifereca\.[A-Za-z0-9._-]+", package)
-              for package in selected
-          ):
-              raise SystemExit("Invalid package id")
-          if len(selected) != len(set(selected)):
-              raise SystemExit("Duplicate package ids")
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as destination:
-              destination.write(f"RELEASE_TAG={tag}\nPACKAGE_IDS={','.join(selected)}\n")
-          print(f"Release request: {tag}; packages: {', '.join(selected)}")
-          PY
+          python3 -m scripts.ci_plugins_release_request \
+            --event "$GITHUB_EVENT_NAME" \
+            --dispatch-tag "$DISPATCH_TAG" \
+            --dispatch-packages "$DISPATCH_PACKAGES" \
+            --github-env "$GITHUB_ENV"
 
       - name: Require main and validate plugins-only tag
         shell: bash
