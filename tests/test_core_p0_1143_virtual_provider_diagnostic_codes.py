@@ -49,7 +49,7 @@ def test_virtual_session_connection_failure_has_only_closed_code():
     )
     provider_sessions._connect_changed_virtual_provider(service, "virtual")
     assert service._sessions == {}
-    assert service._session_errors == {"virtual:__public__": PRIVATE} is False
+    assert service._session_errors == {"virtual:__public__": "virtual_provider_connect_failed"}
     assert diagnostics.entries == [
         ("PLUGIN", "virtual provider connection", "error",
          {"provider": "virtual", "code": "virtual_provider_connect_failed"})
