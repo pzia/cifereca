@@ -534,7 +534,9 @@ def test_2095_kobo_audit_xtest_requires_stable_real_gtk_hit_target():
     assert "w.pick(point_x, point_y, Gtk.PickFlags.DEFAULT)" in probe
     assert "f.get(\"audit_stable_geometry\") != geometry" in probe
     assert "assert attempt <= 8, \"Kobo audit physical hit target did not settle\"" in probe
-    assert probe.count("device[0].click_widget(audit)") == 1
+    assert probe.count("device[0].click_widget(audit)") == 0
+    assert probe.count("device[0].window_point(w, point_x, point_y)") == 1
+    assert probe.count("device[0].click(screen_x, screen_y)") == 1
     assert 'f["audit_deadline"] = monotonic() + 6' in probe
     assert 'f["audit_click_signal_seen"] = False' in probe
     assert 'report["kobo_audit_observation"]' in probe
