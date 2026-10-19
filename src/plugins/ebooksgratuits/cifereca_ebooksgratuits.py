@@ -235,14 +235,59 @@ def _validated_public_query(query):
 
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.17','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+        super().__init__(descriptor=DESCRIPTOR,**kw)
+        self.transport=transport
+        self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'
+        self.maximum=int(self.options.get('max_download_bytes',100*1024*1024))
+        self.diagnostics=diagnostics
+        self.page_size=int(self.options.get('search_page_size',50))
         self.acquisition_backend=str(self.options.get('acquisition_backend') or 'opds').strip().lower()
-        if self.acquisition_backend not in {'opds','html'}: raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_backend')
+        if self.acquisition_backend not in {'opds','html'}:
+            raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_backend')
         self.opds_feed_url=str(self.options.get('opds_feed_url') or OPDS_FEED)
         self._opds_pages_limit=MAX_REQUESTED_PAGES
+        self.client=self._new_client()
+
+    def _new_client(self):
+        # close() permanently closes an httpx.Client. Only a fresh
+        # cookie-free transport can serve a subsequent explicit connect().
+        # Both OPDS and legacy simulation share this lifecycle.
+        return httpx.Client(
+            timeout=float(self.options.get('timeout_seconds',30)),
+            follow_redirects=True, trust_env=False,
+            headers={
+                'User-Agent':'Cifereca-EbooksGratuits/0.1.20',
+                'Accept-Language':'fr-FR,fr;q=0.9',
+            },
+        )
+
     def connect(self):
-        self.connected=True; self._accounts=[Account(display_name='Catalogue public',unique_id='ebooksgratuits',provider_id='ebooksgratuits',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
-    def close(self): self.client.close(); self.connected=False; self._accounts=[]
+        # Lightweight test transports may expose get() but no HTTPX
+        # is_closed property. Only a positively closed real client requires
+        # replacement; do not hide invalid-query tests behind a new GET.
+        if getattr(self.client, 'is_closed', False) is True:
+            try:
+                self.client=self._new_client()
+            except (OSError, ValueError, TypeError, httpx.HTTPError):
+                # A runtime/proxy error might include a path or credentials.
+                # Do not turn a failed reopen into a connected public source
+                # or show exception text in the Core/GTK status.
+                raise ProviderError(
+                    'Ebooks libres et gratuits : transport_unavailable'
+                ) from None
+        # This is a local session registration, NOT a successful OPDS probe.
+        self.connected=True
+        self._accounts=[Account(
+            display_name='Catalogue public',unique_id='ebooksgratuits',
+            provider_id='ebooksgratuits',credential_id=self.credential_id,
+            provider_label=self.descriptor.display_name,is_primary=True,
+        )]
+        return self.accounts
+
+    def close(self):
+        self.client.close()
+        self.connected=False
+        self._accounts=[]
     def _fetch(self,url):
         try:r=self.client.get(url); r.raise_for_status(); return r
         except httpx.HTTPError as e: raise _public_search_error(e) from e
@@ -390,6 +435,10 @@ OPDS_FEED = 'https://opds2.ebooksgratuits.org/index.php/feed'
 ATOM = '{http://www.w3.org/2005/Atom}'
 DC = '{http://purl.org/dc/terms/}'
 OPDS_MAX_FEED_BYTES = 2 * 1024 * 1024
+# 2 MiB of XML can still contain thousands of tiny nodes or deep nesting.
+# Bound the parser independently from the wire size before building a tree.
+OPDS_MAX_ELEMENTS = 12000
+OPDS_MAX_DEPTH = 96
 
 
 def _safe_opds_link(feed_url, href, kind):
@@ -455,37 +504,99 @@ def _safe_opds_link(feed_url, href, kind):
         return None
 
 
-def _xml_root(response):
-    content=response.content
-    if not isinstance(content,bytes) or len(content)>OPDS_MAX_FEED_BYTES:
+class _BoundedOPDSTree(ET.TreeBuilder):
+    """Deny DTDs (including UTF-16) and unbounded XML element trees."""
+
+    def __init__(self):
+        super().__init__()
+        self.depth=0
+        self.count=0
+
+    def doctype(self, name, pubid, system):
+        # A raw b'<!DOCTYPE' byte scan misses UTF-16/XML encodings.
+        # This parser callback rejects the declaration before entity use.
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
-    # Reject DTDs and internal entities before stdlib XML parsing.
-    if b'<!doctype' in content.lower() or b'<!entity' in content.lower():
+
+    def start(self, tag, attrs):
+        self.depth+=1
+        self.count+=1
+        if self.depth>OPDS_MAX_DEPTH or self.count>OPDS_MAX_ELEMENTS:
+            raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+        return super().start(tag,attrs)
+
+    def end(self, tag):
+        result=super().end(tag)
+        self.depth-=1
+        return result
+
+
+def _xml_root(content):
+    if type(content) is not bytes or len(content)>OPDS_MAX_FEED_BYTES:
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
     try:
-        return ET.fromstring(content)
-    except ET.ParseError as e:
-        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed') from e
+        # Enforce DTD/entity, depth and element budgets during XML parsing.
+        # A prior byte-pattern scan alone cannot qualify non-UTF8 XML.
+        return ET.fromstring(content,parser=ET.XMLParser(target=_BoundedOPDSTree()))
+    except (ET.ParseError, RecursionError, OverflowError, ValueError):
+        # Unsupported XML multi-byte encodings are unverified payloads, not
+        # exceptions whose raw parser text should escape into Core/UI.
+        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed') from None
 
 
 def _opds_fetch(session,url):
     checked=_safe_opds_link(session.opds_feed_url,url,'feed')
     if checked != url:
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
-    # HTTP redirects are never allowed to escape the public feed origin.
+    # A GET eagerly buffers the ENTIRE response before _xml_root gets to
+    # enforce the 2 MiB limit. Stream the raw HTTP body under that bound.
+    # Require identity encoding: a compressed 2 MiB body could decompress
+    # into an unbounded XML bomb before iter_bytes() returns its first chunk.
+    # Do not read a redirect body; no new retries or origins.
     try:
         for _ in range(4):
-            response=session.client.get(checked,follow_redirects=False,
-                                        headers={'Accept':'application/atom+xml, application/opensearchdescription+xml'})
-            # httpx.raise_for_status() treats 3xx as failures too: inspect the
-            # redirect first, then validate its destination before the next GET.
-            if response.status_code not in {301,302,303,307,308}:
+            with session.client.stream(
+                'GET',checked,follow_redirects=False,
+                headers={
+                    'Accept':'application/atom+xml, application/opensearchdescription+xml',
+                    'Accept-Encoding':'identity',
+                }
+            ) as response:
+                if response.status_code in {301,302,303,307,308}:
+                    target=_safe_opds_link(
+                        session.opds_feed_url,response.headers.get('location',''),'feed'
+                    )
+                    if not target:
+                        raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
+                    checked=target
+                    continue
                 response.raise_for_status()
-                return _xml_root(response),checked
-            target=_safe_opds_link(session.opds_feed_url,response.headers.get('location',''),'feed')
-            if not target:
-                raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
-            checked=target
+                # Identity response only: httpx decompresses entire chunks
+                # before applying our byte bound otherwise. Do not accept a
+                # server ignoring the explicit Accept-Encoding request.
+                if response.headers.get('content-encoding','').strip().casefold() not in {'','identity'}:
+                    raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+                # httpx.MockTransport and some compatible adapters hand
+                # back a Response built with text=/content=, already fully
+                # buffered *before* our stream context. Preserve those
+                # deterministic fixtures, but still validate their size and
+                # XML; real network responses take the bounded raw-stream path.
+                if response.is_stream_consumed:
+                    if not response.is_closed:
+                        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+                    content=response.content
+                    if type(content) is not bytes or len(content)>OPDS_MAX_FEED_BYTES:
+                        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+                    return _xml_root(content),checked
+                size=0
+                chunks=[]
+                # Content-Length is advisory and may be false or absent.
+                # Always enforce the cap on the bytes read from the stream.
+                for chunk in response.iter_raw(chunk_size=65536):
+                    size+=len(chunk)
+                    if size>OPDS_MAX_FEED_BYTES:
+                        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+                    chunks.append(chunk)
+                return _xml_root(b''.join(chunks)),checked
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
     except httpx.HTTPError as e:
         raise _public_search_error(e) from e
@@ -561,11 +672,22 @@ def _opds_entry_is_book(session, entry, base):
     EPUB alternate links are accepted only if their URL is qualified as a
     same-origin public download. Navigation entries are not books.
     """
+    # An arbitrary "acquisition" rel by itself is not a book. Require
+    # a safe same-origin public fetch route AND a qualified ebook MIME,
+    # so a foreign/private/missing link cannot suppress root navigation or
+    # create a fake public catalogue record. PDF-only acquisitions remain
+    # visible as metadata-only records; this plugin downloads EPUB only.
     return any(
-        '/acquisition' in rel
-        or (rel == 'alternate'
-            and mime.startswith('application/epub+zip')
-            and _safe_opds_link(session.opds_feed_url, raw, 'download'))
+        bool(_safe_opds_link(session.opds_feed_url, raw, 'download'))
+        and (
+            ('/acquisition' in rel
+             and mime.split(';', 1)[0].strip()
+                 in {'application/epub+zip', 'application/pdf',
+                     'application/x-pdf',
+                     'application/x-mobipocket-ebook'})
+            or (rel == 'alternate'
+                and mime.split(';', 1)[0].strip() == 'application/epub+zip')
+        )
         for rel, mime, raw, _ in _opds_links(entry, base)
     )
 
@@ -615,13 +737,19 @@ def _opds_text(elem,tag):
 def _opds_items(session,feed,feed_url):
     items=[]
     for entry in feed.findall(ATOM+'entry'):
+        # OPDS search responses may mix navigational scopes with acquisition
+        # entries. Never publish a subsection as an undownloadable "book".
+        if not _opds_entry_is_book(session,entry,feed_url):
+            continue
         title=_opds_text(entry,ATOM+'title')
         if not title:continue
         entry_id=_opds_text(entry,ATOM+'id')
         if not entry_id:continue
         epub=None; alternate=None; thumbnail=None; formats=set()
         for rel,mime,raw,_ in _opds_links(entry,feed_url):
-            checked=_safe_opds_link(session.opds_feed_url,raw,'download') if mime.startswith('application/epub+zip') else None
+            checked=(_safe_opds_link(session.opds_feed_url,raw,'download')
+                     if mime.split(';',1)[0].strip()=='application/epub+zip'
+                     else None)
             if checked and ('/acquisition' in rel or rel=='alternate'):
                 epub=epub or checked; formats.add('EPUB')
             if rel=='alternate' and ('text/html' in mime or 'atom+xml' in mime):
@@ -697,7 +825,25 @@ def _opds_load_acquisition(session,initial,field,needle):
         has_acquisition=any(
             _opds_entry_is_book(session, entry, actual) for entry in entries
         )
-        if has_acquisition or not entries:
+        if has_acquisition:
+            # COPS can mix direct acquisitions and links to more books.
+            # We only publish the qualified direct books; the unseen
+            # subsections cannot be counted as searched or empty.
+            navigation = any(
+                'atom+xml' in mime and '/acquisition' not in rel
+                and _safe_opds_link(session.opds_feed_url,raw,'feed')
+                for entry in entries
+                if not _opds_entry_is_book(session,entry,actual)
+                for rel,mime,raw,_ in _opds_links(entry,actual)
+            )
+            warning = (
+                'partial_results : livres et sous-catalogues OPDS mélangés ; '
+                'seuls les livres directs sont parcourus'
+            )
+            if navigation and warning not in session.last_search_warnings:
+                session.last_search_warnings.append(warning)
+            return feed,actual
+        if not entries:
             return feed,actual
         links=[]
         for entry in entries:
