@@ -506,10 +506,14 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
             # personal search terms. Neither the result batch nor diagnostics
             # may carry their raw message.
             failure_code = search_failure_code(exc) or "ProviderSearchFailed"
-            if attempt == 0 or len(variants) == 1:
-                terminal_error_code = failure_code
-                terminal_error_message = "Recherche en ligne indisponible"
-                warnings.append(f"{session.descriptor.display_name}: recherche en ligne indisponible")
+            # An earlier variant returning a legitimate empty 200 does not
+            # make a later transport/protocol failure disappear. Record the
+            # terminal outage for the source, even when it is variant N>1,
+            # so the caller can use the same bounded, read-only public
+            # catalogue fallback as for a failure on the first attempt.
+            terminal_error_code = failure_code
+            terminal_error_message = "Recherche en ligne indisponible"
+            warnings.append(f"{session.descriptor.display_name}: recherche en ligne indisponible")
             self.diagnostics.add(
                 "PLUGIN", "search", "error",
                 detail={"provider": session.provider_id, "attempt": attempt + 1, "q_len": len(variant),
