@@ -75,18 +75,19 @@ class PluginsDraftLookupTests(unittest.TestCase):
         self.assertNotIn("private", stderr.getvalue())
 
 
-def test_release_workflow_only_rescues_the_attested_empty_2095_draft():
-    from pathlib import Path
-    workflow = (Path(__file__).resolve().parents[1] /
-                ".github/workflows/plugins-only-release.yml").read_text(encoding="utf-8")
-    assert "--paginate --slurp" in workflow
-    assert '--lookup-draft' in workflow
-    assert '417619783' in workflow
-    assert COMMIT in workflow
-    assert 'git diff --quiet "$draft_sha" "$GITHUB_SHA" --' in workflow
-    assert 'src/cifereca src/plugins' in workflow
-    assert 'gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$draft_id"' in workflow
-    assert 'gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id"' in workflow
-    assert 'gh api "repos/$GITHUB_REPOSITORY/releases/$P0_RELEASE_ID"' in workflow
-    assert '"repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"' not in workflow
-    assert '--generate-notes' not in workflow
+class PluginsOnlyWorkflowRecoveryContracts(unittest.TestCase):
+    def test_release_workflow_only_rescues_the_attested_empty_2095_draft(self):
+        from pathlib import Path
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/plugins-only-release.yml").read_text(encoding="utf-8")
+        assert "--paginate --slurp" in workflow
+        assert '--lookup-draft' in workflow
+        assert '417619783' in workflow
+        assert COMMIT in workflow
+        assert 'git diff --quiet "$draft_sha" "$GITHUB_SHA" --' in workflow
+        assert 'src/cifereca src/plugins' in workflow
+        assert 'gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$draft_id"' in workflow
+        assert 'gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id"' in workflow
+        assert 'gh api "repos/$GITHUB_REPOSITORY/releases/$P0_RELEASE_ID"' in workflow
+        assert '"repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"' not in workflow
+        assert '--generate-notes' not in workflow
