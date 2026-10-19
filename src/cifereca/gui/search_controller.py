@@ -83,6 +83,8 @@ def _build_search_page(self: SearchControllerHost) -> MasterDetailPage:
     page.connect_selected(self._search_selected)
     self._search_generation = getattr(self, "_search_generation", 0) + 1
     self._remote_search_results = []
+    self._online_source_statuses = {}
+    self._online_source_context = None
     return page
 
 
@@ -141,6 +143,11 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     self._search_generation += 1
     generation = self._search_generation
     identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
+    # Never reuse source verdicts across requests, accounts or generations.
+    self._online_source_statuses = {}
+    self._online_source_context = (
+        (state.text, state.field, state.scope, identity_id) if force else None
+    )
     def current():
         if getattr(self, "_closed", False):
             return False
@@ -191,6 +198,16 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
             )
     def deliver_batch(batch):
         if not current(): return False
+        from .search_batch_feedback import public_batch_status
+        # Closed Core status and bounded provider key. The ID is only a
+        # per-request map key; neither ID nor label enters the GUI caption.
+        provider = getattr(batch, "provider_id", None)
+        status = public_batch_status(batch)
+        if (type(provider) is str and 1 <= len(provider) <= 128
+                and status is not None):
+            statuses = self._online_source_statuses
+            if provider in statuses or len(statuses) < 64:
+                statuses[provider] = status
         if batch.results:
             self._remote_search_results = merge_results(self._remote_search_results, list(batch.results))
             self._populate_search(self._remote_search_results, announce=False)
