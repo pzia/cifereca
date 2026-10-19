@@ -95,7 +95,7 @@ _LOCAL_STOPWORDS = frozenset({
 
 
 def _words(value: str) -> list[str]:
-    return re.findall(r"[^\\W_]+", _fold(value))
+    return re.findall(r"[^\W_]+", _fold(value))
 
 
 def _local_query_parts(query: str) -> tuple[list[str], list[str]]:
