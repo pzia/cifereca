@@ -681,36 +681,81 @@ class DetailPanel(Gtk.Box):
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         label.set_selectable(True)
-        is_long = len(text) > 700 or text.count("\n") >= 6
-        if is_long:
-            label.set_lines(6)
-            label.set_ellipsize(Pango.EllipsizeMode.END)
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            box.append(label)
-            toggle = Gtk.Button(label="Lire la suite")
-            toggle.add_css_class("flat")
-            toggle.set_halign(Gtk.Align.START)
+        label.set_hexpand(True)
+        label.set_lines(6)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_hexpand(True)
+        box.append(label)
+        toggle = Gtk.Button(label="Lire la suite")
+        toggle.add_css_class("flat")
+        toggle.set_halign(Gtk.Align.START)
+        toggle.set_visible(False)  # No button or reserved height until Pango attests truncation.
+        box.append(toggle)
+        expanded = {"value": False}
+        watch = {"clock": None, "handler": None, "key": None, "overflow": False}
 
-            expanded = {"value": False}
+        def apply_state():
+            collapsed = watch["overflow"] and not expanded["value"]
+            lines = 6 if collapsed else -1
+            ellipsize = Pango.EllipsizeMode.END if collapsed else Pango.EllipsizeMode.NONE
+            if label.get_lines() != lines:
+                label.set_lines(lines)
+            if label.get_ellipsize() != ellipsize:
+                label.set_ellipsize(ellipsize)
+            if not watch["overflow"] and toggle.has_focus():
+                label.grab_focus()
+            toggle.set_visible(watch["overflow"])
+            toggle.set_label("Réduire" if expanded["value"] else "Lire la suite")
 
-            def toggle_summary(button):
-                expanded["value"] = not expanded["value"]
-                if expanded["value"]:
-                    label.set_lines(-1)
-                    label.set_ellipsize(Pango.EllipsizeMode.NONE)
-                    button.set_label("Réduire")
-                else:
-                    label.set_lines(6)
-                    label.set_ellipsize(Pango.EllipsizeMode.END)
-                    button.set_label("Lire la suite")
+        def measure(_frame_clock=None):
+            if label.get_root() is None:
+                return
+            width = label.get_width()
+            if width <= 0:
+                return
+            context = label.get_pango_context()
+            key = (width, context.get_serial(), label.get_scale_factor())
+            if key == watch["key"]:
+                return
+            watch["key"] = key
+            # Measure the *complete*, unellipsized text at the actual GTK width.
+            # Unlike Gtk.Label.get_layout(), this layout is not limited to six
+            # lines and cannot confuse a long but fully visible summary (#1018).
+            layout = label.create_pango_layout(text)
+            layout.set_wrap(Pango.WrapMode.WORD_CHAR)
+            layout.set_width(width * Pango.SCALE)
+            watch["overflow"] = layout.get_line_count() > 6
+            if not watch["overflow"]:
+                expanded["value"] = False
+            apply_state()
 
-            toggle.connect("clicked", toggle_summary)
-            box.append(toggle)
-            group.add(box)
-        else:
-            group.add(label)
+        def mapped(_label):
+            clock = label.get_frame_clock()
+            if clock is not None and watch["handler"] is None:
+                watch["clock"] = clock
+                # GTK4 has no "notify::width": observe only painted frames
+                # (not a continuously running tick), including resize and font
+                # changes, then compare width + Pango context serial.
+                watch["handler"] = clock.connect("after-paint", measure)
+                measure()
+
+        def unmapped(_label):
+            if watch["clock"] is not None and watch["handler"] is not None:
+                watch["clock"].disconnect(watch["handler"])
+            watch["clock"] = None
+            watch["handler"] = None
+            watch["key"] = None
+
+        def toggle_summary(_button):
+            expanded["value"] = not expanded["value"]
+            apply_state()
+
+        toggle.connect("clicked", toggle_summary)
+        label.connect("map", mapped)
+        label.connect("unmap", unmapped)
+        group.add(box)
         self._append_content(group)
-
 
     def show_item_detail(self, item: SearchResult, detail: ItemDetail) -> None:
         content_type = self.window.service.content_type_for(item)

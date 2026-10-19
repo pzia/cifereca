@@ -169,13 +169,18 @@ def test_unknown_file_format_promotes_support_to_essential_without_duplication()
 def test_long_summaries_are_collapsible_but_remain_selectable():
     source = ast.unparse(_method("DetailPanel", "_show_description"))
     assert "set_selectable(True)" in source
-    assert "len(text) > 700" in source
-    assert "text.count('\\n') >= 6" in source
+    assert "len(text) > 700" not in source
+    assert "text.count(" not in source
+    assert "create_pango_layout(text)" in source
+    assert "layout.get_line_count() > 6" in source
+    assert "get_width()" in source
     assert "set_lines(6)" in source
     assert "Pango.EllipsizeMode.END" in source
     assert "'Lire la suite'" in source
     assert "'Réduire'" in source
-    assert "set_lines(-1)" in source
+    # Expanded/collapsed lines are now selected by the Pango overflow state.
+    assert "lines = 6 if collapsed else -1" in source
+    assert "label.set_lines(lines)" in source
     assert "Pango.EllipsizeMode.NONE" in source
 
 
