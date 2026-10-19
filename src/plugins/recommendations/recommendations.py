@@ -22,7 +22,7 @@ from cifereca.plugin_api import (
 )
 from recommendation_llm import explain_reasons
 
-from recommendation_engine import RankedCandidate, candidate_key, get_field, identifier_values, normalize
+from recommendation_engine import CatalogNoticeVariant, RankedCandidate, candidate_key, get_field, identifier_values, normalize
 from recommendation_service import LibrarySnapshotCache, RecommendationPartial, RecommendationResult, compute_recommendations
 from reference_recommendation import compute_reference_recommendations
 
@@ -307,10 +307,15 @@ def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
     merged title or unattributed ISBN never becomes an actionable source.
     """
     selections: list[str] = []
-    for notice in tuple(notices or ())[:64]:
-        if not getattr(notice, "has_source_coordinates", False):
+    # A restored/corrupted ranking may contain an arbitrary object with a
+    # fabricated has_source_coordinates property. It cannot attest an edition.
+    # The engine produces only immutable CatalogNoticeVariant records.
+    if type(notices) not in (tuple, list):
+        return ()
+    for notice in notices[:64]:
+        if type(notice) is not CatalogNoticeVariant or not notice.has_source_coordinates:
             continue
-        isbn = getattr(notice, "isbn", "")
+        isbn = notice.isbn
         if type(isbn) is not str or not re.fullmatch(r"97[89][0-9]{10}", isbn):
             continue
         if sum(
@@ -1580,10 +1585,15 @@ class UxRecommendationsView:
         # Ranks may aggregate editions and accounts from several providers.
         # Show only accountable, originally observed variants. Never display
         # credential IDs, private record IDs or infer borrowing availability.
-        variants = tuple(getattr(ranked, "notices", ()) or ())
+        raw_variants = getattr(ranked, "notices", ())
+        variants = (
+            tuple(raw_variants[:64])
+            if type(raw_variants) in (tuple, list) else ()
+        )
         exact_variants = [
             variant for variant in variants[:16]
-            if getattr(variant, "has_source_coordinates", False)
+            if (type(variant) is CatalogNoticeVariant
+                and variant.has_source_coordinates)
         ]
         if exact_variants:
             edition_fields = []
