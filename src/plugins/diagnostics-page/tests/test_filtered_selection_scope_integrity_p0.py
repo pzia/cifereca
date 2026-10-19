@@ -6,10 +6,29 @@ provider logs, or external requests. The selection is always fail-closed.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 
 from diagnostics_selection import collect_filtered_selection
+
+
+@pytest.fixture(autouse=True)
+def _fixed_selection_clock(monkeypatch):
+    """#2140: test relative periods against one frozen date, not wall time.
+
+    Fixtures use 2026-10-18. Without this clock, their default 'day'
+    selection fails as soon as the CI date rolls to October 19.
+    Only the selection module's clock is frozen; production code is unchanged.
+    """
+    import diagnostics_selection
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 18, 15, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(diagnostics_selection, "datetime", FixedDateTime)
 
 
 def event(number, *, severity="error", source="app_log", module="cifereca.sync",
