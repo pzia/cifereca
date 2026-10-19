@@ -416,11 +416,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     status=source_outcomes.get(self.sync_source_id(account), "failed"),
                     attempted_at=attempted_at,
                 )
-            except Exception as sync_state_exc:
-                logger.warning(
-                    "TRACE sync source projection failed provider=%s reason=%s",
-                    account.provider_id, type(sync_state_exc).__name__,
-                )
+            except Exception:
+                # A source's provider ID and exception class are not safe
+                # diagnostic strings. The persisted outcome remains failed.
+                logger.warning("TRACE sync source projection failed code=source_state_projection_failed")
         emit("identity_end", **summary)
 
     # Personal store catalog mirroring is INVENTORY ONLY (#1862). Do not
@@ -464,12 +463,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 else "blocked" if blocked
                 else "inventory_only"
             )
-    except Exception as exc:
-        # A provider exception may contain a signed ACSM URL or bearer cookie.
-        # The error type and phase are sufficient to explain the failure.
+    except Exception:
+        # Even an exception *class name* can be supplied by a plugin. Only
+        # the closed phase code belongs in an exportable TRACE.
         catalog_mirror["status"] = "failed"
-        logger.warning("TRACE catalog mirror opening error type=%s",
-                       type(exc).__name__)
+        logger.warning("TRACE catalog mirror opening error code=catalog_mirror_failed")
     emit("catalog_mirror", result=catalog_mirror)
 
     # Inventory/rights above always remain independent of local acquisition.
@@ -602,10 +600,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             "scheduled_kobo": kobo_decision["scheduled_kobo"],
             "checked_at": int(time.time()),
         }, sort_keys=True))
-    except Exception as exc:
-        # A diagnostic breadcrumb must never prevent loans/sources syncing.
-        logger.warning("TRACE kobo backup decision persistence error kind=%s",
-                       type(exc).__name__)
+    except Exception:
+        # Optional persistence must neither fail the opening nor reveal a
+        # filesystem, plugin or database exception class in TRACE.
+        logger.warning("TRACE kobo backup decision persistence error code=decision_save_failed")
     self.diagnostics.add(
         "KOBO", "automatic backup decision",
         "warning" if kobo_decision["status"] in ("partial", "error") else "ok",
@@ -632,8 +630,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
 def _record_action(self, identity_id: str | None, action_type: str, outcome: str, *, provider_id: str='', plugin_id: str='', facts: Mapping[str, Any] | None=None) -> None:
     try:
         self.storage.action_event_put(identity_id=identity_id, action_type=action_type, outcome=outcome, provider_id=provider_id, plugin_id=plugin_id, facts=facts)
-    except Exception as exc:
-        self.diagnostics.add("STATISTICS", "action event", "error", detail={"action": action_type, "error": type(exc).__name__})
+    except Exception:
+        # Never reflect an action label or a SQLite exception from an
+        # optional statistic into the shareable diagnostic feed.
+        self.diagnostics.add("STATISTICS", "action event", "error", detail={"code": "action_event_failed"})
 
 
 def _record_loan_statistics(self, account, rows, *, from_cache=False):

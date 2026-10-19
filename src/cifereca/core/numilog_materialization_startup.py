@@ -157,11 +157,48 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             # The private catalogue can contain hundreds of purchases.
             # Bound memory without blocking ordinary 300+ book libraries.
             if (type(raw) not in {list, tuple} or len(raw) > 2048
-                    or any(type(row) is not SearchResult for row in raw)):
-                # A partial/hostile provider response wrapped in a list is
-                # not proof of a complete authenticated purchase inventory.
-                # Do not silently treat malformed rows as an empty library
-                # and finalize a false successful startup receipt.
+                    or any(type(row) is not SearchResult for row in raw)
+                    or any(
+                        type(row.source_provider) is not str
+                        or row.source_provider != "numilog"
+                        or type(row.source_credential) is not str
+                        or row.source_credential != account.credential_id
+                        or type(row.source_collection) is not str
+                        or row.source_collection != "library"
+                        or type(row.scenario) is not str
+                        or row.scenario != "NUMILOG_LIBRARY"
+                        for row in raw
+                    )):
+                # A typed result attributed to another connection or to the
+                # public catalogue cannot prove this authenticated account's
+                # library. Never mistake a mixed/foreign manifest for an empty
+                # successful backup, mirror its rights or acquire its ACSM.
+                trace.fail("manifest_invalid")
+                failures += 1
+                continue
+            # Before any owned-rights write, require a complete and uniquely
+            # scoped identifier for every provider-advertised downloadable
+            # purchase. The real Numilog adapter deduplicates its own pages.
+            # Silently skipping a malformed or duplicated purchase would
+            # produce a false "complete / 0 attempted" initial backup.
+            count = Counter(
+                row.record_id for row in raw if type(row.record_id) is str
+            )
+            if (any(
+                type(row.owned) is not bool
+                or type(row.downloadable) is not bool
+                or (
+                    row.owned is True and row.downloadable is True
+                    and (
+                        type(row.id) is not str
+                        or type(row.record_id) is not str
+                        or row.id != row.record_id
+                        or not _item_id(row.record_id, account.credential_id)
+                        or count[row.record_id] != 1
+                    )
+                )
+                for row in raw
+            )):
                 trace.fail("manifest_invalid")
                 failures += 1
                 continue
@@ -197,11 +234,8 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
                 trace.fail("consent_revoked")
                 failures += 1
                 continue
-            # Duplicate editions on a private provider page are ambiguous.
-            count = Counter(
-                row.record_id for row in raw
-                if type(row) is SearchResult and type(row.record_id) is str
-            )
+            # The checked manifest snapshot already has bounded, typed IDs
+            # and duplicate counts; do not re-evaluate them after mirroring.
             candidates = [
                 row for row in raw
                 if type(row) is SearchResult

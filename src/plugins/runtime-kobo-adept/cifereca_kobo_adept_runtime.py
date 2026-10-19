@@ -9,6 +9,7 @@ from datetime import date
 import shutil
 import subprocess
 import time
+import unicodedata
 
 from cifereca_runtime_diagnostics import safe_message, output_bytes, operation_family, stderr_summary
 from cifereca.plugin_api import (
@@ -366,12 +367,24 @@ class KoboAdeptRuntime:
 
     @staticmethod
     def _return_binding(payload):
-        metadata = payload.get('metadata') or {}
+        metadata = payload.get('metadata')
         # DrmMutationRequest.loan_id can be a PROVIDER id. Never use it as ADEPT id.
-        loan = str(metadata.get('adept_loan_id') or '').strip()
-        profile = str(metadata.get('adept_profile_name') or '').strip()
-        if not loan or not profile or loan.startswith('-') or profile.startswith('-'):
-            raise AttentionRequired('Loan ID ADEPT et nom du profil de fulfillment requis.',code='adept_return_binding_required')
+        # Never call str() or silently strip untrusted identity references:
+        # a forged object/number or a control character must not reach argv.
+        loan = metadata.get('adept_loan_id') if type(metadata) is dict else None
+        profile = metadata.get('adept_profile_name') if type(metadata) is dict else None
+        if any(
+            type(value) is not str
+            or not 1 <= len(value) <= 256
+            or value != value.strip()
+            or value.startswith('-')
+            or any(unicodedata.category(char) in {'Cc', 'Cf', 'Cs'} for char in value)
+            for value in (loan, profile)
+        ):
+            raise AttentionRequired(
+                'Loan ID ADEPT et nom du profil de fulfillment requis.',
+                code='adept_return_binding_required',
+            )
         return loan, profile
 
     @staticmethod
@@ -424,11 +437,14 @@ class KoboAdeptRuntime:
             try:
                 inventory = self.loans(name)
                 matches = [row for row in inventory['loans'] if row['id'] == loan]
-            except Exception as exc:
+            except Exception:
+                # The vendor's exception may embed a signed URL, license XML,
+                # profile or Adobe credentials. Do not chain its traceback
+                # into a user-visible failure or diagnostic record.
                 raise KoboAdeptError(
                     'Commande de restitution confirmée, mais inventaire ADEPT illisible. '
                     'Vérifiez le prêt avant toute nouvelle restitution ; le fichier est conservé.',
-                    code='adept_return_verification_unavailable', retryable=False) from exc
+                    code='adept_return_verification_unavailable', retryable=False) from None
             exact=len(matches)==1
             returned=matches[0].get('returned') if exact else None
             token_present=matches[0].get('token_present') if exact else None
@@ -446,7 +462,7 @@ class KoboAdeptRuntime:
             # Codes originate from structured exceptions, never the raw message.
             code = getattr(exc, 'code', 'adept_return_failed')
             safe_codes = {'adept_return_verification_unavailable', 'adept_return_not_confirmed', 'adept_return_binding_required', 'adept_loan_return_unsupported', 'kobo_adept_invalid_response', 'kobo_adept_missing', 'kobo_adept_timeout', 'kobo_adept_launch_error', 'kobo_adept_invalid_json', 'kobo_adept_invalid_utf8', 'kobo_adept_failed'}
-            code = code if code in safe_codes else 'adept_return_failed'
+            code = code if type(code) is str and code in safe_codes else 'adept_return_failed'
             phase('failed', failed_phase=failed_phase, error_code=code[:120])
             logger.warning('ADEPT return trace=%s failed phase=%s code=%s', trace,failed_phase, code[:120])
             if self._return_diagnostic['cli_requested']:

@@ -9,11 +9,11 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
-from urllib.parse import urlsplit
 import unicodedata
 
 from cifereca.plugin_api import ProviderCapabilityError
 from cifereca_numilog_public import PublicSearchPage, _query, PublicSearchParseError
+from cifereca_numilog_html import public_book_url
 
 _PROOF = {
     "title": ("title", "a.TitleBook"),
@@ -57,6 +57,17 @@ def _validate_page(page):
             or type(page.total_results) is not int or page.total_results < len(page.items)
             or type(page.complete) is not bool):
         raise ProviderCapabilityError(error)
+    # A page-only filter can report an exhaustive negative only when the
+    # underlying public page is demonstrably complete. A caller/cache may
+    # mutate a frozen page via dataclasses.replace(); trusting complete=True
+    # independently of total, page number and navigation would turn an
+    # arbitrary subset into a false claim of no further catalogue matches.
+    if page.complete and (
+        page.page_index != 0
+        or page.total_results != len(page.items)
+        or page.next_url is not None
+    ):
+        raise ProviderCapabilityError(error)
     source_url = None
     seen_ids = set()
     for row in page.items:
@@ -89,7 +100,8 @@ def _validate_page(page):
         if (type(product_url) is not str or type(product_id) is not str
                 or not product_id.isascii() or not product_id.isdigit()
                 or not 1 <= len(product_id) <= 12
-                or urlsplit(product_url).path.split("/")[1:2] != [product_id]
+                or public_book_url(product_url) != product_url
+                or product_url.split("/")[3:4] != [product_id]
                 or getattr(row, "record_id", None) != "numilog:public:" + product_id
                 or row.record_id in seen_ids):
             raise ProviderCapabilityError(error)

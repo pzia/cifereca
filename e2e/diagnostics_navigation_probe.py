@@ -1601,15 +1601,35 @@ def main() -> int:
             if first_row is not None:
                 source_rows.append(first_row)
 
-        def in_first_view(widget):
+        def first_view_geometry(widget):
+            # Count full allocation separately from a one-pixel intersection.
+            # All measurements are numeric/boolean aggregates; never record
+            # widget titles, account IDs, text, private paths or messages.
             ok, bounds = widget.compute_bounds(scroll)
-            return bool(
-                ok and widget.get_mapped()
-                and bounds.get_y() < scroll.get_height()
-                and bounds.get_y() + bounds.get_height() > 0
-                and bounds.get_x() < scroll.get_width()
-                and bounds.get_x() + bounds.get_width() > 0
+            if not ok or not widget.get_mapped():
+                return {"intersects": False, "fully_visible": False,
+                        "clipped_horizontally": False}
+            x, y = float(bounds.get_x()), float(bounds.get_y())
+            width, height = float(bounds.get_width()), float(bounds.get_height())
+            view_width, view_height = float(scroll.get_width()), float(scroll.get_height())
+            intersects = bool(
+                width > 0 and height > 0 and x < view_width
+                and x + width > 0 and y < view_height and y + height > 0
             )
+            return {
+                "intersects": intersects,
+                "fully_visible": bool(
+                    intersects and x >= 0 and y >= 0
+                    and x + width <= view_width + 0.5
+                    and y + height <= view_height + 0.5
+                ),
+                "clipped_horizontally": bool(
+                    intersects and (x < 0 or x + width > view_width + 0.5)
+                ),
+            }
+
+        def in_first_view(widget):
+            return first_view_geometry(widget)["intersects"]
 
         first_actions = []
         all_actions = []
@@ -1651,6 +1671,31 @@ def main() -> int:
                 "visible_action_buttons": sum(
                     in_first_view(button) for button in all_actions
                 ),
+                # UX P0 #2141: full visibility/activation is a stronger
+                # descriptive signal than a one-pixel viewport intersection.
+                # It still does not prove accessible labels or click success.
+                "fully_visible_source_status_rows": sum(
+                    first_view_geometry(row)["fully_visible"] for row in source_rows
+                ),
+                "fully_visible_primary_source_actions": sum(
+                    first_view_geometry(button)["fully_visible"]
+                    for button in first_actions
+                ),
+                "fully_visible_enabled_primary_source_actions": sum(
+                    first_view_geometry(button)["fully_visible"] and button.get_sensitive()
+                    for button in first_actions
+                ),
+                "fully_visible_action_buttons": sum(
+                    first_view_geometry(button)["fully_visible"]
+                    for button in all_actions
+                ),
+                "horizontally_clipped_primary_source_actions": sum(
+                    first_view_geometry(button)["clipped_horizontally"]
+                    for button in first_actions
+                ),
+                "global_action_fully_visible": first_view_geometry(
+                    w._sync_all_button
+                )["fully_visible"],
                 "global_action_visible": in_first_view(w._sync_all_button),
                 "scroll_content_height": round(total_height, 1),
                 "scroll_extent_viewports": round(

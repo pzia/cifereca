@@ -55,6 +55,22 @@ def _public_timestamp(value) -> str | None:
     return value if 2000 <= parsed.year <= 2100 and parsed.utcoffset() is not None else None
 
 
+def provider_absence_attested(row: dict) -> bool:
+    """A durable status alone is not proof of a fresh digital-loan inventory.
+
+    Request acceptance does not imply success; a crash-recovered POST may be
+    confirmed by absence even when the HTTP acknowledgement was never saved.
+    Refuse contradictory or corrupted checkpoints without coercing any field.
+    """
+    return (
+        type(row.get("status")) is str
+        and row["status"] == "provider_return_confirmed"
+        and type(row.get("verification")) is str
+        and row["verification"] == "provider_absent"
+        and _public_timestamp(row.get("checked_at")) is not None
+    )
+
+
 def public_return_state(row: dict) -> dict:
     raw_status = row.get("status")
     status = (
@@ -72,6 +88,11 @@ def public_return_state(row: dict) -> dict:
             and raw_verification == ""
         ) else "unavailable"
     )
+    if status == "provider_return_confirmed" and not provider_absence_attested(row):
+        # A mismatched verification code or missing checked_at is not proof.
+        # Keep the original ledger byte-for-byte; only the read projection
+        # becomes verification-required instead of declaring a loan returned.
+        status, verification = "verification_unavailable", "unavailable"
     return {
         "status": status,
         "request_accepted": row.get("request_accepted") is True,

@@ -100,4 +100,4 @@ def test_diagnostics_broker_aggregates_and_redacts_plugin_checks():
 
     failed = next(row for row in rows if row.component == "diagnostics.fail")
     assert failed.status == "error"
-    assert failed.detail == {"error_type": "RuntimeError"}
+    assert failed.detail == {"code": "diagnostic_check_failed"}
