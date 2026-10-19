@@ -4,6 +4,7 @@ from .core import acsm_staging, loan_failure_evidence, adept_acquisition_return
 from .core import adept_artifact_publication
 from .core import loan_acquisition_admission, loan_local_preparation
 from .core import loan_provider_delivery
+from .core import loan_adept_profile_guard
 from .core import manual_acsm_import
 from .core import provider_loan_return
 from .core import return_adept_orchestrator
@@ -2780,74 +2781,16 @@ class LibraryService:
             if acquisition.kind == "acsm" and acquisition.acsm_path is not None:
                 retained_acsm = acquisition.acsm_path
                 failure_executor = "kobo-adept"
-                # Check the pinned borrower grant again immediately before ADEPT:
-                # provider staging can take time, and a grant may be revoked.
-                adept_borrower_identity_id = identity.identity_id
-                borrower_code = None
-                if str(loan.source_provider).lower() == "paris":
-                    adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
-                        loan, connection_identity_id=identity.identity_id,
-                    )
-                if borrower_code:
-                    code = borrower_code
-                    self.storage.acquisition_put({
-                        **ledger_base, "status": "attention_required",
-                        "strategy": "loan_auto", "executor": "kobo-adept",
-                        "attention_code": code,
-                        "metadata": {**previous_meta, "provider_loan_id": loan.id,
-                                     "acsm_staging_path": str(retained_acsm)},
-                    })
-                    _TRACE_LOG.warning(
-                        "TRACE download loan_auto blocked reason=ambiguous_borrower_account loan_ref=%s",
-                        trace_ref,
-                    )
-                    return {
-                        "status": "attention_required", "loan_id": loan.id,
-                        "code": code, "retry": "explicit_only",
-                    }
-                try:
-                    profile_name, profile_source = self.resolve_adept_profile_for_identity(adept_borrower_identity_id)
-                except AdeptProfileResolutionError as exc:
-                    self.storage.acquisition_put({
-                        **ledger_base, "status": "attention_required", "strategy": "loan_auto", "executor": "kobo-adept",
-                        "attention_code": exc.code, "error_message": str(exc),
-                        "metadata": {**previous_meta, "provider_loan_id": loan.id,
-                                     "acsm_staging_path": str(retained_acsm)},
-                    })
-                    _TRACE_LOG.info(
-                        "TRACE download acsm cleanup loan_ref=%s action=keep reason=profile_unresolved",
-                        trace_ref,
-                    )
-                    return {"status": "attention_required", "loan_id": loan.id, "code": exc.code, "error": str(exc)}
-                _TRACE_LOG.info(
-                    "TRACE download adept profile-resolved loan_ref=%s",
-                    trace_ref,
+                preflight = loan_adept_profile_guard.check(
+                    self, loan, identity=identity, ledger_base=ledger_base,
+                    previous_meta=previous_meta, retained_acsm=retained_acsm,
+                    trace_ref=trace_ref,
+                    AdeptProfileResolutionError=AdeptProfileResolutionError,
+                    adept_acsm_plan=adept_acsm_plan, _TRACE_LOG=_TRACE_LOG,
                 )
-                # 0.13.3+ distinguishes a reader-backed profile from one that
-                # can actually execute ACSM/libgourou operations. Only block
-                # when Adept explicitly publishes a negative readiness signal;
-                # older contracts that omit it remain compatible.
-                try:
-                    profile_rows = self.kobo_profiles()
-                except Exception:
-                    profile_rows = []
-                profile_row = self._adept_profile_row(profile_name, profile_rows)
-                if profile_row:
-                    if adept_acsm_plan.profile_is_explicitly_acsm_unready(profile_row):
-                        code = "adept_profile_acsm_not_ready"
-                        message = "Le profil Kobo-Adept lié à cette identité n'est pas prêt pour les acquisitions ACSM"
-                        self.storage.acquisition_put({
-                            **ledger_base, "status": "attention_required", "strategy": "loan_auto", "executor": "kobo-adept",
-                            "attention_code": code, "error_message": message,
-                            "metadata": {**previous_meta, "provider_loan_id": loan.id,
-                                         "acsm_staging_path": str(retained_acsm),
-                                         "adept_attempt_profile": profile_name},
-                        })
-                        _TRACE_LOG.info(
-                            "TRACE download acsm cleanup loan_ref=%s action=keep reason=profile_not_ready",
-                            trace_ref,
-                        )
-                        return {"status": "attention_required", "loan_id": loan.id, "code": code, "error": message}
+                if isinstance(preflight, dict):
+                    return preflight
+                adept_borrower_identity_id, profile_name = preflight
 
                 acsm_format, format_source, suffix = adept_acsm_plan.select_acsm_format(
                     detect_acsm_format(acquisition.acsm_path),
