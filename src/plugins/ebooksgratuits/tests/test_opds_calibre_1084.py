@@ -343,3 +343,21 @@ def test_epub_transport_disables_redirects_for_opds_items(tmp_path):
         assert transport.sources[0]["expected_format"]=="epub"
     finally:
         session.close()
+
+
+def test_multiword_opensearch_preserves_encoded_spaces():
+    calls=[]
+    def handle(req):
+        calls.append(str(req.url))
+        return route(req)
+    session=make_session(handle)
+    try:
+        assert session.search("Les Misérables", field="all")
+        assert "q=Les%20Mis%C3%A9rables" in calls[-1]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("encoded", ["%0A", "%0D", "%09", "%00", "%E2%80%AE"])
+def test_opds_query_encoded_control_characters_rejected(encoded):
+    assert _safe_opds_link(FEED, "/index.php/feed/search?q=x"+encoded+"y", "feed") is None
