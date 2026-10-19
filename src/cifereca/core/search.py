@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unicodedata
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -84,7 +85,90 @@ def _field_values(row: Mapping[str, Any], field: str) -> list[str]:
     return values
 
 
+# Common French grammatical words should not hide a book whose meaningful
+# terms occur in different attested fields. An all-stopword query still uses
+# its original tokens; otherwise "du" would match the entire catalogue.
+_LOCAL_STOPWORDS = frozenset({
+    "a", "au", "aux", "d", "de", "des", "du", "en", "et", "l", "la",
+    "le", "les", "un", "une",
+})
+
+
+def _words(value: str) -> list[str]:
+    return re.findall(r"[^\W_]+", _fold(value))
+
+
+def _local_query_parts(query: str) -> tuple[list[str], list[str]]:
+    # A quoted expression remains a contiguous, strict phrase within ONE
+    # bibliographic field. It is never silently relaxed by stop-word removal.
+    phrases = [" ".join(_words(text)) for text in re.findall(r'"([^"]+)"', query)]
+    remainder = re.sub(r'"[^"]+"', " ", query)
+    all_terms = _words(remainder)
+    terms = [term for term in all_terms if term not in _LOCAL_STOPWORDS]
+    return terms or (all_terms if not phrases else []), [p for p in phrases if p]
+
+
+def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tuple[str, ...]]:
+    """Return a local, network-free relevance score and attested match fields.
+
+    (0, ()) means no match. A result can match across title, awards, subjects
+    and an already indexed summary, but never searches free-form credential,
+    path, or token metadata. No fuzzy semantic/LLM claim is made.
+    """
+    if not isinstance(row, Mapping) or not isinstance(query, str):
+        return 0, ()
+    terms, phrases = _local_query_parts(query)
+    if not terms and not phrases:
+        return 0, ()
+    meta = _metadata(row)
+    search = meta.get("search_result")
+    search = search if isinstance(search, Mapping) else {}
+    groups = (
+        ("title", 100, _values(row.get("title")) + _values(search.get("title"))
+         + _bundle_member_values(row, "title")),
+        ("series", 80, _values(meta.get("series")) + _values(search.get("series"))
+         + _bundle_member_values(row, "series")),
+        ("collection", 75, _values(meta.get("collection")) + _values(search.get("collection"))
+         + _bundle_member_values(row, "collection")),
+        ("author", 70, _values(row.get("author")) + _values(search.get("author"))
+         + _bundle_member_values(row, "author")),
+        ("subject", 50, _values(meta.get("subjects")) + _values(meta.get("subject"))
+         + _values(meta.get("themes")) + _values(meta.get("keywords"))
+         + _values(search.get("subjects")) + _bundle_member_values(row, "subject")),
+        ("award", 45, _values(meta.get("awards")) + _values(meta.get("prizes"))
+         + _values(meta.get("literary_prizes")) + _values(search.get("awards"))),
+        ("description", 30, _values(row.get("description"))
+         + _values(meta.get("description")) + _values(meta.get("summary"))
+         + _values(meta.get("synopsis")) + _values(search.get("description"))),
+        ("publisher", 20, _values(row.get("publisher")) + _values(meta.get("publisher"))
+         + _values(search.get("publisher"))),
+        ("identifier", 10, _values(row.get("item_id")) + _values(row.get("isbn"))
+         + _values(meta.get("isbn")) + _values(meta.get("isbns"))),
+        ("language", 5, _values(meta.get("languages")) + _values(meta.get("language"))),
+    )
+    scored = [(name, weight, tuple(" ".join(_words(value)) for value in values
+                                     if type(value) is str and value))
+              for name, weight, values in groups]
+    total = 0
+    matched_fields: list[str] = []
+    for token in [*terms, *phrases]:
+        # A phrase must occur within one value; a word may match a value
+        # in a different field from the previous word.
+        matches = [(weight, name) for name, weight, values in scored
+                   if any(token in value for value in values)]
+        if not matches:
+            return 0, ()
+        weight, name = max(matches)
+        total += weight
+        if name not in matched_fields:
+            matched_fields.append(name)
+    return total, tuple(matched_fields)
+
+
 def _matches_query(row: Mapping[str, Any], query: str, field: str) -> bool:
+    # Explicit Author/Title/ISBN/... keep their old strict field semantics.
+    if str(field or "all").casefold() == "all":
+        return local_search_evidence(row, query)[0] > 0 if query.strip() else True
     tokens = [token for token in _fold(query).split() if token]
     if not tokens:
         return True
@@ -215,6 +299,8 @@ def filter_loaded_results(
     language_set = {tag for value in (languages or ()) if (tag := normalize_language_tag(value))}
     wanted_scope = str(scope or "all").casefold()
     result: list[dict[str, Any]] = []
+    scored_rows: list[tuple[int, dict[str, Any]]] = []
+    rank_local = bool(query and str(field or "all").casefold() == "all")
     for raw in rows:
         row = dict(raw)
         provider = str(row.get("provider_id") or row.get("source_provider") or "").casefold()
@@ -229,9 +315,19 @@ def filter_loaded_results(
         medium = support_kind(row)
         if wanted_scope in {"physical", "digital", "unknown"} and medium != wanted_scope:
             continue
-        if query and not _matches_query(row, query, field):
-            continue
-        result.append(row)
+        if rank_local:
+            score, _fields = local_search_evidence(row, query)
+            if not score:
+                continue
+            scored_rows.append((score, row))
+        else:
+            if query and not _matches_query(row, query, field):
+                continue
+            result.append(row)
+    # Stable sort: equal-strength matches retain their existing source order.
+    if rank_local:
+        scored_rows.sort(key=lambda item: item[0], reverse=True)
+        return [row for _score, row in scored_rows]
     return result
 
 
@@ -328,4 +424,4 @@ class KnownCatalogSearch:
         )
 
 
-__all__ = ["LocalLibrarySearch", "KnownCatalogSearch", "filter_loaded_results", "available_formats", "project_acquisition_offer_formats", "support_kind"]
+__all__ = ["LocalLibrarySearch", "KnownCatalogSearch", "filter_loaded_results", "local_search_evidence", "available_formats", "project_acquisition_offer_formats", "support_kind"]
