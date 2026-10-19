@@ -18,7 +18,7 @@ import time
 _E2E_DIR = str(Path(__file__).resolve().parent)
 if _E2E_DIR not in sys.path:
     sys.path.insert(0, _E2E_DIR)
-from gtk_layout_critical import gtk_layout_critical_counts, gtk_layout_critical_failure
+from gtk_layout_critical import gtk_layout_critical_counts, gtk_layout_critical_failure, gtk_layout_phase_counts
 
 ROOT = Path(__file__).resolve().parents[1]
 CAPTURE = ROOT / "environnements/openai-chat-debian/capture_app.py"
@@ -451,6 +451,11 @@ def main() -> int:
             # Count only fixed GTK widget classes in memory: no raw warning,
             # widget pointer, path or text is added to CI's structured output.
             gtk_critical = gtk_layout_critical_counts(output, errors)
+            # Per-process stderr phase markers carry closed labels only. This
+            # does not claim which GTK widget generated a native warning.
+            gtk_phases = (gtk_layout_phase_counts(errors)
+                          if scenario.get('runner') in {'gtk-diagnostics-navigation', 'gtk-maintenance'}
+                          else {})
             _write_redacted_log(stdout_path, output, env)
             _write_redacted_log(stderr_path, errors, env)
             report = png.with_suffix(".json")
@@ -503,6 +508,7 @@ def main() -> int:
                 "visual_change_ratio": visual_change_ratio,
                 "assertion_error": assertion_error,
                 "gtk_layout_critical": gtk_critical,
+                **({"gtk_layout_phases": gtk_phases} if gtk_phases else {}),
                 "report": str(report),
                 "screenshot": str(png) if png.exists() else None,
                 "stdout": str(stdout_path),
