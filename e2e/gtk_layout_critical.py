@@ -56,25 +56,30 @@ _PHASE_MARKER = re.compile(
 )
 
 
-def gtk_layout_phase_counts(stderr: str) -> dict[str, dict[str, int]]:
-    """Closed phase-attribution counts; stderr must come from one E2E process.
+def gtk_layout_phase_counts(*streams: str) -> dict[str, dict[str, int]]:
+    """Attribute GTK criticals to reviewed phases in either capture stream.
 
-    This is diagnostic correlation rather than proof of causation or an
-    entitlement to emit arbitrary provider error data. Only two widget
-    families and the exact nine source-reviewed phases can appear.
+    GTK native log routing can differ by runner/runtime: count each stream
+    independently, provided both receive the same *literal* marker set.
+    No raw line, pointer, user data or untrusted phase is emitted.
     """
-    if type(stderr) is not str:
-        return {}
     counts = {key: {"GtkStack": 0, "GtkRevealer": 0} for key in GTK_PHASES_2027}
-    active = None
-    for line in stderr[:_MAX_STREAM].splitlines():
-        marker = _PHASE_MARKER.fullmatch(line.strip())
-        if marker is not None and marker.group("phase") in counts:
-            active = marker.group("phase")
+    for stream in streams:
+        if type(stream) is not str:
             continue
-        if active is None or not _CRITICAL.search(line):
-            continue
-        counts[active]["GtkStack"] += bool(_STACK.search(line))
-        counts[active]["GtkRevealer"] += bool(_REVEALER.search(line))
+        active = None
+        for line in stream[:_MAX_STREAM].splitlines():
+            marker = _PHASE_MARKER.fullmatch(line.strip())
+            if marker is not None and marker.group("phase") in counts:
+                active = marker.group("phase")
+                continue
+            if active is None or not _CRITICAL.search(line):
+                continue
+            counts[active]["GtkStack"] = min(
+                100000, counts[active]["GtkStack"] + bool(_STACK.search(line))
+            )
+            counts[active]["GtkRevealer"] = min(
+                100000, counts[active]["GtkRevealer"] + bool(_REVEALER.search(line))
+            )
     return {key: value for key, value in counts.items()
             if value["GtkStack"] or value["GtkRevealer"]}
