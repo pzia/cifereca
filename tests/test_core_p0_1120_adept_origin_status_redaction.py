@@ -113,3 +113,57 @@ def test_unknown_attention_code_cannot_escape_identity_preflight(tmp_path, monke
         assert paris.posts == 0
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("code,expected", [
+    (PRIVATE, "loan_return_borrower_unproven"),
+    (True, "loan_return_borrower_unproven"),
+    ({"signed": PRIVATE}, "loan_return_borrower_unproven"),
+    ("loan_return_borrower_mismatch", "loan_return_borrower_mismatch"),
+    ("loan_return_source_unavailable", "loan_return_source_unavailable"),
+    ("loan_return_borrower_unproven", "loan_return_borrower_unproven"),
+])
+def test_read_only_loan_verification_has_same_closed_preflight_projection(
+    tmp_path, monkeypatch, code, expected,
+):
+    service, loan, paris = setup(tmp_path)
+    try:
+        def refuse(_loan):
+            raise AttentionRequired(PRIVATE, code=code)
+        monkeypatch.setattr(service, "_return_loan_identity", refuse)
+        outcome = service.verify_loan_return(loan)
+        assert outcome == {
+            "status": "failed", "scope": "adobe_first_paris", "code": expected,
+        }
+        assert "NEVER_ECHO" not in json.dumps(outcome)
+        assert paris.posts == 0 and paris.accounts_read == []
+    finally:
+        service.close()
+
+
+def test_read_only_verification_handles_raising_code_property_without_leaking(
+    tmp_path, monkeypatch,
+):
+    class HostileAttention(AttentionRequired):
+        def __getattribute__(self, name):
+            if name == "code":
+                raise RuntimeError(PRIVATE)
+            return super().__getattribute__(name)
+
+    service, loan, paris = setup(tmp_path)
+    try:
+        monkeypatch.setattr(
+            service, "_return_loan_identity",
+            lambda _loan: (_ for _ in ()).throw(
+                HostileAttention(PRIVATE, code="loan_return_borrower_mismatch"),
+            ),
+        )
+        outcome = service.verify_loan_return(loan)
+        assert outcome == {
+            "status": "failed", "scope": "adobe_first_paris",
+            "code": "loan_return_borrower_unproven",
+        }
+        assert "NEVER_ECHO" not in json.dumps(outcome)
+        assert paris.posts == 0 and paris.accounts_read == []
+    finally:
+        service.close()
