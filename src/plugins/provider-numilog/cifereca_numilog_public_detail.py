@@ -260,6 +260,55 @@ def parse_public_detail_jsonld(html, product_url):
         publisher = publisher.get("name")
     if _valid_text(publisher, 256):
         fields["publisher"] = publisher.strip()
+
+    # Schema.org Book/CreativeWork roles are explicit properties, NOT
+    # interchangeable authors. Accept only named Person/Organization objects;
+    # plain strings or mixed/ambiguous lists do not establish a contributor
+    # identity or role. Roles stay public editorial facts, not owned rights.
+    roles = (
+        ("translator", "translators", frozenset(("Person", "Organization"))),
+        ("illustrator", "illustrators", frozenset(("Person",))),
+        ("contributor", "contributors", frozenset(("Person", "Organization"))),
+    )
+    for source_key, target, eligible_types in roles:
+        observed = node.get(source_key)
+        if type(observed) is dict:
+            observed = [observed]
+        if type(observed) is not list or not 1 <= len(observed) <= 16:
+            continue
+        names = []
+        for contributor in observed:
+            if type(contributor) is not dict:
+                names = []
+                break
+            kind = contributor.get("@type")
+            if (kind is not None
+                    and (type(kind) is not str
+                         or (kind not in eligible_types
+                             and kind not in {"https://schema.org/" + item for item in eligible_types}))):
+                names = []
+                break
+            name = contributor.get("name")
+            if not _valid_text(name, 256):
+                names = []
+                break
+            names.append(name.strip())
+        if names:
+            fields[target] = list(dict.fromkeys(names))
+
+    # Public Book declarations do not identify the purchased file format.
+    # Keep edition/pagination/age as literal, provenance-scoped metadata:
+    # never turn an age label into recommended_age or a format entitlement.
+    for source_key, target, maximum in (
+        ("bookEdition", "public_edition_label", 256),
+        ("typicalAgeRange", "public_age_range_label", 80),
+    ):
+        value = node.get(source_key)
+        if _valid_text(value, maximum):
+            fields[target] = value.strip()
+    pages = node.get("numberOfPages")
+    if type(pages) is int and 1 <= pages <= 20000:
+        fields["public_page_count"] = pages
     from cifereca_numilog_public_identifiers import (
         PublicIdentifierError, extract_public_identifiers,
     )
@@ -343,17 +392,27 @@ def validated_public_jsonld_fields(detail, product_url):
         "title": 512, "description": 16000, "language": 80,
         "published_at": 32, "isbn_edition_unspecified": 32,
         "authors": 32, "publisher": 256,
+        "translators": 16, "illustrators": 16, "contributors": 16,
+        "public_edition_label": 256, "public_age_range_label": 80,
+        "public_page_count": 20000,
     }
     if (not set(fields).issubset(allowed)
             or set(fields) != set(evidence)):
         raise PublicDetailError("public_jsonld_evidence_unverified")
     result, proofs = {}, {}
     for key, value in fields.items():
-        if key == "authors":
-            if (type(value) is not list or not 1 <= len(value) <= 32
-                    or any(not _valid_text(name, 256) for name in value)):
+        if key in {"authors", "translators", "illustrators", "contributors"}:
+            ceiling = 32 if key == "authors" else 16
+            if (type(value) is not list or not 1 <= len(value) <= ceiling
+                    or any(not _valid_text(name, 256) or name != name.strip()
+                           for name in value)
+                    or (key != "authors" and len(set(value)) != len(value))):
                 raise PublicDetailError("public_jsonld_evidence_unverified")
             qualified = list(value)
+        elif key == "public_page_count":
+            if type(value) is not int or not 1 <= value <= allowed[key]:
+                raise PublicDetailError("public_jsonld_evidence_unverified")
+            qualified = value
         elif key == "isbn_edition_unspecified":
             if type(value) is not str or _isbn(value) != value:
                 raise PublicDetailError("public_jsonld_evidence_unverified")
