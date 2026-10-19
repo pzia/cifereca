@@ -492,7 +492,9 @@ def _xml_root(content):
         # Enforce DTD/entity, depth and element budgets during XML parsing.
         # A prior byte-pattern scan alone cannot qualify non-UTF8 XML.
         return ET.fromstring(content,parser=ET.XMLParser(target=_BoundedOPDSTree()))
-    except (ET.ParseError, RecursionError, OverflowError):
+    except (ET.ParseError, RecursionError, OverflowError, ValueError):
+        # Unsupported XML multi-byte encodings are unverified payloads, not
+        # exceptions whose raw parser text should escape into Core/UI.
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed') from None
 
 
@@ -528,6 +530,18 @@ def _opds_fetch(session,url):
                 # server ignoring the explicit Accept-Encoding request.
                 if response.headers.get('content-encoding','').strip().casefold() not in {'','identity'}:
                     raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+                # httpx.MockTransport and some compatible adapters hand
+                # back a Response built with text=/content=, already fully
+                # buffered *before* our stream context. Preserve those
+                # deterministic fixtures, but still validate their size and
+                # XML; real network responses take the bounded raw-stream path.
+                if response.is_stream_consumed:
+                    if not response.is_closed:
+                        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+                    content=response.content
+                    if type(content) is not bytes or len(content)>OPDS_MAX_FEED_BYTES:
+                        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+                    return _xml_root(content),checked
                 size=0
                 chunks=[]
                 # Content-Length is advisory and may be false or absent.
