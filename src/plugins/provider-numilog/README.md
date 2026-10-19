@@ -1,3 +1,23 @@
+## 0.1.72 — rattachement d'identité stable pendant un enrichissement (#1072 P0)
+
+Dans les parcours **explicitement demandés** `enrich_owned_public_listing`,
+`enrich_owned_public_detail` et `enrich_owned_direct_public_detail`,
+le plugin fixe l'identité propriétaire du compte **si le broker public
+`identities` est configuré**, puis la revérifie après la lecture privée
+`Mes Livres`, au retour de la recherche commerciale et au retour de la fiche
+produit. Un compte supprimé/réassigné ou un broker devenu inaccessible
+arrête l'opération avec un **code textuel fixe**, sans publier une ancienne
+notice sous le nouveau propriétaire ni recopier l'exception du broker.
+
+Cette garde ne touche ni le contrat de possession, ni l'autorisation
+d'acquisition ACSM, ni les URL privées. Elle n'ajoute aucune requête HTTP
+au chemin nominal. Les anciens clients autonomes sans broker gardent leur
+contrôle strict `credential_id` + `record_id` + inventaire privé rafraîchi.
+Un changement **après** le dernier contrôle reste du ressort de la
+génération de sélection/identité du CoreUI (aucune transaction d'identité
+n'est prétendue). Tests purement synthétiques :
+`tests/test_numilog_owned_enrichment_identity_race_p0.py`.
+
 ## 0.1.71 — rôles et mentions éditoriales de fiche Numilog (#1072 P0)
 
 Une **fiche publique explicitement demandée**, associée à un produit
