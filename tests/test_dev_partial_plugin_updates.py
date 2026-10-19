@@ -193,6 +193,24 @@ class PartialUpgradeTransactionTests(unittest.TestCase):
         self.assertIsNone(self._version(BETA))
         self.assertIsNone(self._receipt(ALPHA))
 
+    def test_late_partial_receipt_failure_rolls_back_first_written_receipt(self) -> None:
+        write_original = dev._record_partial_install_provenance
+
+        def partially_write(indexed, packages, **kwargs):
+            write_original(indexed, packages[:1], **kwargs)
+            assert self._receipt(ALPHA) is not None
+            raise OSError("failure writing second receipt")
+
+        patches = self._sandbox()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             patch.object(dev, "_record_partial_install_provenance", side_effect=partially_write):
+            with self.assertRaisesRegex(OSError, "second receipt"):
+                dev.apply_snapshot(self.snapshot)
+        self.assertEqual(self._version(ALPHA), "0.9")
+        self.assertIsNone(self._version(BETA))
+        self.assertIsNone(self._receipt(ALPHA))
+        self.assertIsNone(self._receipt(BETA))
+
     def test_untrusted_or_stale_receipt_is_ignored(self) -> None:
         patches = self._sandbox()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
