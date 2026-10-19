@@ -51,8 +51,11 @@ class X11Input:
         ):
             raise RuntimeError("Could not translate X11 surface coordinates.")
         transform_x, transform_y = native.get_surface_transform()
-        x = round(origin_x.value + rect.get_x() + rect.get_width() / 2 - transform_x)
-        y = round(origin_y.value + rect.get_y() + rect.get_height() / 2 - transform_y)
+        # compute_bounds(native) describes the native widget allocation.
+        # Include its render offset inside the X11 surface. Subtracting it
+        # moves small targets outside their hit area on decorated windows.
+        x = round(origin_x.value + rect.get_x() + rect.get_width() / 2 + transform_x)
+        y = round(origin_y.value + rect.get_y() + rect.get_height() / 2 + transform_y)
         return x, y
 
     def click_widget(self, widget) -> dict:
