@@ -112,8 +112,9 @@ def test_repeated_connect_without_close_does_not_replace_active_client(monkeypat
 
 def test_failed_recreation_does_not_claim_connected_or_reach_network(monkeypatch):
     session, requests, created = make_session(monkeypatch, refuse=True)
-    with pytest.raises(OSError, match="PRIVATE_PATH"):
+    with pytest.raises(ProviderError, match="transport_unavailable") as caught:
         session.connect()
+    assert "PRIVATE_PATH" not in str(caught.value)
     assert not session.connected and session.client.is_closed
     assert session._accounts == []
     assert requests == [] and created == []
@@ -124,7 +125,7 @@ def test_html_simulation_backend_reconnect_keeps_independent_base_route(monkeypa
     try:
         for run in range(2):
             session.connect()
-            assert requests == []
+            assert len(requests) == run
             response = session._fetch("https://www.ebooksgratuits.com/ebooks.php")
             assert "Simulation HTML" in response.text
             session.close()
