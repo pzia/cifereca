@@ -235,6 +235,7 @@ def main():
         later(180, changed_profile)
 
     def changed_profile():
+        report["phase_code"] = 21
         view = state["view"]
         assert view.selected_identity_id() == "bob"
         assert view._master._page.store.get_n_items() == 0
@@ -247,7 +248,84 @@ def main():
         state["old_action"].emit("clicked")
         assert len(state["searches"]) == 1
         report["checks"]["disposed_callbacks_inert"] = True
+        # A real deactivation + fresh plugin activation must create a new
+        # GTK detail, not resurrect the old selection or old identity.
+        previous_view = view
+        state["window"].service.current_identity = NS(identity_id="alice")
+        plugin = RecommendationsPlugin().activate(NS(config={}))
+        fresh_widget = plugin.build(_UiHost(state["window"]))
+        plugin._view._start_refresh = lambda: None
+        state["window"].set_content(fresh_widget)
+        state.update(view=plugin._view, plugin=plugin)
+        assert plugin._view is not previous_view
+        later(370, after_reactivation)
+
+    def after_reactivation():
+        report["phase_code"] = 22
+        view = state["view"]
+        assert view.widget.get_mapped()
+        assert view.selected_identity_id() == "alice"
+        assert view._master._page.store.get_n_items() == 0
+        assert view._master._page.selection.get_selected_item() is None
+        # A long but bounded public description exercises the shared
+        # DetailPanel vertical scroller at both actual Xvfb widths.
+        long_notice = "Description publique attestée, sans achat. " * 150
+        reactivated = ranked(
+            "edition-reopened", "Livre Réactivé", "9780306406157", score=90
+        )
+        reactivated.item["description"] = long_notice
+        view._ranked = [reactivated]
+        view._render()
+        assert view._master._page.store.get_n_items() == 1
+        view._master._page.selection.set_selected(0)
+        later(250, after_reactivation_detail)
+
+    def after_reactivation_detail():
+        report["phase_code"] = 23
+        view = state["view"]
+        assert view._master._page.selection.get_selected() == 0
+        assert any(
+            isinstance(widget, Gtk.Label)
+            and widget.get_text() == "Livre Réactivé"
+            for widget in walk(view._master._page.detail)
+        ), "New plugin did not render a fresh detail through shared GTK"
+        assert view.selected_identity_id() == "alice"
+        assert len(state["searches"]) == 1
+        assert not state["plugin"]._view._disposed
+        report["checks"]["reactivation_fresh_detail_and_identity"] = True
+        scrolls = [
+            widget for widget in walk(view._master._page.detail)
+            if isinstance(widget, Gtk.ScrolledWindow)
+        ]
+        scrollable = [
+            widget.get_vadjustment() for widget in scrolls
+            if widget.get_vadjustment() is not None
+            and widget.get_vadjustment().get_upper()
+            > widget.get_vadjustment().get_page_size() + 12
+        ]
+        assert scrollable, "Long shared detail cannot scroll at this GTK width"
+        adjustment = scrollable[0]
+        end = adjustment.get_upper() - adjustment.get_page_size()
+        adjustment.set_value(min(end, 140))
+        assert adjustment.get_value() > 0
+        report["checks"]["detail_scroll_functional"] = True
+        capture("05-reopened-scrolled")
+        # Returning to the list removes the active detail and must not
+        # turn a still-stored old action into a usable callback.
+        view._master._page.selection.set_selected(Gtk.INVALID_LIST_POSITION)
+        later(200, after_return_to_list)
+
+    def after_return_to_list():
+        report["phase_code"] = 24
+        view = state["view"]
+        assert view._master._page.store.get_n_items() == 1
+        assert view._master._page.selection.get_selected_item() is None
+        state["old_action"].emit("clicked")
+        assert len(state["searches"]) == 1
+        report["checks"]["return_to_list_keeps_old_action_inert"] = True
         report["checks"]["no_network_or_acquisition"] = True
+        capture("06-return-to-list")
+        state["plugin"].deactivate()
         report["status"] = "PASS"
         save()
         app.quit()
@@ -297,7 +375,9 @@ def main():
         if state["device"] is not None:
             state["device"].close()
         save()
-    return 0 if report["status"] == "PASS" else 1
+    # Fixed, non-sensitive phase exit codes help diagnose a failing GTK
+    # callback from the privacy-safe CI summary without publishing traceback.
+    return 0 if report["status"] == "PASS" else report.get("phase_code", 1)
 
 
 if __name__ == "__main__":
