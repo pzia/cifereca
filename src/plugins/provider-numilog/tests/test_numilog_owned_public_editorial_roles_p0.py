@@ -146,11 +146,11 @@ def test_same_titled_products_keep_separate_credits_and_identifiers():
     ({"translator": "Nom libre non typé"}, "translators"),
     ({"translator": {"@type": ["Person"], "name": "Malformé"}}, "translators"),
     ({"translator": {"@type": "Book", "name": "Étranger"}}, "translators"),
-    ({"translator": [{"@type": "Person", "name": "Valide"}, {"name": "PRIVATE\\n"}]}, "translators"),
+    ({"translator": [{"@type": "Person", "name": "Valide"}, {"name": "PRIVATE\n"}]}, "translators"),
     ({"illustrator": {"@type": "Organization", "name": "Pas une personne"}}, "illustrators"),
     ({"contributor": [{"name": "Beaucoup"}] * 17}, "contributors"),
-    ({"bookEdition": "Édition\\u202ePRIVATE"}, "public_edition_label"),
-    ({"typicalAgeRange": "PRIVATE\\n12-15"}, "public_age_range_label"),
+    ({"bookEdition": "Édition\u202ePRIVATE"}, "public_edition_label"),
+    ({"typicalAgeRange": "PRIVATE\n12-15"}, "public_age_range_label"),
     ({"numberOfPages": True}, "public_page_count"),
     ({"numberOfPages": 20001}, "public_page_count"),
 ])
@@ -162,11 +162,11 @@ def test_malformed_optional_credits_do_not_pollute_public_or_owned_fields(bad, e
 
 
 @pytest.mark.parametrize("key,bad", [
-    ("translators", ["PRIVATE\\n"]),
+    ("translators", ["PRIVATE\n"]),
     ("illustrators", ["x"] * 17),
     ("contributors", [{"name": "PRIVATE"}]),
     ("translators", ["Duplicata", "Duplicata"]),
-    ("public_edition_label", "PRIVATE\\u202e"),
+    ("public_edition_label", "PRIVATE\u202e"),
     ("public_age_range_label", "x" * 81),
     ("public_page_count", True),
     ("public_page_count", 20001),
