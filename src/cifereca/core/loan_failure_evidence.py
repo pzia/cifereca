@@ -10,17 +10,43 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
+def safe_exit_code(exc: BaseException) -> int | None:
+    """Inspect a provider exception without executing numeric coercions."""
+    try:
+        value = getattr(exc, "exit_code", None)
+    except Exception:
+        return None
+    return value if type(value) is int and -255 <= value <= 255 else None
+
+
+def safe_retryable_flag(exc: BaseException) -> bool:
+    """Only an explicit native boolean can request the historical retry."""
+    try:
+        return getattr(exc, "retryable", False) is True
+    except Exception:
+        return False
+
+
 def process_failure_facts(
     raw: Mapping[str, Any], *, exc: BaseException, candidate: Any, path_type: type[Path],
 ) -> dict[str, Any]:
-    """Keep existing typed process facts and bounded local artifact observations."""
+    """Keep bounded native process facts; never stringify provider values."""
     process = {}
-    for key in ("returncode", "duration_ms", "stdout_bytes", "stderr_bytes"):
-        value = raw.get(key)
-        if isinstance(value, int) and not isinstance(value, bool):
+    limits = (
+        ("returncode", -255, 255),
+        ("duration_ms", 0, 86_400_000),
+        ("stdout_bytes", 0, 2**63 - 1),
+        ("stderr_bytes", 0, 2**63 - 1),
+    )
+    for key, minimum, maximum in limits:
+        try:
+            value = raw.get(key)
+        except Exception:
+            continue
+        if type(value) is int and minimum <= value <= maximum:
             process[key] = value
-    exit_code = getattr(exc, "exit_code", None)
-    if isinstance(exit_code, int):
+    exit_code = safe_exit_code(exc)
+    if exit_code is not None:
         process["returncode"] = exit_code
     if isinstance(candidate, path_type):
         try:
