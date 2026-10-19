@@ -416,11 +416,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     status=source_outcomes.get(self.sync_source_id(account), "failed"),
                     attempted_at=attempted_at,
                 )
-            except Exception as sync_state_exc:
-                logger.warning(
-                    "TRACE sync source projection failed provider=%s reason=%s",
-                    account.provider_id, type(sync_state_exc).__name__,
-                )
+            except Exception:
+                # A source's provider ID and exception class are not safe
+                # diagnostic strings. The persisted outcome remains failed.
+                logger.warning("TRACE sync source projection failed code=source_state_projection_failed")
         emit("identity_end", **summary)
 
     # Personal store catalog mirroring is INVENTORY ONLY (#1862). Do not
@@ -464,12 +463,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 else "blocked" if blocked
                 else "inventory_only"
             )
-    except Exception as exc:
-        # A provider exception may contain a signed ACSM URL or bearer cookie.
-        # The error type and phase are sufficient to explain the failure.
+    except Exception:
+        # Even an exception *class name* can be supplied by a plugin. Only
+        # the closed phase code belongs in an exportable TRACE.
         catalog_mirror["status"] = "failed"
-        logger.warning("TRACE catalog mirror opening error type=%s",
-                       type(exc).__name__)
+        logger.warning("TRACE catalog mirror opening error code=catalog_mirror_failed")
     emit("catalog_mirror", result=catalog_mirror)
 
     # Inventory/rights above always remain independent of local acquisition.
