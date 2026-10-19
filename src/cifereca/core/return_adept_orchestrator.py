@@ -132,10 +132,12 @@ def return_loan_prefer_adept(
             result = self.return_adept_acquisition(acquisition_id)
             if result.get("ok") is not True or result.get("verification") != "confirmed":
                 raise ValueError("ADEPT return not confirmed")
-        except Exception as exc:
+        except Exception:
+            # An ADEPT runtime may supply an exception type containing local
+            # profile/account information. Persist only one closed reason.
             record = self.storage.loan_return_transition(
                 key, op_id, status="failed", verification="adobe_unavailable",
-                adobe_verified=False, error_type=type(exc).__name__,
+                adobe_verified=False, error_type="adept_return_unavailable",
             )
             return public_state(record or {"status": "failed"})
         record = self.storage.loan_return_transition(
