@@ -42,3 +42,39 @@ def gtk_layout_critical_failure(counts: dict[str, int | bool]) -> str | None:
     if counts.get("stream_truncated") is True:
         return "GTK layout P0 #2027 : journal tronqué, absence non attestée"
     return None
+
+
+# Marker values are literal constants emitted only by the reviewed E2E probe.
+# The tool never republishes the underlying GTK log or arbitrary marker text.
+GTK_PHASES_2027 = (
+    "window_start", "window_shown", "sync_desktop",
+    "sync_font_desktop", "sync_narrow", "sync_font_narrow",
+    "sync_restored", "numilog_consent", "done",
+)
+_PHASE_MARKER = re.compile(
+    r"^CIFERECA_E2E_GTK_PHASE:(?P<phase>[a-z_]+)$"
+)
+
+
+def gtk_layout_phase_counts(stderr: str) -> dict[str, dict[str, int]]:
+    """Closed phase-attribution counts; stderr must come from one E2E process.
+
+    This is diagnostic correlation rather than proof of causation or an
+    entitlement to emit arbitrary provider error data. Only two widget
+    families and the exact nine source-reviewed phases can appear.
+    """
+    if type(stderr) is not str:
+        return {}
+    counts = {key: {"GtkStack": 0, "GtkRevealer": 0} for key in GTK_PHASES_2027}
+    active = None
+    for line in stderr[:_MAX_STREAM].splitlines():
+        marker = _PHASE_MARKER.fullmatch(line.strip())
+        if marker is not None and marker.group("phase") in counts:
+            active = marker.group("phase")
+            continue
+        if active is None or not _CRITICAL.search(line):
+            continue
+        counts[active]["GtkStack"] += bool(_STACK.search(line))
+        counts[active]["GtkRevealer"] += bool(_REVEALER.search(line))
+    return {key: value for key, value in counts.items()
+            if value["GtkStack"] or value["GtkRevealer"]}
