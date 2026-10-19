@@ -130,11 +130,6 @@ def main():
         except Exception:
             pass
         save()
-        # Temporary fail-only diagnostic: keep the raw report private in
-        # the runner workspace while publishing only a closed exit phase.
-        # Remove this block before the acceptance/merge SHA. The workflow
-        # intentionally uploads no raw fixture, screenshot or stderr.
-        (out / "screen.json").rename(out / "screen.private-debug.json")
         app.quit()
 
     def later(delay, fn):
@@ -169,7 +164,6 @@ def main():
         device.key("Return", False)
 
     def initial():
-        report["phase_code"] = 11
         view = state["view"]
         assert view.selected_identity_id() == "alice"
         assert isinstance(view._master, PublicBookMasterDetailView)
@@ -186,7 +180,6 @@ def main():
         later(150, selected_a)
 
     def selected_a():
-        report["phase_code"] = 12
         view = state["view"]
         assert view._master._page.selection.get_selected() == 0
         assert any(
@@ -204,7 +197,6 @@ def main():
         later(170, after_action)
 
     def after_action():
-        report["phase_code"] = 13
         view = state["view"]
         assert state["searches"] == [
             ("9780306406157", "isbn", False, "alice")
@@ -214,7 +206,6 @@ def main():
         later(150, selected_b)
 
     def selected_b():
-        report["phase_code"] = 14
         view = state["view"]
         assert any(
             isinstance(widget, Gtk.Label) and widget.get_text() == "Livre B"
@@ -230,7 +221,6 @@ def main():
         later(170, no_match)
 
     def no_match():
-        report["phase_code"] = 15
         view = state["view"]
         assert view._master._page.store.get_n_items() == 0
         assert view._master._page.selection.get_selected_item() is None
@@ -245,7 +235,6 @@ def main():
         later(180, changed_profile)
 
     def changed_profile():
-        report["phase_code"] = 21
         view = state["view"]
         assert view.selected_identity_id() == "bob"
         assert view._master._page.store.get_n_items() == 0
@@ -271,7 +260,6 @@ def main():
         later(370, after_reactivation)
 
     def after_reactivation():
-        report["phase_code"] = 22
         view = state["view"]
         assert view.widget.get_mapped()
         assert view.selected_identity_id() == "alice"
@@ -298,29 +286,23 @@ def main():
         later(250, after_reactivation_detail)
 
     def after_reactivation_detail():
-        report["phase_code"] = 23
         view = state["view"]
         assert view._master._page.selection.get_selected() == 0
-        report["phase_code"] = 231
         assert any(
             isinstance(widget, Gtk.Label)
             and widget.get_text() == "Livre Réactivé"
             for widget in walk(view._master._page.detail)
         ), "New plugin did not render a fresh detail through shared GTK"
-        report["phase_code"] = 232
         assert view.selected_identity_id() == "alice"
         assert len(state["searches"]) == 1
         assert not state["plugin"]._view._disposed
         report["checks"]["reactivation_fresh_detail_and_identity"] = True
-        report["phase_code"] = 233
         # A post-selection Gtk allocation may need an extra frame. Probe
         # the actual shared body scroller after layout, bounded to <1.2 s.
         assert isinstance(view._master._page.detail.body_scroll, Gtk.ScrolledWindow)
-        report["phase_code"] = 237
         later(120, lambda: verify_scrolling(0))
 
     def verify_scrolling(attempt):
-        report["phase_code"] = 238
         view = state["view"]
         panel = view._master._page.detail
         scroller = panel.body_scroll
@@ -332,20 +314,16 @@ def main():
             later(120, lambda: verify_scrolling(attempt + 1))
             return
         assert end > 12, "Synthetic long detail never overflows body scrollbar"
-        report["phase_code"] = 239
         adjustment.set_value(min(end, 140))
         assert adjustment.get_value() > 0
-        report["phase_code"] = 235
         report["checks"]["detail_scroll_functional"] = True
         capture("05-reopened-scrolled")
-        report["phase_code"] = 236
         # Returning to the list removes the active detail and must not
         # turn a still-stored old action into a usable callback.
         view._master._page.selection.set_selected(Gtk.INVALID_LIST_POSITION)
         later(200, after_return_to_list)
 
     def after_return_to_list():
-        report["phase_code"] = 24
         view = state["view"]
         assert view._master._page.store.get_n_items() == 1
         assert view._master._page.selection.get_selected_item() is None
@@ -360,7 +338,6 @@ def main():
         app.quit()
 
     def activate(_app):
-        report["phase_code"] = 10
         window = Adw.ApplicationWindow(application=app)
         window.set_default_size(args.width - 40, 850 if args.width == 1366 else 930)
         window._closed = False
@@ -404,13 +381,8 @@ def main():
             fail(AssertionError("GTK Recommendations closed before checks"))
         if state["device"] is not None:
             state["device"].close()
-        # Temporary diagnostic: fail() has already written a private copy.
-        # Recreating screen.json here would mask the safe phase exit code.
-        if report["status"] == "PASS":
-            save()
-    # Fixed, non-sensitive phase exit codes help diagnose a failing GTK
-    # callback from the privacy-safe CI summary without publishing traceback.
-    return 0 if report["status"] == "PASS" else report.get("phase_code", 1)
+        save()
+    return 0 if report["status"] == "PASS" else 1
 
 
 if __name__ == "__main__":
