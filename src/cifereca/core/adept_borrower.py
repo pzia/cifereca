@@ -71,14 +71,24 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
         if matches[0].is_primary:
             return connection_identity_id, None
         return None, "adept_borrower_binding_required"
-    if str(binding.get("connection_identity_id") or "") != connection_identity_id:
+    # This is a stored *grant*, not an arbitrary provider projection. Never
+    # coerce malformed values or call custom equality/getter implementations
+    # to establish borrower ownership or the pinned ADEPT profile.
+    if type(binding) is not dict:
+        return None, "adept_borrower_profile_changed"
+    bound_connection = binding.get("connection_identity_id")
+    if type(bound_connection) is not str or bound_connection != connection_identity_id:
         return None, "adept_borrower_connection_changed"
-    owner = str(binding.get("borrower_identity_id") or "")
-    pinned = str(binding.get("profile_id") or "")
-    if not owner or self.identity_by_id(owner) is None or not pinned:
+    owner = binding.get("borrower_identity_id")
+    pinned = binding.get("profile_id")
+    if (type(owner) is not str or not owner
+            or type(pinned) is not str or not pinned
+            or self.identity_by_id(owner) is None):
         return None, "adept_borrower_profile_changed"
     current = self.storage.adept_profile_binding_get("identity", owner)
-    if current != pinned or binding.get("confirmed_by") != "explicit":
+    confirmed_by = binding.get("confirmed_by")
+    if (type(current) is not str or current != pinned
+            or type(confirmed_by) is not str or confirmed_by != "explicit"):
         return None, "adept_borrower_profile_changed"
     return owner, None
 
