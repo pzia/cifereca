@@ -95,7 +95,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             focused = root.get_focus() if root is not None else None
             restore_focus = bool(
                 switch is not None and focused is not None
-                and (focused is switch or switch.is_ancestor(focused))
+                and (focused is switch or focused.is_ancestor(switch))
             )
         child = self.outer.get_first_child()
         while child is not None:
