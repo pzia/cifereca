@@ -45,7 +45,9 @@ def build_main_shell(window, *, Gtk, add_css, version):
     window._rebuild_plugin_pages()
 
     window.busy_revealer = Gtk.Revealer()
-    window.busy_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
+    # #2027 isolation: do not animate the shell's activity revealer.
+    # Keep widget, visibility, keyboard state, lifecycle and dimensions intact.
+    window.busy_revealer.set_transition_type(Gtk.RevealerTransitionType.NONE)
     busy = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=9)
     add_css(busy, "busy-bar")
     window.busy_spinner = Gtk.Spinner(); window.busy_spinner.set_visible(False); busy.append(window.busy_spinner)
