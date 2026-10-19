@@ -235,7 +235,7 @@ def _validated_public_query(query):
 
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.17','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.18','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
         self.acquisition_backend=str(self.options.get('acquisition_backend') or 'opds').strip().lower()
         if self.acquisition_backend not in {'opds','html'}: raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_backend')
         self.opds_feed_url=str(self.options.get('opds_feed_url') or OPDS_FEED)
@@ -561,11 +561,22 @@ def _opds_entry_is_book(session, entry, base):
     EPUB alternate links are accepted only if their URL is qualified as a
     same-origin public download. Navigation entries are not books.
     """
+    # An arbitrary "acquisition" rel by itself is not a book. Require
+    # a safe same-origin public fetch route AND a qualified ebook MIME,
+    # so a foreign/private/missing link cannot suppress root navigation or
+    # create a fake public catalogue record. PDF-only acquisitions remain
+    # visible as metadata-only records; this plugin downloads EPUB only.
     return any(
-        '/acquisition' in rel
-        or (rel == 'alternate'
-            and mime.startswith('application/epub+zip')
-            and _safe_opds_link(session.opds_feed_url, raw, 'download'))
+        bool(_safe_opds_link(session.opds_feed_url, raw, 'download'))
+        and (
+            ('/acquisition' in rel
+             and mime.split(';', 1)[0].strip()
+                 in {'application/epub+zip', 'application/pdf',
+                     'application/x-pdf',
+                     'application/x-mobipocket-ebook'})
+            or (rel == 'alternate'
+                and mime.startswith('application/epub+zip'))
+        )
         for rel, mime, raw, _ in _opds_links(entry, base)
     )
 
@@ -615,6 +626,10 @@ def _opds_text(elem,tag):
 def _opds_items(session,feed,feed_url):
     items=[]
     for entry in feed.findall(ATOM+'entry'):
+        # OPDS search responses may mix navigational scopes with acquisition
+        # entries. Never publish a subsection as an undownloadable "book".
+        if not _opds_entry_is_book(session,entry,feed_url):
+            continue
         title=_opds_text(entry,ATOM+'title')
         if not title:continue
         entry_id=_opds_text(entry,ATOM+'id')
@@ -697,7 +712,25 @@ def _opds_load_acquisition(session,initial,field,needle):
         has_acquisition=any(
             _opds_entry_is_book(session, entry, actual) for entry in entries
         )
-        if has_acquisition or not entries:
+        if has_acquisition:
+            # COPS can mix direct acquisitions and links to more books.
+            # We only publish the qualified direct books; the unseen
+            # subsections cannot be counted as searched or empty.
+            navigation = any(
+                'atom+xml' in mime and '/acquisition' not in rel
+                and _safe_opds_link(session.opds_feed_url,raw,'feed')
+                for entry in entries
+                for rel,mime,raw,_ in _opds_links(entry,actual)
+                if not _opds_entry_is_book(session,entry,actual)
+            )
+            warning = (
+                'partial_results : livres et sous-catalogues OPDS mélangés ; '
+                'seuls les livres directs sont parcourus'
+            )
+            if navigation and warning not in session.last_search_warnings:
+                session.last_search_warnings.append(warning)
+            return feed,actual
+        if not entries:
             return feed,actual
         links=[]
         for entry in entries:
