@@ -68,6 +68,20 @@ def merge_attested_public_listing(owned, public_rows):
     Only listing-level attributes are copied; ISBN, DRM, format and historic
     purchase price cannot be inferred.
     """
+    # This helper can be invoked independently of the authenticated session.
+    # Reassert the private-book boundary before even checking a public URL:
+    # a public catalogue row or another provider must never acquire a
+    # purchased-edition provenance marker through this merge.
+    owned_metadata = getattr(owned, "metadata", None)
+    if (getattr(owned, "source_provider", None) != "numilog"
+            or getattr(owned, "source_collection", None) != "library"
+            or getattr(owned, "source_credential", None) in (None, "", "__public__")
+            or getattr(owned, "owned", None) is not True
+            or getattr(owned, "downloadable", None) is not True
+            or getattr(owned, "download_url", None) is not None
+            or type(owned_metadata) is not dict
+            or owned_metadata.get("public_url_evidence") != "numilog.library_title_link"):
+        raise ProviderCapabilityError("Numilog : owned_edition_evidence_unverified")
     owned_url = public_book_url(getattr(owned, "friendly_url", None))
     if owned_url is None:
         return owned, "no_attested_public_url"
