@@ -339,6 +339,7 @@ def test_standard_update_applies_release_plugins_after_core_switch(tmp_path, mon
 
     applied = []
     monkeypatch.setattr(updater, "_build_release_plugin_snapshot", fake_build)
+    monkeypatch.setattr(updater, "_snapshot_package_ids", lambda _snapshot: ["org.test"])
     monkeypatch.setattr(
         updater,
         "_apply_release_plugin_snapshot",
@@ -380,6 +381,7 @@ def test_plugin_upgrade_failure_restores_previous_core(tmp_path, monkeypatch):
     monkeypatch.setattr(updater, "_smoke", lambda release: {})
     monkeypatch.setattr(updater, "_smoke_restored_plugins", lambda release, transaction: {"plugin_count": 0})
     monkeypatch.setattr(updater, "_build_release_plugin_snapshot", lambda release, dest: tmp_path / "snapshot.zip")
+    monkeypatch.setattr(updater, "_snapshot_package_ids", lambda _snapshot: ["org.test"])
 
     def fail_after_mutation(*_):
         updater.shutil.rmtree(packages / "org.test")
@@ -430,6 +432,8 @@ def _patch_fake_runtime(monkeypatch):
         "_build_release_plugin_snapshot",
         lambda release, destination: destination / "snapshot.zip",
     )
+    monkeypatch.setattr(updater, "_snapshot_package_ids",
+                        lambda _snapshot: ["org.test", "org.only-b"])
 
 
 def _transactional_update_fixture(tmp_path, monkeypatch):
