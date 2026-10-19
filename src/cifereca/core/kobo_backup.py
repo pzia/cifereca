@@ -174,7 +174,7 @@ _KOBO_BACKUP_CODES = frozenset({
     "invalid_pagination", "no_downloadable_artifact",
     "no_compatible_http_candidate", "missing_pinned_delivery_capability",
     "result_unparseable_artifact_present",
-    "result_unparseable_artifact_missing",
+    "result_unparseable_artifact_missing", "invalid_epub",
 })
 
 
