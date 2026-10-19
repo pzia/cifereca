@@ -122,6 +122,59 @@ jobs:
           CIFERECA_P0_GATE_ROOT: ${{ runner.temp }}/cifereca-p0-pr-gate
         run: bash scripts/ci-plugins-only-historical-core-gate.sh "${{ steps.build.outputs.archive }}"
 
+      # #577: a passing one-package install is not evidence of correct
+      # multi-package transactionality. This second preview runs in its own
+      # temporary XDG / install root; both packages, activation preservation,
+      # receipts and rollback must succeed before a PR can pass this gate.
+      - name: Build multi-package PR plugins-only snapshot
+        id: build-multi
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          tag="plugins-v${version}-pr-${{ github.event.pull_request.number }}-multi"
+          python -m scripts.package_partial_plugins \
+            --packages "org.cifereca.transport.http,org.cifereca.ui.page.diagnostics" \
+            --id "$tag" --out dist
+          archive="dist/$tag.zip"
+          test -s "$archive"
+          test -s "$archive.sha256"
+          python -m scripts.package_partial_plugins --verify "$archive"
+          (cd dist && sha256sum -c "$tag.zip.sha256")
+          # Explicitly prove both packages are present in the selected ZIP.
+          python - "$archive" <<'PY'
+          import json
+          import sys
+          import zipfile
+
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              indexes = [item for item in z.namelist()
+                         if item.endswith("/cifereca-plugins-only.json")]
+              if len(indexes) != 1:
+                  raise SystemExit("Ambiguous multi-package release index")
+              index = json.loads(z.read(indexes[0]))
+              ids = {row["package_id"] for row in index["packages"]}
+              expected = {
+                  "org.cifereca.transport.http",
+                  "org.cifereca.ui.page.diagnostics",
+              }
+              if len(index["packages"]) != 2 or ids != expected:
+                  raise SystemExit("Multi-package release selection changed")
+          PY
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Exercise real multi-package install, provenance and rollback
+        shell: bash
+        env:
+          CIFERECA_P0_GATE_ROOT: ${{ runner.temp }}/cifereca-p0-pr-multi-gate
+        run: bash scripts/ci-plugins-only-runtime-gate.sh "${{ steps.build-multi.outputs.archive }}"
+
+      - name: Reject real historical Core on multi-package preview
+        shell: bash
+        env:
+          CIFERECA_P0_GATE_ROOT: ${{ runner.temp }}/cifereca-p0-pr-multi-gate
+        run: bash scripts/ci-plugins-only-historical-core-gate.sh "${{ steps.build-multi.outputs.archive }}"
+
   preflight-request:
     # A historical/neutralized request must not even enter the publishing job.
     if: github.event_name == 'push'

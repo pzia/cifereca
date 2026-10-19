@@ -210,6 +210,47 @@ class PartialPluginReleaseTests(unittest.TestCase):
         self.assertIn('os.environ.get("CIFERECA_P0_CORE_SOURCE")', runtime_gate)
         self.assertNotIn("|| true", gate)
 
+    def test_pr_gate_exercises_real_two_package_transaction(self) -> None:
+        """#577: multi-selection must run real strict updater and rollback."""
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/plugins-only-release.yml").read_text(
+            encoding="utf-8"
+        )
+        review = workflow.split("\n  validate-pr:\n", 1)[1].split(
+            "\n  preflight-request:\n", 1
+        )[0]
+        single = review.index("name: Exercise the real plugins-only runtime gate")
+        multi = review.index("name: Build multi-package PR plugins-only snapshot")
+        multi_gate = review.index(
+            "name: Exercise real multi-package install, provenance and rollback"
+        )
+        historical = review.index(
+            "name: Reject real historical Core on multi-package preview"
+        )
+        self.assertLess(single, multi)
+        self.assertLess(multi, multi_gate)
+        self.assertLess(multi_gate, historical)
+        self.assertIn(
+            '--packages "org.cifereca.transport.http,org.cifereca.ui.page.diagnostics"',
+            review,
+        )
+        self.assertIn('if len(index["packages"]) != 2 or ids != expected:', review)
+        self.assertIn(
+            'CIFERECA_P0_GATE_ROOT: ${{ runner.temp }}/cifereca-p0-pr-multi-gate',
+            review,
+        )
+        self.assertIn(
+            'bash scripts/ci-plugins-only-runtime-gate.sh "${{ steps.build-multi.outputs.archive }}"',
+            review,
+        )
+        self.assertIn(
+            'bash scripts/ci-plugins-only-historical-core-gate.sh "${{ steps.build-multi.outputs.archive }}"',
+            review,
+        )
+        # PR path may never use the permission-bearing publication job.
+        self.assertNotIn("gh release create", review)
+        self.assertNotIn("gh release edit", review)
+
     def test_real_installed_provenance_is_checked_before_sign_and_after_rollback(self) -> None:
         """#577: source metadata alone never passes the release runtime gate."""
         root = Path(__file__).resolve().parents[1]

@@ -193,3 +193,26 @@ historique `v0.9.44+dev.12` ; les autres plugins ne dépendent pas de ce
 contrôle spécialisé. Ce gate ne constitue pas une approbation de release,
 ne prouve pas la version chargée par la GUI et ne dispense pas des tests
 du vrai wheel, de Cosign, du rollback et de la recette XDG.
+
+## Validation de transaction multi-packages sur installation réelle de CI (#577)
+
+La PR `plugins-only-release.yml` maintient son test mono-package
+Diagnostics, puis construit **un deuxième ZIP explicitement limité** aux
+packages `org.cifereca.transport.http` et
+`org.cifereca.ui.page.diagnostics`. Le test en vérifie les deux identités
+dans l'index (ainsi que les checksums) **avant** d'utiliser les gates
+existants avec un XDG/INSTALL_ROOT temporaire indépendant du test mono.
+
+Ce second passage exerce la vraie commande `cifereca-update-dev
+--require-plugins-only --expected-sha256` : remplacement des deux
+packages, sauvegarde et conservation du statut actif/inactif, reçus
+installés et identité SHA-256, refus sur un Core réellement plus ancien,
+smoke volontairement échoué et rollback exact de l'arborescence. Aucun
+compte ni plugin de l'utilisateur n'est utilisé. Les deux ZIP sont
+des **artefacts de validation PR**, pas des releases distribuées.
+
+Cette preuve CI multi-packages ne remplace pas la recette de montée
+depuis une ancienne release complète sur une installation utilisateur,
+la GUI redémarrée ni la coexistence avec une future release complète ;
+#577 reste ouvert pour ces critères. Aucune publication sans demande
+explicite.
