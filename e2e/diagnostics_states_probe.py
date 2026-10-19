@@ -235,13 +235,34 @@ def main():
     def later(fn, ms=120):
         def cb():
             try:
+                code = getattr(fn, "__code__", None)
+                if code is not None and code.co_filename == __file__:
+                    report["checkpoint_line"] = code.co_firstlineno
+                save()
                 fn()
             except Exception as exc:
+                frames = []
+                trace = exc.__traceback__
+                while trace is not None:
+                    if trace.tb_frame.f_code.co_filename == __file__:
+                        frames.append(trace.tb_lineno)
+                    trace = trace.tb_next
+                report["failure_line"] = frames[-1] if frames else 0
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(ms, cb)
 
     def until(predicate, callback, *, seconds=8):
+        # Only a source-verified call line can be published by the CI exporter.
+        from inspect import currentframe
+        frame = currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            if caller is not None and caller.f_code.co_filename == __file__:
+                report["wait_line"] = caller.f_lineno
+        finally:
+            del frame
+        save()
         deadline = monotonic() + seconds
 
         def poll():
