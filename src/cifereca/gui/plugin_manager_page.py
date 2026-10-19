@@ -13,6 +13,7 @@ from gi.repository import Adw, Gtk, Gio, GLib  # noqa: E402
 from cifereca.plugins.configuration import defaults_for_schema, schema_scope
 from .action_widgets import action_button, AdaptiveActionBar, mirror_sensitivity
 from .plugin_attention import plugin_section_expanded
+from .plugin_manager_error_feedback import plugin_error_message
 from .plugin_view import (
     PLUGIN_VIEW_FILTERS,
     PLUGIN_ROLE_FILTERS, PLUGIN_ROLE_LABELS,
@@ -656,7 +657,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         try:
             self.manager.set_identity_enabled(plugin_id, identity_id, enabled)
         except Exception as exc:
-            self.window.show_error(str(exc), "Activation impossible"); return
+            self.window.show_error(plugin_error_message(exc), "Activation impossible"); return
         self.on_changed()
 
     def _reload(self) -> None:
@@ -728,7 +729,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         try:
             self.manager.set_enabled(plugin_id, enabled)
         except Exception as exc:
-            self.window.show_error(str(exc), "Impossible de modifier le plugin")
+            self.window.show_error(plugin_error_message(exc), "Impossible de modifier le plugin")
         self.refresh(); self.on_changed()
 
     def _priority(self, plugin_id: str, value: int) -> None:
@@ -736,14 +737,14 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             self.manager.set_priority(plugin_id, value)
             self.manager.activate()
         except Exception as exc:
-            self.window.show_error(str(exc), "Priorité invalide")
+            self.window.show_error(plugin_error_message(exc), "Priorité invalide")
         self.on_changed()
 
     def _rollback(self, package_id: str) -> None:
         try:
             version = self.manager.rollback(package_id)
         except Exception as exc:
-            self.window.show_error(str(exc), "Rollback impossible"); return
+            self.window.show_error(plugin_error_message(exc), "Rollback impossible"); return
         self._toast(f"Version {version} réactivée"); self.refresh(); self.on_changed()
 
     def _confirm_remove(
@@ -773,7 +774,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         try:
             self.manager.remove_package(package_id)
         except Exception as exc:
-            self.window.show_error(str(exc), "Désinstallation impossible"); return
+            self.window.show_error(plugin_error_message(exc), "Désinstallation impossible"); return
         self._toast("Package désinstallé"); self.refresh(); self.on_changed()
 
     def _choose_archive(self, _button: Gtk.Button) -> None:
@@ -803,7 +804,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             if hasattr(Gtk, "DialogError"):
                 cancelled = cancelled or exc.matches(Gtk.dialog_error_quark(), Gtk.DialogError.DISMISSED)
             if not cancelled:
-                self.window.show_error(str(exc), "Sélection du ZIP impossible")
+                self.window.show_error(plugin_error_message(exc), "Sélection du ZIP impossible")
             return
         finally:
             if getattr(self.window, "_plugin_archive_chooser", None) is chooser:
@@ -835,7 +836,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         try:
             manifest = self.manager.inspect_archive(path)
         except Exception as exc:
-            self.window.show_error(str(exc), "ZIP de plugin invalide"); return
+            self.window.show_error(plugin_error_message(exc), "ZIP de plugin invalide"); return
         names = ", ".join(p.display_name or p.id for p in manifest.plugins)
         required = sorted({dep.plugin for p in manifest.plugins for dep in p.requires})
         system = sorted({req.name or req.path or req.type for p in manifest.plugins for req in p.system_requires})
@@ -853,7 +854,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         try:
             package = self.manager.install(path, activate=True)
         except Exception as exc:
-            self.window.show_error(str(exc), "Installation impossible"); return
+            self.window.show_error(plugin_error_message(exc), "Installation impossible"); return
         self._toast(f"{package.manifest.package.name} installé"); self.refresh(); self.on_changed()
 
     def _diagnostic(self, plugin_id: str) -> None:
@@ -965,7 +966,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                         values[name]=(json.loads(text) if text else ([] if typ=="array" else {})) if typ in {"array","object"} else text
                 self.manager.set_plugin_config(plugin_id, values, scope_id=sid)
             except Exception as exc:
-                self.window.show_error(str(exc), "Configuration invalide"); return
+                self.window.show_error(plugin_error_message(exc), "Configuration invalide"); return
             dialog.close(); self._toast("Configuration enregistrée"); self.refresh(); self.on_changed()
         save.connect("clicked", do_save)
         scroll = Gtk.ScrolledWindow(); scroll.set_child(outer)
