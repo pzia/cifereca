@@ -115,17 +115,17 @@ class NumilogPublicSession(ProviderSession):
 
     def enrich_public_detail(self, item):
         """Explicit detail request only, not part of connect/search/sync."""
+        # Pin the generation BEFORE validating the caller's row. A reconnect
+        # during validation must not bless a stale request with the new epoch.
+        epoch = self._navigation_epoch_snapshot()
         if not self.connected:
             raise ProviderError("Numilog public : catalogue non connecté")
         from cifereca_numilog_public_client import fetch_public_detail
         from cifereca_numilog_public_detail import (
             validate_public_detail_item, merge_public_detail,
         )
-        # A cache hit may be returned just as this public session is closed
-        # or reconnected. A response valid for the old navigation generation
-        # is not permission to publish rows into a new session's UI.
-        epoch = self._navigation_epoch_snapshot()
         url = validate_public_detail_item(item)  # No HTTP for foreign/private rows.
+        self._assert_public_generation(epoch)
         detail = self._public_cache.get(("detail", url), lambda: fetch_public_detail(url))
         result = merge_public_detail(item, detail)
         self._assert_public_generation(epoch)
@@ -186,8 +186,11 @@ class NumilogPublicSession(ProviderSession):
         )
 
     def search(self, query, scope="all", page=0, field="all"):
-        url = self._validate_search(query, page, field, scope)
+        # Capture BEFORE validation: close/reconnect during validation cannot
+        # silently turn a request from the old generation into a new request.
         epoch = self._navigation_epoch_snapshot()
+        url = self._validate_search(query, page, field, scope)
+        self._assert_public_generation(epoch)
         rows = list(self._public_rows(self._get_page(query, page, field, url).items))
         # The generic Core search path must be protected just like browse()
         # and follow_public_link() when a session changes during a cache hit,
