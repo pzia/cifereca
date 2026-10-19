@@ -138,6 +138,13 @@ done < "$selected_file"
 
 test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
 
+# #577: attestation against the actually installed plugin store, NOT merely
+# the updater's exit code or the source manifest. Validate every selected
+# package's receipt, exact nested ZIP digest, tag, Core and absent signature
+# claim. This runs in both PR review and signed-release gates.
+python -m scripts.ci_plugins_only_receipt_gate \
+  --archive "$archive" --store "$store_root" --snapshot-sha256 "$digest"
+
 tree_digest() {
   python - "$1" <<'PY'
 import hashlib
@@ -210,5 +217,10 @@ while IFS=$'\t' read -r package_id package_version; do
 done < "$selected_file"
 test "$(tree_digest "$store_root")" = "$before_rollback"
 test "$(sha256sum "$XDG_DATA_HOME/cifereca/.p0-user-data" | awk '{print $1}')" = "$data_before"
+
+# The failed third attempt must not have altered the successful receipts
+# or any installed package bytes; tree_digest above checks both.
+python -m scripts.ci_plugins_only_receipt_gate \
+  --archive "$archive" --store "$store_root" --snapshot-sha256 "$digest"
 
 echo "plugins-only runtime gate passed for $(wc -l < "$selected_file") selected packages; $inactive_package inactive"
