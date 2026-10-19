@@ -211,7 +211,7 @@ def _redact(text: str, env: dict[str, str]) -> str:
     )
     text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer [REDACTED]", text)
     text = re.sub(r"(?i)\b(?:https?|ftp|file)://[^\s<>\"']+", "[REDACTED_URL]", text)
-    text = re.sub(r"(?i)[^\s@<>\"']+@[^\s@<>\"']+\.[^\s@<>\"']+", "[REDACTED_EMAIL]", text)
+    text = re.sub(r"(?i)\b[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,253}\.[A-Z]{2,63}\b", "[REDACTED_EMAIL]", text)
     text = re.sub(r"(?i)(?<![\w])/(?:home|Users|run/user)/[^\s<>\"']+", "/[REDACTED_PATH]", text)
     return text
 
