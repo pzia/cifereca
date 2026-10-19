@@ -91,3 +91,13 @@ class PluginsOnlyWorkflowRecoveryContracts(unittest.TestCase):
         assert 'gh api "repos/$GITHUB_REPOSITORY/releases/$P0_RELEASE_ID"' in workflow
         assert '"repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"' not in workflow
         assert '--generate-notes' not in workflow
+        # Untagged drafts cannot use gh release upload/download/edit by tag.
+        assert 'gh release upload "$RELEASE_TAG"' not in workflow
+        assert 'gh release download "$RELEASE_TAG"' not in workflow
+        assert 'gh release edit "$RELEASE_TAG"' not in workflow
+        assert 'https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$draft_id/assets' in workflow
+        assert 'https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id' in workflow
+        assert 'gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$P0_RELEASE_ID"' in workflow
+        assert 'test "$draft_assets" = "0"' in workflow
+        assert 'len(rows) != 3' in workflow
+        assert 'assert len(release.get("assets", [])) == 3' in workflow
