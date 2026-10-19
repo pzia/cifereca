@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 from concurrent.futures import Future
+from datetime import datetime, timezone
 from threading import Event, Thread, get_ident
 from time import monotonic
 
@@ -129,6 +130,7 @@ class SelectionBroker(Broker):
         super().__init__()
         self.bulk = False
         self.error_count = 55
+        self.bulk_timestamp = datetime.now(timezone.utc).isoformat()
         self.ui_thread = get_ident()
         self.scan_threads = []
 
@@ -138,7 +140,7 @@ class SelectionBroker(Broker):
         self.event_queries.append(dict(query))
         if query.get("severity") in {"error", "critical"}:
             self.scan_threads.append(get_ident())
-        rows = [{"event_id": f"bulk-{i:03d}", "timestamp":"2026-10-18T12:00:00+00:00",
+        rows = [{"event_id": f"bulk-{i:03d}", "timestamp":self.bulk_timestamp,
                  "source":"core_events", "module":"core.sync",
                  "severity": "error" if i < self.error_count else
                              ("critical" if i < self.error_count + 2 else "warning"),
@@ -288,6 +290,12 @@ def main():
     def step(callback):
         def wrapped():
             try:
+                code = getattr(callback, "__code__", None)
+                if code is not None and code.co_filename == __file__:
+                    report["checkpoint_line"] = code.co_firstlineno
+                # Persist the last scheduled source checkpoint before native
+                # GTK work: SIGABRT cannot run Python's exception handler.
+                save()
                 callback()
             except Exception as exc:
                 frames = []
