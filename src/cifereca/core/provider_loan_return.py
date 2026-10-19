@@ -69,16 +69,18 @@ def return_digital(self, loan: Loan, *, explicit_retry: bool = False, _TRACE_LOG
         response = session.return_digital(loan, account)
         if not isinstance(response, dict) or response.get("success") is not True:
             raise ValueError("Paris did not attest request acceptance")
-    except Exception as exc:
+    except Exception:
         # Network failures are indeterminate: POST may already have been
         # accepted upstream. Never retry automatically on uncertainty.
+        # Plugin-controlled exception class names are not safe for either
+        # the durable ledger or the operator TRACE.
         row = self.storage.loan_return_transition(
             key, operation_id, status="verification_unavailable",
-            verification="unavailable", error_type=type(exc).__name__,
+            verification="unavailable", error_type="provider_return_unavailable",
         )
         _TRACE_LOG.warning(
-            "TRACE return core phase=request_uncertain ref=%s error_type=%s",
-            return_ref(key), type(exc).__name__,
+            "TRACE return core phase=request_uncertain ref=%s code=provider_return_unavailable",
+            return_ref(key),
         )
         return public_return_state(row or state)
     row = self.storage.loan_return_transition(
