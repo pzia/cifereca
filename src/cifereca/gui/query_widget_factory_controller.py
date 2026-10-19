@@ -7,14 +7,37 @@ importable without PyGObject and to preserve the optional widget service.
 from __future__ import annotations
 
 
-def build_query_controls(window, changed, activate, *, library=False, QueryControls):
-    """Resolve one widget factory, preserving current provider ordering and fallback."""
+def _provider_choices(window, *, library=False):
+    """Only live sources belong to Search; Library can filter historical books."""
     providers = dict(window.service.searchable_providers())
     providers["local"] = "Local"
-    for row in window.service.catalog_entries():
-        provider = str(row.get("provider_id") or "local")
-        providers.setdefault(provider, window.service.provider_display_name(provider))
-    providers = sorted(providers.items(), key=lambda pair: pair[1])
+    if library:
+        for row in window.service.catalog_entries():
+            provider = str(row.get("provider_id") or "local")
+            providers.setdefault(provider, window.service.provider_display_name(provider))
+    return sorted(providers.items(), key=lambda pair: pair[1])
+
+
+def refresh_query_providers(window):
+    """Refresh live controls after async provider connection without rebuilding pages."""
+    if getattr(window, "_closed", False):
+        return
+    for route, library in (("search", False), ("library", True)):
+        controls = getattr(window, route + "_controls", None)
+        if controls is None:
+            continue
+        updater = getattr(controls, "set_provider_choices", None)
+        if callable(updater):
+            updater(_provider_choices(window, library=library))
+        if not library:
+            setter = getattr(controls, "set_provider_search_capabilities", None)
+            if callable(setter):
+                setter(window.service.provider_search_capabilities())
+
+
+def build_query_controls(window, changed, activate, *, library=False, QueryControls):
+    """Resolve one widget factory, preserving current provider ordering and fallback."""
+    providers = _provider_choices(window, library=library)
     catalog = window.plugin_manager.widget_catalog() if window.plugin_manager else None
     factory = getattr(catalog, "build_query_controls", None)
     controls = None
