@@ -68,14 +68,15 @@ def test_projection_adds_proven_details_without_assuming_purchase():
 
 def test_conflicts_are_exposed_without_overwriting_listing_values():
     item = catalogue_item()
-    detail = book_detail(item, name="Différent", description="Different",
+    detail = book_detail(item, description="Different",
                          publisher={"name": "Autre éditeur"}, author="Autre auteur")
     merged = merge_public_detail(item, detail)
     assert merged.title == item.title and merged.author == item.author
     assert merged.publisher == item.publisher and merged.description == item.description
-    assert {"title", "authors", "publisher", "description"}.issubset(
+    assert {"authors", "publisher", "description"}.issubset(
         set(merged.metadata["public_detail"]["listing_conflicts"])
     )
+    assert "title" not in merged.metadata["public_detail"]["listing_conflicts"]
 
 
 @pytest.mark.parametrize("changes", [
@@ -142,8 +143,9 @@ def test_spoofed_field_provenance_cannot_be_published():
 def test_mismatched_title_does_not_fill_missing_details():
     item = replace(catalogue_item(), author=None, publisher=None, description=None)
     detail = book_detail(item, name="Different book")
-    merged = merge_public_detail(item, detail)
-    assert merged.author is None and merged.publisher is None
-    assert merged.description is None and merged.title == item.title
-    assert "title" in merged.metadata["public_detail"]["listing_conflicts"]
-    assert merged.owned is False
+    with pytest.raises(ProviderCapabilityError, match="detail_title_conflict"):
+        merge_public_detail(item, detail)
+    assert item.author is None and item.publisher is None
+    assert item.description is None and item.title == catalogue_item().title
+    assert "public_detail" not in item.metadata
+    assert item.owned is False
