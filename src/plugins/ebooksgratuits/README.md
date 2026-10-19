@@ -1,3 +1,20 @@
+## #1917 — navigation OPDS racine et preuve de couverture (19/10/2026)
+
+En mode OPDS Calibre/COPS (par défaut), `search("")` consulte la racine
+et choisit la branche « All books / Tous les livres » lorsqu'elle est
+**identifiable de manière unique**. Si la racine ne contient que des sous-
+catalogues thématiques (« Authors », « Recent », etc.), le plugin peut en
+visiter **un seul**, mais signale désormais `partial_results` même lorsque
+cette branche répond avec zéro livre. Deux branches « All books » distinctes
+sont également signalées comme une couverture partielle ; aucun crawl ou
+concaténation spéculative n'est ajouté.
+
+Cette correction ne prouve **pas** que le serveur distant est disponible ni
+que la recherche OpenSearch est intégrée au moteur fédéré. Le succès d'un
+téléchargement depuis le cache local est indépendant. Tests hors réseau :
+`tests/test_opds_root_partial_1917.py`. Recette live expurgée et GTK :
+suivis par #1917 et le contrat Core #1916.
+
 # Acquisition Calibre OPDS — #1084 (0.1.17)
 
 Production : `https://opds2.ebooksgratuits.org/index.php/feed` (COPS, OPDS Atom/XML 1.x, **pas** OPDS JSON 2). Le site officialise cette URL : https://www.ebooksgratuits.com/torrent.php. Recherche via le lien OpenSearch annoncé par la racine ; navigation via liens Atom et pagination par `rel=next` uniquement. Limite de 101 pages demandables ; aucune exploration ou acquisition implicite. Le catalogue Calibre contient aussi des ouvrages de partenaires, donc éditeur renseigné seulement lorsque la notice l'atteste. Titres, auteurs, catégories, genres, mise à jour et liens EPUB proviennent de chaque notice ; pas d'âge inféré depuis `Jeunesse` ni de jugement territorial ou date historique déduits. Les champs spécialisés filtrent localement la page de recherche et annoncent une couverture partielle. La présence d'une offre EPUB est vérifiée par son lien et type MIME, le transport valide le fichier ; des notices sans EPUB restent non téléchargeables.
