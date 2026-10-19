@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from unicodedata import category
 from time import monotonic
 
 from cifereca.plugin_api import LLMRequest
@@ -23,16 +24,28 @@ class Explanation:
 
 
 def _safe_name(value):
-    raw = str(value or "").strip()
+    # Providers and models are metadata from a potentially remote service.
+    # Never invoke user-defined __str__ or surface arbitrary objects.
+    if type(value) is not str:
+        return "non précisé"
+    raw = value.strip()
     return raw if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/+-]{0,63}", raw) else "non précisé"
 
 
 def evidence_only_request(reasons):
     """Never include a title, identity, whole library, or catalogue description."""
-    facts = tuple(
-        str(value).strip()[:160] for value in tuple(reasons or ())[:3]
-        if isinstance(value, str) and value.strip()
-    )
+    # No mapping iteration (which would otherwise export arbitrary keys),
+    # string subclasses, objects or control/bidi characters into an LLM prompt.
+    if type(reasons) not in (list, tuple):
+        return None
+    facts = []
+    for value in reasons[:3]:
+        if type(value) is not str:
+            continue
+        clean = " ".join(value.split())
+        if not clean or any(category(char) in {"Cc", "Cf", "Cs"} for char in clean):
+            continue
+        facts.append(clean[:160])
     if not facts:
         return None
     return LLMRequest(
@@ -71,19 +84,26 @@ def explain_reasons(service, reasons, *, enabled=False, consent=False, control=N
         return None
     if control is not None and control.cancelled():
         return None
-    if not (getattr(result, "ok", False) is True
-            and getattr(result, "generated", False) is True):
+    try:
+        if not (getattr(result, "ok", False) is True
+                and getattr(result, "generated", False) is True):
+            return None
+        message = getattr(result, "text", "")
+        if type(message) is not str:
+            return None
+        message = " ".join(message.split())
+        if (not 2 <= len(message) <= 360
+                or any(category(char) in {"Cc", "Cf", "Cs"} for char in message)):
+            # A model response is not safe merely because it is a string:
+            # invisible controls/bidi overrides can corrupt GTK detail text.
+            return None
+        return Explanation(
+            text=message,
+            provider=_safe_name(getattr(result, "provider", "")),
+            model=_safe_name(getattr(result, "model", "")),
+            remote=getattr(result, "remote", False) is True,
+            elapsed_ms=min(600000, int(max(0, (monotonic() - started) * 1000))),
+        )
+    except Exception:
+        # Remote result accessors may fail. Never display their exception text.
         return None
-    message = getattr(result, "text", "")
-    if not isinstance(message, str):
-        return None
-    message = " ".join(message.split())
-    if not 2 <= len(message) <= 360:
-        return None
-    return Explanation(
-        text=message,
-        provider=_safe_name(getattr(result, "provider", "")),
-        model=_safe_name(getattr(result, "model", "")),
-        remote=getattr(result, "remote", False) is True,
-        elapsed_ms=min(600000, int(max(0, (monotonic() - started) * 1000))),
-    )
