@@ -96,6 +96,25 @@ def public_state(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# These statuses originate from the Core's exact acquisition/borrower
+# evidence. Do not stringify a foreign object or expose an arbitrary legacy
+# value as a public status (it may contain a profile path or signed ACSM URL).
+_ADEPT_ORIGIN_STATUSES = frozenset({
+    "adept_identity_unproven", "adept_loan_identity_conflict",
+    "adept_borrower_ambiguous", "adept_borrower_binding_required",
+    "adept_borrower_connection_changed", "adept_borrower_profile_changed",
+    "no_acquisition", "adept_return_acquisition_ambiguous",
+    "adept_return_profile_conflict", "returned", "loan_id_missing",
+    "profile_missing", "ready", "returned_unverified", "verification_failed",
+    "expired", "unresolved", "ambiguous", "inventory_error",
+    "binding_conflict", "token_missing", "provider_conflict",
+})
+
+
+def _public_origin_status(value: Any, *, default: str) -> str:
+    return value if type(value) is str and value in _ADEPT_ORIGIN_STATUSES else default
+
+
 # LibraryService retains the shared loan-operation lock. Dependencies and the
 # historical public guard helpers are imported/injected by its facade at call
 # time; the mutation/checkpoint/verification body below keeps its original order.
@@ -114,18 +133,36 @@ def return_loan_prefer_adept(
     try:
         account, _session, pnb_key = self._return_loan_identity(loan)
     except AttentionRequired as exc:
+        # Only the three Core return-preflight codes are public evidence.
+        # A plugin may carry a URL in a subclass's arbitrary .code.
+        code = getattr(exc, "code", None)
+        if type(code) is not str or code not in {
+            "loan_return_borrower_unproven", "loan_return_borrower_mismatch",
+            "loan_return_source_unavailable",
+        }:
+            code = "loan_return_borrower_unproven"
         return {
             "status": "failed", "scope": "adobe_first_paris",
-            "code": exc.code, "retry": "resolve_identity",
+            "code": code, "retry": "resolve_identity",
         }
     borrower = str(account.unique_id or "primary")
     key = adept_return_key(
         loan.source_provider, loan.source_credential, borrower, str(loan.id)
     )
     source = self.adept_return_status_for_loan(loan)
-    acquisition_id = source.get("acquisition_id")
-    if not acquisition_id:
-        reason = str(source.get("status") or "adept_return_binding_required")
+    if type(source) is not dict:
+        source = {}
+    raw_id = source.get("acquisition_id")
+    acquisition_id = (
+        raw_id if type(raw_id) is str and 0 < len(raw_id) <= 256 else None
+    )
+    if acquisition_id is None:
+        reason = _public_origin_status(
+            source.get("status"), default="adept_return_binding_required",
+        )
+        # "ready" without an exact acquisition is not permission to mutate.
+        if reason == "ready":
+            reason = "adept_return_binding_required"
         return {
             "status": "provider_action_available" if reason == "no_acquisition" else reason,
             "scope": "adobe_first_paris",
@@ -148,9 +185,13 @@ def return_loan_prefer_adept(
         }
     previous = self.storage.loan_return_state(key)
     if previous is None:
-        if source.get("status") != "ready" or source.get("return_available") is not True:
+        source_status = _public_origin_status(
+            source.get("status"), default="adept_return_state_required",
+        )
+        if source_status != "ready" or source.get("return_available") is not True:
             return {
-                "status": str(source.get("status") or "adept_return_state_required"),
+                "status": source_status if source_status != "ready"
+                          else "adept_return_state_required",
                 "scope": "adobe_first_paris", "retry": "verification_only",
             }
         claimed, record = self.storage.loan_return_claim(key, uuid.uuid4().hex)
