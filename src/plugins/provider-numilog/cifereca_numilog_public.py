@@ -66,8 +66,9 @@ _HIDDEN_TAGS = {'script', 'style', 'template', 'noscript', 'iframe', 'svg'}
 
 def _hidden(node):
     style = ''.join((node.attrs.get('style') or '').lower().split())
+    aria = node.attrs.get('aria-hidden')
     return (node.tag in _HIDDEN_TAGS or 'hidden' in node.attrs
-            or (node.attrs.get('aria-hidden') or '').lower() == 'true'
+            or (type(aria) is str and aria.strip().casefold() == 'true')
             or 'display:none' in style or 'visibility:hidden' in style)
 
 
