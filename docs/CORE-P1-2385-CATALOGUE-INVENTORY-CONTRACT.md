@@ -7,8 +7,11 @@ projection **read-only / cache-only** des fournisseurs réellement présents dan
 le registre Core, prêts et activés **pour l'identité choisie**.
 `CatalogBrokerImpl.catalogue_source_capabilities(identity_id=None)` expose
 la même méthode en **extension additive facultative** du broker existant
-`catalog`. La signature du `CatalogBroker` historique et celle du
-`SynchronizationBroker.sources` sont **inchangées**.
+`catalog`. Le modèle **`CatalogueSourceCapability`** et le protocole
+optionnel **`CatalogueSourceInventoryBroker`** s'importent uniquement depuis
+`cifereca.plugin_api` ; les consommateurs testent cette capacité à
+l'exécution avant usage. La signature du `CatalogBroker` historique et
+celle du `SynchronizationBroker.sources` sont **inchangées**.
 
 Schéma v1 : `CatalogueSourceCapability`, immutable, uniquement :
 - `provider_id` : slug canonique enregistré, sans alias/compte privé ;
