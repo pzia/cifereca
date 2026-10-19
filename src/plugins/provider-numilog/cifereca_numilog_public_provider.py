@@ -115,6 +115,9 @@ class NumilogPublicSession(ProviderSession):
 
     def enrich_public_detail(self, item):
         """Explicit detail request only, not part of connect/search/sync."""
+        # Pin the generation BEFORE validating the caller's row. A reconnect
+        # during validation must not bless a stale request with the new epoch.
+        epoch = self._navigation_epoch_snapshot()
         if not self.connected:
             raise ProviderError("Numilog public : catalogue non connecté")
         from cifereca_numilog_public_client import fetch_public_detail
@@ -122,8 +125,11 @@ class NumilogPublicSession(ProviderSession):
             validate_public_detail_item, merge_public_detail,
         )
         url = validate_public_detail_item(item)  # No HTTP for foreign/private rows.
+        self._assert_public_generation(epoch)
         detail = self._public_cache.get(("detail", url), lambda: fetch_public_detail(url))
-        return merge_public_detail(item, detail)
+        result = merge_public_detail(item, detail)
+        self._assert_public_generation(epoch)
+        return result
 
     def enrich_loaded_page_product(self, page, record_id):
         """Explicitly enrich ONE public search card, retaining page provenance.
@@ -180,8 +186,22 @@ class NumilogPublicSession(ProviderSession):
         )
 
     def search(self, query, scope="all", page=0, field="all"):
+        # Capture BEFORE validation: close/reconnect during validation cannot
+        # silently turn a request from the old generation into a new request.
+        epoch = self._navigation_epoch_snapshot()
         url = self._validate_search(query, page, field, scope)
-        return list(self._public_rows(self._get_page(query, page, field, url).items))
+        self._assert_public_generation(epoch)
+        rows = list(self._public_rows(self._get_page(query, page, field, url).items))
+        # The generic Core search path must be protected just like browse()
+        # and follow_public_link() when a session changes during a cache hit,
+        # conversion or transport completion. No extra HTTP request.
+        self._assert_public_generation(epoch)
+        return rows
+
+    def _assert_public_generation(self, expected):
+        with self._navigation_lock:
+            if not self.connected or self._navigation_epoch != expected:
+                raise ProviderError("Numilog public : navigation_invalidated")
 
     def _navigation_epoch_snapshot(self):
         with self._navigation_lock:
