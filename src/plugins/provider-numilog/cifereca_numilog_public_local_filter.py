@@ -57,6 +57,17 @@ def _validate_page(page):
             or type(page.total_results) is not int or page.total_results < len(page.items)
             or type(page.complete) is not bool):
         raise ProviderCapabilityError(error)
+    # A page-only filter can report an exhaustive negative only when the
+    # underlying public page is demonstrably complete. A caller/cache may
+    # mutate a frozen page via dataclasses.replace(); trusting complete=True
+    # independently of total, page number and navigation would turn an
+    # arbitrary subset into a false claim of no further catalogue matches.
+    if page.complete and (
+        page.page_index != 0
+        or page.total_results != len(page.items)
+        or page.next_url is not None
+    ):
+        raise ProviderCapabilityError(error)
     source_url = None
     seen_ids = set()
     for row in page.items:
