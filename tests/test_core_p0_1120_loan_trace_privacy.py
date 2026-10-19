@@ -88,6 +88,8 @@ def test_persisted_adept_attention_does_not_trace_raw_attention_code(
         )
         result = svc._acquire_active_loan_automatically(loan)
         assert result["status"] == "attention_required"
+        assert result["code"] == "adept_attention_required"
+        assert "SIGNED_SECRET" not in repr(result)
         logs = _local_records(caplog)
         assert any("auto-retry-blocked" in log for log in logs)
         _not_private(logs, loan)
@@ -126,3 +128,54 @@ def test_relinked_local_artifact_path_is_not_traced(
         _not_private(logs, loan)
     finally:
         svc.close()
+
+
+
+@pytest.mark.parametrize("prior_code", [
+    "adept_error", "adept_profile_ambiguous", "adept_profile_missing",
+    "kobo_adept_failed", "kobo_adept_timeout", "kobo_adept_invalid_contract",
+    "adept_license_fulfilled_by_other_user",
+])
+def test_known_adept_remediation_codes_still_reach_repeat_loan_feedback(
+    tmp_path, monkeypatch, prior_code,
+):
+    svc = _service(tmp_path)
+    try:
+        aid = _seed(svc, status="attention_required")
+        svc.storage.acquisition_update_state(
+            aid, "attention_required",
+            attention_code=prior_code,
+            error_code="adept_error",
+        )
+        before = svc.storage.acquisition_get(aid)
+        monkeypatch.setattr(
+            svc, "acquire_digital_loan",
+            lambda *_a, **_kw: pytest.fail("no replay of signed ACSM"),
+        )
+        outcome = svc._acquire_active_loan_automatically(_loan())
+        assert outcome["status"] == "attention_required"
+        assert outcome["code"] == prior_code
+        assert outcome["retry"] == "explicit_only"
+        assert svc.storage.acquisition_get(aid) == before
+    finally:
+        svc.close()
+
+
+def test_attention_code_projection_does_not_coerce_hostile_ledger_object():
+    from cifereca.core.loan_local_preparation import _public_adept_attention_code
+
+    class Hostile:
+        def __bool__(self):
+            raise AssertionError("Do not cast persisted code to boolean")
+        def __str__(self):
+            raise AssertionError("Do not stringify persisted code")
+        def __eq__(self, other):
+            raise AssertionError("Do not compare hostile code to text")
+
+    assert _public_adept_attention_code({
+        "attention_code": Hostile(), "error_code": "adept_profile_required",
+    }) == "adept_profile_required"
+    assert _public_adept_attention_code({
+        "attention_code": "https://private.invalid/?token=SIGNED_SECRET",
+        "error_code": "SIGNED_SECRET",
+    }) == "adept_attention_required"

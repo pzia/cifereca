@@ -9,6 +9,33 @@ from dataclasses import dataclass
 from typing import Any
 from . import loan_artifact_state
 from .loan_safe_trace import loan_trace_ref
+from .loan_failure_diagnostics import _CODES as _RUNTIME_FAILURE_CODES
+
+
+# Only known internal remediation codes may leave a historic ADEPT ledger
+# as UI feedback. Older/plugin-written attention_code values are untrusted.
+_PUBLIC_ADEPT_ATTENTION_CODES = frozenset({
+    "adept_error",
+    "adept_attention_required",
+    "adept_license_fulfilled_by_other_user",
+    "adept_profile_required",
+    "adept_profile_ambiguous",
+    "adept_profile_acsm_not_ready",
+    "adept_borrower_binding_required",
+    "adept_identity_unproven",
+    "adept_loan_identity_conflict",
+    "adept_profile_missing",
+}) | _RUNTIME_FAILURE_CODES
+
+
+def _public_adept_attention_code(previous: dict[str, Any] | None) -> str:
+    if type(previous) is not dict:
+        return "adept_attention_required"
+    for key in ("attention_code", "error_code"):
+        candidate = previous.get(key)
+        if type(candidate) is str and candidate in _PUBLIC_ADEPT_ATTENTION_CODES:
+            return candidate
+    return "adept_attention_required"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -109,8 +136,7 @@ def prepare(self, loan, *, identity, entitlement_id, force_refresh, started,
         # The existing ledger is the authoritative pending-intervention
         # state. Preserve diagnostic, ACSM staging and any prior artifact;
         # do not acquire the provider link or attempt a different profile.
-        code = str((previous or {}).get("attention_code")
-                   or (previous or {}).get("error_code") or "adept_attention_required")
+        code = _public_adept_attention_code(previous)
         _TRACE_LOG.warning(
             "TRACE download loan_auto auto-retry-blocked loan_ref=%s "
             "reason=persisted_adept_attention",
