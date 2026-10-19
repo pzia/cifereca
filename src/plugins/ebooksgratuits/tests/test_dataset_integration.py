@@ -67,7 +67,7 @@ def test_local_dataset_search_filters_and_download():
                 credential_id="public",
                 label="",
                 credentials={},
-                options={"base_url": server.base, "search_page_size": 20},
+                options={"base_url": server.base, "search_page_size": 20, "acquisition_backend": "html"},
                 config={},
                 diagnostics=Diagnostics(),
                 transport=transport,
