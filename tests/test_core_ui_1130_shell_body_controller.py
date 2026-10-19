@@ -81,9 +81,12 @@ def _window():
     return window, events, styles, css, header
 
 
+PANGO = NS(EllipsizeMode=NS(END="end"))
+
+
 def _render():
     window, events, styles, css, header = _window()
-    root = build_main_shell(window, Gtk=GTK, add_css=css, version="1.2.3")
+    root = build_main_shell(window, Gtk=GTK, Pango=PANGO, add_css=css, version="1.2.3")
     return window, root, events, styles, header
 
 
@@ -99,7 +102,8 @@ def test_owner_has_no_runtime_gtk_import_and_mainwindow_facade_is_stable():
     assert [arg.arg for arg in facade.args.args] == ["self"]
     text = ast.unparse(facade)
     assert "shell_body_controller.build_main_shell" in text
-    assert "Gtk=Gtk" in text and "add_css=add_css" in text and "version=__version__" in text
+    assert "Gtk=Gtk" in text and "Pango=Pango" in text
+    assert "add_css=add_css" in text and "version=__version__" in text
 
 
 def test_root_contains_header_sidebar_stack_and_exactly_one_footer():
@@ -173,7 +177,10 @@ def test_activity_widgets_initially_hidden_with_stable_labels_and_css():
     assert window.activity_status_icon.properties["visible"] is False
     assert window.busy_label.options["label"] == ""
     assert window.busy_label.properties["hexpand"] is True
-    assert window.busy_label.properties["wrap"] is True
+    assert window.busy_label.properties["wrap"] is False
+    assert window.busy_label.properties["ellipsize"] == "end"
+    assert window.busy_label.properties["max_width_chars"] == 72
+    assert "notify::label" in window.busy_label.callbacks
 
 
 def test_history_popover_has_one_box_and_remains_hidden_until_activity():
