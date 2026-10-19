@@ -117,6 +117,27 @@ Tester le Core **réellement distribué** ; s'il ne dispose pas du mode strict,
 la recette de fermeture globale #839 nécessite une publication Core distincte,
 sur autorisation explicite. Ne pas clore P0 par déduction.
 
+## Contrôle de bout en bout des reçus dans le gate officiel (#577)
+
+La revue PR **et** la publication officielle utilisent
+`scripts/ci-plugins-only-runtime-gate.sh` sur une installation XDG/HOME
+**isolée**. Après l'installation stricte réelle, et de nouveau après
+un rollback forcé, `scripts/ci_plugins_only_receipt_gate.py` vérifie
+**chaque** package sélectionné : `snapshot_id`, source Git,
+version Core testée, empreinte SHA-256 du ZIP complet et du ZIP plugin,
+drapeau de digest contrôlé et `signature_verified: false`. Les reçus
+absents, partiels, périmés, surdimensionnés, via symlink ou contenant des
+champs non revus provoquent un échec **avant la signature et toute création
+de brouillon de release**.
+
+Ce contrôle prouve la **persistance et le rollback de la provenance dans
+le store installé par le gate**, pas une preuve de Cosign ni une installation
+sur le poste utilisateur. La signature du ZIP téléchargé est validée
+indépendamment par le workflow et le même gate est rejoué sur les assets
+téléchargés de la release encore en brouillon, avant publication. La
+recette GUI/XDG utilisateur et la coexistence avec une future release
+complète restent requises pour la clôture globale de #577.
+
 ## Reçu local de dernière mise à jour (#577)
 
 Après **installation réelle**, validation de l'index, contrôle des packages et
