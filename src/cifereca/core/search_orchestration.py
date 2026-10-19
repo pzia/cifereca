@@ -940,6 +940,44 @@ def _numilog_public_catalog_url(value: Any, *, cover: bool = False) -> str | Non
         return None
 
 
+_PUBLIC_SEARCH_TEXT_FIELDS = (
+    "awards", "prizes", "literary_prizes", "keywords", "themes", "tags",
+    "summary", "synopsis",
+)
+
+
+def _safe_public_search_text(key: str, value: Any) -> str | list[str] | None:
+    """Persist only bounded bibliographic text, never arbitrary Kobo extras.
+
+    This projection supplements the established metadata allowlist without
+    importing raw URLs, account fields, cookie headers or nested dictionaries
+    from an untrusted catalogue search result.
+    """
+    limit = 4000 if key in {"summary", "synopsis"} else 240
+
+    def clean(raw: Any) -> str | None:
+        if type(raw) is not str or not 0 < len(raw) <= limit:
+            return None
+        if any(ord(char) < 32 and char not in "\n\r\t" for char in raw):
+            return None
+        if re.search(
+            r"(?i)(?:https?://|(?:token|auth|cookie|signature|access_token|"
+            r"refresh_token)\s*=|(?:bearer|basic)\s+\S+|"
+            r"[^\s@]+@[^\s@]+\.[^\s@]+)",
+            raw,
+        ):
+            return None
+        normalized = " ".join(raw.split())
+        return normalized if normalized else None
+
+    if type(value) is str:
+        return clean(value)
+    if type(value) in (list, tuple) and len(value) <= 32:
+        values = [clean(part) for part in value]
+        return values if values and all(part is not None for part in values) else None
+    return None
+
+
 def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None=None) -> int:
     """Persist progressively discovered remote catalog metadata (0.8.3)."""
     identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
@@ -991,6 +1029,13 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             for name in ("subjects", "subject", "series", "collection", "publisher", "languages", "isbn", "isbns", "original_language", "authors", "contributors", "identifiers", "edition", "edition_statement", "series_index", "collection_index", "genre", "genres", "categories", "audience", "target_age", "rights", "dates")
             if raw_meta.get(name) not in (None, "", [], {})
         }
+        # Kobo-Vault and other providers may already expose attested awards,
+        # subjects and summaries. Preserve *only* sanitized bibliographic
+        # fields of the same exact source item, not its private extras.
+        for name in _PUBLIC_SEARCH_TEXT_FIELDS:
+            safe = _safe_public_search_text(name, raw_meta.get(name))
+            if safe is not None:
+                allowed_meta[name] = safe
         cover_url = (
             _numilog_public_catalog_url(row.thumbnail_url, cover=True)
             if row.source_provider == "numilog" else row.thumbnail_url
