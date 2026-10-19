@@ -19,12 +19,24 @@ de la recette finale de #1917 P1.
 | HTTP 200, aucune carte, pas de double indicateur de zéro | Liste vide avec **`partial_results`**, et non zéro attesté | La structure HTML, un login ou une transition de site ne permettent pas de prouver l'absence |
 | Requête non textuelle/contrôle/longueur excessive | `invalid_query`, avant HTTP | Pas de coercition de données privées en recherche |
 
-La page officielle actuelle montre `Showing 1-20 of 82`, des numéros de
-pages et un état `No results` dans un autre filtre.
-Cela atteste une **surface publique** et des libellés, **pas** que la route
-`q` actuelle accepte tous les termes ou filtre le serveur de manière
-exhaustive. La consultation ne démontre pas non plus les CGU/robots ou le
-comportement du client sur un poste utilisateur.
+**Écart de route live, connu et hors de cette correction #2333.**
+La [Free Library actuellement peuplée](https://www.baen.com/catalog/category/view/s/free-library/id/2012)
+affiche `Items 1-12 of 82`, et
+[la page `p=2`](https://www.baen.com/catalog/category/view/s/free-library/id/2012/?p=2)
+affiche `Items 13-24 of 82`. Le plugin utilise encore l'ancien chemin
+`/allbooks/category/index/id/2012` et ses anciens paramètres `q/page/pageSize`,
+**non qualifiés comme équivalents** aux routes `catalog/category` et `p`
+observées. Le routeur Magento et les sélecteurs de cartes réelles font
+l'objet de l'audit **#764** et de la PR brouillon **#1057**, bloquée
+sur des fixtures HTML brutes autorisées. Aucune promotion implicite de
+`/catalog/category` n'est effectuée dans #2333.
+
+Un ancien écran peut présenter `Showing 0-0 of 0` / `No results` ;
+ces mots ne démontrent **ni** la validité de la recherche `q`, **ni**
+une absence de livres sur la route peuplée. Le contrat #2333
+signale `partial_results` quand ces deux marqueurs manquent, mais ne
+corrige pas le routage. La consultation documentaire ne démontre ni les
+CGU/robots ni un GET automatisé autorisé depuis l'installation utilisateur.
 
 Tests hors réseau : `test_search_capabilities_p1.py` (champ/scopes, pages,
 zéro), `test_search_failures_p1.py` (401/403/429/5xx, panne),
