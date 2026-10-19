@@ -115,4 +115,4 @@ def test_return_confirmation_requires_exact_single_verified_registry_row(
 ):
     service, observed = _facade(inventory)
     assert adobe_return_inventory_confirmed(service, GOOD) is attested
-    assert observed == ["profiles", "resolve", "name", "adapter", "inventory"]
+    assert observed == ["profiles", "resolve", "adapter", "name", "inventory"]
