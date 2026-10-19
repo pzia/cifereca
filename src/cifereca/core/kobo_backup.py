@@ -164,59 +164,75 @@ def _manifest_author(item: dict[str, Any]) -> str | None:
     return text or None
 
 
+# The provider/runtime chooses exception.code and even its class name.
+# Identifier-like strings are NOT necessarily safe (an account can be one).
+_KOBO_BACKUP_CODES = frozenset({
+    "missing_delegation_scope", "missing_token", "invalid_token",
+    "invalid_bearer", "unauthorized", "forbidden", "insufficient_scope",
+    "invalid_api_token", "archived_book", "temporary", "network_error",
+    "http_error", "redirect_denied", "invalid_response",
+    "invalid_pagination", "no_downloadable_artifact",
+    "no_compatible_http_candidate", "missing_pinned_delivery_capability",
+    "result_unparseable_artifact_present",
+    "result_unparseable_artifact_missing",
+})
+
+
 def _kobo_backup_error_info(exc: Exception) -> dict[str, Any]:
-    """Return a compact, non-secret diagnostic classification for a backup error."""
-    message = str(exc) or exc.__class__.__name__
+    """Only bounded, closed diagnostic facts cross the backup/error boundary."""
     code: str | None = None
     status_code: int | None = None
     phase = "integration"
     fatal = False
 
     if isinstance(exc, KoboVaultError) or (
-        isinstance(exc, ProviderError) and isinstance(getattr(exc, "status_code", None), int)
+        isinstance(exc, ProviderError)
+        and type(getattr(exc, "status_code", None)) is int
     ):
         phase = "vault"
-        raw_code = str(getattr(exc, "code", "") or "")
-        code = raw_code if raw_code.isidentifier() else "provider_http_error"
-        status_code = getattr(exc, "status_code", None)
-        # The account is still authenticated for its manifest and descriptor:
-        # delegated-only 403 must not abort the entire account or other accounts.
+        raw_code = getattr(exc, "code", None)
+        code = (raw_code if type(raw_code) is str
+                and raw_code in _KOBO_BACKUP_CODES else "provider_http_error")
+        raw_status = getattr(exc, "status_code", None)
+        status_code = (raw_status if type(raw_status) is int
+                       and 100 <= raw_status <= 599 else None)
+        # Delegated-only 403 does not invalidate a previously authenticated
+        # account, and must not starve other owned Kobo purchases.
         fatal = code != "missing_delegation_scope" and (
             status_code in {401, 403} or code in {
-                "missing_token", "invalid_token", "invalid_bearer", "unauthorized",
-                "forbidden", "insufficient_scope", "invalid_api_token",
+                "missing_token", "invalid_token", "invalid_bearer",
+                "unauthorized", "forbidden", "insufficient_scope",
+                "invalid_api_token",
             }
         )
     elif isinstance(exc, (KoboAdeptError, UserFacingError)):
         phase = "adept"
-        code = str(getattr(exc, "code", "") or "adept_error")
+        raw_code = getattr(exc, "code", None)
+        code = (raw_code if type(raw_code) is str
+                and raw_code in _KOBO_BACKUP_CODES else "adept_error")
     else:
-        lower = message.lower()
-        if "bearer token invalide" in lower or "token api refus" in lower:
-            phase = "vault"
-            code = "invalid_token"
-            fatal = True
-        elif "scope insuffisant" in lower:
-            phase = "vault"
-            code = "insufficient_scope"
-            fatal = True
-        elif "candidat epub/pdf http direct" in lower or "candidat http epub/pdf" in lower:
-            phase = "integration"
+        # Legacy untyped exceptions retain the historical coarse auth/scope
+        # classification. Their text is NEVER copied to a receipt or event.
+        try:
+            hint = str(exc)[:512].lower()
+        except Exception:
+            hint = ""
+        if "bearer token invalide" in hint or "token api refus" in hint:
+            phase, code, fatal = "vault", "invalid_token", True
+        elif "scope insuffisant" in hint:
+            phase, code, fatal = "vault", "insufficient_scope", True
+        elif "candidat epub/pdf http direct" in hint or "candidat http epub/pdf" in hint:
             code = "no_compatible_http_candidate"
-        elif "aucun artefact téléchargeable compatible" in lower:
-            phase = "vault"
-            code = "no_downloadable_artifact"
-        elif "library_sync/kdrm exige" in lower:
-            phase = "integration"
+        elif "aucun artefact téléchargeable compatible" in hint:
+            phase, code = "vault", "no_downloadable_artifact"
+        elif "library_sync/kdrm exige" in hint:
             code = "missing_pinned_delivery_capability"
 
-    if code is None:
-        code = exc.__class__.__name__
     return {
         "phase": phase,
-        "code": str(code),
+        "code": code or "backup_item_failed",
         "status_code": status_code,
-        "message": message,
+        "message": "Sauvegarde Kobo impossible",
         "fatal": fatal,
     }
 
@@ -889,11 +905,10 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             return False
         try:
             cancellation_latched = bool(cancelled())
-        except Exception as exc:
-            # A broken cancellation hook must not launch another acquisition.
-            logger.warning(
-                "TRACE kobo cancellation hook failed kind=%s", type(exc).__name__,
-            )
+        except Exception:
+            # A broken cancellation hook must not launch another acquisition
+            # or emit arbitrary plugin-controlled exception class names.
+            logger.warning("TRACE kobo cancellation hook failed code=callback_failed")
             cancellation_latched = True
         return cancellation_latched
 
