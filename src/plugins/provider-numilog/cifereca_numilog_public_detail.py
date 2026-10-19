@@ -347,6 +347,25 @@ def merge_public_detail(item, detail):
     except (PublicDetailError, PublicIdentifierError):
         raise ProviderCapabilityError(error) from None
 
+    # Product URL equality alone does not guarantee that the currently
+    # published product JSON-LD still describes the searched book. Reject
+    # contradictory *or absent* Book titles before copying any identifiers,
+    # commercial offers, publisher, formats or cover into this catalogue row.
+    # Unlike displaying a conflict marker beside the listing, preserving
+    # those foreign fields in metadata would silently misattribute an ISBN.
+    def _title_key(value):
+        if not _valid_text(value, 512):
+            return None
+        return unicodedata.normalize(
+            "NFKC", " ".join(value.split()),
+        ).casefold()
+
+    listed_title = _title_key(getattr(item, "title", None))
+    detail_title = _title_key(fields.get("title"))
+    if (listed_title is None or detail_title is None
+            or listed_title != detail_title):
+        raise ProviderCapabilityError("Numilog public : detail_title_conflict")
+
     projection = {}
     conflicts = []
     for key, target in (
@@ -366,12 +385,6 @@ def merge_public_detail(item, detail):
                 conflicts.append(key)
         else:
             projection[target] = value
-    if fields.get("title") and fields["title"].strip() != item.title.strip():
-        conflicts.append("title")
-    # A page declaring a different book at the same URL cannot safely fill
-    # missing listing fields; expose conflict without projecting new values.
-    if "title" in conflicts:
-        projection.clear()
     from cifereca_numilog_public_metadata import validated_public_metadata, PublicMetadataError
     from cifereca_numilog_public_commercial import (
         validated_public_commercial, PublicCommercialError,
