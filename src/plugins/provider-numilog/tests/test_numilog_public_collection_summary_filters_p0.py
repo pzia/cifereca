@@ -56,7 +56,7 @@ def test_collection_is_source_attested_and_combinable_with_author():
     assert all(r.metadata["collection"] == "Romans Junior" for r in roman.items)
     combined = refine_loaded_public_page(
         p, collection="ROMANS JUNIOR", author="Jean Claude Mourlevat",
-        summary="HERISSON",
+        summary="FRISSONNE",
     )
     assert combined.matching_count == 1
     assert combined.items[0].title == "Jefferson prend des risques"
