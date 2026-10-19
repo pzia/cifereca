@@ -2198,13 +2198,20 @@ def main() -> int:
         rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
         kobo = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
         assert "Connexion : Déconnectée" in kobo.get_subtitle()
-        audit = next(
-            button for button in walk(sync_action_row(kobo))
-            if isinstance(button, Gtk.Button)
-            and button.get_tooltip_text() == (
-                "Audit SHA local de ce compte (lecture seule, peut être long)"
-            )
-        )
+        # #2141: secondary actions are now below the account's explicitly
+        # opened tools expander, not in the primary ActionRow suffix.
+        # Resolve the containing account group to preserve source isolation.
+        groups = [group for group in walk(w._sync_sources_box)
+                  if isinstance(group, Adw.PreferencesGroup)
+                  and any(node is kobo for node in walk(group))]
+        assert len(groups) == 1, "Kobo audit source must have one account group"
+        audits = [button for button in walk(groups[0])
+                  if isinstance(button, Gtk.Button)
+                  and button.get_tooltip_text() == (
+                      "Audit SHA local de ce compte (lecture seule, peut être long)"
+                  )]
+        assert len(audits) == 1, "Kobo audit action must remain account-scoped"
+        audit = audits[0]
         assert audit.get_sensitive() and audit.get_mapped()
         assert not f["audit_calls"] and not f["mutations"]
         # GTK mapping is NOT on-screen visibility. An extra confirmation row
