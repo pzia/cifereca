@@ -7,6 +7,7 @@ import time
 from typing import Any
 from ..task_queue import TaskPriority
 from .startup_lifecycle import once_while_open
+from .connection_failure_summary import connection_failure_summary
 _TRACE_LOG = logging.getLogger("cifereca")
 
 
@@ -38,8 +39,14 @@ def connect_configured_sources(
         _TRACE_LOG.info("TRACE gui populate-loans end")
         connected = len(result.get("connected", []))
         errors = result.get("errors", {}) or {}
+        safe_details = connection_failure_summary(result.get("connection_failures"))
+        status = f"{connected} source(s) connectée(s)"
+        if errors:
+            status += f", {len(errors)} en erreur"
+            if safe_details:
+                status += ". " + safe_details
         window._activity_result(
-            f"{connected} source(s) connectée(s)" + (f", {len(errors)} en erreur" if errors else ""),
+            status,
             success=not bool(errors),
             persistent=bool(errors),
         )
