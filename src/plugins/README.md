@@ -81,3 +81,11 @@ souhaite récupérer de l'espace, la suppression manuelle des anciens packages
 et du cache doit être volontaire et distincte d'une mise à jour Core.
 Ce retrait ne supprime pas les autres sources (Milan, École des loisirs,
 Open Library).
+
+## Retrait Jeunesse et plugins en sommeil (19/10/2026)
+
+Les six packages spécifiques Jeunesse sont retirés et interdits de réinstallation ou de réactivation. Les caches et les versions déjà présentes dans le magasin utilisateur sont préservés, mais non découverts. Les fixtures de `simulation/` restent accessibles historiquement, sans anciens tests d'adaptateur actif. Références P3 : [catalogue #741](https://github.com/pzia/cifereca/issues/741), [Milan #946](https://github.com/pzia/cifereca/issues/946), [École des loisirs #944](https://github.com/pzia/cifereca/issues/944), [Open Library #2308](https://github.com/pzia/cifereca/issues/2308), [découverte #2309](https://github.com/pzia/cifereca/issues/2309), [enrichissement #2310](https://github.com/pzia/cifereca/issues/2310).
+
+Le filtre d'âge **générique** en Recherche est P2 [#2311](https://github.com/pzia/cifereca/issues/2311). Le module transversal `cifereca.plugin_api.youth_ages` reste disponible, indépendant du plugin retiré.
+
+Baen, Critique littéraire, CifericaOPDS, Dev Updater et Constellations sont opt-in par `enabled_by_default=false`; une activation volontaire préexistante n'est pas supprimée. Browser Recorder/Playwright est déjà opt-in.

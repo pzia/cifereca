@@ -31,9 +31,6 @@ PUBLIC_ARTIFACT_PATHS = {
         "dist/cifereca-plugins-only-preview-${{ github.run_id }}-${{ github.run_attempt }}.zip",
         "dist/cifereca-plugins-only-preview-${{ github.run_id }}-${{ github.run_attempt }}.zip.sha256",
     ),
-    "youth-source-live-qualification.yml": (
-        "youth-live-evidence/result.json",
-    ),
 }
 
 
@@ -78,6 +75,3 @@ def test_reports_are_generated_from_closed_public_verdicts_not_raw_fixtures():
     gtk = (ROOT / "gtk-smoke.yml").read_text(encoding="utf-8")
     assert "gtk-smoke-public/result.json" in gtk
     assert "path: environnements/chatgpt-work/evidence" not in gtk
-    youth = (ROOT / "youth-source-live-qualification.yml").read_text(encoding="utf-8")
-    assert "safe = module.public_report(raw_report)" in youth
-    assert "path: youth-live-evidence/result.json" in youth

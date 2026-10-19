@@ -105,77 +105,6 @@ SCENARIOS = {
         "runner": "gtk-constellations",
         "width": 1600,
     },
-    "youth-1366": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "P1 #758 : page Jeunesse GTK réelle, XTEST, 1366px, âges, identité, provenance.",
-        "runner": "gtk-youth",
-        "width": 1366,
-    },
-    "youth-1600": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "Plugins P1 #1599 : vraie page Jeunesse GTK/XTEST 1600px ; détails, identités, retour et sélection.",
-        "runner": "gtk-youth",
-        "width": 1600,
-    },
-    "youth-filter-help-1366": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "UX P1 #922 : 10 aides et noms permanents des filtres Jeunesse sur la vraie GTK 1366.",
-        "runner": "gtk-youth",
-        "width": 1366,
-        "filters_ux": True,
-    },
-    "youth-milan-1366": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "P1 #758 : vrai Milan activé, pagination, lien notice GTK et panne HTTP simulée à 1366px.",
-        "runner": "gtk-youth",
-        "width": 1366,
-        "milan": True,
-    },
-    "youth-editions-1366": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "P1 #758 : deux éditions même titre/ISBN différents, âges contradictoires par source, vrai GTK 1366.",
-        "runner": "gtk-youth",
-        "width": 1366,
-        "editions": True,
-    },
-    "youth-editions-1600": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "P1 #1599 : deux éditions, ISBN distincts et âges par provenance dans le vrai détail GTK 1600.",
-        "runner": "gtk-youth",
-        "width": 1600,
-        "editions": True,
-    },
-    "youth-focus-return-1366": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "UX P2 #962 : restaurer le focus du bouton Jeunesse après Retour depuis Recherche (GTK/XTEST 1366).",
-        "runner": "gtk-youth",
-        "width": 1366,
-        "library_search": True,
-        "focus_return": True,
-    },
-    "youth-library-search-1366": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "P0 #906 UX : Jeunesse -> Recherche connue -> Retour par vraie GTK/XTEST 1366.",
-        "runner": "gtk-youth",
-        "width": 1366,
-        "library_search": True,
-    },
-    "youth-library-search-1600": {
-        "plugin": "catalog.youth",
-        "fixture": "search-filters",
-        "description": "P1 #1599 : Jeunesse -> Recherche connue -> Retour, sélection et clavier XTEST 1600.",
-        "runner": "gtk-youth",
-        "width": 1600,
-        "library_search": True,
-    },
     "diagnostics-1366": {
         "plugin": "ui.page.diagnostics",
         "fixture": "startup",
@@ -370,18 +299,6 @@ def main() -> int:
                     args.python, str(ROOT / "e2e/constellations_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                 ]
-            elif scenario.get("runner") == "gtk-youth":
-                width = scenario["width"]
-                command = [
-                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
-                    args.python, str(ROOT / "e2e/youth_page_probe.py"),
-                    "--out", str(scenario_dir), "--width", str(width),
-                    *(["--milan"] if scenario.get("milan") else []),
-                    *(["--editions"] if scenario.get("editions") else []),
-                    *(["--library-search"] if scenario.get("library_search") else []),
-                    *(["--focus-return"] if scenario.get("focus_return") else []),
-                    *(["--filters-ux"] if scenario.get("filters_ux") else []),
-                ]
             elif scenario.get("runner") == "gtk-diagnostics":
                 width = scenario["width"]
                 command = [
@@ -489,7 +406,7 @@ def main() -> int:
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") in {"gtk-probe", "gtk-youth", "gtk-diagnostics", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations"} and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
