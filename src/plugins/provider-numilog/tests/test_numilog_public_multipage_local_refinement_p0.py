@@ -121,7 +121,7 @@ def test_matched_rows_are_copy_on_return():
     ))),  # duplicate product across pages
     lambda a, b: (replace(a, next_url=None), b),
     lambda a, b: (replace(a, next_url=URL + "&GRID_PAGE=2"), b),
-    lambda a, b: (a, replace(b, next_url=URL + "&GRID_PAGE=2")),
+    lambda a, b: (a, replace(b, next_url=URL + "&GRID_PAGE=3")),
     lambda a, b: (a, replace(b, pagination_links=({"url": URL.replace(
         "jefferson", "different-query")},))),
 ])
