@@ -2292,7 +2292,17 @@ def main() -> int:
             lambda _button: f.__setitem__("audit_click_signal_seen", True),
         )
         report["stage"] = "P0_1347_kobo_audit_pointer_dispatch"
-        report["pointer_actions"].append(device[0].click_widget(audit))
+        # Dispatch exactly the center whose MainWindow hit-test was verified
+        # across two GTK frames. Using widget_point(audit) independently can
+        # calculate a different X11 position for nested, scrolled ActionRows
+        # under rootless Xvfb (observed clicked=false, broker_calls=0).
+        # Still genuine physical XTEST; never emit the audit via GTK API.
+        screen_x, screen_y = device[0].window_point(w, point_x, point_y)
+        device[0].click(screen_x, screen_y)
+        report["pointer_actions"].append({
+            "widget": audit.get_name(), "x": screen_x, "y": screen_y,
+            "source": "XTEST pointer/button events (verified MainWindow hit-test)",
+        })
         report["stage"] = "P0_1347_kobo_audit_result_wait"
         f["audit_deadline"] = monotonic() + 6
         later(100, loan_sync_audit_result)
