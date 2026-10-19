@@ -172,9 +172,13 @@ class OptionalLLMService:
             return failed("invalid_request")
         if control is not None and control.cancelled():
             return failed("cancelled")
-        if (not isinstance(request.prompt, str) or not request.prompt.strip()
+        # Plugins can construct LLMRequest at runtime despite its type hints.
+        # Reject str subclasses and foreign task objects before invoking their
+        # __str__/strip/__eq__ hooks on a path that must fail safely.
+        if (type(request.prompt) is not str or not request.prompt.strip()
                 or len(request.prompt) > max_input
-                or not isinstance(request.system, str) or len(request.system) > 1000
+                or type(request.system) is not str or len(request.system) > 1000
+                or type(request.task) is not str
                 or request.task not in ("generate", "structured")
                 or type(request.max_output_tokens) is not int
                 or request.max_output_tokens < 1):
