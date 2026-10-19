@@ -97,8 +97,8 @@ def test_all_active_catalogues_present_even_without_public_accounts():
     names = [x.provider_id for x in sources]
     assert names == sorted(names)
     assert names == [
-        "rights-only", "bnf-catalogue", "ebooksgratuits", "gallica",
-        "gutenberg", "kobo", "numilog", "paris",
+        "bnf-catalogue", "ebooksgratuits", "gallica", "gutenberg",
+        "kobo", "numilog", "paris", "rights-only",
     ]
     gallica = next(x for x in sources if x.provider_id == "gallica")
     assert gallica.identity_scope == "public"
