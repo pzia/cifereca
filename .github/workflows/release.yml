@@ -104,6 +104,11 @@ jobs:
         run: python scripts/check_release_inventory.py
 
       - name: Run Core tests
+        # These tests spawn isolated Python processes. Match PR CI's import
+        # scope so subprocesses find the source tree and Kobo provider without
+        # installing a different candidate than the one being released.
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/src/plugins/provider-kobo
         run: python -m pytest -q tests
 
       - name: Run plugin tests
