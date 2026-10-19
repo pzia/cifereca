@@ -221,8 +221,8 @@ class PartialPluginReleaseTests(unittest.TestCase):
         self.assertIn('--store "$store_root"', gate)
         self.assertLess(gate.index(command), gate.index("before_incompatible="))
         self.assertGreater(gate.rindex(command), gate.index("before_rollback="))
-        review = workflow.split("\\n  validate-pr:\\n", 1)[1].split("\\n  preflight-request:\\n", 1)[0]
-        release = workflow.split("\\n  release:\\n", 1)[1]
+        review = workflow.split("\n  validate-pr:\n", 1)[1].split("\n  preflight-request:\n", 1)[0]
+        release = workflow.split("\n  release:\n", 1)[1]
         self.assertIn("scripts.test_ci_plugins_only_receipt_gate", review)
         self.assertIn("scripts.test_ci_plugins_only_receipt_gate", release)
         self.assertIn("scripts/ci_plugins_only_receipt_gate.py", workflow)
