@@ -35,8 +35,15 @@ def return_adept_acquisition(
             if len(matches) != 1 or any(type(matches[0].get(k)) is not bool for k in ("returned", "expired", "token_present")):
                 raise ValueError("loan missing or ambiguous")
             return matches[0]
-        except Exception as exc:
-            raise AttentionRequired("État ADEPT non confirmé. Vérifiez le prêt ; le fichier est conservé.", code="adept_return_verification_required") from exc
+        except Exception:
+            # ADEPT registry failures can include original profile paths,
+            # signed fulfillment URLs, accounts, stderr or a hostile __str__.
+            # A constant UserFacingError is not sufficient if traceback
+            # formatting prints its chained provider exception.
+            raise AttentionRequired(
+                "État ADEPT non confirmé. Vérifiez le prêt ; le fichier est conservé.",
+                code="adept_return_verification_required",
+            ) from None
     try:
         fresh = read_exact()
     except Exception:
