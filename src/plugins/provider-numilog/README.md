@@ -1,3 +1,31 @@
+## 0.1.71 — rôles et mentions éditoriales de fiche Numilog (#1072 P0)
+
+Une **fiche publique explicitement demandée**, associée à un produit
+`Mes Livres` via son URL canonique et le titre de l'achat fraîchement
+vérifié, peut désormais conserver les déclarations JSON-LD `Book` :
+`translator`, `illustrator`, `contributor` sous des clés **distinctes**
+(`translators`, `illustrators`, `contributors`), ainsi que
+`bookEdition` (`public_edition_label`), `numberOfPages`
+(`public_page_count`) et `typicalAgeRange` (`public_age_range_label`).
+Les personnes/organisations sont des objets nommés et bornés ; une valeur
+malformée est omise, et toute mutation non qualifiée du cache est refusée
+par `validated_public_jsonld_fields`. Une provenance est conservée par champ
+dans `public_detail_enrichment.public_jsonld.field_evidence`.
+
+**Sémantique stricte** : il s'agit de métadonnées du **produit commercial**,
+pas d'une preuve de la variante EPUB/PDF achetée, d'un ISBN numérique, d'un
+droit d'acquisition, ni d'un âge recommandé automatiquement. La liste des
+traducteurs/illustrateurs n'est jamais réécrite en auteurs. Aucun HTTP
+supplémentaire n'est ajouté à `search/library/holdings`, aucun
+téléchargement ni synchronisation n'est déclenché. La présence réelle
+de ces propriétés sur Numilog **n'est pas attestée** par les deux fixtures
+produit actuelles ; leurs cas positifs sont **synthétiques** et suivent
+le contrat [Schema.org Book](https://schema.org/Book).
+
+Tests hors réseau : `test_numilog_owned_public_editorial_roles_p0.py`.
+Les étapes de recette commerciale et la qualification exacte de
+l'édition achetée demeurent ouvertes dans #1072.
+
 ## 0.1.70 — filtre local de langue publique attestée (#1886 P0)
 
 `NumilogPublicSession.refine_loaded_page(page, language="fr")` accepte
