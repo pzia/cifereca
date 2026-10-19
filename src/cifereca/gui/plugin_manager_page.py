@@ -48,6 +48,10 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self._package_expansion: dict[str, bool] = {}
         self._family_navigation_open = True
         self._family_expansion: dict[str, bool] = {}
+        self._plugin_widgets: dict[str, Gtk.Widget] = {}
+        self._plugin_switches: dict[str, Gtk.Switch] = {}
+        self._refresh_anchor_id: str | None = None
+        self._viewport_token = None
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.outer.set_margin_top(24); self.outer.set_margin_bottom(24)
@@ -63,11 +67,36 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self._view_query = str(plugin_id or "").strip()
         self._view_filter = "all"
         self._view_role = "all"
+        self._reset_viewport_on_refresh = True
         self.refresh()
         if hasattr(self, "plugin_search"):
             self.plugin_search.grab_focus()
 
     def refresh(self) -> None:
+        # The toggle's row will be destroyed below. Record its old *visual*
+        # offset rather than just the adjustment, which is reset by GTK when
+        # the child tree briefly becomes empty (#908).
+        adjustment = self.get_vadjustment()
+        old_scroll = adjustment.get_value()
+        anchor_id = self._refresh_anchor_id
+        self._refresh_anchor_id = None
+        reset_scroll = bool(getattr(self, "_reset_viewport_on_refresh", False))
+        self._reset_viewport_on_refresh = False
+        anchor_offset = None
+        restore_focus = False
+        if anchor_id:
+            row = self._plugin_widgets.get(anchor_id)
+            if row is not None:
+                ok, bounds = row.compute_bounds(self.outer)
+                if ok:
+                    anchor_offset = bounds.get_y() - old_scroll
+            switch = self._plugin_switches.get(anchor_id)
+            root = self.get_root()
+            focused = root.get_focus() if root is not None else None
+            restore_focus = bool(
+                switch is not None and focused is not None
+                and (focused is switch or focused.is_ancestor(switch))
+            )
         child = self.outer.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling(); self.outer.remove(child); child = nxt
@@ -144,6 +173,45 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         refresh_bottom.connect("clicked", lambda _b: self._reload()); footer.append(refresh_bottom)
         mirror_sensitivity(install, install_bottom); mirror_sensitivity(refresh, refresh_bottom)
         self.outer.append(footer)
+        self._restore_viewport(
+            0.0 if reset_scroll else old_scroll,
+            None if reset_scroll else anchor_id,
+            None if reset_scroll else anchor_offset,
+            restore_focus and not reset_scroll,
+        )
+
+    def _restore_viewport(
+        self, scroll: float, anchor_id: str | None, offset: float | None,
+        restore_focus: bool,
+    ) -> None:
+        """Restore after the new GTK allocation, not while the tree is empty."""
+        token = object()
+        self._viewport_token = token
+        adjustment = self.get_vadjustment()
+        focus_pending = restore_focus
+
+        def restore() -> bool:
+            nonlocal focus_pending
+            if self._viewport_token is not token or self.get_root() is None:
+                return False
+            if focus_pending and anchor_id in self._plugin_switches:
+                self._plugin_switches[anchor_id].grab_focus()
+                focus_pending = False
+            target = scroll
+            row = self._plugin_widgets.get(anchor_id) if anchor_id else None
+            if row is not None and offset is not None:
+                ok, bounds = row.compute_bounds(self.outer)
+                if ok:
+                    target = bounds.get_y() - offset
+            limit = max(adjustment.get_lower(),
+                        adjustment.get_upper() - adjustment.get_page_size())
+            adjustment.set_value(max(adjustment.get_lower(), min(limit, target)))
+            return False
+
+        # Idle covers synchronous refresh; the post-frame retry covers GTK's
+        # deferred measurement of wrapped text/expanded package rows.
+        GLib.idle_add(restore)
+        GLib.timeout_add(48, restore)
 
     def _plugin_search_changed(self, entry: Gtk.SearchEntry) -> None:
         query = entry.get_text()
@@ -169,6 +237,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self._render_inventory()
 
     def _render_inventory(self, *, statuses=None, inventory=None) -> None:
+        self._plugin_widgets.clear()
+        self._plugin_switches.clear()
         container = self.inventory_box
         child = container.get_first_child()
         while child is not None:
@@ -498,6 +568,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         from cifereca.plugin_help import plugin_help
         d = status.descriptor
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        self._plugin_widgets[d.id] = box
         box.set_margin_top(9); box.set_margin_bottom(9)
         box.set_margin_start(10); box.set_margin_end(10)
 
@@ -627,6 +698,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         activation_label = Gtk.Label(label="Activé", xalign=0)
         activation_group.append(activation_label)
         toggle = Gtk.Switch(); toggle.set_active(bool(status.enabled)); toggle.set_valign(Gtk.Align.CENTER)
+        self._plugin_switches[d.id] = toggle
         toggle.set_tooltip_text(f"Activer ou désactiver {d.display_name or d.id}")
         toggle.connect("notify::active", lambda sw, _p, pid=d.id: self._toggle(pid, sw.get_active(), sw))
         activation_group.append(toggle); settings.append(activation_group)
@@ -730,6 +802,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             self.manager.set_enabled(plugin_id, enabled)
         except Exception as exc:
             self.window.show_error(plugin_error_message(exc), "Impossible de modifier le plugin")
+        self._refresh_anchor_id = plugin_id
         self.refresh(); self.on_changed()
 
     def _priority(self, plugin_id: str, value: int) -> None:
