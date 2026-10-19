@@ -220,6 +220,19 @@ def _public_search_error(exc):
     return ProviderError(f'Ebooks libres et gratuits : {code}')
 
 
+def _validated_public_query(query):
+    """Accept public text, not arbitrary objects serialized into HTTP URLs."""
+    if query is None:
+        return ""  # Existing empty browse contract.
+    if (type(query) is not str or len(query) > 512
+            or any(unicodedata.category(ch) in {'Cc', 'Cf', 'Cs'}
+                   for ch in query)):
+        raise ProviderCapabilityError(
+            'Ebooks libres et gratuits : invalid_query'
+        )
+    return query
+
+
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
         super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.17','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
@@ -237,9 +250,10 @@ class EbooksSession(ProviderSession):
     def _search_payload(query,page,page_size=50):
         return {'titre':str(query or '').strip(),'offset':str(page*page_size),'Submit':'Rechercher'}
     def search(self,query,scope='all',page=0,field='all'):
+        self.last_search_warnings = []
+        query = _validated_public_query(query)
         if self.acquisition_backend == 'opds':
             return self._search_opds(query,scope=scope,page=page,field=field)
-        self.last_search_warnings = []
         # Unimplemented fields/scopes must never masquerade as zero matches.
         if type(field) is not str or field.strip().casefold() not in DESCRIPTOR.search_capabilities.fields:
             raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_field')
@@ -669,8 +683,9 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
     if not session.connected:raise ProviderError('Ebooks libres et gratuits : connecter le catalogue')
     if type(page) is not int or not 0<=page<MAX_REQUESTED_PAGES:
         raise ProviderCapabilityError('Ebooks libres et gratuits : invalid_page')
+    query = _validated_public_query(query)
     field=field.strip().lower()
-    needle=str(query or '').strip()
+    needle=query.strip()
     if field not in {'all','title'} and not needle:
         return []
     root,root_url=_opds_fetch(session,session.opds_feed_url)
