@@ -470,7 +470,7 @@ jobs:
             --certificate-github-workflow-ref "refs/heads/main" \
             --certificate-github-workflow-sha "$GITHUB_SHA"
 
-      - name: Resolve immutable draft source and upload signed ZIP
+      - name: Create or update draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
