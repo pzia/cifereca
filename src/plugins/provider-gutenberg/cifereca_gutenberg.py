@@ -506,7 +506,8 @@ class GutenbergSession(ProviderSession):
         try:
             root = ET.fromstring(content)
         except ET.ParseError:
-            raise ProviderError("Project Gutenberg : opds_next_link_unverified") from None
+            # Malformed Atom is an XML failure, not a forged/missing next URL.
+            raise ProviderError("Project Gutenberg OPDS : XML invalide") from None
         try:
             base = urlsplit(base_url)
             base_port = base.port or (443 if base.scheme == "https" else 80)
