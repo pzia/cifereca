@@ -2439,7 +2439,11 @@ class LibraryService:
                     or str(row.get("account_id") or "") != str(loan.source_account_id or "")
                     or str(row.get("item_id") or "") != str(loan.record_id or loan.id)):
                 continue
-            metadata = row.get("metadata") or {}
+            metadata = row.get("metadata")
+            if type(metadata) is not dict:
+                # A malformed acquisition payload must not be promoted into
+                # a different same-account ADEPT return transaction.
+                return {"status": "adept_return_binding_required", "return_available": False}
             recorded_loan_id = metadata.get("provider_loan_id")
             if recorded_loan_id is not None and str(recorded_loan_id) != str(loan.id):
                 continue
@@ -2453,7 +2457,11 @@ class LibraryService:
             return {"status": "adept_return_acquisition_ambiguous", "return_available": False}
 
         row = candidates[0]
-        binding = (row.get("metadata") or {}).get("adept_binding") or {}
+        binding = row["metadata"].get("adept_binding")
+        # Historical or damaged JSON may contain an array/string instead of
+        # an ADEPT binding. This is never evidence for a return action.
+        if type(binding) is not dict:
+            binding = {}
         origin_attested = inventory_attests_return_origin(binding)
         if borrower_code and not origin_attested:
             return {"status": borrower_code, "return_available": False}
@@ -2481,16 +2489,22 @@ class LibraryService:
             or binding.get("token_present") is not False
         ):
             state = "returned_unverified"
-        if binding.get("return_verification") in {"pending", "verification_failed"}:
+        raw_verification = binding.get("return_verification")
+        raw_inventory = binding.get("inventory_status")
+        raw_loan_state = binding.get("loan_state")
+        if any(value is not None and type(value) is not str
+               for value in (raw_verification, raw_inventory, raw_loan_state)):
+            # JSON arrays/maps are unhashable; a corrupt checkpoint should
+            # require explicit reconciliation rather than crash the detail UI.
             state = "verification_failed"
-        elif binding.get("loan_state") == "expired":
+        elif raw_verification in {"pending", "verification_failed"}:
+            state = "verification_failed"
+        elif raw_loan_state == "expired":
             state = "expired"
-        elif (
-            binding.get("inventory_status") in {
-                "unresolved", "ambiguous", "inventory_error", "binding_conflict"
-            } and state != "returned"
-        ):
-            state = binding["inventory_status"]
+        elif raw_inventory in {
+            "unresolved", "ambiguous", "inventory_error", "binding_conflict"
+        } and state != "returned":
+            state = raw_inventory
         elif binding.get("token_present") is False and state != "returned":
             state = "token_missing"
         if state in {"returned", "returned_unverified"} and self._provider_loan_active_for_acquisition(row):
@@ -2501,7 +2515,7 @@ class LibraryService:
             "adept_loan_id": binding.get("adept_loan_id"),
             "profile_name": binding.get("adept_profile_name"),
             "return_available": bool(
-                state == "ready" and binding.get("return_available")
+                state == "ready" and binding.get("return_available") is True
                 and self._adept_return_capability()
             ),
         }
