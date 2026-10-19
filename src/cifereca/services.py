@@ -2874,7 +2874,15 @@ class LibraryService:
         except (KoboAdeptError, UserFacingError) as exc:
             if retained_acsm is not None and retained_acsm.exists():
                 _TRACE_LOG.info("TRACE download acsm cleanup loan_ref=%s action=keep reason=adept_error", trace_ref)
-            code = str(getattr(exc, "code", "") or "adept_error")
+            # A plugin's error code is not a public contract by itself.
+            # Reuse the bounded diagnostic vocabulary for UI and SQLite.
+            try:
+                raw_code = getattr(exc, "code", None)
+            except Exception:
+                raw_code = None
+            from .core.loan_failure_diagnostics import failure_fields
+            classified = failure_fields(code=raw_code, process={}, loan_ref=None)["code"]
+            code = classified if classified != "unclassified_error" else "adept_error"
             process = {}
             if failure_executor == "kobo-adept":
                 raw = self.runtime_diagnostic("runtime.kobo-adept")
@@ -2882,22 +2890,23 @@ class LibraryService:
                     raw, exc=exc,
                     candidate=locals().get("adept_destination"), path_type=Path,
                 )
-                from .core.loan_failure_diagnostics import failure_fields
                 self.diagnostics.add("KOBO-ADEPT", "acquisition failed", "error",
                     detail=failure_fields(code=code, process=process, loan_ref=trace_ref), level="errors")
-            message = str(exc)
+            # Never persist a provider/libgourou exception's raw text,
+            # signed ACSM URL or even a plugin-controlled version string.
+            # The untrusted text is inspected locally only to preserve the
+            # historical named Adobe licensing classification.
+            try:
+                private_message = str(exc)
+            except Exception:
+                private_message = ""
+            message = (
+                "Acquisition ADEPT indisponible" if failure_executor == "kobo-adept"
+                else "Acquisition du prêt indisponible"
+            )
             if code == "pnb_redirect_refused":
-                plugin_version = "inconnue"
-                if self._plugin_manager is not None:
-                    try:
-                        plugin_version = self._plugin_manager.status("provider." + loan.source_provider).descriptor.version
-                    except KeyError:
-                        pass
-                message += f" (Plugin {loan.source_provider} {plugin_version} ; consulter les traces PNB target_scheme / target_port pour distinguer protocole, port et hôte.)"
+                message = "Redirection PNB refusée ; consulter les traces PNB"
                 self.diagnostics.add("PNB", "redirect refused", "warning", detail={"loan_ref": trace_ref, "code": "pnb_redirect_refused"}, level="errors")
-            if process:
-                facts = ", ".join(f"{key}={value}" for key, value in process.items())
-                message += f" ({facts})"
             # This is a decoder/transport-contract failure, *not* an Adobe
             # licensing decision. The next opening may retry it automatically.
             # Never infer a named Adobe refusal from a generic CLI exit code.
@@ -2911,7 +2920,7 @@ class LibraryService:
                 time.monotonic()-started, bool(process),
             )
             status = "retryable_error" if retryable else "attention_required"
-            attention_code = adept_attention_code(code, message, executor=failure_executor)
+            attention_code = adept_attention_code(code, private_message, executor=failure_executor)
             metadata = loan_failure_evidence.adept_failure_metadata(
                 previous_meta, loan_id=loan.id, process=process,
                 retained_acsm=retained_acsm, executor=failure_executor,
