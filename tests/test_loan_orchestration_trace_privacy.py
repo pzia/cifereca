@@ -71,7 +71,7 @@ def test_real_orchestration_keeps_outcomes_files_and_requests_but_not_private_tr
             assert result['code'] == 'adept_profile_required'
             assert result['error'] == 'Profil ADEPT indisponible'
             assert PRIVATE not in result['code'] + result['error']
-        if scenario == 'borrower_changed': assert result['code'] == PRIVATE+'-borrower-code'
+        if scenario == 'borrower_changed': assert result['code'] == 'adept_borrower_ambiguous'
         if scenario == 'adept_failure':
             assert result['code'] == 'adept_error'
             assert result['error'].startswith('Acquisition ADEPT indisponible')

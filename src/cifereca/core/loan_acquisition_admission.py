@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 from ..models import Loan
 from .loan_safe_trace import loan_trace_ref
+from .adept_borrower import public_borrower_refusal_code
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -42,14 +43,17 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
         _, borrower_code = self._paris_adept_identity_for_loan(
             loan, connection_identity_id=identity.identity_id,
         )
-        if borrower_code:
+        # A non-None borrower refusal is never an approval, even if its
+        # plugin-provided value is falsey or carries private text.
+        if borrower_code is not None:
             _TRACE_LOG.warning(
                 "TRACE download loan_auto blocked reason=borrower_binding_guard loan_ref=%s",
                 trace_ref,
             )
             return AutomaticLoanAdmission(refusal={
                 "status": "attention_required", "loan_id": loan.id,
-                "code": borrower_code, "retry": "explicit_only",
+                "code": public_borrower_refusal_code(borrower_code),
+                "retry": "explicit_only",
             })
     entitlement_inventory = self.storage.entitlements(
         provider_id=loan.source_provider, state="active"

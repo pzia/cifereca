@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .adept_borrower import public_borrower_refusal_code
+
 
 def check(
     self: Any, loan: Any, *, identity: Any, ledger_base: dict[str, Any],
@@ -24,8 +26,9 @@ def check(
         adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
             loan, connection_identity_id=identity.identity_id,
         )
-    if borrower_code:
-        code = borrower_code
+    # Only None means proven: a falsey malformed code must not select ADEPT.
+    if borrower_code is not None:
+        code = public_borrower_refusal_code(borrower_code)
         self.storage.acquisition_put({
             **ledger_base, "status": "attention_required",
             "strategy": "loan_auto", "executor": "kobo-adept",

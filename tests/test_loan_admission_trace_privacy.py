@@ -68,7 +68,7 @@ def test_refusals_preserve_public_codes_without_putting_them_or_coordinates_into
         _forbid_work(service, monkeypatch)
         result = resolve(service, loan, _TRACE_LOG=logging.getLogger('test'))
         code = ('adept_identity_unproven' if scenario == 'unbound' else
-                'https://private.invalid?auth='+PRIVATE if scenario == 'borrower' else
+                'adept_borrower_ambiguous' if scenario == 'borrower' else
                 'adept_loan_identity_conflict')
         assert result.refusal['code'] == code
         assert result.refusal['status'] == 'attention_required' and result.refusal['retry'] == 'explicit_only'
