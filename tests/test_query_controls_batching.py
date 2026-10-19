@@ -22,6 +22,7 @@ class Widget:
     def emit(self, name):
         for callback in list(self.signals.get(name, ())): callback(self)
     def append(self, child): self.children.append(child)
+    def remove(self, child): self.children.remove(child)
     def insert(self, child, *_): self.children.append(child)
     def get_parent(self): return None
     def set_child(self, child): self.child=child
@@ -77,6 +78,30 @@ class QueryControlBatching(unittest.TestCase):
         self.assertEqual(control.label,'Format : EPUB')
         self.assertEqual(calls[-1],('epub',))
         self.assertEqual(len(calls),3)
+
+    def test_source_choice_refresh_keeps_selection_and_drops_disabled_provider(self):
+        calls = []
+        control = QueryControls(
+            [('baen', 'Baen'), ('ebooksgratuits', 'Ebooks libres et gratuits')],
+            lambda: calls.append(control.state()), lambda: None,
+        )
+        control.provider.set_values(('ebooksgratuits',))
+        before = control.state()
+        calls.clear()
+        control.set_provider_choices([
+            ('ebooksgratuits', 'Ebooks libres et gratuits'),
+            ('gutenberg', 'Gutenberg'),
+        ])
+        self.assertEqual(control.state(), before)
+        self.assertNotIn('baen', control.provider.buttons)
+        self.assertIn('gutenberg', control.provider.buttons)
+        self.assertEqual(calls, [])
+        control.provider.set_values(('gutenberg',))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[-1].providers, ('gutenberg',))
+        control.set_provider_choices([('ebooksgratuits', 'Ebooks libres et gratuits')])
+        self.assertEqual(control.state().providers, ())
+        self.assertEqual(len(calls), 2)
 
     def test_set_state_is_atomic_and_duplicate_signal_is_ignored(self):
         calls=[]
