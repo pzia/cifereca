@@ -392,6 +392,12 @@ def _safe_opds_link(feed_url, href, kind):
                 or base.username or base.password or dst.username or dst.password
                 or dst.fragment):
             return None
+        # Decode solely for validation; encoded controls and escaped slashes
+        # must not bypass endpoint classification.
+        from urllib.parse import unquote
+        decoded=unquote(dst.path+'?'+dst.query)
+        if any(ch.isspace() or unicodedata.category(ch) in {'Cc','Cf','Cs'} for ch in decoded):
+            return None
         path=dst.path.lower()
         # Calibre COPS supplies /index.php/fetch/... downloads; do not infer
         # ebook URLs by book ID, nor admit arbitrary same-origin action paths.
