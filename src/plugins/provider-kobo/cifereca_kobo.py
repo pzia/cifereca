@@ -415,6 +415,13 @@ class KoboSession(ProviderSession):
         # Reset is done before input validation, so even rejected attempts
         # cannot leave a previous personal-denial warning visible.
         rows = self.catalog.search(query, **options)
+        if account_id is None and scope in {"all", "digital"}:
+            # #1917: the public catalogue was searched, not the personal
+            # library. Report reduced coverage rather than a complete hit
+            # set even when the public-only query returned zero results.
+            self.last_search_warnings.append(
+                "partial_results : compte Kobo non attesté ; catalogue public seulement"
+            )
         if account_id is not None and scope != "catalog":
             rejections = getattr(self.catalog, "last_search_rejections", ())
             if type(rejections) in (tuple, list) and any(
