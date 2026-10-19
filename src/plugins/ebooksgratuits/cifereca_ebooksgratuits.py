@@ -469,10 +469,22 @@ def _opds_links(node,base):
 
 
 def _opds_find_link(node,base,rel):
-    for r,mime,raw,checked in _opds_links(node,base):
-        if r == rel and checked:
-            return checked,mime,raw
-    return None,None,None
+    # A *missing* rel=next ends a page set; a declared but unverified
+    # rel=next does not prove that the following page has zero books.
+    # Fail closed on multiple conflicting next links or invalid origins.
+    matches=[]
+    for r,mime,raw,_checked in _opds_links(node,base):
+        if r != rel:
+            continue
+        # A backslash is not a valid route separator in the attested
+        # COPS Atom next-link contract; URL parsers disagree on its meaning.
+        checked=_safe_opds_link(base,raw,'feed') if '\\' not in raw else None
+        if not checked:
+            raise ProviderError('Ebooks libres et gratuits : invalid_opds_pagination')
+        matches.append((checked,mime,raw))
+        if len({value[0] for value in matches}) > 1:
+            raise ProviderError('Ebooks libres et gratuits : invalid_opds_pagination')
+    return matches[0] if matches else (None,None,None)
 
 
 def _opds_template(href,query):
