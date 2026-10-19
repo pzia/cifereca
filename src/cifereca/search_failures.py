@@ -21,7 +21,15 @@ def search_failure_code(error: BaseException) -> str | None:
             if status == 403:
                 return "SearchAccessDenied"
             unavailable |= status == 429 or status >= 500
-        if (getattr(error, "code", None) == "search_temporarily_unavailable"
+        # Provider exception properties are untrusted. A descriptor may
+        # raise, or its equality operator may execute arbitrary plugin code.
+        # Only a native, closed machine code may authorize public fallback.
+        try:
+            provider_code = getattr(error, "code", None)
+        except Exception:
+            provider_code = None
+        if ((type(provider_code) is str
+             and provider_code == "search_temporarily_unavailable")
                 or isinstance(error, (httpx.TransportError, ParseError))):
             unavailable = True
         error = error.__cause__ or error.__context__
