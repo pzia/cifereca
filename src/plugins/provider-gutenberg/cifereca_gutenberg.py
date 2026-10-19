@@ -499,32 +499,44 @@ class GutenbergSession(ProviderSession):
 
     @staticmethod
     def _next_page_url(content: bytes, base_url: str) -> str | None:
+        # A *missing* Atom next link means end-of-catalogue; an invalid
+        # server-advertised next link means pagination is unavailable, NOT
+        # a successful empty page. Never follow a changed origin/TLS scheme.
         try:
             root = ET.fromstring(content)
         except ET.ParseError:
-            return None
-        base = urlsplit(base_url)
+            raise ProviderError("Project Gutenberg : opds_next_link_unverified") from None
+        try:
+            base = urlsplit(base_url)
+            base_port = base.port or (443 if base.scheme == "https" else 80)
+        except ValueError:
+            raise ProviderError("Project Gutenberg : opds_next_link_unverified") from None
+        next_urls = set()
         for link in root.findall(f"{{{ATOM}}}link"):
             rel = str(link.attrib.get("rel") or "").strip().casefold()
             if rel != "next":
                 continue
-            href = html.unescape(str(link.attrib.get("href") or "").strip())
-            if not href:
-                continue
-            resolved = urljoin(base_url, href)
-            parsed = urlsplit(resolved)
-            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-                continue
-            if base.hostname and parsed.hostname.casefold() != base.hostname.casefold():
-                continue
-            if parsed.username or parsed.password:
-                continue
+            href = html.unescape(str(link.attrib.get("href") or ""))
+            if (not href or len(href) > 2048 or href != href.strip()
+                    or "\\" in href or any(ord(ch) < 33 or ord(ch) == 127 for ch in href)):
+                raise ProviderError("Project Gutenberg : opds_next_link_unverified")
             try:
-                parsed.port
+                resolved = urljoin(base_url, href)
+                parsed = urlsplit(resolved)
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                if (parsed.scheme != base.scheme
+                        or parsed.scheme not in {"http", "https"}
+                        or not parsed.hostname or not base.hostname
+                        or parsed.hostname.casefold() != base.hostname.casefold()
+                        or port != base_port or parsed.username or parsed.password
+                        or parsed.fragment or len(resolved) > 4096):
+                    raise ValueError("unverified")
             except ValueError:
-                continue
-            return resolved
-        return None
+                raise ProviderError("Project Gutenberg : opds_next_link_unverified") from None
+            next_urls.add(resolved)
+            if len(next_urls) > 1:
+                raise ProviderError("Project Gutenberg : opds_next_link_ambiguous")
+        return next(iter(next_urls)) if next_urls else None
 
     @staticmethod
     def _field_filter(rows: list[SearchResult], query: str, field: str) -> list[SearchResult]:
