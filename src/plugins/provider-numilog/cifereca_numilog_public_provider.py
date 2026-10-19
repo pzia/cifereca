@@ -213,6 +213,18 @@ class NumilogPublicSession(ProviderSession):
         from cifereca_numilog_public_local_filter import refine_loaded_public_page
         return refine_loaded_public_page(page, **filters)
 
+    def refine_loaded_pages(self, pages, **filters):
+        """Refine up to eight already-fetched consecutive public pages.
+
+        This is explicitly offline, and MUST NOT imply server-side field
+        search or a filtered global total. Mixed query/facet/edition sets,
+        gaps, duplicate items and changing public counters are rejected.
+        """
+        if not self.connected:
+            raise ProviderError("Numilog public : catalogue non connecté")
+        from cifereca_numilog_public_multi_refinement import refine_loaded_public_pages
+        return refine_loaded_public_pages(pages, **filters)
+
     def follow_public_link(self, url):
         """Follow ONLY an unexpired facet/pager link returned by browse/follow.
 
