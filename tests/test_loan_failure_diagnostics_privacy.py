@@ -34,13 +34,21 @@ def test_real_service_keeps_exact_public_error_retry_ledger_process_but_expurgat
     monkeypatch.setattr(service,'runtime_diagnostic',lambda *_:raw)
     try:
         result=service._acquire_active_loan_automatically(loan)
-        assert result['loan_id']==loan.id and PRIVATE in result['error']
+        assert result['loan_id']==loan.id
+        assert result['error'] == (
+            'Acquisition ADEPT indisponible' if stage == 'adept'
+            else 'Redirection PNB refusée ; consulter les traces PNB'
+        )
+        assert PRIVATE not in result['error'] + str(result['code'])
         assert result['status']==('retryable_error' if code=='kobo_adept_invalid_json' else 'attention_required')
         if stage=='adept':
             assert result['process']['returncode']==2**100 and result['process']['duration_ms']==-1
             assert result['process']['stdout_bytes']==5
         ledger=service.storage.acquisitions(provider_id=loan.source_provider)
-        assert len(ledger)==1 and ledger[0]['error_code']==code and PRIVATE in ledger[0]['error_message']
+        safe_code = code if code != PRIVATE else 'adept_error'
+        assert len(ledger)==1 and ledger[0]['error_code']==safe_code
+        assert ledger[0]['error_message'] == result['error']
+        assert PRIVATE not in ledger[0]['error_code'] + ledger[0]['error_message']
         assert ledger[0]['metadata']['provider_loan_id']==loan.id
         assert source.is_file()
         events=[e for e in service.diagnostics.snapshot() if e['operation'] in {'acquisition failed','redirect refused'}]
@@ -51,7 +59,7 @@ def test_real_service_keeps_exact_public_error_retry_ledger_process_but_expurgat
             assert 'message' not in event['detail'] and 'provider_loan_id' not in event['detail']
             assert 'plugin_version' not in event['detail']
             if event['category']=='KOBO-ADEPT':
-                assert event['detail']['code']==('unclassified_error' if code==PRIVATE else code)
+                assert event['detail']['code']==safe_code
                 assert event['detail']['stdout_bytes']==5
                 assert not set(event['detail']) & {'returncode','duration_ms','stderr_bytes','stdout_mode'}
     finally:service.close()
