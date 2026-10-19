@@ -30,13 +30,15 @@ def _paris_digital_inventory_complete(session: Any) -> bool:
 
 def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
     """Re-read the exact borrower with NO cache and NO second POST."""
-    from .loan_return_guard import public_return_state, return_ref
+    from .loan_return_guard import public_return_state, provider_absence_attested, return_ref
     account, session, key = self._return_loan_identity(loan)
     checkpoint = self.storage.loan_return_state(key)
     if checkpoint is None:
         return {"status": "not_requested", "scope": "provider_pnb_only"}
-    if checkpoint.get("status") == "provider_return_confirmed":
+    if provider_absence_attested(checkpoint):
         return public_return_state(checkpoint)
+    # A stored "confirmed" label without an attested absent inventory does
+    # not authorize the fast-path: re-read only, never re-send the POST.
     operation_id = str(checkpoint.get("operation_id") or "")
     if checkpoint.get("status") == "request_sent":
         # A just-dispatched POST may still be in-flight. Avoid racing its
