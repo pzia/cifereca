@@ -9,7 +9,7 @@ import hashlib
 import json
 from typing import Any
 
-from .loan_return_guard import _public_timestamp
+from .loan_return_guard import _public_timestamp, _verification_time_attested
 
 
 def adept_return_key(provider_id: str, credential_id: str,
@@ -55,7 +55,7 @@ def paris_return_attested(row: dict[str, Any]) -> bool:
         and adobe_return_attested(row)
         and type(row.get("verification")) is str
         and row["verification"] == "provider_absent"
-        and _public_timestamp(row.get("checked_at")) is not None
+        and _verification_time_attested(row.get("checked_at"))
     )
 
 
