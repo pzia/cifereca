@@ -67,3 +67,39 @@ def test_e2e_runner_attaches_counter_to_trace_and_summary_without_masking_warnin
     assert "gtk_layout_critical=gtk_critical" in source
     assert "if returncode == 0 and layout_problem:" not in source
     assert "_write_redacted_log(stderr_path, errors, env)" in source
+
+
+def test_runtime_trace_only_emits_closed_widget_counters(tmp_path):
+    import importlib.util
+    import json
+
+    path = MODULE.parent / "run.py"
+    spec = importlib.util.spec_from_file_location("e2e_runtime_guard_2027", path)
+    assert spec is not None and spec.loader is not None
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+
+    output = tmp_path / "trace.jsonl"
+    runner._event(
+        output, "startup", "gtk_layout_critical_observed",
+        gtk_layout_critical={
+            "GtkStack": 5, "GtkRevealer": 5, "stream_truncated": False,
+        },
+        account="PRIVATE_ACSM_TOKEN",
+        path="/home/private",
+    )
+    raw = output.read_text()
+    event = json.loads(raw)
+    assert event["gtk_layout_critical"] == {
+        "GtkStack": 5, "GtkRevealer": 5, "stream_truncated": False,
+    }
+    assert "PRIVATE" not in raw and "/home/" not in raw
+    with __import__("pytest").raises(ValueError):
+        runner._event(
+            output, "startup", "gtk_layout_critical_observed",
+            gtk_layout_critical={
+                "GtkStack": 5, "GtkRevealer": 5,
+                "stream_truncated": False, "screenshot": "PRIVATE",
+            },
+        )
+    assert output.read_text() == raw
