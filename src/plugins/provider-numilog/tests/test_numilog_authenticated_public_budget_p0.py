@@ -152,7 +152,7 @@ def test_unqualified_detail_url_is_rejected_before_cache_or_http(monkeypatch, in
 @pytest.mark.parametrize("kwargs", [
     {"field": "author"}, {"field": "isbn"}, {"field": True},
     {"page": True}, {"page": -1}, {"page": 101},
-    {"query": "a"}, {"query": None}, {"query": "token=PRIVATE\\n"},
+    {"query": "a"}, {"query": None}, {"query": "token=PRIVATE" + chr(10)},
 ])
 def test_invalid_public_search_is_rejected_before_cache_or_http(monkeypatch, kwargs):
     s = session()
