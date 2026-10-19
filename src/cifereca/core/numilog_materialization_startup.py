@@ -218,12 +218,23 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             # performs its own account/session re-admission before writing.
             # This is still NOT permission to acquire: each edition passes
             # preflight plus the locked admission after this read.
-            mirror_numilog_manifest_rights(
+            mirrored = mirror_numilog_manifest_rights(
                 broker.service, raw,
                 identity_id=identity_id,
                 credential_id=account.credential_id,
                 account_id=account.unique_id,
             )
+            required_rights = sum(
+                row.owned is True and row.downloadable is True
+                for row in raw
+            )
+            if type(mirrored) is not int or mirrored < required_rights:
+                # A silently rejected/ambiguous owned entitlement means the
+                # private manifest was not durably mirrored. Reporting a clean
+                # zero-download success would hide an initial backup failure.
+                trace.fail("rights_mirror_failed")
+                failures += 1
+                continue
             if (
                 not same_source()
                 or mode(broker, source_id) != "on_start"
