@@ -266,3 +266,23 @@ Après validation, `contract()` publie une copie dont `contract_version`
 est l’entier canonique. Le probe strict et le véritable consommateur Core
 restent compatibles avec les chaînes historiques `"8"` et `"009"` ; le
 dictionnaire original de la CLI/cache n’est pas modifié en place.
+
+
+## 1.2.25 — références de restitution typées et exceptions fournisseur non chaînées
+
+La référence de prêt ADEPT et le nom du profil sont désormais validés **avant**
+toute commande de restitution : chaînes exactes non vides, au plus 256
+caractères, sans conversion implicite d'objets/nombres, préfixe `-`,
+blancs aux extrémités, caractère de contrôle, de format Unicode ou surrogate.
+Une valeur non qualifiée produit seulement le code fixe
+`adept_return_binding_required`, sans recopier l'entrée dans argv,
+les journaux ou le message Core.
+
+Après un `acsm return` confirmé par le processus, l'échec de relecture de
+l'inventaire n'inclut plus l'exception ou le traceback fourni en amont :
+`adept_return_verification_unavailable` est projeté avec texte fixe et
+`retryable=false`, sans chaîner une erreur contenant éventuellement une
+URL signée, un XML ou un identifiant. La journalisation de la phase continue
+de n'utiliser que le code métier fermé. Les tests couvrent des références
+malveillantes et un échec d'inventaire synthétique ; aucune restitution Adobe
+réelle ni nouveau code fournisseur n'est revendiqué.
