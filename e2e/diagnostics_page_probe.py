@@ -351,7 +351,7 @@ def main():
         assert len(expanders) >= 1, f"volet {label!r} absent"
         return reveal_diagnostics_section(expanders[0])
 
-    def until(predicate, done, *, seconds=10):
+    def until(predicate, done, *, seconds=10, on_timeout=None):
         # Always record the exact call site of this wait, including GI-bound
         # methods such as button.has_focus (not Python lambdas). The CI
         # exporter validates that numeric line against an AST `until` call.
@@ -374,6 +374,8 @@ def main():
             if predicate():
                 done()
             elif monotonic() >= deadline:
+                if on_timeout is not None:
+                    on_timeout()
                 raise AssertionError("Timeout de la condition GTK attendue")
             else:
                 later(check, 90)
@@ -499,9 +501,25 @@ def main():
             until(lambda: switcher.get_stack().get_visible_child_name() == key,
                   lambda: later(done, 120))
 
+        # Explain this one strict XTEST focus gate by source-line only. Each
+        # fixed raise can be identified through the existing AST-reviewed
+        # public failure_line; no widget repr or private GTK content escapes.
+        def tab_focus_timeout():
+            if not window[0].is_active():
+                raise AssertionError("GTK tab focus: inactive toplevel")
+            if not button.get_focusable():
+                raise AssertionError("GTK tab focus: unfocusable toggle")
+            current = window[0].get_focus()
+            if current is None:
+                raise AssertionError("GTK tab focus: no focused widget")
+            if current is not button:
+                raise AssertionError("GTK tab focus: different focused widget")
+            raise AssertionError("GTK tab focus: target reports no focus")
+
         # X11 focus changes are asynchronous. Do not dispatch a physical
         # Space while GTK may still route it to the previously focused tab.
-        until(button.has_focus, lambda: later(activate_focused_tab, 120), seconds=4)
+        until(button.has_focus, lambda: later(activate_focused_tab, 120),
+              seconds=4, on_timeout=tab_focus_timeout)
 
     def capture_navigation():
         # New acceptance uses physical keyboard navigation, not the legacy
