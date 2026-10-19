@@ -21,8 +21,13 @@ class X11Input:
         if not self.display:
             raise RuntimeError("Could not open the X11 display.")
 
-    def click(self, x: int, y: int) -> None:
+    def move(self, x: int, y: int) -> None:
+        """Move a *real* XTEST pointer before its GTK hit-test is accepted."""
         self.xtst.XTestFakeMotionEvent(self.display, -1, x, y, 0)
+        self.x11.XSync(self.display, False)
+
+    def click(self, x: int, y: int) -> None:
+        self.move(x, y)
         self.xtst.XTestFakeButtonEvent(self.display, 1, True, 0)
         self.xtst.XTestFakeButtonEvent(self.display, 1, False, 0)
         self.x11.XSync(self.display, False)
@@ -57,6 +62,31 @@ class X11Input:
         x = round(origin_x.value + rect.get_x() + rect.get_width() / 2 + transform_x)
         y = round(origin_y.value + rect.get_y() + rect.get_height() / 2 + transform_y)
         return x, y
+
+    def window_point(self, window, x: float, y: float) -> tuple[int, int]:
+        """Convert a GTK toplevel-local hit point to the X11 root display.
+
+        Gtk.Widget.compute_bounds(native) for a scrolled, nested button can
+        diverge from its main-window hit test during GTK4 reallocation.
+        The audited window-local point is validated with Gtk.Widget.pick
+        before this conversion, then dispatched as genuine XTEST input.
+        """
+        from math import isfinite
+        width, height = window.get_width(), window.get_height()
+        if (
+            type(width) is not int or type(height) is not int
+            or width <= 0 or height <= 0
+            or type(x) not in (int, float) or type(y) not in (int, float)
+            or not isfinite(x) or not isfinite(y)
+            or not 0 <= x < width or not 0 <= y < height
+        ):
+            raise RuntimeError("XTEST target outside allocated GTK toplevel")
+        center_x, center_y = self.widget_point(window)
+        screen_x = round(center_x + x - width / 2)
+        screen_y = round(center_y + y - height / 2)
+        if screen_x < 0 or screen_y < 0:
+            raise RuntimeError("XTEST window target has no on-screen coordinates")
+        return screen_x, screen_y
 
     def click_widget(self, widget) -> dict:
         x, y = self.widget_point(widget)

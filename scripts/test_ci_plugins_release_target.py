@@ -76,6 +76,24 @@ class PluginsDraftLookupTests(unittest.TestCase):
 
 
 class PluginsOnlyWorkflowRecoveryContracts(unittest.TestCase):
+    def test_official_draft_shell_parses_before_another_authorized_release(self):
+        """Catch a broken case/if/heredoc before a signed release workflow runs."""
+        import subprocess
+        import textwrap
+        from pathlib import Path
+
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/plugins-only-release.yml").read_text(encoding="utf-8")
+        step = workflow.split(
+            "      - name: Create or update draft GitHub Release\\n".replace("\\n", "\n"), 1,
+        )[1].split("\n      # Download the GitHub-hosted draft assets", 1)[0]
+        body = step.split("\n        run: |\n", 1)[1]
+        script = textwrap.dedent(body)
+        check = subprocess.run(
+            ["bash", "-n"], input=script, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(check.returncode, 0, "Invalid official draft release Bash script")
+
     def test_release_workflow_only_rescues_the_attested_empty_2095_draft(self):
         from pathlib import Path
         workflow = (Path(__file__).resolve().parents[1] /
@@ -83,6 +101,13 @@ class PluginsOnlyWorkflowRecoveryContracts(unittest.TestCase):
         assert "--paginate --slurp" in workflow
         assert '--lookup-draft' in workflow
         assert '417619783' in workflow
+        assert '417644698' in workflow
+        assert '1c0ca31762629bdc87c69ae0c39c022ee79fee5f' in workflow
+        assert 'await_draft_state() {' in workflow
+        assert 'draft_info="$(await_draft_state present)"' in workflow
+        assert 'test "$(await_draft_state none)" = "none"' in workflow
+        assert 'sleep 2' in workflow
+        assert 'GitHub draft metadata did not converge within 24 seconds.' in workflow
         assert COMMIT in workflow
         assert 'git diff --quiet "$draft_sha" "$GITHUB_SHA" --' in workflow
         assert 'src/cifereca src/plugins' in workflow

@@ -483,6 +483,22 @@ jobs:
               python3 scripts/ci_plugins_release_target.py \
                 --tag "$RELEASE_TAG" --commit "$GITHUB_SHA" --lookup-draft
           }
+          # GitHub's paginated drafts may lag successful create/delete.
+          # Read-only bounded polling: fail closed, never infer a draft.
+          await_draft_state() {
+            local expected="$1" value attempt
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              value="$(draft_lookup)"
+              if [[ "$expected" == "present" && "$value" != "none" ]] ||
+                 [[ "$expected" == "none" && "$value" == "none" ]]; then
+                printf '%s\n' "$value"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "GitHub draft metadata did not converge within 24 seconds." >&2
+            return 1
+          }
           draft_info="$(draft_lookup)"
           if [[ "$draft_info" != "none" ]]; then
             read -r draft_id draft_sha draft_assets <<< "$draft_info"
@@ -491,12 +507,16 @@ jobs:
               # the previous run created an EMPTY draft with no Git tag.
               # Never retarget an asset-bearing or published release.
               if [[ "$RELEASE_TAG" != "plugins-v0.9.44+dev.13-001" ||
-                    "$draft_id" != "417619783" ||
-                    "$draft_sha" != "20212b37be5f963aed35eee45b338bcdc188aede" ||
                     "$draft_assets" != "0" ]]; then
                 echo "Refusing to mutate an unrelated or nonempty release draft." >&2
                 exit 1
               fi
+              # Both prior incomplete runs have independently attested
+              # immutable IDs and zero assets. No arbitrary draft deletion.
+              case "$draft_id:$draft_sha" in
+                "417619783:20212b37be5f963aed35eee45b338bcdc188aede"|"417644698:1c0ca31762629bdc87c69ae0c39c022ee79fee5f") ;;
+                *) echo "Unknown source draft; refusing recovery." >&2; exit 1 ;;
+              esac
               git merge-base --is-ancestor "$draft_sha" "$GITHUB_SHA"
               git diff --quiet "$draft_sha" "$GITHUB_SHA" -- \
                 VERSION pyproject.toml src/cifereca src/plugins || {
@@ -508,7 +528,7 @@ jobs:
                 exit 1
               fi
               gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$draft_id" --silent
-              test "$(draft_lookup)" = "none" || {
+              test "$(await_draft_state none)" = "none" || {
                 echo "Orphan draft still exists; refusing new release." >&2
                 exit 1
               }
@@ -528,7 +548,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "$RELEASE_TAG" --notes-file "$notes_file" --draft
-            draft_info="$(draft_lookup)"
+            draft_info="$(await_draft_state present)"
           fi
           if [[ "$draft_info" == "none" ]]; then
             echo "Draft creation not observable; refusing asset upload." >&2

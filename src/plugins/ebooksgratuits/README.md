@@ -1,3 +1,115 @@
+## #1917 — reconnexion réelle du client public (0.1.20, 19/10/2026)
+
+`EbooksSession.close()` ferme définitivement son `httpx.Client`.
+Jusqu'ici, un `connect()` ultérieur réactivait le drapeau local et
+retournait « Catalogue public » sans recréer le client : une recherche
+hors cache pouvait alors échouer sur une session HTTP définitivement
+fermée. Cette incohérence touche OPDS et l'ancien backend HTML de
+simulation, indépendamment de la couverture OPDS distante.
+
+Désormais, un `connect()` explicite sur **la même session déjà fermée**
+crée un **nouveau client HTTP anonyme** (même configuration
+`timeout_seconds`, `trust_env=False`, `follow_redirects=True`).
+Une connexion répétée sur un client actif ne recrée rien.
+Une erreur de construction se traduit par
+`Ebooks libres et gratuits : transport_unavailable` sans publier
+une exception contenant chemins locaux ou jetons : la session reste
+déconnectée, sans compte fictivement actif.
+
+**Important** : `connect()` reste une **inscription locale**, sans GET
+ni promesse de disponibilité du catalogue. Seul `search()` effectue
+les lectures OPDS/OpenSearch publiques réellement nécessaires.
+Tests `test_opds_reconnect_http_client_p1.py` : recherches nouvelles
+après fermeture/reconnexion, renouvellement du transport,
+absence d'appels au connect, refus hors session, backend HTML
+indépendant et panne de réouverture expurgée. Tout est testé avec
+`httpx.MockTransport`, sans HTTP réel, compte privé ou téléchargement.
+
+Cette modification n'affirme pas que les notices nouvelles apparaissent
+déjà dans CoreUI (#2361) ni que le serveur OPDS est disponible en live.
+Le ticket #1917 reste ouvert.
+
+---
+
+## #1917 — lecture OPDS bornée pendant le GET (0.1.19, 19/10/2026)
+
+Le catalogue COPS imposait déjà **2 Mio** au XML après lecture, mais
+`httpx.Client.get()` avait auparavant **tout chargé en mémoire** avant
+ce contrôle. La limite n'était donc pas un véritable budget réseau.
+
+`_opds_fetch()` lit désormais la réponse via `stream()` et
+`iter_raw(chunk_size=65536)` avec plafond de **2 Mio d'octets reçus**,
+y compris lorsqu'un `Content-Length` trompeur annonce une taille faible.
+La négociation utilise `Accept-Encoding: identity` ; une compression
+`gzip` / `deflate` reçue malgré cette demande est **refusée** avant
+décompression pour éviter une réponse comprimée minuscule produisant une
+expansion arbitraire hors budget. Le flux est fermé immédiatement au
+dépassement. Aucune destination nouvelle ni repli HTML n'est permis.
+**Compatibilité tests/mock** : les réponses `httpx.Response(content=...)`
+déjà intégralement lues avant de parvenir au plugin restent acceptées,
+mais avec validation stricte des octets et du XML. Cela ne transforme
+pas un transport réellement prébufferisé en transport borné avant mémoire ;
+les vrais GET OPDS utilisent toujours le streaming brut.
+
+Le parseur `xml.etree.ElementTree` se voit imposer un constructeur
+d'arbre refusant **tout DOCTYPE** au niveau XML (y compris pour
+les documents **UTF-16**, que les précédentes recherches
+`b'<!doctype'` ne pouvaient pas détecter), ainsi qu'un budget de
+**12 000 éléments / 96 niveaux**. Ces contrôles sont appliqués pendant
+le parse, non après la construction de l'arbre, et renvoient le même code
+`invalid_opds_feed` sans imprimer le XML fournisseur.
+Les corps HTTP des redirections 3xx ne sont pas lus ; la cible reste
+qualifiée sur la même origine et dans les routes OPDS autorisées.
+401/403/429/5xx et XML/DTD invalides conservent leurs codes sûrs.
+
+Tests hors réseau `test_opds_streaming_byte_budget_p1.py` : page Atom,
+limite exacte, flux trop volumineux avec en-tête mensonger,
+gzip hostile sans lecture, redirection autorisée/étrangère, erreurs
+serveur expurgées, DTD UTF-8/UTF-16 interdite, limites de largeur et de
+profondeur XML, réponses MockTransport déjà bufferisées. Tests via
+`httpx.MockTransport`,
+sans compte, téléchargement ni trafic distant.
+
+**Limite** : une installation qui sert uniquement des réponses OPDS
+compressées malgré `Accept-Encoding: identity` sera classée
+`invalid_opds_feed` ; un support compressé sûr exigerait plus tard une
+décompression incrémentale strictement plafonnée et des captures
+amont. Cette modification ne prouve pas l'accessibilité live d'OPDS
+ni la recherche hors cache dans CoreUI.
+
+---
+
+## #1917 — qualification des entrées Atom EPUB/PDF (0.1.18, 19/10/2026)
+
+Un `<entry>` OPDS n'est plus considéré comme un livre sur la seule
+présence d'un `rel=.../acquisition`. Une offre admissible doit désormais
+déclarer un type de fichier reconnu (EPUB, PDF, Mobipocket) **et** un lien
+d'acquisition direct répondant aux mêmes restrictions d'origine et de
+chemin public `/index.php/fetch` que le téléchargement réel ; un
+`rel=alternate` EPUB doit satisfaire les mêmes restrictions.
+
+Cela empêche une entrée provenant d'un autre hôte, d'une URL
+`/account/`, d'un MIME HTML ou d'un lien alternatif privé de se
+faire passer pour un livre et de détourner la navigation vers le
+catalogue global. Les sous-catalogues de navigation ne sont plus
+projetés comme de fausses notices de livres.
+
+Sur un flux mélangeant des entrées d'acquisition valides et des
+sous-catalogues, le plugin affiche `partial_results` : seules les
+notices directes sont couvertes, aucun parcours automatique de la branche
+voisine n'est ajouté. Une fiche **PDF seulement** reste visible, mais
+`downloadable=False` et sans lien EPUB. Le résultat est borné au flux
+reçu, sans promesse d'exhaustivité ni nouveaux appels HTTP de recherche.
+
+Tests hors réseau `test_opds_public_book_entry_integrity_p1.py`
+avec `httpx.MockTransport` : origines étrangères, liens privés,
+MIME trompeur, page mixte, PDF-only et racine OPDS. La réponse réelle
+`opds2.ebooksgratuits.org` **n'a pas été vérifiée en direct** par ces
+tests ; la recette hors-cache dans le Core/UI et la qualification réseau
+restent ouvertes dans #1917 et #2361.
+
+---
+
 ## #1917 — navigation OPDS racine et preuve de couverture (19/10/2026)
 
 En mode OPDS Calibre/COPS (par défaut), `search("")` consulte la racine
