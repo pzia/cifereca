@@ -8,7 +8,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from cifereca.plugin_api import ProviderError
+from cifereca.plugin_api import ProviderError, ProviderCapabilityError
 from cifereca_ebooksgratuits import EbooksSession
 
 HOST = "https://opds2.ebooksgratuits.org"
@@ -143,3 +143,32 @@ def test_search_while_closed_is_refused_without_reopening_automatically(monkeypa
         session.search("fresh-book")
     assert created == [] and requests == []
     assert session.connected is False and session.client.is_closed
+
+
+
+def test_lightweight_mock_without_httpx_closed_flag_is_not_replaced(monkeypatch):
+    class NeverHTTP:
+        def get(self, *_args, **_kwargs):
+            pytest.fail("invalid query must not reach any network method")
+
+        def close(self):
+            pass
+
+    s = EbooksSession(
+        credential_id="__public__", label="Public",
+        credentials={}, options={}, config={}, diagnostics=None,
+        transport=None,
+    )
+    s.client.close()
+    mocked = NeverHTTP()
+    s.client = mocked
+    monkeypatch.setattr(s, "_new_client", lambda: pytest.fail(
+        "mocked active transport does not need to be replaced"
+    ))
+    try:
+        s.connect()
+        assert s.client is mocked
+        with pytest.raises(ProviderCapabilityError, match="invalid_query"):
+            s.search({"private": "PRIVATE"})
+    finally:
+        s.close()
