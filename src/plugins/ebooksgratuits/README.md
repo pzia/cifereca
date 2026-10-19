@@ -12,6 +12,11 @@ La négociation utilise `Accept-Encoding: identity` ; une compression
 décompression pour éviter une réponse comprimée minuscule produisant une
 expansion arbitraire hors budget. Le flux est fermé immédiatement au
 dépassement. Aucune destination nouvelle ni repli HTML n'est permis.
+**Compatibilité tests/mock** : les réponses `httpx.Response(content=...)`
+déjà intégralement lues avant de parvenir au plugin restent acceptées,
+mais avec validation stricte des octets et du XML. Cela ne transforme
+pas un transport réellement prébufferisé en transport borné avant mémoire ;
+les vrais GET OPDS utilisent toujours le streaming brut.
 
 Le parseur `xml.etree.ElementTree` se voit imposer un constructeur
 d'arbre refusant **tout DOCTYPE** au niveau XML (y compris pour
@@ -28,7 +33,8 @@ Tests hors réseau `test_opds_streaming_byte_budget_p1.py` : page Atom,
 limite exacte, flux trop volumineux avec en-tête mensonger,
 gzip hostile sans lecture, redirection autorisée/étrangère, erreurs
 serveur expurgées, DTD UTF-8/UTF-16 interdite, limites de largeur et de
-profondeur XML. Tests via `httpx.MockTransport`,
+profondeur XML, réponses MockTransport déjà bufferisées. Tests via
+`httpx.MockTransport`,
 sans compte, téléchargement ni trafic distant.
 
 **Limite** : une installation qui sert uniquement des réponses OPDS
