@@ -135,7 +135,9 @@ def test_private_denial_reports_partial_results_without_private_metadata(status)
         session.connected = False
         assert len(session.search("book", scope="all")) == 1
         assert paths == ["/api/v2/catalog/search"]
-        assert session.last_search_warnings == []
+        assert session.last_search_warnings == [
+            "partial_results : compte Kobo non attesté ; catalogue public seulement"
+        ]
     finally:
         session.close()
 
@@ -186,7 +188,9 @@ def test_public_only_unbound_search_does_not_claim_personal_denial():
         results = session.search("book", scope="all", field="all")
         assert [row.record_id for row in results] == ["public-edition"]
         assert paths == ["/api/v2/catalog/search"]
-        assert session.last_search_warnings == []
+        assert session.last_search_warnings == [
+            "partial_results : compte Kobo non attesté ; catalogue public seulement"
+        ]
     finally:
         session.close()
 
