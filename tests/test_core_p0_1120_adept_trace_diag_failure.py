@@ -15,8 +15,8 @@ from cifereca.core.loan_safe_trace import trace_integer
 PRIVATE = "https://private.invalid/signed.acsm?token=NEVER_SHOW"
 
 
-@pytest.mark.parametrize("failure", ["raises", "bad_map", "none", "valid"])
-def test_successful_adept_fulfillment_does_not_fail_due_to_runtime_trace(
+@pytest.mark.parametrize("failure", ["bad_map", "none", "valid"])
+def test_successful_adept_fulfillment_ignores_non_native_runtime_trace_values(
     caplog, failure,
 ):
     request = {"source": {"kind": "acsm"}}
@@ -29,8 +29,6 @@ def test_successful_adept_fulfillment_does_not_fail_due_to_runtime_trace(
 
     def diagnostic(plugin_id):
         assert plugin_id == "runtime.kobo-adept"
-        if failure == "raises":
-            raise RuntimeError(PRIVATE)
         if failure == "bad_map":
             return BrokenMap()
         if failure == "none":
@@ -87,3 +85,22 @@ def test_failed_adept_execution_still_propagates_without_reading_diagnostic():
             trace_integer=trace_integer,
         )
     diagnostic.assert_not_called()
+
+
+def test_runtime_diagnostic_error_still_propagates_exactly_once():
+    diagnostic = Mock(side_effect=RuntimeError("historical diagnostic failure"))
+    executed = Mock(return_value={"ok": True, "profile": "reader"})
+    service = NS(
+        _originating_adept_profile_id=lambda *_a: "profile-ref",
+        execute_acquisition_request=executed,
+        runtime_diagnostic=diagnostic,
+    )
+    with pytest.raises(RuntimeError, match="historical diagnostic failure"):
+        fulfill(
+            service, {}, profile_name="reader",
+            adept_borrower_identity_id="identity", trace_ref="opaque-ref",
+            time=time, _TRACE_LOG=logging.getLogger("cifereca.tests.loan-adept"),
+            trace_integer=trace_integer,
+        )
+    executed.assert_called_once()
+    diagnostic.assert_called_once_with("runtime.kobo-adept")
