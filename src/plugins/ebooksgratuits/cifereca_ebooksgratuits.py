@@ -538,10 +538,26 @@ def _opds_search_url(session,root,base,query):
     raise ProviderCapabilityError('Ebooks libres et gratuits : search_route_unavailable')
 
 
+def _opds_entry_is_book(session, entry, base):
+    """Follow the same definition of a book at the root and search scopes.
+
+    OPDS acquisition entries can be PDF-only (still catalogue notices), and
+    EPUB alternate links are accepted only if their URL is qualified as a
+    same-origin public download. Navigation entries are not books.
+    """
+    return any(
+        '/acquisition' in rel
+        or (rel == 'alternate'
+            and mime.startswith('application/epub+zip')
+            and _safe_opds_link(session.opds_feed_url, raw, 'download'))
+        for rel, mime, raw, _ in _opds_links(entry, base)
+    )
+
+
 def _opds_browse_url(session,root,base):
     candidates=[]
     for entry in root.findall(ATOM+'entry'):
-        if any(m.startswith('application/epub+zip') for _,m,_,_ in _opds_links(entry,base)):
+        if _opds_entry_is_book(session,entry,base):
             return base
         title=(entry.findtext(ATOM+'title') or '').casefold()
         for r,m,raw,_ in _opds_links(entry,base):
@@ -646,14 +662,7 @@ def _opds_load_acquisition(session,initial,field,needle):
         # Only a checked public EPUB URL counts, not an arbitrary rel or a
         # same-looking untrusted URL to another origin.
         has_acquisition=any(
-            any(
-                '/acquisition' in rel
-                or (rel == 'alternate'
-                    and mime.startswith('application/epub+zip')
-                    and _safe_opds_link(session.opds_feed_url,raw,'download'))
-                for rel,mime,raw,_ in _opds_links(entry,actual)
-            )
-            for entry in entries
+            _opds_entry_is_book(session, entry, actual) for entry in entries
         )
         if has_acquisition or not entries:
             return feed,actual
