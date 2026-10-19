@@ -143,7 +143,8 @@ def test_sidebar_visible_width_and_brand_version_keep_css():
 
 def test_main_stack_is_non_homogeneous_to_prevent_hidden_page_width_lock():
     window, *_ = _render()
-    assert window.view_stack.properties["transition_type"] == "crossfade"
+    # #2027 isolation experiment: only the main shell transition changes.
+    assert window.view_stack.properties["transition_type"] == "none"
     assert window.view_stack.properties["hhomogeneous"] is False
     assert window.view_stack.properties["hexpand"] is True
     assert window.view_stack.properties["vexpand"] is True
