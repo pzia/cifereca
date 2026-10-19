@@ -240,6 +240,12 @@ class KoboAdeptRuntime:
         if proc.returncode == 0 and value.get('ok') is True and value.get('error') is not None:
             fail('Kobo-Adept a renvoyé un résultat contradictoire.',
                  'kobo_adept_invalid_response', returncode=proc.returncode)
+        if proc.returncode != 0 and value.get('ok') is True:
+            # An upstream nonzero process exit contradicts the CLI's
+            # explicit success claim. Do not project even a recognized
+            # Adobe/identity error.code from an inconsistent response.
+            fail('Kobo-Adept a renvoyé un résultat contradictoire.',
+                 'kobo_adept_invalid_response', returncode=proc.returncode)
         if proc.returncode != 0 or value.get('ok') is False:
             error = value.get('error') if isinstance(value.get('error'), dict) else {}
             acsm_request = (
