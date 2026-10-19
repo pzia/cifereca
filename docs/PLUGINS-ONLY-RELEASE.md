@@ -146,3 +146,29 @@ réellement chargée. Les installations antérieures à ce mécanisme exposent
 Les tests CI couvrent un et plusieurs packages, statut désactivé conservé,
 refus strict, dry-run, rollback et tampering du reçu. **Aucune release
 automatique n'est déclenchée par cette évolution.**
+
+## Gate Numilog spécifique : Core publié contenant les correctifs (#2095)
+
+Le plugin Numilog peut avoir une version plus récente sur `main` alors que
+le Core officiel publié `v0.9.44+dev.12` précède les correctifs requis.
+La simple compatibilité de Plugin API, l'égalité des chaînes VERSION ou un
+smoke depuis le checkout **ne sont pas des preuves suffisantes**.
+
+À la publication plugins-only, une sélection contenant
+`org.cifereca.provider.numilog` déclenche maintenant le contrôle
+`scripts/ci_numilog_core_release_gate.py` sur le **SHA du tag du Core
+officiellement publié**, lui-même associé au wheel téléchargé et vérifié par
+le workflow. Le gate exige la version du manifeste Numilog >= 0.1.51
+et les ancêtres de trois fusions prérequises dans ce tag :
+
+- `#2081` : projection diagnostique Numilog sans secrets ;
+- `#2117` / `#2112` : rattachement de l'ACSM acquis à l'achat exact ;
+- `#2125` / `#2114` : rafraîchissement Recherche après indexation.
+
+Si l'un des commits manque ou si la topologie Git ne peut pas être
+vérifiée, le workflow s'arrête **avant toute signature, brouillon ou
+publication**. Un test dans la CI de revue confirme le refus sur le tag
+historique `v0.9.44+dev.12` ; les autres plugins ne dépendent pas de ce
+contrôle spécialisé. Ce gate ne constitue pas une approbation de release,
+ne prouve pas la version chargée par la GUI et ne dispense pas des tests
+du vrai wheel, de Cosign, du rollback et de la recette XDG.
