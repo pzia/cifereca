@@ -27,10 +27,6 @@ CORE = ("search-filter-p0",) + BOOK_DETAIL + ("mainwindow-baseline-1366",
 DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-structured-1366", "diagnostics-volume-1366",
         "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
-YOUTH = ("youth-1366", "youth-1600", "youth-filter-help-1366", "youth-milan-1366",
-         "youth-editions-1366", "youth-editions-1600",
-         "youth-library-search-1366", "youth-library-search-1600",
-         "youth-focus-return-1366")
 # CI smoke for P1 bibliographic detail plugins (#1599). These existing GTK
 # scenarios are regression guards, not plugin-specific acceptance evidence.
 DETAIL = BOOK_DETAIL + ("mainwindow-baseline-1366",
@@ -39,15 +35,13 @@ CONSTELLATIONS_GTK = ("constellations-detail-1366", "constellations-detail-1600"
 CONSTELLATIONS = DETAIL + CONSTELLATIONS_GTK
 RECOMMENDATIONS_GTK = ("recommendations-detail-1366", "recommendations-detail-1600")
 RECOMMENDATIONS = DETAIL + RECOMMENDATIONS_GTK
-ALL = CORE + DIAG + YOUTH + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK
+ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          "startup", "core-navigation", "diagnostics-navigation-1366",
-         "diagnostics-navigation-slow-1366", "youth-library-search-1366")
-# main_window is imported directly by core search, detail, youth and
-# Diagnostics navigation probes. The generic shell subset misses those
-# XTEST consumers. Keep all direct consumers when MainWindow changes.
+         "diagnostics-navigation-slow-1366")
+# MainWindow changes affect core/detail and Diagnostics navigation probes.
 MAINWINDOW = tuple(dict.fromkeys(
-    CORE + YOUTH + ("diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
+    CORE + ("diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
 ))
 # The Diagnostics common probe is imported by every other Diagnostics probe;
 # navigation probes also implement both MainWindow baseline scenarios.
@@ -65,8 +59,7 @@ LOCAL_GUI = {
     "cover_preview.py": BOOK_DETAIL,
     "facet_text.py": ("search-filter-p0",),
     "query_controls.py": ("search-filter-p0", "core-navigation"),
-    # youth_page_probe imports QueryState from this module directly.
-    "query_model.py": ("search-filter-p0",) + BOOK_DETAIL + YOUTH,
+    "query_model.py": ("search-filter-p0",) + BOOK_DETAIL,
     "search_intent.py": ("search-filter-p0",),
     "settings_ai_actions.py": LLM,
     "settings_ai_section.py": LLM,
@@ -90,7 +83,6 @@ PROBES = {
     "e2e/diagnostics_navigation_probe.py": (
         "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366",
         "mainwindow-baseline-1366", "mainwindow-baseline-1600"),
-    "e2e/youth_page_probe.py": YOUTH,
 }
 GLOBAL = {
     "e2e/run.py", "pyproject.toml",
@@ -126,11 +118,6 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             selected.update(CONSTELLATIONS)
         elif path.startswith("src/plugins/recommendations/"):
             selected.update(RECOMMENDATIONS)
-        elif path.startswith("src/plugins/youth-detail-enrichment/"):
-            selected.update(YOUTH)
-        elif path.startswith(("src/plugins/youth-catalog/", "src/plugins/youth-source-",
-                              "simulation/youth_sources/", "simulation/milan/")):
-            selected.update(YOUTH)
         elif path in SYNC_PRODUCERS:
             selected.update(SYNC_CORE)
         elif path.startswith("src/cifereca/builtin_ui/"):

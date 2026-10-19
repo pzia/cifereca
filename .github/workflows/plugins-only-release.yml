@@ -74,7 +74,7 @@ jobs:
           version="$(tr -d '[:space:]' < VERSION)"
           tag="plugins-v${version}-pr-${{ github.event.pull_request.number }}"
           python -m scripts.package_partial_plugins \
-            --packages "org.cifereca.ui.page.diagnostics,org.cifereca.youth-source-discovery" \
+            --packages "org.cifereca.ui.page.diagnostics" \
             --id "$tag" \
             --out dist
           archive="dist/$tag.zip"
