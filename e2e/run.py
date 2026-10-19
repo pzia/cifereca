@@ -197,14 +197,30 @@ def _secret_values(env: dict[str, str]) -> list[str]:
     )
 
 
+MAX_E2E_LOG_CHARS = 1_000_000
+
+
 def _redact(text: str, env: dict[str, str]) -> str:
+    """Sanitize in memory, before a CI-readable log file exists."""
     for value in _secret_values(env):
         text = text.replace(value, "[REDACTED]")
-    return re.sub(
+    text = re.sub(
         r"(?i)(authorization|token|password|secret|cookie)(\s*[:=]\s*)[^\s,;]+",
         r"\1\2[REDACTED]",
         text,
     )
+    text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer [REDACTED]", text)
+    text = re.sub(r"(?i)\b(?:https?|ftp|file)://[^\s<>\"']+", "[REDACTED_URL]", text)
+    text = re.sub(r"(?i)\b[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,253}\.[A-Z]{2,63}\b", "[REDACTED_EMAIL]", text)
+    text = re.sub(r"(?i)(?<![\w])/(?:home|Users|run/user)/[^\s<>\"']+", "/[REDACTED_PATH]", text)
+    return text
+
+
+def _write_redacted_log(path: Path, text: str, env: dict[str, str]) -> None:
+    """Bound untrusted subprocess logs and never write raw streams to evidence."""
+    truncated = len(text) > MAX_E2E_LOG_CHARS
+    safe = _redact(text[:MAX_E2E_LOG_CHARS], env)
+    path.write_text(safe + ("\n[TRUNCATED]\n" if truncated else ""), encoding="utf-8")
 
 
 def materialize_fixture(name: str, root: Path) -> dict[str, str]:
@@ -234,14 +250,34 @@ def materialize_fixture(name: str, root: Path) -> dict[str, str]:
 
 
 def _event(path: Path, scenario: str, event: str, **detail) -> None:
+    """Persist a bounded, scalar trace; never arbitrary GTK/error payloads."""
+    if scenario not in SCENARIOS or event not in {
+        "scenario_start", "xvfb_display_retry", "scenario_end",
+    }:
+        raise ValueError("unexpected E2E trace event")
     row = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "scenario": scenario,
         "event": event,
-        **detail,
     }
+    if event == "scenario_start" and detail.get("plugin") == SCENARIOS[scenario]["plugin"]:
+        row["plugin"] = SCENARIOS[scenario]["plugin"]
+    if event == "xvfb_display_retry" and type(detail.get("attempt")) is int:
+        row["attempt"] = min(2, max(1, detail["attempt"]))
+    if event == "scenario_end":
+        code = detail.get("returncode")
+        if type(code) is int and -255 <= code <= 255:
+            row["returncode"] = code
+        for key in ("screenshot", "report"):
+            if type(detail.get(key)) is bool:
+                row[key] = detail[key]
+        ratio = detail.get("visual_change_ratio")
+        if type(ratio) in (int, float) and 0 <= ratio <= 1:
+            row["visual_change_ratio"] = round(ratio, 6)
+        # Deliberately drop assertion_error, traceback, URL, nested metadata,
+        # private account/session fields, file paths and all unknown keys.
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.write(json.dumps(row, ensure_ascii=True, sort_keys=True) + "\n")
 
 
 def retryable_x11_startup_failure(returncode: int, output: str) -> bool:
@@ -373,32 +409,28 @@ def main() -> int:
                     "--",
                     args.python, "-m", "cifereca", *scenario["args"],
                 ]
-            with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
-                completed = subprocess.run(
-                    command, cwd=ROOT, env=env, check=False,
-                    stdout=stdout, stderr=stderr, text=True,
-                )
-                # An occasional Xvfb handover race can leave GTK without a
-                # display (GDK_IS_DISPLAY), even when the previous GTK
-                # scenario passed. Retry exactly once in a new Xvfb session,
-                # retaining the original log and recording the retry.
-                if name in {"startup", "core-navigation"} and completed.returncode:
-                    stdout.flush()
-                    first_output = stdout_path.read_text(encoding="utf-8")
-                    if retryable_x11_startup_failure(completed.returncode, first_output):
-                        _event(trace_path, name, "xvfb_display_retry", attempt=2)
-                        stdout.write("\n--- X11 display initialization retry (once) ---\n")
-                        stdout.flush()
-                        time.sleep(1)
-                        completed = subprocess.run(
-                            command, cwd=ROOT, env=env, check=False,
-                            stdout=stdout, stderr=stderr, text=True,
-                        )
-            for log_path in (stdout_path, stderr_path):
-                log_path.write_text(
-                    _redact(log_path.read_text(encoding="utf-8"), env),
-                    encoding="utf-8",
-                )
+            # Collect subprocess output in memory and scrub it before making
+            # CI artifact files. Even failed GTK probes cannot persist raw logs.
+            completed = subprocess.run(
+                command, cwd=ROOT, env=env, check=False,
+                capture_output=True, text=True,
+            )
+            output = completed.stdout or ""
+            errors = completed.stderr or ""
+            if name in {"startup", "core-navigation"} and completed.returncode:
+                # Single Xvfb handover retry: inspect in-memory stdout only.
+                if retryable_x11_startup_failure(completed.returncode, output):
+                    _event(trace_path, name, "xvfb_display_retry", attempt=2)
+                    time.sleep(1)
+                    second = subprocess.run(
+                        command, cwd=ROOT, env=env, check=False,
+                        capture_output=True, text=True,
+                    )
+                    output += "\n--- X11 display initialization retry (once) ---\n" + (second.stdout or "")
+                    errors += "\n--- X11 display initialization retry (once) ---\n" + (second.stderr or "")
+                    completed = second
+            _write_redacted_log(stdout_path, output, env)
+            _write_redacted_log(stderr_path, errors, env)
             report = png.with_suffix(".json")
             returncode = completed.returncode
             assertion_error = None

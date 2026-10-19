@@ -52,3 +52,81 @@ def test_runner_uses_stable_per_scenario_artifact_names():
     assert 'scenario_dir / "stdout.log"' in source
     assert 'scenario_dir / "stderr.log"' in source
     assert 'scenario_dir / "trace.jsonl"' in source
+
+
+def test_e2e_logs_are_redacted_before_first_artifact_write(tmp_path, monkeypatch):
+    """#1143: both green and red probe paths must never persist raw child output."""
+    import sys
+    from types import SimpleNamespace
+
+    runner = _module()
+    monkeypatch.setattr(runner.shutil, "which", lambda name: "/fake/xvfb-run")
+    monkeypatch.setenv("E2E_TEST_TOKEN", "PRIVATE_ENV_TOKEN")
+    for status in (0, 7):
+        calls = []
+
+        def fake_run(*args, **kwargs):
+            assert kwargs.get("capture_output") is True
+            assert kwargs.get("text") is True
+            assert "stdout" not in kwargs and "stderr" not in kwargs
+            calls.append(1)
+            return SimpleNamespace(
+                returncode=status,
+                stdout=(
+                    "token=INLINE_SECRET bearer PRIVATE_BEARER "
+                    "https://example.invalid/file?signature=PRIVATE_URL "
+                    "/home/private_user/data user@example.test PRIVATE_ENV_TOKEN"
+                ),
+                stderr="Authorization: PRIVATE_AUTH cookie=PRIVATE_COOKIE",
+            )
+
+        monkeypatch.setattr(runner.subprocess, "run", fake_run)
+        dest = tmp_path / f"case-{status}"
+        monkeypatch.setattr(sys, "argv", ["e2e/run.py", "--scenario", "startup", "--out", str(dest)])
+        assert runner.main() == status
+        assert len(calls) == 1
+        for logfile in ("stdout.log", "stderr.log"):
+            public = (dest / "startup" / logfile).read_text(encoding="utf-8")
+            for private in (
+                "INLINE_SECRET", "PRIVATE_BEARER", "PRIVATE_URL",
+                "/home/private_user", "user@example.test",
+                "PRIVATE_ENV_TOKEN", "PRIVATE_AUTH", "PRIVATE_COOKIE",
+            ):
+                assert private not in public
+            assert len(public) < runner.MAX_E2E_LOG_CHARS
+
+
+def test_oversized_e2e_subprocess_log_is_bounded_and_sanitized(tmp_path):
+    runner = _module()
+    output = tmp_path / "stdout.log"
+    raw = "a" * (runner.MAX_E2E_LOG_CHARS + 200) + "SECRET=PRIVATE"
+    runner._write_redacted_log(output, raw, {"API_TOKEN": "PRIVATE"})
+    text = output.read_text(encoding="utf-8")
+    assert text.endswith("[TRUNCATED]\n")
+    assert "PRIVATE" not in text
+    assert len(text) <= runner.MAX_E2E_LOG_CHARS + 15
+
+
+def test_trace_jsonl_never_serializes_unreviewed_payloads_even_on_failure(tmp_path):
+    """#1143: a recursive/private report is never copied into CI trace files."""
+    runner = _module()
+    trace = tmp_path / "trace.jsonl"
+    runner._event(
+        trace, "startup", "scenario_end", returncode=1,
+        screenshot=True, report=False, visual_change_ratio=0.25,
+        assertion_error="https://private.invalid/?token=NEVER_WRITE",
+        private_account={"email": "reader@example.test", "password": "SECRET"},
+        xdg_path="/home/reader/.config",
+        future_metadata=[{"authorization": "Bearer SECRET"}],
+    )
+    rows = [runner.json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["returncode"] == 1
+    assert rows[0]["visual_change_ratio"] == 0.25
+    assert rows[0]["screenshot"] is True and rows[0]["report"] is False
+    assert set(rows[0]) == {
+        "timestamp_utc", "scenario", "event", "returncode",
+        "visual_change_ratio", "screenshot", "report",
+    }
+    assert "SECRET" not in trace.read_text()
+    assert "reader@example.test" not in trace.read_text()
+    assert "private.invalid" not in trace.read_text()
