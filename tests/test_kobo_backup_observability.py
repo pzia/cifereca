@@ -210,7 +210,7 @@ def test_vault_auth_error_aborts_batch_and_persists_compact_summary(tmp_path: Pa
             "phase": "vault",
             "code": "unauthorized",
             "status_code": 401,
-            "message": "Kobo-Vault : Bearer token invalide",
+            "message": "Sauvegarde Kobo impossible",
             "count": 1,
         }]
 

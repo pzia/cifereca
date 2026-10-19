@@ -84,7 +84,7 @@ def test_real_failed_kobo_backup_keeps_full_in_process_result_but_redacts_diagno
         summary = service.sync_kobo_backup()
         assert summary["errors"] == 1
         assert summary["aborted"] is True
-        assert summary["error_summary"][0]["message"] == "Kobo-Vault : Bearer token invalide"
+        assert summary["error_summary"][0]["message"] == "Sauvegarde Kobo impossible"
         assert summary["sources"][0]["credential_id"] == "vault-1"
 
         diag = service.diagnostics.snapshot()[-1]
