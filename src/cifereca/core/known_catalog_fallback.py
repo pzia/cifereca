@@ -48,6 +48,11 @@ def known_public_fallback(
             return ()
     except Exception:
         return ()
+    # The Core mirror already normalizes these bibliographic fields. Perform
+    # the same bounded, private-URL rejecting check on persisted rows too:
+    # old SQLite rows may predate that validator or have been imported by a
+    # different producer, so public stale output cannot trust raw metadata.
+    from .search_orchestration import _PUBLIC_SEARCH_TEXT_FIELDS, _safe_public_search_text
     candidates: list[dict[str, Any]] = []
     for entry in entries:
         if (entry.get("provider_id") != provider_id
@@ -76,6 +81,12 @@ def known_public_fallback(
         if not all(type(v) is str and v and len(v) < 512 for v in (item_id, catalog_id)):
             continue
         public_meta = {key: value for key, value in meta.items() if key in _PUBLIC_META}
+        for name in _PUBLIC_SEARCH_TEXT_FIELDS:
+            if name not in meta:
+                continue
+            verified = _safe_public_search_text(name, meta[name])
+            if verified is not None:
+                public_meta[name] = verified
         candidates.append({
             "key": catalog_id, "item_id": item_id,
             "title": entry.get("title"), "author": entry.get("author"),
