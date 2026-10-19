@@ -619,6 +619,12 @@ class CatalogSearchBatch:
     error_message: str = ""
     cached: bool = False
     elapsed_ms: int = 0
+    # Closed Core status, not a provider-supplied message. Optional trailing
+    # field preserves old positional consumers of the public 0.4 contract.
+    result_status: Literal[
+        "live", "cached", "partial", "known_catalog_stale",
+        "unavailable", "fallback_global",
+    ] = "live"
 
 
 @dataclass(frozen=True, slots=True)
