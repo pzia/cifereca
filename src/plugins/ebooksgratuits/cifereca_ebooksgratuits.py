@@ -670,6 +670,18 @@ def _opds_load_acquisition(session,initial,field,needle):
         links.sort()
         if links[0][0]>2:
             raise ProviderCapabilityError('Ebooks libres et gratuits : browse_route_unavailable')
+        # Distinct same-priority OPDS navigation feeds may each contain
+        # books for the requested field. Following the first is a bounded
+        # choice, not proof that the entire server catalogue was searched.
+        # Never request the other feeds implicitly or claim a corpus zero.
+        priority = links[0][0]
+        alternatives = {href for rank, href in links if rank == priority}
+        warning = (
+            'partial_results : plusieurs branches OPDS possibles ; '
+            'une seule interrogée'
+        )
+        if len(alternatives) > 1 and warning not in session.last_search_warnings:
+            session.last_search_warnings.append(warning)
         url=links[0][1]
     raise ProviderError('Ebooks libres et gratuits : navigation_limit')
 
