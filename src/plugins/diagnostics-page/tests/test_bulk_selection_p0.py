@@ -1,7 +1,7 @@
 """P0 #2140: deterministic multi-page diagnostics selection without raw logs."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 
@@ -10,6 +10,24 @@ import pytest
 from diagnostics_selection import (
     MAX_SCAN_PAGES, collect_filtered_selection, page_selection_ids,
 )
+
+
+@pytest.fixture(autouse=True)
+def _fixed_selection_clock(monkeypatch):
+    """#2140: test relative periods against one frozen date, not wall time.
+
+    Fixtures use 2026-10-18. Without this clock, their default 'day'
+    selection fails as soon as the CI date rolls to October 19.
+    Only the selection module's clock is frozen; production code is unchanged.
+    """
+    import diagnostics_selection
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 18, 15, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(diagnostics_selection, "datetime", FixedDateTime)
 
 
 class FakeBroker:
