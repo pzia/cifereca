@@ -39,7 +39,7 @@ class Widget:
 Gtk = NS(
     Revealer=Widget, Box=Widget, Label=Widget, Button=Widget,
     Orientation=NS(HORIZONTAL='horizontal'),
-    RevealerTransitionType=NS(SLIDE_UP='slide-up'),
+    RevealerTransitionType=NS(SLIDE_UP='slide-up', NONE='none'),
 )
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -48,7 +48,7 @@ def test_renderer_preserves_hidden_bar_order_spacing_labels_and_icon():
     css = []
     bar = build_notification_bar(Gtk=Gtk, add_css=lambda *args: css.append(args))
     row = bar.revealer.children[0]
-    assert bar.revealer.transition == 'slide-up'
+    assert bar.revealer.transition == 'none'  # #2027 isolation: notification only
     assert bar.revealer.revealed is False
     assert row.options == {'orientation': 'horizontal', 'spacing': 8}
     assert row.children == [bar.label, bar.close]
