@@ -46,11 +46,19 @@ def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
         # however, permit inventory-only recovery without re-sending POST.
         from datetime import datetime, timezone
         try:
-            started = datetime.fromisoformat(str(checkpoint["requested_at"]))
+            raw_started = checkpoint["requested_at"]
+            if type(raw_started) is not str or len(raw_started) > 40:
+                raise ValueError("invalid checkpoint clock")
+            started = datetime.fromisoformat(raw_started.replace("Z", "+00:00"))
+            if started.utcoffset() is None:
+                raise ValueError("naive checkpoint clock")
             age = (datetime.now(timezone.utc) - started).total_seconds()
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             age = 0
-        if age < 180:
+        # Small negative ages are normal clock skew and still protect the
+        # in-flight POST. An implausible *future* timestamp must not freeze
+        # inventory-only recovery indefinitely after a crash/restart.
+        if -180 <= age < 180:
             return public_return_state(checkpoint)
     phase = "inventory_checked"
     verification = "unavailable"
