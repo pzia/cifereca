@@ -1,3 +1,36 @@
+## #1917 — lecture OPDS bornée pendant le GET (0.1.19, 19/10/2026)
+
+Le catalogue COPS imposait déjà **2 Mio** au XML après lecture, mais
+`httpx.Client.get()` avait auparavant **tout chargé en mémoire** avant
+ce contrôle. La limite n'était donc pas un véritable budget réseau.
+
+`_opds_fetch()` lit désormais la réponse via `stream()` et
+`iter_raw(chunk_size=65536)` avec plafond de **2 Mio d'octets reçus**,
+y compris lorsqu'un `Content-Length` trompeur annonce une taille faible.
+La négociation utilise `Accept-Encoding: identity` ; une compression
+`gzip` / `deflate` reçue malgré cette demande est **refusée** avant
+décompression pour éviter une réponse comprimée minuscule produisant une
+expansion arbitraire hors budget. Le flux est fermé immédiatement au
+dépassement. Aucune destination nouvelle ni repli HTML n'est permis.
+Les corps HTTP des redirections 3xx ne sont pas lus ; la cible reste
+qualifiée sur la même origine et dans les routes OPDS autorisées.
+401/403/429/5xx et XML/DTD invalides conservent leurs codes sûrs.
+
+Tests hors réseau `test_opds_streaming_byte_budget_p1.py` : page Atom,
+limite exacte, flux trop volumineux avec en-tête mensonger,
+gzip hostile sans lecture, redirection autorisée/étrangère, erreurs
+serveur expurgées, DTD interdite. Tests via `httpx.MockTransport`,
+sans compte, téléchargement ni trafic distant.
+
+**Limite** : une installation qui sert uniquement des réponses OPDS
+compressées malgré `Accept-Encoding: identity` sera classée
+`invalid_opds_feed` ; un support compressé sûr exigerait plus tard une
+décompression incrémentale strictement plafonnée et des captures
+amont. Cette modification ne prouve pas l'accessibilité live d'OPDS
+ni la recherche hors cache dans CoreUI.
+
+---
+
 ## #1917 — qualification des entrées Atom EPUB/PDF (0.1.18, 19/10/2026)
 
 Un `<entry>` OPDS n'est plus considéré comme un livre sur la seule
