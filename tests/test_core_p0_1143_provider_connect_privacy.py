@@ -86,7 +86,9 @@ def test_failed_provider_connect_has_closed_error_and_no_traceback(
     assert result["connected"] == []
     details = [r["detail"] for r in state.diagnostics.snapshot()
                if r["operation"] in {"provider connect", "public provider connect"}]
-    assert details == [{"code": "provider_connect_failed"}]
+    assert details == [{
+        "code": "provider_connect_failed", "provider_id": "provider.test",
+    }]
     snapshot = provider_sessions.provider_diagnostic_state(state)
     assert snapshot["errors"] == {"connect_failed": 1}
     visible = caplog.text + state.diagnostics.text("test") + json.dumps(snapshot)
