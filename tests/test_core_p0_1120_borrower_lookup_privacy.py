@@ -11,7 +11,6 @@ import pytest
 
 from cifereca.core.loan_accounts import account_for_loan
 from cifereca.providers import ProviderConfigurationError
-from tests.test_loan_borrower_context import service as _service_fixture
 
 
 PRIVATE = "https://private.invalid/loan.acsm?auth=NEVER_LEAK_BORROWER"
