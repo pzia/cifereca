@@ -5,6 +5,13 @@
 live ni une garantie d'exhaustivité du catalogue. Le ticket #1917 reste ouvert
 jusqu'aux recettes multi-provider, Core/UI et gates demandées.
 
+**Périmètre P1 en vigueur (#1917, arbitrage du 19/10/2026)** :
+BnF Catalogue, Gutenberg, Gallica, EbooksGratuits, Paris et Kobo public.
+**Baen est traité hors P1** : #2333 P2 (capacité/erreurs), #2332 P2
+(simulation). **CifericaOPDS est traité hors P1** : #969 P2, dépendance
+Core #968 P2. Leurs lignes ci-dessous sont de simples repères de contexte,
+**pas des critères de sortie de #1917**. Numilog reste #1886 P0.
+
 **Vocabulaire** — `serveur` = sélecteur transmis à l'endpoint ; `page locale`
 = post-filtre appliqué seulement aux éléments récupérés ; `global` =
 recherche textuelle générale sans facette dédiée ; `non attesté` = ne pas
@@ -17,10 +24,10 @@ d'un livre sur toutes les pages ou dans un autre catalogue.
 | [Gutenberg](../src/plugins/provider-gutenberg/cifereca_gutenberg.py) | all, title, author, subject, language | OPDS recherche générale, spécialités en **page locale** | next-link / 25 | Pas de résultat exhaustif par champ ; `bookshelf:` est une syntaxe générale distincte. |
 | [Gallica](../src/plugins/provider-gallica/cifereca_gallica.py) | all, title, author, subject, isbn | `all` : OPDS/OpenSearch EPUB ; spécialités via SRU ; audio SRU sur branche indépendante | page / 50 par branche | Audio optionnel ; erreurs de branche rapportées comme partielles, pas comme absence de livre. |
 | [Ebooks libres et gratuits](../src/plugins/ebooksgratuits/cifereca_ebooksgratuits.py) | all, title, author, subject, category, genre | Calibre OPDS/OpenSearch : recherche générale en amont, spécialités en **page locale** | page / 50 via `next` | `subject` élargit catégories + genres ; depuis #2303 (fusionnée), `genre` ne lit que les genres explicitement publiés ; aucun crawl implicite. |
-| [Baen Free Library](../src/plugins/baen/cifereca_baen.py) | all | Formulaire catalogue **global**, pas de champ auteur/ISBN | page / 50 | Champ inconnu rejeté ; état HTTP 401/403/429/5xx typé. Structure HTML amont encore à qualifier (#764). |
+| [Baen Free Library — contexte P2 #2333, hors #1917](../src/plugins/baen/cifereca_baen.py) | all | Formulaire catalogue **global**, pas de champ auteur/ISBN | page / 50 | Champ inconnu rejeté ; état HTTP 401/403/429/5xx typé. Structure HTML amont encore à qualifier (#764). |
 | [Bibliothèques de Paris](../src/plugins/provider-paris/cifereca_paris.py) | all | Syracuse texte **global**, aucun champ auteur/ISBN/subject attesté | page / 50 | Scopes `all/digital/physical`, erreurs partielles de branche ; droits de prêt séparés du catalogue. |
 | [Kobo / Vault](../src/plugins/provider-kobo/cifereca_kobo.py) | all | Requête globale Vault ; sémantique serveur auteur/ISBN non attestée | page / 50 | `catalog` force l'appel public ; `all/digital` incluent bibliothèque uniquement si compte attesté, repli privé 401/403 vers public avec `partial_results` ; garde de session supplémentaire fusionnée dans #2300. |
-| [CifericaOPDS virtuel](../src/plugins/cifericaopds/cifereca_cifericaopds.py) | HTTP : all ; fixture : all, title, author, isbn, language | HTTP candidat : `q/source_id` uniquement ; fixture : post-filtre sur jeu borné | none | Pas de pagination serveur HTTP attestée ; aucun compte ou acquisition. |
+| [CifericaOPDS virtuel — contexte P2 #969, hors #1917](../src/plugins/cifericaopds/cifereca_cifericaopds.py) | HTTP : all ; fixture : all, title, author, isbn, language | HTTP candidat : `q/source_id` uniquement ; fixture : post-filtre sur jeu borné | none | Pas de pagination serveur HTTP attestée ; aucun compte ou acquisition. |
 | [Numilog achats](../src/plugins/provider-numilog/cifereca_numilog.py) | all, title, titre (privé) ; `catalog` + all (public) | `all/digital` : titres possédés, filtre local ; `catalog` : catalogue commercial brSimple anonyme | page / 50 privé ; grille publique `GRID_PAGE` / 20 | **Deux autorités distinctes** ; seul le compte privé atteste `owned`, jamais le catalogue commercial (#1886, #1072). |
 | [Numilog Catalogue public](../src/plugins/provider-numilog/cifereca_numilog_public_provider.py) | all | brSimple texte général, filtres de facettes suivis uniquement depuis des liens issus de la page | page / 20 | Singleton public désactivé par défaut ; accessibilité live, robots/CGU, pages ultérieures non qualifiés (#1886). |
 
@@ -43,7 +50,7 @@ d'un livre sur toutes les pages ou dans un autre catalogue.
 
 ## Recette encore ouverte (ne pas déclarer succès)
 
-Tester sur les providers précités : zéro réel, page suivante, champ
+Tester sur les **six providers P1** (BnF, Gutenberg, Gallica, EbooksGratuits, Paris, Kobo) : zéro réel, page suivante, champ
 spécialisé, erreur 401/403/429/5xx, branche privée refusée, deux comptes,
 source publique désactivée, déduplication sans mélange de droits, et
 avertissements fédérés lisibles côté Core/UI. Les tests hors réseau du
