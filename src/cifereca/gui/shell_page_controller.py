@@ -109,7 +109,14 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
             recovery = next((p for p in fallback if p.route == page.route and p.route in {"plugins", "settings"}), None)
             if recovery is None:
                 continue
-            widget = recovery.factory(host)
+            # A failing plugin may override the built-in Plugins route.
+            # Recover with the *existing* Core-owned manager when eligible:
+            # otherwise rebuilding it discards the user's scroll and focus.
+            # Never reuse for a different route or a changed manager.
+            if recovery.route == "plugins" and retained_plugins is not None:
+                widget = retained_plugins
+            else:
+                widget = recovery.factory(host)
             if not is_current():
                 return
             page = recovery
