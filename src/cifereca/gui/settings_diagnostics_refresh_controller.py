@@ -6,6 +6,8 @@ and no implicit plugin activation. GTK and projection are injected by the host.
 """
 from __future__ import annotations
 
+from .connection_failure_summary import connection_failure_summary
+
 
 def refresh_settings_diagnostics(
     window, *, page_lifetime, diag_summary, diag_filter, diag_issues_box,
@@ -16,12 +18,22 @@ def refresh_settings_diagnostics(
         return
     data = system_status(window.plugin_manager)
     attention = int(data.get("attention") or 0)
+    # Passive Core snapshot: no reconnect, remote query or plugin serializer.
+    provider_state = window.service.provider_diagnostic_state()
+    failure_text = connection_failure_summary(
+        provider_state.get("connection_failures")
+        if type(provider_state) is dict else None
+    )
     diag_summary.set_label(
         f"{data.get('ready', 0)} prêt(s) · {attention} à examiner. "
         + (
             "Les anomalies sont affichées en premier."
-            if attention else "Aucune anomalie bloquante détectée."
+            if attention else (
+                "Des connexions nécessitent une vérification."
+                if failure_text else "Aucune anomalie bloquante détectée."
+            )
         )
+        + (f"\n{failure_text}" if failure_text else "")
     )
     clear_box(diag_issues_box)
     attention_only = int(diag_filter.get_selected()) == 0
@@ -68,6 +80,6 @@ def refresh_settings_diagnostics(
         "cover_pipeline": window.covers.stats(),
         "history_cover_search": window.history_cover_resolver.stats(),
         "ui_performance": window.ui_perf.snapshot(),
-        "providers": window.service.provider_diagnostic_state(),
+        "providers": provider_state,
     })
     diag_text.get_buffer().set_text(diagnostics_text)
