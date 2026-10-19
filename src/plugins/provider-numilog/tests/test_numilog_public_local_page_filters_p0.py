@@ -193,7 +193,8 @@ def test_missing_provenance_cannot_turn_absent_author_into_false_exhaustiveness(
         }
         metadata["field_evidence"] = evidence
         fake = replace(page, items=(replace(row, metadata=metadata),),
-                       total_results=1, complete=True, next_url=None)
+                       total_results=1, complete=True, next_url=None,
+                       pagination_links=())
         result = s.refine_loaded_page(fake, author="Mourlevat")
         assert not result.items
         assert result.missing_evidence_count == 1
