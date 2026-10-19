@@ -8,7 +8,6 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 
-import httpx
 import pytest
 
 from cifereca.plugin_api import ProviderCapabilityError, ProviderError
@@ -127,7 +126,6 @@ def test_explicit_epub_broker_receives_same_origin_policy_with_or_without_cache(
         assert source["classify_http_status"] is True
         assert source["max_redirects"] == 2
         assert source["expected_format"] == "epub"
-        assert source["Referer"] if "Referer" in source else True
         assert source["headers"]["Referer"] == s.opds_feed_url
         assert "www.ebooksgratuits.com" not in repr(source)
     finally:
