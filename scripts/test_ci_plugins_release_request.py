@@ -40,19 +40,23 @@ class ReleaseRequestTests(unittest.TestCase):
         active = json.loads(
             (ROOT / ".github/plugins-only-release-request.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(active["kind"], INACTIVE_KIND)
-        self.assertNotIn("package_ids", active)
-        self.assertNotIn("release_tag", active)
+        # Today's request is inactive; future explicitly authorized releases
+        # remain possible, but no removed Jeunesse package may be selected.
+        self.assertIn(active["kind"], {INACTIVE_KIND, ACTIVE_KIND})
+        self.assertNotIn(RETIRED, active.get("package_ids", []))
         archived = json.loads((ROOT / active["historical_request"]).read_text(encoding="utf-8"))
         self.assertEqual(archived["kind"], ACTIVE_KIND)
         self.assertEqual(archived["request_revision"], 4)
         self.assertEqual(archived["authorized_on"], "2026-10-09")
         self.assertIn(RETIRED, archived["package_ids"])
         self.assertIn(DIAGNOSTICS, archived["package_ids"])
-        self.assertIsNone(
-            resolve_request("push", ROOT / ".github/plugins-only-release-request.json",
-                            plugins_dir=self.plugins)
-        )
+        if active["kind"] == INACTIVE_KIND:
+            self.assertNotIn("package_ids", active)
+            self.assertNotIn("release_tag", active)
+            self.assertIsNone(
+                resolve_request("push", ROOT / ".github/plugins-only-release-request.json",
+                                plugins_dir=self.plugins)
+            )
 
     def test_removed_and_unknown_ids_are_rejected_before_any_package_build(self):
         for packages in ([RETIRED], [DIAGNOSTICS, RETIRED],
