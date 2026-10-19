@@ -74,10 +74,13 @@ def gtk_layout_phase_counts(*streams: str) -> dict[str, dict[str, int]]:
             continue
         active = None
         for line in stream[:_MAX_STREAM].splitlines():
-            marker = _PHASE_MARKER.fullmatch(line.strip())
-            if marker is not None:
-                # Unknown phase names are boundaries, not borrowed counters.
-                active = marker.group("phase") if marker.group("phase") in counts else None
+            clean = line.strip()
+            if clean.startswith("CIFERECA_E2E_GTK_PHASE:"):
+                # Any marker-looking line (including invalid syntax) ends the
+                # previous phase; never borrow counts from a known phase.
+                marker = _PHASE_MARKER.fullmatch(clean)
+                active = (marker.group("phase") if marker is not None
+                          and marker.group("phase") in counts else None)
                 continue
             if active is None or not _CRITICAL.search(line):
                 continue
