@@ -24,6 +24,8 @@ class DiagnosticSettingsWidgets:
     performance_export: Any
     performance_status: Any
     open_page: Any
+    entry: Any
+    fallback_widgets: tuple[Any, ...]
 
 
 def build_settings_diagnostics_section(
@@ -32,6 +34,9 @@ def build_settings_diagnostics_section(
     action_button: Callable[..., Any],
 ) -> DiagnosticSettingsWidgets:
     """Build exactly the original view, without binding callbacks."""
+    entry = Adw.PreferencesGroup()
+    entry.set_title("Journaux et captures")
+    section.append(entry)
     diag_group = Adw.PreferencesGroup()
     diag_group.set_title("Diagnostic système")
     section.append(diag_group)
@@ -73,7 +78,7 @@ def build_settings_diagnostics_section(
     open_page.set_tooltip_text(
         "Accéder aux journaux et rapports dans la page Diagnostics"
     )
-    diag_group.add(open_page)
+    entry.add(open_page)
 
     # A separate, explicitly opted-in UI performance observer. The monitor
     # already exists on MainWindow; opening Settings never starts capture.
@@ -121,5 +126,6 @@ def build_settings_diagnostics_section(
         performance_capture=performance_capture,
         performance_export=performance_export,
         performance_status=performance_status,
-        open_page=open_page,
+        open_page=open_page, entry=entry,
+        fallback_widgets=(diag_group, perf_group, buttons),
     )

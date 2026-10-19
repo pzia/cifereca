@@ -8,7 +8,7 @@ from .settings_performance_actions import bind_settings_performance_actions
 from . import settings_diagnostics_refresh_controller
 
 
-def bind_diagnostics_page_link(window, button, *, page_lifetime):
+def bind_diagnostics_page_link(window, button, *, page_lifetime, fallback_widgets=()):
     """Navigate only to a registered Diagnostics page; preserve Core fallback.
 
     No plugin is activated by building Settings. A disabled/absent contribution
@@ -22,16 +22,19 @@ def bind_diagnostics_page_link(window, button, *, page_lifetime):
         pages = getattr(window, "_pages", None)
         return isinstance(pages, dict) and "diagnostics" in pages
 
-    def refresh() -> None:
+    def refresh() -> bool:
         if not active():
-            return
+            return False
         enabled = available()
+        for widget in fallback_widgets:
+            widget.set_visible(not enabled)
         button.set_sensitive(enabled)
         button.set_tooltip_text(
             "Ouvrir la page Diagnostics : journaux et rapports"
             if enabled else
             "Page Diagnostics indisponible ; les outils locaux restent accessibles ici"
         )
+        return enabled
 
     def open_page(_button=None) -> None:
         if not active():
@@ -66,6 +69,7 @@ def bind_settings_diagnostics(self, *, page_lifetime, diagnostic_ui,
     # navigate to an absent page; Settings remains the built-in fallback.
     refresh_diagnostics_link = bind_diagnostics_page_link(
         self, diagnostic_ui.open_page, page_lifetime=page_lifetime,
+        fallback_widgets=getattr(diagnostic_ui, "fallback_widgets", ()),
     )
 
     # Reuse MainWindow.ui_perf: no profiler, periodic collector or automatic
@@ -98,8 +102,9 @@ def bind_settings_diagnostics(self, *, page_lifetime, diagnostic_ui,
     def refresh_text() -> None:
         if not page_lifetime.alive or getattr(self, "_closed", False):
             return
+        if refresh_diagnostics_link():
+            return
         refresh_performance_status()
-        refresh_diagnostics_link()
         from ..system_status import system_status
         return settings_diagnostics_refresh_controller.refresh_settings_diagnostics(
             self, page_lifetime=page_lifetime,
@@ -118,6 +123,9 @@ def bind_settings_diagnostics(self, *, page_lifetime, diagnostic_ui,
         diag_switch=diag_switch, levels=levels, Gtk=Gtk, Gdk=Gdk,
     )
 
+    entry = getattr(diagnostic_ui, "entry", None)
+    if entry is not None:
+        entry.connect("map", lambda *_args: refresh_diagnostics_link())
     diag_filter.connect("notify::selected", lambda *_args: refresh_text())
     refresh.connect("clicked", lambda _b: refresh_text())
     copy.connect("clicked", copy_text)
