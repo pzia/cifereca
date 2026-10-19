@@ -210,8 +210,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = CiferecaCore.abort_directory_migration()
             print(json.dumps(result, ensure_ascii=False, indent=2)); return 0
-        except Exception as exc:
-            print(str(exc), file=sys.stderr); return 1
+        except Exception:
+            # Filesystem/database failures may include the user's library path,
+            # identity directory or provider secrets. Never print raw text.
+            print("Annulation de migration impossible", file=sys.stderr)
+            return 1
 
     # A local repair/preview must not activate plugins, chmod Config, purge
     # caches or recover a directory migration as a side effect of startup.
