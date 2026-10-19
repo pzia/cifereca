@@ -229,3 +229,63 @@ def test_failures_are_bounded_without_leaking_provider_body(status,code):
         assert 'PRIVATE' not in str(exc.value)
     finally:
         session.close()
+
+
+def test_cops_search_navigation_enters_books_scope_before_pagination():
+    """The real COPS renderer returns scope navigation from OpenSearch."""
+    navigation = """<feed xmlns="http://www.w3.org/2005/Atom">
+    <entry><id>cops:author</id><title>Authors</title>
+    <link rel="subsection" type="application/atom+xml" href="/index.php/feed/authors"/></entry>
+    <entry><id>cops:books</id><title>Books</title>
+    <link rel="subsection" type="application/atom+xml" href="/index.php/feed/books"/></entry>
+    </feed>"""
+    calls=[]
+    def handle(req):
+        calls.append(req.url.path)
+        if req.url.path=="/index.php/feed/search":
+            return response(req,body=navigation)
+        if req.url.path=="/index.php/feed/books":
+            return response(req,body=page(BOOK))
+        return route(req)
+    session=make_session(handle)
+    try:
+        rows=session.search("livre",field="all")
+        assert [r.title for r in rows]==["Livre d'essai"]
+        assert calls==["/index.php/feed","/index.php/opensearch.xml",
+                       "/index.php/feed/search","/index.php/feed/books"]
+    finally:
+        session.close()
+
+
+def test_cops_author_navigation_resolves_matching_author_not_first_name():
+    scope = """<feed xmlns="http://www.w3.org/2005/Atom">
+    <entry><id>cops:books</id><title>Books</title><link
+      rel="subsection" type="application/atom+xml"
+      href="/index.php/feed/books"/></entry>
+    <entry><id>cops:authors</id><title>Authors</title><link
+      rel="subsection" type="application/atom+xml"
+      href="/index.php/feed/authors"/></entry></feed>"""
+    authors = """<feed xmlns="http://www.w3.org/2005/Atom">
+    <entry><id>cops:author:1</id><title>Autre Auteur</title>
+    <link type="application/atom+xml" href="/index.php/feed/author1"/></entry>
+    <entry><id>cops:author:2</id><title>Auteur Exemple</title>
+    <link type="application/atom+xml" href="/index.php/feed/author2"/></entry>
+    </feed>"""
+    visited=[]
+    def handle(req):
+        visited.append(req.url.path)
+        path=req.url.path
+        if path=="/index.php/feed/search":return response(req,body=scope)
+        if path=="/index.php/feed/authors":return response(req,body=authors)
+        if path=="/index.php/feed/author2":return response(req,body=page(BOOK))
+        if path in {"/index.php/feed/author1","/index.php/feed/books"}:
+            pytest.fail("Wrong navigation branch")
+        return route(req)
+    session=make_session(handle)
+    try:
+        rows=session.search("Exemple",field="author")
+        assert len(rows)==1 and rows[0].author=="Auteur Exemple"
+        assert visited[-3:]==["/index.php/feed/search",
+                             "/index.php/feed/authors","/index.php/feed/author2"]
+    finally:
+        session.close()
