@@ -250,14 +250,34 @@ def materialize_fixture(name: str, root: Path) -> dict[str, str]:
 
 
 def _event(path: Path, scenario: str, event: str, **detail) -> None:
+    """Persist a bounded, scalar trace; never arbitrary GTK/error payloads."""
+    if scenario not in SCENARIOS or event not in {
+        "scenario_start", "xvfb_display_retry", "scenario_end",
+    }:
+        raise ValueError("unexpected E2E trace event")
     row = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "scenario": scenario,
         "event": event,
-        **detail,
     }
+    if event == "scenario_start" and detail.get("plugin") == SCENARIOS[scenario]["plugin"]:
+        row["plugin"] = SCENARIOS[scenario]["plugin"]
+    if event == "xvfb_display_retry" and type(detail.get("attempt")) is int:
+        row["attempt"] = min(2, max(1, detail["attempt"]))
+    if event == "scenario_end":
+        code = detail.get("returncode")
+        if type(code) is int and -255 <= code <= 255:
+            row["returncode"] = code
+        for key in ("screenshot", "report"):
+            if type(detail.get(key)) is bool:
+                row[key] = detail[key]
+        ratio = detail.get("visual_change_ratio")
+        if type(ratio) in (int, float) and 0 <= ratio <= 1:
+            row["visual_change_ratio"] = round(ratio, 6)
+        # Deliberately drop assertion_error, traceback, URL, nested metadata,
+        # private account/session fields, file paths and all unknown keys.
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.write(json.dumps(row, ensure_ascii=True, sort_keys=True) + "\n")
 
 
 def retryable_x11_startup_failure(returncode: int, output: str) -> bool:
