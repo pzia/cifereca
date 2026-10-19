@@ -19,6 +19,7 @@ class _UiHost:
     def __init__(self, window: "MainWindow", action_context=None) -> None:
         self.window = window
         self._action_context = action_context
+        self._performance_generation = getattr(window, "_shell_page_rebuild_token", None)
     def _window_alive(self) -> bool:
         return not getattr(self.window, "_closed", False)
     def toast(self, message: str, timeout: int = 3) -> None:
@@ -26,6 +27,43 @@ class _UiHost:
         if not self._window_alive():
             return
         self.window.toast(message, timeout)
+    def _performance_monitor(self):
+        from cifereca.plugin_api import UnsupportedOperation
+        if (not self._window_alive()
+                or getattr(self.window, "_shell_page_rebuild_token", None)
+                is not self._performance_generation):
+            raise UnsupportedOperation("Observation des performances indisponible.")
+        monitor = getattr(self.window, "ui_perf", None)
+        if (monitor is None
+                or not callable(getattr(monitor, "performance_report", None))
+                or not callable(getattr(monitor, "enable_detailed_capture", None))):
+            raise UnsupportedOperation("Observation des performances indisponible.")
+        return monitor
+
+    def performance_report(self) -> dict[str, Any]:
+        """Read the existing observer without enabling collection or I/O."""
+        from cifereca.plugin_api import UnsupportedOperation
+        monitor = self._performance_monitor()
+        try:
+            report = monitor.performance_report()
+            if type(report) is not dict or report.get("schema") != "cifereca.performance.phases/1":
+                raise ValueError("invalid_performance_report")
+            return report
+        except Exception:
+            raise UnsupportedOperation("Rapport de performances indisponible.") from None
+
+    def set_performance_capture(self, enabled: bool) -> dict[str, Any]:
+        """An explicit, exact boolean; never a toggle on page construction."""
+        from cifereca.plugin_api import UnsupportedOperation
+        if type(enabled) is not bool:
+            raise ValueError("invalid_performance_capture_option")
+        monitor = self._performance_monitor()
+        try:
+            monitor.enable_detailed_capture(enabled)
+        except Exception:
+            raise UnsupportedOperation("Capture de performances indisponible.") from None
+        return self.performance_report()
+
     def action_context(self):
         if self._action_context is None:
             from cifereca.plugin_api import UiActionContext

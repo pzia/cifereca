@@ -990,6 +990,19 @@ class UiPageHost(Protocol):
 
 
 @runtime_checkable
+class UiPerformanceHost(UiPageHost, Protocol):
+    """Optional local Core performance observer for technical UI pages.
+
+    Reading never starts capture. Mutations require an exact boolean and an
+    active host lifetime; navigation preserves an explicitly started capture.
+    Reports use cifereca.performance.phases/1, already bounded/redacted by Core.
+    Export remains an explicit local file action owned by the calling page.
+    """
+    def performance_report(self) -> Mapping[str, Any]: ...
+    def set_performance_capture(self, enabled: bool) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
 class UiActionHost(UiPageHost, Protocol):
     """Host used while executing contextual UI actions."""
     def action_context(self) -> UiActionContext: ...
