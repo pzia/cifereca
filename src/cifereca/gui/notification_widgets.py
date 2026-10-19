@@ -15,7 +15,9 @@ class NotificationBar:
 def build_notification_bar(*, Gtk, add_css) -> NotificationBar:
     """Build the existing hidden, closable bar without timers or callbacks."""
     revealer = Gtk.Revealer()
-    revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
+    # #2027: isolate the *window notification* revealer (distinct from
+    # the activity revealer, already tested negatively in #2424).
+    revealer.set_transition_type(Gtk.RevealerTransitionType.NONE)
     revealer.set_reveal_child(False)
     bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     add_css(bar, "notification-bar")
