@@ -18,6 +18,9 @@ from tests.test_core_0984_adept_first_paris_reconcile import setup as adept_setu
 
 class HostileRow:
     def __getattribute__(self, name):
+        # Pytest legitimately inspects __class__ while collecting parameters.
+        if name == "__class__":
+            return object.__getattribute__(self, name)
         raise AssertionError("Untrusted row attribute access: " + name)
 
     def __str__(self):
