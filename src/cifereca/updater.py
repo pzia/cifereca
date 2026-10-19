@@ -597,10 +597,10 @@ def _restore_transaction_packages(path: Path, transaction: dict[str, Any]) -> No
         if isinstance(before, dict) and before.get("exists"):
             backup = path / "plugins" / package_id
             if not backup.is_dir():
-                raise UpdateError(f"Backup plugin absent pour {package_id}")
+                raise UpdateError("Backup plugin de restauration absent")
             shutil.copytree(backup, destination)
             if _package_identity(package_id) != before:
-                raise UpdateError(f"Vérification de restauration échouée pour {package_id}")
+                raise UpdateError("Vérification de restauration plugin échouée")
 
 
 def _smoke_restored_plugins(release: Path, transaction: dict[str, Any]) -> dict[str, Any]:
@@ -617,29 +617,29 @@ def _smoke_restored_plugins(release: Path, transaction: dict[str, Any]) -> dict[
         rows = json.loads(proc.stdout)
     except Exception as exc:
         raise UpdateError("Validation des plugins restaurés: sortie JSON invalide") from exc
-    if not isinstance(rows, list):
+    # The restored runtime is an untrusted inventory. Never echo its plugin
+    # IDs or even the (locally stored) package names into public errors.
+    if (type(rows) is not list or len(rows) > 4096
+            or any(type(row) is not dict
+                   or type(row.get("package_id")) is not str
+                   or type(row.get("state")) is not str for row in rows)):
         raise UpdateError("Validation des plugins restaurés: liste JSON attendue")
     package_ids = set(package_rows)
-    failed = sorted({
-        str(row.get("plugin_id") or row.get("package_id"))
-        for row in rows if isinstance(row, dict)
-        and row.get("package_id") in package_ids
-        and row.get("state") in {"error", "incompatible"}
-    })
-    if failed:
-        raise UpdateError("Plugins restaurés incompatibles ou en erreur: " + ", ".join(failed))
-    visible = {
-        str(row.get("package_id")) for row in rows
-        if isinstance(row, dict) and row.get("package_id")
-    }
+    failed_count = sum(
+        row["package_id"] in package_ids
+        and row["state"] in {"error", "incompatible"}
+        for row in rows
+    )
+    if failed_count:
+        raise UpdateError("Plugins restaurés incompatibles ou en erreur")
+    visible = {row["package_id"] for row in rows}
     active = {
         package_id for package_id, row in package_rows.items()
         if isinstance(row, dict) and isinstance(row.get("before"), dict)
         and row["before"].get("exists") and row["before"].get("active")
     }
-    missing = sorted(active - visible)
-    if missing:
-        raise UpdateError("Plugins actifs restaurés absents de l'inventaire: " + ", ".join(missing))
+    if active - visible:
+        raise UpdateError("Plugins actifs restaurés absents de l'inventaire")
     return {"plugin_count": len(rows), "managed_packages": sorted(package_ids)}
 
 
