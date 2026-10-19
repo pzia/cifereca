@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "core.ui",
-    "version": "0.9.44+dev.12",
+    "version": "0.9.44+dev.13",
     "name": "Interface cifereca",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "core.ui.pages",
       "type": "ui.page",
-      "version": "0.9.44+dev.12",
+      "version": "0.9.44+dev.13",
       "entrypoint": "cifereca_builtin_ui:Pages",
       "display_name": "Pages standard",
       "priority": -100,
@@ -21,7 +21,7 @@
     {
       "id": "core.ui.titlebar",
       "type": "ui.titlebar",
-      "version": "0.9.44+dev.12",
+      "version": "0.9.44+dev.13",
       "entrypoint": "cifereca_builtin_ui:Titlebar",
       "display_name": "Barre de titre",
       "priority": -100,
@@ -50,7 +50,7 @@
     {
       "id": "core.ui.widgets",
       "type": "ui.widgets",
-      "version": "0.9.44+dev.12",
+      "version": "0.9.44+dev.13",
       "entrypoint": "cifereca_builtin_ui:Widgets",
       "display_name": "Widgets standard",
       "priority": -100,
@@ -60,7 +60,7 @@
     {
       "id": "core.ui.system",
       "type": "ui.page",
-      "version": "0.9.44+dev.12",
+      "version": "0.9.44+dev.13",
       "entrypoint": "cifereca_builtin_ui:SystemPages",
       "display_name": "Diagnostic système (repli)",
       "priority": -100,
@@ -73,7 +73,7 @@
     {
       "id": "core.maintenance.cache",
       "type": "maintenance.tool",
-      "version": "0.9.44+dev.12",
+      "version": "0.9.44+dev.13",
       "entrypoint": "cifereca_builtin_ui:CacheMaintenance",
       "display_name": "Nettoyage des caches",
       "priority": 100,
