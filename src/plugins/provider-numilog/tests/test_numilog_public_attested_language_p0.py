@@ -28,19 +28,28 @@ def catalogue_page():
     ))
 
 
-def enriched_page(page, language="fr", *, modified_title=None):
+def enriched_page(page, language="fr", *, visible_language=None, hidden=False):
     item = page.items[0]
     node = {
         "@context": "https://schema.org", "@type": "Book",
         "url": item.friendly_url, "name": item.title,
-        "inLanguage": language,
     }
-    if modified_title is not None:
-        node["name"] = modified_title
+    if language is not None:
+        node["inLanguage"] = language
+    visible = ""
+    if visible_language is not None:
+        visible = (
+            '<div id="ctl02_CentrePage_dvFicheDetail">'
+            '<div class="titledetailDRM">Détails</div>'
+            '<span ' + ('hidden ' if hidden else '')
+            + 'id="ctl02_CentrePage_FicheDetaille1_lblLanguage">'
+            + visible_language + '</span></div>'
+        )
     text = (
         '<html><form id="aspnetForm" name="aspnetForm" method="post" action="'
-        + urlsplit(item.friendly_url).path + '"><h1>'
-        + item.title + '</h1></form><script type="application/ld+json">'
+        + urlsplit(item.friendly_url).path + '"><h1 class="Titlebook">'
+        + item.title + '</h1>' + visible
+        + '</form><script type="application/ld+json">'
         + json.dumps(node, ensure_ascii=False)
         + '</script></html>'
     )
@@ -76,6 +85,28 @@ def test_one_explicit_public_book_language_is_a_positive_match_only():
     assert english.missing_evidence_count == 20
     assert english.has_uninspected_or_unverified_matches is True
     assert english.public_unfiltered_total == french.public_unfiltered_total
+
+
+def test_visible_language_label_is_attested_without_jsonld_language():
+    page = enriched_page(
+        catalogue_page(), language=None, visible_language="Français",
+    )
+    result = refine_loaded_public_page(page, language="Français")
+    assert result.matching_count == 1
+    assert result.missing_evidence_count == 19
+    # No BCP47 or age inferred from a localized page label.
+    assert refine_loaded_public_page(page, language="fr").matching_count == 0
+    assert result.items[0].owned is False
+
+
+def test_hidden_visible_language_label_does_not_attest_a_match():
+    page = enriched_page(
+        catalogue_page(), language=None, visible_language="Français",
+        hidden=True,
+    )
+    result = refine_loaded_public_page(page, language="Français")
+    assert result.matching_count == 0
+    assert result.missing_evidence_count == 20
 
 
 def test_incompatible_title_or_corrupt_language_proof_is_unknown():
