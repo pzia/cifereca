@@ -1471,13 +1471,13 @@ class DiagnosticsBrokerImpl:
                     }),
                     "core",
                 ))
-        except Exception as exc:
+        except Exception:
             rows.append(HealthCheckResult(
                 "core.sync.sources",
                 "sync",
                 "error",
                 "Sources configurées",
-                {"error_type": type(exc).__name__},
+                {"code": "sync_sources_unavailable"},
                 "core",
             ))
 
@@ -1505,25 +1505,25 @@ class DiagnosticsBrokerImpl:
                 {"count": len(providers)},
                 "core",
             ))
-        except Exception as exc:
+        except Exception:
             rows.append(HealthCheckResult(
                 "core.providers.loaded",
                 "provider.library",
                 "error",
                 "Providers chargés",
-                {"error_type": type(exc).__name__},
+                {"code": "providers_unavailable"},
                 "core",
             ))
 
         try:
             contributions = tuple(manager.services("diagnostics.check"))
-        except Exception as exc:
+        except Exception:
             rows.append(HealthCheckResult(
                 "core.diagnostics.contributions",
                 "diagnostics.check",
                 "error",
                 "Vérifications plugins",
-                {"error_type": type(exc).__name__},
+                {"code": "diagnostic_contributions_unavailable"},
                 "core",
             ))
             contributions = ()
@@ -1532,13 +1532,13 @@ class DiagnosticsBrokerImpl:
         for resolved in contributions:
             try:
                 checks = tuple(resolved.service.checks())
-            except Exception as exc:
+            except Exception:
                 rows.append(HealthCheckResult(
                     f"{resolved.plugin_id}.check",
                     resolved.plugin_id,
                     "error",
                     resolved.plugin_id,
-                    {"error_type": type(exc).__name__},
+                    {"code": "diagnostic_check_failed"},
                     "plugin",
                 ))
                 continue
@@ -1549,7 +1549,7 @@ class DiagnosticsBrokerImpl:
                         resolved.plugin_id,
                         "error",
                         "Résultat de diagnostic invalide",
-                        {"result_type": type(item).__name__},
+                        {"code": "invalid_diagnostic_result"},
                         "plugin",
                     ))
                     continue
