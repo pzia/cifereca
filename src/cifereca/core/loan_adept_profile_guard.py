@@ -47,9 +47,17 @@ def check(
         # Profile-resolution exceptions may be provided by runtime extensions.
         # Their message and even their code are untrusted: neither belongs in
         # the durable acquisition ledger or the public loan receipt.
-        code = (exc.code if type(exc.code) is str and exc.code in {
-            "adept_profile_required", "adept_profile_ambiguous",
-        } else "adept_profile_required")
+        # Resolve a provider/runtime-owned attribute only once. A property
+        # may raise, return a non-string object, or change between reads.
+        # None of those cases may interrupt the fail-closed ADEPT refusal.
+        try:
+            untrusted_code = exc.code
+        except Exception:
+            untrusted_code = None
+        code = (untrusted_code if type(untrusted_code) is str
+                and untrusted_code in {
+                    "adept_profile_required", "adept_profile_ambiguous",
+                } else "adept_profile_required")
         message = "Profil ADEPT indisponible"
         self.storage.acquisition_put({
             **ledger_base, "status": "attention_required", "strategy": "loan_auto", "executor": "kobo-adept",
