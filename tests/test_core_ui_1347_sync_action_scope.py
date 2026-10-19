@@ -103,6 +103,9 @@ def _methods():
         # has separate component and GTK allocation acceptance tests.
         add_sync_action=lambda row, button: row.add_suffix(button),
         sync_action_row=lambda row: row,
+        # Keep callback tests independent of native progressive layout, just
+        # like FlowBox wrapping above. Its widget composition is tested alone.
+        add_sync_detail=lambda group, row, **kw: group.add(row),
         sync_identity_action_label=sync_identity_action_label,
         sync_source_presentation=sync_source_presentation,
         sync_source_row_labels=sync_source_row_labels,

@@ -63,7 +63,7 @@ def test_underlying_business_callbacks_are_unchanged():
 def test_sync_page_explains_metadata_only_and_global_download_not_embedded():
     path = ROOT / "src/cifereca/gui/sync_controller.py"
     text = path.read_text(encoding="utf-8")
-    assert "Actualiser les sources met à jour les notices et droits en ligne" in text
-    assert "Ce bouton ne télécharge aucun ebook" in text
+    assert "Synchroniser met à jour les notices et droits en ligne, sans télécharger de livre" in text
+    assert "Les outils et téléchargements se trouvent dans chaque compte" in text
     assert "self.service.sync_kobo_backup(progress=progress)" in text
     assert "self.service.sync_kobo_backup(" not in _method("_build_library_page")
