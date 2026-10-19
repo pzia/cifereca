@@ -235,14 +235,48 @@ def _validated_public_query(query):
 
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.19','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+        super().__init__(descriptor=DESCRIPTOR,**kw)
+        self.transport=transport
+        self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'
+        self.maximum=int(self.options.get('max_download_bytes',100*1024*1024))
+        self.diagnostics=diagnostics
+        self.page_size=int(self.options.get('search_page_size',50))
         self.acquisition_backend=str(self.options.get('acquisition_backend') or 'opds').strip().lower()
-        if self.acquisition_backend not in {'opds','html'}: raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_backend')
+        if self.acquisition_backend not in {'opds','html'}:
+            raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_backend')
         self.opds_feed_url=str(self.options.get('opds_feed_url') or OPDS_FEED)
         self._opds_pages_limit=MAX_REQUESTED_PAGES
+        self.client=self._new_client()
+
+    def _new_client(self):
+        # close() permanently closes an httpx.Client. Only a fresh
+        # cookie-free transport can serve a subsequent explicit connect().
+        # Both OPDS and legacy simulation share this lifecycle.
+        return httpx.Client(
+            timeout=float(self.options.get('timeout_seconds',30)),
+            follow_redirects=True, trust_env=False,
+            headers={
+                'User-Agent':'Cifereca-EbooksGratuits/0.1.20',
+                'Accept-Language':'fr-FR,fr;q=0.9',
+            },
+        )
+
     def connect(self):
-        self.connected=True; self._accounts=[Account(display_name='Catalogue public',unique_id='ebooksgratuits',provider_id='ebooksgratuits',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
-    def close(self): self.client.close(); self.connected=False; self._accounts=[]
+        if self.client.is_closed:
+            self.client=self._new_client()
+        # This is a local session registration, NOT a successful OPDS probe.
+        self.connected=True
+        self._accounts=[Account(
+            display_name='Catalogue public',unique_id='ebooksgratuits',
+            provider_id='ebooksgratuits',credential_id=self.credential_id,
+            provider_label=self.descriptor.display_name,is_primary=True,
+        )]
+        return self.accounts
+
+    def close(self):
+        self.client.close()
+        self.connected=False
+        self._accounts=[]
     def _fetch(self,url):
         try:r=self.client.get(url); r.raise_for_status(); return r
         except httpx.HTTPError as e: raise _public_search_error(e) from e
