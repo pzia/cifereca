@@ -860,6 +860,11 @@ class LibraryService:
         """Return declared search limits for connected providers, keyed by provider id."""
         return search_orchestration.provider_search_capabilities(self)
 
+    def catalogue_source_capabilities(self, identity_id: str | None = None):
+        """Read-only inventory; search is not a declaration of catalogue sync."""
+        from .core.catalogue_source_inventory import catalogue_source_capabilities
+        return catalogue_source_capabilities(self, identity_id=identity_id)
+
     @staticmethod
     def _search_contract_warning(session: ProviderSession, field: str, scope: str) -> str:
         return search_orchestration._search_contract_warning(session, field, scope, facade_type=LibraryService)
