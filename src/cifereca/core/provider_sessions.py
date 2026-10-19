@@ -169,7 +169,7 @@ def _connect_changed_virtual_provider(self, provider_id: str) -> None:
                 session.close()
             except Exception:
                 pass
-        self._session_errors[key] = type(exc).__name__
+        self._session_errors[key] = "virtual_provider_connect_failed"
         self.diagnostics.add(
             "PLUGIN", "virtual provider connection", "error",
             detail={"provider": provider_id, "code": "virtual_provider_connect_failed"},
