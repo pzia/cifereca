@@ -178,7 +178,9 @@ def test_long_summaries_are_collapsible_but_remain_selectable():
     assert "Pango.EllipsizeMode.END" in source
     assert "'Lire la suite'" in source
     assert "'Réduire'" in source
-    assert "set_lines(-1)" in source
+    # Expanded/collapsed lines are now selected by the Pango overflow state.
+    assert "lines = 6 if collapsed else -1" in source
+    assert "label.set_lines(lines)" in source
     assert "Pango.EllipsizeMode.NONE" in source
 
 
