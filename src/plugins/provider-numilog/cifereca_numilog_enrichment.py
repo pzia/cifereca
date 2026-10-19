@@ -222,7 +222,7 @@ def merge_attested_public_listing(owned, public_rows):
 
 
 def merge_attested_owned_public_detail(owned, detail):
-    """Safely enrich a *fresh, listing-matched* owned row from one public Book.
+    """Safely enrich a fresh owned book from an attested public product.
 
     This is a metadata projection, not a purchase/format validation. The
     authenticated library supplies ownership; the listing's identical product
@@ -245,16 +245,27 @@ def merge_attested_owned_public_detail(owned, detail):
             or metadata.get("public_url_evidence") != "numilog.library_title_link"):
         raise ProviderCapabilityError(error)
     listing = metadata.get("public_enrichment")
-    if (type(listing) is not dict
-            or listing.get("status") != "attested_listing_match"
-            or listing.get("scope") != "public_listing_only"
-            or listing.get("product_url") != url
-            or type(listing.get("field_evidence")) is not dict):
+    if type(listing) is not dict or listing.get("product_url") != url:
         raise ProviderCapabilityError(error)
-    try:
-        _query(listing.get("source_url"))
-    except Exception:
-        raise ProviderCapabilityError(error) from None
+    listing_attested = (
+        listing.get("status") == "attested_listing_match"
+        and listing.get("scope") == "public_listing_only"
+        and type(listing.get("field_evidence")) is dict
+    )
+    direct_title_link_attested = (
+        set(listing) == {"status", "scope", "product_url", "field_evidence"}
+        and listing.get("status") == "attested_owned_title_link"
+        and listing.get("scope") == "owned_library_title_link_only"
+        and listing.get("field_evidence") == {}
+        and metadata.get("format_unverified") is True
+    )
+    if not (listing_attested or direct_title_link_attested):
+        raise ProviderCapabilityError(error)
+    if listing_attested:
+        try:
+            _query(listing.get("source_url"))
+        except Exception:
+            raise ProviderCapabilityError(error) from None
     if (type(detail) is not dict or detail.get("product_url") != url
             or detail.get("owned") is not False
             or detail.get("downloadable") is not False
@@ -307,7 +318,7 @@ def merge_attested_owned_public_detail(owned, detail):
             # the purchased row's existing text and surface both versions.
             listing_proof = listing["field_evidence"].get("description")
             may_upgrade = (
-                source_field == "description"
+                listing_attested and source_field == "description"
                 and type(current) is str and _valid_text(current, 16000)
                 and type(listing_proof) is dict
                 and listing_proof.get("kind") == "numilog.public_search_listing"
@@ -354,6 +365,9 @@ def merge_attested_owned_public_detail(owned, detail):
         "public_identifiers": typed_ids,
         "identifier_evidence": typed_proof,
     }
+    if direct_title_link_attested:
+        detail_summary["association_evidence"] = "numilog.library_title_link"
+        detail_summary["association_scope"] = "authenticated_owned_book_product"
     if listing_excerpt is not None:
         detail_summary["replaced_listing_excerpt"] = listing_excerpt
     if "language" in fields:
@@ -378,3 +392,41 @@ def merge_attested_owned_public_detail(owned, detail):
         next_metadata["public_product_metadata"] = dict(html_metadata["fields"])
     next_metadata["public_detail_enrichment"] = detail_summary
     return replace(owned, metadata=next_metadata, **projection)
+
+
+def merge_attested_owned_direct_public_detail(owned, detail):
+    """Project a public Book linked *directly* in a fresh private title card.
+
+    A validated owned-library title link is already an explicit product-level
+    association: it need not first appear in a public title search's first
+    page. This never proves the purchased EPUB/PDF variant, paper/digital
+    ISBN equality, entitlement or delivery. Only the caller which freshly
+    reloaded the authenticated inventory may invoke this path.
+    """
+    error = "Numilog : public_detail_evidence_conflict"
+    meta = getattr(owned, "metadata", None)
+    url = getattr(owned, "friendly_url", None)
+    if (type(meta) is not dict
+            or meta.get("public_url_evidence") != "numilog.library_title_link"
+            or meta.get("format_unverified") is not True
+            or meta.get("public_enrichment") is not None
+            or type(url) is not str
+            or public_book_url(url) != url
+            or getattr(owned, "source_provider", None) != "numilog"
+            or getattr(owned, "source_collection", None) != "library"
+            or getattr(owned, "source_credential", None) in (None, "", "__public__")
+            or getattr(owned, "owned", None) is not True
+            or getattr(owned, "downloadable", None) is not True
+            or getattr(owned, "download_url", None) is not None):
+        raise ProviderCapabilityError(error)
+
+    # The private library attests only the product URL, not a search listing
+    # or an owned edition format. These statements remain separate in Core.
+    direct = {
+        "status": "attested_owned_title_link",
+        "scope": "owned_library_title_link_only",
+        "product_url": url,
+        "field_evidence": {},
+    }
+    fresh = replace(owned, metadata={**meta, "public_enrichment": direct})
+    return merge_attested_owned_public_detail(fresh, detail)
