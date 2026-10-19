@@ -640,8 +640,19 @@ def _opds_load_acquisition(session,initial,field,needle):
         if feed.tag!=ATOM+'feed':
             raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
         entries=feed.findall(ATOM+'entry')
+        # The item projector supports an EPUB with rel=alternate as well
+        # as OPDS acquisition links. The navigation detector must agree:
+        # otherwise a valid page of books becomes browse_route_unavailable.
+        # Only a checked public EPUB URL counts, not an arbitrary rel or a
+        # same-looking untrusted URL to another origin.
         has_acquisition=any(
-            any('/acquisition' in rel for rel,_,_,_ in _opds_links(entry,actual))
+            any(
+                '/acquisition' in rel
+                or (rel == 'alternate'
+                    and mime.startswith('application/epub+zip')
+                    and _safe_opds_link(session.opds_feed_url,raw,'download'))
+                for rel,mime,raw,_ in _opds_links(entry,actual)
+            )
             for entry in entries
         )
         if has_acquisition or not entries:
