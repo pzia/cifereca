@@ -1,3 +1,34 @@
+## #1917 — qualification des entrées Atom EPUB/PDF (0.1.18, 19/10/2026)
+
+Un `<entry>` OPDS n'est plus considéré comme un livre sur la seule
+présence d'un `rel=.../acquisition`. Une offre admissible doit désormais
+déclarer un type de fichier reconnu (EPUB, PDF, Mobipocket) **et** un lien
+d'acquisition direct répondant aux mêmes restrictions d'origine et de
+chemin public `/index.php/fetch` que le téléchargement réel ; un
+`rel=alternate` EPUB doit satisfaire les mêmes restrictions.
+
+Cela empêche une entrée provenant d'un autre hôte, d'une URL
+`/account/`, d'un MIME HTML ou d'un lien alternatif privé de se
+faire passer pour un livre et de détourner la navigation vers le
+catalogue global. Les sous-catalogues de navigation ne sont plus
+projetés comme de fausses notices de livres.
+
+Sur un flux mélangeant des entrées d'acquisition valides et des
+sous-catalogues, le plugin affiche `partial_results` : seules les
+notices directes sont couvertes, aucun parcours automatique de la branche
+voisine n'est ajouté. Une fiche **PDF seulement** reste visible, mais
+`downloadable=False` et sans lien EPUB. Le résultat est borné au flux
+reçu, sans promesse d'exhaustivité ni nouveaux appels HTTP de recherche.
+
+Tests hors réseau `test_opds_public_book_entry_integrity_p1.py`
+avec `httpx.MockTransport` : origines étrangères, liens privés,
+MIME trompeur, page mixte, PDF-only et racine OPDS. La réponse réelle
+`opds2.ebooksgratuits.org` **n'a pas été vérifiée en direct** par ces
+tests ; la recette hors-cache dans le Core/UI et la qualification réseau
+restent ouvertes dans #1917 et #2361.
+
+---
+
 ## #1917 — navigation OPDS racine et preuve de couverture (19/10/2026)
 
 En mode OPDS Calibre/COPS (par défaut), `search("")` consulte la racine
