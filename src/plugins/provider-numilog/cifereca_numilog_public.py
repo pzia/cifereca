@@ -35,6 +35,26 @@ def _fail(code):
     raise PublicSearchParseError(code)
 
 
+# Parser's HTML attribute dictionary normally keeps only the last duplicate.
+# An earlier hidden marker, public ID, product href or field class must not
+# be silently overwritten by another value in hostile or changed markup.
+_EVIDENCE_ATTRIBUTES = frozenset({
+    'id', 'class', 'href', 'hidden', 'aria-hidden', 'style',
+    'data-src', 'src', 'formatid', 'availablelcp',
+})
+
+
+class _PublicSearchParser(Parser):
+    def handle_starttag(self, tag, attrs):
+        seen = set()
+        for name, _value in attrs:
+            if name in _EVIDENCE_ATTRIBUTES:
+                if name in seen:
+                    _fail('ambiguous_html_attribute')
+                seen.add(name)
+        super().handle_starttag(tag, attrs)
+
+
 def _safe_text(value, maximum):
     return (type(value) is str and len(value) <= maximum
             and not any(unicodedata.category(c) in {'Cc', 'Cf', 'Cs'} for c in value))
@@ -287,7 +307,7 @@ def parse_public_search(text, source_url):
     if type(text) is not str or len(text) > MAX_HTML_BYTES or len(text.encode('utf-8', errors='replace')) > MAX_HTML_BYTES:
         _fail('html_size')
     try:
-        root = Parser(text).root
+        root = _PublicSearchParser(text).root
     except ParseError:
         _fail('html_structure')
     grids = [n for n in _visible_walk(root) if n.tag == 'table' and n.attrs.get('id') == GRID_ID]
