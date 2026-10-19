@@ -108,6 +108,43 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
         return {}
 
 
+
+def _native_abort_diagnosis(source: Path, scenario: str, code: int) -> dict:
+    """Classify a native abort using fixed markers, never disclose log text.
+
+    This is a hint from stderr plus the actual process exit, not an assertion
+    of root cause. Native aborts may leave no Python report at all.
+    """
+    if code not in {-6, 134}:
+        return {}
+    result = {"native_failure_kind": "unclassified_native_abort"}
+    directory = source.resolve().parent / scenario
+    nested = directory / scenario
+    log = nested / "stderr.log"
+    try:
+        if any(p.is_symlink() for p in (directory, nested, log)):
+            return result
+        if not log.is_file() or log.stat().st_size > MAX_BYTES:
+            return result
+        with log.open("rb") as handle:
+            handle.seek(max(0, log.stat().st_size - 32768))
+            tail = handle.read(32768)
+        markers = (
+            ("allocator_abort_marker", (b"malloc():", b"double free or corruption",
+                                        b"free(): invalid pointer", b"corrupted size vs.")),
+            ("gtk_assertion_marker", (b"Gtk:ERROR:", b"Gtk-ERROR **:")),
+            ("glib_assertion_marker", (b"GLib:ERROR:", b"GLib-GObject:ERROR:")),
+            ("python_abort_marker", (b"Fatal Python error:",)),
+        )
+        for category, candidates in markers:
+            if any(marker in tail for marker in candidates):
+                result["native_failure_kind"] = category
+                break
+    except OSError:
+        pass
+    return result
+
+
 def safe_summary(source: Path) -> dict:
     # Fail closed for symlinks, invalid JSON, unreasonable sizes or fields.
     if source.is_symlink() or not source.is_file() or source.stat().st_size > MAX_BYTES:
@@ -138,6 +175,7 @@ def safe_summary(source: Path) -> dict:
         # messages, personal paths, URLs, JSON/JSONL, logs, pixels and images.
         if code != 0:
             row.update(_failed_diagnostic(source, scenario))
+            row.update(_native_abort_diagnosis(source, scenario, code))
         rows.append(row)
     return {"schema": "cifereca-e2e-public-verdict/v1", "results": rows}
 

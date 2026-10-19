@@ -1349,6 +1349,8 @@ class DiagnosticsPagePlugin:
                         "diagnostic selection exceeds 96 KB",
                         "diagnostic selection cancelled",
                         "diagnostic selection contains invalid Unicode",
+                        "diagnostic selection contains out-of-scope events",
+                        "diagnostic selection contains out-of-period events",
                     }
                     reason = fixed if fixed in safe else "Sélection indisponible : source ou export non qualifié"
                     GLib.idle_add(finish, token, start_generation, None, reason)
