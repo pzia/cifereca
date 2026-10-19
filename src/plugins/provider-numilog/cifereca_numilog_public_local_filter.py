@@ -24,7 +24,9 @@ _PROOF = {
     "year": ("published_at", ".product_meta .LabelInfos[Parution]"),
     "format_label": ("format_labels", ".product_meta .LabelInfos[Format(s)]"),
 }
-_ALLOWED = frozenset(_PROOF)
+# A digital ISBN has no search-card evidence: it is a positive-only match
+# after an *explicitly* enriched product detail, never a server-side filter.
+_ALLOWED = frozenset(_PROOF) | {"isbn_digital"}
 
 
 @dataclass(frozen=True)
@@ -159,11 +161,53 @@ def _value(row, field):
     return value
 
 
+def _digital_isbn_positive(row, expected):
+    """True only for an EXACT label-proven public digital EAN; else unknown.
+
+    An unmatched / absent identifier cannot prove a negative: Numilog may
+    publish another EPUB/PDF edition or omit some labels on the same product.
+    No ISBN from JSON-LD without an explicit *digital* role, paper EAN, cover
+    filename, title or unknown vendor metadata is ever considered a match.
+    """
+    detail = row.metadata.get("public_detail")
+    url = row.friendly_url
+    if (type(detail) is not dict or detail.get("status") != "observed_jsonld"
+            or detail.get("source_url") != url
+            or detail.get("edition_match") != "canonical_product_url_only"
+            or detail.get("rights_proven") is not False
+            or detail.get("format_edition_proven") is not False):
+        return None
+    from cifereca_numilog_public_detail import (
+        PublicDetailError, validated_public_jsonld_fields,
+    )
+    from cifereca_numilog_public_identifiers import (
+        PublicIdentifierError, validated_public_identifiers,
+    )
+    try:
+        fields, _ = validated_public_jsonld_fields(detail, url)
+        title = fields.get("title")
+        if type(title) is not str or type(row.title) is not str:
+            return None
+        def title_key(value):
+            return unicodedata.normalize("NFKC", " ".join(value.split())).casefold()
+        if title_key(title) != title_key(row.title):
+            return None
+        identifiers, _ = validated_public_identifiers(detail, url)
+    except (PublicDetailError, PublicIdentifierError, TypeError, ValueError):
+        return None
+    # Only the format-typed EPUB/PDF or explicitly labelled digital EAN.
+    # The generic JSON-LD Book.isbn may in reality identify the PAPER book.
+    values = (
+        identifiers.get(key) for key in ("epub", "pdf", "digital_unspecified")
+    )
+    return True if expected in values else None
+
+
 def refine_loaded_public_page(page: PublicSearchPage, **filters) -> PublicPageRefinement:
     """Filter positive, source-attested facts on one page with honest coverage.
 
     The caller must explicitly browse an existing public Numilog session first.
-    This method does not call the network, cannot search an ISBN, and never
+    This method does not call the network, cannot search ISBNs *remotely*, and never
     converts absent or unproved metadata into a negative assertion.
     """
     if not filters or set(filters) - _ALLOWED:
@@ -174,6 +218,12 @@ def refine_loaded_public_page(page: PublicSearchPage, **filters) -> PublicPageRe
             if type(value) is not int or not 1000 <= value <= 9999:
                 raise ProviderCapabilityError("Numilog public : invalid_local_filter")
             qualified[field] = value
+        elif field == "isbn_digital":
+            from cifereca_numilog_public_identifiers import _isbn13
+            if (type(value) is not str or not 13 <= len(value) <= 24
+                    or _isbn13(value) is None):
+                raise ProviderCapabilityError("Numilog public : invalid_local_filter")
+            qualified[field] = _isbn13(value)
         elif (type(value) is not str or not 1 <= len(value.strip()) <= 120
               or any(unicodedata.category(c) in {"Cc", "Cf", "Cs"} for c in value)):
             raise ProviderCapabilityError("Numilog public : invalid_local_filter")
@@ -192,6 +242,13 @@ def refine_loaded_public_page(page: PublicSearchPage, **filters) -> PublicPageRe
         missing_proof = False
         mismatch = False
         for field, expected in qualified.items():
+            if field == "isbn_digital":
+                # Positive-only evidence from an explicitly consulted public
+                # product detail. A different or unpublished edition EAN is
+                # UNKNOWN, never proof that this item cannot match.
+                if _digital_isbn_positive(row, expected) is None:
+                    missing_proof = True
+                continue
             actual = _value(row, field)
             if actual is None:
                 missing_proof = True

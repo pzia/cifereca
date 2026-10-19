@@ -1457,3 +1457,38 @@ offline : deux achats, produits homonymes, premier résultat public absent,
 compte tiers, révocation, doublons, titre public contradictoire et preuve
 falsifiée. Une vraie recette avec deux pages de Mes Livres authentifiées
 **expurgées** reste nécessaire avant de clore le P0 #1072.
+
+
+## 0.1.69 — filtrage local EAN/ISBN numérique prouvé par fiche (#1886)
+
+Le provider public peut désormais filtrer **une page anonyme déjà chargée**
+avec `refine_loaded_page(page, isbn_digital="978...")` et combiner ce
+critère à `title`, `author`, etc. Ce filtre accepte uniquement un
+**ISBN-13 valide** et des correspondances **exactes** déjà portées par une
+fiche publique explicitement consultée (`enrich_public_detail(item)`) puis
+associée à sa carte d'origine : `metadata.public_detail.public_identifiers`
+et ses preuves vérifiées, rôles `epub`, `pdf` ou
+`digital_unspecified`, URL et titre canonique concordants.
+
+L'EAN `paper`, le champ `Book.isbn` JSON-LD non typé, le nom du fichier
+de couverture et un `lid` privé ne sont **jamais** des preuves d'un EAN
+numérique. Un identifiant absent, mal prouvé ou différent reste « inconnu »
+(`missing_evidence_count`), et **non** une réponse négative exhaustive :
+d'autres formats/éditions peuvent ne pas être décrits par la fiche. Le
+résultat conservé est `loaded_public_page_only`, avec total du moteur
+public **non filtré**, `owned=False`, `downloadable=False` et aucun
+lien signé. Il n'y a ni requête réseau supplémentaire dans le filtre, ni
+récupération automatique de toutes les fiches, ni prétendue recherche
+**serveur** par ISBN.
+
+**Utilisation opt-in** : appeler
+`enrich_loaded_page_product(page, record_id)` pour enrichir **une seule**
+carte de la page déjà chargée, puis filtrer la page retournée. Cette
+opération réutilise `enrich_public_detail`, le cache et le budget réseau
+anonyme commun, préserve le total et les liens de pagination, et refuse
+une sélection étrangère ou une réponse tardive après déconnexion. Aucun
+GET de détail n'est effectué pour les autres cartes.
+Les tests offline utilisent une carte `jefferson` réellement enregistrée
+et des balises EAN **synthétiques** ; aucune relation réelle entre le livre
+Jefferson et ces numéros de test n'est revendiquée. La recette serveur
+auteur/ISBN, les conditions d'accès et le raccordement UX restent ouverts.
