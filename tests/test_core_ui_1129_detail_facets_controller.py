@@ -207,3 +207,50 @@ def test_adept_return_is_explicit_and_keeps_user_action_priority():
         ("return", "acq-7"),
         ("feedback", "Retour enregistré, jeton absent · fichier conservé · état local vérifié"),
     ]
+
+
+def _return_error_task():
+    binding = {"acquisition_id": "acq-7"}
+    host, _groups = _host([], adept=binding)
+    host._closed = False
+    host._identity_context_generation = 4
+    host._account_context_generation = 8
+    events, requests, added = [], [], []
+    host.show_error = lambda *args: events.append(args)
+    host.runner.submit = lambda *args, **kwargs: requests.append((args, kwargs))
+    detail = NS(content=Widget(), _subtitle_label=None,
+                add_actions=lambda actions: added.extend(actions))
+    _execute(host, detail, {"artifact_id": "artifact-7"})
+    added[0].click()
+    assert len(requests) == 1
+    return host, requests[0][0][3], events
+
+
+def test_adept_return_error_is_constant_and_does_not_stringify_provider_failure():
+    class HostileError(RuntimeError):
+        def __str__(self):
+            raise AssertionError("Cannot serialize private ADEPT error")
+
+    host, failure, events = _return_error_task()
+    failure(HostileError("PRIVATE_TOKEN"))
+    assert events == [("Restitution ADEPT indisponible", "Restitution ADEPT impossible")]
+
+
+def test_adept_return_preserves_explicit_safe_message_not_technical_detail():
+    from cifereca.plugin_api import UserFacingError
+    host, failure, events = _return_error_task()
+    failure(UserFacingError("Profil Adobe absent", code="profile_missing",
+                            technical_detail="https://private.invalid/?token=PRIVATE"))
+    assert events == [("Profil Adobe absent", "Restitution ADEPT impossible")]
+    assert "PRIVATE" not in repr(events)
+
+
+def test_late_adept_return_failure_does_not_alert_after_context_change():
+    for attr in ("_closed", "_identity_context_generation", "_account_context_generation"):
+        host, failure, events = _return_error_task()
+        if attr == "_closed":
+            host._closed = True
+        else:
+            setattr(host, attr, getattr(host, attr) + 1)
+        failure(RuntimeError("PRIVATE_TOKEN"))
+        assert events == []
