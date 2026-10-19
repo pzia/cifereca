@@ -37,6 +37,8 @@ _DIAGNOSTIC_STAGES = frozenset({
     "P0_1905_numilog_inventory_dialog_wait",
     "P0_1905_numilog_inventory_dialog_preflight",
     "P0_1905_numilog_inventory_dialog_ready",
+    "P0_1347_kobo_audit_pointer_dispatch",
+    "P0_1347_kobo_audit_result_wait",
     "P0_2027_narrow_header_minimum", "P0_2027_narrow_source_minimum",
     "P0_2027_narrow_scroll_minimum", "P0_2027_narrow_window_minimum",
     "P0_2027_narrow_allocation_pending",
@@ -117,6 +119,30 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
             # A bounded index into the reviewed builder's children, never
             # widget labels, geometry, paths or arbitrary GTK object reprs.
             result["minimum_row"] = minimum_row
+        # #2095: only closed, fixture-derived diagnostic state is publishable
+        # for the failed *real* MainWindow audit acceptance. In particular,
+        # the raw subtitle, source ID, pointers and task exceptions never pass.
+        observation = data.get("kobo_audit_observation")
+        if observation is not None and scenario in {
+            "mainwindow-baseline-1366", "mainwindow-baseline-1600",
+        }:
+            if (type(observation) is not dict
+                    or set(observation) != {
+                        "clicked_signal", "broker_calls", "subtitle_phase",
+                    }
+                    or type(observation["clicked_signal"]) is not bool
+                    or type(observation["broker_calls"]) is not int
+                    or not 0 <= observation["broker_calls"] <= 2
+                    or type(observation["subtitle_phase"]) is not str
+                    or observation["subtitle_phase"] not in {
+                        "initial", "in_progress", "other",
+                    }):
+                raise ValueError("untrusted Kobo audit E2E diagnostic")
+            result["kobo_audit_observation"] = {
+                key: observation[key] for key in (
+                    "clicked_signal", "broker_calls", "subtitle_phase",
+                )
+            }
         duration = data.get("duration_seconds")
         if type(duration) in (int, float) and math.isfinite(duration) and 0 <= duration <= 3600:
             result["duration_seconds"] = round(duration, 2)
@@ -207,6 +233,26 @@ def safe_summary(source: Path) -> dict:
                     or not 0 <= counters["GtkRevealer"] <= 100000):
                 raise ValueError("invalid GTK geometry counters")
             row["gtk_layout_critical"] = counters
+        # P0 #2027: phase labels and widget classes are reviewed literal
+        # constants, not GTK stderr, paths or dynamic provider metadata.
+        phases = item.get("gtk_layout_phase")
+        if phases is not None:
+            allowed_phases = frozenset({
+                "window_start", "window_shown", "sync_desktop",
+                "sync_font_desktop", "sync_narrow", "sync_font_narrow",
+                "sync_restored", "numilog_consent", "done",
+            })
+            if (type(phases) is not dict or len(phases) > len(allowed_phases)
+                    or not set(phases).issubset(allowed_phases)):
+                raise ValueError("invalid GTK phase labels")
+            for counts in phases.values():
+                if (type(counts) is not dict
+                        or set(counts) != {"GtkStack", "GtkRevealer"}
+                        or any(type(value) is not int or not 0 <= value <= 100000
+                               for value in counts.values())):
+                    raise ValueError("invalid GTK phase counts")
+            if phases:
+                row["gtk_layout_phase"] = phases
         # Deliberately discard every other field, including raw assertion
         # messages, personal paths, URLs, JSON/JSONL, logs, pixels and images.
         if code != 0:

@@ -144,6 +144,10 @@ def test_same_titled_products_keep_separate_credits_and_identifiers():
 
 @pytest.mark.parametrize("bad,expected_key", [
     ({"translator": "Nom libre non typé"}, "translators"),
+    ({"translator": {"name": "Nom sans @type"}}, "translators"),
+    ({"illustrator": {"name": "Illustrateur sans @type"}}, "illustrators"),
+    ({"contributor": {"name": "Contributeur sans @type"}}, "contributors"),
+    ({"translator": {"@type": None, "name": "Type nul"}}, "translators"),
     ({"translator": {"@type": ["Person"], "name": "Malformé"}}, "translators"),
     ({"translator": {"@type": "Book", "name": "Étranger"}}, "translators"),
     ({"translator": [{"@type": "Person", "name": "Valide"}, {"name": "PRIVATE\n"}]}, "translators"),
@@ -183,6 +187,49 @@ def test_mutated_cached_public_evidence_fails_closed_before_owned_projection(key
         with pytest.raises(ProviderCapabilityError, match="evidence_conflict") as caught:
             merge_attested_owned_direct_public_detail(owned, forged)
         assert "PRIVATE" not in str(caught.value)
+    finally:
+        s.close()
+
+
+def test_absolute_schema_org_person_type_is_recognized_without_other_roles():
+    record = details(
+        translator={"@type": "http://schema.org/Person",
+                    "name": "Traduction externe attestée"},
+        illustrator={"@type": "https://schema.org/Person",
+                     "name": "Illustration externe attestée"},
+        contributor={"@type": "https://schema.org/Organization",
+                     "name": "Atelier éditorial attesté"},
+    )
+    assert record["fields"]["translators"] == ["Traduction externe attestée"]
+    assert record["fields"]["illustrators"] == ["Illustration externe attestée"]
+    assert record["fields"]["contributors"] == ["Atelier éditorial attesté"]
+    s, owned = purchased(0)
+    try:
+        merged = merge_attested_owned_direct_public_detail(owned, record)
+        proofs = merged.metadata["public_detail_enrichment"]["public_jsonld"]
+        assert proofs["fields"]["translators"] == ["Traduction externe attestée"]
+        assert proofs["rights_proven"] is False
+        assert merged.owned is True and merged.download_url is None
+        assert "isbn_digital" not in merged.metadata
+    finally:
+        s.close()
+
+
+def test_untyped_role_is_not_an_author_or_proven_owned_edition_credit():
+    record = details(translator={"name": "PRIVATE_UNTYPED"},
+                     illustrator={"name": "PRIVATE_UNTYPED"},
+                     contributor={"name": "PRIVATE_UNTYPED"})
+    for role in ("translators", "illustrators", "contributors"):
+        assert role not in record["fields"] and role not in record["field_evidence"]
+    s, owned = purchased(0)
+    try:
+        merged = merge_attested_owned_direct_public_detail(owned, record)
+        result = merged.metadata["public_detail_enrichment"]["public_jsonld"]
+        assert all(role not in result["fields"] for role in
+                   ("translators", "illustrators", "contributors"))
+        assert merged.author == "Autrice publiée"
+        assert "PRIVATE_UNTYPED" not in repr(merged.metadata)
+        assert merged.format is None
     finally:
         s.close()
 

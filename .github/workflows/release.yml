@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: release-${{ inputs.release_tag || github.ref }}
@@ -162,6 +163,27 @@ jobs:
             echo "RELEASE_BUNDLE=$bundle"
           } >> "$GITHUB_ENV"
 
+      - name: Install Cosign for Core release provenance
+        uses: sigstore/cosign-installer@v4.1.1
+        with:
+          cosign-release: "v3.0.6"
+
+      - name: Sign and verify Core wheel and bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+          for artifact in "dist/$RELEASE_WHEEL" "dist/$RELEASE_DEV" "dist/$RELEASE_BUNDLE"; do
+            cosign sign-blob --yes --bundle "$artifact.sigstore.json" "$artifact"
+            test -s "$artifact.sigstore.json"
+            cosign verify-blob "$artifact" \
+              --bundle "$artifact.sigstore.json" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+              --certificate-github-workflow-ref "$GITHUB_REF" \
+              --certificate-github-workflow-sha "$GITHUB_SHA"
+          done
       - name: Recheck immutable Core release target before draft mutation
         env:
           GH_TOKEN: ${{ github.token }}
@@ -192,6 +214,9 @@ jobs:
           gh release upload "$RELEASE_TAG" \
             "dist/$RELEASE_WHEEL" "dist/$RELEASE_DEV" \
             "dist/$RELEASE_BUNDLE" "dist/SHA256SUMS" \
+            "dist/$RELEASE_WHEEL.sigstore.json" \
+            "dist/$RELEASE_DEV.sigstore.json" \
+            "dist/$RELEASE_BUNDLE.sigstore.json" \
             --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Verify downloaded Core release draft assets
@@ -214,6 +239,17 @@ jobs:
             cmp "dist/$file" "$downloaded/$file"
           done
           (cd "$downloaded" && sha256sum -c SHA256SUMS)
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+          for archive in "$RELEASE_WHEEL" "$RELEASE_DEV" "$RELEASE_BUNDLE"; do
+            test -s "$downloaded/$archive.sigstore.json"
+            cosign verify-blob "$downloaded/$archive" \
+              --bundle "$downloaded/$archive.sigstore.json" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+              --certificate-github-workflow-ref "$GITHUB_REF" \
+              --certificate-github-workflow-sha "$GITHUB_SHA"
+          done
           python scripts/ci_core_release_preflight.py \
             --tag "$RELEASE_TAG" --version "$(cat VERSION)" \
             --commit "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY"

@@ -526,3 +526,15 @@ def test_2027_numilog_consent_e2e_failures_have_stage_and_geometry_evidence():
     # No forced focus, synthetic click, skipped gate, or added retry replaces
     # the physical XTEST action or changes any of the existing UX thresholds.
     assert 'report["pointer_actions"].append(device[0].click_widget(button))' in probe
+
+
+def test_2095_kobo_audit_xtest_requires_stable_real_gtk_hit_target():
+    """No programmatic click or retry can mask a lost audit XTEST event."""
+    probe = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(encoding="utf-8")
+    assert "w.pick(point_x, point_y, Gtk.PickFlags.DEFAULT)" in probe
+    assert "f.get(\"audit_stable_geometry\") != geometry" in probe
+    assert "assert attempt <= 8, \"Kobo audit physical hit target did not settle\"" in probe
+    assert probe.count("device[0].click_widget(audit)") == 1
+    assert 'f["audit_deadline"] = monotonic() + 6' in probe
+    assert 'f["audit_click_signal_seen"] = False' in probe
+    assert 'report["kobo_audit_observation"]' in probe

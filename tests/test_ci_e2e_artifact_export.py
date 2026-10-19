@@ -579,3 +579,60 @@ def test_gtk_critical_only_publishes_closed_counts_never_raw_addresses():
                 pass
             else:
                 raise AssertionError("Untrusted GTK geometry data published")
+
+
+def test_2095_failed_kobo_audit_exports_only_closed_physical_click_state():
+    """Explain sporadic XTEST failures without disclosing GTK/account evidence."""
+    module = _module()
+    secret = "PRIVATE_ACCOUNT_TOKEN_OR_URL"
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        scenario = "mainwindow-baseline-1600"
+        source = root / "summary.json"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source.write_text(json.dumps([{
+            "scenario": scenario, "returncode": 1,
+            "stderr": secret, "stdout": secret,
+        }]), encoding="utf-8")
+        evidence = {
+            "clicked_signal": False,
+            "broker_calls": 0,
+            "subtitle_phase": "initial",
+        }
+        report.write_text(json.dumps({
+            "kobo_audit_observation": evidence,
+            "error": secret,
+            "pointer_actions": [{"source_id": secret}],
+        }), encoding="utf-8")
+        safe = module.safe_summary(source)
+        assert safe["results"][0]["kobo_audit_observation"] == evidence
+        assert secret not in json.dumps(safe)
+        # Wrong types, out-of-range counters and arbitrary metadata fail closed.
+        for untrusted in (
+            {**evidence, "clicked_signal": 1},
+            {**evidence, "broker_calls": True},
+            {**evidence, "broker_calls": 3},
+            {**evidence, "subtitle_phase": secret},
+            {**evidence, "private": secret},
+            [evidence],
+        ):
+            report.write_text(json.dumps({
+                "kobo_audit_observation": untrusted,
+                "error": secret,
+            }), encoding="utf-8")
+            redacted = module.safe_summary(source)["results"][0]
+            assert "kobo_audit_observation" not in redacted
+            assert secret not in json.dumps(redacted)
+        # Passing scenarios cannot publish extra debug state.
+        source.write_text(json.dumps([{
+            "scenario": scenario, "returncode": 0,
+        }]), encoding="utf-8")
+        report.write_text(json.dumps({"kobo_audit_observation": evidence}),
+                          encoding="utf-8")
+        assert "kobo_audit_observation" not in module.safe_summary(source)["results"][0]
+        # Other scenarios do not inherit these private diagnostic fields.
+        source.write_text(json.dumps([{
+            "scenario": "startup", "returncode": 1,
+        }]), encoding="utf-8")
+        assert "kobo_audit_observation" not in module.safe_summary(source)["results"][0]

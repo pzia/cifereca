@@ -26,7 +26,9 @@ _PROOF = {
 }
 # A digital ISBN has no search-card evidence: it is a positive-only match
 # after an *explicitly* enriched product detail, never a server-side filter.
-_ALLOWED = frozenset(_PROOF) | {"isbn_digital", "language"}
+_ALLOWED = frozenset(_PROOF) | {
+    "isbn_digital", "language", "genre", "series", "keyword",
+}
 
 
 @dataclass(frozen=True)
@@ -167,9 +169,33 @@ def _value(row, field):
         except ValueError:
             return None
     if field in {"author", "format_label"}:
-        if (type(value) is not list or not 1 <= len(value) <= 32
-                or any(type(x) is not str or not x or len(x) > 1000 for x in value)):
+        # Cached SearchResult objects may be mutated after parsing. The
+        # selector proof alone cannot qualify arbitrary replacement lists,
+        # including bidi/control text that would reach the detail renderer.
+        maximum = 1000 if field == "author" else 80
+        count = 32 if field == "author" else 10
+        if (type(value) is not list or not 1 <= len(value) <= count
+                or any(type(x) is not str or not x.strip()
+                       or len(x) > maximum
+                       or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"}
+                              for char in x) for x in value)):
             return None
+        if field == "author":
+            # Parser authors and flat display field must agree. Otherwise the
+            # local positive match would be for an author not actually shown.
+            if type(row.author) is not str or row.author != " ; ".join(value):
+                return None
+        else:
+            # Parser derives SearchResult.format only from a single explicit
+            # offer label, not by choosing a purchased edition. A post-cache
+            # rewrite of that label is not qualified source evidence.
+            only = value[0].casefold() if len(value) == 1 else ""
+            parsed_format = (
+                "EPUB" if only in {"epub", "epub sans drm"}
+                else "PDF" if only == "pdf" else None
+            )
+            if row.format != parsed_format:
+                return None
         return tuple(value)
     # The source parser bounds listing summaries to 16 Ki characters and
     # labelled collection values to 2000. Recheck at this cached/page input
@@ -262,6 +288,61 @@ def _detail_language_positive(row, expected):
                        for value in values) else None
 
 
+def _detail_editorial_positive(row, field, expected):
+    """Source-proven commercial Book text, NEVER remote/exhaustive search.
+
+    Only a deliberately enriched product can provide a positive genre,
+    series or keyword fact. An absent or different value remains UNKNOWN,
+    not a proof that other catalogue pages or products cannot match.
+    """
+    detail = row.metadata.get("public_detail")
+    url = row.friendly_url
+    if (type(detail) is not dict or detail.get("status") != "observed_jsonld"
+            or detail.get("source_url") != url
+            or detail.get("edition_match") != "canonical_product_url_only"
+            or detail.get("rights_proven") is not False
+            or detail.get("format_edition_proven") is not False):
+        return None
+    from cifereca_numilog_public_detail import (
+        PublicDetailError, validated_public_jsonld_fields,
+    )
+    from cifereca_numilog_public_identifiers import (
+        PublicIdentifierError, validated_public_identifiers,
+    )
+    from cifereca_numilog_public_metadata import (
+        PublicMetadataError, validated_public_metadata,
+    )
+    from cifereca_numilog_public_commercial import (
+        PublicCommercialError, validated_public_commercial,
+    )
+    try:
+        # This optional detail rides inside a copied public row. Validate
+        # ALL associated optional evidence too, before returning that row
+        # to the caller as a positive editorial match.
+        fields, _ = validated_public_jsonld_fields(detail, url)
+        validated_public_identifiers(detail, url)
+        validated_public_metadata(detail, url)
+        validated_public_commercial(detail, url)
+        title = fields.get("title")
+        if type(title) is not str or type(row.title) is not str:
+            return None
+        if (unicodedata.normalize("NFKC", " ".join(title.split())).casefold()
+                != unicodedata.normalize("NFKC", " ".join(row.title.split())).casefold()):
+            return None
+    except (PublicDetailError, PublicIdentifierError, PublicMetadataError,
+            PublicCommercialError, TypeError, ValueError):
+        return None
+    source_key = {
+        "genre": "genres",
+        "series": "public_series_label",
+        "keyword": "public_keywords",
+    }[field]
+    published = fields.get(source_key)
+    labels = published if type(published) is list else [published]
+    return True if any(type(value) is str and expected in _fold(value)
+                       for value in labels) else None
+
+
 def refine_loaded_public_page(page: PublicSearchPage, **filters) -> PublicPageRefinement:
     """Filter positive, source-attested facts on one page with honest coverage.
 
@@ -312,6 +393,12 @@ def refine_loaded_public_page(page: PublicSearchPage, **filters) -> PublicPageRe
                 # No published language on listing cards. Do not fetch N
                 # details or discard other editions as proven non-matches.
                 if _detail_language_positive(row, expected) is None:
+                    missing_proof = True
+                continue
+            if field in {"genre", "series", "keyword"}:
+                # A public Book's declared topic/series is only a local
+                # positive. Never turn a nonmatch into a global negative.
+                if _detail_editorial_positive(row, field, expected) is None:
                     missing_proof = True
                 continue
             actual = _value(row, field)

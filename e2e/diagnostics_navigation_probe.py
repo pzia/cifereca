@@ -39,7 +39,14 @@ from cifereca.builtin_ui.cifereca_builtin_ui import Pages
 from diagnostics_page_probe import Broker, Context, Host, Tasks
 from diagnostics_states_probe import StateTasks
 from x11_input import X11Input
+from gtk_layout_critical import GTK_PHASES_2027
 
+
+
+def gtk_phase_2027(phase: str) -> None:
+    # Source-reviewed constants only; no widget, pointer or account data.
+    assert phase in GTK_PHASES_2027
+    print(f"CIFERECA_E2E_GTK_PHASE:{phase}", file=sys.stderr, flush=True)
 
 
 def probe_failure_line(exc):
@@ -1792,6 +1799,7 @@ def main() -> int:
         later(350, lambda: sync_desktop_first_fold(False))
 
     def sync_desktop_first_fold(large_font):
+        gtk_phase_2027("sync_desktop" if not large_font else "sync_font_desktop")
         w = window[0]
         f = loan_sync_fixture
         key = "large_font" if large_font else "normal_font"
@@ -1809,6 +1817,7 @@ def main() -> int:
         Gtk.Settings.get_default().set_property(
             "gtk-font-name", f["sync_original_font"]
         )
+        gtk_phase_2027("sync_narrow")
         w.set_default_size(760, 780)
         deadline = monotonic() + 4
 
@@ -1887,15 +1896,18 @@ def main() -> int:
             side_effects,
         )
         if not large_font:
+            gtk_phase_2027("sync_font_narrow")
             Gtk.Settings.get_default().set_property("gtk-font-name", "Sans 12")
             later(350, lambda: sync_narrow_allocations(True))
             return
+        gtk_phase_2027("sync_restored")
         Gtk.Settings.get_default().set_property("gtk-font-name", f["sync_original_font"])
         f["sync_long_name_row"].set_title(f["sync_original_title"])
         w.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
         later(350, begin_numilog_inventory_acceptance)
 
     def begin_numilog_inventory_acceptance():
+        gtk_phase_2027("numilog_consent")
         w = window[0]
         f = loan_sync_fixture
         scroll = f["sync_scroll"]
@@ -2245,11 +2257,41 @@ def main() -> int:
         assert 0 <= window_bounds.get_y() and (
             window_bounds.get_y() + window_bounds.get_height() <= w.get_height()
         ), "Kobo audit action is outside the displayed window"
+        # GTK can finish a scroll allocation after compute_bounds reports an
+        # on-screen rectangle. The XTEST event is delivered after this GTK
+        # callback returns; sending it during reflow can hit another widget.
+        # Require a stable hit target on two separate main-loop iterations.
+        point_x = window_bounds.get_x() + window_bounds.get_width() / 2
+        point_y = window_bounds.get_y() + window_bounds.get_height() / 2
+        picked = w.pick(point_x, point_y, Gtk.PickFlags.DEFAULT)
+        while picked is not None and picked is not audit:
+            picked = picked.get_parent()
+        geometry = (
+            round(window_bounds.get_x()), round(window_bounds.get_y()),
+            round(window_bounds.get_width()), round(window_bounds.get_height()),
+            round(scroll.get_vadjustment().get_value()),
+        )
+        if picked is not audit or f.get("audit_stable_geometry") != geometry:
+            attempt = f.get("audit_stable_checks", 0) + 1
+            assert attempt <= 8, "Kobo audit physical hit target did not settle"
+            f["audit_stable_checks"] = attempt
+            f["audit_stable_geometry"] = geometry
+            later(130, loan_sync_audit_click)
+            return
         report["checks"]["P0_kobo_audit_XTEST_target_inside_viewport"] = True
         report["checks"]["P0_kobo_audit_offline_button_no_implicit_scan"] = True
         # A physical XTEST action is the sole trigger; rendering the row does
         # not authorize or start any inspection.
+        # Observe the real GTK "clicked" signal without invoking the action
+        # programmatically. A missed XTEST hit must remain a test failure.
+        f["audit_click_signal_seen"] = False
+        audit.connect(
+            "clicked",
+            lambda _button: f.__setitem__("audit_click_signal_seen", True),
+        )
+        report["stage"] = "P0_1347_kobo_audit_pointer_dispatch"
         report["pointer_actions"].append(device[0].click_widget(audit))
+        report["stage"] = "P0_1347_kobo_audit_result_wait"
         f["audit_deadline"] = monotonic() + 6
         later(100, loan_sync_audit_result)
 
@@ -2263,7 +2305,21 @@ def main() -> int:
         )
         subtitle = audit_row.get_subtitle()
         if "Fichiers locaux vérifiés par SHA : 3" not in subtitle:
-            assert monotonic() < f["audit_deadline"], (
+            now = monotonic()
+            if now >= f["audit_deadline"]:
+                # Closed fixture facts only. Never publish account/source IDs,
+                # GTK text, coordinates, worker exceptions, or raw traces.
+                report["kobo_audit_observation"] = {
+                    "clicked_signal": f["audit_click_signal_seen"] is True,
+                    "broker_calls": min(len(f["audit_calls"]), 2),
+                    "subtitle_phase": (
+                        "in_progress" if subtitle == "Inspection locale en cours (lecture seule)…"
+                        else "initial" if subtitle == (
+                            "Non consulté · aucun téléchargement, déplacement ou suppression"
+                        ) else "other"
+                    ),
+                }
+            assert now < f["audit_deadline"], (
                 "Le résultat GTK de l'audit Kobo n'est pas apparu"
             )
             later(100, loan_sync_audit_result)
@@ -3270,6 +3326,7 @@ def main() -> int:
         finish()
 
     def finish():
+        gtk_phase_2027("done")
         report["status"] = "PASS"
         save()
         rc[0] = 0
@@ -3281,6 +3338,7 @@ def main() -> int:
 
         def do_activate(self):
             try:
+                gtk_phase_2027("window_start")
                 w = MainWindow(self, core.config, core.library, core.diagnostics)
                 window[0] = w
                 # Observe provenance before TaskRunner's intentional redaction.
@@ -3296,6 +3354,7 @@ def main() -> int:
                 w.plugin_manager = IsolatedContributions(page_plugin)
                 w._rebuild_plugin_pages()
                 w.present()
+                gtk_phase_2027("window_shown")
                 device[0] = X11Input()
                 later(500, home_summary_acceptance if args.window_baseline else initial)
             except Exception as exc:
