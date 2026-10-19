@@ -178,6 +178,13 @@ class BnfCatalogueSession(ProviderSession):
             raise ProviderError("BnF : réponse SRU attendue")
         if any(n.tag.rsplit("}", 1)[-1] == "diagnostic" for n in root.iter()):
             raise ProviderError("BnF : requête refusée par le service SRU")
+        # SRU 1.2 numberOfRecords is the server's evidence for a genuine
+        # zero. A structurally empty or truncated 200 response is NOT a
+        # successful search with no books: callers must see a typed failure.
+        totals = root.findall(f"{{{SRU}}}numberOfRecords")
+        if (len(totals) != 1 or totals[0].text is None
+                or re.fullmatch(r"[0-9]{1,12}", totals[0].text.strip()) is None):
+            raise ProviderError("BnF : invalid_sru_response")
         rows = {}
         for data in root.findall(f".//{{{SRU}}}recordData"):
             values: dict[str, list[str]] = {}
