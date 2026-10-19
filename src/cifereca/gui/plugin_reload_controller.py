@@ -38,6 +38,12 @@ def plugins_changed(window) -> None:
     if getattr(window, "_closed", False):
         return
     window._subscribe_cached_book_details()
+    # On a user-initiated plugin change, an enabled public provider needs
+    # a fresh session. Startup already schedules its own first connection.
+    if getattr(window, "_source_inventory_startup_connection_seen", False):
+        reconnect = getattr(window, "_connect_sources_if_open", None)
+        if callable(reconnect):
+            reconnect()
 
 
 def subscribe_cached_book_details(window, *, idle_add, subscribe_cached_book_detail_changes) -> None:
