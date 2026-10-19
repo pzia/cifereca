@@ -11,7 +11,10 @@ import httpx
 import pytest
 
 from cifereca.plugin_api import ProviderError
-from cifereca_ebooksgratuits import EbooksSession, OPDS_MAX_FEED_BYTES, _opds_fetch
+from cifereca_ebooksgratuits import (
+    EbooksSession, OPDS_MAX_FEED_BYTES, OPDS_MAX_ELEMENTS, OPDS_MAX_DEPTH,
+    _opds_fetch,
+)
 
 HOST = "https://opds2.ebooksgratuits.org"
 ROOT = HOST + "/index.php/feed"
@@ -193,5 +196,58 @@ def test_dtd_still_rejected_after_safe_bounded_read():
             _opds_fetch(s, ROOT)
         assert "PRIVATE" not in str(caught.value)
         assert body.closed
+    finally:
+        s.close()
+
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-16", "utf-16-be"])
+def test_internal_xml_entity_is_forbidden_at_parser_level_even_in_utf16(encoding):
+    # In UTF-16, raw b'<!doctype' scans do NOT see a DTD. ElementTree's
+    # default parser otherwise expands this internal entity.
+    text = ('<?xml version="1.0" encoding="' + encoding + '"?>'
+            '<!DOCTYPE feed [<!ENTITY secret "PRIVATE_ENTITY">]>'
+            '<feed>&secret;</feed>')
+    body = text.encode(encoding)
+    s, _seen = session(lambda req: httpx.Response(
+        200, stream=ProbeStream([body]), request=req,
+    ))
+    try:
+        with pytest.raises(ProviderError, match="invalid_opds_feed") as caught:
+            _opds_fetch(s, ROOT)
+        assert "PRIVATE" not in str(caught.value)
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("kind", ["deep", "wide"])
+def test_xml_structure_rejected_before_tree_becomes_disproportionate(kind):
+    if kind == "deep":
+        payload = b"<feed>" + b"<n>" * OPDS_MAX_DEPTH + b"</n>" * OPDS_MAX_DEPTH + b"</feed>"
+    else:
+        payload = b"<feed>" + b"<n/>" * OPDS_MAX_ELEMENTS + b"</feed>"
+    assert len(payload) < OPDS_MAX_FEED_BYTES
+    stream = ProbeStream([payload])
+    s, _seen = session(lambda req: httpx.Response(
+        200, stream=stream, request=req,
+    ))
+    try:
+        with pytest.raises(ProviderError, match="invalid_opds_feed") as caught:
+            _opds_fetch(s, ROOT)
+        assert stream.closed
+        assert "PRIVATE" not in str(caught.value)
+    finally:
+        s.close()
+
+
+def test_structural_budgets_accept_ordinary_root_navigation():
+    body = (b'<feed xmlns="http://www.w3.org/2005/Atom">'
+            b'<entry><id>urn:book:1</id><title>Livre public</title>'
+            b'</entry></feed>')
+    s, _seen = session(lambda req: httpx.Response(200, content=body, request=req))
+    try:
+        root, url = _opds_fetch(s, ROOT)
+        assert len(root.findall("{http://www.w3.org/2005/Atom}entry")) == 1
+        assert url == ROOT
     finally:
         s.close()
