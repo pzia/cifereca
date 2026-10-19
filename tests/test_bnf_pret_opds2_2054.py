@@ -76,6 +76,8 @@ def test_groups_navigation_and_publications():
 def test_empty_or_invalid_catalog_is_rejected():
     with pytest.raises(opds.OPDS2ContractError, match="empty_catalog"):
         opds.parse_catalog(feed(navigation=[], publications=[]))
+    with pytest.raises(opds.OPDS2ContractError, match="empty_catalog"):
+        opds.parse_catalog(feed(navigation=[], publications=[], groups=[{}]))
     with pytest.raises(opds.OPDS2ContractError, match="invalid_catalog"):
         opds.parse_catalog({})
     with pytest.raises(opds.OPDS2ContractError, match="invalid_catalog"):
