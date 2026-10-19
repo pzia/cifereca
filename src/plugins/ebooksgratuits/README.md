@@ -1,3 +1,36 @@
+## #1917 — reconnexion réelle du client public (0.1.20, 19/10/2026)
+
+`EbooksSession.close()` ferme définitivement son `httpx.Client`.
+Jusqu'ici, un `connect()` ultérieur réactivait le drapeau local et
+retournait « Catalogue public » sans recréer le client : une recherche
+hors cache pouvait alors échouer sur une session HTTP définitivement
+fermée. Cette incohérence touche OPDS et l'ancien backend HTML de
+simulation, indépendamment de la couverture OPDS distante.
+
+Désormais, un `connect()` explicite sur **la même session déjà fermée**
+crée un **nouveau client HTTP anonyme** (même configuration
+`timeout_seconds`, `trust_env=False`, `follow_redirects=True`).
+Une connexion répétée sur un client actif ne recrée rien.
+Une erreur de construction se traduit par
+`Ebooks libres et gratuits : transport_unavailable` sans publier
+une exception contenant chemins locaux ou jetons : la session reste
+déconnectée, sans compte fictivement actif.
+
+**Important** : `connect()` reste une **inscription locale**, sans GET
+ni promesse de disponibilité du catalogue. Seul `search()` effectue
+les lectures OPDS/OpenSearch publiques réellement nécessaires.
+Tests `test_opds_reconnect_http_client_p1.py` : recherches nouvelles
+après fermeture/reconnexion, renouvellement du transport,
+absence d'appels au connect, refus hors session, backend HTML
+indépendant et panne de réouverture expurgée. Tout est testé avec
+`httpx.MockTransport`, sans HTTP réel, compte privé ou téléchargement.
+
+Cette modification n'affirme pas que les notices nouvelles apparaissent
+déjà dans CoreUI (#2361) ni que le serveur OPDS est disponible en live.
+Le ticket #1917 reste ouvert.
+
+---
+
 ## #1917 — lecture OPDS bornée pendant le GET (0.1.19, 19/10/2026)
 
 Le catalogue COPS imposait déjà **2 Mio** au XML après lecture, mais
