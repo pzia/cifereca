@@ -5,7 +5,33 @@ All calls are synthetic; no Paris credentials, HTTP, loans or DRM.
 import pytest
 
 from cifereca_paris import ParisProviderSession
-from test_search_capability_contract_p1 import FakeClient, make_session
+
+
+class FakeClient:
+    def __init__(self):
+        self.calls = []
+        self.last_search_warnings = []
+
+    def search(self, query, scope, page):
+        self.calls.append((query, scope, page))
+        self.last_search_warnings = (
+            ["Catalogue physique momentanément indisponible"]
+            if scope == "all" else []
+        )
+        return []
+
+    def close(self):
+        pass
+
+
+def make_session(client):
+    session = ParisProviderSession(
+        credential_id="paris-test", label="Paris", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    session.client.close()
+    session.client = client
+    return session
 
 
 @pytest.mark.parametrize("incoming,canonical", [
