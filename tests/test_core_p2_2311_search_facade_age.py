@@ -62,6 +62,44 @@ def test_known_and_library_search_apply_same_age_restriction_locally():
     assert all(entry[0] in {"local", "catalog"} for entry in calls)
 
 
+def test_age_evidence_survives_public_mirror_only_for_same_edition(tmp_path):
+    from dataclasses import replace
+    from tests.test_core043_progress_cache_stats import _FakeSession
+
+    service = _service(tmp_path)
+    try:
+        template = _FakeSession("bnf").search("Livre", "all")[0]
+        published = replace(
+            template, record_id="edition-eight", title="Livre commun",
+            source_collection="catalog",
+            metadata={"youth_age_ranges": [
+                {"age_min": 8, "age_max": 10, "age_kind": "publisher",
+                 "source_label": "De 8 à 10 ans", "item_id": "edition-eight"},
+                {"age_min": 13, "age_max": 15, "age_kind": "publisher",
+                 "source_label": "De 13 à 15 ans", "item_id": "other-edition"},
+                {"age_min": 7, "age_max": 10, "age_kind": "inferred",
+                 "source_label": "estimation"},
+                {"age_min": 1, "age_max": 16, "age_kind": "interest",
+                 "source_label": "https://private.invalid/?token=SIGNED"},
+            ]},
+        )
+        assert service._mirror_remote_results([published], identity_id="alice") == 1
+        stored = service.storage.catalog_entries(identity_id="alice", provider_id="bnf")
+        assert len(stored) == 1
+        assert stored[0]["metadata"]["youth_age_ranges"] == [
+            {"age_min": 8, "age_max": 10, "age_kind": "publisher",
+             "source_label": "De 8 à 10 ans"},
+        ]
+        assert [r["item_id"] for r in service.search_known_catalog(
+            "livre", identity_id="alice", age=9,
+        )] == ["edition-eight"]
+        assert service.search_known_catalog("livre", identity_id="alice", age=14) == []
+        assert service.search_known_catalog("livre", identity_id="bob", age=9) == []
+        assert "SIGNED" not in repr(stored)
+    finally:
+        service.close()
+
+
 def test_library_service_offline_facade_never_contacts_providers(tmp_path):
     service = _service(tmp_path)
     try:
