@@ -1,5 +1,10 @@
 {
-  "kind": "no-pending-plugins-only-release",
-  "historical_request": "docs/release-history/plugins-only-v0.9.44-dev.12-001-request.json",
-  "reason": "#2331: request revision 4 included a removed Jeunesse package. No new release is authorized."
+  "kind": "authorized-plugins-only-release",
+  "release_tag": "plugins-v0.9.44+dev.13-001",
+  "package_ids": [
+    "org.cifereca.provider.numilog"
+  ],
+  "purpose": "P0 #2095: publish current Numilog only after an officially published, signed Core v0.9.44+dev.13; require Numilog/Core compatibility gate, signed assets, strict install and rollback.",
+  "authorized_on": "2026-10-19",
+  "requires_published_core_tag": "v0.9.44+dev.13"
 }
