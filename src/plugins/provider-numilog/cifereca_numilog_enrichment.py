@@ -48,7 +48,7 @@ def _qualified_public_listing_value(public, field, value):
         valid = _safe_text(value, 16000)
     elif valid and field == "thumbnail_url":
         valid = re.fullmatch(
-            r"https://couverture\\.numilog\\.com/[0-9]{1,32}_GRANDE\\.jpg",
+            r"https://couverture\.numilog\.com/[0-9]{1,32}_GRANDE\.jpg",
             value,
         ) is not None
     elif valid and field == "collection":
