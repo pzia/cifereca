@@ -28,6 +28,23 @@ def _paris_digital_inventory_complete(session: Any) -> bool:
     )
 
 
+def _paris_inventory_rows_well_formed(rows: Any) -> bool:
+    """A partial/corrupt row collection cannot attest a PNB loan's absence.
+
+    The Paris adapter returns normalized Loan objects. Reject unexpected
+    provider payloads before scanning for an absent loan, without invoking
+    dynamic attributes, equality, stringification or repr on hostile rows.
+    A valid empty inventory remains a legitimate absence proof when DILICOM
+    also reports no errors.
+    """
+    return type(rows) is list and all(
+        type(row) is Loan
+        and type(row.id) is str and bool(row.id)
+        and type(row.provider) is str and bool(row.provider)
+        for row in rows
+    )
+
+
 def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
     """Re-read the exact borrower with NO cache and NO second POST."""
     from .loan_return_guard import public_return_state, provider_absence_attested, return_ref
@@ -66,8 +83,8 @@ def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
     error_type = None
     try:
         loans = session.loans(account)  # ALWAYS direct provider; bypass cached account reads
-        if not isinstance(loans, list):
-            raise ValueError("provider inventory has no complete list")
+        if not _paris_inventory_rows_well_formed(loans):
+            raise ValueError("provider inventory has malformed loan rows")
         # A failed SYRACUSE leg is unrelated to digital loans. Any missing
         # or unrecognized provider error is ambiguous and fails closed.
         if loan.source_provider == "paris" and not _paris_digital_inventory_complete(session):
@@ -104,8 +121,8 @@ def verify_paris_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE
         return {"status": "verification_unavailable", "verification": "unavailable"}
     try:
         rows = session.loans(account)
-        if not isinstance(rows, list):
-            raise ValueError("Paris inventory incomplete")
+        if not _paris_inventory_rows_well_formed(rows):
+            raise ValueError("Paris inventory incomplete or malformed")
         if not _paris_digital_inventory_complete(session):
             raise ValueError("Paris digital inventory unverified")
         present = any(
