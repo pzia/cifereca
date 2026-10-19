@@ -49,7 +49,7 @@ def test_untrusted_score_is_filtered_before_comparison_with_minimum():
     view.selected_language_id = lambda: ""
     view._text = NS(get_text=lambda: "")
     invalid = RankedCandidate(item={"title": "Source"}, score=PoisonScore(), reasons=(), sources=())
-    assert view._matches(invalid) is False
+    assert UxRecommendationsView._matches(view, invalid) is False
 
 
 @pytest.mark.parametrize("score", [0, 20, 77, 100])
