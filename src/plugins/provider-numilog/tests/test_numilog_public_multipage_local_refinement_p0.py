@@ -155,7 +155,7 @@ def test_cross_query_even_with_same_total_and_correct_pager_is_rejected():
     )
     forged = _relabel(other, url=new_url, index=1)
     b = replace(b, items=(forged, *b.items[1:]))
-    with pytest.raises(ProviderCapabilityError, match="unverified_local_page"):
+    with pytest.raises(ProviderCapabilityError, match="unverified_loaded_pages"):
         refine_loaded_public_pages([a, b], title="Jefferson")
 
 
