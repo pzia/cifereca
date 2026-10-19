@@ -308,6 +308,10 @@ def parse_public_search(text, source_url):
         _fail('html_size')
     try:
         root = _PublicSearchParser(text).root
+    except PublicSearchParseError:
+        # Preserve a fixed, verified reason for ambiguous evidence instead
+        # of treating it as an ordinary malformed-upstream-layout error.
+        raise
     except ParseError:
         _fail('html_structure')
     grids = [n for n in _visible_walk(root) if n.tag == 'table' and n.attrs.get('id') == GRID_ID]
