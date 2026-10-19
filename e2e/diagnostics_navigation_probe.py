@@ -46,7 +46,9 @@ from gtk_layout_critical import GTK_PHASES_2027
 def gtk_phase_2027(phase: str) -> None:
     # Source-reviewed constants only; no widget, pointer or account data.
     assert phase in GTK_PHASES_2027
-    print(f"CIFERECA_E2E_GTK_PHASE:{phase}", file=sys.stderr, flush=True)
+    marker = f"CIFERECA_E2E_GTK_PHASE:{phase}"
+    print(marker, file=sys.stdout, flush=True)
+    print(marker, file=sys.stderr, flush=True)
 
 
 def probe_failure_line(exc):
