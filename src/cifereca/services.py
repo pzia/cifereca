@@ -2914,7 +2914,7 @@ class LibraryService:
                             "provider." + loan.source_provider,
                         ).descriptor.version
                         if type(version) is str and len(version) <= 19 and re.fullmatch(
-                            r"[0-9]{1,3}(?:\\.[0-9]{1,3}){1,3}", version,
+                            r"[0-9]{1,3}(?:\.[0-9]{1,3}){1,3}", version,
                         ):
                             message += f" (plugin {version})"
                 except Exception:
