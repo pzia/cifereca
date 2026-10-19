@@ -55,6 +55,8 @@ GTK_PHASES_2027 = (
     "maint_busy_guard", "maint_scan", "maint_first_dialog",
     "maint_cancel_stale", "maint_execute", "maint_refresh",
     "maint_p1_naming", "maint_p1_duplicates", "maint_done",
+    "maint_dialog_visible", "maint_dialog_response",
+    "maint_p1_dialog_visible", "maint_p1_dialog_response",
 )
 _PHASE_MARKER = re.compile(
     r"^CIFERECA_E2E_GTK_PHASE:(?P<phase>[a-z0-9_]+)$"

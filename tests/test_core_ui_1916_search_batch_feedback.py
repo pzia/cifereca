@@ -101,3 +101,57 @@ def test_rendered_count_persists_distinct_closed_statuses_only_in_matching_conte
     host._search_mode = "local"
     host._update_search_count(1)
     assert host.search_page.count_label.set_label.call_args.args[0] == "1 résultat · Connu"
+
+
+def test_empty_failed_source_is_visible_before_remaining_providers_complete():
+    host = controller_host()
+    host.run_search(True)
+    request = host.requests[-1]
+    request.work()
+    on_batch = host.online.call_args.args[2]
+    on_batch(NS(provider_id="public-A", result_status="unavailable",
+                error_code="SearchTemporarilyUnavailable", results=[]))
+    host._populate_search.assert_not_called()  # Worker thread cannot paint.
+    assert host._online_source_statuses == {}
+    callback, args = host.scheduled.pop()
+    assert callback(*args) is False
+    assert host._online_source_statuses == {"public-A": "unavailable"}
+    host._populate_search.assert_called_once_with([], announce=False)
+    # The other source is still pending; its first result should keep A's
+    # closed verdict and render without waiting for the final summary.
+    on_batch(NS(provider_id="public-B", result_status="live",
+                error_code="", results=[NS(id="book", source_provider="public-B")]))
+    callback, args = host.scheduled.pop()
+    assert callback(*args) is False
+    assert host._online_source_statuses == {
+        "public-A": "unavailable", "public-B": "live",
+    }
+    assert len(host._remote_search_results) == 1
+    assert host._populate_search.call_count == 2
+    assert not host.toast.called and not host.show_error.called
+
+
+def test_empty_provider_status_does_not_repaint_from_old_query_or_identity():
+    host = controller_host()
+    old_book = NS(id="private-prior", source_provider="public")
+    host._remote_query_key = ("previous", "all", "all")
+    host._remote_search_results = [old_book]
+    host.run_search(True)
+    assert host._remote_search_results == []
+    host.requests[-1].work()
+    on_batch = host.online.call_args.args[2]
+    on_batch(NS(provider_id="public", result_status="unavailable",
+                error_code="SearchTemporarilyUnavailable", results=[]))
+    host.service.current_identity = NS(identity_id="another")
+    callback, args = host.scheduled.pop()
+    assert callback(*args) is False
+    assert host._online_source_statuses == {}
+    host._populate_search.assert_not_called()
+    # Malformed provider status does not trigger an empty redraw or echo input.
+    host.service.current_identity = NS(identity_id="alice")
+    on_batch(NS(provider_id="public", result_status="https://private.invalid/?token=SECRET",
+                error_code="SearchTemporarilyUnavailable", results=[]))
+    callback, args = host.scheduled.pop()
+    assert callback(*args) is False
+    assert host._online_source_statuses == {}
+    host._populate_search.assert_not_called()
