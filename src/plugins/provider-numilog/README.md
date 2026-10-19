@@ -1346,3 +1346,7 @@ effectivement achetée ; la recette réelle #1072 demeure nécessaire.
 Les routes recherche et détail refusent les délais non numériques, non finis,
 nuls, négatifs ou supérieurs à 30 secondes avant de créer le client HTTP.
 La valeur finie est transmise sans nouveau retry ni contournement du cooldown.
+
+### 0.1.64 — budget anonyme commun (P0 #1886)
+
+`NumilogSession.search_public(query)` (y compris `search(scope="catalog")`) et `NumilogSession.public_product_detail(url)` partagent désormais **le même cache mémoire anonyme** que l’enrichissement explicite des achats : au plus deux GET en rafale, ensuite un jeton/seconde, **un seul GET en vol**, TTL 60 secondes, refus sans boucle de retry, refroidissement HTTP 429 commun et préservé après reconnexion. Les URL de détail et les champs de recherche sont vérifiés **avant** consultation du cache. Les réponses commerciales n’utilisent ni cookies ni bibliothèque privée, et aucun droit de téléchargement n’est déduit. Ce jalon ne qualifie pas la recherche distante multi-attributs.
