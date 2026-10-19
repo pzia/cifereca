@@ -1339,3 +1339,10 @@ Il n'y a **ni publication du prix d'achat**, ni promotion d'un ISBN
 papier/EPUB, ni téléchargement ou attribution de droits.
 La validation des champs n'est pas une preuve de l'édition numérique
 effectivement achetée ; la recette réelle #1072 demeure nécessaire.
+
+
+## 0.1.63 — budget HTTP public validé avant ouverture (#1886)
+
+Les routes recherche et détail refusent les délais non numériques, non finis,
+nuls, négatifs ou supérieurs à 30 secondes avant de créer le client HTTP.
+La valeur finie est transmise sans nouveau retry ni contournement du cooldown.
