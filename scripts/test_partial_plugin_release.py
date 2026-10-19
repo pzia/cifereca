@@ -170,8 +170,10 @@ class PartialPluginReleaseTests(unittest.TestCase):
             release_job.index("name: Verify downloaded draft artifact and repeat P0 gates"),
             release_job.index("name: Publish completed plugins-only release"),
         )
-        self.assertIn('gh release download "$RELEASE_TAG"', release_job)
-        self.assertIn('--pattern "$RELEASE_TAG.zip.sigstore.json"', release_job)
+        # Untagged GitHub drafts are addressed by immutable release/asset IDs.
+        self.assertIn('https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id', release_job)
+        self.assertIn('len(rows) != 3', release_job)
+        self.assertNotIn('gh release download "$RELEASE_TAG"', release_job)
         self.assertIn('cosign verify-blob "$artifact_dir/$RELEASE_TAG.zip"', release_job)
         self.assertNotIn("actions/attest@v4", release_job)
         self.assertIn('bash scripts/ci-plugins-only-runtime-gate.sh "$artifact_dir/$RELEASE_TAG.zip"', release_job)
@@ -302,8 +304,12 @@ class PartialPluginReleaseTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         release_job = workflow.split("\n  release:\n", 1)[1]
         validator = "python3 scripts/ci_plugins_release_target.py"
-        self.assertEqual(release_job.count(validator), 3)
-        self.assertLess(release_job.index(validator), release_job.index("gh release upload"))
+        self.assertEqual(release_job.count(validator), 4)
+        self.assertLess(
+            release_job.index(validator),
+            release_job.index("https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$draft_id/assets"),
+        )
+        self.assertNotIn("gh release upload", release_job)
         self.assertLess(
             release_job.index("name: Recheck immutable draft target before publication"),
             release_job.index("name: Publish completed plugins-only release"),

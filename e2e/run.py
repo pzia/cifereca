@@ -456,7 +456,7 @@ def main() -> int:
             gtk_critical = gtk_layout_critical_counts(output, errors)
             # These fixed phase counts correlate diagnostic warnings with
             # deterministic GUI actions; none contains timestamps or raw GTK.
-            gtk_phases = gtk_layout_phase_counts(errors)
+            gtk_phases = gtk_layout_phase_counts(output, errors)
             _write_redacted_log(stdout_path, output, env)
             _write_redacted_log(stderr_path, errors, env)
             report = png.with_suffix(".json")
@@ -509,7 +509,7 @@ def main() -> int:
                 "visual_change_ratio": visual_change_ratio,
                 "assertion_error": assertion_error,
                 "gtk_layout_critical": gtk_critical,
-                "gtk_layout_phase": gtk_phases if name.startswith("mainwindow-baseline-") else {},
+                "gtk_layout_phase": gtk_phases if name.startswith(("mainwindow-baseline-", "maintenance-tools-")) else {},
                 "report": str(report),
                 "screenshot": str(png) if png.exists() else None,
                 "stdout": str(stdout_path),
