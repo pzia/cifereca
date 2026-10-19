@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-MODULE = Path(__file__).resolve().parents[1] / "cifereca_bnf_pret_contract.py"
+MODULE = Path(__file__).resolve().parents[1] / "src/plugins/provider-bnf-pret/cifereca_bnf_pret_contract.py"
 spec = importlib.util.spec_from_file_location("cifereca_bnf_pret_contract", MODULE)
 contract = importlib.util.module_from_spec(spec)
 import sys
