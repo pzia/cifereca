@@ -210,6 +210,31 @@ class PartialPluginReleaseTests(unittest.TestCase):
         self.assertIn('os.environ.get("CIFERECA_P0_CORE_SOURCE")', runtime_gate)
         self.assertNotIn("|| true", gate)
 
+    def test_real_installed_provenance_is_checked_before_sign_and_after_rollback(self) -> None:
+        """#577: source metadata alone never passes the release runtime gate."""
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/plugins-only-release.yml").read_text(encoding="utf-8")
+        gate = (root / "scripts/ci-plugins-only-runtime-gate.sh").read_text(encoding="utf-8")
+        command = "python -m scripts.ci_plugins_only_receipt_gate"
+        self.assertEqual(gate.count(command), 2)
+        self.assertIn('--snapshot-sha256 "$digest"', gate)
+        self.assertIn('--store "$store_root"', gate)
+        self.assertLess(gate.index(command), gate.index("before_incompatible="))
+        self.assertGreater(gate.rindex(command), gate.index("before_rollback="))
+        review = workflow.split("\n  validate-pr:\n", 1)[1].split("\n  preflight-request:\n", 1)[0]
+        release = workflow.split("\n  release:\n", 1)[1]
+        self.assertIn("scripts.test_ci_plugins_only_receipt_gate", review)
+        self.assertIn("scripts.test_ci_plugins_only_receipt_gate", release)
+        self.assertIn("scripts/ci_plugins_only_receipt_gate.py", workflow)
+        self.assertLess(
+            release.index("name: Exercise real strict install"),
+            release.index("name: Sign plugins-only ZIP"),
+        )
+        self.assertLess(
+            release.index("name: Verify downloaded draft artifact and repeat P0 gates"),
+            release.index("name: Publish completed plugins-only release"),
+        )
+
     def test_plugins_only_draft_is_bound_to_exact_source_commit(self) -> None:
         tag, sha = "plugins-v0.9.44+dev.12-002", "a" * 40
         exact = {"tag_name": tag, "draft": True, "target_commitish": sha}
