@@ -156,7 +156,12 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
             raw = session.library()
             # The private catalogue can contain hundreds of purchases.
             # Bound memory without blocking ordinary 300+ book libraries.
-            if type(raw) not in {list, tuple} or len(raw) > 2048:
+            if (type(raw) not in {list, tuple} or len(raw) > 2048
+                    or any(type(row) is not SearchResult for row in raw)):
+                # A partial/hostile provider response wrapped in a list is
+                # not proof of a complete authenticated purchase inventory.
+                # Do not silently treat malformed rows as an empty library
+                # and finalize a false successful startup receipt.
                 trace.fail("manifest_invalid")
                 failures += 1
                 continue
