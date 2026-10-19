@@ -100,3 +100,29 @@ def test_no_plugin_manager_or_capture_required_to_use_entrypoint():
     assert calls == ["diagnostics"]
     assert not hasattr(window, "plugin_manager")
     assert not hasattr(window, "ui_perf")
+
+
+def test_route_visibility_moves_tools_without_mutating_capture_or_service():
+    class Group:
+        def __init__(self): self.visible = None
+        def set_visible(self, value): self.visible = value
+    groups = [Group(), Group(), Group()]
+    window = NS(_closed=False, _pages={}, navigate=lambda route: None)
+    lifetime = SettingsPageLifetime()
+    button = Button()
+    refresh = bind_diagnostics_page_link(window, button, page_lifetime=lifetime,
+                                         fallback_widgets=groups)
+    assert all(g.visible is True for g in groups)
+    window._pages["diagnostics"] = object()
+    assert refresh() is True
+    assert all(g.visible is False for g in groups)
+    assert button.enabled is True
+    window._pages.clear()
+    assert refresh() is False
+    assert all(g.visible is True for g in groups)
+    lifetime.dispose()
+    window._pages["diagnostics"] = object()
+    refresh()
+    assert all(g.visible is True for g in groups)
+    assert not hasattr(window, "ui_perf")
+    assert not hasattr(window, "service")

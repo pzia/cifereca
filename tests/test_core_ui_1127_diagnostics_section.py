@@ -66,21 +66,23 @@ def _render():
     return ui, section, calls
 
 
-def test_diagnostic_hierarchy_filter_and_actions_are_unchanged():
+def test_diagnostic_entry_and_core_fallback_preserve_controls():
     ui, section, calls = _render()
-    assert len(section.children) == 3
-    group = section.children[0]
+    assert len(section.children) == 4
+    assert section.children[0] is ui.entry
+    assert ui.entry.children == [ui.open_page]
+    group = section.children[1]
     assert group.title == "Diagnostic système"
-    assert len(group.children) == 6
+    assert len(group.children) == 5
     assert group.children[0] is ui.summary
     assert group.children[2] is ui.issues_box
     assert group.children[3] is ui.details_toggle
     assert group.children[4] is ui.scroll
-    assert group.children[5] is ui.open_page
+    assert ui.fallback_widgets == tuple(section.children[1:])
     assert ui.filter.values == ["À examiner", "Tous"]
     assert ui.filter.tooltip == "Afficher uniquement les anomalies ou l’inventaire complet"
     assert ui.summary.wrap is True
-    perf = section.children[1]
+    perf = section.children[2]
     assert perf.title == "Performances · capture volontaire"
     assert "ne démarre qu’après votre action" in perf.children[0].label
     assert perf.children[1] is ui.performance_status
