@@ -500,6 +500,60 @@ def _validate_plugins_only_index(
     return index
 
 
+def _record_partial_install_provenance(
+    indexed: dict[str, Any], packages: list[tuple[str, str, Path, bool]],
+    *, snapshot_id: str, snapshot_sha256: str, trusted_digest_verified: bool,
+) -> None:
+    """Persist an informational receipt inside the plugin rollback boundary.
+
+    The digest only proves a match with the caller-supplied SHA; this is NOT
+    a Cosign signature verification or proof the GUI loaded the plugin.
+    All values are derived from the validated local manifest and ZIP.
+    """
+    store = _plugin_store_root()
+    commit = indexed.get("source_git_commit", "")
+    source_commit = commit if type(commit) is str and re.fullmatch(r"[0-9a-f]{7,40}", commit) else ""
+    safe_id = snapshot_id if re.fullmatch(r"[A-Za-z0-9._+-]{1,128}", snapshot_id) else ""
+    core = indexed.get("core_version_tested")
+    safe_core = core if type(core) is str and re.fullmatch(r"[A-Za-z0-9._+-]{1,64}", core) else ""
+    for package_id, version, package_archive, _activate in packages:
+        directory = store / package_id
+        if not directory.is_dir() or directory.is_symlink():
+            raise DevUpdateError("plugin provenance : répertoire de package invalide")
+        receipt = {
+            "schema": 1,
+            "scope": "plugins-only",
+            "package_id": package_id,
+            "version": version,
+            "snapshot_id": safe_id,
+            "source_git_commit": source_commit,
+            "core_version_tested": safe_core,
+            "snapshot_sha256": snapshot_sha256,
+            "package_sha256": _sha256(package_archive),
+            "trusted_digest_verified": trusted_digest_verified,
+            # No statement about remote signature or loaded GUI state.
+            "signature_verified": False,
+        }
+        # Atomic replace, even if a stale destination happens to be a symlink.
+        temporary: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=directory,
+                prefix=".cifereca-provenance-", delete=False,
+            ) as handle:
+                temporary = handle.name
+                json.dump(receipt, handle, sort_keys=True, ensure_ascii=True)
+                handle.write("\n")
+            os.replace(temporary, directory / ".cifereca-last-plugin-update.json")
+            temporary = None
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+
+
 def apply_snapshot(
     archive: Path,
     *,
@@ -634,6 +688,14 @@ def apply_snapshot(
             if require_plugins_only:
                 step("plugin_verification", _verify_strict_installed_packages, strict_packages)
             smoke = step("smoke", _smoke_plugins, package_ids)
+            # Keep this write in the rollback transaction: a failed receipt
+            # must not leave an installed package whose origin is unknown.
+            if partial_index is not None:
+                _record_partial_install_provenance(
+                    partial_index, strict_packages,
+                    snapshot_id=snapshot_id, snapshot_sha256=result["sha256"],
+                    trusted_digest_verified=expected_sha256 is not None,
+                )
         except (Exception, KeyboardInterrupt) as exc:
             # A cooperative Ctrl-C must restore the pre-update plugin state,
             # even when the interrupted installation already changed Core.
