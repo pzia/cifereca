@@ -36,11 +36,15 @@ def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
     due = data.get("next_eligible_at")
     counts = ("attempted", "downloaded", "skipped", "failed")
     if any(type(data.get(key)) is not int or data[key] < 0
-           or data[key] > (2048 if key == "skipped" else 8)
+           or data[key] > (2048 if key == "skipped" else 9 if key == "failed" else 8)
            for key in counts):
         return "Dernier bilan indisponible."
+    # A manifest/acquisition failure can be followed by a *second* failure
+    # while closing its durable receipt. Both must remain visible even when
+    # no download was attempted (0 attempted, 2 failed). This agrees with
+    # the closed Core StartupTrace contract without relaxing its other bounds.
     if (data["downloaded"] > data["attempted"]
-            or data["failed"] > data["attempted"] + 1):
+            or data["failed"] > data["attempted"] + 2):
         # Never display internally contradictory counters as attested facts.
         return "Dernier bilan indisponible."
     if (started is not None and (type(started) is not int
