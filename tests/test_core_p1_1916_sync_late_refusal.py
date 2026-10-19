@@ -9,8 +9,8 @@ from tests.test_core_p1_1916_stale_public_fallback import _known
 
 
 @pytest.mark.parametrize("status,warning,stale", [
-    (401, "recherche en ligne indisponible", False),
-    (403, "recherche en ligne indisponible", False),
+    (401, "authentification requise", False),
+    (403, "accès refusé", False),
     (429, "recherche en ligne indisponible", True),
     (503, "recherche en ligne indisponible", True),
 ])
@@ -79,7 +79,8 @@ def test_late_access_denial_keeps_other_live_provider_and_does_not_cache(
         assert any(row.source_provider == "good" for row in rows)
         assert all(row.source_provider != "bad" for row in rows)
         assert bad_calls == ["valid-but-empty", "forbidden"]
-        assert any("indisponible" in warning for warning in service.last_search_warnings)
+        assert any("accès refusé" in warning for warning in service.last_search_warnings)
+        assert all("indisponible" not in warning for warning in service.last_search_warnings)
         assert "SECRET" not in str(rows) + str(service.last_search_warnings)
         assert not any(row["namespace"] == "search"
                        for row in service.storage.cache_namespace_stats())
