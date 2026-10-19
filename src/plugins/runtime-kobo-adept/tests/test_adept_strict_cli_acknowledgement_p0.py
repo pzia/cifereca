@@ -155,7 +155,10 @@ def test_exit_nonzero_with_true_ack_is_still_a_failure(monkeypatch):
         {"ok": True, "profile": {"complete": True}}, exit_code=1,
     )
     assert isinstance(response, KoboAdeptError)
-    assert response.code == "kobo_adept_failed"
+    # Exit nonzero contradicts ok=true. It is an invalid CLI receipt, not
+    # evidence for a more specific vendor failure or a successful mutation.
+    assert response.code == "kobo_adept_invalid_response"
+    assert response.retryable is False
 
 
 def test_exit_zero_typed_true_but_error_null_does_not_gain_rights_implicitly(monkeypatch):
