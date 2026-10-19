@@ -1,3 +1,49 @@
+## #2460 — fiche HTML distincte du flux OPDS et acquisition EPUB (0.1.21)
+
+Correctif du **retour utilisateur** « Voir en ligne ouvre le XML » :
+le plugin publiait `friendly_url = alternate or feed_url`. Cette
+valeur transformait une URL Atom de recherche/navigation en prétendue
+**fiche Web du livre**. Désormais seule une **alternative
+`rel=alternate` explicitement `text/html` ou `application/xhtml+xml`**
+et qualifiée sur la même origine publique, sans query privée et hors
+routes XML/feed/fetch/account, devient `friendly_url`. Une fiche
+sans alternative HTML conserve `friendly_url=None`, donc aucune action
+« Voir en ligne » trompeuse ; le lien de téléchargement EPUB reste
+séparé sous `download_url` et n'est jamais construit depuis le titre
+ou l'ID de l'entrée.
+
+Pour l'acquisition **explicitement déclenchée**, la notice publique
+est envoyée au **même broker `transport.http`** que la recherche : le
+plugin autorise au maximum **deux redirections** sous une nouvelle
+politique `redirect_policy=same_origin` imposée à chaque saut par
+Transport HTTP **1.0.5**. Une cible d'une autre origine, un downgrade
+HTTPS, une réponse HTML, un EPUB invalide ou un dépassement de taille
+reste refusé avant publication atomique. `classify_http_status=True`
+donne des codes stables et expurgés `auth_required`, `access_denied`,
+`not_found`, `rate_limited`, `service_unavailable`, sans corps HTTP.
+Les fournisseurs qui ne demandent pas cette politique conservent
+leur comportement historique.
+
+La version **0.1.21 dépend de Transport HTTP >=1.0.5** pour éviter
+qu'un ancien broker suive des redirections sans appliquer la
+restriction d'origine. Depuis une notice OPDS sans fiche HTML,
+l'origine de fichier retournée après téléchargement est la **vraie URL
+EPUB qualifiée**, jamais le flux XML ni une page générique inventée.
+Les limites globales d'acquisitions **5/min et 50/jour/personne**
+restent sous le pilotage du Core, sans déclenchement automatique.
+
+Tests hors réseau :
+`test_opds_web_vs_acquisition_p1_2460.py`,
+`test_opds_same_origin_redirect_p1_2460.py` et test existant
+`test_opds_calibre_1084.py`. Toutes les notices positives sont des
+fixtures Atom **synthétiques** ; ni la raison d'un échec réel sur un
+livre donné, ni la présence effective d'une page HTML chez COPS,
+ni les actions GTK de la release installée ne sont attestées.
+Le P1 #2460 reste **ouvert** pour recette réseau autorisée/expurgée,
+validation Recherche et Recommandations #1354 et contrôle CI/GTK.
+
+---
+
 ## #1917 — reconnexion réelle du client public (0.1.20, 19/10/2026)
 
 `EbooksSession.close()` ferme définitivement son `httpx.Client`.
