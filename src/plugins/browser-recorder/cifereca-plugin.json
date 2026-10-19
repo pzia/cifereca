@@ -1,0 +1,36 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.technical.browser-recorder",
+    "version": "0.1.0",
+    "name": "Browser Recorder (technique)",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.4,<2"
+  },
+  "plugins": [
+    {
+      "id": "ui.page.browser-recorder",
+      "type": "ui.page",
+      "version": "0.1.0",
+      "entrypoint": "browser_recorder_page:PLUGIN",
+      "display_name": "Browser Recorder",
+      "description": "Capture volontaire de parcours Web authentifiés et rejeu GET supervisé ; export HAR expurgé.",
+      "help_text": "Désactivé par défaut. Ouvre un Chromium visible Playwright pour une connexion manuelle. Capture seulement méthode, code HTTP et chemins structurés expurgés sur l'origine HTTPS choisie, sans header/cookie/body/query ni profil persistant. Arrêter explicitement pour enregistrer une trace locale privée. Rejeu de navigations GET statiques autorisées, étape par étape, avec reconnexion manuelle ; aucune transaction ni restauration de session. Installer facultativement Playwright et Chromium sur le poste. Aucune capture à l'activation du plugin.",
+      "enabled_by_default": false,
+      "priority": 35,
+      "instantiation": "singleton_public",
+      "capabilities": [
+        "browser.recorder.capture",
+        "browser.recorder.replay.manual",
+        "browser.recorder.har.sanitized"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "tasks"
+      ],
+      "requires_contracts": []
+    }
+  ]
+}
