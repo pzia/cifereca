@@ -27,7 +27,9 @@ def test_inventory_exception_class_name_is_not_persisted_or_replayed(tmp_path):
         # Re-check after an already accepted return, without another POST.
         # The confirmed state is terminal; force a fresh state in a new loan.
         other = _loan(loan_id="loan-failed-inventory")
-        session.failure = HostileInventoryFailure(PRIVATE)
+        def failed_inventory(_account):
+            raise HostileInventoryFailure(PRIVATE)
+        session.loans = failed_inventory
         result = svc.return_digital(other)
         assert result["status"] == "verification_unavailable"
         assert result["provider_inventory_verified"] is False
