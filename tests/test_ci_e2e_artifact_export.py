@@ -541,3 +541,41 @@ class SharedHelperFailureTests(unittest.TestCase):
             raise RuntimeError("PRIVATE")
         except RuntimeError as exc:
             self.assertIsNone(ns["probe_failure_location"](exc))
+
+
+def test_gtk_critical_only_publishes_closed_counts_never_raw_addresses():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{
+            "scenario": "mainwindow-baseline-1366",
+            "returncode": 1,
+            "gtk_layout_critical": {
+                "GtkStack": 87, "GtkRevealer": 57, "stream_truncated": False,
+            },
+            "stderr": "GtkStack 0xPRIVATE_POINTER /home/PRIVATE token=SECRET",
+            "assertion_error": "PRIVATE",
+        }]))
+        safe = module.safe_summary(source)
+        assert safe["results"][0]["gtk_layout_critical"] == {
+            "GtkStack": 87, "GtkRevealer": 57, "stream_truncated": False,
+        }
+        assert "PRIVATE" not in repr(safe) and "SECRET" not in repr(safe)
+        for bad in (
+            {"GtkStack": "87", "GtkRevealer": 57, "stream_truncated": False},
+            {"GtkStack": True, "GtkRevealer": 0, "stream_truncated": False},
+            {"GtkStack": 1, "GtkRevealer": 1, "stream_truncated": False, "url": "PRIVATE"},
+            {"GtkStack": 0, "GtkRevealer": 0, "stream_truncated": "PRIVATE"},
+            {"GtkStack": -1, "GtkRevealer": 0, "stream_truncated": False},
+        ):
+            source.write_text(json.dumps([{
+                "scenario": "startup", "returncode": 1,
+                "gtk_layout_critical": bad,
+            }]))
+            try:
+                module.safe_summary(source)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Untrusted GTK geometry data published")
