@@ -13,6 +13,13 @@ import sys
 import tempfile
 import time
 
+# E2E selection imports this runner by its absolute path (not as a Python
+# package). The module directory must be importable in that mode too.
+_E2E_DIR = str(Path(__file__).resolve().parent)
+if _E2E_DIR not in sys.path:
+    sys.path.insert(0, _E2E_DIR)
+from gtk_layout_critical import gtk_layout_critical_counts, gtk_layout_critical_failure
+
 ROOT = Path(__file__).resolve().parents[1]
 CAPTURE = ROOT / "environnements/openai-chat-debian/capture_app.py"
 SECRET_KEY = re.compile(r"(token|password|secret|authorization|cookie)", re.I)
@@ -249,10 +256,11 @@ def materialize_fixture(name: str, root: Path) -> dict[str, str]:
     }
 
 
-def _event(path: Path, scenario: str, event: str, **detail) -> None:
+def _event(trace_path: Path, scenario: str, event: str, **detail) -> None:
     """Persist a bounded, scalar trace; never arbitrary GTK/error payloads."""
     if scenario not in SCENARIOS or event not in {
         "scenario_start", "xvfb_display_retry", "scenario_end",
+        "gtk_layout_critical_observed",
     }:
         raise ValueError("unexpected E2E trace event")
     row = {
@@ -264,6 +272,17 @@ def _event(path: Path, scenario: str, event: str, **detail) -> None:
         row["plugin"] = SCENARIOS[scenario]["plugin"]
     if event == "xvfb_display_retry" and type(detail.get("attempt")) is int:
         row["attempt"] = min(2, max(1, detail["attempt"]))
+    if event == "gtk_layout_critical_observed":
+        counters = detail.get("gtk_layout_critical")
+        if (type(counters) is not dict
+                or set(counters) != {"GtkStack", "GtkRevealer", "stream_truncated"}
+                or type(counters["GtkStack"]) is not int
+                or type(counters["GtkRevealer"]) is not int
+                or type(counters["stream_truncated"]) is not bool
+                or not 0 <= counters["GtkStack"] <= 100000
+                or not 0 <= counters["GtkRevealer"] <= 100000):
+            raise ValueError("invalid closed GTK trace counters")
+        row["gtk_layout_critical"] = counters
     if event == "scenario_end":
         code = detail.get("returncode")
         if type(code) is int and -255 <= code <= 255:
@@ -276,7 +295,7 @@ def _event(path: Path, scenario: str, event: str, **detail) -> None:
             row["visual_change_ratio"] = round(ratio, 6)
         # Deliberately drop assertion_error, traceback, URL, nested metadata,
         # private account/session fields, file paths and all unknown keys.
-    with path.open("a", encoding="utf-8") as handle:
+    with trace_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, ensure_ascii=True, sort_keys=True) + "\n")
 
 
@@ -429,6 +448,9 @@ def main() -> int:
                     output += "\n--- X11 display initialization retry (once) ---\n" + (second.stdout or "")
                     errors += "\n--- X11 display initialization retry (once) ---\n" + (second.stderr or "")
                     completed = second
+            # Count only fixed GTK widget classes in memory: no raw warning,
+            # widget pointer, path or text is added to CI's structured output.
+            gtk_critical = gtk_layout_critical_counts(output, errors)
             _write_redacted_log(stdout_path, output, env)
             _write_redacted_log(stderr_path, errors, env)
             report = png.with_suffix(".json")
@@ -442,6 +464,16 @@ def main() -> int:
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
+            # #2027 is reproducible in the existing baseline. Until its
+            # geometry root cause is fixed, capture the closed counters but
+            # keep functional E2E gates authoritative. A mandatory zero-warning
+            # gate now would block every unrelated Core PR. Do not suppress
+            # the actual GTK log output, downgrade an existing failure or
+            # claim that zero in other fixtures proves a field fix.
+            layout_problem = gtk_layout_critical_failure(gtk_critical)
+            if layout_problem:
+                _event(trace_path, name, "gtk_layout_critical_observed",
+                       gtk_layout_critical=gtk_critical)
             if returncode == 0 and minimum_change is not None:
                 if visual_change_ratio is None:
                     assertion_error = "Le rapport de capture ne contient pas visual_change_ratio."
@@ -461,6 +493,7 @@ def main() -> int:
                 report=report.exists(),
                 visual_change_ratio=visual_change_ratio,
                 assertion_error=assertion_error,
+                gtk_layout_critical=gtk_critical,
             )
             results.append({
                 "scenario": name,
@@ -469,6 +502,7 @@ def main() -> int:
                 "returncode": returncode,
                 "visual_change_ratio": visual_change_ratio,
                 "assertion_error": assertion_error,
+                "gtk_layout_critical": gtk_critical,
                 "report": str(report),
                 "screenshot": str(png) if png.exists() else None,
                 "stdout": str(stdout_path),

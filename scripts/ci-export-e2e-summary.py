@@ -193,6 +193,20 @@ def safe_summary(source: Path) -> dict:
             if type(ratio) not in (int, float) or not math.isfinite(ratio) or not 0 <= ratio <= 1:
                 raise ValueError("invalid E2E visual ratio")
             row["visual_change_ratio"] = round(ratio, 6)
+        # #2027: these three *closed* machine fields are safe to publish;
+        # any additional key or non-native number is rejected fail-closed.
+        # Neither the GTK diagnostic line nor any widget pointer is exported.
+        counters = item.get("gtk_layout_critical")
+        if counters is not None:
+            if (type(counters) is not dict
+                    or set(counters) != {"GtkStack", "GtkRevealer", "stream_truncated"}
+                    or type(counters["GtkStack"]) is not int
+                    or type(counters["GtkRevealer"]) is not int
+                    or type(counters["stream_truncated"]) is not bool
+                    or not 0 <= counters["GtkStack"] <= 100000
+                    or not 0 <= counters["GtkRevealer"] <= 100000):
+                raise ValueError("invalid GTK geometry counters")
+            row["gtk_layout_critical"] = counters
         # Deliberately discard every other field, including raw assertion
         # messages, personal paths, URLs, JSON/JSONL, logs, pixels and images.
         if code != 0:
