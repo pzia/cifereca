@@ -2905,8 +2905,32 @@ class LibraryService:
                 else "Acquisition du prêt indisponible"
             )
             if code == "pnb_redirect_refused":
-                message = "Redirection PNB refusée ; consulter les traces PNB"
+                message = "Redirection PNB refusée ; consulter les traces PNB target_scheme / target_port"
+                # Keep a genuinely numeric plugin version for remote debugging,
+                # but never interpolate a plugin-controlled version string.
+                try:
+                    if self._plugin_manager is not None:
+                        version = self._plugin_manager.status(
+                            "provider." + loan.source_provider,
+                        ).descriptor.version
+                        if type(version) is str and len(version) <= 19 and re.fullmatch(
+                            r"[0-9]{1,3}(?:\\.[0-9]{1,3}){1,3}", version,
+                        ):
+                            message += f" (plugin {version})"
+                except Exception:
+                    pass
                 self.diagnostics.add("PNB", "redirect refused", "warning", detail={"loan_ref": trace_ref, "code": "pnb_redirect_refused"}, level="errors")
+            # A bounded subset of real process counters is useful even when
+            # the runtime response text is untrusted and cannot be echoed.
+            public_process = failure_fields(code=code, process=process, loan_ref=None)
+            safe_facts = [
+                f"{key}={public_process[key]}" for key in (
+                    "returncode", "duration_ms", "stdout_bytes",
+                    "stderr_bytes", "artifact_bytes", "artifact_present",
+                ) if key in public_process
+            ]
+            if safe_facts:
+                message += " (" + ", ".join(safe_facts) + ")"
             # This is a decoder/transport-contract failure, *not* an Adobe
             # licensing decision. The next opening may retry it automatically.
             # Never infer a named Adobe refusal from a generic CLI exit code.
