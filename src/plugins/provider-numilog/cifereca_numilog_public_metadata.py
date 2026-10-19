@@ -44,11 +44,22 @@ class _Reader(Parser):
         super().handle_starttag(tag, attrs)
 
 
+def _hidden(node):
+    # HTML attributes are case-insensitive in their relevant token values,
+    # while CSS can separate property/value with tabs or newlines.
+    # A hidden product label or parent cannot attest commercial metadata.
+    aria = node.attrs.get('aria-hidden')
+    style = node.attrs.get('style')
+    compact = ''.join(style.casefold().split()) if type(style) is str else ''
+    return ('hidden' in node.attrs
+            or (type(aria) is str and aria.strip().casefold() == 'true')
+            or 'display:none' in compact
+            or 'visibility:hidden' in compact)
+
+
 def _visible(node, *, wrapper=False):
-    style = (node.attrs.get('style') or '').replace(' ', '').casefold()
     if (node.tag in _IGNORED or (node.tag == 'form' and not wrapper)
-            or 'hidden' in node.attrs or node.attrs.get('aria-hidden') == 'true'
-            or 'display:none' in style or 'visibility:hidden' in style):
+            or _hidden(node)):
         return
     yield node
     for child in node.children:
@@ -57,8 +68,8 @@ def _visible(node, *, wrapper=False):
 
 def _value(node):
     # Excluded descendants must never bleed into an otherwise qualified label.
-    if any(n.tag in _IGNORED or n.tag == 'form' or 'hidden' in n.attrs
-           or n.attrs.get('aria-hidden') == 'true' or n.attrs.get('style')
+    if any(n.tag in _IGNORED or n.tag == 'form' or _hidden(n)
+           or n.attrs.get('style')
            for n in node.walk() if n is not node):
         raise PublicMetadataError()
     text = node.text()
@@ -82,8 +93,7 @@ def extract_public_metadata(html, product_url, expected_title):
     def forms_in(node):
         # A canonical-looking wrapper in an ignored/foreign form is no
         # product context. Respect all ancestors, including the body.
-        if (node.tag in _IGNORED or 'hidden' in node.attrs
-                or node.attrs.get('aria-hidden') == 'true'
+        if (node.tag in _IGNORED or _hidden(node)
                 or node.attrs.get('style')):
             return
         if node.tag == 'form':
