@@ -70,7 +70,14 @@ def refine_loaded_public_pages(pages, **filters) -> PublicPagesRefinement:
             raise ProviderCapabilityError(_ERROR)
         # The single-page implementation revalidates each row's canonical
         # public identity, exact selector evidence, rights and filter input.
-        local = refine_loaded_public_page(page, **filters)
+        try:
+            local = refine_loaded_public_page(page, **filters)
+        except ProviderCapabilityError as exc:
+            if str(exc) == "Numilog public : unverified_local_page":
+                # Expose a single closed page-set error for mixed/forged
+                # evidence, while preserving explicit invalid filter codes.
+                raise ProviderCapabilityError(_ERROR) from None
+            raise
 
         if total is None:
             total = page.total_results
