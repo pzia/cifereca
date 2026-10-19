@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 from concurrent.futures import Future
+from datetime import datetime, timezone
 from threading import Event, Thread, get_ident
 from time import monotonic
 
@@ -129,6 +130,7 @@ class SelectionBroker(Broker):
         super().__init__()
         self.bulk = False
         self.error_count = 55
+        self.bulk_timestamp = datetime.now(timezone.utc).isoformat()
         self.ui_thread = get_ident()
         self.scan_threads = []
 
@@ -138,7 +140,7 @@ class SelectionBroker(Broker):
         self.event_queries.append(dict(query))
         if query.get("severity") in {"error", "critical"}:
             self.scan_threads.append(get_ident())
-        rows = [{"event_id": f"bulk-{i:03d}", "timestamp":"2026-10-18T12:00:00+00:00",
+        rows = [{"event_id": f"bulk-{i:03d}", "timestamp":self.bulk_timestamp,
                  "source":"core_events", "module":"core.sync",
                  "severity": "error" if i < self.error_count else
                              ("critical" if i < self.error_count + 2 else "warning"),
@@ -290,6 +292,13 @@ def main():
             try:
                 callback()
             except Exception as exc:
+                frames = []
+                trace = exc.__traceback__
+                while trace is not None:
+                    if trace.tb_frame.f_code.co_filename == __file__:
+                        frames.append(trace.tb_lineno)
+                    trace = trace.tb_next
+                report["failure_line"] = frames[-1] if frames else 0
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         return wrapped
@@ -586,6 +595,42 @@ def main():
         assert any(q.get("severity") == "error" and q["offset"] == 50 for q in broker.event_queries)
         report["checks"]["P0_2140_errors_57_across_pages_keyboard_background_redacted"] = True
         screenshot("14-bulk-errors-57")
+        if args.width == 1366:
+            report["stage"] = "P0_2140_resize_selected_window_760"
+            content = page[0].get_child()
+            rows = []
+            child = content.get_first_child()
+            while child is not None:
+                rows.append(min(10000, max(0, child.measure(Gtk.Orientation.HORIZONTAL, -1)[0])))
+                child = child.get_next_sibling()
+            minimum = window[0].measure(Gtk.Orientation.HORIZONTAL, -1)[0]
+            report["stage"] = ("P0_2140_narrow_window_minimum" if minimum > 760
+                               else "P0_2140_narrow_allocation_pending")
+            if rows and max(rows) > 724:
+                report["minimum_row"] = rows.index(max(rows))
+            window[0].set_default_size(760, 790)
+            until(lambda: window[0].get_width() <= 760,
+                  lambda: verify_narrow_bulk(payload), seconds=5)
+        else:
+            keyboard_action("Copier la sélection", lambda: read_bulk_clipboard(payload))
+
+    def verify_narrow_bulk(payload):
+        assert 700 <= window[0].get_width() <= 760
+        assert selection_count(57) and selection_preview() == payload
+        horizontal = page[0].get_hadjustment()
+        assert horizontal.get_upper() - horizontal.get_page_size() < 5
+        actions = find_button("Erreurs + critiques (filtres)").get_parent().get_parent()
+        assert isinstance(actions, Gtk.FlowBox)
+        # Validate every actual GTK button allocation against the page width,
+        # rather than assuming wrapping from the presence of a FlowBox.
+        for button in [w for w in walk(actions) if isinstance(w, Gtk.Button)]:
+            ok, bounds = button.compute_bounds(page[0])
+            assert ok
+            assert bounds.get_x() >= 0 and bounds.get_x() + bounds.get_width() <= page[0].get_width()
+        report["checks"]["P0_2140_selected_window_760_without_horizontal_overflow"] = True
+        screenshot("14b-bulk-errors-760")
+        # The remaining real XTEST copy/page/invert/all/cancel/refusal sequence
+        # now runs at760 too, with unchanged assertions and operation deadlines.
         keyboard_action("Copier la sélection", lambda: read_bulk_clipboard(payload))
 
     def read_bulk_clipboard(expected):
