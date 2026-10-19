@@ -650,7 +650,15 @@ class GutenbergSession(ProviderSession):
             if next_url: self._remember_page(rows_cache,page_index+1,next_url)
             if page_index == page: break
             if not next_url:
-                self._diagnostic("GUTENBERG", "OPDS pagination", "ok",detail={"requested_page": page, "last_available_page": page_index}, level="detailed"); return []
+                # This proves only that the *requested OPDS page* does not
+                # exist. For a specialized field, earlier pages were never
+                # exhaustively searched for a matching author/subject/etc.
+                if field not in ("all", ""):
+                    self.last_search_warnings.append(
+                        "partial_results : filtre local limité à la page OPDS demandée"
+                    )
+                self._diagnostic("GUTENBERG", "OPDS pagination", "ok",detail={"requested_page": page, "last_available_page": page_index}, level="detailed")
+                return []
             current_url=next_url; params=None; page_index+=1
         assert response is not None
         parsed = self._parse_feed(response.content, str(response.url)); rows = self._field_filter(parsed, filter_query, field); duration_ms = int((time.perf_counter() - started) * 1000)
