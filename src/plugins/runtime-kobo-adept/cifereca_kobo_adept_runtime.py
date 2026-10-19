@@ -227,11 +227,27 @@ class KoboAdeptRuntime:
             self.last_run_diagnostic.update(stdout_mode='unexpected_json_type', stdout_summary='JSON de type inattendu')
             fail('Kobo-Adept a renvoyé un document inattendu.', 'kobo_adept_invalid_response', returncode=proc.returncode)
         self.last_run_diagnostic.update(stdout_mode='json', stdout_summary='objet JSON')
-        # The public CLI contract is an explicit boolean acknowledgement.
-        # Exit 0 on its own is not evidence that a profile was created, an
-        # ACSM was fulfilled or a loan was returned. Never interpret missing,
-        # null, integer or string "ok" as a successful command.
-        if proc.returncode == 0 and value.get('ok') is not True and value.get('ok') is not False:
+        # A *descriptive* "contract --json" document is not an operation
+        # receipt. Kobo-ADEPT 0.13.6 publishes name/contract_version without
+        # "ok" here. Its known, read-only schema is the sole exception to the
+        # mandatory boolean acknowledgement on all other CLI commands.
+        raw_version = value.get('contract_version')
+        descriptive_contract = (
+            type(args) is list and args == ['contract', '--json']
+            and payload is None and proc.returncode == 0
+            and 'ok' not in value and 'error' not in value
+            and type(value.get('name')) is str and value['name'] == 'kobo-adept'
+            and (
+                (type(raw_version) is int and 0 <= raw_version <= 1000)
+                or (type(raw_version) is str and 1 <= len(raw_version) <= 3
+                    and raw_version.isascii() and raw_version.isdecimal())
+            )
+        )
+        # Exit 0 alone is never proof that a profile was created, an ACSM
+        # fulfilled or a loan returned. Null, integer and string "ok" values
+        # stay invalid, even for the read-only contract command.
+        if (proc.returncode == 0 and value.get('ok') is not True
+                and value.get('ok') is not False and not descriptive_contract):
             fail('Kobo-Adept n’a pas confirmé le résultat de la commande.',
                  'kobo_adept_invalid_response', returncode=proc.returncode)
         # A payload reporting both success and a vendor error is contradictory.

@@ -53,8 +53,8 @@ def profile_payload(name):
 if argv == ["contract", "--json"]:
     save()
     print(json.dumps({
-        "ok": True,
         "name": "kobo-adept",
+        "version": "0.13.6",
         "contract_version": 8,
         "capabilities": ["strict_json_stdout"],
     }))
