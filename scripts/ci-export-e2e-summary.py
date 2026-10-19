@@ -40,11 +40,20 @@ _DIAGNOSTIC_STAGES = frozenset({
     "P0_2027_narrow_header_minimum", "P0_2027_narrow_source_minimum",
     "P0_2027_narrow_scroll_minimum", "P0_2027_narrow_window_minimum",
     "P0_2027_narrow_allocation_pending",
+    "P0_2140_resize_selected_window_760", "P0_2140_narrow_window_minimum",
+    "P0_2140_narrow_allocation_pending", "P0_2140_wait_57_errors",
+    "P0_2140_bulk_fixture",
 })
 
 
 def _failed_diagnostic(source: Path, scenario: str) -> dict:
-    if scenario not in {"mainwindow-baseline-1366", "mainwindow-baseline-1600"}:
+    probes = {
+        "mainwindow-baseline-1366": "diagnostics_navigation_probe.py",
+        "mainwindow-baseline-1600": "diagnostics_navigation_probe.py",
+        "diagnostics-1366": "diagnostics_page_probe.py",
+        "diagnostics-large-1600": "diagnostics_page_probe.py",
+    }
+    if scenario not in probes:
         return {}
     # Workflow --out/scenario + runner's own scenario directory. Never follow
     # a path supplied by summary.json, a symlink or a large/unreadable report.
@@ -65,7 +74,7 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
         if type(stage) is str and stage in _DIAGNOSTIC_STAGES:
             result["last_stage"] = stage
         line = data.get("checkpoint_line")
-        probe = ast.parse((ROOT / "e2e/diagnostics_navigation_probe.py").read_text())
+        probe = ast.parse((ROOT / "e2e" / probes[scenario]).read_text())
         allowed_lines = {n.lineno for n in ast.walk(probe)
                          if isinstance(n, (ast.FunctionDef, ast.Lambda))}
         if type(line) is int and line in allowed_lines:
@@ -78,6 +87,13 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
                            if isinstance(n, (ast.Assert, ast.Raise))}
         if type(failure_line) is int and failure_line in assertion_lines:
             result["failure_line"] = failure_line
+        minimum_row = data.get("minimum_row")
+        if (probes[scenario] == "diagnostics_page_probe.py"
+                and stage == "P0_2140_narrow_window_minimum"
+                and type(minimum_row) is int and 0 <= minimum_row < 128):
+            # A bounded index into the reviewed builder's children, never
+            # widget labels, geometry, paths or arbitrary GTK object reprs.
+            result["minimum_row"] = minimum_row
         duration = data.get("duration_seconds")
         if type(duration) in (int, float) and math.isfinite(duration) and 0 <= duration <= 3600:
             result["duration_seconds"] = round(duration, 2)
