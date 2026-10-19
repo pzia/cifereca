@@ -310,6 +310,8 @@ def validate_public_detail_item(item):
             or getattr(item, "source_provider", None) != "numilog-catalog"
             or getattr(item, "source_credential", None) != "__public__"
             or getattr(item, "source_collection", None) != "public_catalog"
+            or getattr(item, "scenario", None) != "NUMILOG_PUBLIC"
+            or getattr(item, "docbase", None) != "NUMILOG"
             or getattr(item, "owned", None) is not False
             or getattr(item, "downloadable", None) is not False
             or getattr(item, "download_url", None) is not None):
