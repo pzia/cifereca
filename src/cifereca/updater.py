@@ -48,7 +48,8 @@ class UpdateError(RuntimeError):
 class ReleasePluginSmokeError(UpdateError):
     """Sanitized child smoke failure, never raw subprocess output."""
 
-    def __init__(self, *, reason_code: str, smoke_counts: dict[str, int]):
+    def __init__(self, *, reason_code: str, smoke_counts: dict[str, int],
+                 failed_contributions: list[dict[str, str]] | None = None):
         if (reason_code not in SMOKE_FAILURE_CODES
                 or type(smoke_counts) is not dict or set(smoke_counts) != SMOKE_COUNT_FIELDS
                 or any(type(v) is not int or not 0 <= v <= 2048
@@ -57,6 +58,7 @@ class ReleasePluginSmokeError(UpdateError):
         super().__init__("Upgrade des plugins de release échoué")
         self.reason_code = reason_code
         self.smoke_counts = dict(smoke_counts)
+        self.failed_contributions = [dict(row) for row in (failed_contributions or [])]
 
 
 def _run_bounded_process(command: list[str], *, timeout: int, **kwargs: Any) -> subprocess.CompletedProcess:
@@ -793,6 +795,64 @@ def _snapshot_package_ids(snapshot: Path) -> list[str]:
         raise UpdateError("Inventaire des packages du snapshot de release invalide") from None
 
 
+def _attested_snapshot_smoke_failures(
+    snapshot: Path, value: Any,
+) -> list[dict[str, str]]:
+    """Admit child smoke IDs only when present in the exact release snapshot.
+
+    The parent never trusts child CLI IDs, labels, errors, or arbitrary text.
+    The only allowed report is a short manifest-bound identity and fixed
+    runtime failure reason. Failure to attest just omits these optional facts.
+    """
+    from .dev_updater import SMOKE_FAILURE_REASONS, MAX_SMOKE_FAILURE_DETAILS
+    if (type(value) is not list or not 1 <= len(value) <= MAX_SMOKE_FAILURE_DETAILS
+            or any(type(item) is not dict
+                   or set(item) != {"package_id", "plugin_id", "reason_code"}
+                   or any(type(part) is not str for part in item.values())
+                   or item["reason_code"] not in SMOKE_FAILURE_REASONS
+                   for item in value)):
+        return []
+    try:
+        # Prior transaction preparation already checked the complete package
+        # list. Independently attest *contribution* IDs from the same ZIP.
+        _snapshot_package_ids(snapshot)
+        with zipfile.ZipFile(snapshot) as archive:
+            manifests = [name for name in archive.namelist()
+                         if len(PurePosixPath(name).parts) == 2
+                         and PurePosixPath(name).name == "cifereca-dev.json"]
+            if len(manifests) != 1:
+                return []
+            base = PurePosixPath(manifests[0]).parts[0]
+            manifest = json.loads(archive.read(manifests[0]))
+            allowed: set[tuple[str, str]] = set()
+            for record in manifest["plugins"]:
+                member = record["path"] if type(record) is dict else None
+                if type(member) is not str:
+                    return []
+                with zipfile.ZipFile(io.BytesIO(archive.read(base + "/" + member))) as plugin:
+                    descriptor = json.loads(plugin.read("cifereca-plugin.json"))
+                pkg = descriptor["package"]
+                entries = descriptor["plugins"]
+                if type(pkg) is not dict or type(entries) is not list:
+                    return []
+                package_id = pkg.get("id")
+                if type(package_id) is not str:
+                    return []
+                for entry in entries:
+                    plugin_id = entry.get("id") if type(entry) is dict else None
+                    if type(plugin_id) is str:
+                        allowed.add((package_id, plugin_id))
+            if any((row["package_id"], row["plugin_id"]) not in allowed
+                   for row in value):
+                return []
+            # Duplicated child rows are untrustworthy, not independent errors.
+            if len({(r["package_id"], r["plugin_id"]) for r in value}) != len(value):
+                return []
+            return [dict(row) for row in value]
+    except Exception:
+        return []
+
+
 def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, Any]:
     command = _command_path(release, DEV_COMMAND)
     if not command.is_file():
@@ -824,8 +884,14 @@ def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, A
                     if (type(counts) is dict and set(counts) == SMOKE_COUNT_FIELDS
                             and all(type(v) is int and 0 <= v <= 2048
                                     for v in counts.values())):
+                        failures = (_attested_snapshot_smoke_failures(
+                            snapshot, detail.get("failed_contributions"),
+                        ) if detail["reason_code"] == "smoke_contributions_failed" else [])
+                        if len(failures) > counts["contributions_error"] + counts["contributions_incompatible"]:
+                            failures = []
                         raise ReleasePluginSmokeError(
                             reason_code=detail["reason_code"], smoke_counts=counts,
+                            failed_contributions=failures,
                         ) from None
         raise UpdateError("Upgrade des plugins de release échoué")
     try:
@@ -1250,6 +1316,10 @@ def main(argv: list[str] | None = None) -> int:
         if type(exc) is ReleasePluginSmokeError:
             detail["reason_code"] = exc.reason_code
             detail["smoke_counts"] = dict(exc.smoke_counts)
+            if exc.failed_contributions:
+                detail["failed_contributions"] = [
+                    dict(row) for row in exc.failed_contributions
+                ]
         _print({"ok": False, "error": detail}, a.json)
         return 1
 
