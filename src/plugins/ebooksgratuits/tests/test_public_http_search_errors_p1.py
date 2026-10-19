@@ -21,7 +21,7 @@ FORM = '<select name="id_auteur"><option value="17">Doyle</option></select>'
 
 def _session(handler):
     session = mod.EbooksSession(
-        credential_id="public", label="", credentials={}, options={},
+        credential_id="public", label="", credentials={}, options={"acquisition_backend":"html"},
         config={}, diagnostics=None, transport=None,
     )
     session.client.close()

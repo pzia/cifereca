@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.ebooksgratuits",
-    "version": "0.1.16",
+    "version": "0.1.17",
     "name": "Ebooks libres et gratuits",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -13,7 +13,7 @@
       "type": "provider.library",
       "entrypoint": "cifereca_ebooksgratuits:PLUGIN",
       "display_name": "Ebooks libres et gratuits",
-      "description": "Catalogue public francophone et téléchargement EPUB.",
+      "description": "Bibliothèque Calibre Ebooks libres et gratuits et partenaires via catalogue OPDS Atom/COPS.",
       "priority": 45,
       "instantiation": "singleton_public",
       "config_schema": {
@@ -25,7 +25,7 @@
             "format": "uri",
             "default": "https://www.ebooksgratuits.com/",
             "title": "URL du catalogue",
-            "description": "URL du site Ebooks libres et gratuits ; utile notamment pour les jeux de données locaux."
+            "description": "URL historique HTML ; utilisée uniquement pour les simulations quand acquisition_backend=html."
           },
           "timeout_seconds": {
             "type": "number",
@@ -40,11 +40,28 @@
             "minimum": 1,
             "maximum": 200,
             "default": 50
+          },
+          "acquisition_backend": {
+            "type": "string",
+            "enum": [
+              "opds",
+              "html"
+            ],
+            "default": "opds",
+            "title": "Source de catalogue",
+            "description": "opds en production ; html réservé aux simulations de régression."
+          },
+          "opds_feed_url": {
+            "type": "string",
+            "format": "uri",
+            "default": "https://opds2.ebooksgratuits.org/index.php/feed",
+            "title": "Flux Calibre OPDS",
+            "description": "URL racine OPDS Atom/COPS, utiliser seulement un hôte de confiance."
           }
         }
       },
-      "help_text": "Catalogue public sans compte. Recherche par titre, auteur et sujet (catégorie/genre) via les filtres publics du site ; pagination serveur et parsing HTML structuré. Le flux EPUB final est téléchargé par transport.http avec limite de taille, validation EPUB et publication atomique. Les recherches filtrées par genre/catégorie conservent le libellé exact du filtre serveur dans les métadonnées, sans le déduire pour les recherches titre/auteur. Les cartes du catalogue affichant « Parution le JJ/MM/AAAA » publient désormais metadata.ebook_release_date (date de mise à disposition de l'édition EbooksGratuits, jamais l'année originale de l'œuvre), avec provenance exacte. L'avertissement « téléchargement non autorisé dans certains pays » est conservé par livre et explicite dans license_note ; cela ne détermine pas la légalité dans le pays du lecteur et n'interdit pas automatiquement l'accès. Sans indication explicite, aucun âge, date ou droit territorial n'est inventé. L'extraction est locale aux pages déjà reçues, sans HTTP supplémentaire.",
-      "version": "0.1.16",
+      "help_text": "Source principale : catalogue officiel Calibre/COPS OPDS Atom 1.x (https://opds2.ebooksgratuits.org/index.php/feed). Utilise la description OpenSearch du serveur, les liens de navigation et la pagination rel=next, sans scraper le site HTML ni inventer d'endpoint. Les filtres title/author/subject/category/genre sont appliqués localement à la seule page OPDS reçue, avec avertissement partial_results. Les catégories et genres proviennent des éléments Atom de chaque notice ; aucun âge n'est inventé. Aucune date historique, droit territorial ou éditeur ne sont déduits de la provenance ; éditeur rempli seulement s'il est explicite. Seuls les liens EPUB d'acquisition présents dans la notice sont téléchargeables, via transport.http avec validation de l'origine et du format. Le mode html est réservé à la simulation et aux tests existants ; les configurations ordinaires prennent opds.",
+      "version": "0.1.17",
       "capabilities": [
         "catalog.search",
         "catalog.detail",

@@ -1,3 +1,12 @@
+# Acquisition Calibre OPDS — #1084 (0.1.17)
+
+Production : `https://opds2.ebooksgratuits.org/index.php/feed` (COPS, OPDS Atom/XML 1.x, **pas** OPDS JSON 2). Le site officialise cette URL : https://www.ebooksgratuits.com/torrent.php. Recherche via le lien OpenSearch annoncé par la racine ; navigation via liens Atom et pagination par `rel=next` uniquement. Limite de 101 pages demandables ; aucune exploration ou acquisition implicite. Le catalogue Calibre contient aussi des ouvrages de partenaires, donc éditeur renseigné seulement lorsque la notice l'atteste. Titres, auteurs, catégories, genres, mise à jour et liens EPUB proviennent de chaque notice ; pas d'âge inféré depuis `Jeunesse` ni de jugement territorial ou date historique déduits. Les champs spécialisés filtrent localement la page de recherche et annoncent une couverture partielle. La présence d'une offre EPUB est vérifiée par son lien et type MIME, le transport valide le fichier ; des notices sans EPUB restent non téléchargeables.
+
+`acquisition_backend=opds` est le défaut. `opds_feed_url` permet un catalogue de test autorisé. `acquisition_backend=html` conserve l'ancien parseur uniquement pour les tests de régression et les simulateurs locaux ; `base_url` ne pilote que ce mode. Aucun basculement automatique vers HTML si l'OPDS est indisponible : erreur explicite. Recette hors ligne par `test_opds_calibre_1084.py`. Recette live sur le flux tiers non revendiquée ; si le site modifie son contrat, qualifier un échantillon réel avant tout correctif.
+
+---
+
+## Notes historiques du parseur HTML (mode simulation)
 # Ebooks libres et gratuits — provenance des dates et droits (0.1.12)
 
 ## Audit des métadonnées amont #764 — 11 octobre 2026

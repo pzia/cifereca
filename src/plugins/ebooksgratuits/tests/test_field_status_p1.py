@@ -49,7 +49,7 @@ class FakeClient:
 
 def make_session(client):
     session = mod.EbooksSession(
-        credential_id="public", label="", credentials={}, options={},
+        credential_id="public", label="", credentials={}, options={"acquisition_backend":"html"},
         config={}, diagnostics=None, transport=None,
     )
     session.client.close()
