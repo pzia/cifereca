@@ -71,7 +71,7 @@ jobs:
       - name: Validate packaging and strict updater tests
         run: |
           python scripts/verify-packaging.py
-          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_plugins_release_request scripts.test_ci_numilog_core_release_gate scripts.test_ci_plugins_only_receipt_gate
+          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_plugins_release_request scripts.test_ci_numilog_core_release_gate scripts.test_ci_plugins_only_receipt_gate scripts.test_ci_plugins_release_target
           python3 -m scripts.ci_plugins_release_request --event push
           python -m pytest -q tests/test_dev_partial_plugin_updates.py
 
@@ -278,7 +278,7 @@ jobs:
       - name: Validate packaging and updater regressions
         run: |
           python scripts/verify-packaging.py
-          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_numilog_core_release_gate scripts.test_ci_plugins_only_receipt_gate
+          python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release scripts.test_ci_numilog_core_release_gate scripts.test_ci_plugins_only_receipt_gate scripts.test_ci_plugins_release_target
           python -m pytest -q tests/test_dev_partial_plugin_updates.py
 
       - name: Build selected official plugins-only snapshot
@@ -476,20 +476,97 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # Refuse an existing draft whose tag belongs to another commit.
-            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" |
+          # GitHub may not expose an untagged draft through /releases/tags.
+          # Read authenticated paginated release objects and resolve one ID.
+          draft_lookup() {
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
               python3 scripts/ci_plugins_release_target.py \
-                --tag "$RELEASE_TAG" --commit "$GITHUB_SHA"
-            gh release edit "$RELEASE_TAG"               --repo "$GITHUB_REPOSITORY"               --title "$RELEASE_TAG"               --draft
-          else
-            gh release create "$RELEASE_TAG"               --repo "$GITHUB_REPOSITORY"               --target "$GITHUB_SHA"               --title "$RELEASE_TAG"               --generate-notes               --draft
+                --tag "$RELEASE_TAG" --commit "$GITHUB_SHA" --lookup-draft
+          }
+          draft_info="$(draft_lookup)"
+          if [[ "$draft_info" != "none" ]]; then
+            read -r draft_id draft_sha draft_assets <<< "$draft_info"
+            if [[ "$draft_sha" != "$GITHUB_SHA" ]]; then
+              # Strict, one-time recovery for the attested P0 #2095 orphan:
+              # the previous run created an EMPTY draft with no Git tag.
+              # Never retarget an asset-bearing or published release.
+              if [[ "$RELEASE_TAG" != "plugins-v0.9.44+dev.13-001" ||
+                    "$draft_id" != "417619783" ||
+                    "$draft_sha" != "20212b37be5f963aed35eee45b338bcdc188aede" ||
+                    "$draft_assets" != "0" ]]; then
+                echo "Refusing to mutate an unrelated or nonempty release draft." >&2
+                exit 1
+              fi
+              git merge-base --is-ancestor "$draft_sha" "$GITHUB_SHA"
+              git diff --quiet "$draft_sha" "$GITHUB_SHA" -- \
+                VERSION pyproject.toml src/cifereca src/plugins || {
+                echo "Plugin/Core source changed since orphan draft; refusing rescue." >&2
+                exit 1
+              }
+              if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+                echo "Already tagged: refusing orphan draft recovery." >&2
+                exit 1
+              fi
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$draft_id" --silent
+              test "$(draft_lookup)" = "none" || {
+                echo "Orphan draft still exists; refusing new release." >&2
+                exit 1
+              }
+              draft_info="none"
+            fi
           fi
-          # Verify new as well as reused draft metadata before any asset write.
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" |
+          if [[ "$draft_info" == "none" ]]; then
+            notes_file="$RUNNER_TEMP/plugins-only-release-notes.md"
+            {
+              printf '# %s\n\n' "$RELEASE_TAG"
+              printf 'Package : org.cifereca.provider.numilog, source vérifiée [%s](https://github.com/%s/commit/%s).\n\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+              printf '%s\n' '- ZIP Numilog uniquement, checksum SHA-256 et signature keyless Sigstore.'
+              printf '%s\n' '- Installation stricte, refus de Core incompatible et rollback exigés avant publication.'
+            } > "$notes_file"
+            test "$(wc -c < "$notes_file")" -le 8192
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TAG" --notes-file "$notes_file" --draft
+            draft_info="$(draft_lookup)"
+          fi
+          if [[ "$draft_info" == "none" ]]; then
+            echo "Draft creation not observable; refusing asset upload." >&2
+            exit 1
+          fi
+          read -r draft_id draft_sha draft_assets <<< "$draft_info"
+          test "$draft_sha" = "$GITHUB_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$draft_id" |
             python3 scripts/ci_plugins_release_target.py \
               --tag "$RELEASE_TAG" --commit "$GITHUB_SHA"
-          gh release upload "$RELEASE_TAG"             "${{ steps.build.outputs.archive }}"             "${{ steps.build.outputs.archive }}.sha256"             "${{ steps.build.outputs.archive }}.sigstore.json"             --repo "$GITHUB_REPOSITORY"             --clobber
+          test "$draft_assets" = "0" || {
+            echo "Refusing to overwrite assets in an existing draft." >&2
+            exit 1
+          }
+          echo "P0_RELEASE_ID=$draft_id" >> "$GITHUB_ENV"
+          # Untagged GitHub drafts are not reliably addressable by tag.
+          # Upload bytes to the attested release ID, never --clobber.
+          archive="${{ steps.build.outputs.archive }}"
+          for asset in "$archive" "$archive.sha256" "$archive.sigstore.json"; do
+            test -s "$asset" && test ! -L "$asset"
+            filename="${asset##*/}"
+            # Percent-encode '+' in the authorized versioned release tag.
+            encoded_name="${filename//+/%2B}"
+            response="$(curl --fail --silent --show-error \
+              -X POST -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$asset" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$draft_id/assets?name=$encoded_name")"
+            printf '%s' "$response" | python3 -c '
+          import json, os, sys
+          asset = json.load(sys.stdin)
+          assert type(asset) is dict and asset.get("name") == sys.argv[1]
+          assert type(asset.get("id")) is int and asset["id"] > 0
+          assert type(asset.get("size")) is int and asset["size"] == os.stat(sys.argv[2]).st_size
+          assert asset.get("state") == "uploaded"
+          ' "$filename" "$asset"
+          done
 
       # Download the GitHub-hosted draft assets, not the local build output.
       # Failure leaves the release as a draft and prevents publication.
@@ -501,12 +578,42 @@ jobs:
           set -euo pipefail
           artifact_dir="$RUNNER_TEMP/p0-downloaded-official"
           mkdir -p "$artifact_dir"
-          gh release download "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --dir "$artifact_dir" \
-            --pattern "$RELEASE_TAG.zip" \
-            --pattern "$RELEASE_TAG.zip.sha256" \
-            --pattern "$RELEASE_TAG.zip.sigstore.json"
+          # Enumerate exactly three verified assets by release ID; never
+          # depend on tag lookup for untagged drafts.
+          gh api "repos/$GITHUB_REPOSITORY/releases/$P0_RELEASE_ID/assets?per_page=100" |
+            python3 -c '
+          import json, sys
+          rows = json.load(sys.stdin)
+          tag = sys.argv[1]
+          expected = {tag + ".zip", tag + ".zip.sha256", tag + ".zip.sigstore.json"}
+          if type(rows) is not list or len(rows) != 3:
+              raise SystemExit("Unexpected number of plugins-only draft assets")
+          seen = set()
+          for row in rows:
+              if type(row) is not dict or row.get("name") not in expected:
+                  raise SystemExit("Unreviewed plugins-only draft asset")
+              name = row["name"]
+              if name in seen or type(row.get("id")) is not int or row["id"] <= 0:
+                  raise SystemExit("Ambiguous plugins-only draft asset")
+              if type(row.get("size")) is not int or row["size"] <= 0:
+                  raise SystemExit("Invalid plugins-only draft asset size")
+              seen.add(name)
+              print(str(row["id"]) + " " + name)
+          if seen != expected:
+              raise SystemExit("Missing plugins-only draft asset")
+          ' "$RELEASE_TAG" > "$artifact_dir/asset-ids"
+          while read -r asset_id asset_name; do
+            case "$asset_name" in
+              "$RELEASE_TAG.zip"|"$RELEASE_TAG.zip.sha256"|"$RELEASE_TAG.zip.sigstore.json") ;;
+              *) exit 1 ;;
+            esac
+            curl --fail --location --silent --show-error \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/octet-stream" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+              --output "$artifact_dir/$asset_name"
+            test -s "$artifact_dir/$asset_name"
+          done < "$artifact_dir/asset-ids"
           (cd "$artifact_dir" && sha256sum -c "$RELEASE_TAG.zip.sha256")
           cmp "dist/$RELEASE_TAG.zip" "$artifact_dir/$RELEASE_TAG.zip"
           cmp "dist/$RELEASE_TAG.zip.sigstore.json" "$artifact_dir/$RELEASE_TAG.zip.sigstore.json"
@@ -527,11 +634,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" |
+          test -n "${P0_RELEASE_ID:-}"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$P0_RELEASE_ID" |
             python3 scripts/ci_plugins_release_target.py \
               --tag "$RELEASE_TAG" --commit "$GITHUB_SHA"
 
       - name: Publish completed plugins-only release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${P0_RELEASE_ID:-}"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$P0_RELEASE_ID" |
+            python3 scripts/ci_plugins_release_target.py \
+              --tag "$RELEASE_TAG" --commit "$GITHUB_SHA"
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$P0_RELEASE_ID" \
+            -F draft=false > "$RUNNER_TEMP/plugins-only-publish-response.json"
+          python3 - "$RUNNER_TEMP/plugins-only-publish-response.json" <<'PY'
+          import json, sys
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert release.get("draft") is False
+          assert release.get("tag_name") == "plugins-v0.9.44+dev.13-001"
+          assert release.get("target_commitish") == __import__("os").environ["GITHUB_SHA"]
+          assert len(release.get("assets", [])) == 3
+          PY
