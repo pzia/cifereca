@@ -204,7 +204,10 @@ def merge_attested_public_listing(owned, public_rows):
             "amount": price["amount"], "minor_units": price["minor_units"],
             "currency": "EUR", "applies_to": "displayed_card_offer",
         }
-    if type(meta.get("collection")) is str and meta.get("collection"):
+    # Non-textual collection metadata is not evidence of "no collection":
+    # a mutated cache result must fail closed, not silently bypass validation.
+    if meta.get("collection") is not None:
+        _qualified_public_listing_value(public, "collection", meta["collection"])
         proof = evidence.get("collection")
         if proof != {
             "source_url": source,
@@ -212,7 +215,6 @@ def merge_attested_public_listing(owned, public_rows):
             "kind": "observed_public_html",
         }:
             raise ProviderCapabilityError("Numilog : public_edition_evidence_conflict")
-        _qualified_public_listing_value(public, "collection", meta["collection"])
         metadata["public_collection"] = meta["collection"]
     # The catalogue listing may aggregate PDF and EPUB offers. Never copy
     # public.format / ISBN / DRM into the owned edition from a listing match.
