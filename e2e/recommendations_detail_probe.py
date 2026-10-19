@@ -247,7 +247,92 @@ def main():
         state["old_action"].emit("clicked")
         assert len(state["searches"]) == 1
         report["checks"]["disposed_callbacks_inert"] = True
+        # A real deactivation + fresh plugin activation must create a new
+        # GTK detail, not resurrect the old selection or old identity.
+        previous_view = view
+        state["window"].service.current_identity = NS(identity_id="alice")
+        plugin = RecommendationsPlugin().activate(NS(config={}))
+        fresh_widget = plugin.build(_UiHost(state["window"]))
+        plugin._view._start_refresh = lambda: None
+        state["window"].set_content(fresh_widget)
+        state.update(view=plugin._view, plugin=plugin)
+        assert plugin._view is not previous_view
+        later(370, after_reactivation)
+
+    def after_reactivation():
+        view = state["view"]
+        assert view.widget.get_mapped()
+        assert view.selected_identity_id() == "alice"
+        assert view._master._page.store.get_n_items() == 0
+        assert view._master._page.selection.get_selected_item() is None
+        # A long but bounded public description exercises the shared
+        # DetailPanel vertical scroller at both actual Xvfb widths.
+        long_notice = "Description publique attestée, sans achat. " * 150
+        reactivated = ranked(
+            "edition-reopened", "Livre Réactivé", "9780306406157", score=90
+        )
+        reactivated.item["description"] = long_notice
+        # Populate 32 *attested synthetic* authors in the shared Catalogue
+        # section: a stable height stress case independent of how libadwaita
+        # lays out and wraps one long subtitle.
+        reactivated.item["authors"] = [
+            "Autrice Attestée",
+            *(f"Contributeur de référence {index:02d}" for index in range(1, 32)),
+        ]
+        view._ranked = [reactivated]
+        view._render()
+        assert view._master._page.store.get_n_items() == 1
+        view._master._page.selection.set_selected(0)
+        later(250, after_reactivation_detail)
+
+    def after_reactivation_detail():
+        view = state["view"]
+        assert view._master._page.selection.get_selected() == 0
+        assert any(
+            isinstance(widget, Gtk.Label)
+            and widget.get_text() == "Livre Réactivé"
+            for widget in walk(view._master._page.detail)
+        ), "New plugin did not render a fresh detail through shared GTK"
+        assert view.selected_identity_id() == "alice"
+        assert len(state["searches"]) == 1
+        assert not state["plugin"]._view._disposed
+        report["checks"]["reactivation_fresh_detail_and_identity"] = True
+        # A post-selection Gtk allocation may need an extra frame. Probe
+        # the actual shared body scroller after layout, bounded to <1.2 s.
+        assert isinstance(view._master._page.detail.body_scroll, Gtk.ScrolledWindow)
+        later(120, lambda: verify_scrolling(0))
+
+    def verify_scrolling(attempt):
+        view = state["view"]
+        panel = view._master._page.detail
+        scroller = panel.body_scroll
+        assert scroller.get_mapped(), "Shared detail scroller not mapped"
+        adjustment = scroller.get_vadjustment()
+        assert adjustment is not None
+        end = adjustment.get_upper() - adjustment.get_page_size()
+        if end <= 12 and attempt < 8:
+            later(120, lambda: verify_scrolling(attempt + 1))
+            return
+        assert end > 12, "Synthetic long detail never overflows body scrollbar"
+        adjustment.set_value(min(end, 140))
+        assert adjustment.get_value() > 0
+        report["checks"]["detail_scroll_functional"] = True
+        capture("05-reopened-scrolled")
+        # Returning to the list removes the active detail and must not
+        # turn a still-stored old action into a usable callback.
+        view._master._page.selection.set_selected(Gtk.INVALID_LIST_POSITION)
+        later(200, after_return_to_list)
+
+    def after_return_to_list():
+        view = state["view"]
+        assert view._master._page.store.get_n_items() == 1
+        assert view._master._page.selection.get_selected_item() is None
+        state["old_action"].emit("clicked")
+        assert len(state["searches"]) == 1
+        report["checks"]["return_to_list_keeps_old_action_inert"] = True
         report["checks"]["no_network_or_acquisition"] = True
+        capture("06-return-to-list")
+        state["plugin"].deactivate()
         report["status"] = "PASS"
         save()
         app.quit()
