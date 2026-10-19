@@ -3,8 +3,9 @@ import hashlib, html, re, unicodedata
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urljoin, quote_plus, urlsplit, parse_qsl
+from urllib.parse import urljoin, quote_plus, quote, urlsplit, parse_qsl
 import httpx
+import xml.etree.ElementTree as ET
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
 
 BASE='https://www.ebooksgratuits.com/'
@@ -71,7 +72,21 @@ def _safe_catalog_link(base_url, raw_href, kind):
         return None
 
 
-DESCRIPTOR=ProviderDescriptor(id='ebooksgratuits',display_name='Ebooks libres et gratuits',description='Catalogue public francophone et téléchargement EPUB.',state='ready',capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),search_capabilities=ProviderSearchCapabilities(fields=('all','title','author','subject','category','genre'),scopes=('all','digital'),pagination='page',page_size=50,max_pages=MAX_REQUESTED_PAGES,notes=('all/title : formulaire public de recherche par texte titre ; pas une recherche serveur exacte multi-attributs.','author/category/genre : choix dans les sélecteurs HTML publics ; subject : catégorie ou genre disponible, pas un index de sujets exhaustif.','Une valeur sans option correspondante donne zéro parmi les sélecteurs publiés, pas une preuve d’absence dans tout le catalogue.',)),homepage=BASE,notes=('Source publique sans authentification.','Recherche par titre, auteur, catégorie et genre.'))
+DESCRIPTOR=ProviderDescriptor(
+    id='ebooksgratuits', display_name='Ebooks libres et gratuits',
+    description='Catalogue Calibre public via OPDS Atom (COPS) ; téléchargement EPUB.',
+    state='ready',
+    capabilities=ProviderCapabilities(search=True,holdings=True,direct_download=True),
+    search_capabilities=ProviderSearchCapabilities(
+        fields=('all','title','author','subject','category','genre'),
+        scopes=('all','digital'), pagination='page', page_size=50,
+        max_pages=MAX_REQUESTED_PAGES,
+        notes=('Recherche amont OPDS/OpenSearch générale ; champs spécialisés filtrés localement sur la page chargée, couverture non exhaustive.',
+               'Pages OPDS parcourues exclusivement via les liens rel=next du serveur ; pas de crawl implicite.',
+               'Le genre Jeunesse ou une catégorie ne constituent pas une indication d’âge.')),
+    homepage='https://opds2.ebooksgratuits.org/',
+    notes=('Source publique sans authentification ; OPDS Atom 1.x/COPS (pas OPDS2 JSON).',
+           'Le catalogue Calibre inclut aussi des livres partenaires.'))
 class Parser(HTMLParser):
     """Small structured parser for catalog <li> cards; no regex-based DOM slicing."""
     def __init__(self, base_url=BASE):
@@ -207,7 +222,11 @@ def _public_search_error(exc):
 
 class EbooksSession(ProviderSession):
     def __init__(self,*,config,diagnostics,transport=None,**kw):
-        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.16','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+        super().__init__(descriptor=DESCRIPTOR,**kw); self.transport=transport; self.base_url=str(self.options.get('base_url') or BASE).rstrip('/')+'/'; self.client=httpx.Client(timeout=float(self.options.get('timeout_seconds',30)),follow_redirects=True,trust_env=False,headers={'User-Agent':'Cifereca-EbooksGratuits/0.1.17','Accept-Language':'fr-FR,fr;q=0.9'}); self.maximum=int(self.options.get('max_download_bytes',100*1024*1024)); self.diagnostics=diagnostics; self.page_size=int(self.options.get('search_page_size',50))
+        self.acquisition_backend=str(self.options.get('acquisition_backend') or 'opds').strip().lower()
+        if self.acquisition_backend not in {'opds','html'}: raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_backend')
+        self.opds_feed_url=str(self.options.get('opds_feed_url') or OPDS_FEED)
+        self._opds_pages_limit=MAX_REQUESTED_PAGES
     def connect(self):
         self.connected=True; self._accounts=[Account(display_name='Catalogue public',unique_id='ebooksgratuits',provider_id='ebooksgratuits',credential_id=self.credential_id,provider_label=self.descriptor.display_name,is_primary=True)]; return self.accounts
     def close(self): self.client.close(); self.connected=False; self._accounts=[]
@@ -218,6 +237,8 @@ class EbooksSession(ProviderSession):
     def _search_payload(query,page,page_size=50):
         return {'titre':str(query or '').strip(),'offset':str(page*page_size),'Submit':'Rechercher'}
     def search(self,query,scope='all',page=0,field='all'):
+        if self.acquisition_backend == 'opds':
+            return self._search_opds(query,scope=scope,page=page,field=field)
         self.last_search_warnings = []
         # Unimplemented fields/scopes must never masquerade as zero matches.
         if type(field) is not str or field.strip().casefold() not in DESCRIPTOR.search_capabilities.fields:
@@ -300,12 +321,19 @@ class EbooksSession(ProviderSession):
                 metadata['license_note']='Attention : téléchargement non autorisé dans certains pays ; vérifier les droits locaux'
             out.append(SearchResult(id='ebooksgratuits:'+rid,record_id=rid,docbase='EBOOKSGRATUITS',medium='digital',title=card['title'],author=card['author'] or None,type='Livre numérique',format='EPUB',publisher='Ebooks libres et gratuits',published_at=None,description=card['description'] or None,thumbnail_url=card['image'] or None,friendly_url=detail,scenario='EBOOKSGRATUITS_CATALOG',source_provider='ebooksgratuits',source_credential=self.credential_id,download_url=epub,content_type='ebook',source_collection='public',owned=False,downloadable=True,metadata=metadata))
         return out[:self.page_size]
+    def _search_opds(self,query,scope='all',page=0,field='all'):
+        return _opds_search(self,query,scope=scope,page=page,field=field)
     def holdings(self,item,search_terms=''): return ItemDetail(record_id=item.record_id,docbase='EBOOKSGRATUITS',title=item.title,author=item.author,type=item.type,year=None,thumbnail_url=item.thumbnail_url,availability_status='available',availability_label='Téléchargement public EPUB',holdings=[],source_provider=self.provider_id,source_credential=self.credential_id)
     def download_direct(self,item,target_dir):
         if item.source_provider!=self.provider_id or not item.download_url: raise ProviderError('Ebooks libres et gratuits : offre inconnue')
         # A forged or stale record cannot redirect the broker to a foreign host.
-        epub=_safe_catalog_link(self.base_url,item.download_url,'epub')
-        detail=_safe_catalog_link(self.base_url,item.friendly_url,'detail') if item.friendly_url else None
+        opds_item = isinstance(getattr(item,'metadata',None),dict) and item.metadata.get('acquisition_source') == 'opds-calibre'
+        if opds_item:
+            epub=_safe_opds_link(self.opds_feed_url,item.download_url,'download')
+            detail=_safe_opds_link(self.opds_feed_url,item.friendly_url,'detail') if item.friendly_url else None
+        else:
+            epub=_safe_catalog_link(self.base_url,item.download_url,'epub')
+            detail=_safe_catalog_link(self.base_url,item.friendly_url,'detail') if item.friendly_url else None
         if epub != item.download_url or (item.friendly_url and detail != item.friendly_url):
             raise ProviderCapabilityError('Ebooks libres et gratuits : invalid_catalog_link')
         if self.transport is None: raise ProviderError('Ebooks libres et gratuits : transport.http indisponible')
@@ -337,3 +365,266 @@ class Plugin(ProviderPlugin):
     def create_session(self,*,credential_id,label,credentials,options,config,storage,diagnostics):
         session=EbooksSession(credential_id=credential_id,label=label,credentials=credentials,options=options,config=config,diagnostics=diagnostics,transport=self.transport); self._sessions.append(session); return session
 PLUGIN=Plugin()
+
+
+# Calibre/COPS OPDS 1.x adapter (#1084). The old HTML parser remains available
+# solely for local regression/simulation via acquisition_backend="html".
+OPDS_FEED = 'https://opds2.ebooksgratuits.org/index.php/feed'
+ATOM = '{http://www.w3.org/2005/Atom}'
+DC = '{http://purl.org/dc/terms/}'
+OPDS_MAX_FEED_BYTES = 2 * 1024 * 1024
+
+
+def _safe_opds_link(feed_url, href, kind):
+    """Never let remote Atom/OpenSearch input choose another HTTP origin."""
+    if not isinstance(href,str) or not href or len(href)>4096 or any(
+        ch.isspace() or unicodedata.category(ch) in {'Cc','Cf','Cs'}
+        for ch in href
+    ):
+        return None
+    try:
+        base=urlsplit(feed_url)
+        dst=urlsplit(urljoin(feed_url,href))
+        def origin(p):
+            return (p.scheme.lower(),(p.hostname or '').lower(),
+                    p.port if p.port is not None else (443 if p.scheme=='https' else 80))
+        if (base.scheme not in {'https','http'} or origin(base)!=origin(dst)
+                or base.username or base.password or dst.username or dst.password
+                or dst.fragment):
+            return None
+        path=dst.path.lower()
+        # Calibre COPS supplies /index.php/fetch/... downloads; do not infer
+        # ebook URLs by book ID, nor admit arbitrary same-origin action paths.
+        if kind=='download' and not (
+            path.endswith('.epub') or '/index.php/fetch' in path
+            or path.endswith('/fetch.php')
+        ):
+            return None
+        if kind=='feed' and not (
+            '/index.php/' in path or path.endswith('/feed')
+            or path.endswith('.xml') or path.endswith('/feed.php')
+        ):
+            return None
+        return dst.geturl()
+    except ValueError:
+        return None
+
+
+def _xml_root(response):
+    content=response.content
+    if not isinstance(content,bytes) or len(content)>OPDS_MAX_FEED_BYTES:
+        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+    # Reject DTDs and internal entities before stdlib XML parsing.
+    if b'<!doctype' in content.lower() or b'<!entity' in content.lower():
+        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+    try:
+        return ET.fromstring(content)
+    except ET.ParseError as e:
+        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed') from e
+
+
+def _opds_fetch(session,url):
+    checked=_safe_opds_link(session.opds_feed_url,url,'feed')
+    if checked != url:
+        raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
+    # HTTP redirects are never allowed to escape the public feed origin.
+    try:
+        for _ in range(4):
+            response=session.client.get(checked,follow_redirects=False,
+                                        headers={'Accept':'application/atom+xml, application/opensearchdescription+xml'})
+            response.raise_for_status()
+            if response.status_code not in {301,302,303,307,308}:
+                return _xml_root(response),checked
+            target=_safe_opds_link(session.opds_feed_url,response.headers.get('location',''),'feed')
+            if not target:
+                raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
+            checked=target
+        raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
+    except httpx.HTTPError as e:
+        raise _public_search_error(e) from e
+
+
+def _opds_links(node,base):
+    for elem in node.findall(ATOM+'link'):
+        raw=elem.get('href','')
+        yield (elem.get('rel','alternate').lower(),elem.get('type','').lower(),raw,
+               _safe_opds_link(base,raw,'detail'))
+
+
+def _opds_find_link(node,base,rel):
+    for r,mime,raw,checked in _opds_links(node,base):
+        if r == rel and checked:
+            return checked,mime,raw
+    return None,None,None
+
+
+def _opds_template(href,query):
+    """Expand only standard OpenSearch placeholders; no invented endpoint."""
+    if not isinstance(href,str) or '{searchTerms' not in href:
+        return None
+    values={'searchTerms':quote(query,safe=''), 'count':'50',
+            'startIndex':'1', 'startPage':'1', 'language':'fr',
+            'inputEncoding':'UTF-8', 'outputEncoding':'UTF-8'}
+    def repl(match):
+        tag=match.group(1).rstrip('?')
+        return values.get(tag,'') if match.group(1).endswith('?') or tag in values else match.group(0)
+    result=re.sub(r'\{([A-Za-z][A-Za-z0-9]*\??)\}',repl,href)
+    return result if '{' not in result and '}' not in result else None
+
+
+def _opds_search_url(session,root,base,query):
+    for rel,mime,raw,_ in _opds_links(root,base):
+        if rel!='search':
+            continue
+        if 'opensearchdescription+xml' in mime:
+            address=_safe_opds_link(session.opds_feed_url,raw,'feed')
+            if not address: continue
+            description,_=_opds_fetch(session,address)
+            if description.tag.rsplit('}',1)[-1]!='OpenSearchDescription':
+                raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+            for child in description:
+                if child.tag.rsplit('}',1)[-1]!='Url': continue
+                if 'atom+xml' not in child.get('type','').lower(): continue
+                expanded=_opds_template(child.get('template',''),query)
+                safe=_safe_opds_link(session.opds_feed_url,expanded,'feed') if expanded else None
+                if safe: return safe
+        elif 'atom+xml' in mime:
+            expanded=_opds_template(raw,query)
+            safe=_safe_opds_link(session.opds_feed_url,expanded,'feed') if expanded else None
+            if safe: return safe
+    raise ProviderCapabilityError('Ebooks libres et gratuits : search_route_unavailable')
+
+
+def _opds_browse_url(session,root,base):
+    candidates=[]
+    for entry in root.findall(ATOM+'entry'):
+        if any(m.startswith('application/epub+zip') for _,m,_,_ in _opds_links(entry,base)):
+            return base
+        title=(entry.findtext(ATOM+'title') or '').casefold()
+        for r,m,raw,_ in _opds_links(entry,base):
+            if 'atom+xml' not in m or '/acquisition' in r: continue
+            href=_safe_opds_link(session.opds_feed_url,raw,'feed')
+            if href:
+                preference=0 if any(x in title for x in ('all books','tous les livres','tous les ebooks','all ebooks')) else 1
+                candidates.append((preference,href))
+    if not candidates:
+        # A root feed with no books or navigable catalogues is not a verified
+        # empty search result.
+        raise ProviderCapabilityError('Ebooks libres et gratuits : browse_route_unavailable')
+    return min(candidates,key=lambda item:item[0])[1]
+
+
+def _opds_text(elem,tag):
+    child=elem.find(tag)
+    if child is None:return None
+    return html.unescape(' '.join(x.strip() for x in child.itertext() if x.strip()))[:12000] or None
+
+
+def _opds_items(session,feed,feed_url):
+    items=[]
+    for entry in feed.findall(ATOM+'entry'):
+        title=_opds_text(entry,ATOM+'title')
+        if not title:continue
+        entry_id=_opds_text(entry,ATOM+'id')
+        if not entry_id:continue
+        epub=None; alternate=None; thumbnail=None; formats=set()
+        for rel,mime,raw,_ in _opds_links(entry,feed_url):
+            checked=_safe_opds_link(session.opds_feed_url,raw,'download') if mime.startswith('application/epub+zip') else None
+            if checked and ('/acquisition' in rel or rel=='alternate'):
+                epub=epub or checked; formats.add('EPUB')
+            if rel=='alternate' and ('text/html' in mime or 'atom+xml' in mime):
+                alternate=alternate or _safe_opds_link(session.opds_feed_url,raw,'detail')
+            if 'image/thumbnail' in rel or rel.endswith('/thumbnail'):
+                thumbnail=thumbnail or _safe_opds_link(session.opds_feed_url,raw,'detail')
+        author_nodes=entry.findall(ATOM+'author')
+        authors=[_opds_text(n,ATOM+'name') for n in author_nodes]
+        author=', '.join(n for n in authors if n) or None
+        categories=[]; genres=[]
+        for category in entry.findall(ATOM+'category'):
+            label=(category.get('label') or category.get('term') or '').strip()
+            if not label:continue
+            if 'genre' in category.get('scheme','').casefold():
+                genres.append(label)
+            else:categories.append(label)
+        metadata={'license_note':'Vérifier les droits selon le pays',
+                  'acquisition_source':'opds-calibre',
+                  'acquisition_evidence':'opds.entry.link',
+                  'catalogue_url':session.opds_feed_url}
+        if categories:
+            metadata['categories']=list(dict.fromkeys(categories))
+            metadata['category_evidence']='opds.atom.category'
+        if genres:
+            metadata['genres']=list(dict.fromkeys(genres))
+            metadata['genre_evidence']='opds.atom.category.genre'
+        if formats:metadata['available_formats']=sorted(formats)
+        updated=_opds_text(entry,ATOM+'updated')
+        if updated: metadata['catalog_updated_at']=updated
+        rid=hashlib.sha256((session.opds_feed_url+'|'+entry_id).encode('utf-8')).hexdigest()[:24]
+        items.append(SearchResult(
+            id='ebooksgratuits:'+rid,record_id=rid,docbase='EBOOKSGRATUITS',
+            medium='digital',title=title,author=author,type='Livre numérique',
+            format='EPUB' if epub else None,
+            publisher=_opds_text(entry,DC+'publisher'),
+            published_at=None,
+            description=_opds_text(entry,ATOM+'summary') or _opds_text(entry,ATOM+'content'),
+            thumbnail_url=thumbnail,
+            friendly_url=alternate or feed_url,
+            scenario='EBOOKSGRATUITS_CATALOG',
+            source_provider='ebooksgratuits',
+            source_credential=session.credential_id,
+            download_url=epub,content_type='ebook',source_collection='public',
+            owned=False,downloadable=bool(epub),metadata=metadata))
+    return items
+
+
+def _opds_search(session,query,scope='all',page=0,field='all'):
+    session.last_search_warnings=[]
+    if not isinstance(field,str) or field.strip().lower() not in DESCRIPTOR.search_capabilities.fields:
+        raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_field')
+    if not isinstance(scope,str) or scope.strip().lower() not in DESCRIPTOR.search_capabilities.scopes:
+        raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_scope')
+    if not session.connected:raise ProviderError('Ebooks libres et gratuits : connecter le catalogue')
+    if type(page) is not int or not 0<=page<MAX_REQUESTED_PAGES:
+        raise ProviderCapabilityError('Ebooks libres et gratuits : invalid_page')
+    field=field.strip().lower()
+    needle=str(query or '').strip()
+    if field not in {'all','title'} and not needle:
+        return []
+    root,root_url=_opds_fetch(session,session.opds_feed_url)
+    if root.tag!=ATOM+'feed':
+        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+    if needle:
+        url=_opds_search_url(session,root,root_url,needle)
+    else:
+        url=_opds_browse_url(session,root,root_url)
+    if field!='all':
+        session.last_search_warnings.append(
+            'partial_results : filtre '+field+' appliqué uniquement à la page OPDS reçue'
+        )
+    seen=set()
+    for index in range(page+1):
+        if url in seen:raise ProviderError('Ebooks libres et gratuits : invalid_opds_pagination')
+        seen.add(url)
+        feed,current=_opds_fetch(session,url)
+        if feed.tag!=ATOM+'feed':
+            raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+        if index==page:
+            rows=_opds_items(session,feed,current)
+            if field=='title':
+                rows=[row for row in rows if _fold(needle) in _fold(row.title)]
+            elif field=='author':
+                rows=[row for row in rows if _fold(needle) in _fold(row.author)]
+            elif field in {'subject','category','genre'}:
+                def tokens(row):
+                    data=row.metadata
+                    if field=='category':return data.get('categories',[])
+                    if field=='genre':return data.get('genres',[])
+                    return data.get('categories',[])+data.get('genres',[])
+                rows=[row for row in rows if any(_fold(needle) in _fold(x) for x in tokens(row))]
+            return rows[:session.page_size]
+        url,_,_=_opds_find_link(feed,current,'next')
+        if not url:
+            return []
+        url=_safe_opds_link(session.opds_feed_url,url,'feed')
+        if not url:raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
+    return []
