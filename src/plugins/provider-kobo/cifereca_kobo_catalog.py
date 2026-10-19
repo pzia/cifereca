@@ -449,9 +449,12 @@ class KoboCatalogService:
             # Public-only projection is obligatory even with a substitute
             # client that returns forged personal rights on /catalog/search.
             payload = KoboVaultClient._public_catalog_payload(payload)
-        items = payload.get("items")
-        if not isinstance(items, list):
-            return []
+        # A malformed success envelope is not evidence of a valid zero.
+        # The real Vault may reject one branch and still return other rows;
+        # absent/non-array items after projection cannot be called empty.
+        if type(payload) is not dict or type(payload.get("items")) is not list:
+            raise ProviderError("Kobo-Vault : invalid_search_response")
+        items = payload["items"]
         rows: list[SearchResult] = []
         for raw in items:
             if not isinstance(raw, dict):
