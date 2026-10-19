@@ -87,3 +87,50 @@ def package_freshness(
         "freshness": status,
         "freshness_reason": reason,
     }
+
+
+def installed_plugin_update_receipt(
+    package_root: Path, package_id: str, installed_versions: Iterable[str],
+) -> dict[str, object] | None:
+    """Read a bounded local receipt, not remote/authenticated release metadata.
+
+    This records the installer operation and external digest comparison; it
+    cannot attest the Cosign signature or that an already-running GUI has
+    loaded the installed package.
+    """
+    import re
+
+    path = package_root / ".cifereca-last-plugin-update.json"
+    try:
+        if package_root.is_symlink() or path.is_symlink():
+            return None
+        if not path.is_file() or path.stat().st_size > 2048:
+            return None
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if type(receipt) is not dict or receipt.get("schema") != 1 or receipt.get("scope") != "plugins-only":
+        return None
+    if receipt.get("package_id") != package_id or receipt.get("version") not in tuple(installed_versions):
+        return None
+    for key, pattern in (
+        ("version", r"[A-Za-z0-9._+-]{1,64}"),
+        ("snapshot_id", r"[A-Za-z0-9._+-]{0,128}"),
+        ("source_git_commit", r"(?:[a-f0-9]{7,40})?"),
+        ("core_version_tested", r"[A-Za-z0-9._+-]{0,64}"),
+        ("snapshot_sha256", r"[a-f0-9]{64}"),
+        ("package_sha256", r"[a-f0-9]{64}"),
+    ):
+        value = receipt.get(key)
+        if type(value) is not str or not re.fullmatch(pattern, value):
+            return None
+    if type(receipt.get("trusted_digest_verified")) is not bool:
+        return None
+    # Explicitly never infer a trusted signature from manifest-provided data.
+    if receipt.get("signature_verified") is not False:
+        return None
+    return {key: receipt[key] for key in (
+        "scope", "version", "snapshot_id", "source_git_commit",
+        "core_version_tested", "snapshot_sha256", "package_sha256",
+        "trusted_digest_verified", "signature_verified",
+    )}
