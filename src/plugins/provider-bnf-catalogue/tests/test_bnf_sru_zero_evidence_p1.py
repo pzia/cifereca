@@ -18,6 +18,14 @@ def envelope(inner):
     ).encode()
 
 
+def parse(content):
+    # Parsing these synthetic empty SRU responses requires no connection,
+    # HTTP client or account; there are no record rows to project.
+    return BnfCatalogueSession.parse_records(
+        object.__new__(BnfCatalogueSession), content,
+    )
+
+
 @pytest.mark.parametrize("inner", [
     "",
     "<numberOfRecords></numberOfRecords>",
@@ -28,7 +36,7 @@ def envelope(inner):
 ])
 def test_unqualified_or_malformed_sru_total_never_proves_zero(inner):
     with pytest.raises(ProviderError, match="invalid_sru_response") as caught:
-        BnfCatalogueSession.parse_records(envelope(inner))
+        parse(envelope(inner))
     assert "token=" not in str(caught.value)
 
 
@@ -40,7 +48,7 @@ def test_explicit_zero_is_valid_no_results():
 
 def test_service_diagnostic_remains_distinct_from_zero():
     with pytest.raises(ProviderError, match="requête refusée"):
-        BnfCatalogueSession.parse_records(envelope(
+        parse(envelope(
             '<numberOfRecords>0</numberOfRecords><diagnostics>'
             '<diagnostic><message>PRIVATE_TOKEN</message></diagnostic>'
             '</diagnostics>'
