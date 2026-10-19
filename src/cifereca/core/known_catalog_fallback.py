@@ -6,6 +6,7 @@ This is not a purchase, loan, holding, download or fresh provider result.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from ..core.search import filter_loaded_results
@@ -28,14 +29,43 @@ def public_service_unavailable(exc: BaseException) -> bool:
     return search_failure_code(exc) == "SearchTemporarilyUnavailable"
 
 
-def known_public_fallback(
+@dataclass(frozen=True, slots=True)
+class KnownPublicFallbackPage:
+    """Public, immutable offline page; a budget failure is never a zero match."""
+    results: tuple[SearchResult, ...]
+    status: str
+    page: int
+    page_size: int
+    matched_count: int
+    has_more: bool
+
+
+def known_public_fallback_page(
     storage: Any, *, provider_id: str, identity_id: str | None,
     query: str, scope: str, field: str, content_types: tuple[str, ...],
-    now: int | None = None,
-) -> tuple[SearchResult, ...]:
-    """Read bounded, fresh-enough catalogue evidence; no service or network IO."""
-    if not identity_id or len(query.strip()) < 2 or provider_id in {"", "numilog"}:
-        return ()
+    now: int | None = None, page: int = 0, page_size: int = _MAX_RESULTS,
+) -> KnownPublicFallbackPage:
+    """Deterministically page already-known public results, without any HTTP.
+
+    An entire provider/identity scope is scanned once up to the existing
+    10k cap; the declared matched_count is exact only inside that bounded
+    scope. If more rows exist, return *no* results and no false completeness.
+    """
+    def empty(status: str) -> KnownPublicFallbackPage:
+        return KnownPublicFallbackPage(
+            (), status, page if type(page) is int and page >= 0 else 0,
+            page_size if type(page_size) is int and page_size > 0 else 0,
+            0, False,
+        )
+
+    if (type(page) is not int or page < 0 or page > _MAX_CATALOG_ROWS
+            or type(page_size) is not int or not 1 <= page_size <= _MAX_RESULTS
+            or page * page_size >= _MAX_CATALOG_ROWS):
+        return empty("invalid_page")
+    if (type(identity_id) is not str or not identity_id
+            or type(provider_id) is not str or provider_id in {"", "numilog"}
+            or type(query) is not str or len(query.strip()) < 2):
+        return empty("unavailable")
     current = int(time.time()) if now is None else int(now)
     try:
         # Apply exact identity/provider scope in SQLite before the read budget.
@@ -45,9 +75,9 @@ def known_public_fallback(
             limit=_MAX_CATALOG_ROWS + 1,
         )
         if len(entries) > _MAX_CATALOG_ROWS:
-            return ()
+            return empty("scope_budget_exceeded")
     except Exception:
-        return ()
+        return empty("unavailable")
     # The Core mirror already normalizes these bibliographic fields. Perform
     # the same bounded, private-URL rejecting check on persisted rows too:
     # old SQLite rows may predate that validator or have been imported by a
@@ -103,8 +133,14 @@ def known_public_fallback(
         candidates, query, providers=(provider_id,), scope=scope,
         field=field, content_types=content_types,
     )
+    matched_count = len(matched)
+    if not matched_count:
+        return empty("no_known_results")
+    first = page * page_size
+    if first >= matched_count:
+        return KnownPublicFallbackPage((), "page_out_of_range", page, page_size, matched_count, False)
     rows: list[SearchResult] = []
-    for row in matched[:_MAX_RESULTS]:
+    for row in matched[first:first + page_size]:
         entry_meta = row["metadata"]
         rows.append(SearchResult(
             id="known-stale:" + row["key"], record_id=row["item_id"],
@@ -120,4 +156,20 @@ def known_public_fallback(
                 "mirrored_at": row["mirrored_at"],
             },
         ))
-    return tuple(rows)
+    return KnownPublicFallbackPage(
+        tuple(rows), "known_catalog_stale", page, page_size,
+        matched_count, first + len(rows) < matched_count,
+    )
+
+
+def known_public_fallback(
+    storage: Any, *, provider_id: str, identity_id: str | None,
+    query: str, scope: str, field: str, content_types: tuple[str, ...],
+    now: int | None = None,
+) -> tuple[SearchResult, ...]:
+    """Legacy first page API, unchanged for synchronous/progressive clients."""
+    return known_public_fallback_page(
+        storage, provider_id=provider_id, identity_id=identity_id,
+        query=query, scope=scope, field=field, content_types=content_types,
+        now=now, page=0, page_size=_MAX_RESULTS,
+    ).results
