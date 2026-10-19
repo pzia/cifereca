@@ -424,7 +424,7 @@ class EbooksSession(ProviderSession):
         try: dest=Path(self.transport.fetch(source,dest))
         except ProviderError: raise
         except Exception as e: raise ProviderError('Ebooks libres et gratuits : téléchargement inaccessible ou EPUB invalide') from e
-        return dest,item.friendly_url or self.base_url
+        return dest,(item.friendly_url or item.download_url) if opds_item else (item.friendly_url or self.base_url)
 class Plugin(ProviderPlugin):
     descriptor=DESCRIPTOR
     def __init__(self): self._sessions=[]; self.context=None; self.transport=None
