@@ -20,15 +20,20 @@ PLUGINS = ROOT / "src/plugins"
 RETIRED = {
     "org.cifereca.youth-source-usborne",
     "org.cifereca.youth-source-booktrust",
+    "org.cifereca.youth-catalog",
+    "org.cifereca.youth-bibliography-openlibrary",
+    "org.cifereca.youth-detail-enrichment",
+    "org.cifereca.youth-source-discovery",
+    "org.cifereca.youth-source-ecole-loisirs",
+    "org.cifereca.youth-source-milan",
 }
 
 
 def test_retired_sources_have_no_shipped_manifests():
     assert RETIRED == _RETIRED_YOUTH_SOURCE_PACKAGES
-    for suffix in ("usborne", "booktrust"):
-        path = PLUGINS / ("youth-source-" + suffix)
+    for package_id in RETIRED:
+        path = PLUGINS / package_id.removeprefix("org.cifereca.")
         assert not (path / "cifereca-plugin.json").exists()
-        assert not (path / (suffix + "_youth.py")).exists()
 
 
 def test_retired_package_store_is_excluded_from_runtime_discovery():
@@ -56,9 +61,6 @@ def test_youth_source_inventory_and_ci_mapping_exclude_retired_packages():
     for package, deps in dependencies["dependencies"].items():
         assert "booktrust" not in package and "usborne" not in package
         assert all("booktrust" not in p and "usborne" not in p for p in deps)
-    catalogue = (PLUGINS / "youth-catalog/youth_catalog.py").read_text()
-    known = catalogue.split("KNOWN_AGE_SOURCES =", 1)[1].split("}", 1)[0]
-    assert "booktrust" not in known and "usborne" not in known
 
 
 @pytest.mark.parametrize("package_id", sorted(RETIRED))

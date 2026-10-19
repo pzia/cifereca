@@ -65,8 +65,7 @@ class EditorialHttpServiceTests(unittest.TestCase):
         service = catalog["editorial"]
         self.assertEqual(service["plugins"], [])
         self.assertEqual(service["fixture_packages"],
-                         ["literary-criticism", "youth-catalog", "constellations",
-                          "youth-source-discovery", "youth-detail-enrichment"])
+                         ["literary-criticism", "constellations"])
         from plugin_coverage import build_report
         matrix = {r["package"]: r for r in build_report()["packages"]}
         for package in service["fixture_packages"]:

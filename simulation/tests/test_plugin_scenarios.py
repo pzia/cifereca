@@ -9,8 +9,7 @@ import zipfile
 
 SIM = Path(__file__).resolve().parents[1]
 REPO = SIM.parent
-for path in (SIM, REPO / "src/plugins/youth-catalog",
-             REPO / "src/plugins/literary-criticism",
+for path in (SIM, REPO / "src/plugins/literary-criticism",
              REPO / "src/plugins/constellations"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
@@ -54,7 +53,8 @@ class PluginCoverageTests(unittest.TestCase):
         rows = {row["package"]: row for row in plugin_coverage.build_report()["packages"]}
         self.assertIn("kobo", rows["provider-kobo"]["services"])
         self.assertEqual(rows["constellations"]["services"], [])
-        self.assertEqual(rows["youth-catalog"]["ui_routes"], ["ui.page.youth"])
+        self.assertNotIn("youth-catalog", rows)
+        self.assertIn("browser-recorder", rows)
 
 
 class SpecializedFixturesTests(unittest.TestCase):
@@ -78,16 +78,10 @@ class SpecializedFixturesTests(unittest.TestCase):
             self.assertEqual(len(first["files"]), 10)
             self.assertEqual(first["version"], plugin_scenarios.SCHEMA_VERSION)
 
-    def test_youth_data_uses_real_normalizer_and_edition_proofs(self):
-        from youth_catalog import normalize_record, bibliographic_match
-        rows = plugin_scenarios.youth_records()["records"]
-        models = [normalize_record(row, source_id="ux-youth") for row in rows]
-        self.assertEqual(bibliographic_match(models[0], models[5]).status, "confirmed")
-        self.assertEqual(bibliographic_match(models[0], models[4]).status, "suggested")
-        self.assertEqual(len(models[2].age_ranges), 0)
-        self.assertEqual(models[3].age_ranges[0].age_kind, "inferred")
-        self.assertTrue(models[6].age_ranges[0].contains(17))
-        self.assertFalse(models[6].age_ranges[0].contains(18))
+    def test_archived_youth_fixture_remains_available_without_plugin(self):
+        rows = plugin_scenarios.youth_records()
+        self.assertTrue(rows["records"])
+        self.assertIn("age_boundary_18_no_match", rows["cases"])
 
     def test_criticism_feed_is_parseable_by_plugin(self):
         from criticism_feeds import parse_feed

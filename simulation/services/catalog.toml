@@ -76,8 +76,7 @@ script = "editorial/pseudo_editorial_service.py"
 default_port = 8097
 health_path = "/health"
 plugins = []
-fixture_packages = ["literary-criticism", "youth-catalog", "constellations",
-                    "youth-source-discovery", "youth-detail-enrichment"]
+fixture_packages = ["literary-criticism", "constellations"]
 
 [service.editorial.args]
 seed = "--seed"
@@ -89,7 +88,7 @@ script = "youth_sources/pseudo_youth_sources_service.py"
 default_port = 8098
 health_path = "/health"
 plugins = []
-fixture_packages = ["youth-bibliography-openlibrary"]
+fixture_packages = []
 
 [service.youth_sources.args]
 seed = "--seed"
@@ -100,7 +99,7 @@ script = "youth_publishers/pseudo_youth_publishers_service.py"
 default_port = 8099
 health_path = "/health"
 plugins = []
-fixture_packages = ["youth-source-ecole-loisirs"]
+fixture_packages = []
 
 [service.youth_publishers.args]
 seed = "--seed"
@@ -111,7 +110,7 @@ script = "milan/pseudo_milan_service.py"
 default_port = 8101
 health_path = "/health"
 plugins = []
-fixture_packages = ["youth-source-milan"]
+fixture_packages = []
 
 [service.milan.args]
 seed = "--seed"
