@@ -90,11 +90,15 @@ def test_age_evidence_survives_public_mirror_only_for_same_edition(tmp_path):
             {"age_min": 8, "age_max": 10, "age_kind": "publisher",
              "source_label": "De 8 à 10 ans"},
         ]
-        assert [r["item_id"] for r in service.search_known_catalog(
-            "livre", identity_id="alice", age=9,
+        assert [r["item_id"] for r in service.filter_attested_search_results(
+            service.search_known_catalog("livre", identity_id="alice"), age=9,
         )] == ["edition-eight"]
-        assert service.search_known_catalog("livre", identity_id="alice", age=14) == []
-        assert service.search_known_catalog("livre", identity_id="bob", age=9) == []
+        assert service.filter_attested_search_results(
+            service.search_known_catalog("livre", identity_id="alice"), age=14,
+        ) == []
+        assert service.filter_attested_search_results(
+            service.search_known_catalog("livre", identity_id="bob"), age=9,
+        ) == []
         assert "SIGNED" not in repr(stored)
     finally:
         service.close()
@@ -121,18 +125,23 @@ def test_library_service_offline_facade_never_contacts_providers(tmp_path):
         def no_network(*args, **kwargs):
             raise AssertionError("age filtering must not access providers")
         service._sessions = {"forbidden": no_network}
-        assert [r["item_id"] for r in service.search_known_catalog(
-            "livre", identity_id="alice", age=9,
+        assert [r["item_id"] for r in service.filter_attested_search_results(
+            service.search_known_catalog("livre", identity_id="alice"), age=9,
         )] == ["edition-a"]
-        assert [r["item_id"] for r in service.search_known_catalog(
-            "livre", identity_id="alice", age=14,
+        assert [r["item_id"] for r in service.filter_attested_search_results(
+            service.search_known_catalog("livre", identity_id="alice"), age=14,
         )] == ["edition-b"]
         rows = service.search_known_catalog("livre", identity_id="alice")
-        assert [r["item_id"] for r in service.filter_loaded_search_results(
-            rows, "livre", age=9,
+        loaded = service.filter_loaded_search_results(rows, "livre")
+        assert [r["item_id"] for r in service.filter_attested_search_results(
+            loaded, age=9,
         )] == ["edition-a"]
-        assert service.search_known_catalog("livre", identity_id="bob", age=9) == []
-        assert service.search_known_catalog("livre", identity_id="alice", age=8,
-                                            age_kind="reading") == []
+        assert service.filter_attested_search_results(
+            service.search_known_catalog("livre", identity_id="bob"), age=9,
+        ) == []
+        assert service.filter_attested_search_results(
+            service.search_known_catalog("livre", identity_id="alice"),
+            age=8, age_kind="reading",
+        ) == []
     finally:
         service.close()
