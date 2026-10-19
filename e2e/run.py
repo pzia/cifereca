@@ -13,12 +13,12 @@ import sys
 import tempfile
 import time
 
-try:
-    # Pytest may import this script as a module from the repository root.
-    from e2e.gtk_layout_critical import gtk_layout_critical_counts, gtk_layout_critical_failure
-except ModuleNotFoundError:
-    # Direct execution as `python e2e/run.py` starts with e2e/ on sys.path.
-    from gtk_layout_critical import gtk_layout_critical_counts, gtk_layout_critical_failure
+# E2E selection imports this runner by its absolute path (not as a Python
+# package). The module directory must be importable in that mode too.
+_E2E_DIR = str(Path(__file__).resolve().parent)
+if _E2E_DIR not in sys.path:
+    sys.path.insert(0, _E2E_DIR)
+from gtk_layout_critical import gtk_layout_critical_counts, gtk_layout_critical_failure
 
 ROOT = Path(__file__).resolve().parents[1]
 CAPTURE = ROOT / "environnements/openai-chat-debian/capture_app.py"
