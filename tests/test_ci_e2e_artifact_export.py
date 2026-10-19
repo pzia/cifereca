@@ -130,6 +130,46 @@ def test_diagnostics_timeout_wait_line_is_ast_validated_and_never_text():
             assert "PRIVATE" not in repr(row)
 
 
+def test_states_failure_source_lines_are_allowlisted_and_private_data_dropped():
+    """#2139: the states E2E failure identifies code, never UI/secret text."""
+    import ast
+    module = _module()
+    tree = ast.parse((ROOT / "e2e/diagnostics_states_probe.py").read_text())
+    checkpoint = next(node.lineno for node in ast.walk(tree)
+                      if isinstance(node, ast.FunctionDef) and node.name == "d04")
+    failure = next(node.lineno for node in ast.walk(tree)
+                   if isinstance(node, ast.Assert) and node.lineno > checkpoint)
+    wait = next(node.lineno for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "until")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "diagnostics-states-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        report.write_text(json.dumps({
+            "checkpoint_line": checkpoint, "failure_line": failure,
+            "wait_line": wait, "error": "PRIVATE_ACSM_URL",
+            "secret": "PRIVATE_TOKEN", "stage": "PRIVATE_STAGE",
+        }))
+        row = module.safe_summary(source)["results"][0]
+        assert row["checkpoint_line"] == checkpoint
+        assert row["failure_line"] == failure
+        assert row["wait_line"] == wait
+        assert "PRIVATE" not in repr(row)
+        report.write_text(json.dumps({
+            "checkpoint_line": True, "failure_line": str(failure),
+            "wait_line": 10**9, "error": "PRIVATE_ACSM_URL",
+        }))
+        row = module.safe_summary(source)["results"][0]
+        assert "checkpoint_line" not in row
+        assert "failure_line" not in row
+        assert "wait_line" not in row
+        assert "PRIVATE" not in repr(row)
+
+
 class SafeFailureDiagnosisTests(unittest.TestCase):
     def test_failed_baseline_exports_only_closed_stage_valid_line_and_bounded_duration(self):
         import ast
