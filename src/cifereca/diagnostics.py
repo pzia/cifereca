@@ -75,6 +75,9 @@ class DiagnosticEntry:
     duration_ms: int | None = None
     detail: dict[str, Any] | None = None
     task_ref: str | None = None
+    # Only Core's fixed connection-failure producer may set this field.
+    # Arbitrary plugin detail={"provider_id": ...} is NOT an attestation.
+    verified_public_provider_id: str | None = None
 
 
 class Diagnostics:
@@ -106,6 +109,37 @@ class Diagnostics:
         with self._lock:
             self._items.append(entry)
 
+    def add_core_provider_connect_failure(
+        self, provider_id: str, *, singleton: bool = False,
+        duration_ms: int | None = None,
+    ) -> None:
+        """Core-owned closed producer, not part of the plugin Diagnostics broker.
+
+        The caller must have matched provider_id to a registered Core provider;
+        this final validation prevents publication of arbitrary credential,
+        account or user-controlled names. Generic add() never sets the
+        verified provenance bit consumed by the public event feed.
+        """
+        from .core.public_provider_diagnostics import (
+            CONNECT_FAILURE_CODE, UNKNOWN_PROVIDER, canonical_public_provider_id,
+        )
+        if not self.enabled:
+            return
+        if self.level == "errors" or self.LEVELS.get(self.level, 1) >= 1:
+            slug = canonical_public_provider_id(provider_id) or UNKNOWN_PROVIDER
+            time_ms = (duration_ms if type(duration_ms) is int
+                       and 0 <= duration_ms <= 600000 else None)
+            entry = DiagnosticEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                category="PLUGIN",
+                operation="public provider connect" if singleton else "provider connect",
+                status="error", duration_ms=time_ms,
+                detail={"code": CONNECT_FAILURE_CODE, "provider_id": slug},
+                verified_public_provider_id=slug,
+            )
+            with self._lock:
+                self._items.append(entry)
+
     def clear(self) -> None:
         with self._lock:
             self._items.clear()
@@ -116,6 +150,8 @@ class Diagnostics:
             for row in rows:
                 if row.get("task_ref") is None:
                     row.pop("task_ref", None)
+                if row.get("verified_public_provider_id") is None:
+                    row.pop("verified_public_provider_id", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
