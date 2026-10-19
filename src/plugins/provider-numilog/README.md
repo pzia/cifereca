@@ -7,9 +7,10 @@ Le chemin générique `search()` et l'enrichissement direct
 l'utilisation du cache et la projection : un callback terminé pendant
 `close()` ou `connect()` pouvait encore fournir une ancienne notice.
 
-Ces deux parcours capturent désormais la génération de session avant
-lecture et valident, **juste avant de restituer la réponse**, qu'elle
-n'a pas changé et que la session est toujours connectée. Sinon, ils
+Ces deux parcours capturent désormais la génération de session
+**avant la validation des arguments**, la revérifient avant tout GET
+pour refuser une reconnexion survenue pendant la validation, puis
+la revérifient **juste avant de restituer la réponse**. Sinon, ils
 refusent le résultat avec le message fixe
 `Numilog public : navigation_invalidated`, sans URL ni corps HTTP.
 C'est une garde de cycle de vie, **pas une transaction UI** : si une
