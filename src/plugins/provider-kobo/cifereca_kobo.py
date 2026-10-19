@@ -448,10 +448,14 @@ class KoboSession(ProviderSession):
                 if type(collection) is not str and collection is not None:
                     continue
                 private = owned is True or collection in ("library", "archived")
-                if private and account_id is None:
+                # "catalog" is always public even for a fully authenticated
+                # session. A faulty substitute catalogue adapter cannot
+                # promote private hits into an explicitly public search.
+                if private and (account_id is None or scope == "catalog"):
                     continue
                 if "account_id" in meta and (
-                    account_id is None or type(meta["account_id"]) is not str
+                    scope == "catalog" or account_id is None
+                    or type(meta["account_id"]) is not str
                     or meta["account_id"] != account_id
                 ):
                     continue
