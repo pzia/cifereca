@@ -320,7 +320,7 @@ def test_failure_callback_preserves_existing_error_dialog_contract():
     _dropdown(dialogs[0]).select(0)
     dialogs[0].respond("attach")
     window.runner.submissions[0].error(ValueError("édition obsolète"))
-    assert events[-1] == ("error", "édition obsolète", "Rattachement impossible")
+    assert events[-1] == ("error", "Rattachement ADEPT indisponible", "Rattachement impossible")
 
 
 def test_closed_window_does_not_read_provider_inventory_or_create_dialog():
@@ -372,3 +372,44 @@ def test_fallback_validity_and_path_are_neutral_when_absent():
     assert dialogs[0].child.children[-1].props["label"] == (
         "Validité : Inconnue\nChemin ADEPT : Non fourni"
     )
+
+
+@pytest.mark.parametrize("error", [
+    RuntimeError("https://private.invalid/LOAN?token=SECRET_ADEPT"),
+    ValueError("/home/private/borrower/loan.acsm"),
+])
+def test_binding_error_hides_untrusted_exception_text(error):
+    window, adw, events, dialogs = _window()
+    _open(window, adw)
+    _dropdown(dialogs[0]).select(0)
+    dialogs[0].respond("attach")
+    window.runner.submissions[0].error(error)
+    assert events[-1] == ("error", "Rattachement ADEPT indisponible", "Rattachement impossible")
+    assert "SECRET_ADEPT" not in repr(events)
+    assert "/home/private" not in repr(events)
+
+
+def test_binding_exception_is_never_stringified():
+    class Hostile(RuntimeError):
+        def __str__(self):
+            raise AssertionError("A plugin exception must not be stringified")
+    window, adw, events, dialogs = _window()
+    _open(window, adw)
+    _dropdown(dialogs[0]).select(0)
+    dialogs[0].respond("attach")
+    window.runner.submissions[0].error(Hostile())
+    assert events[-1] == ("error", "Rattachement ADEPT indisponible", "Rattachement impossible")
+
+
+def test_binding_public_userfacing_message_preserves_only_safe_text():
+    from cifereca.plugin_api import UserFacingError
+    window, adw, events, dialogs = _window()
+    _open(window, adw)
+    _dropdown(dialogs[0]).select(0)
+    dialogs[0].respond("attach")
+    window.runner.submissions[0].error(
+        UserFacingError("Choisissez un profil actif", code="profile_needed",
+                        technical_detail="Bearer SECRET_ADEPT"),
+    )
+    assert events[-1] == ("error", "Choisissez un profil actif", "Rattachement impossible")
+    assert "SECRET_ADEPT" not in repr(events)

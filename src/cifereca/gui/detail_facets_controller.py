@@ -6,6 +6,8 @@ No new facet extraction/lookup engine is introduced.
 """
 from __future__ import annotations
 
+from ..plugin_api import UserFacingError
+
 
 def add_facets(window, detail, item, controls, *, Adw, Gtk, TaskPriority):
     values = window._facet_values(item)
@@ -113,6 +115,20 @@ def add_facets(window, detail, item, controls, *, Adw, Gtk, TaskPriority):
             "Le retour fournisseur reste une action distincte."
         )
         def return_loan(_button):
+            if getattr(window, "_closed", False):
+                return
+            identity_generation = getattr(window, "_identity_context_generation", None)
+            account_generation = getattr(window, "_account_context_generation", None)
+
+            def report_failure(exc):
+                # An async ADEPT error is not automatically safe for GTK.
+                if (getattr(window, "_closed", False)
+                        or getattr(window, "_identity_context_generation", None) != identity_generation
+                        or getattr(window, "_account_context_generation", None) != account_generation):
+                    return
+                message = (exc.user_message if isinstance(exc, UserFacingError)
+                           else "Restitution ADEPT indisponible")
+                window.show_error(message, "Restitution ADEPT impossible")
             window.runner.submit(
                 "Restitution du prêt ADEPT…",
                 lambda: window.service.return_adept_acquisition(binding["acquisition_id"]),
@@ -127,7 +143,7 @@ def add_facets(window, detail, item, controls, *, Adw, Gtk, TaskPriority):
                         )
                     ),
                 ),
-                lambda exc: window.show_error(str(exc), "Restitution ADEPT impossible"),
+                report_failure,
                 control=button,
                 priority=TaskPriority.USER_ACTION,
             )

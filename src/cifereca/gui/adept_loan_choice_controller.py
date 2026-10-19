@@ -7,6 +7,7 @@ existing TaskRunner queue remain unchanged; GTK/Adw are injected.
 from __future__ import annotations
 
 from ..task_queue import TaskPriority
+from ..plugin_api import UserFacingError
 
 
 def _selected_index(dropdown, count: int) -> int | None:
@@ -111,7 +112,11 @@ def present_adept_loan_choices(window, acquisition_id, loan, result, *, Gtk, Adw
 
         def error(exc):
             if context_current():
-                window.show_error(str(exc), "Rattachement impossible")
+                # Provider/ADEPT errors may carry bearer URLs, keys or book paths.
+                # The explicit user_message contract is the only safe text.
+                message = (exc.user_message if isinstance(exc, UserFacingError)
+                           else "Rattachement ADEPT indisponible")
+                window.show_error(message, "Rattachement impossible")
 
         window.runner.submit(
             "Rattachement du prêt ADEPT…",
