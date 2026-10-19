@@ -169,10 +169,10 @@ def test_initial_refresh_waits_for_first_map_and_is_scheduled_once():
     assert glib.calls == []
 
     widget.emit_map()
-    assert glib.calls == [view.refresh]
+    assert len(glib.calls) == 1 and callable(glib.calls[0])
 
     widget.emit_map()
-    assert glib.calls == [view.refresh]
+    assert len(glib.calls) == 1
 
 
 def test_already_mapped_widget_schedules_initial_refresh_immediately():
@@ -182,7 +182,7 @@ def test_already_mapped_widget_schedules_initial_refresh_immediately():
     view = _FakeView()
 
     _refresh_on_first_map(view, widget, glib)
-    assert glib.calls == [view.refresh]
+    assert len(glib.calls) == 1 and callable(glib.calls[0])
 
 
 class _NoisyIdentityDropDown:
@@ -518,3 +518,54 @@ def test_all_languages_mode_keeps_unknown_language_candidate():
     view._text = SimpleNamespace(get_text=lambda: "")
 
     assert view._matches(ranked("Unknown"))
+
+
+def test_scheduled_first_map_does_not_refresh_disposed_view():
+    widget = _FakeWidget()
+    glib = _FakeGLib()
+    calls = []
+
+    class View:
+        _disposed = False
+        def refresh(self):
+            calls.append("refresh")
+
+    view = View()
+    _refresh_on_first_map(view, widget, glib)
+    widget.emit_map()
+    assert len(glib.calls) == 1
+    view._disposed = True  # deactivated before GTK idle runs
+    assert glib.calls[0]() is False
+    assert calls == []
+
+
+def test_map_after_deactivation_never_queues_refresh():
+    widget = _FakeWidget()
+    glib = _FakeGLib()
+
+    class View:
+        _disposed = True
+        def refresh(self):
+            raise AssertionError("disposed view cannot refresh")
+
+    _refresh_on_first_map(View(), widget, glib)
+    widget.emit_map()
+    assert glib.calls == []
+
+
+def test_live_first_map_idle_refresh_runs_once_and_stops_idle_source():
+    widget = _FakeWidget()
+    glib = _FakeGLib()
+    calls = []
+
+    class View:
+        _disposed = False
+        def refresh(self):
+            calls.append("refresh")
+
+    _refresh_on_first_map(View(), widget, glib)
+    widget.emit_map()
+    widget.emit_map()
+    assert len(glib.calls) == 1
+    assert glib.calls[0]() is False
+    assert calls == ["refresh"]
