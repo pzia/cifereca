@@ -618,9 +618,9 @@ def _opds_load_acquisition(session,initial,field,needle):
                     continue
                 href=_safe_opds_link(session.opds_feed_url,raw,'feed')
                 if not href:continue
-                if any(token in label or token in identifier for token in wanted):
+                if needle and field in {'author','subject','category','genre'} and _fold(needle) in label:
                     rank=0
-                elif needle and _fold(needle) in label:
+                elif any(token in label or token in identifier for token in wanted):
                     rank=1
                 elif any(token in label or token in identifier for token in ('book','livre','ebook')):
                     rank=2
