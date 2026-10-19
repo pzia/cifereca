@@ -13,6 +13,24 @@ sans soumission de formulaire ni déclenchement de téléchargement.**
 | [Blackbone, produit 1171334](https://www.numilog.com/1171334/blackbone--coltan-song-tome-1--des-15-ans.ebook) | Fiche visible : NATHAN, publication **2020-04-16**, **228 pages**, langue « Français », **EAN papier 9782092591086** distinct du **EAN EPUB sans DRM 9782092591093** ; mention éditoriale « Roman ado dès 15 ans ». | Aucune identité d'acheteur, format effectivement acquis, ou politique d'âge machine n'est établie par le texte de la fiche. |
 | [Le Piège de Sainte-Soline, produit 1956345](https://www.numilog.com/1956345/le-piege-de-sainte-soline--megabassines--la-lutte-pour-l-eau.ebook) | Produit public distinct, date **2026-10-01**, marque Massot éditions. La présentation contient des références **ISBN papier / numérique** différentes. | La page publique ne prouve pas que cet ouvrage existe dans un compte Numilog, ni que tous les identifiants du texte sont des EAN structurés avec provenance par format. |
 
+## Nouvelles observations externes — qualification limitée
+
+- Une [page de résultats Numilog indexée publiquement](https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?RAFormat=11&mode=Ra)
+  apparaît avec le couple de paramètres **`mode=Ra` / `RAFormat=11`**
+  et présente des offres audio MP3. **Cela n'atteste ni la sémantique
+  stable de `RAFormat=11`, ni le `<form>`, ni les autres paramètres
+  titre/auteur/EAN, ni une permission d'automatisation** : ce lien
+  est un indice de parcours à qualifier, pas un endpoint ajouté au plugin.
+- Les [conditions générales numériques de Numilog](https://www.numilog.com/Pages/Aide/faq.aspx?idCategorieActive=16)
+  distinguent explicitement les fichiers de formats différents et leurs
+  achats séparés (article 1). La fiche de **produit commercial** ne
+  constitue donc pas une preuve du **fichier et format achetés**. Ce
+  principe reste appliqué pour tout EAN, format ou ISBN issu de l'offre.
+- L'accès à `https://www.numilog.com/robots.txt` n'a pas été possible
+  depuis l'outil public consulté. **Son contenu et les permissions de
+  robots restent inconnus**, sans prétendre qu'il autorise ou interdise
+  un parcours automatisé particulier.
+
 Ces observations **ne sont pas des fixtures HTML brutes**. Les fichiers
 `src/plugins/provider-numilog/tests/fixtures/observed_metadata_*.html`
 et `public_search_jefferson_20261016.html` ont déjà une traçabilité

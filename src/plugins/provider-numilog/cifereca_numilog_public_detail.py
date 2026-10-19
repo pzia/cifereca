@@ -314,6 +314,44 @@ def parse_public_detail_jsonld(html, product_url):
     pages = node.get("numberOfPages")
     if type(pages) is int and 1 <= pages <= 20000:
         fields["public_page_count"] = pages
+
+    # Explicit Schema.org Book editorial declarations. A commercial genre,
+    # search keyword or series name is NEVER a purchased-edition identity,
+    # ISBN, verified shelving classification or right to an EPUB/PDF file.
+    # The exact declared literals (including comma-separated keywords) stay
+    # intact; no heuristic tokenization, translation or taxonomy mapping.
+    for source_key, destination in (
+        ("genre", "genres"), ("keywords", "public_keywords"),
+    ):
+        values = node.get(source_key)
+        if type(values) is str:
+            values = [values]
+        if (type(values) is list and 1 <= len(values) <= 16
+                and all(_valid_text(label, 256)
+                        and not label.strip().casefold().startswith(
+                            ("http://", "https://", "javascript:", "data:")
+                        ) for label in values)):
+            fields[destination] = list(dict.fromkeys(v.strip() for v in values))
+
+    headline = node.get("alternativeHeadline")
+    if (_valid_text(headline, 256) and not headline.strip().casefold().startswith(
+            ("http://", "https://", "javascript:", "data:"))):
+        # alternativeHeadline is not automatically the book's subtitle.
+        fields["public_alternative_headline"] = headline.strip()
+
+    series = node.get("isPartOf")
+    if type(series) is dict:
+        kind, series_name = series.get("@type"), series.get("name")
+        if (type(kind) is str and kind in {
+                "BookSeries", "CreativeWorkSeries",
+                "https://schema.org/BookSeries",
+                "http://schema.org/BookSeries",
+                "https://schema.org/CreativeWorkSeries",
+                "http://schema.org/CreativeWorkSeries",
+            } and _valid_text(series_name, 256)
+                and not series_name.strip().casefold().startswith(
+                    ("http://", "https://", "javascript:", "data:"))):
+            fields["public_series_label"] = series_name.strip()
     from cifereca_numilog_public_identifiers import (
         PublicIdentifierError, extract_public_identifiers,
     )
@@ -400,22 +438,36 @@ def validated_public_jsonld_fields(detail, product_url):
         "translators": 16, "illustrators": 16, "contributors": 16,
         "public_edition_label": 256, "public_age_range_label": 80,
         "public_page_count": 20000,
+        "genres": 16, "public_keywords": 16,
+        "public_alternative_headline": 256,
+        "public_series_label": 256,
     }
     if (not set(fields).issubset(allowed)
             or set(fields) != set(evidence)):
         raise PublicDetailError("public_jsonld_evidence_unverified")
     result, proofs = {}, {}
     for key, value in fields.items():
-        if key in {"authors", "translators", "illustrators", "contributors"}:
+        if key in {"authors", "translators", "illustrators", "contributors",
+                   "genres", "public_keywords"}:
             ceiling = 32 if key == "authors" else 16
             if (type(value) is not list or not 1 <= len(value) <= ceiling
                     or any(not _valid_text(name, 256) or name != name.strip()
                            for name in value)
-                    or (key != "authors" and len(set(value)) != len(value))):
+                    or (key != "authors" and len(set(value)) != len(value))
+                    or (key in {"genres", "public_keywords"} and any(
+                        name.casefold().startswith(
+                            ("http://", "https://", "javascript:", "data:")
+                        ) for name in value))):
                 raise PublicDetailError("public_jsonld_evidence_unverified")
             qualified = list(value)
         elif key == "public_page_count":
             if type(value) is not int or not 1 <= value <= allowed[key]:
+                raise PublicDetailError("public_jsonld_evidence_unverified")
+            qualified = value
+        elif key in {"public_series_label", "public_alternative_headline"}:
+            if (not _valid_text(value, allowed[key]) or value != value.strip()
+                    or value.casefold().startswith(
+                        ("http://", "https://", "javascript:", "data:"))):
                 raise PublicDetailError("public_jsonld_evidence_unverified")
             qualified = value
         elif key == "isbn_edition_unspecified":
