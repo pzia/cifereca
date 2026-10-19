@@ -66,7 +66,11 @@ def index_local_loan_artifact(
         final_path, title=loan.title, item_id=str(loan.record_id or loan.id),
         identity_id=identity.identity_id, provider_id=loan.source_provider,
     )
-    _TRACE_LOG.info("TRACE download catalog index end loan_ref=%s indexed=%s dt=%.3fs", trace_ref, scan.get("status") == "indexed", time.monotonic()-index_started)
-    if scan.get("status") != "indexed":
+    # Only the Core indexer's native receipt can attest a completed index.
+    # Never invoke a plugin-owned mapping getter or comparison to turn an
+    # untrusted result into success, or serialize its failure details.
+    indexed = type(scan) is dict and type(scan.get("status")) is str and scan["status"] == "indexed"
+    _TRACE_LOG.info("TRACE download catalog index end loan_ref=%s indexed=%s dt=%.3fs", trace_ref, indexed, time.monotonic()-index_started)
+    if not indexed:
         raise ProviderConfigurationError("Indexation locale impossible")
     return final_inspection, scan
