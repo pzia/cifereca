@@ -29,9 +29,8 @@ def test_unknown_markers_cannot_publish_private_phases():
     data = ("CIFERECA_E2E_GTK_PHASE:window_shown\n"
             "CIFERECA_E2E_GTK_PHASE:SECRET_PROFILE\n"
             "(gtk): Gtk-CRITICAL GtkStack https://private.invalid/?token=PRIVATE\n")
-    assert gtk["gtk_layout_phase_counts"](data) == {
-        "window_shown": {"GtkStack": 1, "GtkRevealer": 0}
-    }
+    # An unreviewed phase must not steal the previous valid phase.
+    assert gtk["gtk_layout_phase_counts"](data) == {}
     assert gtk["gtk_layout_phase_counts"](None, {}) == {}
 
 
@@ -41,4 +40,4 @@ def test_probe_and_runner_use_dual_stream_without_replacing_existing_contract():
     assert 'print(marker, file=sys.stdout, flush=True)' in source
     assert 'print(marker, file=sys.stderr, flush=True)' in source
     assert 'gtk_layout_phase_counts(output, errors)' in runner
-    assert '"gtk_layout_phase": gtk_phases if name.startswith("mainwindow-baseline-") else {}' in runner
+    assert '"gtk_layout_phase": gtk_phases if name.startswith(("mainwindow-baseline-", "maintenance-tools-")) else {}' in runner
