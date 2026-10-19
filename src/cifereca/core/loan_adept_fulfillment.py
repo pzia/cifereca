@@ -15,19 +15,14 @@ def fulfill(self, request, *, profile_name, adept_borrower_identity_id,
     result = self.execute_acquisition_request(request)
     from ..adept_binding import capture_binding
     adept_binding = capture_binding(result, profile_name=profile_name, profile_id=originating_profile_id)
-    # Post-fulfillment telemetry is best-effort. A provider-owned diagnostic
-    # getter must never turn a successful ADEPT operation into an acquisition
-    # failure after the signed ACSM has already been consumed.
-    try:
-        diag = self.runtime_diagnostic("runtime.kobo-adept")
-    except Exception:
-        diag = {}
+    # Keep the historical exception contract of runtime_diagnostic(): an
+    # explicit runtime failure still propagates unchanged to the caller.
+    # Only projection of unexpected return *values* is fail-closed, without
+    # invoking an untrusted mapping subclass's getter.
+    diag = self.runtime_diagnostic("runtime.kobo-adept")
 
     def runtime_fact(name):
-        try:
-            return diag.get(name)
-        except Exception:
-            return None
+        return diag.get(name) if type(diag) is dict else None
 
     _TRACE_LOG.info(
         "TRACE download adept end loan_ref=%s returncode=%s duration_ms=%s dt=%.3fs",
