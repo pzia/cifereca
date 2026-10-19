@@ -11,6 +11,10 @@ from typing import Any, Callable
 
 from ..models import Account
 from ..providers import ProviderConfigurationError, ProviderSession
+from .public_provider_diagnostics import (
+    CONNECT_FAILURE_CODE, MISSING_PROVIDER_CODE,
+    public_connection_failure, bounded_connection_failures,
+)
 
 def attach_plugin_manager(self, manager: Any) -> list[str]:
     """Attach Plugin API services, preferring external providers/runtimes when ready."""
@@ -392,6 +396,10 @@ def provider_diagnostic_state(self) -> dict[str, Any]:
         "plugins": self.registry.diagnostic_state(),
         "sessions": sessions,
         "errors": {"connect_failed": min(10000, len(self._session_errors))},
+        # Separate safe projection; legacy private errors remain internal.
+        "connection_failures": bounded_connection_failures(
+            getattr(self, "_connect_failures_public", ()),
+        ),
         "kobo_adept": adept,
     }
 
@@ -425,6 +433,7 @@ def disconnect_configured(self) -> None:
             pass
         self._sessions.pop(key, None)
     self._session_errors = {}
+    self._connect_failures_public = ()
     self._active_session_key = None
     self.primary = self._local_account()
     self.accounts = [self.primary]
@@ -492,6 +501,19 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     return session
 
 
+def _publish_connection_failure(diagnostics: Any, failure: dict[str, str], *,
+                                singleton: bool = False, duration_ms: int | None = None) -> None:
+    """Prefer the Core-attested producer; legacy diagnostics mocks stay usable."""
+    publish = getattr(diagnostics, "add_core_provider_connect_failure", None)
+    if callable(publish):
+        publish(failure["provider_id"], singleton=singleton, duration_ms=duration_ms)
+    else:
+        diagnostics.add(
+            "PLUGIN", "public provider connect" if singleton else "provider connect",
+            "error", detail=failure,
+        )
+
+
 def connect_configured(self, *, logger) -> dict[str, Any]:
     """Connect all enabled provider identities from local preferences.
 
@@ -506,6 +528,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
     all_accounts: list[Account] = []
     connected: list[str] = []
     errors: dict[str, str] = {}
+    failures: list[dict[str, str]] = []
 
     rows = self.config.provider_accounts(enabled_only=True)
     configured_provider_ids = {str(row.get("provider") or "").strip().lower() for row in rows if isinstance(row, dict)}
@@ -552,6 +575,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             config=self.config, storage=self.storage, diagnostics=self.diagnostics,
         )
         key = self._session_key(provider_id, credential_id)
+        public_started = time.monotonic()
         try:
             session.connect()
             self._sessions[key] = session
@@ -566,9 +590,15 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             except Exception:
                 pass
             errors[key] = "Connexion à la source indisponible"
-            self.diagnostics.add(
-                "PLUGIN", "public provider connect", "error",
-                detail={"code": "provider_connect_failed"},
+            public_failure = public_connection_failure(self.registry, provider_id)
+            failures.append(public_failure)
+            logger.warning(
+                "TRACE provider connect error code=provider_connect_failed provider_id=%s",
+                public_failure["provider_id"],
+            )
+            _publish_connection_failure(
+                self.diagnostics, public_failure, singleton=True,
+                duration_ms=int((time.monotonic() - public_started) * 1000),
             )
 
     logger.info("TRACE connect-configured enabled-rows=%s", len(rows))
@@ -583,6 +613,9 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         plugin = self.registry.maybe_get(provider_id)
         if plugin is None:
             errors[f"{provider_id}:{credential_id}"] = "Plugin inconnu"
+            failures.append(public_connection_failure(
+                self.registry, provider_id, code=MISSING_PROVIDER_CODE,
+            ))
             continue
         if plugin.descriptor.state != "ready":
             # Skeletons are visible to the GUI/docs but never perform I/O.
@@ -622,18 +655,25 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         except Exception:
             # Never invoke logger.exception: the traceback may include signed
             # endpoints, plugin credentials, response bodies and local paths.
-            logger.warning("TRACE provider connect error code=provider_connect_failed dt=%.3fs", time.monotonic()-item_started)
+            public_failure = public_connection_failure(self.registry, provider_id)
+            logger.warning(
+                "TRACE provider connect error code=provider_connect_failed provider_id=%s dt=%.3fs",
+                public_failure["provider_id"], time.monotonic()-item_started,
+            )
             try:
                 session.close()
             except Exception:
                 pass
             errors[key] = "Connexion à la source indisponible"
-            self.diagnostics.add(
-                "PLUGIN", "provider connect", "error",
-                detail={"code": "provider_connect_failed"},
+            failures.append(public_failure)
+            _publish_connection_failure(
+                self.diagnostics, public_failure,
+                duration_ms=int((time.monotonic() - item_started) * 1000),
             )
 
     self._session_errors = errors
+    self._connect_failures_public = tuple(failures)
+    public_failures = bounded_connection_failures(failures)
     if not all_accounts:
         # Local-first cifereca is usable without any provider. Plugin
         # installation/configuration and the local Library remain available.
@@ -642,7 +682,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         self.current_account = self.primary
         self._active_session_key = None
         self.last_loans = []
-        return {"accounts": self.accounts, "identities": self.identities, "loans": [], "connected": connected, "errors": errors}
+        return {"accounts": self.accounts, "identities": self.identities, "loans": [], "connected": connected, "errors": errors, "connection_failures": public_failures}
 
     self.accounts = all_accounts
     self.current_account = all_accounts[0]
@@ -650,7 +690,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
     self._active_session_key = self._session_key(self.current_account.provider_id, self.current_account.credential_id)
     self.primary = self.current_account
     loans = self.refresh_identity_loans(force=True)
-    return {"accounts": self.accounts, "identities": self.identities, "loans": loans, "connected": connected, "errors": errors}
+    return {"accounts": self.accounts, "identities": self.identities, "loans": loans, "connected": connected, "errors": errors, "connection_failures": public_failures}
 
 
 def login(self, username: str, password: str) -> dict[str, Any]:

@@ -17,6 +17,10 @@ from typing import Any
 from .diagnostic_numilog_projection import (
     public_numilog_fields, public_numilog_message, public_numilog_session_log,
 )
+from .public_provider_diagnostics import (
+    CONNECT_FAILURE_CODE, canonical_public_provider_id,
+)
+from ..diagnostics import Diagnostics
 
 _LOG_LINE = re.compile(
     r"^(?P<date>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+) "
@@ -278,6 +282,25 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                  if word in _STRUCTURED_TERMS][:5]
         message = " ".join(terms) if terms else "[opération masquée]"
         public_detail = {}
+        # This projection is restricted to the Core connection producer's
+        # exact fixed operation/code pair. Other PLUGIN records remain masked,
+        # even if an arbitrary plugin supplies a well-formed provider_id.
+        if (category == "PLUGIN"
+                and operation in {"provider connect", "public provider connect"}
+                and status in {"error", "failed"}
+                and type(diagnostics) is Diagnostics
+                and type(row.get("detail")) is dict
+                and row["detail"].get("code") == CONNECT_FAILURE_CODE):
+            identifier = canonical_public_provider_id(
+                row["detail"].get("provider_id")
+            )
+            if (identifier is not None and
+                    row.get("verified_public_provider_id") == identifier):
+                public_detail = {
+                    "provider_id": identifier,
+                    "code": CONNECT_FAILURE_CODE,
+                }
+                message = "connexion fournisseur échouée"
         if category == "NUMILOG":
             public_detail = public_numilog_fields(
                 operation, row.get("detail"), row.get("duration_ms"),
