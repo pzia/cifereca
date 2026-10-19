@@ -54,6 +54,7 @@ def test_excessive_or_untyped_error_counts_still_fail_closed(attempted, failed):
 
 def test_private_extraneous_diagnostic_field_cannot_enter_render():
     report = _status()
+    report["status"] = "failed"  # Durable status remains safe if auxiliary detail is invalid.
     report["diagnostic"]["private_url"] = "https://secret.invalid/?token=PRIVATE"
     text = describe_run("on_start", report, now=2_000_000_000)
     assert "PRIVATE" not in text
