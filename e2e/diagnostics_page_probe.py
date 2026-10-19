@@ -288,6 +288,12 @@ def main():
     def step(callback):
         def wrapped():
             try:
+                code = getattr(callback, "__code__", None)
+                if code is not None and code.co_filename == __file__:
+                    report["checkpoint_line"] = code.co_firstlineno
+                # Persist the last scheduled source checkpoint before native
+                # GTK work: SIGABRT cannot run Python's exception handler.
+                save()
                 callback()
             except Exception as exc:
                 frames = []

@@ -75,18 +75,28 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
             result["last_stage"] = stage
         line = data.get("checkpoint_line")
         probe = ast.parse((ROOT / "e2e" / probes[scenario]).read_text())
-        allowed_lines = {n.lineno for n in ast.walk(probe)
+        helper_allowed = probes[scenario] == "diagnostics_navigation_probe.py"
+        helper_probe = ast.parse((ROOT / "e2e/activity_feedback_acceptance.py").read_text()) if helper_allowed else None
+        checkpoint_helper = helper_allowed and data.get("checkpoint_source") == "activity_feedback"
+        checkpoint_probe = helper_probe if checkpoint_helper else probe
+        allowed_lines = {n.lineno for n in ast.walk(checkpoint_probe)
                          if isinstance(n, (ast.FunctionDef, ast.Lambda))}
         if type(line) is int and line in allowed_lines:
             result["checkpoint_line"] = line
+            if checkpoint_helper:
+                result["checkpoint_source"] = "activity_feedback"
         # A callback checkpoint may be a lambda calling another function.
         # Publish the actual failure location only when it is a reviewed
         # assertion/raise statement in this exact probe, never traceback text.
         failure_line = data.get("failure_line")
-        assertion_lines = {n.lineno for n in ast.walk(probe)
+        failure_helper = helper_allowed and data.get("failure_source") == "activity_feedback"
+        failure_probe = helper_probe if failure_helper else probe
+        assertion_lines = {n.lineno for n in ast.walk(failure_probe)
                            if isinstance(n, (ast.Assert, ast.Raise))}
         if type(failure_line) is int and failure_line in assertion_lines:
             result["failure_line"] = failure_line
+            if failure_helper:
+                result["failure_source"] = "activity_feedback"
         minimum_row = data.get("minimum_row")
         if (probes[scenario] == "diagnostics_page_probe.py"
                 and stage == "P0_2140_narrow_window_minimum"
@@ -106,6 +116,42 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
         return result
     except (OSError, UnicodeError, ValueError, RecursionError):
         return {}
+
+
+def _native_abort_diagnosis(source: Path, scenario: str, code: int) -> dict:
+    """Classify a native abort using fixed markers, never disclose log text.
+
+    This is a hint from stderr plus the actual process exit, not an assertion
+    of root cause. Native aborts may leave no Python report at all.
+    """
+    if code not in {-6, 134}:
+        return {}
+    result = {"native_failure_kind": "unclassified_native_abort"}
+    directory = source.resolve().parent / scenario
+    nested = directory / scenario
+    log = nested / "stderr.log"
+    try:
+        if any(p.is_symlink() for p in (directory, nested, log)):
+            return result
+        if not log.is_file() or log.stat().st_size > MAX_BYTES:
+            return result
+        with log.open("rb") as handle:
+            handle.seek(max(0, log.stat().st_size - 32768))
+            tail = handle.read(32768)
+        markers = (
+            ("allocator_abort_marker", (b"malloc():", b"double free or corruption",
+                                        b"free(): invalid pointer", b"corrupted size vs.")),
+            ("gtk_assertion_marker", (b"Gtk:ERROR:", b"Gtk-ERROR **:")),
+            ("glib_assertion_marker", (b"GLib:ERROR:", b"GLib-GObject:ERROR:")),
+            ("python_abort_marker", (b"Fatal Python error:",)),
+        )
+        for category, candidates in markers:
+            if any(marker in tail for marker in candidates):
+                result["native_failure_kind"] = category
+                break
+    except OSError:
+        pass
+    return result
 
 
 def safe_summary(source: Path) -> dict:
@@ -138,6 +184,7 @@ def safe_summary(source: Path) -> dict:
         # messages, personal paths, URLs, JSON/JSONL, logs, pixels and images.
         if code != 0:
             row.update(_failed_diagnostic(source, scenario))
+            row.update(_native_abort_diagnosis(source, scenario, code))
         rows.append(row)
     return {"schema": "cifereca-e2e-public-verdict/v1", "results": rows}
 
