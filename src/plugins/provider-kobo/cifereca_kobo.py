@@ -422,21 +422,29 @@ class KoboSession(ProviderSession):
             self.last_search_warnings.append(
                 "partial_results : compte Kobo non attesté ; catalogue public seulement"
             )
-        if account_id is not None and scope != "catalog":
-            rejections = getattr(self.catalog, "last_search_rejections", ())
-            if type(rejections) in (tuple, list) and any(
+        # Rejected rows or branches cannot certify exhaustive search, even
+        # if the valid subset contains no books. Publish fixed words only;
+        # never interpolate vendor diagnostics, account IDs or product keys.
+        rejections = getattr(self.catalog, "last_search_rejections", ())
+        if type(rejections) in (tuple, list):
+            limited = rejections[:128]
+            if account_id is not None and scope != "catalog" and any(
                 type(row) is dict
-                and type(row.get("source")) is str
-                and type(row.get("reason")) is str
-                and row["source"] == "library"
-                and row["reason"] == "personal_search_denied"
-                for row in rejections[:64]
+                and row.get("source") == "library"
+                and row.get("reason") == "personal_search_denied"
+                for row in limited
             ):
-                # Never pass Vault exception/body, credentials or account IDs
-                # across the public warning boundary.
                 self.last_search_warnings.append(
                     "partial_results : recherche personnelle refusée ; "
                     "catalogue public seulement"
+                )
+            if any(
+                type(row) is dict
+                and row.get("reason") != "personal_search_denied"
+                for row in limited
+            ):
+                self.last_search_warnings.append(
+                    "partial_results : notices Kobo invalides ignorées"
                 )
         accepted: list[SearchResult] = []
         for item in rows:
