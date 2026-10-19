@@ -108,3 +108,27 @@ class PluginsOnlyWorkflowRecoveryContracts(unittest.TestCase):
         assert 'test "$draft_assets" = "0"' in workflow
         assert 'len(rows) != 3' in workflow
         assert 'assert len(release.get("assets", [])) == 3' in workflow
+
+
+    def test_release_draft_mutation_step_has_valid_bash_syntax(self):
+        """CI must parse the *actual* GitHub Actions shell block before merge."""
+        from pathlib import Path
+        import subprocess
+
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/plugins-only-release.yml").read_text(encoding="utf-8")
+        lines = workflow.splitlines()
+        position = next(i for i, line in enumerate(lines)
+                        if line.strip() == "- name: Create or update draft GitHub Release")
+        run = next(i for i in range(position + 1, len(lines))
+                   if lines[i] == "        run: |")
+        stop = next(i for i in range(run + 1, len(lines))
+                    if lines[i].startswith("      - name: "))
+        block = lines[run + 1:stop]
+        assert block and all(line.startswith("          ") or line == ""
+                             for line in block)
+        shell = "\n".join(line[10:] if line else "" for line in block) + "\n"
+        checked = subprocess.run(["bash", "-n"], input=shell, text=True,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 check=False)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
