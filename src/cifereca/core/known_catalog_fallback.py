@@ -25,7 +25,7 @@ _PUBLIC_META = frozenset({
 })
 
 
-_PUBLIC_STALE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,510}\\Z")
+_PUBLIC_STALE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,510}")
 
 
 def _safe_stale_identifier(value: Any) -> bool:
@@ -45,9 +45,9 @@ def _safe_stale_bibliographic_text(value: Any, *, field: str) -> str | None:
         return None
     # A path is not a bibliographic source identifier. Backslashes are
     # forbidden conservatively, even for rare legitimate book titles.
-    if checked.startswith(("/", "~/", "file:", "\\\\")) or "\\\\" in checked:
+    if checked.startswith(("/", "~/", "file:", "\\")) or "\\" in checked:
         return None
-    if re.match(r"^[A-Za-z]:[/\\\\]", checked):
+    if re.match(r"^[A-Za-z]:[/\\]", checked):
         return None
     return checked
 
