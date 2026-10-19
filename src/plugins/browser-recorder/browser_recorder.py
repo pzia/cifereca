@@ -44,6 +44,8 @@ class RecorderError(Exception):
 def site_origin(url: str) -> str:
     if type(url) is not str or not 8 <= len(url) <= 2048:
         raise RecorderError("invalid_origin")
+    if any(ord(char) <= 32 or ord(char) == 127 for char in url):
+        raise RecorderError("invalid_origin")
     try:
         p = urlsplit(url)
         host = p.hostname
