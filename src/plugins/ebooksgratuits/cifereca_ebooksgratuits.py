@@ -647,9 +647,10 @@ def _opds_load_acquisition(session,initial,field,needle):
         # same-looking untrusted URL to another origin.
         has_acquisition=any(
             any(
-                mime.startswith('application/epub+zip')
-                and ('/acquisition' in rel or rel == 'alternate')
-                and _safe_opds_link(session.opds_feed_url,raw,'download')
+                '/acquisition' in rel
+                or (rel == 'alternate'
+                    and mime.startswith('application/epub+zip')
+                    and _safe_opds_link(session.opds_feed_url,raw,'download'))
                 for rel,mime,raw,_ in _opds_links(entry,actual)
             )
             for entry in entries
