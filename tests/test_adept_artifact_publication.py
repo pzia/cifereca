@@ -86,3 +86,44 @@ def test_actual_pdf_format_and_hook_survive_publication(tmp_path, repair):
         assert not previous.exists()
     else:
         assert previous.read_bytes() == b'previous loan'
+
+
+PRIVATE_INSPECTION = "https://private.invalid/acsm?token=DO_NOT_EXPOSE"
+
+
+class HostileInspectionReason:
+    def __str__(self):
+        raise AssertionError(PRIVATE_INSPECTION)
+
+    def __repr__(self):
+        raise AssertionError(PRIVATE_INSPECTION)
+
+
+@pytest.mark.parametrize("stage", ["initial", "final"])
+@pytest.mark.parametrize("reason", [PRIVATE_INSPECTION, HostileInspectionReason()])
+def test_adept_inspection_failure_never_exposes_untrusted_reason(
+    tmp_path, stage, reason,
+):
+    staged = tmp_path / "staged.epub"
+    destination = tmp_path / "destination.epub"
+    previous = tmp_path / "previous.epub"
+    staged.write_bytes(b"synthetic source")
+    destination.write_bytes(b"old destination")
+    previous.write_bytes(b"old loan")
+    checked = []
+    def inspector(path, expected=None):
+        checked.append((path, expected))
+        if stage == "initial" or expected is not None:
+            return NS(valid=False, media_format=None, reason=reason)
+        return NS(valid=True, media_format="epub", protected=False, reason=reason)
+    with pytest.raises(ProviderConfigurationError) as raised:
+        _publish(staged, destination, previous, inspector=inspector)
+    assert str(raised.value) == (
+        "Artefact Kobo-Adept invalide" if stage == "initial"
+        else "Artefact final invalide"
+    )
+    assert len(checked) == (1 if stage == "initial" else 2)
+    assert PRIVATE_INSPECTION not in str(raised.value)
+    assert staged.read_bytes() == b"synthetic source"
+    assert destination.read_bytes() == b"old destination"
+    assert previous.read_bytes() == b"old loan"
