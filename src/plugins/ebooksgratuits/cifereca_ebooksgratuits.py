@@ -398,8 +398,14 @@ def _safe_opds_link(feed_url, href, kind):
         # Decode solely for validation; encoded controls and escaped slashes
         # must not bypass endpoint classification.
         from urllib.parse import unquote
-        decoded=unquote(dst.path+'?'+dst.query)
-        if any(ch.isspace() or unicodedata.category(ch) in {'Cc','Cf','Cs'} for ch in decoded):
+        decoded_path=unquote(dst.path)
+        decoded_query=unquote(dst.query)
+        # Encoded spaces are legitimate inside OpenSearch query text; reject
+        # controls and format characters, not a normal multiword search.
+        if (any(ch.isspace() or unicodedata.category(ch) in {'Cc','Cf','Cs'}
+                for ch in decoded_path)
+                or any(unicodedata.category(ch) in {'Cc','Cf','Cs'}
+                       for ch in decoded_query)):
             return None
         path=dst.path.lower()
         # Calibre COPS supplies /index.php/fetch/... downloads; do not infer
