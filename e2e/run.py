@@ -260,6 +260,7 @@ def _event(path: Path, scenario: str, event: str, **detail) -> None:
     """Persist a bounded, scalar trace; never arbitrary GTK/error payloads."""
     if scenario not in SCENARIOS or event not in {
         "scenario_start", "xvfb_display_retry", "scenario_end",
+        "gtk_layout_critical_observed",
     }:
         raise ValueError("unexpected E2E trace event")
     row = {
@@ -271,6 +272,17 @@ def _event(path: Path, scenario: str, event: str, **detail) -> None:
         row["plugin"] = SCENARIOS[scenario]["plugin"]
     if event == "xvfb_display_retry" and type(detail.get("attempt")) is int:
         row["attempt"] = min(2, max(1, detail["attempt"]))
+    if event == "gtk_layout_critical_observed":
+        counters = detail.get("gtk_layout_critical")
+        if (type(counters) is not dict
+                or set(counters) != {"GtkStack", "GtkRevealer", "stream_truncated"}
+                or type(counters["GtkStack"]) is not int
+                or type(counters["GtkRevealer"]) is not int
+                or type(counters["stream_truncated"]) is not bool
+                or not 0 <= counters["GtkStack"] <= 100000
+                or not 0 <= counters["GtkRevealer"] <= 100000):
+            raise ValueError("invalid closed GTK trace counters")
+        row["gtk_layout_critical"] = counters
     if event == "scenario_end":
         code = detail.get("returncode")
         if type(code) is int and -255 <= code <= 255:
