@@ -238,6 +238,7 @@ def main():
             report["pointer_actions"].append(device[0].click_widget(button))
 
     def respond(dialog, label, on_clicked):
+        gtk_phase_2027("maint_p1_dialog_visible" if tool.tool_id != "core.cache.cleanup" else "maint_dialog_visible")
         response = next(
             (b for b in walk(dialog) if isinstance(b, Gtk.Button)
              and label in str(b.get_label() or "").replace("_", "")),
@@ -257,6 +258,7 @@ def main():
             return x >= 0 and y >= 0
 
         def click_then_continue():
+            gtk_phase_2027("maint_p1_dialog_response" if tool.tool_id != "core.cache.cleanup" else "maint_dialog_response")
             physical(response)
             on_clicked()
 
