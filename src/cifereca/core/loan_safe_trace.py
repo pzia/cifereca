@@ -17,22 +17,30 @@ _PROCESS_KEY = secrets.token_bytes(32)
 
 
 def loan_trace_ref(loan: Any, identity_id: str | None) -> str:
+    # Provider-side loan descriptors may raise on attribute access or carry
+    # str subclasses whose __str__/__getitem__ execute arbitrary plugin code.
+    # A missing/untrusted coordinate is a blank *trace* coordinate only:
+    # it never supplies evidence of borrower identity or loan rights.
+    def coordinate(name: str) -> str:
+        try:
+            value = getattr(loan, name, None)
+        except Exception:
+            return ""
+        return value if type(value) is str else ""
+
     coordinates = (
-        getattr(loan, "source_provider", None),
-        getattr(loan, "source_credential", None),
-        getattr(loan, "source_account_id", None),
-        getattr(loan, "id", None),
-        getattr(loan, "record_id", None),
-        identity_id,
+        coordinate("source_provider"),
+        coordinate("source_credential"),
+        coordinate("source_account_id"),
+        coordinate("id"),
+        coordinate("record_id"),
+        identity_id if type(identity_id) is str else "",
     )
-    # The six length-prefixed components prevent ambiguous concatenation.
-    # Individual 1024-character bounds make this cheap even for malformed
-    # provider objects; never expose or repr() original values.
+    # Preserve the historical HMAC for all native string coordinates. Six
+    # length-prefixed bounded components prevent ambiguous concatenation.
     pieces = []
     for value in coordinates:
-        raw = str(value if isinstance(value, str) else "")[:1024].encode(
-            "utf-8", "surrogatepass",
-        )
+        raw = value[:1024].encode("utf-8", "surrogatepass")
         pieces.append(len(raw).to_bytes(2, "big") + raw)
     return hmac.new(
         _PROCESS_KEY, b"".join(pieces), hashlib.sha256,
