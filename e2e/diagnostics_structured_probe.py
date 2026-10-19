@@ -141,13 +141,34 @@ def main():
     def later(callback, ms=140):
         def invoke():
             try:
+                code = getattr(callback, "__code__", None)
+                if code is not None and code.co_filename == __file__:
+                    report["checkpoint_line"] = code.co_firstlineno
+                save()
                 callback()
             except Exception as exc:
+                lines = []
+                trace = exc.__traceback__
+                while trace is not None:
+                    if trace.tb_frame.f_code.co_filename == __file__:
+                        lines.append(trace.tb_lineno)
+                    trace = trace.tb_next
+                report["failure_line"] = lines[-1] if lines else 0
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(ms, invoke)
 
     def until(predicate, then, seconds=7):
+        # CI exports only AST-reviewed source locations, never UI values.
+        from inspect import currentframe
+        frame = currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            if caller is not None and caller.f_code.co_filename == __file__:
+                report["wait_line"] = caller.f_lineno
+        finally:
+            del frame
+        save()
         deadline = monotonic() + seconds
         def poll():
             if predicate():
