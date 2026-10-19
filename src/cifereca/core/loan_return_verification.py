@@ -130,18 +130,39 @@ def verify_paris_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE
 
 
 def adobe_return_inventory_confirmed(self, acquisition: dict[str, Any]) -> bool:
-    """Crash recovery: ADEPT inventory check ONLY, never replay mutation."""
-    binding = (acquisition.get("metadata") or {}).get("adept_binding") or {}
+    """Crash recovery: ADEPT inventory check ONLY, never replay mutation.
+
+    Legacy SQLite acquisition metadata is not an authorization boundary:
+    malformed lists/strings and arbitrary profile/loan objects must fail
+    closed *before* any runtime lookup. A partial/ambiguous loan registry is
+    never evidence that an Adobe return has happened.
+    """
+    if type(acquisition) is not dict:
+        return False
+    metadata = acquisition.get("metadata")
+    if type(metadata) is not dict:
+        return False
+    binding = metadata.get("adept_binding")
+    if type(binding) is not dict:
+        return False
     profile_id = binding.get("adept_profile_id")
     loan_id = binding.get("adept_loan_id")
-    if not profile_id or not loan_id:
+    if any(type(value) is not str or not 0 < len(value) <= 256
+           for value in (profile_id, loan_id)):
         return False
     try:
         profile = self._adept_profile_row(profile_id, self.kobo_profiles())
         if not profile:
             return False
-        loans = self._kobo_adapter().loans(self._adept_profile_name(profile))
-        matches = [r for r in loans["loans"] if r.get("id") == loan_id]
+        inventory = self._kobo_adapter().loans(self._adept_profile_name(profile))
+        if type(inventory) is not dict or type(inventory.get("loans")) is not list:
+            return False
+        rows = inventory["loans"]
+        if any(type(row) is not dict or type(row.get("id")) is not str
+               for row in rows):
+            # A partial/hostile registry cannot prove the exact transaction.
+            return False
+        matches = [row for row in rows if row["id"] == loan_id]
         return (
             len(matches) == 1
             and matches[0].get("returned") is True
