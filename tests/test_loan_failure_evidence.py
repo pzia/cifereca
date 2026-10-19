@@ -7,10 +7,13 @@ import pytest
 
 from cifereca.core.loan_failure_evidence import (
     process_failure_facts, adept_failure_metadata, provider_failure_metadata,
+    safe_exit_code, safe_retryable_flag,
 )
 
 
-@pytest.mark.parametrize("exit_code, expected", [(None, 10), (7, 7), ("7", 10), (True, True)])
+@pytest.mark.parametrize("exit_code, expected", [
+    (None, 10), (7, 7), ("7", 10), (True, 10), (256, 10), (-256, 10),
+])
 def test_process_uses_typed_allowlist_and_keeps_exception_override(exit_code, expected):
     raw = {"returncode": 10, "duration_ms": 25, "stdout_bytes": True,
            "stderr_bytes": "100", "stdout": "PRIVATE", "token": "PRIVATE"}
@@ -18,10 +21,52 @@ def test_process_uses_typed_allowlist_and_keeps_exception_override(exit_code, ex
     result = process_failure_facts(raw, exc=NS(exit_code=exit_code), candidate=None, path_type=Path)
     assert result == {"returncode": expected, "duration_ms": 25}
     assert raw == before
-    # The historical exception override accepts bool as int. This structural
-    # extraction preserves that behavior, rather than silently changing it.
+    # Valid native integers keep their historical value; the exception
+    # override must be a native bounded integer rather than an arbitrary object.
     assert type(result["returncode"]) is type(expected)
 
+
+
+def test_failure_evidence_ignores_hostile_or_oversized_numeric_values():
+    private = "https://private.invalid/file.acsm?token=SECRET"
+    class IntSubclass(int):
+        def __str__(self):
+            raise AssertionError(private)
+    class Hostile:
+        def __bool__(self):
+            raise AssertionError(private)
+    class Failure(Exception):
+        @property
+        def exit_code(self):
+            raise RuntimeError(private)
+        @property
+        def retryable(self):
+            raise RuntimeError(private)
+
+    raw = {
+        "returncode": 11, "duration_ms": 86_400_001,
+        "stdout_bytes": IntSubclass(10), "stderr_bytes": -1,
+        "stdout": private, "artifact_path": private,
+    }
+    assert process_failure_facts(raw, exc=Failure(), candidate=None, path_type=Path) == {
+        "returncode": 11, "duration_ms": 86_400_001, "stderr_bytes": -1,
+    }
+    assert safe_exit_code(Failure()) is None
+    assert safe_exit_code(NS(exit_code=IntSubclass(1))) is None
+    assert safe_retryable_flag(Failure()) is False
+    for bad in (0, 1, "true", Hostile(), IntSubclass(1), None):
+        assert safe_retryable_flag(NS(retryable=bad)) is False
+    assert safe_retryable_flag(NS(retryable=True)) is True
+    assert safe_retryable_flag(NS(retryable=False)) is False
+
+
+def test_bad_mapping_getter_does_not_interrupt_adept_failure_finalization():
+    class BrokenMapping(dict):
+        def get(self, key):
+            raise RuntimeError("PRIVATE_SIGNED_ACSM_URL")
+    assert process_failure_facts(
+        BrokenMapping(), exc=NS(exit_code=10), candidate=None, path_type=Path,
+    ) == {"returncode": 10}
 
 def test_artifact_probe_is_read_only_and_does_not_expose_path(tmp_path):
     file = tmp_path / "retained.epub"

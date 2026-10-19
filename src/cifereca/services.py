@@ -2953,13 +2953,13 @@ class LibraryService:
             # This is a decoder/transport-contract failure, *not* an Adobe
             # licensing decision. The next opening may retry it automatically.
             # Never infer a named Adobe refusal from a generic CLI exit code.
-            retryable = bool(getattr(exc, "retryable", False)) or code in {
+            retryable = loan_failure_evidence.safe_retryable_flag(exc) or code in {
                 "kobo_adept_invalid_json",
             }
             _TRACE_LOG.warning(
                 "Acquisition failed loan_ref=%s executor=%s retryable=%s exit_code=%s dt=%.3fs process_present=%s",
                 trace_ref, failure_executor, retryable,
-                trace_integer(getattr(exc, "exit_code", None), minimum=-255, maximum=255),
+                loan_failure_evidence.safe_exit_code(exc),
                 time.monotonic()-started, bool(process),
             )
             status = "retryable_error" if retryable else "attention_required"
