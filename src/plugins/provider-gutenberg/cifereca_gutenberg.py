@@ -5,6 +5,7 @@ import logging
 from datetime import date, datetime
 import re
 import time
+from unicodedata import category
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -618,6 +619,13 @@ class GutenbergSession(ProviderSession):
             # Validate even an otherwise empty/too-short query: no malformed
             # page may be misreported as a successful empty search.
             raise ProviderCapabilityError("Project Gutenberg : invalid_page")
+        # Gutenberg's local field parser previously stringified arbitrary
+        # objects before deciding that a short search had no results.
+        if query is None:
+            query = ""
+        if (type(query) is not str or len(query) > 2048
+                or any(category(ch) in {"Cc", "Cf", "Cs"} for ch in query)):
+            raise ProviderCapabilityError("Project Gutenberg : invalid_query")
         query, field, filter_query = _search_facet(query, field)
         if len(query) < 2:
             _LOG.info("TRACE gutenberg search skipped reason=query-too-short query_len=%s", len(query)); return []
