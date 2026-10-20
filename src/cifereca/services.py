@@ -4,7 +4,7 @@ from .core import acsm_staging, loan_failure_evidence, adept_acquisition_return
 from .core import adept_artifact_publication
 from .core import loan_acquisition_admission, loan_local_preparation
 from .core import loan_provider_delivery
-from .core import loan_completion_receipt
+from .core import loan_completion_receipt, loan_initial_receipt
 from .core import loan_adept_profile_guard
 from .core import manual_acsm_import
 from .core import provider_loan_return
@@ -2795,20 +2795,12 @@ class LibraryService:
         legacy_acsm_artifact = local.previous_state.legacy_acsm_artifact
         decision = local.decision
 
-        ledger_base = {
-            "entitlement_id": entitlement_id,
-            "provider_id": loan.source_provider,
-            "credential_id": loan.source_credential,
-            "account_id": loan.source_account_id,
-            "identity_id": identity.identity_id,
-            "item_id": str(loan.record_id or loan.id),
-            "title": loan.title,
-        }
-        self.storage.acquisition_put({
-            **ledger_base, "status": "acquiring", "strategy": "loan_auto",
-            "executor": "provider",
-            "metadata": {**previous_meta, "provider_loan_id": loan.id},
-        })
+        ledger_base = loan_initial_receipt.ledger_base(
+            loan, entitlement_id=entitlement_id, identity_id=identity.identity_id,
+        )
+        self.storage.acquisition_put(
+            loan_initial_receipt.acquiring_receipt(ledger_base, loan, previous_meta)
+        )
         _TRACE_LOG.info("TRACE download ledger acquiring loan_ref=%s", trace_ref)
         retained_acsm: Path | None = None
         failure_executor = "provider"
