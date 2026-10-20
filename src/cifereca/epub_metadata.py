@@ -99,7 +99,15 @@ def _publish_cover(data,kind):
             Path(temp).unlink(missing_ok=True)
     return name
 
-def inspect_epub(path):
+def inspect_epub(path, *, metadata_only: bool = False):
+    """Inspect bounded OPF content; optionally skip cover/cache side effects.
+
+    ``metadata_only=True`` reads only container.xml and the selected OPF;
+    it never resolves, extracts or publishes a cover, and never invokes the
+    cover cache. The caller of a filesystem audit must independently secure
+    and bound the opened file against symlinks, races and directory escape.
+    Default behavior remains backward compatible with catalogue scans.
+    """
     result={'epub_metadata_schema':SCHEMA,'epub_metadata':{},'epub_status':'unavailable'}
     try:
         with zipfile.ZipFile(path) as archive:
@@ -144,6 +152,9 @@ def inspect_epub(path):
                 'subjects':values.get('subject',[]),'description':'\n\n'.join(values.get('description',[])) or None,
                 'rights':values.get('rights',[]),'series':series,'original':original,'source':'epub','opf':opf}
             result.update(epub_metadata=normalized,epub_status='ok')
+            if metadata_only:
+                result['epub_cover_status']='not_inspected'
+                return result
             items=list(manifest) if manifest is not None else []
             candidates=[node for node in items if 'cover-image' in node.attrib.get('properties','').split()]
             candidates.extend(node for node in items if node.attrib.get('id')==cover_id and node not in candidates)
