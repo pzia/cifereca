@@ -223,7 +223,9 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 message = "[contenu libre masqué : consulter le journal local]"
             try:
                 ts = datetime.strptime(match["date"], "%Y-%m-%d %H:%M:%S,%f")
-                ts = ts.astimezone().isoformat()
+                # Legacy file timestamps are local wall time; interpret once
+                # in the host timezone, then publish the instant in UTC.
+                ts = ts.astimezone().astimezone(timezone.utc).isoformat()
             except ValueError:
                 continue
             # Logger names are not guaranteed to be static: extensions may
@@ -306,7 +308,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             incomplete = True
             continue
         try:
-            _stamp(stamp)
+            utc_stamp = _stamp(stamp).isoformat()
         except (ValueError, TypeError):
             incomplete = True
             continue
@@ -377,7 +379,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                     and type(task_ref) is str and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
                 public_detail["task_ref"] = task_ref
             message = public_numilog_message(operation, public_detail) or "[opération masquée]"
-        base_id = _event_id("core_events", stamp, category + ":" + operation)
+        base_id = _event_id("core_events", utc_stamp, category + ":" + operation)
         event_id = base_id
         # Two records may share the same timestamp/category/operation.
         # Preserve the historical hash of a unique record, but avoid false
@@ -386,13 +388,13 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         while event_id in used_ids:
             duplicate_number += 1
             event_id = _event_id(
-                "core_events", stamp,
+                "core_events", utc_stamp,
                 f"{category}:{operation}:duplicate:{duplicate_number}",
             )
         used_ids.add(event_id)
         duplicate_offsets[base_id] = duplicate_number
         events.append({
-            "timestamp": stamp,
+            "timestamp": utc_stamp,
             "source": "core_events",
             "module": module,
             "severity": severity,
