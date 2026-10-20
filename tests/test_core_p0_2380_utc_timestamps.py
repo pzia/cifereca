@@ -64,6 +64,7 @@ def test_snapshot_order_and_filters_compare_instants_not_lexical_offsets(tmp_pat
 def test_legacy_local_log_publishes_utc_and_does_not_invent_task_ref(
     tmp_path, monkeypatch,
 ):
+    original_timezone = os.environ.get("TZ")
     monkeypatch.setenv("TZ", "Europe/Paris")
     time.tzset()
     try:
@@ -90,6 +91,8 @@ def test_legacy_local_log_publishes_utc_and_does_not_invent_task_ref(
         assert all("PRIVATE_TOKEN" not in str(row) for row in out["events"])
         assert out["sources"][1]["last_event"] == "2026-10-20T11:54:51.293000+00:00"
     finally:
-        if "TZ" in os.environ:
+        if original_timezone is None:
             monkeypatch.delenv("TZ")
+        else:
+            monkeypatch.setenv("TZ", original_timezone)
         time.tzset()
