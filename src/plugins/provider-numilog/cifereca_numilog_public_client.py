@@ -10,7 +10,7 @@ import math
 import re
 import time
 import unicodedata
-from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qs
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -240,20 +240,9 @@ def resolve_readzis_recommendation(recommendation_url: str, *, lid: str,
                 or chr(92) in location or any(ch.isspace() for ch in location)
                 or any(segment in (".", "..") for segment in parsed.path.split("/"))):
             raise ValueError("untrusted location")
-        # Read a marketing query solely to reject hostile/ambiguous redirects.
-        # It is NEVER followed, cached, logged, or copied to the public URL.
-        if parsed.query:
-            if '%' in parsed.query:
-                raise ValueError("encoded tracking")
-            q = parse_qs(parsed.query, keep_blank_values=True,
-                         strict_parsing=True, max_num_fields=2)
-            if (not set(q).issubset({'trackid', 'utm_source'})
-                    or any(len(v) != 1 for v in q.values())
-                    or ('utm_source' in q and q['utm_source'] != ['readzis'])
-                    or ('trackid' in q and not re.fullmatch(
-                        r'[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}',
-                        q['trackid'][0]))):
-                raise ValueError("untrusted tracking")
+        # The marketing query is opaque and irrelevant: do not inspect,
+        # validate, persist, log or follow it. Only the query-free product
+        # destination is eligible for a separate anonymous GET.
         canonical = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
         if (public_book_url(canonical, base_url=PUBLIC_ORIGIN + "/") != canonical
                 or parsed.path.split("/")[1] != lid):
