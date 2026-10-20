@@ -259,3 +259,135 @@ def test_failed_vendor_response_never_publishes_or_switches_to_lcp(tmp_path, out
         _assert_clean(tmp_path)
     finally:
         session.close()
+
+
+PUBLIC_VENDOR = 'https://future-download.numilog.com/path/future?token=FAKE_DELIVERY'
+PUBLIC_CDN = 'https://publisher-cdn.org/opaque/file?receipt=FICTIONAL'
+PUBLIC_LCP = 'https://different-publisher.org/read-lcp?token=FAKE_LCP'
+
+
+def new_vendor_confirmation():
+    # Both entries belong to the same ProductId and exemplaire even though
+    # the delivery hosts and opaque queries are different.
+    return (eden_confirmation()
+            .replace(SIGNED_LCP, PUBLIC_LCP)
+            .replace(SIGNED_ADOBE, PUBLIC_VENDOR))
+
+
+def _fake_dns(request_host, port, **kwargs):
+    assert request_host in {'future-download.numilog.com', 'publisher-cdn.org'}
+    assert port == 443
+    return [(socket.AF_INET, socket.SOCK_STREAM, 0, '',
+             ('8.8.8.8', 443))]
+
+
+@pytest.mark.parametrize('delivery_redirect', [False, True])
+def test_future_public_host_from_verified_links_no_static_endpoint(
+    tmp_path, monkeypatch, delivery_redirect,
+):
+    # This includes a subdomain receiving the Numilog wildcard Cookie in an
+    # ordinary httpx call. The selected signed link MUST not receive it.
+    import cifereca_numilog as plugin
+    monkeypatch.setattr(plugin.socket, 'getaddrinfo', _fake_dns)
+    seen = []
+
+    def handler(request):
+        url = str(request.url)
+        seen.append((url, request.headers.get('cookie')))
+        if url == LIBRARY:
+            return httpx.Response(200, text=INVENTORY_DWLD)
+        if url == READ_DWLD:
+            return httpx.Response(302, headers={'location': LANDING})
+        if url == LANDING:
+            return httpx.Response(200, text=new_vendor_confirmation(),
+                                  headers={'content-type': 'text/html'})
+        if url == PUBLIC_VENDOR and delivery_redirect:
+            return httpx.Response(302, headers={'location': PUBLIC_CDN})
+        if url in {PUBLIC_VENDOR, PUBLIC_CDN}:
+            return httpx.Response(
+                200, content=ACSM,
+                headers={'content-type': 'application/vnd.adobe.adept+xml'},
+            )
+        pytest.fail('No LCP GET, arbitrary URL, or other purchase allowed')
+
+    session, diag, broker = setup(tmp_path, handler)
+    session.connected = True
+    session.client.cookies.set('session', 'FAKE_COOKIE_SECRET',
+                               domain='.numilog.com')
+    try:
+        item = session.library()[0]
+        file, origin = session.download_direct(item, tmp_path)
+        assert file.is_file() and origin == LIBRARY
+        urls = [url for url, cookie in seen]
+        assert urls == ([LIBRARY, LIBRARY, READ_DWLD, LANDING, PUBLIC_VENDOR]
+                        + ([PUBLIC_CDN] if delivery_redirect else []))
+        assert PUBLIC_LCP not in urls
+        assert all(cookie in (None, '') for url, cookie in seen
+                   if url in {PUBLIC_VENDOR, PUBLIC_CDN})
+        assert len(broker.calls) == 1
+        assert 'FAKE_COOKIE_SECRET' not in repr(diag.events)
+        assert 'FAKE_DELIVERY' not in repr(diag.events)
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize('unsafe_resolution', [
+    '10.0.0.1', '127.0.0.1', '169.254.169.254', '192.168.1.3',
+])
+def test_attested_public_dns_must_not_resolve_to_private_ip(
+    tmp_path, monkeypatch, unsafe_resolution,
+):
+    import cifereca_numilog as plugin
+
+    def private_dns(host, port, **kwargs):
+        assert host == 'future-download.numilog.com' and port == 443
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, '',
+                 (unsafe_resolution, 443))]
+
+    monkeypatch.setattr(plugin.socket, 'getaddrinfo', private_dns)
+    visited = []
+
+    def handler(request):
+        url = str(request.url)
+        visited.append(url)
+        if url == LIBRARY:
+            return httpx.Response(200, text=INVENTORY_DWLD)
+        if url == READ_DWLD:
+            return httpx.Response(302, headers={'location': LANDING})
+        if url == LANDING:
+            return httpx.Response(200, text=new_vendor_confirmation(),
+                                  headers={'content-type': 'text/html'})
+        pytest.fail('Rejected host must not be queried')
+
+    session, diag, broker = setup(tmp_path, handler)
+    session.connected = True
+    try:
+        with pytest.raises(ProviderError, match='non publique'):
+            session.download_direct(session.library()[0], tmp_path)
+        assert visited == [LIBRARY, LIBRARY, READ_DWLD, LANDING]
+        assert broker.calls == []
+        assert not list(tmp_path.glob('*.epub'))
+        _assert_clean(tmp_path)
+    finally:
+        session.close()
+
+
+def test_arbitrary_new_host_requires_real_selected_links_and_owned_modal():
+    html = new_vendor_confirmation()
+    selected = {}
+    assert delivery_url(
+        html, LANDING, allowed_origins=ALLOWED,
+        expected_readbook=READ_DWLD, require_bound_confirmation=True,
+        allow_missing_readbook=True, selection=selected,
+    ) == PUBLIC_VENDOR
+    assert selected == {'kind': 'acsm'}
+    # A bare vendor URL (or the LCP alternative) in other HTML is not owned.
+    for evil in (PUBLIC_VENDOR, PUBLIC_LCP):
+        with pytest.raises(DeliverySelectionError):
+            delivery_url(
+                '<script>const possible = "' + evil + '";</script>',
+                LANDING, allowed_origins=ALLOWED,
+                expected_readbook=READ_DWLD, require_bound_confirmation=True,
+                allow_missing_readbook=True,
+            )
