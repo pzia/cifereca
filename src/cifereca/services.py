@@ -2982,11 +2982,10 @@ class LibraryService:
                 "error_code": code, "error_message": message, "metadata": metadata,
                 "attention_code": None if status == "retryable_error" else attention_code,
             })
-            return {
-                "status": status, "loan_id": loan.id, "error": message,
-                "code": attention_code if status == "attention_required" else code,
-                "process": process,
-            }
+            return loan_failure_evidence.adept_failure_outcome(
+                loan_id=loan.id, status=status, message=message,
+                attention_code=attention_code, code=code, process=process,
+            )
         except Exception as exc:
             if retained_acsm is not None and retained_acsm.exists():
                 _TRACE_LOG.info("TRACE download acsm cleanup loan_ref=%s action=keep reason=acquisition_error", trace_ref)
@@ -3019,10 +3018,9 @@ class LibraryService:
                 "attention_code": None,
                 "metadata": metadata,
             })
-            return {
-                "status": "retryable_error", "loan_id": loan.id,
-                "code": attention_code, "error": "Acquisition du prêt indisponible",
-            }
+            return loan_failure_evidence.provider_failure_outcome(
+                loan_id=loan.id, attention_code=attention_code,
+            )
 
     def _synchronize_account_source_impl(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
         """Synchronize one explicit account/source without changing account selection.
