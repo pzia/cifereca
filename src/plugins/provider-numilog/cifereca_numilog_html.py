@@ -141,6 +141,39 @@ def public_book_url(value, base_url=LIBRARY):
         return None
 
 
+def readzis_recommendation_url(value, lid, base_url=LIBRARY):
+    """One proven owned-card recommendation, not a product or delivery URL.
+
+    Only the observed SN=FB shape is accepted. Share visits can trigger
+    commercial tracking and must never occur in inventory, search or sync.
+    """
+    if (type(value) is not str or type(lid) is not str
+            or not re.fullmatch(r'[0-9]{1,12}', lid)
+            or not 0 < len(value) <= 512
+            or not _raw_delivery_url_safe(value) or chr(92) in value):
+        return None
+    try:
+        raw = urlsplit(value)
+        if (any(p in ('.', '..') for p in raw.path.split('/'))
+                or '%' in raw.path or '%' in raw.query
+                or raw.fragment or raw.username or raw.password):
+            return None
+        parsed = urlsplit(urljoin(base_url, value))
+        if (parsed.scheme != 'https' or parsed.netloc != 'www.numilog.com'
+                or parsed.path != '/Pages/Readzis/Recommand.ashx'
+                or parsed.fragment or parsed.username or parsed.password
+                or origin(base_url) != ('https', 'www.numilog.com', 443)):
+            return None
+        query = parse_qs(parsed.query, keep_blank_values=True,
+                         strict_parsing=True, max_num_fields=2)
+        if (set(query) != {'LivreId', 'SN'}
+                or query['LivreId'] != [lid] or query['SN'] != ['FB']):
+            return None
+        return BASE + 'Pages/Readzis/Recommand.ashx?LivreId=' + lid + '&SN=FB'
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def _scoped_library_cards(table):
     """Separate book cards through normal HTML table/tbody/tr wrappers.
 
@@ -349,6 +382,31 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                 if origin(cover) not in allowed_covers or parsed_cover.username or parsed_cover.password or parsed_cover.fragment or parsed_cover.query:
                     cover = None
             row = {'lid':lid[0],'variant':repr(key[1]),'title':titles[0] if titles else 'Livre Numilog '+lid[0], 'cover':cover, 'href':href, 'public_url':public_url}
+            if (public_url is None and strict_public_enrichment_selector is not None
+                    and strict_public_enrichment_selector(row)):
+                # Scoped only to a fresh selected purchase; absent from normal
+                # library, search and synchronization projections.
+                if len(links) == 1 and len(title_nodes) == 1:
+                    recommendations = set()
+                    for anchor in (n for n in nodes if n.tag == 'a'):
+                        candidate = anchor.attrs.get('href')
+                        if type(candidate) is not str:
+                            continue
+                        try:
+                            is_readzis = (urlsplit(candidate).path.casefold()
+                                == '/pages/readzis/recommand.ashx')
+                        except ValueError:
+                            is_readzis = False
+                        if not is_readzis:
+                            continue
+                        checked = readzis_recommendation_url(candidate, lid[0], base_url)
+                        if checked is None:
+                            raise ParseError('Lien Readzis non qualifié : enrichissement arrêté')
+                        recommendations.add(checked)
+                    if len(recommendations) > 1:
+                        raise ParseError('Liens Readzis divergents : enrichissement arrêté')
+                    if recommendations:
+                        row['readzis_url'] = next(iter(recommendations))
             if delivery_evidence and (delivery_selector is None or delivery_selector(row)):
                 # Never retain order refs in search or background sync.
                 # The only eligible direct URL is an actual HTML href under

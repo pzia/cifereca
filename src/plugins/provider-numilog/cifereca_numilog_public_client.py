@@ -10,7 +10,7 @@ import math
 import re
 import time
 import unicodedata
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -192,3 +192,61 @@ def fetch_public_detail(product_url: str, *, timeout: float = 15.0):
         )
     except PublicDetailError:
         raise ProviderError("Numilog : public_detail_layout_unverified") from None
+
+
+
+def resolve_readzis_recommendation(recommendation_url: str, *, lid: str,
+                                   timeout: float = 15.0) -> str:
+    """One explicit anonymous share GET; NEVER follow the marketing Location.
+
+    A visit to Readzis may be tracked commercially. Return only the strict,
+    same-ID, query-free canonical public book URL; no delivery/ACSM rights.
+    """
+    from cifereca_numilog_html import readzis_recommendation_url, public_book_url
+    if (type(recommendation_url) is not str
+            or readzis_recommendation_url(
+                recommendation_url, lid,
+                PUBLIC_ORIGIN + '/Pages/Compte/MesLivres.aspx',
+            ) != recommendation_url):
+        raise ProviderCapabilityError("Numilog : invalid_public_readzis_url")
+    timeout = _checked_timeout(timeout)
+    try:
+        with httpx.Client(
+            timeout=timeout, follow_redirects=False, trust_env=False,
+            headers={"User-Agent": "Cifereca-Numilog-Public/1.0",
+                     "Accept": "text/html", "Accept-Language": "fr-FR,fr;q=0.9"},
+        ) as client:
+            with client.stream("GET", recommendation_url) as response:
+                status = response.status_code
+                if status in (401, 403):
+                    raise ProviderError("Numilog : public_readzis_forbidden")
+                if status == 429:
+                    raise PublicRateLimitError(
+                        "Numilog : public_readzis_rate_limited",
+                        response.headers.get("retry-after"),
+                    )
+                if status not in (301, 302):
+                    raise ProviderError("Numilog : public_readzis_redirect_unverified")
+                location = response.headers.get("location")
+    except httpx.HTTPError:
+        raise ProviderError("Numilog : public_readzis_network_unavailable") from None
+
+    if type(location) is not str or not 0 < len(location) <= 4096:
+        raise ProviderError("Numilog : public_readzis_redirect_unverified")
+    try:
+        parsed = urlsplit(location)
+        if (parsed.scheme != "https" or parsed.netloc != "www.numilog.com"
+                or parsed.fragment or parsed.username or parsed.password
+                or chr(92) in parsed.path or any(ch.isspace() for ch in parsed.path)
+                or any(segment in (".", "..") for segment in parsed.path.split("/"))):
+            raise ValueError("untrusted location")
+        # The marketing query is opaque and irrelevant: do not inspect,
+        # validate, persist, log or follow it. Only the query-free product
+        # destination is eligible for a separate anonymous GET.
+        canonical = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+        if (public_book_url(canonical, base_url=PUBLIC_ORIGIN + "/") != canonical
+                or parsed.path.split("/")[1] != lid):
+            raise ValueError("different product")
+        return canonical
+    except (ValueError, IndexError, TypeError, AttributeError):
+        raise ProviderError("Numilog : public_readzis_redirect_unverified") from None

@@ -75,7 +75,8 @@ class PublicCatalogueCache:
             return value
         except ProviderError as exc:
             if str(exc) in {'Numilog : public_catalog_rate_limited',
-                            'Numilog : public_detail_rate_limited'}:
+                            'Numilog : public_detail_rate_limited',
+                            'Numilog : public_readzis_rate_limited'}:
                 delay = getattr(exc, 'retry_after_seconds', 0.0)
                 # The exception is a remote transport boundary too: a huge
                 # integer can overflow float() and an infinite duration would
