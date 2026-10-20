@@ -22,9 +22,12 @@ class TaskRunner:
     """Run non-UI operations outside GTK with priority and global feedback."""
 
 
-    def __init__(self, window: Any, *, max_workers: int = 3):
+    def __init__(self, window: Any, *, max_workers: int = 3, max_pending: int | None = None):
         self.window = window
-        self.pool = PriorityExecutor(max_workers=max_workers, thread_name_prefix="cifereca-task")
+        self.pool = PriorityExecutor(
+            max_workers=max_workers, thread_name_prefix="cifereca-task",
+            max_pending=max_pending,
+        )
         self._count = 0
         self._lock = threading.Lock()
         self._task_ids = itertools.count(1)
