@@ -79,7 +79,7 @@ def _build_sync_page(self):
     )
     scope_note.set_wrap(True)
     outer.append(scope_note)
-    self._sync_sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8); outer.append(self._sync_sources_box)
+    self._sync_sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18); outer.append(self._sync_sources_box)
     refresh.connect(
         "clicked",
         lambda _b: self._refresh_sync_page()
@@ -235,10 +235,16 @@ def _refresh_sync_page(self) -> None:
             continue
         # The scoped broker order determines ephemeral labels only; sid remains
         # the opaque, separate source route for each row.
-        group = Adw.PreferencesGroup(); box.append(group)
+        group = Adw.PreferencesGroup()
+        # A distinct visual boundary must survive a long expanded tools list:
+        # group and actions are scoped to exactly this account.
+        group.set_hexpand(True)
+        add_css(group, "sync-source-panel")
+        box.append(group)
         group._cifereca_sync_tools_state = self._sync_tools_state
         group._cifereca_sync_source_id = source.source_id
         row = Adw.ActionRow(); row.set_title(display_label)
+        add_css(row, "sync-source-heading")
         if source.sync_capable:
             # Errors cannot disappear in low-contrast multi-line subtitles or
             # behind the per-account tools expander. An icon and a short fixed
