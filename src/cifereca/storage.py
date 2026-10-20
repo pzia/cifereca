@@ -2124,6 +2124,15 @@ class Storage:
                     "WHERE provider_id='numilog' AND credential_id=? AND item_id=? "
                     "LIMIT 3", (credential_id, item_id),
                 ).fetchall()
+                # The locked acquisition path ALSO refuses a placement for
+                # this exact scoped purchase, even when no ledger exists.
+                # Include the same conservative guard in the *same* SQLite
+                # snapshot so the batch does not claim an acquirable item
+                # that is already locally placed. Never expose path/owner.
+                placement_conflict = db.execute(
+                    "SELECT 1 FROM placements WHERE provider_id='numilog' "
+                    "AND source_item_id=? LIMIT 1", (item_id,),
+                ).fetchone() is not None
             finally:
                 db.execute("RELEASE SAVEPOINT numilog_purchase_preflight")
         right_keys = ("entitlement_id", "identity_id", "credential_id",
@@ -2139,6 +2148,7 @@ class Storage:
         return {
             "entitlements": result,
             "acquisitions": [dict(zip(ledger_keys, values)) for values in ledgers],
+            "placement_conflict": placement_conflict,
         }
 
     def numilog_materialization_consent_revision(
