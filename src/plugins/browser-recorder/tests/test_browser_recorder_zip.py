@@ -407,6 +407,7 @@ def test_vendor_json_mime_is_coarsened_not_published_in_reviewed_zip():
     trace.exchanges.append(PrivateExchange(
         1, "GET", url=ORIGIN + "/api/books", status=200,
         response_headers=headers,
+        mime=f"application/vnd.{private}+json",
         response_body='{"result":"fictional"}',
     ))
     review = IdentifierReview(trace)
@@ -418,6 +419,7 @@ def test_vendor_json_mime_is_coarsened_not_published_in_reviewed_zip():
         descriptor = json.loads(next(row["text"] for row in preview["members"]
                                      if row["name"] == "exchanges/0001.json"))
         assert descriptor["response_headers"]["content-type"] == "application/*+json"
+        assert descriptor["mime"] == "application/*+json"
         assert private not in json.dumps(preview)
         assert "SECRET_PROFILE" not in json.dumps(preview)
     finally:
