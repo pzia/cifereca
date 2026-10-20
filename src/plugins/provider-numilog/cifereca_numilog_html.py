@@ -832,6 +832,8 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
     if candidate.delivery_kind == 'acsm':
         require(sum(_field(block, 'DrmTechnlology') == 'ADOBE'
                     for block in blocks) == 1)
+        require(sum(_field(block, 'DrmTechnlology') == 'LCP'
+                    for block in blocks) <= 1)
         require(all(_field(block, 'DrmTechnlology') in {'ADOBE', 'LCP'}
                     for block in blocks))
     if candidate.delivery_kind == 'epub_direct':
