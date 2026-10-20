@@ -279,22 +279,34 @@ class ReviewedBundlePlan:
         directory = Path(directory)
         if directory.is_symlink():
             raise RecorderError("unsafe_directory")
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         name = __import__("datetime").datetime.now(
             __import__("datetime").timezone.utc,
         ).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(4) + ".zip"
         if not _FILENAME.fullmatch(name):
             raise RecorderError("bundle_invalid_filename")
-        folder_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        folder_flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                        | getattr(os, "O_NOFOLLOW", 0))
+        flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                 | getattr(os, "O_NOFOLLOW", 0))
         try:
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             dir_fd = os.open(directory, folder_flags)
             try:
                 fd = os.open(name, flags, 0o600, dir_fd=dir_fd)
-                with os.fdopen(fd, "wb") as stream:
-                    stream.write(self._blob)
-                    stream.flush()
-                    os.fsync(stream.fileno())
+                try:
+                    with os.fdopen(fd, "wb") as stream:
+                        stream.write(self._blob)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                except BaseException:
+                    # No incomplete artifact may masquerade as an exported
+                    # archive after a disk-full/flush/fsync interruption.
+                    # Unlink using the same no-follow directory descriptor.
+                    try:
+                        os.unlink(name, dir_fd=dir_fd)
+                    except OSError:
+                        pass
+                    raise
             finally:
                 os.close(dir_fd)
         except OSError:
