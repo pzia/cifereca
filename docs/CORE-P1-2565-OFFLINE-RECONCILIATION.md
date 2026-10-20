@@ -62,17 +62,33 @@ permettant une réparation ultérieure.
   sauvegarde de la même identité, sans attribution de droits. Les liens refusés
   restent `local_file_without_attested_right`/`ambiguous` ; les divergences sont
   `hash_mismatch`. Un droit non vérifié n'est jamais appelé livre absent.
+- Une passe `inspect_stored_paths()` distincte vérifie les chemins explicites
+  des placements dans les seules racines autorisées. `stored_path_missing`
+  exige ENOENT, deux observations concordantes et les mêmes ancêtres/racine.
+  Permissions, symlinks, fichiers spéciaux, racine absente ou remplacée restent
+  `stored_path_unavailable` ; les chemins étrangers sont `stored_path_out_of_scope`.
+  Limites de durée/chemins et annulation, sans ouverture du contenu des livres.
+- `metadata_candidates()` recherche uniquement des identifiants explicites
+  scheme/valeur dans les notices de **la même identité**. Les ISBN 10/13 exigent
+  une clé de contrôle valide, sans recherche approximative ni déduction par
+  titre/auteur/nom. Plusieurs notices concordantes restent ambiguës. La certitude
+  est toujours `metadata_only`, jamais un droit ou une autorisation de réparation.
+  Le snapshot ne conserve que ces identifiants bibliographiques des métadonnées
+  catalogue (pas les blobs JSON, jetons ou URL). Budgets de références/candidats
+  et annulation sont visibles.
 - Les relations sont des indices éphémères de fichiers et de lignes, avec raison
   et certitude (`bytes`/`attested`). Les sources ADEPT ne sont pas interrogées :
   `adept_status=not_requested`. Aucun profil/licence/jeton n'est lu.
 
 ## Suite de #2565 (non livrée par cette tranche)
 
-Snapshot sûr pendant une session avec WAL actif, métadonnées candidates/édition,
-liens catalog_entries/backup plus riches, chemins stockés réellement absents,
+Snapshot sûr pendant une session avec WAL actif, rapprochements par édition au-delà
+des identifiants explicitement attestés,
+liens catalog_entries/backup plus riches,
 références ADEPT locales, compteurs par identité/fournisseur, API de service et
 entrée Maintenance asynchrone avec filtres/inspection. L'absence de chemin dans
-cet inventaire n'est donc pas publiée comme `stored_path_missing`.
+cet inventaire ne suffit jamais à conclure `stored_path_missing` : seule la
+passe de contrôle explicite ci-dessus peut produire ce constat.
 
 Les réparations sont un lot distinct : jeton de confirmation, preuve fraîche,
 transactions et annulation. Ne jamais convertir ce rapport en autorisation de

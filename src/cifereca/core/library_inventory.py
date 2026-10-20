@@ -109,7 +109,7 @@ def scan_identity_roots(
     """
     limits = limits or InventoryLimits()
     chosen = []
-    if not isinstance(roots, dict) or not roots:
+    if not isinstance(roots, dict) or not 1 <= len(roots) <= 128:
         raise ValueError('invalid_inventory_roots')
     for identity, paths in roots.items():
         if type(identity) is not str or not identity or len(identity) > 1024 or '\0' in identity:
@@ -117,6 +117,8 @@ def scan_identity_roots(
         if type(paths) is not tuple or not paths:
             raise ValueError('invalid_inventory_roots')
         for path in paths:
+            if len(chosen) >= 128:
+                raise ValueError('invalid_inventory_roots')
             path = Path(path)
             if not path.is_absolute() or path == Path('/') or '..' in path.parts:
                 raise ValueError('invalid_inventory_roots')
@@ -200,11 +202,13 @@ def scan_identity_roots(
                         result.reasons.add('entry_budget')
                         return
                     result.entries += 1
+                    is_directory = False
                     try:
                         info = entry.stat(follow_symlinks=False)
                         if stat.S_ISLNK(info.st_mode):
                             result.skipped_symlinks += 1
                         elif stat.S_ISDIR(info.st_mode):
+                            is_directory = True
                             if depth >= limits.depth:
                                 result.reasons.add('depth_budget')
                                 continue
@@ -238,6 +242,8 @@ def scan_identity_roots(
                                 progress(result.redacted())
                     except OSError:
                         result.reasons.add('entry_unavailable')
+                        if is_directory:
+                            result.unavailable_directories.append((identity, str(path / entry.name)))
                     if result.reasons & {'entry_budget', 'file_budget', 'cancelled', 'time_budget'}:
                         return
         except OSError:

@@ -106,6 +106,10 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'overlapping_inventory_roots'):
             scan_identity_roots({'a': (self.library,), 'b': (self.library/'child',)})
 
+    def test_root_cap_is_bounded_before_traversal(self):
+        with self.assertRaisesRegex(ValueError, 'invalid_inventory_roots'):
+            scan_identity_roots({str(i): (self.root/str(i),) for i in range(129)})
+
     def test_recursive_and_depth_budget(self):
         nested = self.library/'a'/'b'
         nested.mkdir(parents=True)
