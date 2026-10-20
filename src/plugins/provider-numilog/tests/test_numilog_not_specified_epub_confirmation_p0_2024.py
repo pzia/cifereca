@@ -192,7 +192,7 @@ def test_unproven_direct_link_never_authorizes_signed_get(mutation):
         extra = (
             "{ ProductId: 9001, IndexExemplaire: 1, "
             "DrmTechnlology: 'NOT_SPECIFIED', format: 'EPUB', "
-            f"link: '{SIGNED_EPUB}' },"
+            "link: '" + SIGNED_EPUB + "' },"
         )
         html = html.replace("];", extra + "];", 1)
     elif mutation == "foreign_card":
