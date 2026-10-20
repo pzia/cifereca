@@ -45,12 +45,14 @@ class Widget:
         self.children = []
         self.suffixes = []
         self.prefixes = []
+        self.css_classes = set()
         self.handlers = {}
         self.sensitive = True
         self.active = False
         self.child = None
         self.subtitle = None
 
+    def add_css_class(self, name): self.css_classes.add(name)
     def set_policy(self, *args): pass
     def set_margin_top(self, *args): pass
     set_margin_bottom = set_margin_start = set_margin_end = set_margin_top
@@ -114,7 +116,10 @@ def _methods():
         Gtk=gtk, Adw=adw,
         Pango=NS(WrapMode=NS(WORD_CHAR=1)),
         AdaptiveActionBar=lambda **kwargs: Widget(),
-        add_css=lambda *args: None,
+        add_css=lambda widget, *classes: (
+            [widget.add_css_class(name) for name in classes] and widget
+            if classes else widget
+        ),
         clear_box=lambda widget: widget.children.clear(),
         # Callback/scope tests isolate native layout; its real implementation
         # has separate component and GTK allocation acceptance tests.
