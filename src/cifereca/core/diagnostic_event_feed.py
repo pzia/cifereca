@@ -223,7 +223,9 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 message = "[contenu libre masqué : consulter le journal local]"
             try:
                 ts = datetime.strptime(match["date"], "%Y-%m-%d %H:%M:%S,%f")
-                # Legacy file timestamps are local wall time; interpret once\n                # in the host timezone, then publish the instant in UTC.\n                ts = ts.astimezone().astimezone(timezone.utc).isoformat()
+                # Legacy file timestamps are local wall time; interpret once
+                # in the host timezone, then publish the instant in UTC.
+                ts = ts.astimezone().astimezone(timezone.utc).isoformat()
             except ValueError:
                 continue
             # Logger names are not guaranteed to be static: extensions may
