@@ -1,0 +1,50 @@
+# TEMPORARY, UNMERGED Debian 13 rootless GTK package relay.
+# Explicitly requested by the user on 2026-10-20 for #2141 UX captures.
+# Strictly allowlisted signed .deb cache: no project logs, captures, credentials
+# or checkout archive in the artifact. Delete/close after local bootstrap.
+name: UX temporary Debian 13 GTK rootless relay
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ux-temporary-gtk-rootless-relay.yml'
+permissions:
+  contents: read
+jobs:
+  gtk-cache:
+    name: Debian 13 signed GTK package cache (no screenshots)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    container:
+      image: debian:trixie
+    steps:
+      - name: Debian package trust prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update -o APT::Update::Error-Mode=any
+          apt-get install -y --no-install-recommends ca-certificates python3 dpkg tar xz-utils git debian-archive-keyring
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download signed Debian GTK package closure using canonical bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .gtk-deb-cache
+          python3 environnements/openai-chat-debian/bootstrap.py \
+            --download-only --deb-cache "$GITHUB_WORKSPACE/.gtk-deb-cache"
+          test -f .gtk-deb-cache/.gtk4-cache-profile.json
+          python3 scripts/ci-validate-gtk-relay-cache.py \
+            --cache "$GITHUB_WORKSPACE/.gtk-deb-cache" \
+            --output "$RUNNER_TEMP/gtk4-debian13-rootless-offline.tar.gz"
+          (cd "$RUNNER_TEMP" && sha256sum gtk4-debian13-rootless-offline.tar.gz > SHA256SUMS)
+      - name: Publish only allowlisted Debian signed packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-debian13-gtk4-rootless-packages
+          path: |
+            ${{ runner.temp }}/gtk4-debian13-rootless-offline.tar.gz
+            ${{ runner.temp }}/SHA256SUMS
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
