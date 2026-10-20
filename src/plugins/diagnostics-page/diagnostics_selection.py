@@ -21,6 +21,10 @@ from diagnostics_explorer import (
 MAX_SELECTED = 200
 MAX_SCAN_PAGES = 8
 MAX_EXPORT_BYTES = 96_000
+# Core publishes only these domain names for an exact parsed app_log TRACE.
+# These are metadata for internal scope verification, never exported as
+# additional arbitrary provider content.
+_ATTESTED_LOG_DOMAINS = frozenset({"KOBO", "NUMILOG", "ADEPT", "SYNC", "PLUGIN"})
 
 
 @dataclass(frozen=True)
@@ -60,7 +64,14 @@ _EXPORTED_EVENT_FIELDS = (
 
 
 def _redacted_page_fingerprint(rows):
-    return tuple(tuple(row[field] for field in _EXPORTED_EVENT_FIELDS) for row in rows)
+    # Keep the closed business domain in the fingerprint even though it is
+    # intentionally absent from the clipboard JSON. A changing classification
+    # must invalidate a multi-page selection.
+    return tuple(
+        tuple(row[field] for field in _EXPORTED_EVENT_FIELDS)
+        + (row.get("business_module", ""),)
+        for row in rows
+    )
 
 
 def _check_selected_scope(rows, *, source: str, module: str, severity: str,
@@ -77,7 +88,9 @@ def _check_selected_scope(rows, *, source: str, module: str, severity: str,
                 or (source != "all" and row["source"] != source)
                 or row["severity"] not in ("debug", "info", "warning", "error", "critical")
                 or (severity and row["severity"] != severity)
-                or (module_prefix and not row["module"].casefold().startswith(module_prefix))):
+                or (module_prefix
+                    and not row["module"].casefold().startswith(module_prefix)
+                    and not row.get("business_module", "").casefold().startswith(module_prefix))):
             raise ValueError("diagnostic selection contains out-of-scope events")
         if since is not None:
             try:
@@ -106,6 +119,24 @@ def _checked_page(payload: Mapping, offset: int, expected_total: int | None):
     rows = sanitized_rows(payload)
     if len(rows) != len(items) or len(selectable_event_ids(rows)) != len(rows):
         raise ValueError("diagnostic selection contains ambiguous event IDs")
+    # Since Core #2569, its module filter may match an attested business_module
+    # while the physical app_log logger remains "cifereca". The general-purpose
+    # public sanitizer intentionally drops that optional metadata, so retain
+    # only a fixed Core-published enum internally for the bulk scope check.
+    # Never trust or export arbitrary business_module strings, and never let
+    # one turn a core_events row or an unknown source into a matching log.
+    by_id = {
+        item.get("event_id"): item for item in items
+        if isinstance(item, Mapping) and type(item.get("event_id")) is str
+    }
+    for row in rows:
+        raw = by_id.get(row["event_id"])
+        if (row["source"] == "app_log" and isinstance(raw, Mapping)
+                and raw.get("source") == "app_log"
+                and raw.get("module") == row["module"]
+                and type(raw.get("business_module")) is str
+                and raw["business_module"] in _ATTESTED_LOG_DOMAINS):
+            row["business_module"] = raw["business_module"]
     following = next_page_offset(payload, current_offset=offset)
     if following is None:
         if offset + len(items) != total:
