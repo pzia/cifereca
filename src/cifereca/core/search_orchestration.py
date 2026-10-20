@@ -718,7 +718,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 emit(CatalogSearchBatch(
                     session.provider_id, session.descriptor.display_name,
                     tuple(groups.get(session.provider_id, ())),
-                    cached=True, result_status=_search_batch_status(\n                        groups.get(session.provider_id, ()), (), "", cached=True\n                    ),
+                    cached=True, result_status=_search_batch_status(
+                        groups.get(session.provider_id, ()), (), "", cached=True
+                    ),
                 ))
                 delivered += 1
             cancelled = request_cancelled()
