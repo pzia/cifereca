@@ -43,3 +43,26 @@ def completed_receipt(
             "hook_reported": bool(hook_info) if is_acsm else None,
         },
     }
+
+
+def completed_outcome(
+    *, loan: Any, final_path: Any, acquisition_kind: str,
+    adept_binding: Any, decision: Any,
+) -> dict[str, Any]:
+    """Historical caller-facing success result, without workflow side effects.
+
+    Preserve the private loan reference in the caller's response only. A
+    direct EPUB delivery never inspects an ADEPT binding, even if the caller
+    retained a sentinel from a previous invocation.
+    """
+    return {
+        "status": "complete",
+        "loan_id": loan.id,
+        "path": str(final_path),
+        "adept_return_available": bool(
+            acquisition_kind == "acsm" and adept_binding.get("return_available")
+        ),
+        "decision": decision.action,
+        "reason": decision.reason,
+        "source": decision.source,
+    }
