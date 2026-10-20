@@ -246,8 +246,12 @@ class NumilogPublicSession(ProviderSession):
         opt-in method gives a UI/plugin caller the source-attested navigation
         links without claiming server search-by-author/ISBN.
         """
-        url = self._validate_search(query, page, field, scope)
+        # Same pre-validation generation fence as generic search(): a
+        # close/reconnect during validation must not authorize an old browse
+        # under the new session, even when the result is already cached.
         epoch = self._navigation_epoch_snapshot()
+        url = self._validate_search(query, page, field, scope)
+        self._assert_public_generation(epoch)
         page_result = self._get_page(query, page, field, url)
         return self._register_public_page(page_result, epoch)
 
