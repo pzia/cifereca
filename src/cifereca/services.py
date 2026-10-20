@@ -2977,11 +2977,13 @@ class LibraryService:
                 retained_acsm=retained_acsm, executor=failure_executor,
                 attempt_profile=locals().get("profile_name"),
             )
-            self.storage.acquisition_put({
-                **ledger_base, "status": status, "strategy": "loan_auto", "executor": failure_executor,
-                "error_code": code, "error_message": message, "metadata": metadata,
-                "attention_code": None if status == "retryable_error" else attention_code,
-            })
+            self.storage.acquisition_put(
+                loan_failure_evidence.adept_failure_receipt(
+                    ledger_base=ledger_base, status=status, executor=failure_executor,
+                    code=code, message=message, metadata=metadata,
+                    attention_code=attention_code,
+                )
+            )
             return loan_failure_evidence.adept_failure_outcome(
                 loan_id=loan.id, status=status, message=message,
                 attention_code=attention_code, code=code, process=process,
@@ -3011,13 +3013,12 @@ class LibraryService:
                 previous_meta, loan_id=loan.id, retained_acsm=retained_acsm,
                 attention_code=attention_code, validation_failure=validation_failure,
             )
-            self.storage.acquisition_put({
-                **ledger_base, "status": "retryable_error", "strategy": "loan_auto", "executor": failure_executor,
-                "error_code": "artifact_invalid" if validation_failure else "provider_acquisition_failed",
-                "error_message": "Acquisition du prêt indisponible",
-                "attention_code": None,
-                "metadata": metadata,
-            })
+            self.storage.acquisition_put(
+                loan_failure_evidence.provider_failure_receipt(
+                    ledger_base=ledger_base, executor=failure_executor,
+                    validation_failure=validation_failure, metadata=metadata,
+                )
+            )
             return loan_failure_evidence.provider_failure_outcome(
                 loan_id=loan.id, attention_code=attention_code,
             )

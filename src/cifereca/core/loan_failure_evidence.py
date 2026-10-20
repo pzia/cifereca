@@ -108,3 +108,35 @@ def provider_failure_outcome(
         "status": "retryable_error", "loan_id": loan_id,
         "code": attention_code, "error": "Acquisition du prêt indisponible",
     }
+
+
+def adept_failure_receipt(
+    *, ledger_base: Mapping[str, Any], status: str, executor: str,
+    code: str, message: str, metadata: dict[str, Any],
+    attention_code: str | None,
+) -> dict[str, Any]:
+    """Project the existing ADEPT-classified failure ledger row, without I/O.
+
+    Classification, retryability, choice of profile and the single durable
+    acquisition_put remain in LibraryService under the existing guards.
+    """
+    return {
+        **ledger_base, "status": status, "strategy": "loan_auto", "executor": executor,
+        "error_code": code, "error_message": message, "metadata": metadata,
+        "attention_code": None if status == "retryable_error" else attention_code,
+    }
+
+
+def provider_failure_receipt(
+    *, ledger_base: Mapping[str, Any], executor: str, validation_failure: bool,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Project the generic provider failure row; never change retry policy."""
+    return {
+        **ledger_base, "status": "retryable_error", "strategy": "loan_auto",
+        "executor": executor,
+        "error_code": "artifact_invalid" if validation_failure else "provider_acquisition_failed",
+        "error_message": "Acquisition du prêt indisponible",
+        "attention_code": None,
+        "metadata": metadata,
+    }
