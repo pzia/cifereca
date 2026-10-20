@@ -160,7 +160,7 @@ def test_progressive_transport_outage_keeps_good_live_and_marks_old_as_stale(
         service.close()
 
 
-@pytest.mark.parametrize("failure", ["forbidden", "timeout", "rate_limited", "server_error", "legitimate_zero"])
+@pytest.mark.parametrize("failure", ["forbidden", "timeout", "http_408", "rate_limited", "server_error", "legitimate_zero"])
 def test_fallback_only_on_public_outage_not_rights_or_real_empty(
     tmp_path, failure,
 ):
@@ -176,8 +176,8 @@ def test_fallback_only_on_public_outage_not_rights_or_real_empty(
                 return []
             if failure == "timeout":
                 raise httpx.ReadTimeout("remote host private")
-            if failure in {"forbidden", "rate_limited", "server_error"}:
-                status = {"forbidden": 403, "rate_limited": 429, "server_error": 503}[failure]
+            if failure in {"forbidden", "http_408", "rate_limited", "server_error"}:
+                status = {"forbidden": 403, "http_408": 408, "rate_limited": 429, "server_error": 503}[failure]
                 request = httpx.Request("GET", "https://catalog.example.invalid/search")
                 raise httpx.HTTPStatusError("not available", request=request,
                                             response=httpx.Response(status, request=request))
@@ -190,7 +190,7 @@ def test_fallback_only_on_public_outage_not_rights_or_real_empty(
             "Maritime Book", force=True, on_batch=batches.append,
         )
         assert len(batches) == 1
-        if failure in {"timeout", "rate_limited", "server_error"}:
+        if failure in {"timeout", "http_408", "rate_limited", "server_error"}:
             assert len(attempts) == 1
             assert batches[0].results[0].metadata["search_provenance"] == "known_catalog_stale"
             assert summary.providers_failed == 1
@@ -236,6 +236,7 @@ def test_no_source_scope_or_future_timestamp_can_surface_foreign_book(tmp_path):
 @pytest.mark.parametrize("status,expected_code", [
     (401, "SearchAuthenticationRequired"),
     (403, "SearchAccessDenied"),
+    (408, "SearchTemporarilyUnavailable"),
     (429, "SearchTemporarilyUnavailable"),
     (503, "SearchTemporarilyUnavailable"),
 ])
