@@ -61,7 +61,7 @@ def _safe_url(url: str, approved: frozenset[str],
         # Publication of a path is not proof of an authentication grant.
         path = "/".join(
             part if part.casefold() in _SAFE_PATH or part in approved
-            or part.startswith("PSEUDO_I") or part == ""
+            or part == ""
             else "~redacted~"
             for part in p.path.split("/")
         )
@@ -72,7 +72,7 @@ def _safe_url(url: str, approved: frozenset[str],
                 raise ValueError("invalid_key")
             if _SECRETS.search(key):
                 query.append((key, "[SECRET]"))
-            elif value in approved or value.startswith("PSEUDO_I"):
+            elif value in approved:
                 query.append((key, value))
             elif value.isdecimal() and len(value) <= 3 and not _IDS.search(key):
                 query.append((key, value))
@@ -165,7 +165,7 @@ def _json_shape(node, *, name="", approved=frozenset(), depth=0, counter=None):
     if type(node) is str:
         if node == "[SECRET]" or node == "[UNREVIEWED]":
             return node
-        if node in approved or node.startswith("PSEUDO_I"):
+        if node in approved:
             return node
         # Preserve JSON field names/types and relation of approved values,
         # but do not publish unreviewed free text by default.
@@ -201,7 +201,7 @@ def _body(raw, mime, approved):
             return None, "body_omitted"
         return json.dumps([
             {"field": k, "value": ("[SECRET]" if _SECRETS.search(k)
-                                  else v if v in approved or v.startswith("PSEUDO_I")
+                                  else v if v in approved
                                   else "[UNREVIEWED]")}
             for k, v in pairs if _FIELD.fullmatch(k)
         ], ensure_ascii=True), "captured_form_structure"
