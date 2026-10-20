@@ -5,6 +5,7 @@ import ipaddress
 import json
 import logging
 import os
+import socket
 from pathlib import Path
 import tempfile
 import threading
@@ -19,7 +20,7 @@ from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderC
     ProviderPlugin, ProviderSession, SearchResult, inspect_artifact, publish_artifact_file)
 from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionError,
     OwnedDelivery, parse_library, parse_library_page, delivery_url, public_book_url,
-    html_response_kind, _is_eden_adobe_download)
+    html_response_kind, _attested_public_https)
 from cifereca_numilog_filename import publish
 from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category, public_http_code
 
@@ -103,6 +104,30 @@ def checked_url(value, allowed_origins=None):
     except ValueError:
         pass
     raise ProviderError('Numilog : destination réseau inattendue ; téléchargement arrêté')
+
+def _checked_attested_network_url(value, allowed_origins):
+    """Signed delivery is authorized by the owned Links row, not a host list.
+
+    Public HTTPS and DNS are checked before every GET outside the existing
+    trusted origins. The check never publishes a hostname or signed query.
+    """
+    if not _attested_public_https(value):
+        raise ProviderError('Numilog : destination réseau de livraison refusée')
+    host = urlsplit(value).hostname
+    if url_origin(value) not in allowed_origins:
+        try:
+            addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+            if (not addresses or any(
+                not ipaddress.ip_address(info[4][0]).is_global
+                for info in addresses
+            )):
+                raise ValueError('not_public')
+        except (OSError, ValueError, IndexError, TypeError):
+            raise ProviderError(
+                'Numilog : destination de livraison non publique'
+            ) from None
+    return value
+
 
 def checked_redirect(base_url, location, allowed_origins):
     """Validate the unmodified Location before urljoin can normalize it."""
@@ -680,7 +705,7 @@ class NumilogSession(ProviderSession):
         return produced,self.library_url
 
     def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None,from_owned_confirmation=False,
-                  from_owned_eden=False):
+                  from_owned_eden=False, authorized_link=None, authorized_kind=None):
         with DeliveryTrace(self.diagnostics, source=source, connected_initial=self.connected) as trace:
             trace.fail('adept_unconfirmed')
             owner = identity_id
@@ -694,10 +719,15 @@ class NumilogSession(ProviderSession):
             )
             attested_confirmation_redirect = None
             start_url_for_confirmation = url
-            eden_authorized = (
-                from_owned_eden is True and source == 'owned_card'
-                and _is_eden_adobe_download(url, self.allowed_origins)
+            selected_link = (
+                authorized_link if type(authorized_link) is str
+                and url == authorized_link and source == 'owned_card'
+                and authorized_kind in {'acsm', 'epub_direct'}
+                and _attested_public_https(authorized_link)
+                else None
             )
+            selected_kind = authorized_kind if selected_link is not None else None
+            signed_redirect_chain = False
             owned_confirmation = (
                 from_owned_confirmation is True and source == 'owned_card'
                 and url_origin(url) == url_origin(self.library_url)
@@ -709,22 +739,14 @@ class NumilogSession(ProviderSession):
                 if owner is not None:
                     self._validate_download_owner(owner)
                 trace.fail('origin_rejected')
-                checked_url(url,self.allowed_origins)
+                attested_hop = (url == selected_link or signed_redirect_chain)
+                if attested_hop:
+                    _checked_attested_network_url(url, self.allowed_origins)
+                else:
+                    checked_url(url, self.allowed_origins)
                 trace.fail('adept_unconfirmed')
-                is_eden_route = (
-                    url_origin(url) == ('https', 'services.numilog.com', 443)
-                    and urlsplit(url).path
-                        == '/v4.0/HandlerDownloadLinks/HandlerEdenDownloadLinkV2.ashx'
-                )
-                if is_eden_route and (
-                    not eden_authorized
-                    or not _is_eden_adobe_download(url, self.allowed_origins)
-                ):
-                    # No implicit LCP download and no unbound signed URL.
-                    raise ProviderError(
-                        'Numilog : livraison Eden non liée à cet achat ; téléchargement arrêté'
-                    )
-                if url_origin(url) in ALLOWED_ACSM_ORIGINS or is_eden_route:
+                if (url_origin(url) in ALLOWED_ACSM_ORIGINS
+                        or (attested_hop and selected_kind == 'acsm')):
                     # A signed link may be single-use. Validate ownership and
                     # the importer BEFORE consuming it, even after an ordinary
                     # readBook 302 or an HTML intermediary (#1883).
@@ -755,7 +777,12 @@ class NumilogSession(ProviderSession):
                     }
                 )
                 referer = self.library_url if from_library else self.base_url
-                with self.client.stream('GET',url,headers={'Referer':referer}) as r:
+                # Do not forward the user's Numilog cookies to an arbitrary
+                # external publisher host obtained from a trusted Links row.
+                headers = {'Referer': referer}
+                if attested_hop and url_origin(url) != url_origin(self.library_url):
+                    headers['Cookie'] = ''
+                with self.client.stream('GET', url, headers=headers) as r:
                     self._diag('HTTP',method='GET',origin_kind=destination_category(url)[0],status=r.status_code)
                     # Validate Location before recording target evidence. A
                     # blocked redirect still gets its ordinary HTTP event
@@ -764,9 +791,17 @@ class NumilogSession(ProviderSession):
                     redirect_to = redirect_error = None
                     if r.status_code in REDIRECTS:
                         try:
-                            redirect_to = checked_redirect(
-                                str(r.url), r.headers.get('location',''), self.allowed_origins,
-                            )
+                            if attested_hop:
+                                raw_location = r.headers.get('location','')
+                                if not _raw_network_url(raw_location):
+                                    raise ProviderError('Numilog : redirection réseau inattendue')
+                                redirect_to = urljoin(str(r.url), raw_location)
+                                if not _attested_public_https(redirect_to):
+                                    raise ProviderError('Numilog : redirection réseau inattendue')
+                            else:
+                                redirect_to = checked_redirect(
+                                    str(r.url), r.headers.get('location',''), self.allowed_origins,
+                                )
                         except ProviderError as exc:
                             redirect_error = exc
                     trace.event('delivery_http',
@@ -795,6 +830,7 @@ class NumilogSession(ProviderSession):
                         ):
                             attested_confirmation_redirect = redirect_to
                         url = redirect_to
+                        signed_redirect_chain = attested_hop
                         trace.fail('redirect_limit')
                         continue
                     self._status(r)
@@ -848,11 +884,12 @@ class NumilogSession(ProviderSession):
                                 and url_origin(str(r.url)) == url_origin(self.library_url)
                             ):
                                 evidence = {}
+                                chosen = {}
                                 try:
                                     bound_url = delivery_url(
                                         html, str(r.url),
                                         allowed_origins=self.allowed_origins,
-                                        evidence=evidence,
+                                        evidence=evidence, selection=chosen,
                                         expected_readbook=expected_readbook,
                                         require_bound_confirmation=True,
                                         allow_missing_readbook=(
@@ -887,9 +924,9 @@ class NumilogSession(ProviderSession):
                                         result='owned_confirmation_binding', **evidence,
                                     )
                                     url = bound_url
-                                    eden_authorized = _is_eden_adobe_download(
-                                        bound_url, self.allowed_origins,
-                                    )
+                                    selected_link = bound_url
+                                    selected_kind = chosen.get('kind')
+                                    signed_redirect_chain = False
                                     trace.fail('redirect_limit')
                                     continue
                             # A shared site template can include a password form
@@ -929,6 +966,7 @@ class NumilogSession(ProviderSession):
                                        page_kind=page_kind,kind='error',result='html_error')
                             raise ProviderError('Numilog : page d’erreur reçue au lieu du fichier attendu')
                         evidence = {}
+                        chosen = {}
                         trace.fail('html_delivery_link_missing')
                         # A commercial confirmation is a multi-book-capable
                         # order page, even without a login widget. A lone
@@ -942,7 +980,8 @@ class NumilogSession(ProviderSession):
                         try:
                             url = delivery_url(
                                 html,str(r.url),allowed_origins=self.allowed_origins,
-                                evidence=evidence, expected_readbook=expected_readbook,
+                                evidence=evidence, selection=chosen,
+                                expected_readbook=expected_readbook,
                                 require_bound_confirmation=confirmation_page,
                                 allow_missing_readbook=(
                                     hop == 1 and attested_confirmation_redirect is not None
@@ -972,9 +1011,10 @@ class NumilogSession(ProviderSession):
                         self._diag('livraison HTML',phase='download',
                                    page_kind=page_kind,kind='intermediate',
                                    result='single_allowed_candidate',**evidence)
-                        eden_authorized = _is_eden_adobe_download(
-                            url, self.allowed_origins,
-                        )
+                        if chosen.get('kind') in {'acsm', 'epub_direct'}:
+                            selected_link = url
+                            selected_kind = chosen['kind']
+                            signed_redirect_chain = False
                         trace.fail('redirect_limit')
                         continue
                     if mime not in {'application/epub+zip','application/octet-stream','application/zip',
@@ -1063,7 +1103,8 @@ class NumilogSession(ProviderSession):
                         raise ProviderCapabilityError(
                             'Numilog : broker acquisition requis pour traiter un ACSM'
                         )
-                    checked_url(evidence.url, self.allowed_origins)
+                    if not _attested_public_https(evidence.url):
+                        raise ProviderError('Numilog : destination réseau inattendue')
                     start = evidence.url
                     self._diag('livraison ACSM',phase='owned_card',kind='card_bound',result='single_allowed_candidate')
                 else:
@@ -1094,8 +1135,9 @@ class NumilogSession(ProviderSession):
                     identity_id=owner,expected_readbook_url=row['href'],
                     from_owned_confirmation=type(row.get('confirmation')) is str
                         and not isinstance(evidence, OwnedDelivery),
-                    from_owned_eden=isinstance(evidence, OwnedDelivery)
-                        and _is_eden_adobe_download(evidence.url, self.allowed_origins))
+                    authorized_link=evidence.url if isinstance(evidence, OwnedDelivery) else None,
+                    authorized_kind=evidence.delivery_kind
+                        if isinstance(evidence, OwnedDelivery) else None)
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
 
