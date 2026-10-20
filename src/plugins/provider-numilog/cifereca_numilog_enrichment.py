@@ -258,7 +258,9 @@ def merge_attested_owned_public_detail(owned, detail):
             or getattr(owned, "downloadable", None) is not True
             or getattr(owned, "download_url", None) is not None
             or type(metadata) is not dict
-            or metadata.get("public_url_evidence") != "numilog.library_title_link"):
+            or metadata.get("public_url_evidence") not in {
+                "numilog.library_title_link", "numilog.library_readzis_redirect",
+            }):
         raise ProviderCapabilityError(error)
     listing = metadata.get("public_enrichment")
     if type(listing) is not dict or listing.get("product_url") != url:
@@ -275,7 +277,18 @@ def merge_attested_owned_public_detail(owned, detail):
         and listing.get("field_evidence") == {}
         and metadata.get("format_unverified") is True
     )
-    if not (listing_attested or direct_title_link_attested):
+    readzis_attested = (
+        set(listing) == {"status", "scope", "product_url", "field_evidence"}
+        and listing.get("status") == "attested_owned_readzis_redirect"
+        and listing.get("scope") == "owned_library_readzis_redirect_only"
+        and listing.get("field_evidence") == {}
+        and metadata.get("format_unverified") is True
+        and metadata.get("public_url_evidence") == "numilog.library_readzis_redirect"
+    )
+    if (listing_attested or direct_title_link_attested) and (
+            metadata.get("public_url_evidence") != "numilog.library_title_link"):
+        raise ProviderCapabilityError(error)
+    if not (listing_attested or direct_title_link_attested or readzis_attested):
         raise ProviderCapabilityError(error)
     if listing_attested:
         try:
@@ -381,8 +394,8 @@ def merge_attested_owned_public_detail(owned, detail):
         "public_identifiers": typed_ids,
         "identifier_evidence": typed_proof,
     }
-    if direct_title_link_attested:
-        detail_summary["association_evidence"] = "numilog.library_title_link"
+    if direct_title_link_attested or readzis_attested:
+        detail_summary["association_evidence"] = metadata["public_url_evidence"]
         detail_summary["association_scope"] = "authenticated_owned_book_product"
     if listing_excerpt is not None:
         detail_summary["replaced_listing_excerpt"] = listing_excerpt
@@ -423,7 +436,9 @@ def merge_attested_owned_direct_public_detail(owned, detail):
     meta = getattr(owned, "metadata", None)
     url = getattr(owned, "friendly_url", None)
     if (type(meta) is not dict
-            or meta.get("public_url_evidence") != "numilog.library_title_link"
+            or meta.get("public_url_evidence") not in {
+                "numilog.library_title_link", "numilog.library_readzis_redirect",
+            }
             or meta.get("format_unverified") is not True
             or meta.get("public_enrichment") is not None
             or type(url) is not str
@@ -438,9 +453,12 @@ def merge_attested_owned_direct_public_detail(owned, detail):
 
     # The private library attests only the product URL, not a search listing
     # or an owned edition format. These statements remain separate in Core.
+    readzis = meta["public_url_evidence"] == "numilog.library_readzis_redirect"
     direct = {
-        "status": "attested_owned_title_link",
-        "scope": "owned_library_title_link_only",
+        "status": ("attested_owned_readzis_redirect" if readzis
+                   else "attested_owned_title_link"),
+        "scope": ("owned_library_readzis_redirect_only" if readzis
+                  else "owned_library_title_link_only"),
         "product_url": url,
         "field_evidence": {},
     }
