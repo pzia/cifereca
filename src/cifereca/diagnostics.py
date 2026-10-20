@@ -82,6 +82,7 @@ class DiagnosticEntry:
     verified_source_sync: bool = False
     verified_kobo_adept: bool = False
     verified_numilog_startup: bool = False
+    verified_kobo_backup: bool = False
 
 
 class Diagnostics:
@@ -191,6 +192,37 @@ class Diagnostics:
         with self._lock:
             self._items.append(entry)
 
+    def add_core_kobo_backup_decision(self, detail: object) -> None:
+        """Record only the closed Core opening decision as attested evidence.
+
+        Generic Diagnostics.add() cannot attest a Kobo decision merely by
+        choosing the same category and operation. This producer does not
+        persist any provider-supplied field or invent a shared task reference.
+        The existing independent local TRACE remains emitted by the caller.
+        """
+        from .core.diagnostic_kobo_projection import public_kobo_backup_decision
+
+        if not self.enabled or self.LEVELS["normal"] > self.LEVELS[self.level]:
+            return
+        fields = public_kobo_backup_decision(detail)
+        if not fields:
+            return
+        safe_detail = {
+            "status": fields["status"],
+            "persisted_enabled": fields["enabled"],
+            "connected_kobo": fields["connected"],
+            "eligible_kobo": fields["eligible"],
+            "interval_minutes": fields["interval_minutes"],
+        }
+        entry = DiagnosticEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            category="KOBO", operation="automatic backup decision",
+            status="warning" if fields["status"] in {"partial", "error"} else "ok",
+            detail=safe_detail, verified_kobo_backup=True,
+        )
+        with self._lock:
+            self._items.append(entry)
+
     def add_core_source_sync(self, provider_id: str, *, phase: str, status: str,
                              code: str, duration_ms: int | None = None,
                              counts: dict | None = None) -> None:
@@ -286,6 +318,8 @@ class Diagnostics:
                     row.pop("verified_kobo_adept", None)
                 if row.get("verified_numilog_startup") is False:
                     row.pop("verified_numilog_startup", None)
+                if row.get("verified_kobo_backup") is False:
+                    row.pop("verified_kobo_backup", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:

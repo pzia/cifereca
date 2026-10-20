@@ -2,7 +2,7 @@
 
 Cette tranche porte **uniquement** la décision globale d'ouverture
 `KOBO / automatic backup decision`. Le Core possède déjà deux observations :
-l'événement `Diagnostics.add` et la trace machine
+l'événement attesté `Diagnostics.add_core_kobo_backup_decision` et la trace machine
 `TRACE kobo backup decision status=… enabled=… connected=… eligible=… interval=…`.
 La projection publique utilise un **parseur fermé commun**. Elle ne copie
 jamais un message texte fournisseur ni la totalité d'un diagnostic privé.

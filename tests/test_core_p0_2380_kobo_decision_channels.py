@@ -38,7 +38,7 @@ def _log(path, line):
 
 def test_kobo_same_bounded_typed_decision_on_both_channels(tmp_path):
     diagnostics = Diagnostics()
-    diagnostics.add("KOBO", "automatic backup decision", "warning", detail=DECISION)
+    diagnostics.add_core_kobo_backup_decision(DECISION)
     log = tmp_path / "cifereca.log"
     _log(log, TRACE)
     report = query_diagnostic_events(diagnostics, log_path=log, limit=20)
@@ -59,6 +59,52 @@ def test_kobo_same_bounded_typed_decision_on_both_channels(tmp_path):
     dump = json.dumps(report)
     assert "SUPERSECRET" not in dump and "AN_ACCOUNT" not in dump
     assert "/home/private" not in dump and "private.invalid" not in dump
+
+
+
+def test_generic_diagnostics_cannot_attest_well_formed_kobo_decision(tmp_path):
+    """An arbitrary producer's matching operation and enums prove no Core act."""
+    diagnostics = Diagnostics()
+    diagnostics.add(
+        "KOBO", "automatic backup decision", "warning",
+        detail={**DECISION, "status": "partial"},
+    )
+    row, = query_diagnostic_events(
+        diagnostics, log_path=tmp_path / "missing", source="core_events",
+    )["events"]
+    assert row["module"] == "KOBO"
+    assert row["message"] == "[opération masquée]"
+    assert "detail" not in row
+    assert "task_ref" not in row
+    assert "AN_ACCOUNT" not in json.dumps(row)
+
+
+def test_core_kobo_producer_rejects_invalid_fields_before_storage(tmp_path):
+    diagnostics = Diagnostics()
+    diagnostics.add_core_kobo_backup_decision({
+        **DECISION, "status": PRIVATE,
+    })
+    assert diagnostics.snapshot() == []
+    diagnostics.add_core_kobo_backup_decision(DECISION)
+    row, = diagnostics.snapshot()
+    assert row["verified_kobo_backup"] is True
+    assert row["detail"] == {
+        "status": "partial", "persisted_enabled": True,
+        "connected_kobo": 3, "eligible_kobo": 3, "interval_minutes": 60,
+    }
+    assert "AN_ACCOUNT" not in json.dumps(row)
+    assert "SUPERSECRET" not in json.dumps(row)
+    public, = query_diagnostic_events(
+        diagnostics, log_path=tmp_path / "missing", source="core_events",
+    )["events"]
+    assert public["detail"]["operation_kind"] == "kobo_backup"
+    assert "task_ref" not in public
+
+
+def test_core_kobo_producer_respects_disabled_and_errors_only_levels():
+    for collector in (Diagnostics(enabled=False), Diagnostics(level="errors")):
+        collector.add_core_kobo_backup_decision(DECISION)
+        assert collector.snapshot() == []
 
 
 @pytest.mark.parametrize("invalid", [
