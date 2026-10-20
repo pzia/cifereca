@@ -293,3 +293,60 @@ def test_pause_resume_and_multiple_tabs_keep_private_correlations():
                for x in trace.exchanges)
     assert "NEVER_LOG" not in repr(trace)
     trace.destroy()
+
+
+
+def test_paused_inflight_body_is_never_read_after_resume():
+    # A fast pause/resume between Playwright events must still prevent a
+    # pre-pause authenticated POST/response from leaking into review.
+    from browser_recorder_http import CapturePause
+
+    control = CapturePause()
+    trace = PrivateHttpTrace((ORIGIN,), pause_control=control)
+    first_data = b'{"book":214}'
+    first = Request(ORIGIN + "/before?book_id=214", method="POST",
+                    headers={"content-type": "application/json",
+                             "content-length": str(len(first_data))},
+                    data=first_data)
+    trace.request(first)
+    response = Response(first, data=b'{"secret":"PRIVATE"}')
+    control.set_paused(True)
+    control.set_paused(False)
+    trace.response(response)
+    trace.finished(first)
+    assert response.body_reads == 0
+    assert first.read_post_data == 0
+    assert len(trace.exchanges) == 1
+    assert trace.exchanges[0].response_body_state == "body_omitted"
+    assert trace.exchanges[0].request_body_state == "body_omitted"
+    assert trace.omitted["paused"] == 1
+    assert not trace._pending and not trace._responses
+
+    control.set_paused(True)
+    trace.request(Request(ORIGIN + "/ignored?token=PRIVATE"))
+    assert len(trace.exchanges) == 1
+    control.set_paused(False)
+    second = Request(ORIGIN + "/after")
+    second_response = Response(second, data=b'{"ok":true}')
+    emit(trace, second, second_response)
+    assert len(trace.exchanges) == 2
+    assert trace.exchanges[1].response_body == '{"ok":true}'
+    assert second_response.body_reads == 1
+    assert trace.omitted["paused"] >= 2
+    trace.destroy()
+
+
+def test_direct_pause_discards_pending_body_and_redirect_payload():
+    trace = PrivateHttpTrace((ORIGIN,))
+    req = Request(ORIGIN + "/pending")
+    trace.request(req)
+    response = Response(req, data=b'{"private":"SECRET"}')
+    trace.pause()
+    trace.response(response)
+    trace.finished(req)
+    assert response.body_reads == 0
+    assert trace.exchanges[0].response_body is None
+    assert trace.exchanges[0].response_body_state == "body_omitted"
+    trace.resume()
+    assert not trace._pending and not trace._responses
+    trace.destroy()
