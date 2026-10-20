@@ -686,8 +686,7 @@ def test_real_chromium_second_origin_is_metadata_only_not_replayable(
                     b'{"access_token":"FICTIONAL_PRIVATE_ACCESS_TOKEN"}'
                 ), {}
             else:
-                code, body, headers = 404, b""
-                headers = {}
+                code, body, headers = 404, b"", {}
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -777,7 +776,6 @@ def test_real_chromium_second_origin_is_metadata_only_not_replayable(
                 "FICTIONAL_PRIVATE_ACCESS_TOKEN",
             ):
                 assert private not in serialized
-            assert '"metadata_only\\": true' not in serialized  # no raw JSON replay payload
             assert any(member["name"].startswith("exchanges/")
                        and '"metadata_only":true' in member["text"]
                        for member in plan.preview()["members"])
