@@ -218,12 +218,50 @@ def _body(raw, mime, approved):
 
 
 def _safe_headers(headers):
-    permitted = {"content-type", "accept", "retry-after",
-                 "x-ratelimit-limit", "x-ratelimit-remaining"}
+    """Export only structural media types and numeric rate-limit evidence.
+
+    A header's *name* being technical is not a confidentiality decision.
+    Arbitrary values such as X-RateLimit-Limit: PRIVATE_TOKEN or MIME
+    parameters containing private identifiers must never reach a ZIP.
+    """
+    if type(headers) is not dict:
+        return {}
     result = {}
+    mime = re.compile(
+        r"(?:application|text)/(?:[a-z0-9.+-]{1,60})", re.ASCII,
+    )
+    known_types = {
+        "application/json", "application/xml", "application/javascript",
+        "application/x-www-form-urlencoded", "application/xhtml+xml",
+        "text/html", "text/plain", "text/xml", "text/json",
+        "text/javascript",
+    }
+
+    def structural_type(value):
+        if not mime.fullmatch(value):
+            return False
+        return (value in known_types
+                or value.startswith("application/")
+                and value.endswith(("+json", "+xml")))
+
     for key, value in headers.items():
-        if key in permitted and type(value) is str:
-            if re.fullmatch(r"[A-Za-z0-9 ,;./+_=-]{1,150}", value):
+        if type(key) is not str or type(value) is not str or len(value) > 256:
+            continue
+        if key == "content-type":
+            base = value.split(";", 1)[0].strip().lower()
+            if structural_type(base):
+                result[key] = base
+        elif key == "accept":
+            # The list of media types is useful to a downstream scraper, not
+            # vendor-specific parameters or arbitrary quality extensions.
+            parts = [v.split(";", 1)[0].strip().lower()
+                     for v in value.split(",")]
+            if 1 <= len(parts) <= 12 and all(
+                structural_type(part) or part == "*/*" for part in parts
+            ):
+                result[key] = ", ".join(parts)
+        elif key in {"retry-after", "x-ratelimit-limit", "x-ratelimit-remaining"}:
+            if re.fullmatch(r"[0-9]{1,9}", value):
                 result[key] = value
     return result
 
