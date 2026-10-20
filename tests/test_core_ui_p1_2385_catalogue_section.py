@@ -21,7 +21,7 @@ def _cap(provider, *, scope="public", available=True, refresh="unsupported",
 
 def _disclosure(window):
     return next((item for item in window._sync_sources_box.children
-                 if getattr(item, "label", "").startswith("Catalogues · recherche")),
+                 if str(getattr(item, "label", "") or "").startswith("Catalogues · recherche")),
                 None)
 
 
