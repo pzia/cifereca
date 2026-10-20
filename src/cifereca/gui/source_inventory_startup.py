@@ -91,18 +91,20 @@ def dispatch_after_opening(window: Any) -> bool:
     """Queue separate bounded inventory and consented backup workers."""
     if getattr(window, "_closed", False):
         return False
-    # Separate trigger, independent opt-in and queue coalescing; a source
-    # with only Numilog backup consent must not depend on an inventory opt-in.
+    # Both automatic jobs are independent consents, but their Core paths
+    # share the *non-blocking* acquisition lock. Never submit both in
+    # parallel: a same-startup inventory sync can consume the global lock
+    # and permanently spend the one-hour Numilog materialization claim.
+    # If there is no due inventory, the consented backup still starts.
     from .numilog_materialization_startup import dispatch_after_opening as materialize
-    backup_queued = materialize(window)
     if getattr(window, "_source_inventory_startup_dispatched", False):
-        return backup_queued
+        return False
     broker = _broker(window)
     if broker is None:
-        return backup_queued
+        return materialize(window)
     identities = due_startup_identities(window, broker)
     if not identities:
-        return backup_queued
+        return materialize(window)
     window._source_inventory_startup_dispatched = True
 
     def work():
@@ -130,14 +132,34 @@ def dispatch_after_opening(window: Any) -> bool:
                 "Actualisation initiale des notices des comptes indisponible"
             ) from None
 
+    def after_inventory(_result=None):
+        # The lock has been released when TaskRunner calls the GTK terminal
+        # callback. The source materialization worker rechecks consent and
+        # binding on execution; this callback grants no acquisition itself.
+        if getattr(window, "_closed", False) or _broker(window) is not broker:
+            return
+        materialize(window)
+
+    def inventory_failed(_error):
+        # A failed *inventory* task must not silently suppress the normal
+        # feedback or prevent an independently consented Numilog backup.
+        # Never forward the exception: it can embed a signed private URL.
+        after_inventory()
+        present = getattr(getattr(window, "runner", None), "present_error", None)
+        if callable(present):
+            present(RuntimeError(
+                "Actualisation initiale des notices des comptes indisponible"
+            ))
+
     try:
         window.runner.submit(
             "Actualisation initiale des notices des comptes…", work,
+            after_inventory, inventory_failed,
             priority=TaskPriority.PROVIDER_SYNC,
             kind="source-sync", origin="automatic",
             coalesce_key="source:inventory:startup",
         )
     except Exception:
         window._source_inventory_startup_dispatched = False
-        return backup_queued
+        return materialize(window)
     return True
