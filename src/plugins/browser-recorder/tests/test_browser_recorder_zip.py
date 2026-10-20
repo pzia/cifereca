@@ -234,3 +234,44 @@ def test_write_or_fsync_failure_cleans_incomplete_archive(tmp_path, monkeypatch)
     assert list(target.iterdir()) == []  # neither 0-byte nor incomplete ZIP
     review.destroy()
     trace.destroy()
+
+
+def test_unreviewed_long_numeric_fields_do_not_escape_json_review():
+    """An arbitrary JSON field name is not proof a long integer is public."""
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/api/books",
+        response_body=json.dumps({
+            "telephone": 33612345678, "postalCode": 13000,
+            "year": 2026, "price": 9.5, "bookId": 214,
+        }),
+        response_headers={"content-type": "application/json"}, status=200,
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for item in review.candidates():
+            review.decide(item.key, "keep" if item.value == "214" else "anonymize")
+        plan = prepare_reviewed_zip(review)
+        summary = plan.preview()
+        text = next(m["text"] for m in summary["members"]
+                    if m["name"] == "bodies/0001-response.txt")
+        values = json.loads(text)
+        assert values["telephone"] == "[NUMBER]"
+        assert values["postalCode"] == "[NUMBER]"
+        assert values["year"] == 2026
+        assert values["price"] == 9.5
+        assert values["bookId"] == 214  # expressly reviewed and kept
+        for private in ("33612345678", "13000"):
+            assert private not in json.dumps(summary)
+    finally:
+        review.destroy()
+        trace.destroy()
+
+
+def test_non_finite_numeric_json_shape_fails_closed():
+    from browser_recorder_zip import _json_shape
+    assert _json_shape(float("nan"), name="number") == "[NUMBER]"
+    assert _json_shape(float("inf"), name="number") == "[NUMBER]"
+    assert _json_shape(10000, name="anonymousCode") == "[NUMBER]"
+    assert _json_shape(9999, name="year") == 9999
+    assert _json_shape(123456789, name="bookId", approved=frozenset({"123456789"})) == 123456789

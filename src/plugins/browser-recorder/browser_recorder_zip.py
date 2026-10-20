@@ -11,6 +11,7 @@ from html import escape
 from html.parser import HTMLParser
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -157,9 +158,16 @@ def _json_shape(node, *, name="", approved=frozenset(), depth=0, counter=None):
                             depth=depth+1, counter=counter)
                 for x in node[:256]]
     if type(node) in (int, float) and not isinstance(node, bool):
-        if _IDS.search(name) and str(node) not in approved:
+        if type(node) is float and not math.isfinite(node):
+            return "[NUMBER]"
+        # An unreviewed telephone, postal code or other numeric identifier
+        # may use an arbitrary field name not matched by _IDS. Do not
+        # export long values just because their JSON type is numeric.
+        if str(node) in approved:
+            return node
+        if _IDS.search(name):
             return "[UNREVIEWED_ID]"
-        return node if abs(node) <= 1e12 else "[NUMBER]"
+        return node if abs(node) < 10_000 else "[NUMBER]"
     if node is None or type(node) is bool:
         return node
     if type(node) is str:
