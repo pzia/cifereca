@@ -214,3 +214,23 @@ def test_unapproved_fake_pseudonyms_never_pass_only_by_prefix():
     assert "[UNREVIEWED]" in text or "~redacted~" in text
     review.destroy()
     trace.destroy()
+
+
+
+def test_write_or_fsync_failure_cleans_incomplete_archive(tmp_path, monkeypatch):
+    import browser_recorder_zip as zipmod
+    trace, review = setup()
+    plan = prepare_reviewed_zip(review)
+    plan.preview()
+
+    def disk_error(_fd):
+        raise OSError("fictional disk-full scenario")
+
+    monkeypatch.setattr(zipmod.os, "fsync", disk_error)
+    target = tmp_path / "exports"
+    with pytest.raises(RecorderError, match="save_failed"):
+        plan.save(target, user_confirmed=True)
+    assert target.is_dir()
+    assert list(target.iterdir()) == []  # neither 0-byte nor incomplete ZIP
+    review.destroy()
+    trace.destroy()
