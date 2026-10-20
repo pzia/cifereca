@@ -118,7 +118,7 @@ def test_redirect_disables_follow_and_strips_tracking(monkeypatch):
     (TRACK + "&secret=" + SECRET, 302),
     (BOOK + "#private", 302),
     (BOOK.replace("www.numilog.com", "www.numilog.com:443"), 302),
-    (BOOK + "?trackid=" + SECRET, 302),
+    (BOOK + "?trackid=" + SECRET + "%2F", 302),
     (BOOK, 200), (BOOK, 307), (BOOK, 403), (BOOK, 429),
 ])
 def test_unqualified_redirects_never_start_product_get(monkeypatch, location, status):
