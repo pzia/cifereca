@@ -158,3 +158,52 @@ def test_audit_never_mutates_input_report(monkeypatch):
     _stub(monkeypatch, lambda: report)
     assert broker.audit_local_reconciliation(source.source_id).ok
     assert json.dumps(report, sort_keys=True) == before
+
+
+def test_2498_valid_shared_budgets_are_public_but_no_path_or_identifier(monkeypatch):
+    service, broker, source, calls = _broker()
+    report = _report()
+    report.update(
+        files_hashed_limit=2048,
+        directory_entries_limit=4096,
+        total_hash_bytes_limit=64 * 1024 ** 3,
+        total_hash_bytes_read=5 * 1024 ** 2,
+        extra_private_budget_field="https://private.invalid/?token=PRIVATE",
+    )
+    _stub(monkeypatch, lambda: report)
+    result = broker.audit_local_reconciliation(source.source_id)
+    assert result.ok
+    assert {key: result.facts[key] for key in (
+        "files_hashed_limit", "directory_entries_limit",
+        "total_hash_bytes_limit", "total_hash_bytes_read",
+    )} == {key: report[key] for key in (
+        "files_hashed_limit", "directory_entries_limit",
+        "total_hash_bytes_limit", "total_hash_bytes_read",
+    )}
+    assert "PRIVATE" not in repr(result) and "private.invalid" not in repr(result)
+    assert calls == [] and service.calls == []
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r.pop("total_hash_bytes_read"),
+    lambda r: r.update(files_hashed_limit=True),
+    lambda r: r.update(files_hashed_limit=-1),
+    lambda r: r.update(directory_entries_limit="PRIVATE_PATH"),
+    lambda r: r.update(total_hash_bytes_limit=10 ** 15),
+    lambda r: r.update(total_hash_bytes_read=10 ** 12),
+    lambda r: r.update(total_hash_bytes_read="https://private.invalid/?token=PRIVATE"),
+])
+def test_2498_partial_or_hostile_shared_budgets_fail_closed(monkeypatch, mutation):
+    service, broker, source, _ = _broker()
+    report = _report()
+    report.update(
+        files_hashed_limit=2048,
+        directory_entries_limit=4096,
+        total_hash_bytes_limit=64 * 1024 ** 3,
+        total_hash_bytes_read=5 * 1024 ** 2,
+    )
+    mutation(report)
+    _stub(monkeypatch, lambda: report)
+    result = broker.audit_local_reconciliation(source.source_id)
+    assert not result.ok and result.facts["status"] == "audit_unavailable"
+    assert "PRIVATE" not in repr(result) and "private.invalid" not in repr(result)
