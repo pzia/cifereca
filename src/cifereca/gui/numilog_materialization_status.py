@@ -64,10 +64,16 @@ def describe_run(mode: str, data: Any, *, now: int | None = None) -> str:
         # durable receipt is still running/failed/unknown. Never turn that
         # observation into a public success or hide its unresolved state.
         detail = {}
+    if detail and detail["status"] == "not_due" and status in {
+        "running", "partial", "failed", "blocked",
+    }:
+        # A later rejected claim is NOT a replacement for the last actual
+        # SQLite attempt. In particular, never display "0 errors" in place
+        # of a failed materialization that consumed its one-hour claim.
+        detail = {}
     if detail and status in {"complete", "partial", "failed", "blocked"}:
         if detail["status"] == "not_due":
-            # A throttled opening is a fresh observation of *no attempt*;
-            # the previous completed SQLite receipt stays untouched.
+            # Keep the existing no-op display for a *completed* prior run.
             pass
         elif (detail["status"] != status or
               any(detail[key] != data[key] for key in counts)):
