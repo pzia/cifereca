@@ -284,6 +284,8 @@ class Diagnostics:
                     row.pop("verified_source_sync", None)
                 if row.get("verified_kobo_adept") is False:
                     row.pop("verified_kobo_adept", None)
+                if row.get("verified_numilog_startup") is False:
+                    row.pop("verified_numilog_startup", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
