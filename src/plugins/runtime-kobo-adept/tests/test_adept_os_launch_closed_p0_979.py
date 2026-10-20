@@ -46,7 +46,7 @@ def test_os_launch_failure_exports_only_closed_diagnostic_fields(monkeypatch, fa
     assert kwargs["detail"]["error_code"] == "kobo_adept_launch_error"
     assert kwargs["detail"]["launch_error"] == "os_error"
     assert kwargs["detail"]["retryable"] is False
-    assert kwargs["detail"]["operation"] == "profile"
+    assert kwargs["detail"]["operation"] == "profile list"
     assert kwargs["detail"]["duration_ms"] >= 0
     assert runtime.last_run_diagnostic["launch_error"] == "os_error"
 
