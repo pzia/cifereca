@@ -124,6 +124,7 @@ def main():
         surface = window.get_surface()
         assert surface is not None
         # Native X11 position/size is not a GTK requested/default size.
+        report["ux611_probe_stage"] = "xwininfo_lookup"
         native_raw = subprocess.check_output(
             ["xwininfo", "-name", "Cifereca geometry E2E 1300"],
             text=True, timeout=3,
@@ -133,11 +134,13 @@ def main():
                               native_raw, re.MULTILINE)
             assert found, ("Missing native X11 geometry field", key)
             return int(found.group(1))
+        report["ux611_probe_stage"] = "xwininfo_parse"
         native = {
             "x": native_int("Absolute upper-left X"),
             "y": native_int("Absolute upper-left Y"),
             "width": native_int("Width"), "height": native_int("Height"),
         }
+        report["ux611_probe_stage"] = "monitor_and_paned"
         monitor = Gdk.Display.get_default().get_monitors().get_item(0)
         assert monitor is not None
         monitor_rect = monitor.get_geometry()
@@ -165,16 +168,19 @@ def main():
             },
             "book_selected": page.selection.get_selected_item() is not None,
         }
+        report.setdefault("native_1300_geometry", {})[route] = sample
+        report["ux611_probe_stage"] = "strict_native_geometry"
         assert sample["display"] == {"width": 1300, "height": 768}, sample["display"]
         for geom in (native, sample["gtk_toplevel"], sample["gdk_surface"]):
             assert (geom["width"], geom["height"]) == (1300, 768), geom
         assert 0 < sample["shell_after_sidebar"]["width"] <= 1300
         assert sample["page"]["width"] <= sample["shell_after_sidebar"]["width"]
+        report["ux611_probe_stage"] = "paned_allocations"
         assert sample["paned"]["maximum"] > 0
         assert sample["paned"]["master_width"] > 0
         assert sample["paned"]["detail_width"] > 0
         assert sample["book_selected"]
-        report.setdefault("native_1300_geometry", {})[route] = sample
+        report["ux611_probe_stage"] = "checked"
         report["checks"]["P2_611_native_1300_" + route] = True
 
     def fail(exc):
