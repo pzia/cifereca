@@ -369,3 +369,65 @@ def test_real_chromium_two_tabs_and_aborted_request_are_passive(
     finally:
         trace.destroy()
         assert trace.exchanges == []
+
+
+@pytest.mark.parametrize("interruption", ("callback_failure", "timeout"))
+def test_real_chromium_interrupted_capture_erases_private_trace(
+    fake_bookstore, monkeypatch, tmp_path: Path, interruption,
+):
+    """Abort before review/export: no unredacted in-memory trace survives.
+
+    Both paths use a real visible Chromium browser against the one synthetic
+    loopback server. No vendor accounts or persistent browser profiles.
+    """
+    server, stop, calls = fake_bookstore
+    origin = f"http://127.0.0.1:{server.server_port}"
+    original_site_origin = http_recorder.site_origin
+
+    def local_test_origin(url):
+        parsed = urlsplit(url)
+        if (parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+                and parsed.port == server.server_port
+                and not parsed.username and not parsed.password):
+            return origin
+        return original_site_origin(url)
+
+    monkeypatch.setattr(http_recorder, "site_origin", local_test_origin)
+    trace_class = http_recorder.PrivateHttpTrace
+    traces = []
+
+    def spy_trace(*args, **kwargs):
+        trace = trace_class(*args, **kwargs)
+        traces.append(trace)
+        return trace
+
+    monkeypatch.setattr(http_recorder, "PrivateHttpTrace", spy_trace)
+    assert not stop.is_set()
+
+    if interruption == "callback_failure":
+        # Model unexpected failure of the consenting UI while the browser
+        # is open, after its first navigation has completed.
+        def cancelled(_status):
+            raise RuntimeError("synthetic_session_interruption")
+
+        with pytest.raises(RuntimeError, match="synthetic_session_interruption"):
+            http_recorder.record_http(
+                origin + "/welcome", stop, origins=(origin,),
+                status=cancelled, max_seconds=5,
+            )
+    else:
+        # An unconfirmed capture expires without exporting any HTTP bytes.
+        with pytest.raises(http_recorder.RecorderError, match="capture_interrupted"):
+            http_recorder.record_http(
+                origin + "/welcome", stop, origins=(origin,), max_seconds=1,
+            )
+
+    assert len(traces) == 1
+    trace = traces[0]
+    assert trace.exchanges == []
+    assert trace._pending == {}
+    assert trace._responses == {}
+    assert trace._tab_numbers == {}
+    assert not list(tmp_path.iterdir())
+    assert calls.count(("GET", "/welcome")) == 1
+    assert not any(method == "POST" for method, _path in calls)
