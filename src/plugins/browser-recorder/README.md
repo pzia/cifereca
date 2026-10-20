@@ -80,10 +80,19 @@ licences et autres secrets détectés ne sont jamais des candidats conservables
 et leurs valeurs sont masquées dans la prévisualisation. L'absence de
 détection n'est **pas une garantie d'anonymat**.
 
-Ce module ne fait **aucun export**, n'écrit aucun fichier et n'est pas encore
-relié à une interface GTK. Même après toutes les décisions, son champ
-`approved_for_export` reste `false`. L'intégration UI, une étape
-obligatoire de rescannage final et la confirmation du ZIP font encore partie
-des tickets #2529/#2530. Ne pas sérialiser ni partager la trace brute
-ni les valeurs de la revue locale.
+Une section GTK distincte **« Parcours HTTP privé »** est disponible
+en bas de la page Browser Recorder : démarrage volontaire, arrêt/revue,
+liste déroulante par identifiant, aperçu local et effacement. Chaque valeur
+doit recevoir une décision avant l'aperçu ; aucune décision de conservation
+n'est précochée. Quitter la page détruit les références privées contrôlées.
+Le HAR v0.1 reste une action distincte ; aucune trace HTTP privée n'y est
+ajoutée.
+
+Cette fonctionnalité ne fait **aucun export** et n'écrit aucun fichier
+contenant les nouveaux corps HTTP. Même après toutes les décisions, son
+champ `approved_for_export` reste `false`. L'aperçu GTK est limité à
+80 000 caractères et ne prétend pas être l'aperçu exhaustif du futur ZIP.
+La recette GTK/Chromium réelle, le rescannage final des secrets et la
+confirmation explicite du ZIP restent nécessaires dans #2529/#2530/#2531.
+Ne jamais partager la trace brute ni les valeurs de revue locale.
 
