@@ -154,8 +154,9 @@ def make_panel(monkeypatch, *, allowed=True, busy=False, export_directory=None):
         request_headers={"content-type": "application/json"},
     ))
 
-    def recorder(start, stop):
+    def recorder(start, stop, *, pause_control=None):
         assert start.startswith(ORIGIN) and stop.is_set()
+        assert pause_control is not None
         return raw
 
     monkeypatch.setattr(review_ui, "record_http", recorder)
@@ -296,3 +297,26 @@ def test_abandoned_zip_review_discards_unexported_bytes(tmp_path, monkeypatch):
     panel.destroy()
     assert panel._bundle_plan is None and raw.exchanges == []
     assert list(tmp_path.iterdir()) == []
+
+
+
+def test_pause_resume_during_capture_is_explicit_and_resets_on_stop(monkeypatch):
+    panel, tasks, raw = make_panel(monkeypatch)
+    assert not panel.pause_button.sensitive
+    panel.begin()
+    control = panel._pause_control
+    assert control is not None and panel.pause_button.sensitive
+    assert control.state()[0] is False
+    panel.pause_button.callbacks["clicked"](panel.pause_button)
+    assert control.state()[0] is True
+    assert panel.pause_button.label == "Reprendre HTTP privé"
+    assert not tasks.handles[0].done()
+    panel.pause_button.callbacks["clicked"](panel.pause_button)
+    assert control.state()[0] is False
+    panel.stop_capture()
+    assert not panel.pause_button.sensitive
+    tasks.handles[0].finish()
+    assert panel._pause_control is None
+    assert not panel.pause_button.sensitive
+    panel.destroy()
+    assert raw.exchanges == []
