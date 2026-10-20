@@ -694,3 +694,14 @@ def test_channel_caption_refuses_hostile_source_reason_and_timestamp():
     assert "Journal applicatif (lecture bornée)" in caption
     for forbidden in ("PRIVATE", "HTTP_URL", "TOKEN", "Timestamp"):
         assert forbidden not in caption
+
+
+def test_partial_core_memory_is_not_described_as_rotated_application_journal():
+    text = diagnostic_channel_caption({"sources": [
+        {"source": "core_events", "status": "partial"},
+        {"source": "app_log", "status": "partial",
+         "reason": "log_tail_bounded"},
+    ]})
+    assert "Événements Core (mémoire) : Historique Core partiel" in text
+    assert "Journal applicatif (lecture bornée) : Journal partiel" in text
+    assert "rotation" not in text.split("Journal applicatif", 1)[0]
