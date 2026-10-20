@@ -705,7 +705,7 @@ class NumilogSession(ProviderSession):
         return produced,self.library_url
 
     def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None,from_owned_confirmation=False,
-                  from_owned_eden=False, authorized_link=None, authorized_kind=None):
+                  authorized_link=None, authorized_kind=None):
         with DeliveryTrace(self.diagnostics, source=source, connected_initial=self.connected) as trace:
             trace.fail('adept_unconfirmed')
             owner = identity_id
