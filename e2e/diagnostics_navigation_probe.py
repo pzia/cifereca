@@ -2170,9 +2170,9 @@ def main() -> int:
             numilog_preview_click(True)
             return
         report["checks"]["P0_1905_Numilog_XTEST_preview_then_explicit_SHA_without_acquisition"] = True
-        scroll = f["sync_scroll"]
-        adjustment = scroll.get_vadjustment()
-        adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+        # Accounts precede public-only catalogues (#2141), so Paris is
+        # no longer guaranteed to be at the scroll bottom. Find the real
+        # target inside sync_homonyms_click before dispatching XTEST.
         later(200, sync_homonyms_click)
 
     def sync_homonyms_click():
@@ -2184,9 +2184,29 @@ def main() -> int:
         button = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
                       and node.get_tooltip_text() == "Synchroniser Paris homonyme")
         assert button.get_sensitive() and button.get_mapped()
-        ok, bounds = button.compute_bounds(f["sync_scroll"])
-        assert ok and bounds.get_y() >= 0
-        assert bounds.get_y() + bounds.get_height() <= f["sync_scroll"].get_height()
+        scroll = f["sync_scroll"]
+        assert isinstance(scroll, Gtk.ScrolledWindow)
+        ok, bounds = button.compute_bounds(scroll)
+        assert ok, "Paris targeted sync button has no scroll bounds"
+        top, bottom = bounds.get_y(), bounds.get_y() + bounds.get_height()
+        height = scroll.get_height()
+        assert height > 100 and bottom > top
+        if top < 4 or bottom > height - 4:
+            attempt = f.get("paris_scroll_attempts", 0) + 1
+            assert attempt <= 5, ("Paris target remained outside viewport",
+                                  top, bottom, height)
+            f["paris_scroll_attempts"] = attempt
+            adjustment = scroll.get_vadjustment()
+            target = adjustment.get_value() + top - min(80, height / 4)
+            maximum = max(adjustment.get_lower(),
+                          adjustment.get_upper() - adjustment.get_page_size())
+            adjustment.set_value(max(adjustment.get_lower(), min(target, maximum)))
+            later(180, sync_homonyms_click)
+            return
+        assert top >= 0 and bottom <= height
+        ok, window_bounds = button.compute_bounds(w)
+        assert ok and window_bounds.get_y() >= 0
+        assert window_bounds.get_y() + window_bounds.get_height() <= w.get_height()
         capture("03i2-sync-public-and-paris-homonyms")
         report["pointer_actions"].append(device[0].click_widget(button))
         f["source_sync_deadline"] = monotonic() + 6
