@@ -20,7 +20,9 @@ def search_failure_code(error: BaseException) -> str | None:
                 return "SearchAuthenticationRequired"
             if status == 403:
                 return "SearchAccessDenied"
-            unavailable |= status == 429 or status >= 500
+            # HTTP 408 is a server-side request timeout; unlike 400/404,
+            # it does not establish a legitimate zero-result response.
+            unavailable |= status in {408, 429} or status >= 500
         # Provider exception properties are untrusted. A descriptor may
         # raise, or its equality operator may execute arbitrary plugin code.
         # Only a native, closed machine code may authorize public fallback.

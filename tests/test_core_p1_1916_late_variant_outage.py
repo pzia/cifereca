@@ -10,6 +10,7 @@ from tests.test_core_p1_1916_stale_public_fallback import _known
 
 @pytest.mark.parametrize("failure,expected_code,fallback", [
     ("transport", "SearchTemporarilyUnavailable", True),
+    ("http_408", "SearchTemporarilyUnavailable", True),
     ("http_429", "SearchTemporarilyUnavailable", True),
     ("http_503", "SearchTemporarilyUnavailable", True),
     ("http_403", "SearchAccessDenied", False),
@@ -31,7 +32,7 @@ def test_progressive_reports_late_outage_without_retrying_same_failed_service(
                 return []
             if failure == "transport":
                 raise httpx.ConnectError(private)
-            status = {"http_429": 429, "http_503": 503, "http_403": 403}[failure]
+            status = {"http_408": 408, "http_429": 429, "http_503": 503, "http_403": 403}[failure]
             req = httpx.Request("GET", private)
             raise httpx.HTTPStatusError(
                 private, request=req, response=httpx.Response(status, request=req),
