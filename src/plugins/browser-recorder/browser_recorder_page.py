@@ -225,6 +225,7 @@ class BrowserRecorderPage:
         self.private_panel = PrivateReviewPanel(
             Gtk, GLib, self.tasks, site, consent,
             legacy_running=lambda: self.handle is not None and not self.handle.done(),
+            export_directory=self.context.data_directory / "exports",
         )
         box.append(self.private_panel.widget)
         return box
