@@ -108,6 +108,44 @@ def _replace(
     return text
 
 
+def _replace_json_body(text: str, replacements: dict[str, str],
+                       *, secret_values=frozenset()) -> str:
+    """Anonymize numeric JSON scalars without breaking the JSON document.
+
+    Plain regex replacement can turn `{"postalCode":13000}` into
+    `{"postalCode":PSEUDO_I0001}`, which is invalid JSON and silently
+    drops the technical body from the final structural ZIP. Walk the
+    bounded parsed structure and turn approved numeric substitutions into
+    explicit JSON strings; preserve all object/array boundaries.
+    """
+    try:
+        node = json.loads(text)
+    except (ValueError, RecursionError):
+        return _replace(text, replacements, secret_values=secret_values)
+
+    count = [0]
+
+    def scrub(value, depth=0):
+        count[0] += 1
+        if depth > 16 or count[0] > 1024:
+            raise RecorderError("review_limit")
+        if type(value) is dict:
+            return {
+                _replace(key, replacements, secret_values=secret_values):
+                    scrub(item, depth + 1)
+                for key, item in value.items() if type(key) is str
+            }
+        if type(value) is list:
+            return [scrub(item, depth + 1) for item in value]
+        if type(value) is str:
+            return _replace(value, replacements, secret_values=secret_values)
+        if type(value) in (int, float):
+            return replacements.get(str(value), value)
+        return value
+
+    return json.dumps(scrub(node), ensure_ascii=False, separators=(",", ":"))
+
+
 @dataclass(repr=False)
 class Identifier:
     key: str
@@ -324,17 +362,27 @@ class IdentifierReview:
                    for value in excluded for source in original):
                 dropped += 1
                 continue
-            def clean(value):
-                return None if value is None else _replace(
+            def clean(value, *, mime=""):
+                if value is None:
+                    return None
+                if "json" in mime.casefold():
+                    return _replace_json_body(
+                        str(value), replacements, secret_values=self._secret_values,
+                    )
+                return _replace(
                     str(value), replacements, secret_values=self._secret_values,
                 )
+
+            request_mime = entry.request_headers.get("content-type", "")
+            response_mime = entry.response_headers.get("content-type", entry.mime)
             rows.append({
                 "exchange_id": entry.sequence, "method": entry.method,
                 "page_id": entry.page_id, "started_ms": entry.started_ms,
                 "duration_ms": entry.duration_ms, "url": clean(entry.url),
                 "redirect_to": clean(entry.redirect_to), "status": entry.status,
-                "mime": entry.mime, "request_body": clean(entry.request_body),
-                "response_body": clean(entry.response_body),
+                "mime": entry.mime,
+                "request_body": clean(entry.request_body, mime=request_mime),
+                "response_body": clean(entry.response_body, mime=response_mime),
                 "request_body_state": entry.request_body_state,
                 "response_body_state": entry.response_body_state,
                 "request_headers": {k: clean(v) for k, v in entry.request_headers.items()},
