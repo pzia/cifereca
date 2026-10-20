@@ -24,9 +24,13 @@ _SECRETS = re.compile(
 )
 _IDS = re.compile(
     r"(?:id|uuid|isbn|ean|sku)$|"
+    # CamelCase/underscore contact coordinates require individual review too.
+    r"(?:phone|telephone|mobile)(?:number|num)?$|"
+    r"(?:postalcode|codepostal|zipcode|postcode|zip)$|"
     r"(?:^|[_\-.])(?:uid|pid|sku|isbn|ean|uuid|profile|account|order|"
     r"book|livre|product|edition|exemplaire|user|email|customer|"
-    r"commande|purchase|identifiant)(?:$|[_\-.])",
+    r"commande|purchase|identifiant|phone|telephone|mobile|postal|"
+    r"zipcode|postcode|zip|code_postal)(?:$|[_\-.])",
     re.IGNORECASE,
 )
 _EMAIL = re.compile(r"(?<![\w@])[a-zA-Z0-9.+_-]{1,64}@[a-zA-Z0-9.-]{2,200}\.[a-zA-Z]{2,24}")
@@ -102,6 +106,44 @@ def _replace(
             pattern = r"(?<![A-Za-z0-9])" + pattern + r"(?![A-Za-z0-9])"
         text = re.sub(pattern, lambda _m, value=subst: value, text)
     return text
+
+
+def _replace_json_body(text: str, replacements: dict[str, str],
+                       *, secret_values=frozenset()) -> str:
+    """Anonymize numeric JSON scalars without breaking the JSON document.
+
+    Plain regex replacement can turn `{"postalCode":13000}` into
+    `{"postalCode":PSEUDO_I0001}`, which is invalid JSON and silently
+    drops the technical body from the final structural ZIP. Walk the
+    bounded parsed structure and turn approved numeric substitutions into
+    explicit JSON strings; preserve all object/array boundaries.
+    """
+    try:
+        node = json.loads(text)
+    except (ValueError, RecursionError):
+        return _replace(text, replacements, secret_values=secret_values)
+
+    count = [0]
+
+    def scrub(value, depth=0):
+        count[0] += 1
+        if depth > 16 or count[0] > 1024:
+            raise RecorderError("review_limit")
+        if type(value) is dict:
+            return {
+                _replace(key, replacements, secret_values=secret_values):
+                    scrub(item, depth + 1)
+                for key, item in value.items() if type(key) is str
+            }
+        if type(value) is list:
+            return [scrub(item, depth + 1) for item in value]
+        if type(value) is str:
+            return _replace(value, replacements, secret_values=secret_values)
+        if type(value) in (int, float):
+            return replacements.get(str(value), value)
+        return value
+
+    return json.dumps(scrub(node), ensure_ascii=False, separators=(",", ":"))
 
 
 @dataclass(repr=False)
@@ -320,17 +362,27 @@ class IdentifierReview:
                    for value in excluded for source in original):
                 dropped += 1
                 continue
-            def clean(value):
-                return None if value is None else _replace(
+            def clean(value, *, mime=""):
+                if value is None:
+                    return None
+                if "json" in mime.casefold():
+                    return _replace_json_body(
+                        str(value), replacements, secret_values=self._secret_values,
+                    )
+                return _replace(
                     str(value), replacements, secret_values=self._secret_values,
                 )
+
+            request_mime = entry.request_headers.get("content-type", "")
+            response_mime = entry.response_headers.get("content-type", entry.mime)
             rows.append({
                 "exchange_id": entry.sequence, "method": entry.method,
                 "page_id": entry.page_id, "started_ms": entry.started_ms,
                 "duration_ms": entry.duration_ms, "url": clean(entry.url),
                 "redirect_to": clean(entry.redirect_to), "status": entry.status,
-                "mime": entry.mime, "request_body": clean(entry.request_body),
-                "response_body": clean(entry.response_body),
+                "mime": entry.mime,
+                "request_body": clean(entry.request_body, mime=request_mime),
+                "response_body": clean(entry.response_body, mime=response_mime),
                 "request_body_state": entry.request_body_state,
                 "response_body_state": entry.response_body_state,
                 "request_headers": {k: clean(v) for k, v in entry.request_headers.items()},

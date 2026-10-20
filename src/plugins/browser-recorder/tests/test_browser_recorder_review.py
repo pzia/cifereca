@@ -266,3 +266,62 @@ def test_mandatory_secret_scrubs_unbounded_substring_variants():
     assert encoded not in output
     assert output == "xx[SECRET]yy zz[SECRET]ww"
     assert _replace("1214 214", {"214": "PSEUDO_I0001"}) == "1214 PSEUDO_I0001"
+
+
+
+def test_phone_and_postal_identifiers_are_decided_individually():
+    """Contact coordinates are not public just because keys lack 'Id'."""
+    from browser_recorder_zip import prepare_reviewed_zip
+
+    telephone = "33612345678"
+    postal = "13000"
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/books?telephone=" + telephone,
+        status=200,
+        response_headers={"content-type": "application/json"},
+        response_body=json.dumps({
+            "phoneNumber": int(telephone),
+            "postalCode": int(postal),
+            "year": 2026,
+            "price": 9.5,
+        }),
+    ))
+    review = IdentifierReview(trace)
+    try:
+        rows = _by_value(review)
+        assert set(rows) == {telephone, postal}
+        assert rows[telephone]["occurrences"] == 2
+        assert rows[postal]["kind"] == "identifier"
+        with pytest.raises(RecorderError, match="review_pending"):
+            review.preview()
+
+        review.decide(rows[telephone]["key"], "anonymize")
+        review.decide(rows[postal]["key"], "keep")
+        preview = json.dumps(review.preview())
+        assert telephone not in preview
+        assert postal in preview
+        assert "PSEUDO_" in preview
+
+        bundle = prepare_reviewed_zip(review).preview()
+        serialized = json.dumps(bundle)
+        assert telephone not in serialized
+        body = next(row["text"] for row in bundle["members"]
+                    if row["name"] == "bodies/0001-response.txt")
+        projected = json.loads(body)
+        assert projected["phoneNumber"].startswith("PSEUDO_")
+        assert projected["postalCode"] == int(postal)  # Explicit, warned KEEP.
+        assert projected["year"] == 2026 and projected["price"] == 9.5
+    finally:
+        review.destroy()
+        trace.destroy()
+
+
+@pytest.mark.parametrize("field", [
+    "phone", "phoneNumber", "telephone", "mobileNum",
+    "postalCode", "codePostal", "zipCode", "code_postal",
+])
+def test_contact_field_spellings_are_reviewable(field):
+    from browser_recorder_review import _category
+    assert _category(field, "13000") == "identifier"
+    assert _category("year", "2026") is None
