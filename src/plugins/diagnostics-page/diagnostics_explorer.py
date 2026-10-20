@@ -332,7 +332,14 @@ def diagnostic_channel_caption(payload: Mapping[str, Any]) -> str:
     parts = []
     for state in states:
         label = _CHANNEL_LABELS[state["source"]]
-        item = f"{label} : {state['label']}"
+        status_label = state["label"]
+        if state["source"] == "core_events" and state["status"] == "partial" and (
+            state.get("reason") != "snapshot_records_incomplete"
+        ):
+            # A bounded in-memory snapshot cannot be explained by log-file
+            # rotation. Never call that state a truncated journal.
+            status_label = "Historique Core partiel (couverture incomplète)"
+        item = f"{label} : {status_label}"
         reason = state.get("reason")
         if reason:
             item += " — " + _CHANNEL_REASON_LABELS.get(reason, "Raison non disponible")
