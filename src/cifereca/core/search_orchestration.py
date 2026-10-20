@@ -257,6 +257,19 @@ def _without_redundant_merged(self, sessions: list[ProviderSession], *, field: s
     ]
 
 
+def _search_session_cache_scope(sessions: list[ProviderSession]) -> tuple[tuple[str, str], ...]:
+    """Partition remote search cache by the active configured source account.
+
+    The tuple is used exclusively inside a SHA-256 key preimage, never
+    persisted, logged or exposed to GUI. Provider sessions without a
+    credential_id retain an empty handle for compatibility.
+    """
+    return tuple(sorted(
+        (str(session.provider_id), str(getattr(session, "credential_id", "")))
+        for session in sessions
+    ))
+
+
 def search(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', field: str='all', content_types: tuple[str, ...] | list[str] | None=None, include_redundant_merged: bool=False, logger, facade_type) -> list[SearchResult]:
     provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
     # Search is global: one connected session per provider is queried,
@@ -291,7 +304,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     )
     virtual_cache_tag = f"\0{virtual_versions}" if virtual_versions else ""
     cache_key = hashlib.sha256(
-        f"search-v7\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
+        f"search-v8\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
     ).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
     if not force:
@@ -661,7 +674,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         for session in searchable
         if (entry := self.registry.virtual_entry(session.provider_id)) is not None
     )
-    cache_key = hashlib.sha256(f"search-v8-progressive\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
+    cache_key = hashlib.sha256(f"search-v9-progressive\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
     def request_current_locked() -> bool:
