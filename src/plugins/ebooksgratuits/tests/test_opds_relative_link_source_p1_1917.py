@@ -31,6 +31,8 @@ BOOK = f'''<feed xmlns="{ATOM}"><entry>
  href="../../fetch/42.epub"/>
 <link rel="alternate" type="text/html"
  href="../../page/book/42"/>
+<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg"
+ href="../../covers/42.jpg"/>
 </entry></feed>'''
 
 SEARCH_NAV = f'''<feed xmlns="{ATOM}"><entry>
@@ -76,10 +78,34 @@ def test_nested_feed_relative_epub_and_html_are_exactly_resolved_without_downloa
         row = found[0]
         assert row.title == "Jefferson"
         assert row.friendly_url == WEB
+        assert row.thumbnail_url == HOST + "/index.php/covers/42.jpg"
         assert row.download_url == EPUB
         assert row.downloadable is True and row.owned is False
         assert row.metadata["acquisition_source"] == "opds-calibre"
         assert visited == [ROOT_URL, SEARCH]
+    finally:
+        s.close()
+
+
+def test_opensearch_description_relative_template_uses_its_own_url():
+    meta = HOST + "/index.php/feed/meta/search.xml"
+    root = f'''<feed xmlns="{ATOM}"><link rel="search"
+    type="application/opensearchdescription+xml"
+    href="/index.php/feed/meta/search.xml"/></feed>'''
+    opensearch = '''<OpenSearchDescription
+    xmlns="http://a9.com/-/spec/opensearch/1.1/">
+    <Url type="application/atom+xml"
+     template="../search/{searchTerms}"/>
+    </OpenSearchDescription>'''
+    s, visited = provider({
+        ROOT_URL: root, meta: opensearch, SEARCH: BOOK,
+    })
+    try:
+        items = s.search("jefferson")
+        assert len(items) == 1
+        assert items[0].download_url == EPUB
+        assert items[0].friendly_url == WEB
+        assert visited == [ROOT_URL, meta, SEARCH]
     finally:
         s.close()
 
