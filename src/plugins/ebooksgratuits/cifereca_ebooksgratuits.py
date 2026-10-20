@@ -919,6 +919,12 @@ def _opds_author_navigation_match(query, label):
             (';', '&', '/', '|', '\n', '\r'))):
         return False
     surname, forename = (part.strip() for part in label.split(','))
+    # A prose heading like "Books by HUGO, Victor" is not an author
+    # identity assertion. It cannot be promoted to an exact person link.
+    if _fold(surname).startswith((
+            'books ', 'livres ', 'auteur ', 'authors ', 'author ',
+            'catalogue ', 'recherche ', 'notices ', 'ouvrages ')):
+        return False
     if (not surname or not forename
             or not all(re.fullmatch(r"[^\W_]+(?:[ '\-][^\W_]+)*",
                                      part, flags=re.UNICODE)
