@@ -218,8 +218,8 @@ def sync_local_reconciliation_presentation(result: object) -> str:
         used_mib = values[3] // (1024 * 1024)
         limit_mib = values[2] // (1024 * 1024)
         budget_label = (
-            f"Plafonds partagés : {values[0]} vérifications SHA · "
-            f"{values[1]} entrées inspectées · "
+            f"Plafonds partagés : {values[0]} vérifications SHA max. · "
+            f"{values[1]} entrées max. · "
             f"{used_mib}/{limit_mib} Mio de lecture cumulée. "
         )
     return (
