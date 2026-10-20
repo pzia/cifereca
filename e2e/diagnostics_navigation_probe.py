@@ -1648,9 +1648,11 @@ def main() -> int:
         for provider in ("gutenberg", "gallica"):
             row = next(row for row in rows if row.get_title() == f"Catalogue public · {provider}")
             subtitle = row.get_subtitle()
-            assert "Catalogue consultable · Activée · Connectée" in subtitle
+            # The real Gutenberg fixture is disabled; Gallica is enabled.
+            expected_activation = "Désactivée" if provider == "gutenberg" else "Activée"
+            assert f"Catalogue consultable · {expected_activation} · Connectée" in subtitle
             assert "Synchronisation des données non prise en charge" in subtitle
-            assert subtitle.count("\\n") == 1
+            assert subtitle.count("\n") == 1
             assert "Échec" not in subtitle
             assert any(isinstance(node, Gtk.Switch) for node in walk(sync_action_row(row)))
             assert not any(isinstance(node, Gtk.Button) for node in walk(sync_action_row(row)))
