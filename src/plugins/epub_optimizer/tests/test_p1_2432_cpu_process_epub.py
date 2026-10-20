@@ -168,3 +168,43 @@ def test_large_images_do_not_enter_pool(tmp_path, monkeypatch):
     )
     assert report.images_seen == 1
     assert pool.calls == 0 and target.is_file()
+
+
+
+@pytest.mark.parametrize("failure", [OSError, RuntimeError])
+def test_pool_start_failure_falls_back_to_sequential_with_explicit_notice(
+    tmp_path, monkeypatch, failure,
+):
+    """An unstarted CPU pool is recoverable; no worker task is retried."""
+    source = tmp_path / "source.epub"
+    baseline = tmp_path / "sequential.epub"
+    target = tmp_path / "fallback.epub"
+    _many_pages(source)
+    before = source.read_bytes()
+    sequential = engine.optimize_epub(
+        source, baseline, profile=builtin_profile("xteink-x3"),
+        cpu_workers=1,
+    )
+
+    def refuse_pool(_method):
+        class Context:
+            def Pool(self, **_kwargs):
+                raise failure("SYNTHETIC_PRIVATE_FAILURE_DETAIL")
+        return Context()
+
+    monkeypatch.setattr(engine.mp, "get_context", refuse_pool)
+    report = engine.optimize_epub(
+        source, target, profile=builtin_profile("xteink-x3"),
+        cpu_workers=2,
+    )
+
+    assert report.images_optimized == sequential.images_optimized == 4
+    assert report.images_kept == sequential.images_kept
+    assert report.image_notes == [
+        "Processus CPU indisponibles : repli séquentiel sécurisé."
+    ]
+    assert "SYNTHETIC_PRIVATE_FAILURE_DETAIL" not in repr(report)
+    assert source.read_bytes() == before
+    assert target.read_bytes() == baseline.read_bytes()
+    assert report.output_sha256 == engine._sha256(target)
+    assert not list(tmp_path.glob(".*.tmp"))
