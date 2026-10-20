@@ -39,6 +39,11 @@ _PAIRS = re.compile(
     re.VERBOSE,
 )
 _XML = re.compile(r"<([A-Za-z][\w.:-]{1,63})>\s*([^<>]{1,512})\s*</\1>")
+_HTML_INPUT = re.compile(r"<input\b[^>]{0,1024}>", re.IGNORECASE)
+_HTML_ATTR = re.compile(r"""([a-zA-Z][\w-]*)\s*=\s*["']([^"'<>]{0,512})["']""")
+_AUTH_BEARER = re.compile(
+    r"\b(?:Bearer|Basic)\s+([A-Za-z0-9_+./=~-]{6,512})", re.IGNORECASE,
+)
 
 
 def _is_secret(name: str, value: str) -> bool:
@@ -196,6 +201,22 @@ class IdentifierReview:
                           where + ":" + match.group("key")[:40])
         for match in _XML.finditer(text):
             self._observe(match.group(1), match.group(2).strip(), where + ":xml")
+        # Form inputs are structured by name/type, not a standalone "value"
+        # attribute. An input type=password or name=token is unexportable
+        # even if the surrounding markup is otherwise useful for a parser.
+        for match in _HTML_INPUT.finditer(text):
+            attributes = {
+                k.lower(): html.unescape(v)
+                for k, v in _HTML_ATTR.findall(match.group())
+            }
+            if "value" in attributes:
+                label = (attributes.get("type") if attributes.get("type") == "password"
+                         else attributes.get("name") or "value")
+                self._observe(label, attributes["value"], where + ":input")
+        # An unstructured Authorization: Bearer VALUE would otherwise only
+        # classify the word "Bearer" and leak the token after it.
+        for match in _AUTH_BEARER.finditer(text):
+            self._observe("access_token", match.group(1), where + ":authorization")
         for pattern, key in ((_EMAIL, "email"), (_UUID, "uuid"),
                              (_JWT, "access_token")):
             for match in pattern.finditer(text):
