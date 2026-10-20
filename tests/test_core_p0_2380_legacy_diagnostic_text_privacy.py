@@ -57,9 +57,9 @@ def test_untrusted_status_does_not_bypass_structured_status_vocabulary(tmp_path)
     exported = d.text("synthetic")
     assert "PRIVATE_CUSTOMER_UNRECOGNISED" not in exported
     assert "status=unknown" in exported and "status=error" in exported
-    assert query_diagnostic_events(
+    assert {row["status"] for row in query_diagnostic_events(
         d, log_path=tmp_path / "missing", source="core_events"
-    )["events"][0]["status"] == "unknown"
+    )["events"]} == {"unknown", "error"}
 
 
 def test_legacy_text_output_masks_hostile_dictionary_field_names():
@@ -78,21 +78,38 @@ def test_legacy_text_output_masks_hostile_dictionary_field_names():
     assert "[champ masqué]" in text
 
 
-def test_missing_and_unknown_key_redaction_preserves_typed_counts():
-    result = redact({
+def test_collector_private_keys_do_not_change_shared_book_ui_redaction():
+    raw = {
         "loan_id": "LIVER_PRIVATE_VALUE",
         "account_id": "NOT_A_EMAIL_PRIVATE_VALUE",
-        "attempted": 2,
-        "path_kind": "confirmation_page",
-        "downloaded": 1,
-    })
-    assert result == {
-        "loan_id": "<redacted>",
-        "account_id": "<redacted>",
+        "title": "Readable book title",
         "attempted": 2,
         "path_kind": "confirmation_page",
         "downloaded": 1,
     }
+    # Public redaction is also used by the Synchronisation book-title UI.
+    assert redact(raw) == raw
+    d = Diagnostics()
+    d.add("CORE", "health check", detail=raw)
+    protected = d.snapshot()[0]["detail"]
+    for key in ("loan_id", "account_id", "title"):
+        assert protected[key] == "<redacted>"
+    assert protected["attempted"] == 2
+    assert protected["path_kind"] == "confirmation_page"
+    assert protected["downloaded"] == 1
+
+
+def test_presence_flags_are_not_mistaken_for_private_identifiers():
+    d = Diagnostics()
+    d.add("ADEPT", "binding evidence", detail={
+        "adept_loan_id_present": True,
+        "origin_profile_id_present": False,
+        "loan_id": "PRIVATE_IDENTIFIER",
+    })
+    detail = d.snapshot()[0]["detail"]
+    assert detail["adept_loan_id_present"] is True
+    assert detail["origin_profile_id_present"] is False
+    assert detail["loan_id"] == "<redacted>"
 
 
 def test_hostile_plugin_fields_cannot_crash_collector_or_text_export():
@@ -105,6 +122,8 @@ def test_hostile_plugin_fields_cannot_crash_collector_or_text_export():
 
         def __eq__(self, _other):
             raise AssertionError("must not compare private object")
+
+        __hash__ = object.__hash__
 
     d = Diagnostics(level="errors")
     # Invalid free fields must not be evaluated when filtering by severity.
