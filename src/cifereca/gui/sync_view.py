@@ -25,6 +25,13 @@ def _timestamp_label(value: object) -> str:
     except (ValueError, OverflowError):
         # Provider timestamps can contain private URLs or credential data.
         return ""
+    # Broker timestamps with UTC offsets are instants. Show them in the
+    # machine's current local timezone rather than silently displaying UTC as
+    # wall time (e.g. a 2-hour error in Paris in summer). For naive timestamps,
+    # the timezone is unknown: preserve the supplied wall time, do not
+    # silently assume UTC, a provider timezone or the account location.
+    if parsed.utcoffset() is not None:
+        parsed = parsed.astimezone()
     return parsed.strftime("%d/%m/%Y %H:%M")
 
 
