@@ -13,6 +13,15 @@ bootstrap rootless — **ni fichier utilisateur, ni code Cifereca, ni capture**.
 - Archive : [`gtk4-deb-cache-debian13-trixie-amd64.tar.gz`](https://github.com/pzia/cifereca/releases/download/gtk4-debian13-trixie-amd64-20261020/gtk4-deb-cache-debian13-trixie-amd64.tar.gz)
 - Contrôle d'intégrité : [`SHA256SUMS`](https://github.com/pzia/cifereca/releases/download/gtk4-debian13-trixie-amd64-20261020/SHA256SUMS)
 
+**Asset publié et vérifié le 20/10/2026 :** 261 paquets Debian, taille
+**115 532 940 octets**, SHA-256 **`994827c014446ffdd37016a18c4e457ef2ad225a1de84f9c738efc23f60324e4`**.
+Cette empreinte correspond à la fois au job de construction
+[GitHub Actions #39458209715](https://github.com/pzia/cifereca/actions/runs/39458209715),
+au fichier `SHA256SUMS` publié et au champ `digest` de l'asset GitHub.
+`fetch_release_cache.py` **épingle ce digest** en plus de contrôler
+l'empreinte de l'archive. Aucun extrait du dépôt ou donnée utilisateur
+n'est inclus.
+
 Le nom de tag et d'asset est **figé**. Une nouvelle révision doit utiliser
 un **nouveau tag**, sans écraser le lot précédent. La Release est marquée
 `prerelease` pour **ne pas devenir la dernière version de Cifereca**.
