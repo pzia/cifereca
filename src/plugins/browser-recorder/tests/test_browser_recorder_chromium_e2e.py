@@ -14,7 +14,10 @@ from threading import Event, Thread
 from time import sleep
 from urllib.parse import urlsplit
 from zipfile import ZipFile
+import hashlib
 import json
+import subprocess
+import sys
 
 import pytest
 
@@ -270,6 +273,58 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
                 for secret in (TOKEN, COOKIE, ACCOUNT, UUID,
                                "PRIVATE_FAKE_TITLE", "FICTIONAL_PASSWORD"):
                     assert secret not in text
+
+            # Independent process: validate the immutable approved archive
+            # using only its bytes and a separately transmitted test oracle.
+            # It must not import the Browser Recorder or reuse its ZIP parser.
+            oracle = {
+                "members": [{
+                    "name": item["name"],
+                    "sha256": hashlib.sha256(
+                        item["text"].encode("utf-8")
+                    ).hexdigest(),
+                } for item in preview["members"]],
+                "denied": [TOKEN, COOKIE, ACCOUNT, UUID,
+                           "PRIVATE_FAKE_TITLE", "FICTIONAL_PASSWORD"],
+            }
+            child = r"""
+import hashlib
+import json
+import sys
+from zipfile import ZipFile
+
+def validate():
+    oracle = json.load(sys.stdin)
+    members = oracle["members"]
+    expected = [item["name"] for item in members]
+    if not expected or len(set(expected)) != len(expected):
+        return False
+    with ZipFile(sys.argv[1], "r") as archive:
+        if sorted(archive.namelist()) != expected:
+            return False
+        for item in members:
+            data = archive.read(item["name"])
+            if len(data) > 1_000_000:
+                return False
+            if hashlib.sha256(data).hexdigest() != item["sha256"]:
+                return False
+            if any(secret.encode("utf-8") in data for secret in oracle["denied"]):
+                return False
+    return True
+
+try:
+    success = validate()
+except Exception:
+    success = False
+sys.exit(0 if success else 3)
+"""
+            checked = subprocess.run(
+                [sys.executable, "-c", child, str(tmp_path / "out" / filename)],
+                input=json.dumps(oracle), text=True, capture_output=True,
+                timeout=8, check=False,
+            )
+            assert checked.returncode == 0
+            assert checked.stdout == checked.stderr == ""
         finally:
             review.destroy()
     finally:
