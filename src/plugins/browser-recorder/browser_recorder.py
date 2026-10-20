@@ -121,6 +121,7 @@ class Capture:
         self.navigations: list[str] = []
         self.dropped = 0
         self._pending: dict[int, dict] = {}
+        self._next_exchange = 0
 
     def request(self, request) -> None:
         url = safe_url(request.url, self.origin)
@@ -130,6 +131,8 @@ class Capture:
             self.dropped += 1
             return
         entry = _request_entry(str(request.method), url, datetime.now(timezone.utc).isoformat())
+        self._next_exchange += 1
+        entry["_cifereca"] = {"exchange_id": self._next_exchange, "outcome": "pending"}
         self.entries.append(entry)
         self._pending[id(request)] = entry
 
@@ -142,6 +145,19 @@ class Capture:
             except (ValueError, TypeError):
                 status = 0
             entry["response"]["status"] = status if 100 <= status <= 599 else 0
+            entry["_cifereca"]["outcome"] = (
+                "redirect" if 300 <= status <= 399 else "response"
+            )
+
+    def request_failed(self, request) -> None:
+        """Associate failures with requests, without inspecting error text.
+
+        Playwright failure descriptions can contain raw URLs, cookies and
+        provider data; persist only the fixed, nonsensitive outcome.
+        """
+        entry = self._pending.pop(id(request), None)
+        if entry is not None:
+            entry["_cifereca"]["outcome"] = "network_error"
 
     def navigate(self, url: str) -> None:
         shape = safe_url(url, self.origin)
@@ -246,6 +262,7 @@ def record(start_url: str, directory: Path, stop: Event, *, save_requested: Even
             try:
                 context.on("request", capture.request)
                 context.on("response", capture.response)
+                context.on("requestfailed", capture.request_failed)
 
                 def bind(page):
                     page.on("framenavigated", lambda frame: (
