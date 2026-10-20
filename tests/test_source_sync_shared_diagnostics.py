@@ -157,7 +157,7 @@ def test_kobo_partial_decision_and_successful_source_sync_are_independent(tmp_pa
     service = _service(tmp_path)
     try:
         account, _, _ = setup_source(service, monkeypatch, tmp_path)
-        service.diagnostics.add("KOBO", "automatic backup decision", "warning", detail=dict(
+        service.diagnostics.add_core_kobo_backup_decision(dict(
             status="partial", persisted_enabled=True, connected_kobo=3,
             eligible_kobo=3, interval_minutes=60))
         service.synchronize_account_source(account)
