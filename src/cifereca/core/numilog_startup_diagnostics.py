@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 import json
+import logging
 import re
 import secrets
 
@@ -29,6 +30,8 @@ COUNTS = ("attempted", "downloaded", "skipped", "failed")
 _KEY = "sync.source.numilog.materialization.diagnostic.v1."
 _CLOCK = "sync.source.numilog.materialization.last_start.v1."
 _ACTIVE = ContextVar("numilog_startup_diagnostic", default=None)
+_LOG = logging.getLogger("cifereca")
+_LOG_PREFIX = "TRACE numilog startup_materialization "
 
 
 def public_fields(detail):
@@ -63,6 +66,24 @@ def public_fields(detail):
                               re.fullmatch(r"[0-9a-f]{12}", detail[key]) is None):
             return {}
     return dict(detail)
+
+
+def public_log_fields(body: object) -> dict:
+    """Read exactly the canonical, bounded Core emission, never arbitrary JSON.
+
+    Requiring canonical encoding also rejects duplicate keys, trailing text,
+    whitespace variants and nonfinite constants before any public projection.
+    """
+    if type(body) is not str or len(body) > 2048 or not body.startswith(_LOG_PREFIX):
+        return {}
+    encoded = body[len(_LOG_PREFIX):]
+    try:
+        fields = public_fields(json.loads(encoded))
+    except (ValueError, TypeError, RecursionError):
+        return {}
+    if not fields or json.dumps(fields, separators=(",", ":"), sort_keys=True) != encoded:
+        return {}
+    return fields
 
 
 def _source(source_id):
@@ -144,6 +165,14 @@ class StartupTrace:
         fields = public_fields(self.fields(phase, code, status))
         if not fields:
             return {}
+        # The SAME validated facts go to both channels. No exception, source
+        # key or arbitrary plugin payload can be appended to this emission.
+        # Logging remains independent of collector enablement/retention.
+        try:
+            _LOG.info("%s%s", _LOG_PREFIX,
+                      json.dumps(fields, separators=(",", ":"), sort_keys=True))
+        except Exception:
+            pass  # an optional log handler cannot alter acquisition outcomes
         try:
             self.service.diagnostics.add("NUMILOG", "startup_materialization",
                 "error" if status in {"failed", "partial"} else "warning" if status == "blocked" else "ok",

@@ -97,7 +97,8 @@ def public_numilog_message(operation: str, fields: dict) -> str | None:
     if operation not in {'acquisition_delivery', 'session_state', 'startup_materialization'}:
         return None
     # The message survives existing UI/selected-event exports (500 chars).
-    return (operation + ''.join(f' {key}={value}' for key, value in fields.items()))[:500]
+    pairs = sorted(fields.items()) if operation == 'startup_materialization' else fields.items()
+    return (operation + ''.join(f' {key}={value}' for key, value in pairs))[:500]
 
 
 def public_numilog_session_log(body: str) -> str | None:

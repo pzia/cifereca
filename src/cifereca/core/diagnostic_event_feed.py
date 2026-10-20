@@ -21,6 +21,7 @@ from .diagnostic_kobo_projection import (
     public_kobo_backup_decision, public_kobo_backup_log,
     public_kobo_backup_message,
 )
+from .numilog_startup_diagnostics import public_log_fields as public_numilog_startup_log
 from .public_provider_diagnostics import (
     CONNECT_FAILURE_CODE, canonical_public_provider_id,
 )
@@ -175,7 +176,13 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_kobo_backup_log(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
-            if kobo_detail:
+            numilog_detail = (
+                public_numilog_startup_log(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
+            if numilog_detail:
+                message = public_numilog_message("startup_materialization", numilog_detail)
+            elif kobo_detail:
                 message = public_kobo_backup_message(kobo_detail)
             elif match["logger"] == "cifereca_numilog":
                 message = public_numilog_session_log(match["body"]) or (
@@ -214,8 +221,9 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "source": "app_log",
                 "module": ".".join(safe_parts)[:90],
                 "severity": match["level"].lower(),
-                "message": message[:240],
+                "message": message[:500] if numilog_detail else message[:240],
                 **({"detail": kobo_detail} if kobo_detail else {}),
+                **({"detail": numilog_detail} if numilog_detail else {}),
                 **({"task_ref": task_correlation[1]} if task_correlation else {}),
                 # Neither the rotation suffix nor a moving tail line index
                 # participates in the ID. Distinct lines remain distinct.
