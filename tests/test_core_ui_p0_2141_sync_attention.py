@@ -88,3 +88,47 @@ def test_account_card_displays_prominent_private_safe_status_without_extra_io():
               for group in window._sync_sources_box.children}
     assert len(groups["failure"].children[0].prefixes) == 1
     assert not window.runner.tasks
+
+
+@pytest.mark.parametrize(("phase_status", "source_status", "expected"), [
+    ("partial", "failed", ("error", "Synchronisation : échec — action nécessaire")),
+    ("interrupted", "error", ("error", "Synchronisation : échec — action nécessaire")),
+    ("attention_required", "failed", ("error", "Synchronisation : échec — action nécessaire")),
+    ("partial", "success", ("warning", "Téléchargement local : résultat partiel")),
+])
+def test_source_wide_failure_outranks_local_phase_warning(phase_status, source_status, expected):
+    source = _source(status=source_status, error="", phase_states=(
+        NS(phase="materialize", status=phase_status),))
+    assert sync_source_attention(source) == expected
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_inventory_failure_outranks_materialization_warning_irrespective_of_phase_order(reverse):
+    phases = [
+        NS(phase="materialize", status="partial", error="PRIVATE_LOCAL"),
+        NS(phase="discover_rights", status="failed", error="PRIVATE_INVENTORY"),
+    ]
+    source = _source(status="partial", error="", phase_states=(
+        tuple(reversed(phases)) if reverse else tuple(phases)))
+    assert sync_source_attention(source) == (
+        "error", "Notices et droits : échec — action nécessaire",
+    )
+
+
+def test_local_error_remains_first_when_both_phases_fail_regardless_of_input_order():
+    source = _source(status="failed", error="https://private.invalid/?token=SECRET",
+                     phase_states=(
+                         NS(phase="discover_rights", status="failed"),
+                         NS(phase="materialize", status="blocked"),
+                     ))
+    assert sync_source_attention(source) == (
+        "error", "Téléchargement local : bloqué — action nécessaire",
+    )
+
+
+def test_malformed_phase_collection_cannot_suppress_closed_source_failure():
+    source = _source(status="failed", error="", phase_states=tuple(
+        NS(phase="materialize", status="partial") for _ in range(9)))
+    assert sync_source_attention(source) == (
+        "error", "Synchronisation : échec — action nécessaire",
+    )

@@ -1480,6 +1480,23 @@ def main() -> int:
             "Synchronisation : échec — action nécessaire\n"
         )
         assert "PRIVATE_SYNC_ERROR" not in failed_paris.get_subtitle()
+        # A local warning must never mask a harder error elsewhere in the
+        # same account. This is a pure, closed-state view projection test;
+        # it never contacts the broker or alters consent.
+        from cifereca.gui.sync_view import sync_source_attention
+        from types import SimpleNamespace
+        mixed = SimpleNamespace(
+            sync_capable=True, enabled=True, connected=True,
+            status="failed", error="PRIVATE_SYNC_ERROR",
+            phase_states=(
+                SimpleNamespace(phase="materialize", status="partial"),
+                SimpleNamespace(phase="discover_rights", status="failed"),
+            ),
+        )
+        assert sync_source_attention(mixed) == (
+            "error", "Notices et droits : échec — action nécessaire",
+        )
+        report["checks"]["P0_2141_hard_error_precedes_phase_warning"] = True
         alerts = [
             node for node in walk(failed_paris)
             if isinstance(node, Gtk.Image)
