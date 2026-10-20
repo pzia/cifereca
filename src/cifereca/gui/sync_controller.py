@@ -176,7 +176,13 @@ def _refresh_sync_page(self) -> None:
         )
     if not rows:
         box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0)); return
-    for source, presentation, display_label in zip(rows, presentations, row_titles):
+    # Prioritize actual sync-capable accounts. Public-only catalogues remain
+    # reachable and activatable, but must not push Kobo/Numilog below the fold.
+    ordered_sources = sorted(
+        zip(rows, presentations, row_titles),
+        key=lambda item: (not bool(item[0].sync_capable), not item[1].action_enabled),
+    )
+    for source, presentation, display_label in ordered_sources:
         if not sync_action_scope_current(self, scope):
             return
         # Refuse a broker row whose ownership does not match the explicitly
@@ -189,8 +195,19 @@ def _refresh_sync_page(self) -> None:
         group._cifereca_sync_tools_state = self._sync_tools_state
         group._cifereca_sync_source_id = source.source_id
         row = Adw.ActionRow(); row.set_title(display_label)
-        row.set_subtitle(presentation.summary)
-        row.set_subtitle_lines(0)
+        if source.sync_capable:
+            # Full phases and account status stay visible for actionable sync.
+            row.set_subtitle(presentation.summary)
+            row.set_subtitle_lines(0)
+        else:
+            # No disabled ghost synchronisation action: only a short, trusted
+            # public-catalogue summary and its existing activation toggle.
+            row.set_subtitle(
+                "Catalogue consultable · " + presentation.activation_label
+                + " · " + presentation.connection_label
+                + "\nSynchronisation des données non prise en charge"
+            )
+            row.set_subtitle_lines(2)
         toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
         toggle.set_tooltip_text("Activation : inclure cette source dans les synchronisations")
         def toggled(widget, _param, sid=source.source_id):
@@ -234,7 +251,8 @@ def _refresh_sync_page(self) -> None:
             )
         now.connect("clicked", one)
         now.set_valign(Gtk.Align.CENTER)
-        add_sync_action(row, now)
+        if source.sync_capable:
+            add_sync_action(row, now)
         if source.provider_id == "kobo":
             # Only a targeted Core broker may resolve the private credential.
             # Neither page building nor switching identity reads the ledger.

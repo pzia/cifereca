@@ -48,7 +48,7 @@ def methods():
                      PolicyType=NS(AUTOMATIC=1, NEVER=0),
                      FlowBoxChild=type("FlowChild", (), {}), Label=Label,
                      Orientation=NS(VERTICAL=1), SelectionMode=NS(NONE=0),
-                     Align=NS(CENTER=3))}
+                     Align=NS(CENTER=3, START=1))}
     exec(compile(ast.Module(body=declarations, type_ignores=[]), str(path), "exec"), env)
     return env["add_sync_action"], env["sync_action_row"]
 
@@ -75,7 +75,10 @@ def test_buttons_are_same_objects_below_full_width_description_and_keep_callback
     assert flow.options["max_children_per_line"] == 3
     assert flow.options["selection_mode"] == 0 and flow.options["homogeneous"] is False
     assert all(button.options["valign"] == 3 for button in buttons)
+    assert all(button.options["halign"] == 1 for button in buttons)
+    assert all(button.options["hexpand"] is False for button in buttons)
     assert all(caption.options["wrap"] is True for caption in captions)
+    assert all(caption.options["width_chars"] == 28 for caption in captions)
     assert [button.options["sensitive"] for button in buttons] == [True, False]
     assert row.options["subtitle"] == "Long état de plusieurs lignes"
     buttons[0].clicked()

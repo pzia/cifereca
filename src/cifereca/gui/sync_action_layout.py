@@ -40,6 +40,11 @@ def add_sync_action(row, button):
         container.append(viewport)
         row._cifereca_action_flow = flow
     button.set_valign(Gtk.Align.CENTER)
+    # #2141: FlowBox may allocate a whole wide cell to a lone action. Keep
+    # the interactive button at its natural width (global and per-account),
+    # without changing its callback, accessible label or responsive wrapping.
+    button.set_halign(Gtk.Align.START)
+    button.set_hexpand(False)
     # Large fonts must wrap the caption rather than impose a new minimum
     # window width. Accessible names, icons and tooltip remain unchanged.
     pending = [button]
@@ -47,7 +52,12 @@ def add_sync_action(row, button):
         widget = pending.pop()
         if isinstance(widget, Gtk.Label):
             widget.set_wrap(True)
-            widget.set_width_chars(1)
+            # A one-character minimum was fine while buttons filled their
+            # FlowBox cells. With natural-width actions it makes long labels
+            # request a narrow, many-line button (>72px high in real GTK).
+            # Reserve a two-line-friendly minimum while the horizontal
+            # ScrolledWindow continues to allow the 760px viewport to shrink.
+            widget.set_width_chars(28)
             widget.set_max_width_chars(44)
         child = widget.get_first_child()
         while child is not None:
@@ -57,3 +67,5 @@ def add_sync_action(row, button):
     child = button.get_parent()
     if isinstance(child, Gtk.FlowBoxChild):
         child.set_focusable(False)
+        child.set_halign(Gtk.Align.START)
+        child.set_hexpand(False)

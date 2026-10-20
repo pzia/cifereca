@@ -1642,15 +1642,20 @@ def main() -> int:
         report["checks"]["P1_1889_gtk_sync_suffix_natural_height_centered"] = True
         report["checks"]["P0_kobo_acquisition_controls_keep_source_row_compact"] = True
         report["checks"]["P0_kobo_acquisition_off_by_default_on_sync_page"] = True
+        # #2141: public catalogue rows still expose their activation switch,
+        # but no fake grey Sync CTA. The fixed two-line presentation is concise
+        # and the ordering lets actual accounts occupy the first viewport.
         for provider in ("gutenberg", "gallica"):
             row = next(row for row in rows if row.get_title() == f"Catalogue public · {provider}")
-            assert f"Fournisseur : {provider}" in row.get_subtitle()
-            assert "Non prise en charge" in row.get_subtitle()
-            assert "Catalogue public consultable indépendamment" in row.get_subtitle()
-            assert "Échec" not in row.get_subtitle()
-            assert any(isinstance(node, Gtk.Button) and not node.get_sensitive()
-                       and "ne fournit pas de synchronisation" in (node.get_tooltip_text() or "")
-                       for node in walk(sync_action_row(row)))
+            subtitle = row.get_subtitle()
+            # The real Gutenberg fixture is disabled; Gallica is enabled.
+            expected_activation = "Désactivée" if provider == "gutenberg" else "Activée"
+            assert f"Catalogue consultable · {expected_activation} · Connectée" in subtitle
+            assert "Synchronisation des données non prise en charge" in subtitle
+            assert subtitle.count("\n") == 1
+            assert "Échec" not in subtitle
+            assert any(isinstance(node, Gtk.Switch) for node in walk(sync_action_row(row)))
+            assert not any(isinstance(node, Gtk.Button) for node in walk(sync_action_row(row)))
         paris = [next(row for row in rows
                       if row.get_title() == f"Paris homonyme · paris · connexion {i}/2")
                  for i in (1, 2)]
@@ -1678,6 +1683,17 @@ def main() -> int:
             if isinstance(group_child, Adw.PreferencesGroup):
                 source_groups.append(group_child)
             group_child = group_child.get_next_sibling()
+        # The two catalogue-only sources should no longer push accounts below
+        # the fold. Keep this assertion on live GTK group ordering, not a mock.
+        source_group_titles = []
+        for group in source_groups:
+            first = next((node for node in walk(group) if isinstance(node, Adw.ActionRow)), None)
+            if first is not None:
+                source_group_titles.append(first.get_title())
+        assert len(source_group_titles) == 11
+        assert all(title.startswith("Catalogue public · ") for title in source_group_titles[-2:])
+        assert all(not title.startswith("Catalogue public · ") for title in source_group_titles[:-2])
+        report["checks"]["P0_2141_sync_accounts_before_public_catalogues"] = True
         source_rows = []
         for group in source_groups:
             first_row = next(
@@ -2154,9 +2170,9 @@ def main() -> int:
             numilog_preview_click(True)
             return
         report["checks"]["P0_1905_Numilog_XTEST_preview_then_explicit_SHA_without_acquisition"] = True
-        scroll = f["sync_scroll"]
-        adjustment = scroll.get_vadjustment()
-        adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+        # Accounts precede public-only catalogues (#2141), so Paris is
+        # no longer guaranteed to be at the scroll bottom. Find the real
+        # target inside sync_homonyms_click before dispatching XTEST.
         later(200, sync_homonyms_click)
 
     def sync_homonyms_click():
@@ -2168,9 +2184,29 @@ def main() -> int:
         button = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
                       and node.get_tooltip_text() == "Synchroniser Paris homonyme")
         assert button.get_sensitive() and button.get_mapped()
-        ok, bounds = button.compute_bounds(f["sync_scroll"])
-        assert ok and bounds.get_y() >= 0
-        assert bounds.get_y() + bounds.get_height() <= f["sync_scroll"].get_height()
+        scroll = f["sync_scroll"]
+        assert isinstance(scroll, Gtk.ScrolledWindow)
+        ok, bounds = button.compute_bounds(scroll)
+        assert ok, "Paris targeted sync button has no scroll bounds"
+        top, bottom = bounds.get_y(), bounds.get_y() + bounds.get_height()
+        height = scroll.get_height()
+        assert height > 100 and bottom > top
+        if top < 4 or bottom > height - 4:
+            attempt = f.get("paris_scroll_attempts", 0) + 1
+            assert attempt <= 5, ("Paris target remained outside viewport",
+                                  top, bottom, height)
+            f["paris_scroll_attempts"] = attempt
+            adjustment = scroll.get_vadjustment()
+            target = adjustment.get_value() + top - min(80, height / 4)
+            maximum = max(adjustment.get_lower(),
+                          adjustment.get_upper() - adjustment.get_page_size())
+            adjustment.set_value(max(adjustment.get_lower(), min(target, maximum)))
+            later(180, sync_homonyms_click)
+            return
+        assert top >= 0 and bottom <= height
+        ok, window_bounds = button.compute_bounds(w)
+        assert ok and window_bounds.get_y() >= 0
+        assert window_bounds.get_y() + window_bounds.get_height() <= w.get_height()
         capture("03i2-sync-public-and-paris-homonyms")
         report["pointer_actions"].append(device[0].click_widget(button))
         f["source_sync_deadline"] = monotonic() + 6
@@ -2206,6 +2242,32 @@ def main() -> int:
         f["sync_scroll"].get_vadjustment().set_value(0)
         later(200, loan_sync_audit_click)
 
+    def kobo_offline_audit_row():
+        """Resolve the audited account before its repeated detail title.
+
+        #2141 sorts enabled/synchronisable Kobo ahead of the offline account.
+        Selecting the first audit detail globally would inspect another
+        account's unchanged subtitle and produce a false negative.
+        """
+        w = window[0]
+        groups = [
+            group for group in walk(w._sync_sources_box)
+            if isinstance(group, Adw.PreferencesGroup)
+            and any(
+                isinstance(item, Adw.ActionRow)
+                and item.get_title() == "Kobo audit hors ligne"
+                for item in walk(group)
+            )
+        ]
+        assert len(groups) == 1, "Offline Kobo audit account is not unique"
+        matches = [
+            item for item in walk(groups[0])
+            if isinstance(item, Adw.ActionRow)
+            and item.get_title() == "Vérification des fichiers et rapprochements"
+        ]
+        assert len(matches) == 1, "Offline Kobo audit detail is not unique"
+        return groups[0], matches[0]
+
     def loan_sync_audit_click():
         w = window[0]
         f = loan_sync_fixture
@@ -2214,12 +2276,10 @@ def main() -> int:
         assert "Connexion : Déconnectée" in kobo.get_subtitle()
         # #2141: secondary actions are now below the account's explicitly
         # opened tools expander, not in the primary ActionRow suffix.
-        # Resolve the containing account group to preserve source isolation.
-        groups = [group for group in walk(w._sync_sources_box)
-                  if isinstance(group, Adw.PreferencesGroup)
-                  and any(node is kobo for node in walk(group))]
-        assert len(groups) == 1, "Kobo audit source must have one account group"
-        audits = [button for button in walk(groups[0])
+        # Keep target account and repeated audit-detail title scoped.
+        account_group, _ = kobo_offline_audit_row()
+        assert any(node is kobo for node in walk(account_group))
+        audits = [button for button in walk(account_group)
                   if isinstance(button, Gtk.Button)
                   and button.get_tooltip_text() == (
                       "Audit SHA local de ce compte (lecture seule, peut être long)"
@@ -2336,6 +2396,12 @@ def main() -> int:
             f["audit_stable_checks"] = 0
             later(130, loan_sync_audit_click)
             return
+        # Only local object identity/generation snapshots. Publication exports
+        # four closed booleans, never IDs, account details or GTK contents.
+        f["audit_row_at_click"] = kobo_offline_audit_row()[1]
+        f["audit_preview_generation_at_click"] = getattr(w, "_sync_preview_generation", None)
+        f["audit_identity_generation_at_click"] = getattr(w, "_identity_context_generation", None)
+        f["audit_page_token_at_click"] = getattr(w, "_sync_page_token", None)
         # Exactly one genuine XTEST press/release on a proven GTK hover target.
         device[0].click(sx, sy)
         report["pointer_actions"].append({
@@ -2349,11 +2415,7 @@ def main() -> int:
     def loan_sync_audit_result():
         w = window[0]
         f = loan_sync_fixture
-        audit_row = next(
-            row for row in walk(w._sync_sources_box)
-            if isinstance(row, Adw.ActionRow)
-            and row.get_title() == "Vérification des fichiers et rapprochements"
-        )
+        audit_row = kobo_offline_audit_row()[1]
         subtitle = audit_row.get_subtitle()
         if "Fichiers locaux vérifiés par SHA : 3" not in subtitle:
             now = monotonic()
@@ -2363,6 +2425,19 @@ def main() -> int:
                 report["kobo_audit_observation"] = {
                     "clicked_signal": f["audit_click_signal_seen"] is True,
                     "broker_calls": min(len(f["audit_calls"]), 2),
+                    "row_recreated": audit_row is not f.get("audit_row_at_click"),
+                    "preview_generation_changed": (
+                        getattr(w, "_sync_preview_generation", None)
+                        != f.get("audit_preview_generation_at_click")
+                    ),
+                    "identity_generation_changed": (
+                        getattr(w, "_identity_context_generation", None)
+                        != f.get("audit_identity_generation_at_click")
+                    ),
+                    "page_rebuilt": (
+                        getattr(w, "_sync_page_token", None)
+                        is not f.get("audit_page_token_at_click")
+                    ),
                     "subtitle_phase": (
                         "in_progress" if subtitle == "Inspection locale en cours (lecture seule)…"
                         else "initial" if subtitle == (

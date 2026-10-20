@@ -65,11 +65,16 @@ def test_non_kobo_sources_and_disabled_actions_remain_centered(monkeypatch):
         ),
     ]
     window, _broker, _calls, _build, _page = harness._fixture(sources=sources)
-    assert [len(g.children[0].suffixes) for g in window._sync_sources_box.children] == [2, 2, 2]
+    # Catalogue-only OPDS keeps the activation switch, but no longer shows
+    # a large disabled Synchroniser button (#2141).
+    assert [len(g.children[0].suffixes) for g in window._sync_sources_box.children] == [2, 2, 1]
     labels = _check_all_suffixes(window)
-    assert len(labels) == 10
+    assert len(labels) == 9
     # Numilog backup consent is a distinct, centered, default-disabled action.
-    numilog_group = window._sync_sources_box.children[0]
+    numilog_group = next(
+        group for group in window._sync_sources_box.children
+        if group.children[0].title == "Compte Numilog"
+    )
     assert numilog_group.children[2].title == "Sauvegarde automatique des achats Numilog"
     assert not numilog_group.children[2].suffixes[0].sensitive
 

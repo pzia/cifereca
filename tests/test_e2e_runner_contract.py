@@ -544,3 +544,24 @@ def test_2095_kobo_audit_xtest_requires_stable_real_gtk_hit_target():
     assert 'f["audit_deadline"] = monotonic() + 6' in probe
     assert 'f["audit_click_signal_seen"] = False' in probe
     assert 'report["kobo_audit_observation"]' in probe
+
+def test_2141_kobo_audit_result_is_scoped_to_offline_account_after_sort():
+    """The E2E must inspect the account targeted by the genuine XTEST click."""
+    probe = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(encoding="utf-8")
+    tree = ast.parse(probe)
+    methods = {node.name: node for node in ast.walk(tree)
+               if isinstance(node, ast.FunctionDef)}
+    assert "kobo_offline_audit_row" in methods
+    helper = ast.get_source_segment(probe, methods["kobo_offline_audit_row"])
+    assert '"Kobo audit hors ligne"' in helper
+    assert '"Vérification des fichiers et rapprochements"' in helper
+    for method, expected in (
+        ("loan_sync_audit_click", "account_group, _ = kobo_offline_audit_row()"),
+        ("loan_sync_audit_after_motion", 'f["audit_row_at_click"] = kobo_offline_audit_row()[1]'),
+        ("loan_sync_audit_result", "audit_row = kobo_offline_audit_row()[1]"),
+    ):
+        body = ast.get_source_segment(probe, methods[method])
+        assert expected in body
+    assert "row for row in walk(w._sync_sources_box)" not in (
+        ast.get_source_segment(probe, methods["loan_sync_audit_result"])
+    )
