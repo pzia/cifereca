@@ -89,10 +89,14 @@ jobs:
         run: |
           set -euo pipefail
           ASSET="gtk4-deb-cache-debian13-trixie-amd64.tar.gz"
+          # Use the mounted workspace, not RUNNER_TEMP: actions/upload-artifact
+          # resolves runner.temp on the Ubuntu host, which can differ from the
+          # container's RUNNER_TEMP (/__w/_temp vs /home/runner/work/_temp).
+          mkdir -p "$GITHUB_WORKSPACE/.gtk-publish"
           python3 scripts/ci-validate-gtk-relay-cache.py \
             --cache "$GITHUB_WORKSPACE/.gtk-deb-cache" \
-            --output "$RUNNER_TEMP/$ASSET"
-          cd "$RUNNER_TEMP"
+            --output "$GITHUB_WORKSPACE/.gtk-publish/$ASSET"
+          cd "$GITHUB_WORKSPACE/.gtk-publish"
           sha256sum "$ASSET" > SHA256SUMS
           sha256sum -c SHA256SUMS
           test "$(tar -tzf "$ASSET" | grep -c '^.gtk-deb-cache/.*.deb$')" -ge 11
@@ -105,8 +109,8 @@ jobs:
         with:
           name: gtk4-debian13-release-staged
           path: |
-            ${{ runner.temp }}/gtk4-deb-cache-debian13-trixie-amd64.tar.gz
-            ${{ runner.temp }}/SHA256SUMS
+            .gtk-publish/gtk4-deb-cache-debian13-trixie-amd64.tar.gz
+            .gtk-publish/SHA256SUMS
           if-no-files-found: error
           retention-days: 2
           compression-level: 0
