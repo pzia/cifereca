@@ -506,7 +506,10 @@ def _publish_connection_failure(diagnostics: Any, failure: dict[str, str], *,
     """Prefer the Core-attested producer; legacy diagnostics mocks stay usable."""
     publish = getattr(diagnostics, "add_core_provider_connect_failure", None)
     if callable(publish):
-        publish(failure["provider_id"], singleton=singleton, duration_ms=duration_ms)
+        # The registry has already classified this outcome. Do not lose the
+        # distinct provider_not_registered code before the shared emission.
+        publish(failure["provider_id"], singleton=singleton,
+                duration_ms=duration_ms, code=failure["code"])
     else:
         diagnostics.add(
             "PLUGIN", "public provider connect" if singleton else "provider connect",
@@ -613,9 +616,14 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         plugin = self.registry.maybe_get(provider_id)
         if plugin is None:
             errors[f"{provider_id}:{credential_id}"] = "Plugin inconnu"
-            failures.append(public_connection_failure(
+            missing = public_connection_failure(
                 self.registry, provider_id, code=MISSING_PROVIDER_CODE,
-            ))
+            )
+            failures.append(missing)
+            _publish_connection_failure(
+                self.diagnostics, missing,
+                duration_ms=int((time.monotonic() - item_started) * 1000),
+            )
             continue
         if plugin.descriptor.state != "ready":
             # Skeletons are visible to the GUI/docs but never perform I/O.
