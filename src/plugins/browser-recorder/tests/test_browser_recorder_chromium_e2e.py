@@ -11,6 +11,7 @@ from __future__ import annotations
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, Thread
+from time import sleep
 from urllib.parse import urlsplit
 from zipfile import ZipFile
 import json
@@ -126,6 +127,9 @@ def fake_bookstore():
             elif target == "/ratelimit":
                 self.send(429, b'{"error":"rate_limited","retryAfter":5}',
                           "application/json", {"Retry-After": "5"})
+            elif target == "/slow":
+                sleep(0.15)
+                self.send(200, b'{"slow":true}')
             elif target == "/unauthorized":
                 self.send(401, b'{"error":"authentication_required"}')
             elif target == "/forbidden":
@@ -270,3 +274,98 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
             review.destroy()
     finally:
         trace.destroy()
+
+
+def test_real_chromium_two_tabs_and_aborted_request_are_passive(
+    fake_bookstore, monkeypatch,
+):
+    """Real Chromium: distinct tab identities, slow I/O and network failure.
+
+    Only a fake loopback origin is accessible to this test. The recorder
+    listens to browser-generated events; it does not issue its own requests,
+    retry failed fetches or write a durable private trace.
+    """
+    from playwright.sync_api import sync_playwright
+
+    server, _stop, calls = fake_bookstore
+    origin = f"http://127.0.0.1:{server.server_port}"
+    original_site_origin = http_recorder.site_origin
+
+    def local_test_origin(url):
+        parsed = urlsplit(url)
+        if (parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+                and parsed.port == server.server_port
+                and not parsed.username and not parsed.password):
+            return origin
+        return original_site_origin(url)
+
+    monkeypatch.setattr(http_recorder, "site_origin", local_test_origin)
+    trace = http_recorder.PrivateHttpTrace((origin,))
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=False)
+            try:
+                context = browser.new_context(
+                    accept_downloads=False, service_workers="block",
+                )
+                try:
+                    context.on("request", trace.request)
+                    context.on("response", trace.response)
+                    context.on("requestfinished", trace.finished)
+                    context.on("requestfailed", trace.failed)
+
+                    # A test driver models user navigation across real tabs.
+                    # No Javascript popup blocker bypass or plugin HTTP call.
+                    first = context.new_page()
+                    second = context.new_page()
+                    first.goto(origin + "/welcome", wait_until="load")
+                    second.goto(origin + "/welcome", wait_until="load")
+                    assert "<books>" in first.evaluate(
+                        "fetch('/meta.xml').then(r => r.text())"
+                    )
+                    assert second.evaluate(
+                        "fetch('/ratelimit').then(r => r.status)"
+                    ) == 429
+                    assert first.evaluate(
+                        "fetch('/slow').then(r => r.json()).then(v => v.slow)"
+                    ) is True
+
+                    # A real Chromium request is deliberately failed by the
+                    # per-test Playwright route (no remote host involved).
+                    second.route("**/drop", lambda route: route.abort("failed"))
+                    assert second.evaluate(
+                        "fetch('/drop').then(() => 'unexpected')"
+                        ".catch(() => 'interrupted')"
+                    ) == "interrupted"
+                    second.wait_for_timeout(150)
+                finally:
+                    context.close()
+            finally:
+                browser.close()
+
+        xml = [x for x in trace.exchanges if urlsplit(x.url).path == "/meta.xml"]
+        limited = [x for x in trace.exchanges
+                   if urlsplit(x.url).path == "/ratelimit"]
+        slow = [x for x in trace.exchanges if urlsplit(x.url).path == "/slow"]
+        failed = [x for x in trace.exchanges if urlsplit(x.url).path == "/drop"]
+        assert len(xml) == len(limited) == len(slow) == len(failed) == 1
+        assert xml[0].page_id > 0 and limited[0].page_id > 0
+        assert xml[0].page_id != limited[0].page_id
+        assert xml[0].status == 200
+        assert limited[0].status == 429
+        assert slow[0].page_id == xml[0].page_id
+        assert slow[0].status == 200 and slow[0].duration_ms >= 90
+        assert failed[0].page_id == limited[0].page_id
+        assert failed[0].network_error is True
+        assert failed[0].response_body_state == "network_error"
+        assert failed[0].response_body is None
+        assert sum(x.network_error for x in trace.exchanges) == 1
+        assert calls.count(("GET", "/meta.xml")) == 1
+        assert calls.count(("GET", "/ratelimit")) == 1
+        assert calls.count(("GET", "/slow")) == 1
+        assert all(path != "/drop" for _method, path in calls)
+        assert not any(method == "POST" for method, _path in calls)
+        assert TOKEN not in repr(trace) and COOKIE not in repr(trace)
+    finally:
+        trace.destroy()
+        assert trace.exchanges == []
