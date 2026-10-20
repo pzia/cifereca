@@ -36,6 +36,24 @@ temporelle n'est jamais une corrélation.
 | Échec connexion `PLUGIN / provider connect` | ID vérifié du registre Core ; échec validé | Slug public qualifié et code fermé, dans les deux canaux (#2380) | L'alias configuré n'est pas public ; generic `Diagnostics.add` de plugin n'atteste rien |
 | Autres diagnostics/TRACE historiques | Aucune preuve de schéma commun | Vocabulaire fixe limité ou message masqué | Pas de promesse de symétrie des deux sources ni de task_ref |
 
+### Filtre de module métier versus nom du logger (#2380)
+
+Le champ `module` de `core_events` désigne une catégorie du collecteur
+(`KOBO`, `NUMILOG`, `ADEPT`, etc.) ; celui de `app_log` désigne le
+**logger physique** (`cifereca`, `cifereca_numilog`…). Un filtrage naïf sur
+`module=KOBO` écartait donc les traces Kobo pourtant accessibles dans le
+journal. Les traces à schéma fermé et provenance de logger vérifiée publient
+maintenant `business_module` (`KOBO`, `NUMILOG`, `SYNC`, `ADEPT` ou
+`PLUGIN`), distinct de `module`. Le filtre `module` correspond au préfixe
+**du logger ou de ce domaine attesté**, sans changer l'identité de la source
+et sans inférer de correspondance entre deux événements par leur heure.
+Une TRACE libre, enrichie de secrets ou provenant d'un logger non autorisé
+n'a **pas** de `business_module` et ne correspond pas à un filtre métier.
+Les deux canaux conservent leurs statuts de couverture indépendants ; un
+`app_log` partiel (`log_tail_bounded`) indique une lecture volontairement
+bornée, pas une panne du fournisseur. La déclaration du plugin Numilog reste
+une observation, pas une preuve Core d'authentification.
+
 Références de schéma : [Kobo](CORE-P0-2380-KOBO-DECISION-CHANNELS.md),
 [Numilog](CORE-P0-2380-NUMILOG-SHARED-EMISSION.md),
 [source-sync](CORE-P0-2380-SOURCE-SYNC-EVENTS.md),
