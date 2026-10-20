@@ -61,6 +61,7 @@ class Widget:
     def set_hexpand(self, *args): pass
     def set_vexpand(self, *args): pass
     def set_wrap(self, *args): pass
+    def set_expanded(self, value): self.expanded = value
     def set_wrap_mode(self, *args): pass
     def set_width_chars(self, *args): pass
     def set_valign(self, *args): pass
@@ -112,6 +113,7 @@ def _methods():
     )
     gtk = NS(
         ScrolledWindow=Widget, Box=Widget, Label=Widget, Switch=Widget, Image=Icon,
+        Expander=Widget,
         PolicyType=NS(NEVER=0, AUTOMATIC=1),
         Orientation=NS(VERTICAL=1, HORIZONTAL=2),
         Align=NS(CENTER=3),
