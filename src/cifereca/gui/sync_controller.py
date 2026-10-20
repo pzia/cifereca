@@ -261,16 +261,22 @@ def _refresh_sync_page(self) -> None:
             )
             row.set_subtitle_lines(0)
         else:
-            # No disabled ghost synchronisation action: only a short, trusted
-            # public-catalogue summary and its existing activation toggle.
+            # An account row without sync capability is NOT evidence of a
+            # public catalogue, much less an exhaustively refreshable one.
+            # Keep a neutral explanation and the independent activation flag.
             row.set_subtitle(
-                "Catalogue consultable · " + presentation.activation_label
+                "Recherche de catalogue distincte, si disponible · "
+                + presentation.activation_label
                 + " · " + presentation.connection_label
-                + "\nSynchronisation des données non prise en charge"
+                + "\nInventaire synchronisé non pris en charge"
             )
             row.set_subtitle_lines(2)
         toggle = Gtk.Switch(); toggle.set_active(source.enabled); toggle.set_valign(Gtk.Align.CENTER)
-        toggle.set_tooltip_text("Activation : inclure cette source dans les synchronisations")
+        toggle.set_tooltip_text(
+            "Activation de cette source (recherche éventuelle, sans synchronisation d’inventaire)"
+            if not source.sync_capable
+            else "Activation : inclure cette source dans les synchronisations"
+        )
         def toggled(widget, _param, sid=source.source_id):
             if not sync_action_scope_current(self, scope):
                 return
