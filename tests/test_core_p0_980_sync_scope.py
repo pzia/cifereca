@@ -37,7 +37,9 @@ def test_public_catalogue_is_not_described_as_a_failed_sync():
         enabled=False, connected=True, sync_capable=False,
     ))
     assert result.sync_label == "Non prise en charge"
-    assert "Catalogue public consultable indépendamment" in result.summary
+    assert "ne fournit pas d’inventaire synchronisable" in result.summary
+    assert "recherche de catalogue, si disponible" in result.summary.casefold()
+    assert "Catalogue public consultable" not in result.summary
     assert "ne fournit pas de synchronisation" in result.disabled_reason
     assert not result.action_enabled
     assert "Échec" not in result.summary
@@ -56,3 +58,27 @@ def test_legacy_capabilities_absent_still_reports_conservative_scope():
     result = sync_source_presentation(source(sync_capabilities=None))
     assert "données en ligne prises en charge" in result.summary
     assert "inventaire distant" not in result.summary
+
+
+def test_technical_non_sync_source_never_claims_public_catalogue():
+    result = sync_source_presentation(source(
+        provider_id="private.technical", label="Technique",
+        enabled=True, connected=False, sync_capable=False,
+        error="PRIVATE https://credentials.invalid/?key=SECRET",
+    ))
+    assert result.sync_label == "Non prise en charge"
+    assert "Une recherche de catalogue, si disponible" in result.summary
+    assert "Catalogue public consultable" not in result.summary
+    assert "SECRET" not in result.summary
+    assert not result.action_enabled
+
+
+def test_sync_capable_owned_store_still_has_no_catalogue_or_loan_claim():
+    result = sync_source_presentation(source(
+        provider_id="numilog", label="Numilog",
+        sync_capabilities=("remote_inventory", "entitlements"),
+    ))
+    assert "inventaire des livres achetés" in result.summary
+    assert "droits sur les livres possédés" in result.summary
+    assert "aucun emprunt" in result.summary
+    assert "Catalogue public" not in result.summary
