@@ -147,7 +147,7 @@ def _json_shape(node, *, name="", approved=frozenset(), depth=0, counter=None):
                             depth=depth+1, counter=counter)
                 for x in node[:256]]
     if type(node) in (int, float) and not isinstance(node, bool):
-        if _IDS.search(name):
+        if _IDS.search(name) and str(node) not in approved:
             return "[UNREVIEWED_ID]"
         return node if abs(node) <= 1e12 else "[NUMBER]"
     if node is None or type(node) is bool:
@@ -239,20 +239,28 @@ def _zip_bytes(members: dict[str, bytes]) -> bytes:
 class ReviewedBundlePlan:
     """Immutable frozen ZIP bytes; the preview must precede explicit saving."""
 
-    def __init__(self, blob: bytes, members: tuple[str, ...]):
+    def __init__(self, blob: bytes, members: dict[str, bytes]):
         self._blob = blob
-        self._members = members
+        self._members = dict(members)
         self._viewed = False
 
     def __repr__(self):
         return f"ReviewedBundlePlan(members={len(self._members)}, bytes={len(self._blob)})"
 
     def preview(self):
+        """Reveal the EXACT frozen UTF-8 members, not only a file count."""
         self._viewed = True
         return {
-            "schema": ZIP_SCHEMA, "members": list(self._members),
-            "bytes": len(self._blob), "sha256": hashlib.sha256(self._blob).hexdigest(),
-            "warning": "Extrait expurgé : des données résiduelles peuvent subsister.",
+            "schema": ZIP_SCHEMA,
+            "members": [
+                {"name": name, "bytes": len(body),
+                 "sha256": hashlib.sha256(body).hexdigest(),
+                 "text": body.decode("utf-8", "strict")}
+                for name, body in sorted(self._members.items())
+            ],
+            "bytes": len(self._blob),
+            "sha256": hashlib.sha256(self._blob).hexdigest(),
+            "warning": "Revue manuelle obligatoire : risque de données résiduelles.",
         }
 
     def save(self, directory: Path, *, user_confirmed: bool = False):
@@ -309,6 +317,8 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         if type(eid) is not int or not 1 <= eid <= MAX_EXCHANGES:
             raise RecorderError("bundle_invalid_exchange")
         path = f"exchanges/{eid:04d}.json"
+        if path in files:
+            raise RecorderError("bundle_duplicate_exchange")
         outgoing = {
             "exchange_id": eid, "method": entry["method"],
             "page_id": entry["page_id"], "started_ms": entry["started_ms"],
@@ -368,4 +378,4 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", all_plain,
     ):
         raise RecorderError("bundle_secret_risk")
-    return ReviewedBundlePlan(blob, tuple(sorted(files)))
+    return ReviewedBundlePlan(blob, files)
