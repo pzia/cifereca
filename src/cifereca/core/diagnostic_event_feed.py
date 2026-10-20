@@ -272,10 +272,22 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 if part.lower() not in (_STRUCTURED_TERMS | {"core", "diagnostics", "ui", "service", "worker"}):
                     break
                 safe_parts.append(part.lower())
+            # Keep the physical logger in "module". A *separate*, fixed
+            # business domain is supported only for a fully validated TRACE
+            # from the exact known producer. Never classify arbitrary TRACE
+            # text, guessed module names or timestamps as domain evidence.
+            business_module = (
+                "KOBO" if kobo_detail else
+                "NUMILOG" if numilog_detail or numilog_session_detail else
+                "SYNC" if source_sync_detail else
+                "ADEPT" if adept_detail else
+                "PLUGIN" if connection_detail else None
+            )
             events.append({
                 "timestamp": ts,
                 "source": "app_log",
                 "module": ".".join(safe_parts)[:90],
+                **({"business_module": business_module} if business_module else {}),
                 "severity": match["level"].lower(),
                 "message": message[:500] if numilog_detail or source_sync_detail or adept_detail else message[:240],
                 **({"detail": kobo_detail} if kobo_detail else {}),
@@ -498,7 +510,17 @@ def query_diagnostic_events(
         events.extend(rows)
         states.append(state)
     if module:
-        events = [row for row in events if row["module"].casefold().startswith(module.casefold()[:90])]
+        # "module" is the logger on app_log, but the Core producer category on
+        # core_events. A KOBO/NUMILOG business filter must not discard a
+        # canonical app_log observation solely because its logger is cifereca.
+        # Only the exact closed schema parser above may set business_module.
+        prefix = module.casefold()[:90]
+        events = [
+            row for row in events
+            if row["module"].casefold().startswith(prefix)
+            or (type(row.get("business_module")) is str
+                and row["business_module"].casefold().startswith(prefix))
+        ]
     if severity:
         if severity.lower() not in {"debug", "info", "warning", "error", "critical"}:
             raise ValueError("unknown diagnostic severity")
