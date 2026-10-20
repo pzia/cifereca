@@ -24,8 +24,8 @@ def test_sync_accounts_precede_catalog_only_sources_and_keep_original_account_or
     for group in groups[2:]:
         row = group.children[0]
         assert row.subtitle == (
-            "Catalogue consultable · Activée · Connectée\n"
-            "Synchronisation des données non prise en charge"
+            "Recherche de catalogue distincte, si disponible · Activée · Connectée\n"
+            "Inventaire synchronisé non pris en charge"
         )
         assert len(row.suffixes) == 1  # activation, no false sync command
     assert window.runner.tasks == []
