@@ -128,6 +128,8 @@ class PrivateExchange:
     response_body_state: str = "body_omitted"
     redirect_to: str | None = field(default=None, repr=False)
     network_error: bool = False
+    # Optional third-party context, never a URL, header, MIME or body.
+    metadata_only: bool = False
 
     def __repr__(self) -> str:
         # A debugging object representation must never leak its secret URL,
@@ -144,10 +146,18 @@ class PrivateHttpTrace:
                  limit: int = MAX_EXCHANGES,
                  max_body: int = MAX_BODY_BYTES,
                  total_body: int = MAX_TOTAL_BODY_BYTES,
-                 pause_control: CapturePause | None = None):
+                 pause_control: CapturePause | None = None,
+                 metadata_only_origins: tuple[str, ...] = ()):
         if not origins or len(origins) > 6:
             raise RecorderError("invalid_origin")
         self.origins = tuple(dict.fromkeys(site_origin(item) for item in origins))
+        if (type(metadata_only_origins) not in (tuple, list)
+                or len(metadata_only_origins) > 4):
+            raise RecorderError("invalid_origin")
+        self.metadata_only_origins = tuple(dict.fromkeys(
+            site_origin(item) for item in metadata_only_origins
+            if site_origin(item) not in self.origins
+        ))
         self.limit = min(MAX_EXCHANGES, max(1, int(limit)))
         self.max_body = min(MAX_BODY_BYTES, max(1, int(max_body)))
         self.total_body = min(MAX_TOTAL_BODY_BYTES, max(0, int(total_body)))
@@ -222,7 +232,8 @@ class PrivateHttpTrace:
             return
         try:
             origin = _url_origin(req.url)
-            if origin not in self.origins:
+            metadata_only = origin in self.metadata_only_origins
+            if origin not in self.origins and not metadata_only:
                 self.omitted["out_of_scope"] += 1
                 return
             if len(self.exchanges) >= self.limit:
@@ -234,10 +245,12 @@ class PrivateHttpTrace:
                 method = "OTHER"
             entry = PrivateExchange(
                 sequence=len(self.exchanges) + 1, method=method,
-                url=str(req.url),
+                # Never retain the target host/path/query of a third party.
+                url="" if metadata_only else str(req.url),
                 started_ms=int((monotonic() - self._begin) * 1000),
                 page_id=self._tab(req),
-                request_headers=_headers(req),
+                request_headers={} if metadata_only else _headers(req),
+                metadata_only=metadata_only,
             )
             self.exchanges.append(entry)
             self._pending[id(req)] = entry
@@ -254,6 +267,10 @@ class PrivateHttpTrace:
                 return
             status = int(resp.status)
             entry.status = status if 100 <= status <= 599 else 0
+            if entry.metadata_only:
+                # No response object retained and no header, Location, MIME
+                # or body access, even for a redirect/authentication failure.
+                return
             entry.response_headers = _headers(resp)
             entry.mime = _mime(entry.response_headers)
             entry.response_body_state = (
@@ -283,6 +300,8 @@ class PrivateHttpTrace:
             return
         entry.duration_ms = max(0, int((monotonic() - self._begin) * 1000)
                                 - entry.started_ms)
+        if entry.metadata_only:
+            return
         sizes = _sizes(req)
         request_length = _length(entry.request_headers)
         actual_request = sizes.get("requestBodySize")
@@ -376,6 +395,7 @@ def record_http(start_url: str, stop: Event, *,
                 origins: tuple[str, ...] | None = None,
                 status=None, factory=None, max_seconds: int = MAX_CAPTURE_SECONDS,
                 pause_control: CapturePause | None = None,
+                metadata_only_origins: tuple[str, ...] = (),
                 ) -> PrivateHttpTrace:
     """Observe a manually controlled Chromium session; return RAM-only trace.
 
@@ -384,7 +404,10 @@ def record_http(start_url: str, stop: Event, *,
     review is abandoned; export requires a separate explicit confirmation.
     """
     origin = site_origin(start_url)
-    trace = PrivateHttpTrace(origins or (origin,), pause_control=pause_control)
+    trace = PrivateHttpTrace(
+        origins or (origin,), pause_control=pause_control,
+        metadata_only_origins=metadata_only_origins,
+    )
     if origin not in trace.origins:
         raise RecorderError("invalid_origin")
     try:

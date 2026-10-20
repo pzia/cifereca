@@ -350,3 +350,94 @@ def test_direct_pause_discards_pending_body_and_redirect_payload():
     trace.resume()
     assert not trace._pending and not trace._responses
     trace.destroy()
+
+
+def test_explicit_third_party_metadata_never_reads_headers_or_bodies():
+    """A separately consented identity origin exposes only method/status.
+
+    Property traps enforce a stronger invariant than merely asserting that
+    a private token is absent from the final ZIP.
+    """
+    from browser_recorder_review import IdentifierReview
+    from browser_recorder_zip import prepare_reviewed_zip
+
+    class ThirdParty(Request):
+        @property
+        def headers(self):
+            raise AssertionError("third-party request headers must stay unread")
+
+        @headers.setter
+        def headers(self, _value):
+            pass
+
+        @property
+        def post_data_buffer(self):
+            raise AssertionError("third-party request body must stay unread")
+
+        def sizes(self):
+            raise AssertionError("third-party body sizes must stay unread")
+
+    class ThirdPartyResponse:
+        status = 302
+        def __init__(self, request):
+            self.request = request
+
+        @property
+        def headers(self):
+            raise AssertionError("third-party headers/redirect must stay unread")
+
+        def body(self):
+            raise AssertionError("third-party response must stay unread")
+
+    trace = PrivateHttpTrace((ORIGIN,), metadata_only_origins=(FOREIGN,))
+    try:
+        target = ThirdParty(
+            FOREIGN + "/login?state=FICTIONAL_PRIVATE_OAUTH&code=SECRET",
+            method="POST",
+        )
+        response = ThirdPartyResponse(target)
+        emit(trace, target, response)
+        assert len(trace.exchanges) == 1
+        entry = trace.exchanges[0]
+        assert entry.metadata_only is True
+        assert entry.method == "POST" and entry.status == 302
+        assert entry.url == "" and entry.redirect_to is None
+        assert not entry.request_headers and not entry.response_headers
+        assert entry.mime == "" and entry.request_body is None
+        assert entry.response_body is None and entry.duration_ms >= 0
+        assert not trace._pending and not trace._responses
+        review = IdentifierReview(trace)
+        try:
+            assert not review.candidates()
+            summary = prepare_reviewed_zip(review).preview()
+            import json
+            published = json.dumps(summary)
+            assert "FICTIONAL_PRIVATE_OAUTH" not in published
+            assert FOREIGN not in published
+            exchange = next(x for x in summary["members"]
+                            if x["name"] == "exchanges/0001.json")
+            document = json.loads(exchange["text"])
+            assert document["metadata_only"] is True
+            assert document["url"] == "" and document["status"] == 302
+            assert not document["bodies"]["request"]["file"]
+            assert not document["bodies"]["response"]["file"]
+        finally:
+            review.destroy()
+    finally:
+        trace.destroy()
+
+
+def test_unlisted_third_party_remains_invisible_and_metadata_scope_is_bounded():
+    trace = PrivateHttpTrace((ORIGIN,))
+    emit(trace, Request(FOREIGN + "/login?token=PRIVATE"),
+         Response(Request(FOREIGN + "/login?token=PRIVATE")))
+    assert trace.exchanges == []
+    assert trace.omitted["out_of_scope"] == 1
+    with pytest.raises(RecorderError, match="invalid_origin"):
+        PrivateHttpTrace((ORIGIN,), metadata_only_origins=(
+            FOREIGN, "https://id2.example.org", "https://id3.example.org",
+            "https://id4.example.org", "https://id5.example.org",
+        ))
+    with pytest.raises(RecorderError, match="invalid_origin"):
+        PrivateHttpTrace((ORIGIN,), metadata_only_origins=("http://localhost",))
+    trace.destroy()

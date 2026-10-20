@@ -396,6 +396,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
             "redirect_to": (_safe_url(entry["redirect_to"], approved, allowed_origins)
                             if entry["redirect_to"] else None),
             "mime": entry["mime"], "network_error": entry["network_error"],
+            "metadata_only": entry.get("metadata_only", False),
             "request_headers": _safe_headers(entry["request_headers"]),
             "response_headers": _safe_headers(entry["response_headers"]),
             "bodies": {},
