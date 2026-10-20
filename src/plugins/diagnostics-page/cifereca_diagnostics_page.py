@@ -12,7 +12,7 @@ from diagnostics_explorer import (
     SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
     sanitized_rows, module_groups, linked_operation_groups, source_summaries, explorer_header,
     next_page_offset, selectable_event_ids, export_selected_events,
-    empty_observation,
+    empty_observation, local_timestamp_label,
 )
 from diagnostics_selection import collect_filtered_selection, page_selection_ids
 from diagnostics_performance import PerformanceCapture, performance_bytes
@@ -1154,7 +1154,7 @@ class DiagnosticsPagePlugin:
                     f"{state['source']} : {state['label']}" +
                     (f" — {state['reason']}" if state.get("reason") else "") +
                     (
-                        f" · dernier événement publié : {state['last_event']}"
+                        f" · dernier événement publié : {local_timestamp_label(state['last_event'])}"
                         if state.get("last_event") else ""
                     )
                     for state in states
@@ -1210,7 +1210,7 @@ class DiagnosticsPagePlugin:
                     select.connect("toggled", on_select)
                     first_line.append(select)
                     summary = _safe_text(
-                        f"{row['timestamp']} · {row['severity']} · {row['message']}"
+                        f"{local_timestamp_label(row['timestamp'])} · {row['severity']} · {row['message']}"
                     )
                     event_label = Gtk.Label(label=summary, xalign=0)
                     event_label.set_wrap(True)
