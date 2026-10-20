@@ -105,9 +105,12 @@ class _ScopedTaskBroker:
 class TaskBrokerImpl:
     """Bounded Core-owned executor exposed to plugins through a narrow broker."""
 
-    def __init__(self, service: Any, *, max_workers: int = 3) -> None:
+    def __init__(self, service: Any, *, max_workers: int = 3, max_pending: int | None = None) -> None:
+        if max_pending is not None and (type(max_pending) is not int or max_pending < 1):
+            raise ValueError("max_pending must be a positive integer")
         self.service = service
         self.max_workers = max(1, int(max_workers))
+        self.max_pending = max_pending
         self._executor: PriorityExecutor | None = None
         self._lock = threading.RLock()
         self._closed = False
@@ -195,6 +198,7 @@ class TaskBrokerImpl:
                 self._executor = PriorityExecutor(
                     max_workers=self.max_workers,
                     thread_name_prefix="cifereca-plugin-task",
+                    max_pending=self.max_pending,
                 )
             executor = self._executor
             self._controls[task_id] = control
