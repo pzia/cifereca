@@ -62,7 +62,8 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             /usr/bin/python3 scripts/ci-select-e2e.py --full --github-output "$GITHUB_OUTPUT"
           else
-            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/e2e-changed-files"
+            # Compare PR-owned changes from the merge base, not unrelated commits on main.
+            git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/e2e-changed-files"
             /usr/bin/python3 scripts/ci-select-e2e.py --changed-files "$RUNNER_TEMP/e2e-changed-files" --github-output "$GITHUB_OUTPUT"
           fi
 
