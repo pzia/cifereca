@@ -250,8 +250,14 @@ class KoboAdeptRuntime:
             )
             fail("Kobo-Adept a dépassé le délai d'exécution.",
                  'kobo_adept_timeout', retryable=not acsm_fulfillment)
-        except OSError as exc:
-            self.last_run_diagnostic.update(duration_ms=int((time.monotonic()-started)*1000), launch_error=type(exc).__name__)
+        except OSError:
+            # Exception subclass names are not a closed diagnostic vocabulary;
+            # even a local launch error may carry sensitive path/profile data.
+            # Emit a fixed technical family without exception text or argv.
+            self.last_run_diagnostic.update(
+                duration_ms=int((time.monotonic()-started)*1000),
+                launch_error='os_error',
+            )
             fail('Kobo-Adept ne peut pas être exécuté.', 'kobo_adept_launch_error')
 
         out, err = statistics(proc.stdout, proc.stderr, proc.returncode)
