@@ -117,3 +117,65 @@ def test_default_stays_unbounded_and_snapshot_never_contains_task_data():
     finally:
         release.set()
         pool.shutdown(wait=True)
+
+
+def test_shutdown_from_worker_does_not_join_self_or_other_worker():
+    """Worker-initiated close is nonblocking even when wait=True was asked."""
+    pool = PriorityExecutor(max_workers=2, max_pending=1, thread_name_prefix="test-worker-stop")
+    other_started, other_release = threading.Event(), threading.Event()
+
+    def other():
+        other_started.set()
+        assert other_release.wait(3)
+        return "other"
+
+    def initiator():
+        assert other_started.wait(2)
+        pool.shutdown(wait=True, cancel_futures=True)
+        # A join of the other worker would block before reaching this line.
+        other_release.set()
+        return "closed-from-worker"
+
+    try:
+        first = pool.submit(TaskPriority.USER_ACTION, initiator)
+        second = pool.submit(TaskPriority.NORMAL, other)
+        assert first.result(timeout=3) == "closed-from-worker"
+        assert second.result(timeout=3) == "other"
+        assert pool.admission_snapshot()["closed"] is True
+        with pytest.raises(RuntimeError, match="executor already closed"):
+            pool.submit(TaskPriority.USER_ACTION, lambda: None)
+        # A caller outside the executor can join those worker threads.
+        for thread in pool._threads:
+            thread.join(timeout=3)
+        assert all(not thread.is_alive() for thread in pool._threads)
+    finally:
+        other_release.set()
+        for thread in pool._threads:
+            thread.join(timeout=3)
+
+
+def test_worker_shutdown_cancels_queued_work_before_return():
+    pool = PriorityExecutor(max_workers=1, max_pending=1, thread_name_prefix="test-worker-cancel")
+    entered, proceed = threading.Event(), threading.Event()
+    try:
+        def first():
+            entered.set()
+            assert proceed.wait(3)
+            pool.shutdown(wait=True, cancel_futures=True)
+            return pool.admission_snapshot()
+
+        running = pool.submit(TaskPriority.NORMAL, first)
+        assert entered.wait(2)
+        waiting = pool.submit(TaskPriority.MAINTENANCE, lambda: pytest.fail("cancelled task ran"))
+        proceed.set()
+        metrics = running.result(timeout=3)
+        assert waiting.cancelled()
+        assert metrics["closed"] is True and metrics["pending"] == 0
+        assert metrics["active"] == 1  # caller is still running
+        for thread in pool._threads:
+            thread.join(timeout=3)
+        assert all(not thread.is_alive() for thread in pool._threads)
+    finally:
+        proceed.set()
+        for thread in pool._threads:
+            thread.join(timeout=3)
