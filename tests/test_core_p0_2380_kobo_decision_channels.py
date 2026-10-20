@@ -38,7 +38,7 @@ def _log(path, line):
 
 def test_kobo_same_bounded_typed_decision_on_both_channels(tmp_path):
     diagnostics = Diagnostics()
-    diagnostics.add("KOBO", "automatic backup decision", "warning", detail=DECISION)
+    diagnostics.add_core_kobo_backup_decision(DECISION)
     log = tmp_path / "cifereca.log"
     _log(log, TRACE)
     report = query_diagnostic_events(diagnostics, log_path=log, limit=20)
@@ -71,6 +71,8 @@ def test_kobo_same_bounded_typed_decision_on_both_channels(tmp_path):
 ])
 def test_invalid_core_decision_fails_closed_without_raw_fallback(invalid, tmp_path):
     d = Diagnostics()
+    d.add_core_kobo_backup_decision(invalid)
+    assert d.snapshot() == []  # invalid evidence never gains Core provenance
     d.add("KOBO", "automatic backup decision", "warning", detail=invalid)
     out = query_diagnostic_events(d, log_path=tmp_path / "missing", source="core_events")
     assert "detail" not in out["events"][0]
@@ -105,6 +107,40 @@ def test_other_kobo_events_do_not_inherit_decision_evidence(tmp_path):
     assert all("detail" not in event for event in report["events"])
     assert all("task_ref" not in event for event in report["events"])
 
+
+
+def test_generic_kobo_decision_cannot_claim_attested_fields(tmp_path):
+    diagnostics = Diagnostics()
+    diagnostics.add("KOBO", "automatic backup decision", "warning", detail=DECISION)
+    report = query_diagnostic_events(
+        diagnostics, source="core_events", log_path=tmp_path / "missing",
+    )
+    row, = report["events"]
+    assert row["message"] == "[opération masquée]"
+    assert "detail" not in row
+    assert "task_ref" not in row
+    assert PRIVATE not in json.dumps(report)
+    assert "connected=3" not in json.dumps(report)
+
+
+def test_core_kobo_decision_is_minimized_and_preserves_errors_only(tmp_path):
+    diagnostics = Diagnostics(level="errors")
+    safe = {**DECISION, "status": "disabled"}
+    diagnostics.add_core_kobo_backup_decision(safe)
+    assert diagnostics.snapshot() == []
+    diagnostics.add_core_kobo_backup_decision(DECISION)
+    rows = diagnostics.snapshot()
+    assert len(rows) == 1
+    assert rows[0]["verified_kobo_backup_decision"] is True
+    assert set(rows[0]["detail"]) == {
+        "status", "persisted_enabled", "connected_kobo",
+        "eligible_kobo", "interval_minutes",
+    }
+    assert "credential_id" not in json.dumps(rows)
+    report = query_diagnostic_events(
+        diagnostics, source="core_events", log_path=tmp_path / "missing",
+    )
+    assert report["events"][0]["detail"]["status"] == "partial"
 
 def test_public_kobo_parser_does_not_coerce_foreign_objects():
     class Hostile:
