@@ -129,8 +129,9 @@ def classify_response_metadata(headers) -> dict:
     bounded, non-sensitive classification for the future private reviewer.
     """
     try:
-        mime = str(headers.get("content-type", "")).split(";", 1)[0].strip().lower()
-        size = str(headers.get("content-length", "")).strip()
+        normalized = {str(key).lower(): value for key, value in headers.items()}
+        mime = str(normalized.get("content-type", "")).split(";", 1)[0].strip().lower()
+        size = str(normalized.get("content-length", "")).strip()
     except (AttributeError, TypeError, ValueError):
         return {"mime": "unknown", "body_state": "body_omitted"}
     textual = mime in _TEXT_MIMES or (
