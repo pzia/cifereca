@@ -54,7 +54,11 @@ class FakeBroker:
             r for r in self.rows if
             (not filters["severity"] or r["severity"] == filters["severity"])
             and (filters["source"] == "all" or r["source"] == filters["source"])
-            and r["module"].casefold().startswith(filters["module"].casefold())
+            and (
+                r["module"].casefold().startswith(filters["module"].casefold())
+                or (type(r.get("business_module")) is str
+                    and r["business_module"].casefold().startswith(filters["module"].casefold()))
+            )
         ]
         offset, limit = filters["offset"], filters["limit"]
         batch = [r.copy() for r in filtered[offset:offset + limit]]
@@ -136,6 +140,60 @@ def test_casefolded_module_prefix_and_fixed_source_allow_valid_selection():
     assert exported["selection"]["pagination_consistency"] == "first_page_rechecked_non_atomic"
     assert all(call["module"] == "CIFERECA" for call in broker.calls)
 
+
+
+
+@pytest.mark.parametrize(("mode", "expected"), [
+    ("all", {"evt-1", "evt-2", "evt-3"}),
+    ("errors", {"evt-1", "evt-2"}),
+])
+def test_business_domain_selection_matches_attested_app_logs_and_core_events(mode, expected):
+    # #2569: app_log physical logger stays cifereca, while Core attests
+    # the NUMILOG business domain using a strictly parsed canonical TRACE.
+    broker = FakeBroker([
+        {**event(1, module="cifereca", severity="error"), "business_module": "NUMILOG"},
+        {**event(2, module="cifereca", severity="critical"), "business_module": "NUMILOG"},
+        event(3, source="core_events", module="NUMILOG", severity="info"),
+        {**event(4, module="cifereca", severity="warning"), "business_module": "KOBO"},
+    ])
+    selected = collect_filtered_selection(
+        broker, module="numilog", period="all", mode=mode,
+    )
+    public = json.loads(selected.export_json)
+    assert {row["event_id"] for row in public["events"]} == expected
+    assert selected.count == len(expected)
+    assert all("business_module" not in row for row in public["events"])
+    assert all(call["module"] == "numilog" for call in broker.calls)
+
+
+@pytest.mark.parametrize(("source", "business_domain"), [
+    ("app_log", "NUMILOG-fake-secret"),
+    ("app_log", "numilog"),
+    ("core_events", "NUMILOG"),
+])
+def test_unattested_or_wrong_source_business_domain_is_not_in_bulk_scope(source, business_domain):
+    # A broken/malicious broker that returns an invalid domain or attaches
+    # a domain to core_events must not bypass the explicit module filter.
+    row = {
+        **event(1, source=source, module="cifereca"),
+        "business_module": business_domain,
+    }
+    with pytest.raises(ValueError, match="out-of-scope"):
+        collect_filtered_selection(
+            FakeBroker([row]), module="NUMILOG", period="all", mode="all",
+        )
+
+
+def test_business_domain_change_with_same_event_id_invalidates_bulk_recheck():
+    broker = FakeBroker([
+        {**event(1, module="NUMILOG.logger"), "business_module": "KOBO"},
+    ], mutate=lambda broker, filters, response: (
+        response["events"][0].__setitem__("business_module", "NUMILOG")
+        if len(broker.calls) == 2 else None
+    ))
+    with pytest.raises(ValueError, match="changed during pagination"):
+        collect_filtered_selection(broker, module="NUMILOG", period="all", mode="all")
+    assert len(broker.calls) == 2
 
 def test_empty_response_and_unfiltered_all_mode_remain_available():
     empty = collect_filtered_selection(FakeBroker([]), mode="errors")
