@@ -345,3 +345,45 @@ def test_actual_zip_member_excludes_private_technical_header_values():
     finally:
         review.destroy()
         trace.destroy()
+
+
+
+def test_manifest_reports_bounded_capture_omissions_without_private_values():
+    trace, review = setup()
+    trace.omitted["out_of_scope"] = 3
+    trace.omitted["binary_skipped"] = 2
+    trace.omitted["paused"] = 5
+    trace.omitted["unknown_size"] = 1
+    try:
+        plan = prepare_reviewed_zip(review)
+        members = plan.preview()["members"]
+        manifest = json.loads(next(member["text"] for member in members
+                                   if member["name"] == "manifest.json"))
+        assert manifest["capture_omissions"] == {
+            "out_of_scope": 3, "limit": 0, "binary_skipped": 2,
+            "oversize": 0, "unknown_size": 1, "network_error": 0,
+            "paused": 5,
+        }
+        assert manifest["excluded_exchanges"] == 1
+        assert all(type(v) is int for v in manifest["capture_omissions"].values())
+        assert ACCOUNT not in json.dumps(manifest)
+        assert TOKEN not in json.dumps(manifest)
+        # The frozen preview and final ZIP must have identical count bytes.
+        preview = plan.preview()
+        assert json.loads(next(member["text"] for member in preview["members"]
+                               if member["name"] == "manifest.json")) == manifest
+    finally:
+        review.destroy()
+        trace.destroy()
+
+
+@pytest.mark.parametrize("bad", [-1, "7", True, 10**12])
+def test_invalid_capture_omission_counter_fails_closed(bad):
+    trace, review = setup()
+    try:
+        trace.omitted["paused"] = bad
+        with pytest.raises(RecorderError, match="bundle_invalid_omissions"):
+            prepare_reviewed_zip(review)
+    finally:
+        review.destroy()
+        trace.destroy()
