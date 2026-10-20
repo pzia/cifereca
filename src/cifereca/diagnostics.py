@@ -10,7 +10,33 @@ from typing import Any
 
 from .diagnostic_task_context import numilog_task_reference
 
-SENSITIVE_KEYS = re.compile(r"pass|password|cookie|token|secret|readerid|barcode|session|authorization", re.I)
+# This is the last-resort in-memory redactor, not a substitute for the
+# closed producer schemas used by diagnostics.events. Sensitive *field names*
+# must not allow an unrecognisable account/profile/title value into the legacy
+# Settings text export merely because it is not an email or a URL.
+SENSITIVE_KEYS = re.compile(
+    r"pass|password|cookie|token|secret|readerid|barcode|session|authorization"
+    r"|(?:^|[_-])(?:credential(?:[_-]?id)?|account[_-]?id|identity[_-]?id"
+    r"|profile[_-]?id|loan[_-]?id|source[_-]?item[_-]?id|book[_-]?title"
+    r"|title|filename|file[_-]?path|local[_-]?path|acsm|license|licence"
+    r"|signed[_-]?url|delivery[_-]?url|source[_-]?url|headers?|api[_-]?key)"
+    r"(?:$|[_-])",
+    re.I,
+)
+_GENERIC_STATUSES = frozenset({
+    "ok", "error", "warning", "failed", "success", "partial", "running",
+    "complete", "completed", "attention_required", "retryable_error",
+    "blocked", "not_due", "cancelled", "skipped", "timeout", "unknown",
+})
+
+
+def _legacy_text_key(value: object) -> str:
+    """Never render free-form dictionary keys into the support text export."""
+    if (type(value) is str and len(value) <= 64
+            and re.fullmatch(r"[a-z][a-z0-9_]*", value, re.ASCII)):
+        return value
+    return "[champ masqué]"
+
 
 
 def redact_text(text: str) -> str:
@@ -106,7 +132,7 @@ class Diagnostics:
             timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             category=redact_text(category),
             operation=redact_text(operation),
-            status=status,
+            status=status if type(status) is str and status in _GENERIC_STATUSES else "unknown",
             duration_ms=duration_ms,
             detail=redact(detail or {}),
             task_ref=numilog_task_reference() if category == "NUMILOG" else None,
@@ -328,9 +354,9 @@ class Diagnostics:
             f"Generated: {datetime.now(timezone.utc).isoformat(timespec='milliseconds')}",
             f"Diagnostics: {'enabled' if self.enabled else 'disabled'} level={self.level}",
         ]
-        if extra:
+        if type(extra) is dict:
             for k, v in redact(extra).items():
-                lines.append(f"{k}: {v}")
+                lines.append(f"{_legacy_text_key(k)}: {v}")
         lines.append("")
         for item in self.snapshot():
             lines.append(f"[{item['timestamp']}] {item['category']} {item['operation']} status={item['status']}")
@@ -341,6 +367,7 @@ class Diagnostics:
             detail = item.get("detail") or {}
             if detail:
                 for k, v in detail.items():
-                    lines.append(f"{k}={json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v}")
+                    safe_key = _legacy_text_key(k)
+                    lines.append(f"{safe_key}={json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v}")
             lines.append("")
         return "\n".join(lines).rstrip() + "\n"
