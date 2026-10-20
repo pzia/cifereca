@@ -405,7 +405,8 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
             "url": _safe_url(entry["url"], approved, allowed_origins),
             "redirect_to": (_safe_url(entry["redirect_to"], approved, allowed_origins)
                             if entry["redirect_to"] else None),
-            "mime": entry["mime"], "network_error": entry["network_error"],
+            "mime": _safe_headers({"content-type": entry["mime"]}).get("content-type", ""),
+            "network_error": entry["network_error"],
             "metadata_only": entry.get("metadata_only", False),
             "request_headers": _safe_headers(entry["request_headers"]),
             "response_headers": _safe_headers(entry["response_headers"]),
