@@ -115,10 +115,8 @@ def test_redirect_disables_follow_and_strips_tracking(monkeypatch):
     (TRACK.replace("www.numilog.com", "evil.invalid"), 302),
     (TRACK.replace("https", "http"), 302),
     ("https://www.numilog.com/Pages/Compte/MesLivres.aspx", 302),
-    (TRACK + "&secret=" + SECRET, 302),
     (BOOK + "#private", 302),
     (BOOK.replace("www.numilog.com", "www.numilog.com:443"), 302),
-    (BOOK + "?trackid=" + SECRET + "%2F", 302),
     (BOOK, 200), (BOOK, 307), (BOOK, 403), (BOOK, 429),
 ])
 def test_unqualified_redirects_never_start_product_get(monkeypatch, location, status):
@@ -130,6 +128,23 @@ def test_unqualified_redirects_never_start_product_get(monkeypatch, location, st
         public_client.resolve_readzis_recommendation(SHARE, lid="42")
     assert SECRET not in str(caught.value)
     assert [c for c in Case.calls if c[0] == "get"] == [("get", SHARE)]
+
+
+@pytest.mark.parametrize("query", [
+    "?trackid=" + SECRET,
+    "?trackid=" + SECRET + "%2F",
+    "?utm_source=readzis&trackid=anything&unknown=value",
+    "?anything=signed-looking-data",
+    "",
+])
+def test_redirect_query_is_ignored_entirely(monkeypatch, query):
+    class Case(AnonymousRedirect):
+        pass
+    Case.status, Case.location, Case.calls = 302, BOOK + query, []
+    monkeypatch.setattr(public_client.httpx, "Client", Case)
+    assert public_client.resolve_readzis_recommendation(SHARE, lid="42") == BOOK
+    assert [c for c in Case.calls if c[0] == "get"] == [("get", SHARE)]
+    assert query not in repr(Case.calls) if query else True
 
 
 def test_unqualified_source_never_opens_socket(monkeypatch):
