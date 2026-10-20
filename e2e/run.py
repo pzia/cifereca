@@ -37,6 +37,15 @@ SCENARIOS = {
         ),
         "runner": "gtk-probe",
     },
+    "book-detail-1300": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": "UX #611 : vrai écran X11 1300×768, position et allocation native, Bibliothèque/Recherche sélectionnées, Paned et sidebar.",
+        "runner": "gtk-detail",
+        "width": 1300,
+        "height": 768,
+        "geometry_1300": True,
+    },
     "book-detail-1366": {
         "plugin": "core",
         "fixture": "search-filters",
@@ -410,10 +419,12 @@ def main() -> int:
                 ]
             elif scenario.get("runner") == "gtk-detail":
                 width = scenario["width"]
+                display_height = scenario.get("height", 1000 if width == 1600 else 900)
                 command = [
-                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{display_height}x24",
                     args.python, str(ROOT / "e2e/book_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
+                    *(["--geometry-1300"] if scenario.get("geometry_1300") else []),
                 ]
             elif scenario.get("runner") == "gtk-probe":
                 command = [
