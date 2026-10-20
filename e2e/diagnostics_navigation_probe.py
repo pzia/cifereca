@@ -1497,6 +1497,19 @@ def main() -> int:
                       and node.get_title() == "Sauvegarde automatique des achats Numilog")
         assert backup.get_mapped(), "Durable backup status must remain outside tools"
         assert "11 source(s)" in w._sync_summary.get_label()
+        # #2141: the summary and actions must stay OUTSIDE the scrolling
+        # source list, including after moving far below the first fold.
+        assert w._sync_attention_row.get_visible()
+        assert "À vérifier :" in w._sync_attention_text.get_label()
+        assert w._sync_attention_icon.get_icon_name() == "dialog-error-symbolic"
+        assert "PRIVATE_SYNC_ERROR" not in w._sync_attention_text.get_label()
+        ancestor = w._sync_summary
+        while ancestor is not None:
+            assert not isinstance(ancestor, Gtk.ScrolledWindow), (
+                "Source context must remain fixed above the scrolling list"
+            )
+            ancestor = ancestor.get_parent()
+        report["checks"]["P0_2141_sticky_sync_context_and_closed_alert_totals"] = True
         f["sync_tools"] = expanders
         f["sync_tools_font"] = Gtk.Settings.get_default().get_property("gtk-font-name")
         scroll = w._sync_sources_box.get_parent()
