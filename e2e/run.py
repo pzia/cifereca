@@ -28,13 +28,6 @@ CAPTURE = ROOT / "environnements/openai-chat-debian/capture_app.py"
 SECRET_KEY = re.compile(r"(token|password|secret|authorization|cookie)", re.I)
 
 SCENARIOS = {
-    "public-fault-search-1366": {
-        "plugin": "core",
-        "fixture": "search-filters",
-        "description": "P0 #771 : véritable GTK Recherche, HTTP localhost et adapter EbooksGratuits (429/503/retour), statuts anonymes, aucun achat.",
-        "runner": "gtk-public-fault",
-        "width": 1366,
-    },
     "search-filter-p0": {
         "plugin": "core",
         "fixture": "search-filters",
@@ -200,6 +193,13 @@ SCENARIOS = {
             "--wait-change-ratio", "0.05",
         ],
         "min_visual_change_ratio": 0.05,
+    },
+    "public-fault-search-1366": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": "P0 #771 : véritable GTK Recherche, HTTP localhost et adapter EbooksGratuits (429/503/retour), statuts anonymes, aucun achat.",
+        "runner": "gtk-public-fault",
+        "width": 1366,
     },
 }
 

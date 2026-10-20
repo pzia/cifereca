@@ -25,7 +25,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "llm-settings-1366", "llm-settings-1600",
         "maintenance-tools-1366", "maintenance-tools-1600",
-        "startup", "core-navigation",
+        "startup", "core-navigation", "public-fault-search-1366",
     ]
 
 
@@ -578,7 +578,7 @@ def test_771_real_gtk_public_fault_search_is_registered_and_selected():
         "MainWindow(self, core.config, core.library, core.diagnostics)",
         "EbooksSession(", "EbooksGratuitsApp(",
         "httpx.MockTransport", "CatalogSearchBatch(", "CatalogSearchSummary(",
-        "device.click_widget(window.search_global_button)",
+        "device[0].click_widget(ui[0].search_global_button)",
         '"429"', '"503"', '"unavailable"', '"live"',
         "no_implicit_download", "public_status_only",
     ):

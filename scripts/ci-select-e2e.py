@@ -22,8 +22,8 @@ SYNC_PRODUCERS = frozenset((
 ))
 BOOK_DETAIL = ("book-detail-1300", "book-detail-1366", "book-detail-1600")
 HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
-CORE = ("search-filter-p0", "public-fault-search-1366") + BOOK_DETAIL + ("mainwindow-baseline-1366",
-        "mainwindow-baseline-1600", "startup", "core-navigation") + LLM + MAINT
+CORE = ("search-filter-p0",) + BOOK_DETAIL + ("mainwindow-baseline-1366",
+        "mainwindow-baseline-1600", "startup", "core-navigation") + LLM + MAINT + ("public-fault-search-1366",)
 DIAG = ("diagnostics-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-structured-1366", "diagnostics-volume-1366",
         "diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
