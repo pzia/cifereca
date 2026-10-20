@@ -123,6 +123,10 @@ class PriorityExecutor:
         # metrics, submit more work or call shutdown themselves.
         for future in cancelled:
             future.cancel()
-        if wait:
+        # Never synchronously join this executor from one of its workers.
+        # Apart from a self-join RuntimeError, joining a *different* worker
+        # can deadlock if that worker awaits completion of this task. The
+        # stop sentinels are already queued; external callers may wait.
+        if wait and threading.current_thread() not in self._threads:
             for thread in self._threads:
                 thread.join()
