@@ -52,7 +52,12 @@ def add_sync_action(row, button):
         widget = pending.pop()
         if isinstance(widget, Gtk.Label):
             widget.set_wrap(True)
-            widget.set_width_chars(1)
+            # A one-character minimum was fine while buttons filled their
+            # FlowBox cells. With natural-width actions it makes long labels
+            # request a narrow, many-line button (>72px high in real GTK).
+            # Reserve a two-line-friendly minimum while the horizontal
+            # ScrolledWindow continues to allow the 760px viewport to shrink.
+            widget.set_width_chars(28)
             widget.set_max_width_chars(44)
         child = widget.get_first_child()
         while child is not None:
