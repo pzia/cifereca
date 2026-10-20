@@ -2242,6 +2242,32 @@ def main() -> int:
         f["sync_scroll"].get_vadjustment().set_value(0)
         later(200, loan_sync_audit_click)
 
+    def kobo_offline_audit_row():
+        """Resolve the audited account before its repeated detail title.
+
+        #2141 sorts enabled/synchronisable Kobo ahead of the offline account.
+        Selecting the first audit detail globally would inspect another
+        account's unchanged subtitle and produce a false negative.
+        """
+        w = window[0]
+        groups = [
+            group for group in walk(w._sync_sources_box)
+            if isinstance(group, Adw.PreferencesGroup)
+            and any(
+                isinstance(item, Adw.ActionRow)
+                and item.get_title() == "Kobo audit hors ligne"
+                for item in walk(group)
+            )
+        ]
+        assert len(groups) == 1, "Offline Kobo audit account is not unique"
+        matches = [
+            item for item in walk(groups[0])
+            if isinstance(item, Adw.ActionRow)
+            and item.get_title() == "Vérification des fichiers et rapprochements"
+        ]
+        assert len(matches) == 1, "Offline Kobo audit detail is not unique"
+        return groups[0], matches[0]
+
     def loan_sync_audit_click():
         w = window[0]
         f = loan_sync_fixture
@@ -2250,12 +2276,10 @@ def main() -> int:
         assert "Connexion : Déconnectée" in kobo.get_subtitle()
         # #2141: secondary actions are now below the account's explicitly
         # opened tools expander, not in the primary ActionRow suffix.
-        # Resolve the containing account group to preserve source isolation.
-        groups = [group for group in walk(w._sync_sources_box)
-                  if isinstance(group, Adw.PreferencesGroup)
-                  and any(node is kobo for node in walk(group))]
-        assert len(groups) == 1, "Kobo audit source must have one account group"
-        audits = [button for button in walk(groups[0])
+        # Keep target account and repeated audit-detail title scoped.
+        account_group, _ = kobo_offline_audit_row()
+        assert any(node is kobo for node in walk(account_group))
+        audits = [button for button in walk(account_group)
                   if isinstance(button, Gtk.Button)
                   and button.get_tooltip_text() == (
                       "Audit SHA local de ce compte (lecture seule, peut être long)"
@@ -2374,11 +2398,7 @@ def main() -> int:
             return
         # Only local object identity/generation snapshots. Publication exports
         # four closed booleans, never IDs, account details or GTK contents.
-        f["audit_row_at_click"] = next(
-            row for row in walk(w._sync_sources_box)
-            if isinstance(row, Adw.ActionRow)
-            and row.get_title() == "Vérification des fichiers et rapprochements"
-        )
+        f["audit_row_at_click"] = kobo_offline_audit_row()[1]
         f["audit_preview_generation_at_click"] = getattr(w, "_sync_preview_generation", None)
         f["audit_identity_generation_at_click"] = getattr(w, "_identity_context_generation", None)
         f["audit_page_token_at_click"] = getattr(w, "_sync_page_token", None)
@@ -2395,11 +2415,7 @@ def main() -> int:
     def loan_sync_audit_result():
         w = window[0]
         f = loan_sync_fixture
-        audit_row = next(
-            row for row in walk(w._sync_sources_box)
-            if isinstance(row, Adw.ActionRow)
-            and row.get_title() == "Vérification des fichiers et rapprochements"
-        )
+        audit_row = kobo_offline_audit_row()[1]
         subtitle = audit_row.get_subtitle()
         if "Fichiers locaux vérifiés par SHA : 3" not in subtitle:
             now = monotonic()
