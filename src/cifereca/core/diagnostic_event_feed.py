@@ -372,7 +372,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 message = "connexion fournisseur échouée"
         if (category == "KOBO"
                 and operation == "automatic backup decision"
-                and type(diagnostics) is Diagnostics):
+                and type(diagnostics) is Diagnostics
+                and row.get("verified_kobo_backup_decision") is True):
             public_detail = public_kobo_backup_decision(row.get("detail"))
             message = public_kobo_backup_message(public_detail) or "[opération masquée]"
         source_sync_detail = {}
