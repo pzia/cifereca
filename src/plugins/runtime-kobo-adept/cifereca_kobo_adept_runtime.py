@@ -135,9 +135,16 @@ class KoboAdeptRuntime:
             "operation", "duration_ms", "stdout_bytes", "stderr_bytes", "returncode",
             "stdout_mode", "stdout_summary", "stderr_summary", "json_line", "json_column",
             "launch_error", "loan_count", "inventory_valid",
-            "error_code", "retryable",
+            "error_code", "retryable", "validation_reason",
         }
         detail = {key: value for key, value in self.last_run_diagnostic.items() if key in allowed}
+        if (detail.get("error_code") != "kobo_adept_invalid_response"
+                or type(detail.get("validation_reason")) is not str
+                or detail["validation_reason"] not in {
+                    "json_not_object", "ok_missing", "ok_not_boolean",
+                    "success_with_error", "exit_nonzero_with_success",
+                }):
+            detail.pop("validation_reason", None)
         reporter = getattr(self.context, "report_diagnostic", None)
         if not callable(reporter):
             return
@@ -280,7 +287,11 @@ class KoboAdeptRuntime:
                        else 'Kobo-Adept a renvoyé une réponse JSON invalide.')
             fail(message, 'kobo_adept_invalid_json', returncode=proc.returncode)
         if not isinstance(value, dict):
-            self.last_run_diagnostic.update(stdout_mode='unexpected_json_type', stdout_summary='JSON de type inattendu')
+            self.last_run_diagnostic.update(
+                stdout_mode='unexpected_json_type',
+                stdout_summary='JSON de type inattendu',
+                validation_reason='json_not_object',
+            )
             fail('Kobo-Adept a renvoyé un document inattendu.', 'kobo_adept_invalid_response', returncode=proc.returncode)
         self.last_run_diagnostic.update(stdout_mode='json', stdout_summary='objet JSON')
         # A *descriptive* "contract --json" document is not an operation
@@ -304,15 +315,20 @@ class KoboAdeptRuntime:
         # stay invalid, even for the read-only contract command.
         if (proc.returncode == 0 and value.get('ok') is not True
                 and value.get('ok') is not False and not descriptive_contract):
+            self.last_run_diagnostic['validation_reason'] = (
+                'ok_missing' if 'ok' not in value else 'ok_not_boolean'
+            )
             fail('Kobo-Adept n’a pas confirmé le résultat de la commande.',
                  'kobo_adept_invalid_response', returncode=proc.returncode)
         # A payload reporting both success and a vendor error is contradictory.
         # Reject it without forwarding the vendor's potentially private error
         # object through Core or through the diagnostic reporter.
         if proc.returncode == 0 and value.get('ok') is True and value.get('error') is not None:
+            self.last_run_diagnostic['validation_reason'] = 'success_with_error'
             fail('Kobo-Adept a renvoyé un résultat contradictoire.',
                  'kobo_adept_invalid_response', returncode=proc.returncode)
         if proc.returncode != 0 and value.get('ok') is True:
+            self.last_run_diagnostic['validation_reason'] = 'exit_nonzero_with_success'
             # An upstream nonzero process exit contradicts the CLI's
             # explicit success claim. Do not project even a recognized
             # Adobe/identity error.code from an inconsistent response.
