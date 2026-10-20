@@ -15,7 +15,10 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 22)
+        self.assertEqual(len(mod.ALL), 23)
+        self.assertIn("book-detail-1300", mod.ALL)
+        self.assertEqual(runner.SCENARIOS["book-detail-1300"]["height"], 768)
+        self.assertTrue(runner.SCENARIOS["book-detail-1300"]["geometry_1300"])
 
     def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
         for path in ("src/cifereca/gui/settings_ai_actions.py",

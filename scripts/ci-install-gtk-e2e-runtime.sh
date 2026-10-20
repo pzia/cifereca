@@ -3,6 +3,7 @@ set -euo pipefail
 
 required_packages=(
   xauth
+  x11-utils
   libxtst6
   python3-gi
   python3-gi-cairo

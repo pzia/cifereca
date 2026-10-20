@@ -20,7 +20,7 @@ SYNC_PRODUCERS = frozenset((
     "src/cifereca/core/loan_provider_delivery.py",
     "src/cifereca/core/sync_coordination.py",
 ))
-BOOK_DETAIL = ("book-detail-1366", "book-detail-1600")
+BOOK_DETAIL = ("book-detail-1300", "book-detail-1366", "book-detail-1600")
 HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
 CORE = ("search-filter-p0",) + BOOK_DETAIL + ("mainwindow-baseline-1366",
         "mainwindow-baseline-1600", "startup", "core-navigation") + LLM + MAINT

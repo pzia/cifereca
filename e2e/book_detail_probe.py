@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -56,10 +57,13 @@ def walk(widget):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1366, 1600))
+    parser.add_argument("--width", required=True, type=int, choices=(1300, 1366, 1600))
+    parser.add_argument("--geometry-1300", action="store_true", help="UX #611: measure native X11 position, shell and both split views at exact 1300×768")
     parser.add_argument("--component-contracts", action="store_true", help="P0 #1124/#1125: real widget lifecycle, summaries, overflow and stable selection")
     parser.add_argument("--short-component-actions", action="store_true", help="Reproduce the pre-existing boundary overflow case with eight shorter labels")
     args = parser.parse_args()
+    if args.geometry_1300 and args.width != 1300:
+        parser.error("--geometry-1300 requires --width 1300")
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     if os.environ.get("GDK_BACKEND") != "x11" or not os.environ.get("DISPLAY"):
@@ -99,6 +103,8 @@ def main():
     def capture(name):
         picture = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
         assert picture.width == args.width, picture.size
+        if args.geometry_1300:
+            assert picture.height == 768, picture.size
         filename = out / f"{name}.png"
         picture.save(filename)
         shutil.copyfile(filename, out / "screen.png")
@@ -107,6 +113,87 @@ def main():
             "sha256": hashlib.sha256(filename.read_bytes()).hexdigest(),
             "route": window.view_stack.get_visible_child_name(),
         })
+
+    def geometry_1300(route):
+        """Collect numeric-only native geometry beside each private screenshot.
+
+        The X11 window name is constant fixture data. Never write a raw
+        xwininfo dump or a title/account/pointer to the report.
+        """
+        assert args.geometry_1300 and route in {"search", "library"}
+        surface = window.get_surface()
+        assert surface is not None
+        # Native X11 position/size is not a GTK requested/default size.
+        report["ux611_probe_stage"] = "xwininfo_lookup"
+        native_raw = subprocess.check_output(
+            ["xwininfo", "-name", "Cifereca geometry E2E 1300"],
+            text=True, timeout=3,
+        )
+        def native_int(key):
+            found = re.search(r"^\s*" + re.escape(key) + r":\s*(-?\d+)\s*$",
+                              native_raw, re.MULTILINE)
+            assert found, ("Missing native X11 geometry field", key)
+            return int(found.group(1))
+        report["ux611_probe_stage"] = "xwininfo_parse"
+        native = {
+            "x": native_int("Absolute upper-left X"),
+            "y": native_int("Absolute upper-left Y"),
+            "width": native_int("Width"), "height": native_int("Height"),
+        }
+        report["ux611_probe_stage"] = "monitor_and_paned"
+        monitor = Gdk.Display.get_default().get_monitors().get_item(0)
+        assert monitor is not None
+        monitor_rect = monitor.get_geometry()
+        page = window.search_page if route == "search" else window.library_page
+        pane = page.paned
+        sample = {
+            "display": {"width": monitor_rect.width, "height": monitor_rect.height},
+            "requested": {"width": 1300, "height": 768},
+            "native": native,
+            "gtk_toplevel": {"width": window.get_width(), "height": window.get_height()},
+            "gdk_surface": {"width": surface.get_width(), "height": surface.get_height()},
+            "shell": {"width": window.shell_root.get_width(), "height": window.shell_root.get_height()},
+            "shell_after_sidebar": {"width": window.view_stack.get_width(),
+                                    "height": window.view_stack.get_height()},
+            "page": {"width": page.get_width(), "height": page.get_height()},
+            "sidebar": {"visible": bool(window.sidebar.get_visible()),
+                        "mapped": bool(window.sidebar.get_mapped()),
+                        "width": window.sidebar.get_width()},
+            "scale_factor": int(window.get_scale_factor()),
+            "paned": {
+                "maximum": int(pane.get_property("max-position")),
+                "position": int(pane.get_position()),
+                "master_width": int(pane.get_start_child().get_width()),
+                "detail_width": int(pane.get_end_child().get_width()),
+            },
+            "book_selected": page.selection.get_selected_item() is not None,
+        }
+        report.setdefault("native_1300_geometry", {})[route] = sample
+        report["ux611_probe_stage"] = "strict_native_geometry"
+        assert sample["display"] == {"width": 1300, "height": 768}, sample["display"]
+        # Client-side decorations reserve a GTK content inset (5px per side
+        # with Adwaita on the CI X11 runtime). GDK surface and native X11 are
+        # the actual outer window, *not* Gtk.Window's content allocation.
+        for geom in (native, sample["gdk_surface"]):
+            assert (geom["width"], geom["height"]) == (1300, 768), geom
+        inset_width = native["width"] - sample["gtk_toplevel"]["width"]
+        inset_height = native["height"] - sample["gtk_toplevel"]["height"]
+        sample["gtk_content_insets"] = {
+            "horizontal_total": inset_width, "vertical_total": inset_height,
+        }
+        assert 0 <= inset_width <= 32 and 0 <= inset_height <= 32, (
+            "Native outer window and GTK content differ beyond decorations",
+            inset_width, inset_height,
+        )
+        assert 0 < sample["shell_after_sidebar"]["width"] <= 1300
+        assert sample["page"]["width"] <= sample["shell_after_sidebar"]["width"]
+        report["ux611_probe_stage"] = "paned_allocations"
+        assert sample["paned"]["maximum"] > 0
+        assert sample["paned"]["master_width"] > 0
+        assert sample["paned"]["detail_width"] > 0
+        assert sample["book_selected"]
+        report["ux611_probe_stage"] = "checked"
+        report["checks"]["P2_611_native_1300_" + route] = True
 
     def fail(exc):
         if report["status"] != "RUNNING":
@@ -157,6 +244,8 @@ def main():
         return {str(x.get_tooltip_text() or ""): x for x in buttons}
 
     def search_initial():
+        if args.geometry_1300:
+            report["ux611_probe_stage"] = "search_ready"
         assert window.service.current_identity.identity_id == "camille"
         # La branche #954 précède #955. Utiliser l\x27API locale déjà stable pour
         # charger une vraie fiche GTK ; le clic loupe est intercepté séparément.
@@ -187,6 +276,9 @@ def main():
         later(280, search_detail)
 
     def search_detail():
+        if args.geometry_1300:
+            report["ux611_probe_stage"] = "selected_search"
+            geometry_1300("search")
         expander, rows = detail_info("search")
         assert not expander.get_expanded(), "Détail doit être replié initialement"
         assert report["online_calls"] == [], "Recherche déclenchée par affichage"
@@ -297,6 +389,9 @@ def main():
     component = {}
 
     def verify_library():
+        if args.geometry_1300:
+            report["ux611_probe_stage"] = "selected_library"
+            geometry_1300("library")
         expander, rows = detail_info("library")
         shown = read_rows(rows)
         for expected in (
@@ -857,8 +952,14 @@ def main():
         def do_activate(self):
             nonlocal window, device
             window = MainWindow(self, core.config, core.library, core.diagnostics)
-            window.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
+            if args.geometry_1300:
+                window.set_title("Cifereca geometry E2E 1300")
+                window.set_default_size(1300, 768)
+            else:
+                window.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
             window.present()
+            if args.geometry_1300:
+                report["ux611_probe_stage"] = "probe_start"
             device = X11Input()
             later(450, search_initial)
         def do_shutdown(self):
