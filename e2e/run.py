@@ -476,6 +476,26 @@ def main() -> int:
             visual_change_ratio = None
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
+                if scenario.get("geometry_1300") and report_data.get("status") != "PASS":
+                    stages = {"probe_start", "search_ready", "selected_search", "selected_library",
+                              "xwininfo_lookup", "xwininfo_parse", "monitor_and_paned",
+                              "strict_native_geometry", "paned_allocations", "checked"}
+                    stage = report_data.get("ux611_probe_stage")
+                    if type(stage) is str and stage in stages:
+                        print("UX611_CLOSED_FAILURE_STAGE=" + stage, flush=True)
+                    values = report_data.get("native_1300_geometry")
+                    if isinstance(values, dict):
+                        for route in ("search", "library"):
+                            sample = values.get(route)
+                            if not isinstance(sample, dict):
+                                continue
+                            for family in ("display", "native", "gtk_toplevel", "gdk_surface",
+                                           "page", "shell_after_sidebar"):
+                                item = sample.get(family)
+                                if isinstance(item, dict):
+                                    width, height = item.get("width"), item.get("height")
+                                    if type(width) is int and type(height) is int and 0 <= width <= 5000 and 0 <= height <= 5000:
+                                        print(f"UX611_NUMERIC {route}.{family}={width}x{height}", flush=True)
                 visual_change_ratio = report_data.get("visual_change_ratio")
                 if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
