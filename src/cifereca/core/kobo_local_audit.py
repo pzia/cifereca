@@ -283,6 +283,17 @@ def kobo_local_reconciliation_audit(
         roots = (target, library_root / folder)
         scopes.append((f"account-{index}", cred, identity, roots))
 
+    # Catalogue placements have an identity and product ID, but NO owning
+    # credential. If two Kobo accounts share an identity, the same product ID
+    # can refer to different purchases/files. Never offer an identity-only
+    # catalogue placement as account-specific SHA evidence in that case,
+    # including for a --credential audit selecting just one of the accounts.
+    identity_credentials: dict[str, set[str]] = defaultdict(set)
+    for connection in connections:
+        identity_credentials[connection["identity_id"]].add(connection["credential_id"])
+    ambiguous_catalogue_identities = {
+        identity for identity, creds in identity_credentials.items() if len(creds) > 1
+    }
     by_catalog: dict[tuple[str, str], list[object]] = defaultdict(list)
     unlinked_catalog = 0
     for row in catalog[:_MAX_RECORDS]:
@@ -293,6 +304,10 @@ def kobo_local_reconciliation_audit(
             continue
         if type(product) is not str or not product:
             unlinked_catalog += 1
+            continue
+        # Product identity in the catalogue is not a credential binding.
+        # Still count unlinked rows above, but refuse ambiguous suggestions.
+        if identity in ambiguous_catalogue_identities:
             continue
         metadata = row.get("metadata")
         raw_path = metadata.get("path") if isinstance(metadata, dict) else None
@@ -475,6 +490,7 @@ def kobo_local_reconciliation_audit(
         "cases": cases,
         "limitations": [
             "Only persisted Kobo backup, active rights and explicit catalogue paths were considered.",
+            "Catalogue paths without account ownership are not matched where Kobo accounts share an identity.",
             "Legacy paths outside the owning identity directory are not read.",
             "Only immediate identity-owned folders are enumerated, up to the shared scan limit.",
             "The global SHA audit is bounded by file count, per-file size and cumulative bytes read.",
