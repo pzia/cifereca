@@ -122,7 +122,7 @@ def test_default_stays_unbounded_and_snapshot_never_contains_task_data():
 def test_shutdown_from_worker_does_not_join_self_or_other_worker():
     """Worker-initiated close is nonblocking even when wait=True was asked."""
     pool = PriorityExecutor(max_workers=2, max_pending=1, thread_name_prefix="test-worker-stop")
-    other_started, other_release = threading.Event(), threading.Event()
+    first_started, other_started, other_release = (threading.Event() for _ in range(3))
 
     def other():
         other_started.set()
@@ -130,6 +130,7 @@ def test_shutdown_from_worker_does_not_join_self_or_other_worker():
         return "other"
 
     def initiator():
+        first_started.set()
         assert other_started.wait(2)
         pool.shutdown(wait=True, cancel_futures=True)
         # A join of the other worker would block before reaching this line.
@@ -138,6 +139,7 @@ def test_shutdown_from_worker_does_not_join_self_or_other_worker():
 
     try:
         first = pool.submit(TaskPriority.USER_ACTION, initiator)
+        assert first_started.wait(2)
         second = pool.submit(TaskPriority.NORMAL, other)
         assert first.result(timeout=3) == "closed-from-worker"
         assert second.result(timeout=3) == "other"
