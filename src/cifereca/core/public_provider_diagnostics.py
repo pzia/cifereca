@@ -7,6 +7,7 @@ filter, not a plugin trust or source-health/online-search guarantee.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -54,6 +55,44 @@ def public_connection_failure(
     }
 
 
+
+# Only an already Core-attested connection failure may be emitted in this
+# format. The log reader validates the entire canonical message, not arbitrary
+# key=value tokens from a provider or plugin logger.
+_CONNECTION_TRACE_PREFIX = "TRACE provider connection failure "
+
+
+def public_connection_fields(value: object) -> dict[str, str]:
+    """Closed shared projection of one connection failure, no account scope."""
+    if type(value) is not dict or set(value) != {"provider_id", "code"}:
+        return {}
+    ident = canonical_public_provider_id(value["provider_id"])
+    code = value["code"]
+    if ident is None or type(code) is not str or code not in {
+        CONNECT_FAILURE_CODE, MISSING_PROVIDER_CODE,
+    }:
+        return {}
+    return {"provider_id": ident, "code": code}
+
+
+def public_connection_log_message(fields: dict[str, str]) -> str:
+    """Only a validated, canonical Core projection reaches this serializer."""
+    return _CONNECTION_TRACE_PREFIX + json.dumps(
+        fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    )
+
+
+def public_connection_log_fields(body: object) -> dict[str, str]:
+    """Refuse noncanonical, extended or hostile log lines rather than guess."""
+    if (type(body) is not str or len(body) > 512
+            or not body.startswith(_CONNECTION_TRACE_PREFIX)):
+        return {}
+    try:
+        fields = public_connection_fields(json.loads(body[len(_CONNECTION_TRACE_PREFIX):]))
+    except (ValueError, TypeError, RecursionError):
+        return {}
+    return fields if fields and public_connection_log_message(fields) == body else {}
+
 def bounded_connection_failures(rows: object) -> dict[str, object]:
     """Explicitly expose truncation, never duplicate private keys/accounts."""
     if type(rows) not in (list, tuple):
@@ -74,4 +113,6 @@ __all__ = [
     "UNKNOWN_PROVIDER", "CONNECT_FAILURE_CODE", "MISSING_PROVIDER_CODE",
     "canonical_public_provider_id", "registered_public_provider_id",
     "public_connection_failure", "bounded_connection_failures",
+    "public_connection_fields", "public_connection_log_message",
+    "public_connection_log_fields",
 ]

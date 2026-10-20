@@ -107,6 +107,81 @@ def test_guard_is_transaction_scoped_and_retryable_does_not_block():
               entitlement_id="entitlement-a", force_refresh=False)
 
 
+class _HostileProvenance:
+    def __str__(self):
+        raise AssertionError("never stringify private saved provenance")
+
+    def __bool__(self):
+        raise AssertionError("never coerce private saved provenance")
+
+
+@pytest.mark.parametrize("metadata,prior_entitlement", [
+    ([], "entitlement-a"),
+    ("private account data", "entitlement-a"),
+    ({"provider_loan_id": 12345}, "entitlement-a"),
+    ({"provider_loan_id": _HostileProvenance()}, "entitlement-a"),
+    ({"provider_loan_id": ""}, "entitlement-a"),
+    ({"provider_loan_id": "loan-a"}, _HostileProvenance()),
+    ({"provider_loan_id": "loan-a"}, False),
+])
+def test_corrupt_persisted_adept_attention_fails_closed_without_auto_retry(
+    metadata, prior_entitlement,
+):
+    row = {
+        "status": "attention_required",
+        "strategy": "loan_auto",
+        "executor": "kobo-adept",
+        "metadata": metadata,
+        "entitlement_id": prior_entitlement,
+    }
+    opts = {"provider_loan_id": "loan-a", "entitlement_id": "entitlement-a"}
+    assert blocked_automatic_adept_retry(row, force_refresh=False, **opts)
+    # A deliberate user refresh can still handle the failure via existing
+    # acquisition guards; this change never performs the refresh itself.
+    assert not blocked_automatic_adept_retry(row, force_refresh=True, **opts)
+
+
+
+@pytest.mark.parametrize("corrupt_record", [
+    [], "private saved row", True, 42, _HostileProvenance(),
+])
+def test_corrupt_saved_record_shape_never_retries_automatically(corrupt_record):
+    """No truthiness or .get on an untrusted persisted record."""
+    opts = {"provider_loan_id": "loan-a", "entitlement_id": "entitlement-a"}
+    assert blocked_automatic_adept_retry(
+        corrupt_record, force_refresh=False, **opts,
+    )
+    # The deliberate retry remains subject to the orchestration's usual
+    # guards; this pure predicate itself performs no provider operation.
+    assert not blocked_automatic_adept_retry(
+        corrupt_record, force_refresh=True, **opts,
+    )
+
+
+def test_absent_or_empty_saved_record_does_not_invent_adept_attention():
+    opts = {"provider_loan_id": "loan-a", "entitlement_id": "entitlement-a",
+            "force_refresh": False}
+    assert not blocked_automatic_adept_retry(None, **opts)
+    assert not blocked_automatic_adept_retry({}, **opts)
+
+
+
+@pytest.mark.parametrize("bad_override", [
+    "true", "false", "1", 1, [True], {"force": True}, _HostileProvenance(),
+])
+def test_only_native_true_allows_explicit_adept_retry(bad_override):
+    """Truthiness/coercion of a hostile caller value cannot reconsume an ACSM."""
+    row = {
+        "status": "attention_required", "strategy": "loan_auto",
+        "executor": "kobo-adept", "entitlement_id": "entitlement-a",
+        "metadata": {"provider_loan_id": "loan-a"},
+    }
+    opts = {"provider_loan_id": "loan-a", "entitlement_id": "entitlement-a"}
+    assert blocked_automatic_adept_retry(row, force_refresh=bad_override, **opts)
+    assert blocked_automatic_adept_retry(row, force_refresh=False, **opts)
+    assert not blocked_automatic_adept_retry(row, force_refresh=True, **opts)
+
+
 def test_exit_code_is_not_mistaken_for_adobe_license_error():
     assert adept_attention_code("adept_error", "acsmdownloader failed (1) exit 10",
                                 executor="kobo-adept") == "adept_error"

@@ -18,8 +18,8 @@ class _Scope:
 _CURRENT: ContextVar[_Scope | None] = ContextVar('diagnostic_task', default=None)
 
 
-def numilog_task_reference() -> str | None:
-    """Allocate only when an enabled Numilog event is actually recorded."""
+def diagnostic_task_reference() -> str | None:
+    """Return the actual worker scope, allocating only for an observed event."""
     scope = _CURRENT.get()
     if scope is None:
         return None
@@ -29,6 +29,11 @@ def numilog_task_reference() -> str | None:
         except Exception:
             return None  # optional diagnostics cannot break a provider action
     return scope.reference
+
+
+def numilog_task_reference() -> str | None:
+    """Compatibility name for existing Numilog producers."""
+    return diagnostic_task_reference()
 
 
 @contextmanager

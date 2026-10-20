@@ -16,9 +16,25 @@ from typing import Any
 
 from .diagnostic_numilog_projection import (
     public_numilog_fields, public_numilog_message, public_numilog_session_log,
+    public_numilog_session_fields,
 )
+from .diagnostic_kobo_projection import (
+    public_kobo_backup_decision, public_kobo_backup_log,
+    public_kobo_backup_message,
+)
+from .numilog_startup_diagnostics import public_log_fields as public_numilog_startup_log
 from .public_provider_diagnostics import (
-    CONNECT_FAILURE_CODE, canonical_public_provider_id,
+    public_connection_fields,
+    public_connection_log_fields,
+)
+from .diagnostic_source_sync import (
+    public_fields as public_source_sync_fields,
+    public_log_fields as public_source_sync_log,
+    public_message as public_source_sync_message,
+)
+from .diagnostic_adept import (
+    public_fields as public_adept_fields, public_log_fields as public_adept_log,
+    public_message as public_adept_message,
 )
 from ..diagnostics import Diagnostics
 
@@ -87,9 +103,28 @@ def _log_lines(
     (device, inode, byte offset) survives a rename to cifereca.log.1 on
     POSIX filesystems. It is never exposed outside the hashed event_id.
     """
+    # The local log may have been relocated through a symlinked directory,
+    # not only a symlinked leaf. Read only through no-follow directory FDs;
+    # without the platform guard, publish no log-derived events at all.
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        return [], "unavailable", None
+    directory_fd = -1
     try:
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-        fd = os.open(path, flags)
+        absolute = Path(os.path.abspath(path))
+        flags_dir = (
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        directory_fd = os.open("/", flags_dir)
+        for part in absolute.parts[1:-1]:
+            next_fd = os.open(part, flags_dir, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        flags = (
+            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        fd = os.open(absolute.name, flags, dir_fd=directory_fd)
         with os.fdopen(fd, "rb") as handle:
             identity = os.fstat(handle.fileno())
             if not stat.S_ISREG(identity.st_mode):
@@ -121,6 +156,9 @@ def _log_lines(
         return [], "missing", None
     except (OSError, ValueError):
         return [], "unavailable", None
+    finally:
+        if directory_fd >= 0:
+            os.close(directory_fd)
 
 
 def _latest_published_event(events: list[dict[str, Any]]) -> str | None:
@@ -165,7 +203,42 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 _TASK_CORRELATION.fullmatch(match["body"])
                 if match["logger"] == "cifereca" else None
             )
-            if match["logger"] == "cifereca_numilog":
+            # This exact Core-owned Kobo decision is a small typed fact,
+            # not a general-purpose log parser or an inferred task link.
+            kobo_detail = (
+                public_kobo_backup_log(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
+            numilog_detail = (
+                public_numilog_startup_log(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
+            numilog_session_detail = (
+                public_numilog_session_fields(match["body"])
+                if match["logger"] == "cifereca_numilog" else {}
+            )
+            source_sync_detail = (
+                public_source_sync_log(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
+            adept_detail = (
+                public_adept_log(match["body"]) if match["logger"] == "cifereca" else {}
+            )
+            connection_detail = (
+                public_connection_log_fields(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
+            if connection_detail:
+                message = "connexion fournisseur échouée"
+            elif adept_detail:
+                message = public_adept_message(adept_detail)
+            elif source_sync_detail:
+                message = public_source_sync_message(source_sync_detail)
+            elif numilog_detail:
+                message = public_numilog_message("startup_materialization", numilog_detail)
+            elif kobo_detail:
+                message = public_kobo_backup_message(kobo_detail)
+            elif match["logger"] == "cifereca_numilog":
                 message = public_numilog_session_log(match["body"]) or (
                     "[contenu libre masqué : consulter le journal local]"
                 )
@@ -184,7 +257,9 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 message = "[contenu libre masqué : consulter le journal local]"
             try:
                 ts = datetime.strptime(match["date"], "%Y-%m-%d %H:%M:%S,%f")
-                ts = ts.astimezone().isoformat()
+                # Legacy file timestamps are local wall time; interpret once
+                # in the host timezone, then publish the instant in UTC.
+                ts = ts.astimezone().astimezone(timezone.utc).isoformat()
             except ValueError:
                 continue
             # Logger names are not guaranteed to be static: extensions may
@@ -202,7 +277,14 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "source": "app_log",
                 "module": ".".join(safe_parts)[:90],
                 "severity": match["level"].lower(),
-                "message": message[:240],
+                "message": message[:500] if numilog_detail or source_sync_detail or adept_detail else message[:240],
+                **({"detail": kobo_detail} if kobo_detail else {}),
+                **({"detail": connection_detail, "status": "error"} if connection_detail else {}),
+                **({"detail": numilog_detail} if numilog_detail else {}),
+                **({"detail": numilog_session_detail} if numilog_session_detail else {}),
+                **({"detail": source_sync_detail, "status": source_sync_detail["status"]}
+                   if source_sync_detail else {}),
+                **({"detail": adept_detail, "status": adept_detail["status"]} if adept_detail else {}),
                 **({"task_ref": task_correlation[1]} if task_correlation else {}),
                 # Neither the rotation suffix nor a moving tail line index
                 # participates in the ID. Distinct lines remain distinct.
@@ -262,7 +344,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             incomplete = True
             continue
         try:
-            _stamp(stamp)
+            utc_stamp = _stamp(stamp).isoformat()
         except (ValueError, TypeError):
             incomplete = True
             continue
@@ -288,29 +370,58 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         if (category == "PLUGIN"
                 and operation in {"provider connect", "public provider connect"}
                 and status in {"error", "failed"}
-                and type(diagnostics) is Diagnostics
-                and type(row.get("detail")) is dict
-                and row["detail"].get("code") == CONNECT_FAILURE_CODE):
-            identifier = canonical_public_provider_id(
-                row["detail"].get("provider_id")
-            )
-            if (identifier is not None and
-                    row.get("verified_public_provider_id") == identifier):
-                public_detail = {
-                    "provider_id": identifier,
-                    "code": CONNECT_FAILURE_CODE,
-                }
+                and type(diagnostics) is Diagnostics):
+            validated = public_connection_fields(row.get("detail"))
+            if (validated and row.get("verified_public_provider_id")
+                    == validated["provider_id"]):
+                public_detail = validated
                 message = "connexion fournisseur échouée"
+        if (category == "KOBO"
+                and operation == "automatic backup decision"
+                and type(diagnostics) is Diagnostics
+                and row.get("verified_kobo_backup") is True):
+            public_detail = public_kobo_backup_decision(row.get("detail"))
+            message = public_kobo_backup_message(public_detail) or "[opération masquée]"
+        source_sync_detail = {}
+        adept_detail = {}
+        if (category == "ADEPT" and operation == "kobo adept"
+                and type(diagnostics) is Diagnostics and row.get("verified_kobo_adept") is True):
+            adept_detail = public_adept_fields(row.get("detail"))
+            if adept_detail:
+                public_detail = adept_detail
+                message = public_adept_message(adept_detail)
+                severity = "error" if adept_detail["status"] == "failed" else "info"
+        if (category == "SYNC" and operation == "source sync"
+                and type(diagnostics) is Diagnostics
+                and row.get("verified_source_sync") is True):
+            source_sync_detail = public_source_sync_fields(row.get("detail"))
+            if source_sync_detail:
+                public_detail = source_sync_detail
+                message = public_source_sync_message(public_detail)
+                severity = ("error" if public_detail["status"] == "failed" else
+                            "warning" if public_detail["status"] == "cancelled" else "info")
         if category == "NUMILOG":
-            public_detail = public_numilog_fields(
-                operation, row.get("detail"), row.get("duration_ms"),
+            # Startup facts must originate from the dedicated Core emitter.
+            # A generic plugin/diagnostics.add with a correctly shaped
+            # dictionary proves no source, phase, result or task provenance.
+            verified_startup = (
+                operation != "startup_materialization" or (
+                    type(diagnostics) is Diagnostics
+                    and row.get("verified_numilog_startup") is True
+                )
             )
-            task_ref = row.get("task_ref")
-            if (operation in {"acquisition_delivery", "session_state", "startup_materialization"}
-                    and type(task_ref) is str and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
-                public_detail["task_ref"] = task_ref
-            message = public_numilog_message(operation, public_detail) or "[opération masquée]"
-        base_id = _event_id("core_events", stamp, category + ":" + operation)
+            if verified_startup:
+                public_detail = public_numilog_fields(
+                    operation, row.get("detail"), row.get("duration_ms"),
+                )
+                task_ref = row.get("task_ref")
+                if (operation in {"acquisition_delivery", "session_state", "startup_materialization"}
+                        and type(task_ref) is str and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
+                    public_detail["task_ref"] = task_ref
+                message = public_numilog_message(operation, public_detail) or "[opération masquée]"
+            else:
+                message = "[opération masquée]"
+        base_id = _event_id("core_events", utc_stamp, category + ":" + operation)
         event_id = base_id
         # Two records may share the same timestamp/category/operation.
         # Preserve the historical hash of a unique record, but avoid false
@@ -319,21 +430,22 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         while event_id in used_ids:
             duplicate_number += 1
             event_id = _event_id(
-                "core_events", stamp,
+                "core_events", utc_stamp,
                 f"{category}:{operation}:duplicate:{duplicate_number}",
             )
         used_ids.add(event_id)
         duplicate_offsets[base_id] = duplicate_number
         events.append({
-            "timestamp": stamp,
+            "timestamp": utc_stamp,
             "source": "core_events",
             "module": module,
             "severity": severity,
             "message": message,
             **({"detail": public_detail} if public_detail else {}),
-            "status": status if status in {"ok", "error", "failed", "warning",
+            "status": adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
+                status if status in {"ok", "error", "failed", "warning",
                                          "attention_required", "partial", "success"}
-                       else "unknown",
+                else "unknown"),
             "event_id": event_id,
         })
     state = {

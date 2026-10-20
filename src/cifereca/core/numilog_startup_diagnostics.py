@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 import json
+import logging
 import re
 import secrets
 
@@ -29,6 +30,8 @@ COUNTS = ("attempted", "downloaded", "skipped", "failed")
 _KEY = "sync.source.numilog.materialization.diagnostic.v1."
 _CLOCK = "sync.source.numilog.materialization.last_start.v1."
 _ACTIVE = ContextVar("numilog_startup_diagnostic", default=None)
+_LOG = logging.getLogger("cifereca")
+_LOG_PREFIX = "TRACE numilog startup_materialization "
 
 
 def public_fields(detail):
@@ -65,6 +68,24 @@ def public_fields(detail):
     return dict(detail)
 
 
+def public_log_fields(body: object) -> dict:
+    """Read exactly the canonical, bounded Core emission, never arbitrary JSON.
+
+    Requiring canonical encoding also rejects duplicate keys, trailing text,
+    whitespace variants and nonfinite constants before any public projection.
+    """
+    if type(body) is not str or len(body) > 2048 or not body.startswith(_LOG_PREFIX):
+        return {}
+    encoded = body[len(_LOG_PREFIX):]
+    try:
+        fields = public_fields(json.loads(encoded))
+    except (ValueError, TypeError, RecursionError):
+        return {}
+    if not fields or json.dumps(fields, separators=(",", ":"), sort_keys=True) != encoded:
+        return {}
+    return fields
+
+
 def _source(source_id):
     return type(source_id) is str and re.fullmatch(r"sync:[0-9a-f]{24}", source_id) is not None
 
@@ -90,7 +111,15 @@ def save(storage, source_id, clock, fields, *, claimed=False):
                 ("sync.source.numilog.materialization.result.v1." + source_id,)).fetchone()
             if receipt is not None:
                 try:
-                    if json.loads(receipt[0]).get("status") == "running":
+                    prior_status = json.loads(receipt[0]).get("status")
+                    if prior_status == "running":
+                        return
+                    if (fields["status"] == "not_due"
+                            and prior_status in {"failed", "partial", "blocked"}):
+                        # A throttled later opening did no work. Keep the
+                        # cause/phase of the last *actual* durable failure,
+                        # which would otherwise vanish from the UI while the
+                        # SQLite failure receipt remains unchanged.
                         return
                 except (ValueError, TypeError, AttributeError):
                     return
@@ -144,10 +173,16 @@ class StartupTrace:
         fields = public_fields(self.fields(phase, code, status))
         if not fields:
             return {}
+        # The SAME validated facts go to both channels. No exception, source
+        # key or arbitrary plugin payload can be appended to this emission.
+        # Logging remains independent of collector enablement/retention.
         try:
-            self.service.diagnostics.add("NUMILOG", "startup_materialization",
-                "error" if status in {"failed", "partial"} else "warning" if status == "blocked" else "ok",
-                detail=fields)
+            _LOG.info("%s%s", _LOG_PREFIX,
+                      json.dumps(fields, separators=(",", ":"), sort_keys=True))
+        except Exception:
+            pass  # an optional log handler cannot alter acquisition outcomes
+        try:
+            self.service.diagnostics.add_core_numilog_startup(fields)
         except Exception:
             pass
         try:

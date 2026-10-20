@@ -914,6 +914,27 @@ class SynchronizationBrokerImpl:
         )
         counts = raw.get("counts") if isinstance(raw, dict) else None
         accounts = raw.get("accounts") if isinstance(raw, dict) else None
+        # #2498: the new shared limits are benign only if the *complete*
+        # Core-owned numeric tuple is validated. Older persisted/mock audits
+        # have no budget fields and must remain backward compatible.
+        budget_keys = (
+            "files_hashed_limit", "directory_entries_limit",
+            "total_hash_bytes_limit", "total_hash_bytes_read",
+        )
+        present = [key in raw for key in budget_keys] if isinstance(raw, dict) else []
+        budget = {}
+        if present and any(present):
+            values = tuple(raw.get(key) for key in budget_keys)
+            if (
+                not all(present)
+                or not all(type(value) is int for value in values)
+                or not 1 <= values[0] <= 100_000
+                or not 1 <= values[1] <= 1_000_000
+                or not 1 <= values[2] <= (1 << 40)
+                or not 0 <= values[3] <= values[2]
+            ):
+                return rejected("audit_unavailable")
+            budget = dict(zip(budget_keys, values))
         if (
             not isinstance(raw, dict)
             or raw.get("schema") != "kobo.local.reconciliation.audit/1"
@@ -938,6 +959,7 @@ class SynchronizationBrokerImpl:
                 "read_only": True, "acquisition_authorized": False,
                 "offline": True, "truncated": raw["truncated"],
                 "counts": {name: counts[name] for name in allowed},
+                **budget,
             },
         )
 

@@ -146,6 +146,13 @@ class EpubOptimizerTransformer:
         max_image_mb = int(request.options.get("max_image_mb") or context.config.get("max_image_mb") or 64)
         max_image_pixels = int(request.options.get("max_image_pixels") or context.config.get("max_image_pixels") or 64_000_000)
         proposed = default_output_path(Path(source.path).name, profile).name
+        # Explicit opt-in; default keeps the historical sequential engine.
+        cpu_workers = int(
+            request.options.get("cpu_workers")
+            or context.config.get("cpu_workers") or 1
+        )
+        if cpu_workers not in (1, 2, 4):
+            raise ValueError("cpu_workers doit valoir 1, 2 ou 4")
 
         def progress(percent: int, message: str) -> None:
             control.check_cancelled()
@@ -166,6 +173,7 @@ class EpubOptimizerTransformer:
                 max_image_pixels=max_image_pixels,
                 progress=progress,
                 cancel_event=_ControlEvent(control),
+                cpu_workers=cpu_workers,
             )
         except CancelledError:
             control.check_cancelled()
@@ -190,6 +198,7 @@ class EpubOptimizerTransformer:
             "images_seen": report.images_seen,
             "images_optimized": report.images_optimized,
             "images_kept": report.images_kept,
+            "cpu_workers": cpu_workers,
         }
         context.report_diagnostic(
             "EPUB optimization completed",

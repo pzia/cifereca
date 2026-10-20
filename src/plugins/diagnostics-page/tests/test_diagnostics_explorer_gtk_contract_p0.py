@@ -34,7 +34,7 @@ def test_query_runs_through_tasks_broker_and_result_renders_on_gtk_idle():
 
 def test_module_groups_event_ids_and_states_are_explicit_not_claimed_correlations():
     src = PAGE.read_text(encoding="utf-8")
-    assert "for group in module_groups(rows):" in src
+    assert "else module_groups(rows))" in src
     assert "for row in group[\"events\"]:" in src
     assert "event_id = row[\"event_id\"]" in src
     assert "Aucun événement sur cette page" in src

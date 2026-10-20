@@ -11,6 +11,7 @@ import pytest
 from browser_recorder import (
     Capture, RecorderError, load_capture, record, replay, replayable,
     safe_url, save_capture, site_origin, MAX_EVENTS, MAX_BYTES,
+    MAX_TEXT_RESPONSE_BYTES, classify_response_metadata,
 )
 
 ORIGIN = "https://bibliotheque.example.org"
@@ -254,3 +255,77 @@ def test_explicit_save_request_allows_har(tmp_path):
     filename = record(ORIGIN + "/books", tmp_path, stopped,
                       save_requested=save_requested, factory=lambda: FakePW(context))
     assert (tmp_path / filename).is_file()
+
+
+def test_exchange_ids_redirect_and_network_error_without_failure_text():
+    capture = Capture(ORIGIN)
+    first = FakeRequest(ORIGIN + "/books?secret=HIDDEN")
+    second = FakeRequest(ORIGIN + "/account/HIDDEN")
+    third = FakeRequest(ORIGIN + "/search")
+    capture.request(first)
+    capture.request(second)
+    capture.request(third)
+    redirect = FakeResponse(first)
+    redirect.status = 302
+    capture.response(redirect)
+    capture.request_failed(second)
+    ok = FakeResponse(third)
+    capture.response(ok)
+    entries = capture.document()["log"]["entries"]
+    assert [e["_cifereca"]["exchange_id"] for e in entries] == [1, 2, 3]
+    assert [e["_cifereca"]["outcome"] for e in entries] == [
+        "redirect", "network_error", "response",
+    ]
+    assert [e["response"]["status"] for e in entries] == [302, 0, 200]
+    assert "HIDDEN" not in json.dumps(entries)
+    assert "secret=" not in json.dumps(entries)
+
+
+def test_failure_without_recorded_request_is_ignored():
+    capture = Capture(ORIGIN)
+    capture.request_failed(FakeRequest("https://foreign.example/private"))
+    assert capture.document()["log"]["entries"] == []
+
+
+@pytest.mark.parametrize(("headers", "expected"), [
+    ({"Content-Type": "text/html; charset=utf-8", "Content-Length": "120"},
+     {"mime": "text", "body_state": "body_omitted"}),
+    ({"content-type": "application/problem+json", "content-length": "32"},
+     {"mime": "text", "body_state": "body_omitted"}),
+    ({"content-type": "application/xml", "content-length": "99999999"},
+     {"mime": "text", "body_state": "truncated"}),
+    ({"content-type": "application/epub+zip"},
+     {"mime": "binary", "body_state": "binary_skipped"}),
+    ({"content-type": "application/pdf", "content-length": "20"},
+     {"mime": "binary", "body_state": "binary_skipped"}),
+    ({}, {"mime": "unknown", "body_state": "body_omitted"}),
+])
+def test_private_response_metadata_classification_never_reads_body(headers, expected):
+    # A MIME and declared size is a *hint*, never permission to fetch body().
+    class PrivateResponse:
+        status = 200
+        def __init__(self, req):
+            self.request = req
+            self.headers = headers
+        def body(self):
+            raise AssertionError("unbounded body forbidden")
+        def text(self):
+            raise AssertionError("unbounded text forbidden")
+    capture = Capture(ORIGIN)
+    req = FakeRequest(ORIGIN + "/books")
+    capture.request(req)
+    capture.response(PrivateResponse(req))
+    result = capture.document()["log"]["entries"][0]["_cifereca"]
+    for key, value in expected.items():
+        assert result[key] == value
+    assert "headers" not in result
+    assert "Content-Length" not in json.dumps(result)
+
+
+def test_advertised_length_does_not_expose_private_response_data():
+    assert classify_response_metadata({
+        "content-type": "text/plain",
+        "content-length": str(MAX_TEXT_RESPONSE_BYTES + 1),
+        "authorization": "Bearer PRIVATE_SECRET",
+        "set-cookie": "session=PRIVATE_SECRET",
+    }) == {"mime": "text", "body_state": "truncated"}

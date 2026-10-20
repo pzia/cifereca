@@ -4,6 +4,7 @@ from .core import acsm_staging, loan_failure_evidence, adept_acquisition_return
 from .core import adept_artifact_publication
 from .core import loan_acquisition_admission, loan_local_preparation
 from .core import loan_provider_delivery
+from .core import loan_completion_receipt, loan_initial_receipt
 from .core import loan_adept_profile_guard
 from .core import manual_acsm_import
 from .core import provider_loan_return
@@ -2794,20 +2795,12 @@ class LibraryService:
         legacy_acsm_artifact = local.previous_state.legacy_acsm_artifact
         decision = local.decision
 
-        ledger_base = {
-            "entitlement_id": entitlement_id,
-            "provider_id": loan.source_provider,
-            "credential_id": loan.source_credential,
-            "account_id": loan.source_account_id,
-            "identity_id": identity.identity_id,
-            "item_id": str(loan.record_id or loan.id),
-            "title": loan.title,
-        }
-        self.storage.acquisition_put({
-            **ledger_base, "status": "acquiring", "strategy": "loan_auto",
-            "executor": "provider",
-            "metadata": {**previous_meta, "provider_loan_id": loan.id},
-        })
+        ledger_base = loan_initial_receipt.ledger_base(
+            loan, entitlement_id=entitlement_id, identity_id=identity.identity_id,
+        )
+        self.storage.acquisition_put(
+            loan_initial_receipt.acquiring_receipt(ledger_base, loan, previous_meta)
+        )
         _TRACE_LOG.info("TRACE download ledger acquiring loan_ref=%s", trace_ref)
         retained_acsm: Path | None = None
         failure_executor = "provider"
@@ -2879,38 +2872,32 @@ class LibraryService:
                 inspect_artifact=inspect_artifact,
                 ProviderConfigurationError=ProviderConfigurationError,
             )
-            self.storage.acquisition_put({
-                **ledger_base, "status": "complete", "strategy": "loan_auto",
-                "artifact_id": scan.get("artifact_id"),
-                "executor": "kobo-adept" if acquisition.kind == "acsm" else "provider",
-                "metadata": {
-                    "path": str(final_path), "catalog_index": scan, "provider_loan_id": loan.id,
-                    "reacquisition": force_refresh,
-                    "acquisition_decision": decision.as_dict(),
-                    "preserved_artifact_path": str(previous_path) if force_refresh and previous_path and previous_path.is_file() else None,
-                    "adept_binding": adept_binding if acquisition.kind == "acsm" else None,
-                    "post_processed": True if acquisition.kind == "acsm" else None,
-                    "adept_artifact_drm": artifact_drm if acquisition.kind == "acsm" else None,
-                    "artifact_format": artifact_format or final_inspection.media_format,
-                    "artifact_protected": artifact_protected if acquisition.kind == "acsm" else final_inspection.protected,
-                    "hook_reported": bool(hook_info) if acquisition.kind == "acsm" else None,
-                },
-            })
+            # Receipt payload is now a pure projection; retain the storage
+            # write, cleanup, diagnostics and response in the original order.
+            self.storage.acquisition_put(
+                loan_completion_receipt.completed_receipt(
+                    ledger_base=ledger_base, scan=scan,
+                    acquisition_kind=acquisition.kind, final_path=final_path,
+                    loan=loan, force_refresh=force_refresh, decision=decision,
+                    previous_path=previous_path,
+                    adept_binding=adept_binding if acquisition.kind == "acsm" else None,
+                    artifact_drm=artifact_drm, artifact_format=artifact_format,
+                    artifact_protected=artifact_protected,
+                    hook_info=hook_info, final_inspection=final_inspection,
+                )
+            )
             if acquisition.kind == "acsm":
                 self._cleanup_acsm_after_success(retained_acsm, loan_id=loan.id)
                 retained_acsm = None
             if acquisition.kind == "acsm":
                 self._diagnose_adept_binding(adept_binding, provider_loan_id=loan.id)
             _TRACE_LOG.info("TRACE download loan_auto complete loan_ref=%s dt=%.3fs", trace_ref, time.monotonic()-started)
-            return {
-                "status": "complete",
-                "loan_id": loan.id,
-                "path": str(final_path),
-                "adept_return_available": bool(acquisition.kind == "acsm" and adept_binding.get("return_available")),
-                "decision": decision.action,
-                "reason": decision.reason,
-                "source": decision.source,
-            }
+            return loan_completion_receipt.completed_outcome(
+                loan=loan, final_path=final_path,
+                acquisition_kind=acquisition.kind,
+                adept_binding=adept_binding if acquisition.kind == "acsm" else None,
+                decision=decision,
+            )
         except (KoboAdeptError, UserFacingError) as exc:
             if retained_acsm is not None and retained_acsm.exists():
                 _TRACE_LOG.info("TRACE download acsm cleanup loan_ref=%s action=keep reason=adept_error", trace_ref)
@@ -2963,14 +2950,7 @@ class LibraryService:
             # A bounded subset of real process counters is useful even when
             # the runtime response text is untrusted and cannot be echoed.
             public_process = failure_fields(code=code, process=process, loan_ref=None)
-            safe_facts = [
-                f"{key}={public_process[key]}" for key in (
-                    "returncode", "duration_ms", "stdout_bytes",
-                    "stderr_bytes", "artifact_bytes", "artifact_present",
-                ) if key in public_process
-            ]
-            if safe_facts:
-                message += " (" + ", ".join(safe_facts) + ")"
+            message += loan_failure_evidence.public_process_suffix(public_process)
             # This is a decoder/transport-contract failure, *not* an Adobe
             # licensing decision. The next opening may retry it automatically.
             # Never infer a named Adobe refusal from a generic CLI exit code.
@@ -2990,16 +2970,17 @@ class LibraryService:
                 retained_acsm=retained_acsm, executor=failure_executor,
                 attempt_profile=locals().get("profile_name"),
             )
-            self.storage.acquisition_put({
-                **ledger_base, "status": status, "strategy": "loan_auto", "executor": failure_executor,
-                "error_code": code, "error_message": message, "metadata": metadata,
-                "attention_code": None if status == "retryable_error" else attention_code,
-            })
-            return {
-                "status": status, "loan_id": loan.id, "error": message,
-                "code": attention_code if status == "attention_required" else code,
-                "process": process,
-            }
+            self.storage.acquisition_put(
+                loan_failure_evidence.adept_failure_receipt(
+                    ledger_base=ledger_base, status=status, executor=failure_executor,
+                    code=code, message=message, metadata=metadata,
+                    attention_code=attention_code,
+                )
+            )
+            return loan_failure_evidence.adept_failure_outcome(
+                loan_id=loan.id, status=status, message=message,
+                attention_code=attention_code, code=code, process=process,
+            )
         except Exception as exc:
             if retained_acsm is not None and retained_acsm.exists():
                 _TRACE_LOG.info("TRACE download acsm cleanup loan_ref=%s action=keep reason=acquisition_error", trace_ref)
@@ -3025,17 +3006,15 @@ class LibraryService:
                 previous_meta, loan_id=loan.id, retained_acsm=retained_acsm,
                 attention_code=attention_code, validation_failure=validation_failure,
             )
-            self.storage.acquisition_put({
-                **ledger_base, "status": "retryable_error", "strategy": "loan_auto", "executor": failure_executor,
-                "error_code": "artifact_invalid" if validation_failure else "provider_acquisition_failed",
-                "error_message": "Acquisition du prêt indisponible",
-                "attention_code": None,
-                "metadata": metadata,
-            })
-            return {
-                "status": "retryable_error", "loan_id": loan.id,
-                "code": attention_code, "error": "Acquisition du prêt indisponible",
-            }
+            self.storage.acquisition_put(
+                loan_failure_evidence.provider_failure_receipt(
+                    ledger_base=ledger_base, executor=failure_executor,
+                    validation_failure=validation_failure, metadata=metadata,
+                )
+            )
+            return loan_failure_evidence.provider_failure_outcome(
+                loan_id=loan.id, attention_code=attention_code,
+            )
 
     def _synchronize_account_source_impl(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
         """Synchronize one explicit account/source without changing account selection.

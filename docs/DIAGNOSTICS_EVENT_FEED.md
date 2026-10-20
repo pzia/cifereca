@@ -84,6 +84,26 @@ aucune permission de lecture arbitraire à un plugin.
 Priorité P0 ; l'analyse IA #1009 n'est jamais déclenchée depuis ce broker.
 Aucune nouvelle GitHub Action.
 
+## Horodatages normalisés UTC (#2380)
+
+Tous les `timestamp` des événements publiés et les `sources[].last_event`
+sont des instants ISO-8601 avec décalage `+00:00`. Les événements historiques
+du collecteur peuvent porter n'importe quel décalage explicite dans leur
+snapshot ; la projection conserve **l'instant**, non sa représentation locale.
+Une ligne de `cifereca.log` n'a pas de fuseau dans son format historique :
+elle est interprétée dans le fuseau local du processus lecteur puis convertie
+en UTC. Un changement de fuseau de la machine entre écriture et lecture
+peut donc empêcher une reconstitution exacte de l'heure de ces anciens logs ;
+il ne faut pas fabriquer une corrélation métier avec leur seul horodatage.
+
+Filtres `since/until` et tri opèrent déjà sur les instants UTC. La
+normalisation ne crée pas de `task_ref`, ne restaure pas les traces filtrées,
+et n'augmente ni la rétention, ni le périmètre de collecte ou d'export.
+L'interface reste libre d'afficher ces instants **en heure locale**, en
+indiquant son fuseau. Les `event_id` des événements de collecteur sont
+désormais calculés sur l'instant UTC canonique : pour une même entrée,
+ils peuvent différer des versions antérieures du logiciel.
+
 ## Couverture des événements structurés
 
 Le snapshot Core est limité aux **500 derniers enregistrements**. Quand il

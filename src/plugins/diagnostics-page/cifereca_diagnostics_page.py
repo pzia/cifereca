@@ -10,9 +10,9 @@ from cifereca.plugin_api import UiPageContribution
 from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_consent, export_analysis_json
 from diagnostics_explorer import (
     SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
-    sanitized_rows, module_groups, source_summaries, explorer_header,
+    sanitized_rows, module_groups, linked_operation_groups, source_summaries, explorer_header,
     next_page_offset, selectable_event_ids, export_selected_events,
-    empty_observation,
+    empty_observation, local_timestamp_label,
 )
 from diagnostics_selection import collect_filtered_selection, page_selection_ids
 from diagnostics_performance import PerformanceCapture, performance_bytes
@@ -624,6 +624,14 @@ class DiagnosticsPagePlugin:
         filters_bottom.append(sort_latest)
         journals_tab.append(filters_bottom)
 
+        operation_grouping = Gtk.CheckButton(label="Regrouper par tâche liée (cette page)")
+        operation_grouping.set_tooltip_text(
+            "Uniquement les références Core publiées ; étapes parfois absentes "
+            "avec les filtres, la pagination ou la rotation des journaux. "
+            "Les résultats métier et worker restent distincts."
+        )
+        journals_tab.append(operation_grouping)
+
         journals_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         journals_refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
         journals_refresh.set_tooltip_text("Actualiser les journaux sans synchronisation")
@@ -1146,7 +1154,7 @@ class DiagnosticsPagePlugin:
                     f"{state['source']} : {state['label']}" +
                     (f" — {state['reason']}" if state.get("reason") else "") +
                     (
-                        f" · dernier événement publié : {state['last_event']}"
+                        f" · dernier événement publié : {local_timestamp_label(state['last_event'])}"
                         if state.get("last_event") else ""
                     )
                     for state in states
@@ -1156,11 +1164,14 @@ class DiagnosticsPagePlugin:
             journals_summary.set_text(explorer_header(
                 current_page, rows, search=search_filter.get_text().strip()
             ))
-            for group in module_groups(rows):
-                title = (
+            groups = (linked_operation_groups(rows) if operation_grouping.get_active()
+                      else module_groups(rows))
+            for group in groups:
+                title = (f"{group['label']} · {group['count']} observation(s) · page partielle"
+                         if "label" in group else (
                     f"{group['module']} · {group['source']} · "
                     f"{group['count']} événement(s) · {group['severity']}"
-                )
+                ))
                 expander = Gtk.Expander(label=title)
                 expander.set_expanded(group["severity"] in {"critical", "error"})
                 group_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -1199,7 +1210,7 @@ class DiagnosticsPagePlugin:
                     select.connect("toggled", on_select)
                     first_line.append(select)
                     summary = _safe_text(
-                        f"{row['timestamp']} · {row['severity']} · {row['message']}"
+                        f"{local_timestamp_label(row['timestamp'])} · {row['severity']} · {row['message']}"
                     )
                     event_label = Gtk.Label(label=summary, xalign=0)
                     event_label.set_wrap(True)
@@ -1491,6 +1502,7 @@ class DiagnosticsPagePlugin:
         module_filter.connect("activate", reset_events)
         search_filter.connect("changed", lambda *_: (invalidate_selection(), display_events()))
         sort_latest.connect("toggled", lambda *_: display_events())
+        operation_grouping.connect("toggled", lambda *_: display_events())
         journals_copy.set_sensitive(False)
         journals_previous.set_sensitive(False)
         journals_next.set_sensitive(False)

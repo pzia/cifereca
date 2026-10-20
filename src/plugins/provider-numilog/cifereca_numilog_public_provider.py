@@ -138,11 +138,16 @@ class NumilogPublicSession(ProviderSession):
         existing cache. It never eagerly loads other cards to answer an ISBN
         filter or changes the page's unfiltered public total/pagination.
         """
+        # Capture before page validation: a disconnect/reconnect while
+        # validating must not re-authorize an old selection under the new
+        # generation, including a cached anonymous product response.
+        epoch = self._navigation_epoch_snapshot()
         if not self.connected:
             raise ProviderError("Numilog public : catalogue non connecté")
         from copy import deepcopy
         from cifereca_numilog_public_local_filter import _validate_page
         _validate_page(page)
+        self._assert_public_generation(epoch)
         if type(record_id) is not str:
             raise ProviderCapabilityError("Numilog public : unverified_product_selection")
         indices = [
@@ -151,7 +156,6 @@ class NumilogPublicSession(ProviderSession):
         ]
         if len(indices) != 1:
             raise ProviderCapabilityError("Numilog public : unverified_product_selection")
-        epoch = self._navigation_epoch_snapshot()
         # This operation intentionally does NOT loop over page.items.
         item = self.enrich_public_detail(page.items[indices[0]])
         with self._navigation_lock:
@@ -159,6 +163,7 @@ class NumilogPublicSession(ProviderSession):
                 raise ProviderError("Numilog public : navigation_invalidated")
         updated = list(deepcopy(page.items))
         updated[indices[0]] = deepcopy(item)
+        self._assert_public_generation(epoch)
         return replace(page, items=tuple(updated))
 
     def _validate_search(self, query, page, field, scope):
@@ -262,10 +267,13 @@ class NumilogPublicSession(ProviderSession):
         Missing published evidence is counted as uncertain, never discarded
         as a proven negative. Page/filters remain separate from account rights.
         """
+        epoch = self._navigation_epoch_snapshot()
         if not self.connected:
             raise ProviderError("Numilog public : catalogue non connecté")
         from cifereca_numilog_public_local_filter import refine_loaded_public_page
-        return refine_loaded_public_page(page, **filters)
+        result = refine_loaded_public_page(page, **filters)
+        self._assert_public_generation(epoch)
+        return result
 
     def refine_loaded_pages(self, pages, **filters):
         """Refine up to eight already-fetched consecutive public pages.
@@ -274,10 +282,13 @@ class NumilogPublicSession(ProviderSession):
         search or a filtered global total. Mixed query/facet/edition sets,
         gaps, duplicate items and changing public counters are rejected.
         """
+        epoch = self._navigation_epoch_snapshot()
         if not self.connected:
             raise ProviderError("Numilog public : catalogue non connecté")
         from cifereca_numilog_public_multi_refinement import refine_loaded_public_pages
-        return refine_loaded_public_pages(pages, **filters)
+        result = refine_loaded_public_pages(pages, **filters)
+        self._assert_public_generation(epoch)
+        return result
 
     def follow_public_link(self, url):
         """Follow ONLY an unexpired facet/pager link returned by browse/follow.
@@ -295,6 +306,9 @@ class NumilogPublicSession(ProviderSession):
             expires = self._navigation_urls.get(url)
             if expires is None or expires <= time.monotonic():
                 raise ProviderCapabilityError("Numilog public : unverified_navigation")
+        # The attested link may have been invalidated just as the lock was
+        # released. Refuse a stale GET/cache lookup after close/reconnect.
+        self._assert_public_generation(epoch)
         page_result = self._public_cache.get(
             ("search-url", url, "all"),
             lambda: fetch_public_search_url(url),

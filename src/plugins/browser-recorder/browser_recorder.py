@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlsplit
 
 MAX_EVENTS = 300
 MAX_BYTES = 256_000
+MAX_TEXT_RESPONSE_BYTES = 64 * 1024
 SCHEMA = "cifereca.browser-recorder/1"
 REDACTED = "~redacted~"
 # Only these known, nonspecific URL components can leave the browser process.
@@ -113,6 +114,40 @@ def _request_entry(method: str, url: str, started: str) -> dict:
     }
 
 
+_TEXT_MIMES = frozenset((
+    "text/html", "text/plain", "text/xml", "text/css",
+    "application/json", "application/xml", "application/xhtml+xml",
+    "application/ld+json",
+))
+
+
+def classify_response_metadata(headers) -> dict:
+    """Closed MIME/size classification without fetching response bytes.
+
+    An advertised Content-Length is not a memory guarantee. Therefore this
+    phase intentionally never calls response.body()/text(); it supplies a
+    bounded, non-sensitive classification for the future private reviewer.
+    """
+    try:
+        normalized = {str(key).lower(): value for key, value in headers.items()}
+        mime = str(normalized.get("content-type", "")).split(";", 1)[0].strip().lower()
+        size = str(normalized.get("content-length", "")).strip()
+    except (AttributeError, TypeError, ValueError):
+        return {"mime": "unknown", "body_state": "body_omitted"}
+    textual = mime in _TEXT_MIMES or (
+        mime.startswith("text/") and len(mime) <= 50
+    ) or (mime.startswith("application/") and
+          (mime.endswith("+json") or mime.endswith("+xml")) and len(mime) <= 80)
+    # Never preserve arbitrary vendor MIME parameters or private headers.
+    if not textual:
+        return {"mime": "binary" if mime else "unknown",
+                "body_state": "binary_skipped" if mime else "body_omitted"}
+    advertised = int(size) if size.isdecimal() and len(size) <= 10 else None
+    if advertised is not None and advertised > MAX_TEXT_RESPONSE_BYTES:
+        return {"mime": "text", "body_state": "truncated"}
+    return {"mime": "text", "body_state": "body_omitted"}
+
+
 class Capture:
     def __init__(self, origin: str, *, limit: int = MAX_EVENTS) -> None:
         self.origin = site_origin(origin)
@@ -121,6 +156,7 @@ class Capture:
         self.navigations: list[str] = []
         self.dropped = 0
         self._pending: dict[int, dict] = {}
+        self._next_exchange = 0
 
     def request(self, request) -> None:
         url = safe_url(request.url, self.origin)
@@ -130,6 +166,8 @@ class Capture:
             self.dropped += 1
             return
         entry = _request_entry(str(request.method), url, datetime.now(timezone.utc).isoformat())
+        self._next_exchange += 1
+        entry["_cifereca"] = {"exchange_id": self._next_exchange, "outcome": "pending"}
         self.entries.append(entry)
         self._pending[id(request)] = entry
 
@@ -142,6 +180,26 @@ class Capture:
             except (ValueError, TypeError):
                 status = 0
             entry["response"]["status"] = status if 100 <= status <= 599 else 0
+            entry["_cifereca"]["outcome"] = (
+                "redirect" if 300 <= status <= 399 else "response"
+            )
+            try:
+                meta = classify_response_metadata(response.headers)
+            except Exception:
+                # A browser adapter or test double must not turn arbitrary
+                # headers into a captured error or a traceback with secrets.
+                meta = {"mime": "unknown", "body_state": "body_omitted"}
+            entry["_cifereca"].update(meta)
+
+    def request_failed(self, request) -> None:
+        """Associate failures with requests, without inspecting error text.
+
+        Playwright failure descriptions can contain raw URLs, cookies and
+        provider data; persist only the fixed, nonsensitive outcome.
+        """
+        entry = self._pending.pop(id(request), None)
+        if entry is not None:
+            entry["_cifereca"]["outcome"] = "network_error"
 
     def navigate(self, url: str) -> None:
         shape = safe_url(url, self.origin)
@@ -246,6 +304,7 @@ def record(start_url: str, directory: Path, stop: Event, *, save_requested: Even
             try:
                 context.on("request", capture.request)
                 context.on("response", capture.response)
+                context.on("requestfailed", capture.request_failed)
 
                 def bind(page):
                     page.on("framenavigated", lambda frame: (

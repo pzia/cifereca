@@ -664,6 +664,21 @@ class PluginManager:
         if self.diagnostics is None:
             return
         try:
+            from ..core.diagnostic_adept import PLUGIN_ID, PACKAGE_ID
+            record = self._records.get(plugin_id)
+            if (plugin_id == PLUGIN_ID and record is not None
+                    and record.descriptor.id == PLUGIN_ID
+                    and record.package.manifest.package.id == PACKAGE_ID):
+                # The context callback binds this identity in Core. A field
+                # named plugin_id in another plugin's payload proves nothing.
+                self.diagnostics.add_core_kobo_adept(detail, status, level=level)
+                return
+            if plugin_id == PLUGIN_ID:
+                # Do not fall back to free-form text for an unverified package
+                # claiming this reserved producer identity.
+                self.diagnostics.add("PLUGIN", "runtime diagnostic", "error",
+                                     detail={"code": "unverified_runtime_producer"}, level=level)
+                return
             payload = dict(detail or {}) if isinstance(detail, dict) else {"detail": detail}
             payload["plugin"] = plugin_id
             self.diagnostics.add("PLUGIN", message, status, detail=payload, level=level)

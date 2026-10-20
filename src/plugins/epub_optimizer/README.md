@@ -1,3 +1,26 @@
+## P1 #2432 — EPUB : travailleurs CPU bornés (pilote 0.3.5)
+
+Le transformer `document.transformer.epub-optimizer` accepte un
+`cpu_workers=1|2|4` depuis la configuration ou les options du plan.
+La valeur par défaut **1 reste séquentielle**. Avec 2/4, les processus
+`spawn` reçoivent seulement les octets de l'image, les paramètres
+du profil e-ink et son indice de mise en page. Aucun objet GTK, PyMuPDF,
+ZIP, connexion SQLite, compte ni accès réseau n'entre dans le worker.
+
+Le coordinateur conserve l'ordre des entrées, l'écriture exclusive
+du ZIP, la vérification DRM/OCF avant traitement, les vérifications
+de sortie et la publication atomique. Un lot traite au plus 16 Mio
+d'images source et au plus N images en vol ; les images trop grandes
+restent traitées par la voie séquentielle. Attente bornée à 120 s
+par image avec annulation vérifiée régulièrement ; une interruption
+du pool retire la sortie temporaire et ne modifie pas l'original.
+
+Le pilotage PDF/PyMuPDF reste **séquentiel** à ce stade, en attendant
+des benchmarks CPU/RSS et une validation du traitement des masques.
+Cette tranche ne démontre pas de gain de performance universel.
+
+---
+
 # Cifereca EPUB/PDF Optimizer 0.3.4
 
 Compatible avec **Plugin API >=1.4,<2** (source de vérité : `cifereca-plugin.json`). Le moteur est publié comme `document.transformer` et les profils comme services publics `device.profile`.

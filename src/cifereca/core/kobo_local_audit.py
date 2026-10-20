@@ -100,6 +100,10 @@ def _read_hash_within(
     A directory swap cannot turn the checked child into an external path:
     every directory component is opened with O_NOFOLLOW relative to its parent.
     """
+    # Without O_NOFOLLOW, a symlinked ancestor or leaf can escape the
+    # owning identity. Fail closed instead of silently dropping the flag.
+    if not hasattr(os, "O_NOFOLLOW"):
+        return None
     if type(path_text) is not str or not path_text or "\x00" in path_text:
         return None
     try:

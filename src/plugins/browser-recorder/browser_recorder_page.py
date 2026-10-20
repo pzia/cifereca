@@ -33,6 +33,7 @@ class BrowserRecorderPage:
         self.mode = None
         self.generation = 0
         self.last_filename = ""
+        self.private_panel = None
 
     def activate(self, context):
         self.context = context
@@ -53,16 +54,21 @@ class BrowserRecorderPage:
 
     def build(self, host):
         from gi.repository import Gtk, GLib
+        from browser_recorder_review_ui import PrivateReviewPanel
 
+        if self.private_panel is not None:
+            self.private_panel.destroy()
+            self.private_panel = None
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         for side in ("top", "bottom", "start", "end"):
             getattr(box, "set_margin_" + side)(16)
 
         description = Gtk.Label(
-            label="Capture locale d'un navigateur Playwright visible. "
-                  "Connectez-vous vous-même ; aucune session ou requête brute n'est conservée. "
-                  "Les URL sont expurgées, les en-têtes, cookies et corps exclus. "
-                  "Le rejeu n'effectue que des GET statiques après votre confirmation.",
+            label="Navigateur Playwright visible, connexion manuelle. "
+                  "Le mode HAR classique enregistre uniquement des métadonnées expurgées "
+                  "(sans cookie, corps ni en-têtes) et rejoue seulement des GET statiques. "
+                  "La capture HTTP privée plus bas garde des textes en mémoire jusqu'à "
+                  "effacement, sans ZIP ni upload automatique.",
             xalign=0, wrap=True,
         )
         box.append(description)
@@ -101,8 +107,10 @@ class BrowserRecorderPage:
 
         def buttons(mode=None):
             active = mode in {"record", "replay"}
-            start.set_sensitive(not active)
-            replay_button.set_sensitive(not active)
+            private_active = (self.private_panel is not None
+                              and self.private_panel.is_recording())
+            start.set_sensitive(not active and not private_active)
+            replay_button.set_sensitive(not active and not private_active)
             stop.set_sensitive(active)
             next_button.set_sensitive(mode == "replay")
 
@@ -113,6 +121,14 @@ class BrowserRecorderPage:
                 return
             if self.handle is not None and not self.handle.done():
                 return
+            if self.private_panel is not None:
+                if self.private_panel.is_recording():
+                    return
+                if self.private_panel.has_private_data():
+                    state.set_label(
+                        "Effacer d'abord la capture HTTP privée avant le mode HAR.",
+                    )
+                    return
             if not consent.get_active():
                 state.set_label("Consentement explicite requis.")
                 return
@@ -205,9 +221,19 @@ class BrowserRecorderPage:
 
         stop.connect("clicked", stop_clicked)
         next_button.connect("clicked", lambda *_: self.advance.release() if self.advance else None)
+
+        self.private_panel = PrivateReviewPanel(
+            Gtk, GLib, self.tasks, site, consent,
+            legacy_running=lambda: self.handle is not None and not self.handle.done(),
+            export_directory=self.context.data_directory / "exports",
+        )
+        box.append(self.private_panel.widget)
         return box
 
     def deactivate(self):
+        if self.private_panel is not None:
+            self.private_panel.destroy()
+            self.private_panel = None
         self.generation += 1
         if self.stop_event is not None:
             self.stop_event.set()

@@ -204,6 +204,23 @@ class SelectionTests(unittest.TestCase):
                 )
 
 
+    def test_1354_release_snapshot_is_not_a_gtk_dependency(self):
+        # Version snapshots are synchronized for an explicit release, not at
+        # every plugin patch. Other unknown runtime paths stay fail-closed.
+        snapshot = "src/cifereca/plugin-release.json"
+        self.assertEqual(mod.select([snapshot]), ())
+        self.assertEqual(mod.select([
+            snapshot,
+            "src/plugins/recommendations/recommendations.py",
+            "src/plugins/recommendations/cifereca-plugin.json",
+        ]), mod.RECOMMENDATIONS)
+        self.assertEqual(mod.select([snapshot, "unknown/runtime.py"]), mod.ALL)
+
+    def test_1354_workflow_uses_merge_base_not_unrelated_main_commits(self):
+        workflow = (ROOT / ".github/workflows/e2e-smoke.yml").read_text(encoding="utf-8")
+        self.assertIn('git diff --name-only "$BASE_SHA...$HEAD_SHA"', workflow)
+        self.assertNotIn('git diff --name-only "$BASE_SHA" "$HEAD_SHA"', workflow)
+
     def test_shared_unknown_and_full_dispatch(self):
         for path in ("e2e/run.py", ".github/workflows/e2e-smoke.yml",
                      "scripts/ci-select-e2e.py", "e2e/unknown_probe.py",

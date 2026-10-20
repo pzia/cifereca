@@ -132,6 +132,22 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
 
 
 def synchronize_account_source(self, account: Account, *, deep: bool=False, control: Any=None) -> dict[str, Any]:
+    from .public_provider_diagnostics import registered_public_provider_id
+    from ..plugin_api import Cancelled
+    started = time.monotonic()
+
+    def observe(phase, status, code, result=None):
+        try:
+            provider = registered_public_provider_id(self.registry, account.provider_id)
+            self.diagnostics.add_core_source_sync(
+                provider, phase=phase, status=status, code=code,
+                duration_ms=(max(0, int((time.monotonic() - started) * 1000))
+                             if phase == "completed" else None), counts=result,
+            )
+        except Exception:
+            pass  # telemetry is optional and never changes the sync outcome
+
+    observe("start", "running", "source_sync_started")
     try:
         # Source synchronization is also a library writer. Serialize it
         # with maintenance destruction and opening/Kobo acquisition across
@@ -148,11 +164,16 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                 "deep": bool(deep), "reason": reason,
             },
         )
+        observe("completed", outcome,
+                "source_disabled" if outcome == "skipped" else "source_sync_complete", result)
         return result
     except LockBusyError as exc:
+        observe("completed", "failed", "operation_busy")
         self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": "operation_busy"})
         raise ProviderConfigurationError("Synchronisation ou maintenance de la bibliothèque déjà en cours") from exc
-    except Exception:
+    except Exception as exc:
+        observe("completed", "cancelled" if isinstance(exc, Cancelled) else "failed",
+                "source_sync_cancelled" if isinstance(exc, Cancelled) else "source_sync_failed")
         # A provider can use a dynamically named exception whose class name
         # contains a borrower, signed URL or local filesystem path.
         self._record_action(account.identity_id, "synchronization", "failed", provider_id=account.provider_id, facts={"deep": bool(deep), "error": "source_sync_failed"})
@@ -608,11 +629,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         # Optional persistence must neither fail the opening nor reveal a
         # filesystem, plugin or database exception class in TRACE.
         logger.warning("TRACE kobo backup decision persistence error code=decision_save_failed")
-    self.diagnostics.add(
-        "KOBO", "automatic backup decision",
-        "warning" if kobo_decision["status"] in ("partial", "error") else "ok",
-        detail=kobo_decision, level="normal",
-    )
+    self.diagnostics.add_core_kobo_backup_decision(kobo_decision)
     for identity in self.identities:
         emit("adept_inventory", identity_id=identity.identity_id, result=self._reconcile_identity_adept_inventory(identity.identity_id))
     self.last_loans = sorted(all_loans, key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))

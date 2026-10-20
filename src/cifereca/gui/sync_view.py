@@ -198,6 +198,30 @@ def sync_local_reconciliation_presentation(result: object) -> str:
         "Audit partiel : limites d’inspection atteintes."
         if facts["truncated"] else "Audit terminé dans les limites prévues."
     )
+    # The Core audit has three *shared* hard budgets. Expose them only when
+    # all four typed counters are present and consistent. Never infer WHICH
+    # budget was exhausted, and never use arbitrary provider limitations.
+    budget_fields = (
+        "files_hashed_limit", "directory_entries_limit",
+        "total_hash_bytes_limit", "total_hash_bytes_read",
+    )
+    values = tuple(facts.get(key) for key in budget_fields)
+    budget_label = ""
+    if (
+        all(type(value) is int for value in values)
+        and 1 <= values[0] <= 100_000
+        and 1 <= values[1] <= 1_000_000
+        and 1 <= values[2] <= 1 << 40
+        and 0 <= values[3] <= values[2]
+    ):
+        # Integer MiB avoids locale-dependent formatting and private paths.
+        used_mib = values[3] // (1024 * 1024)
+        limit_mib = values[2] // (1024 * 1024)
+        budget_label = (
+            f"Plafonds partagés : {values[0]} vérifications SHA max. · "
+            f"{values[1]} entrées max. · "
+            f"{used_mib}/{limit_mib} Mio de lecture cumulée. "
+        )
     return (
         f"Fichiers locaux vérifiés par SHA : {counts['linked_files_verified']} · "
         f"groupes de doublons binaires : {counts['binary_match_groups']} · "
@@ -205,7 +229,8 @@ def sync_local_reconciliation_presentation(result: object) -> str:
         f"Fichiers non indexés candidats : {counts['unindexed_regular_file_candidates']} · "
         f"placements incertains : {counts['unverified_placements']} · "
         f"droits sans artefact confirmé : {counts['active_entitlements_unmaterialized']}.\n"
-        f"{completeness} Aucune réconciliation, acquisition ni suppression autorisée."
+        f"{completeness} {budget_label}"
+        "Aucune réconciliation, acquisition ni suppression autorisée."
     )
 
 
