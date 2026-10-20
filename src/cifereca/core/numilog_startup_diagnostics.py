@@ -202,18 +202,6 @@ def acquisition_refusal(code):
 
 
 @contextmanager
-def acquisition_boundary(code):
-    """Mark the first failed acquisition gate; preserve the original error."""
-    try:
-        yield
-    except Cancelled:
-        raise
-    except Exception:
-        acquisition_refusal(code)
-        raise
-
-
-@contextmanager
 def adept_stage(provider_id):
     """Mark ADEPT only when the public Core import is actually entered."""
     trace = _ACTIVE.get() if provider_id == "numilog" else None
