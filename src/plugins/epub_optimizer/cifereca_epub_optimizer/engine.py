@@ -504,6 +504,7 @@ def _epub_payloads(
     max_image_pixels: int,
     cpu_workers: int,
     cancel_event: threading.Event | None,
+    fallback_notes: list[str] | None = None,
 ):
     """Yield contents in ZIP order; at most N image jobs / 16 MiB in flight.
 
@@ -517,8 +518,23 @@ def _epub_payloads(
             yield info, archive.read(info), None
         return
 
-    context = mp.get_context("spawn")
-    with context.Pool(processes=cpu_workers, maxtasksperchild=64) as workers:
+    # Only pool CREATION failures can safely fall back. A worker crash,
+    # deadline failure or cancellation after launch remains a hard failure;
+    # silently retrying its work could obscure a partial or unsafe result.
+    try:
+        context = mp.get_context("spawn")
+        pool = context.Pool(processes=cpu_workers, maxtasksperchild=64)
+    except (OSError, RuntimeError):
+        _check_cancel(cancel_event)
+        if fallback_notes is not None:
+            fallback_notes.append(
+                "Processus CPU indisponibles : repli séquentiel sécurisé."
+            )
+        for info in infos:
+            _check_cancel(cancel_event)
+            yield info, archive.read(info), None
+        return
+    with pool as workers:
         index = 0
         while index < len(infos):
             _check_cancel(cancel_event)
@@ -788,6 +804,7 @@ def optimize_epub(
                     image_names, profile, layout_hints,
                     max_image_mb=max_image_mb, max_image_pixels=max_image_pixels,
                     cpu_workers=cpu_workers, cancel_event=cancel_event,
+                    fallback_notes=report.image_notes,
                 )
                 for info, data, precomputed in contents:
                     _check_cancel(cancel_event)
