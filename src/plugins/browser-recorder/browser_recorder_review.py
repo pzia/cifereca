@@ -24,9 +24,13 @@ _SECRETS = re.compile(
 )
 _IDS = re.compile(
     r"(?:id|uuid|isbn|ean|sku)$|"
+    # CamelCase/underscore contact coordinates require individual review too.
+    r"(?:phone|telephone|mobile)(?:number|num)?$|"
+    r"(?:postalcode|codepostal|zipcode|postcode|zip)$|"
     r"(?:^|[_\-.])(?:uid|pid|sku|isbn|ean|uuid|profile|account|order|"
     r"book|livre|product|edition|exemplaire|user|email|customer|"
-    r"commande|purchase|identifiant)(?:$|[_\-.])",
+    r"commande|purchase|identifiant|phone|telephone|mobile|postal|"
+    r"zipcode|postcode|zip|code_postal)(?:$|[_\-.])",
     re.IGNORECASE,
 )
 _EMAIL = re.compile(r"(?<![\w@])[a-zA-Z0-9.+_-]{1,64}@[a-zA-Z0-9.-]{2,200}\.[a-zA-Z]{2,24}")
