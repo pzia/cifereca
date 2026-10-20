@@ -493,6 +493,28 @@ def _attested_public_https(value):
         return False
 
 
+def _attested_query_matches_product(url, product, drm):
+    """Optional recognized query IDs cannot contradict the selected JS row.
+
+    No expected vendor hostname or endpoint is hard-coded here; unfamiliar
+    opaque signature parameters remain the vendor's responsibility.
+    """
+    try:
+        fields = parse_qs(
+            urlsplit(url).query, keep_blank_values=True, max_num_fields=64,
+        )
+        for key in ('pid', 'productid'):
+            if key in fields and fields[key] != [product]:
+                return False
+        if drm in {'ADOBE', 'NOT_SPECIFIED'} and 'DRM' in fields:
+            # Explicit LCP markers contradict a non-LCP Links entry.
+            if len(fields['DRM']) != 1 or fields['DRM'][0].upper() == 'LCP':
+                return False
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 def _is_direct_epub_download(value, allowed_origins, *, expected_product=None):
     """Only the observed signed Numilog handler, never another service URL.
 
@@ -601,7 +623,8 @@ def _owned_delivery_candidates(node, *, allowed_origins):
                 # card and again in the confirmation. The *merchant page*,
                 # not this plugin's hard-coded endpoint table, authorizes
                 # the selected delivery URL. The target must still be safe.
-                if not _attested_public_https(decoded_url):
+                if (not _attested_public_https(decoded_url)
+                        or not _attested_query_matches_product(decoded_url, product, drm)):
                     continue
             except (ValueError, TypeError, AttributeError):
                 continue
