@@ -38,6 +38,9 @@ class Widget:
     def set_text(self, text):
         self.text = text
 
+    def get_text(self):
+        return self.text
+
     def get_buffer(self):
         return self.buffer
 
@@ -100,6 +103,7 @@ class Gtk:
     TextView = Widget
     ComboBoxText = Combo
     CheckButton = Check
+    Entry = Widget
 
 
 class GLib:
@@ -154,9 +158,11 @@ def make_panel(monkeypatch, *, allowed=True, busy=False, export_directory=None):
         request_headers={"content-type": "application/json"},
     ))
 
-    def recorder(start, stop, *, pause_control=None):
+    def recorder(start, stop, *, pause_control=None, metadata_only_origins=()):
         assert start.startswith(ORIGIN) and stop.is_set()
         assert pause_control is not None
+        assert type(metadata_only_origins) is tuple
+        raw.third_party_scope = metadata_only_origins
         return raw
 
     monkeypatch.setattr(review_ui, "record_http", recorder)
@@ -320,3 +326,54 @@ def test_pause_resume_during_capture_is_explicit_and_resets_on_stop(monkeypatch)
     assert not panel.pause_button.sensitive
     panel.destroy()
     assert raw.exchanges == []
+
+
+
+def test_third_party_scope_is_explicit_and_frozen_at_capture_start(monkeypatch):
+    panel, tasks, raw = make_panel(monkeypatch)
+    assert panel.third_party_origins.sensitive
+    panel.third_party_origins.set_text(
+        "https://identity.example.org, https://auth.example.org/"
+    )
+    panel.begin()
+    assert len(tasks.handles) == 1
+    assert not panel.third_party_origins.sensitive
+    # Edits made while a browser is open must not broaden its approved scope.
+    panel.third_party_origins.set_text("https://unapproved.example.org")
+    panel.stop_capture()
+    tasks.handles[0].finish()
+    assert raw.third_party_scope == (
+        "https://identity.example.org", "https://auth.example.org",
+    )
+    assert panel.third_party_origins.sensitive is False  # trace awaits review
+    panel.discard()
+    assert panel.third_party_origins.sensitive
+    panel.destroy()
+
+
+def test_invalid_third_party_scope_refuses_browser_without_leaking_origin(
+    monkeypatch,
+):
+    from browser_recorder_review_ui import _metadata_only_origins
+    from browser_recorder import RecorderError
+    import pytest
+
+    for raw in (
+        "https://identity.example.org/path?code=PRIVATE_CODE",
+        "https://identity.example.org?code=PRIVATE_CODE",
+        "https://books.example.org",
+        "http://localhost",
+        "https://a.example.org,https://b.example.org,https://c.example.org,"
+        "https://d.example.org,https://e.example.org",
+        "https://identity.example.org,https://identity.example.org",
+    ):
+        with pytest.raises(RecorderError, match="invalid_origin"):
+            _metadata_only_origins(raw, ORIGIN)
+        panel, tasks, trace = make_panel(monkeypatch)
+        panel.third_party_origins.set_text(raw)
+        panel.begin()
+        assert tasks.handles == []
+        assert "Origines HTTPS invalides" in panel.status.label
+        assert "PRIVATE_CODE" not in panel.status.label
+        panel.destroy()
+    assert _metadata_only_origins("", ORIGIN) == ()
