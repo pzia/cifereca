@@ -1,31 +1,41 @@
-## 0.1.79 — livraison Eden V2 Adobe et LCP alternatifs (#2024 P0)
+## 0.1.79 — livraison autorisée par le tableau Links (#2024 P0)
 
-Une confirmation Numilog observée fournit désormais deux entrées `Links`
-pour le **même produit/exemplaire** : `LCP` avec `DRM=LCP` et `ADOBE`
-sans ce paramètre, sur la route HTTPS exacte du gestionnaire
-`services.numilog.com/v4.0/HandlerDownloadLinks/HandlerEdenDownloadLinkV2.ashx`.
-Le parseur ne reproduit ni n'enregistre les jetons signés ; il vérifie
-strictement les noms `pid/uid/tid`, les formats et bornes des valeurs,
-l'unicité, l'égalité `pid=ProductId` et la concordance des deux variantes
-`pid/uid/tid`. La paire produit/copie, l'unique bouton ModalDownload,
-la carte de confirmation liée à l'achat et l'éventuel readBook de la
-carte restent obligatoires. L'absence de streaming après le 302 direct
-autorise le mode `download` sur **cette forme Eden V2 seulement**.
+La confirmation liée au compte et à la carte de l'achat est
+l'**autorité de provenance** du lien : le parseur n'impose plus une
+liste figée de domaines, handlers ou formats de jetons à la valeur
+`link`. Pour une édition avec alternatives `ADOBE` / `LCP`, il
+sélectionne uniquement l'unique entrée `ADOBE`; la variante
+`LCP` n'est pas interrogée. Pour `NOT_SPECIFIED` / `EPUB`,
+le téléchargement direct reste validé comme EPUB.
 
-Le provider sélectionne **exclusivement la variante ADOBE** et bloque
-une URL Eden V2 non liée à la carte avant GET. Le broker d'acquisition,
-la vérification de propriétaire, la détection structurale ACSM et le
-runtime ADEPT existants restent obligatoires. Aucun téléchargement LCP
-n'est effectué : la prise en charge LCP ne fait pas partie de cette
-version. Les réponses HTML/403, redirections hors origine et contenus
-ACSM invalides échouent sans publication.
+Les conditions de sélection restent strictes : origine HTTPS Numilog
+de la **page de confirmation**, `readBook` ou href de la carte achetée,
+lien explicite `ModalDownload`, identifiants produit/exemplaire
+concordants, entrée `Links` littérale unique par technologie et
+contradictions de query `pid/productid/DRM` refusées.
+Aucune URL de la page seule, d'une fiche publique ou d'un script
+non lié n'autorise une acquisition.
 
-Tests fictifs et hors réseau :
-`test_numilog_eden_v2_adobe_p0_2024.py`, variations de formulaire
-de connexion partagé, redirection, modes `dwld/download`, édition
-mismatched, jetons et copies adverses, LCP refusé et broker ADEPT.
-Le fait que Numilog offre ADOBE ne prouve **pas** qu'une récupération
-réelle réussisse, ni la cause antérieure d'un worker automatique.
+L'URL de livraison sélectionnée est une **capacité éphémère** : aucune
+publication de la query, aucun lien persistant, aucun fallback LCP.
+Avant requête sur une nouvelle destination, le transport impose HTTPS,
+pas de credentials/fragment/port non standard ni d'IP littérale ou
+de nom local/réservé, et rejette toute résolution DNS privée/non globale.
+Sur les destinations attestées hors origine de la bibliothèque, les
+cookies de session Numilog sont supprimés ; chaque redirection HTTPS
+est vérifiée avant de poursuivre (limite 12 sauts). La vérification DNS
+préalable n'est pas un transport DNS-pinné et ne prétend pas empêcher
+à elle seule toutes les variantes de DNS rebinding.
+
+Les résultats reçus sont **inspectés**, et non déduits du libellé
+ADOBE/EPUB : ACSM seulement après identité + broker ADEPT disponibles,
+EPUB non protégé seulement après validation structurelle.
+Les tests MockTransport/DNS simulés couvrent plusieurs fournisseurs,
+l'absence de whitelist, la protection des cookies, les duplications,
+des destinations non publiques, les redirections et les éditions
+étrangères. Aucune signature privée n'a été utilisée. Cela ne prouve
+pas une livraison réelle, ni l'échec du worker automatique.
+
 
 ---
 
