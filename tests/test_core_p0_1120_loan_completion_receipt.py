@@ -102,9 +102,8 @@ def test_library_service_still_records_then_cleans_up_then_diagnoses():
         rows = [line for callee, line in calls if callee == name]
         assert rows, name
         return min(rows)
-    assert at("loan_provider_delivery.index_local_loan_artifact") < (
-        at("loan_completion_receipt.completed_receipt")
-        < at("self._cleanup_acsm_after_success")
-        < at("self._diagnose_adept_binding")
-    )
+    assert (at("loan_provider_delivery.index_local_loan_artifact")
+            < at("loan_completion_receipt.completed_receipt")
+            < at("self._cleanup_acsm_after_success")
+            < at("self._diagnose_adept_binding"))
     assert at("self.storage.acquisition_put") < at("self._cleanup_acsm_after_success")
