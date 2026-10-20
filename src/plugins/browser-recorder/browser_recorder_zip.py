@@ -416,10 +416,25 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
                          "status": outgoing["status"]})
     files["timeline.json"] = _member_bytes(timeline)
     files["identifiers.json"] = _member_bytes(preview["decisions"])
+    # Publish counts, never unreviewed URLs, hosts, header values or bodies.
+    # The same bounded keys are present for zero-count categories so a LLM
+    # can distinguish "observed none" from "unknown/unreported".
+    omission_codes = (
+        "out_of_scope", "limit", "binary_skipped", "oversize",
+        "unknown_size", "network_error", "paused",
+    )
+    capture_omissions = {}
+    for code in omission_codes:
+        count = review.trace.omitted.get(code, 0)
+        if type(count) is not int or not 0 <= count <= 1_000_000:
+            raise RecorderError("bundle_invalid_omissions")
+        capture_omissions[code] = count
+
     files["manifest.json"] = _member_bytes({
         "schema": ZIP_SCHEMA, "export": "explicit-only", "contains_raw_session": False,
         "exchange_count": len(timeline),
         "excluded_exchanges": preview["dropped_exchanges"],
+        "capture_omissions": capture_omissions,
         "secret_values_suppressed": preview["secrets_replaced"],
         "coverage": "JSON shapes and selected HTML/XML selectors; free text omitted",
         "max_uncompressed": MAX_UNCOMPRESSED,
