@@ -306,6 +306,9 @@ class NumilogPublicSession(ProviderSession):
             expires = self._navigation_urls.get(url)
             if expires is None or expires <= time.monotonic():
                 raise ProviderCapabilityError("Numilog public : unverified_navigation")
+        # The attested link may have been invalidated just as the lock was
+        # released. Refuse a stale GET/cache lookup after close/reconnect.
+        self._assert_public_generation(epoch)
         page_result = self._public_cache.get(
             ("search-url", url, "all"),
             lambda: fetch_public_search_url(url),
