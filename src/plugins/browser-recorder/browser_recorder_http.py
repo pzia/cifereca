@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import re
-from threading import Event
+from threading import Event, Lock
 from time import monotonic
 from urllib.parse import urlsplit
 
@@ -90,6 +90,26 @@ def _sizes(request) -> dict:
         return {}
 
 
+class CapturePause:
+    """Thread-safe pause control, without captured network data."""
+
+    def __init__(self):
+        self._lock = Lock()
+        self._paused = False
+        self._revision = 0
+
+    def set_paused(self, value: bool) -> None:
+        with self._lock:
+            value = bool(value)
+            if value != self._paused:
+                self._paused = value
+                self._revision += 1
+
+    def state(self) -> tuple[bool, int]:
+        with self._lock:
+            return self._paused, self._revision
+
+
 @dataclass(repr=False)
 class PrivateExchange:
     sequence: int
@@ -123,7 +143,8 @@ class PrivateHttpTrace:
     def __init__(self, origins: tuple[str, ...], *,
                  limit: int = MAX_EXCHANGES,
                  max_body: int = MAX_BODY_BYTES,
-                 total_body: int = MAX_TOTAL_BODY_BYTES):
+                 total_body: int = MAX_TOTAL_BODY_BYTES,
+                 pause_control: CapturePause | None = None):
         if not origins or len(origins) > 6:
             raise RecorderError("invalid_origin")
         self.origins = tuple(dict.fromkeys(site_origin(item) for item in origins))
@@ -132,19 +153,43 @@ class PrivateHttpTrace:
         self.total_body = min(MAX_TOTAL_BODY_BYTES, max(0, int(total_body)))
         self.exchanges: list[PrivateExchange] = []
         self.omitted = {"out_of_scope": 0, "limit": 0, "binary_skipped": 0,
-                        "oversize": 0, "unknown_size": 0, "network_error": 0}
+                        "oversize": 0, "unknown_size": 0, "network_error": 0,
+                        "paused": 0}
         self._pending: dict[int, PrivateExchange] = {}
         self._responses: dict[int, object] = {}
         self._begin = monotonic()
         self.paused = False
+        self._pause_control = pause_control
+        self._pause_revision = pause_control.state()[1] if pause_control else 0
         self._tab_numbers: dict[int, int] = {}
 
     def __repr__(self):
         return (f"PrivateHttpTrace(exchanges={len(self.exchanges)}, "
                 f"omissions={sum(self.omitted.values())})")
 
+    def _drop_inflight_on_pause(self) -> None:
+        # A pause cannot finish capturing a request that began earlier.
+        self.omitted["paused"] += len(self._pending)
+        for entry in self._pending.values():
+            entry.request_body_state = "body_omitted"
+            entry.response_body_state = "body_omitted"
+        self._pending.clear()
+        self._responses.clear()
+
+    def _is_paused(self) -> bool:
+        if self._pause_control is not None:
+            paused, revision = self._pause_control.state()
+            if revision != self._pause_revision:
+                # Detect pause + resume between two Playwright callbacks.
+                self._drop_inflight_on_pause()
+                self._pause_revision = revision
+            return paused
+        return self.paused
+
     def pause(self) -> None:
-        self.paused = True
+        if not self.paused:
+            self.paused = True
+            self._drop_inflight_on_pause()
 
     def resume(self) -> None:
         self.paused = False
@@ -172,7 +217,8 @@ class PrivateHttpTrace:
         return decoded
 
     def request(self, req) -> None:
-        if self.paused:
+        if self._is_paused():
+            self.omitted["paused"] += 1
             return
         try:
             origin = _url_origin(req.url)
@@ -199,6 +245,8 @@ class PrivateHttpTrace:
             self.omitted["network_error"] += 1
 
     def response(self, resp) -> None:
+        if self._is_paused():
+            return
         try:
             req = resp.request
             entry = self._pending.get(id(req))
@@ -226,6 +274,8 @@ class PrivateHttpTrace:
             self.omitted["network_error"] += 1
 
     def finished(self, req) -> None:
+        if self._is_paused():
+            return
         key = id(req)
         entry = self._pending.pop(key, None)
         resp = self._responses.pop(key, None)
@@ -296,6 +346,8 @@ class PrivateHttpTrace:
             entry.response_body_state = "body_omitted"
 
     def failed(self, req) -> None:
+        if self._is_paused():
+            return
         entry = self._pending.pop(id(req), None)
         self._responses.pop(id(req), None)
         if entry is not None:
@@ -322,7 +374,8 @@ class PrivateHttpTrace:
 
 def record_http(start_url: str, stop: Event, *,
                 origins: tuple[str, ...] | None = None,
-                status=None, factory=None, max_seconds: int = MAX_CAPTURE_SECONDS
+                status=None, factory=None, max_seconds: int = MAX_CAPTURE_SECONDS,
+                pause_control: CapturePause | None = None,
                 ) -> PrivateHttpTrace:
     """Observe a manually controlled Chromium session; return RAM-only trace.
 
@@ -331,7 +384,7 @@ def record_http(start_url: str, stop: Event, *,
     review is abandoned; export requires a separate explicit confirmation.
     """
     origin = site_origin(start_url)
-    trace = PrivateHttpTrace(origins or (origin,))
+    trace = PrivateHttpTrace(origins or (origin,), pause_control=pause_control)
     if origin not in trace.origins:
         raise RecorderError("invalid_origin")
     try:
