@@ -14,8 +14,9 @@ multi-auteurs ni titre narratif. La route reste validée comme
 retourné** subit ensuite le filtre `Atom author/name` individuel :
 le titre de branche seul n'atteste ni auteur d'un livre, ni résultat
 global ou achat. Si plusieurs branches sont qualifiées, une seule
-est parcourue avec `partial_results`. Pas de GET additionnel ni
-de réinterrogation/repli en arrière-plan.
+est parcourue avec `partial_results`. Le lien autorisé sélectionné peut naturellement faire l'objet d'un
+GET de navigation (au lieu d'un refus précédent) ; aucune autre branche
+n'est explorée et il n'y a ni repli réseau ni réinterrogation implicite.
 
 Tests hors réseau (`httpx.MockTransport`) :
 `tests/test_opds_author_navigation_order_p1_1917.py` :
