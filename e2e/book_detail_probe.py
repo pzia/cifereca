@@ -232,6 +232,8 @@ def main():
         return {str(x.get_tooltip_text() or ""): x for x in buttons}
 
     def search_initial():
+        if args.geometry_1300:
+            report["ux611_probe_stage"] = "search_ready"
         assert window.service.current_identity.identity_id == "camille"
         # La branche #954 précède #955. Utiliser l\x27API locale déjà stable pour
         # charger une vraie fiche GTK ; le clic loupe est intercepté séparément.
@@ -263,6 +265,7 @@ def main():
 
     def search_detail():
         if args.geometry_1300:
+            report["ux611_probe_stage"] = "selected_search"
             geometry_1300("search")
         expander, rows = detail_info("search")
         assert not expander.get_expanded(), "Détail doit être replié initialement"
@@ -375,6 +378,7 @@ def main():
 
     def verify_library():
         if args.geometry_1300:
+            report["ux611_probe_stage"] = "selected_library"
             geometry_1300("library")
         expander, rows = detail_info("library")
         shown = read_rows(rows)
@@ -942,6 +946,8 @@ def main():
             else:
                 window.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
             window.present()
+            if args.geometry_1300:
+                report["ux611_probe_stage"] = "probe_start"
             device = X11Input()
             later(450, search_initial)
         def do_shutdown(self):
