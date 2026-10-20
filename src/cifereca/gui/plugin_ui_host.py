@@ -121,9 +121,16 @@ class _UiHost:
     ) -> bool:
         if not self._window_alive():
             return False
+        # Preserve the legacy public host contract for the default route:
+        # existing GTK harnesses and plugins accept no providers keyword.
+        # Only a caller explicitly narrowing the scope uses the extension.
+        if providers:
+            return self.window.search_books(
+                query, field=field, online=online, identity_id=identity_id,
+                providers=providers,
+            )
         return self.window.search_books(
             query, field=field, online=online, identity_id=identity_id,
-            providers=providers,
         )
     def build_action_bar(self, actions):
         bar = AdaptiveActionBar()
