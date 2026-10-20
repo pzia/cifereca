@@ -135,4 +135,10 @@ def test_reuse_returns_before_provider_call_and_exposes_reason(tmp_path, monkeyp
 
 def test_successful_acquisition_persists_decision_metadata():
     source = SERVICES.read_text(encoding='utf-8')
-    assert '"acquisition_decision": decision.as_dict()' in source
+    # #1120: the successful receipt is composed in a pure helper while the
+    # guarded caller keeps the same storage write and decision provenance.
+    receipt = (SERVICES.parent / 'core' / 'loan_completion_receipt.py').read_text(
+        encoding='utf-8'
+    )
+    assert 'loan_completion_receipt.completed_receipt(' in source
+    assert '"acquisition_decision": decision.as_dict()' in receipt
