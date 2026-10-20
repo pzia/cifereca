@@ -311,6 +311,54 @@ def sync_source_row_labels(sources: object) -> tuple[str, ...]:
     return tuple(display)
 
 
+def sync_source_attention(source: object) -> tuple[str, str] | None:
+    """Return a closed-severity, safe alert for a synchronisable account.
+
+    Only Core-enumerated state and phase codes may influence the wording.
+    Never interpolate error bodies, account IDs, provider descriptions,
+    untrusted phase strings or success timestamps into the attention line.
+    An inventory success cannot conceal a failed local materialization.
+    """
+    if getattr(source, "sync_capable", None) is not True:
+        return None
+    entries = getattr(source, "phase_states", ())
+    if isinstance(entries, (tuple, list)) and len(entries) <= 8:
+        phase_labels = (
+            ("materialize", "Téléchargement local"),
+            ("discover_rights", "Notices et droits"),
+        )
+        words = {
+            "failed": ("error", "échec — action nécessaire"),
+            "materialization_failed": ("error", "échec — action nécessaire"),
+            "blocked": ("error", "bloqué — action nécessaire"),
+            "attention_required": ("warning", "action nécessaire"),
+            "interrupted": ("warning", "interrompu"),
+            "partial": ("warning", "résultat partiel"),
+        }
+        for phase, label in phase_labels:
+            for row in entries:
+                if getattr(row, "phase", None) != phase:
+                    continue
+                raw = getattr(row, "status", None)
+                issue = words.get(raw) if type(raw) is str else None
+                if issue:
+                    return issue[0], f"{label} : {issue[1]}"
+    raw_status = getattr(source, "status", None)
+    status = raw_status.strip().casefold() if type(raw_status) is str and len(raw_status) <= 64 else ""
+    raw_error = getattr(source, "error", None)
+    # The text of a provider error is never a safe display value.
+    error_present = type(raw_error) is str and bool(raw_error)
+    if error_present or status in {"error", "failed"}:
+        return "error", "Synchronisation : échec — action nécessaire"
+    if status in {"blocked", "attention_required"}:
+        return "warning", "Synchronisation : action nécessaire"
+    if status == "partial":
+        return "warning", "Synchronisation : résultat partiel"
+    if getattr(source, "enabled", None) is True and getattr(source, "connected", None) is False:
+        return "warning", "Compte déconnecté — reconnexion nécessaire"
+    return None
+
+
 def sync_source_presentation(source: object) -> SyncSourcePresentation:
     enabled = bool(getattr(source, "enabled", False))
     connected = bool(getattr(source, "connected", False))

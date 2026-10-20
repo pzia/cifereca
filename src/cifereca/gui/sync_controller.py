@@ -16,7 +16,7 @@ from ..plugin_api import SyncRequest
 from .action_widgets import add_css, clear_box
 from .sync_view import (
     sync_identity_action_label, sync_source_presentation,
-    sync_source_row_labels,
+    sync_source_attention, sync_source_row_labels,
     sync_local_preflight_presentation, sync_local_reconciliation_presentation,
     sync_numilog_local_preview_presentation,
 )
@@ -196,8 +196,25 @@ def _refresh_sync_page(self) -> None:
         group._cifereca_sync_source_id = source.source_id
         row = Adw.ActionRow(); row.set_title(display_label)
         if source.sync_capable:
-            # Full phases and account status stay visible for actionable sync.
-            row.set_subtitle(presentation.summary)
+            # Errors cannot disappear in low-contrast multi-line subtitles or
+            # behind the per-account tools expander. An icon and a short fixed
+            # first line stay at the source header without provider secrets.
+            alert = sync_source_attention(source)
+            if alert is not None:
+                severity, message = alert
+                icon = Gtk.Image.new_from_icon_name(
+                    "dialog-error-symbolic" if severity == "error"
+                    else "dialog-warning-symbolic"
+                )
+                icon.set_valign(Gtk.Align.CENTER)
+                icon.set_tooltip_text(message)
+                add_css(icon, severity)
+                row.add_prefix(icon)
+            # Keep the full phase/account evidence below the prominent line.
+            row.set_subtitle(
+                (alert[1] + "\n" if alert is not None else "")
+                + presentation.summary
+            )
             row.set_subtitle_lines(0)
         else:
             # No disabled ghost synchronisation action: only a short, trusted

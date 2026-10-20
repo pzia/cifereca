@@ -13,7 +13,7 @@ from cifereca.gui.sync_action_scope import (
     capture_sync_action_scope, sync_action_scope_current,
 )
 from cifereca.gui.sync_view import (
-    sync_identity_action_label, sync_source_presentation,
+    sync_identity_action_label, sync_source_presentation, sync_source_attention,
     sync_source_row_labels,
     sync_local_preflight_presentation, sync_local_reconciliation_presentation,
     sync_numilog_local_preview_presentation,
@@ -24,17 +24,35 @@ ROOT = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
 OWNER = ROOT / "sync_controller.py"
 
 
+class Icon:
+    def __init__(self, icon_name):
+        self.icon_name = icon_name
+        self.css_classes = set()
+        self.tooltip = None
+
+    @classmethod
+    def new_from_icon_name(cls, name):
+        return cls(name)
+
+    def set_valign(self, *args): pass
+    def set_tooltip_text(self, text): self.tooltip = text
+    def add_css_class(self, name): self.css_classes.add(name)
+
+
 class Widget:
     def __init__(self, label=None, **kwargs):
         self.label = label
         self.children = []
         self.suffixes = []
+        self.prefixes = []
+        self.css_classes = set()
         self.handlers = {}
         self.sensitive = True
         self.active = False
         self.child = None
         self.subtitle = None
 
+    def add_css_class(self, name): self.css_classes.add(name)
     def set_policy(self, *args): pass
     def set_margin_top(self, *args): pass
     set_margin_bottom = set_margin_start = set_margin_end = set_margin_top
@@ -54,6 +72,7 @@ class Widget:
     def get_active(self): return self.active
     def get_child(self): return self.child
     def set_child(self, child): self.child = child
+    def add_prefix(self, widget): self.prefixes.append(widget)
     def add_suffix(self, widget): self.suffixes.append(widget)
     def append(self, widget): self.children.append(widget)
     def add(self, widget): self.children.append(widget)
@@ -87,7 +106,7 @@ def _methods():
         ast.Module(body=[future, *methods], type_ignores=[]),
     )
     gtk = NS(
-        ScrolledWindow=Widget, Box=Widget, Label=Widget, Switch=Widget,
+        ScrolledWindow=Widget, Box=Widget, Label=Widget, Switch=Widget, Image=Icon,
         PolicyType=NS(NEVER=0, AUTOMATIC=1),
         Orientation=NS(VERTICAL=1, HORIZONTAL=2),
         Align=NS(CENTER=3),
@@ -97,7 +116,10 @@ def _methods():
         Gtk=gtk, Adw=adw,
         Pango=NS(WrapMode=NS(WORD_CHAR=1)),
         AdaptiveActionBar=lambda **kwargs: Widget(),
-        add_css=lambda *args: None,
+        add_css=lambda widget, *classes: (
+            [widget.add_css_class(name) for name in classes] and widget
+            if classes else widget
+        ),
         clear_box=lambda widget: widget.children.clear(),
         # Callback/scope tests isolate native layout; its real implementation
         # has separate component and GTK allocation acceptance tests.
@@ -108,6 +130,7 @@ def _methods():
         add_sync_detail=lambda group, row, **kw: group.add(row),
         sync_identity_action_label=sync_identity_action_label,
         sync_source_presentation=sync_source_presentation,
+        sync_source_attention=sync_source_attention,
         sync_source_row_labels=sync_source_row_labels,
         sync_local_preflight_presentation=sync_local_preflight_presentation,
         sync_local_reconciliation_presentation=sync_local_reconciliation_presentation,
