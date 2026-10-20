@@ -1696,7 +1696,8 @@ class UxRecommendationsView:
             # Preserve a *local, approximate* exploration action rather
             # than inventing a provider-specific detail/loan/download.
             # Never invoke the network or query another identity.
-            if not verified_isbns and 2 <= len(title) <= 160 and title != "Sans titre":
+            if (not verified_isbns and exact_variants
+                    and 2 <= len(title) <= 160 and title != "Sans titre"):
                 title_query = title
 
                 def search_title():
