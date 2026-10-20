@@ -39,18 +39,26 @@ def catalog_page():
         name="password" value="FICTIONAL_PASSWORD"></form>
       <script>
       async function exercise() {{
-        await fetch('/login', {{
+        // Fetch resolves on response HEADERS. Drain every body so Chromium
+        // produces requestfinished before asking the recorder to stop.
+        let response = await fetch('/login', {{
           method: 'POST', headers: {{'Content-Type':'application/json'}},
           body: JSON.stringify({{
             'accountId':'{ACCOUNT}', 'password':'FICTIONAL_PASSWORD',
             'access_token':'{TOKEN}', 'ProductId':214
           }})
         }});
-        await fetch('/api/books?AccountId={ACCOUNT}&ProductId={PRODUCT}');
-        await fetch('/meta.xml');
-        await fetch('/ratelimit');
-        await fetch('/binary.png');
-        await fetch('/uuid?uuid={UUID}');
+        await response.text();
+        response = await fetch('/api/books?AccountId={ACCOUNT}&ProductId={PRODUCT}');
+        await response.text();
+        response = await fetch('/meta.xml');
+        await response.text();
+        response = await fetch('/ratelimit');
+        await response.text();
+        response = await fetch('/binary.png');
+        await response.arrayBuffer();
+        response = await fetch('/uuid?uuid={UUID}');
+        await response.text();
         await fetch('/complete');
       }}
       window.addEventListener('DOMContentLoaded', exercise);
