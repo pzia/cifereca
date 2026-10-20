@@ -60,3 +60,29 @@ def test_multi_session_ambiguous_origin_cache_is_recomputed_not_silently_dropped
         assert all(not b.cached and len(b.results) == 1 for b in batches)
     finally:
         service.close()
+
+
+def test_virtual_origin_stale_cached_batch_keeps_provenance(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        calls = []
+        session = _source("virtual", origin="origin.bookstore", calls=calls)
+        original_search = session.search
+        def stale(*args, **kwargs):
+            return [replace(row, metadata={**(row.metadata or {}),
+                                           "search_provenance": "known_catalog_stale"})
+                    for row in original_search(*args, **kwargs)]
+        session.search = stale
+        service._sessions = {"virtual": session}
+        monkeypatch.setattr(service, "_mirror_remote_results", lambda rows, **kwargs: 0)
+        service.search_progressive("Metropolitan", force=True)
+        seen = []
+        service.search_progressive("Metropolitan", on_batch=seen.append)
+        assert calls == ["virtual"]
+        assert len(seen) == 1 and seen[0].cached
+        assert seen[0].provider_id == "virtual"
+        assert seen[0].result_status == "known_catalog_stale"
+        assert seen[0].results[0].source_provider == "origin.bookstore"
+        assert seen[0].results[0].metadata["search_provenance"] == "known_catalog_stale"
+    finally:
+        service.close()
