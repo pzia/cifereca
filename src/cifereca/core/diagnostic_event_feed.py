@@ -17,6 +17,10 @@ from typing import Any
 from .diagnostic_numilog_projection import (
     public_numilog_fields, public_numilog_message, public_numilog_session_log,
 )
+from .diagnostic_kobo_projection import (
+    public_kobo_backup_decision, public_kobo_backup_log,
+    public_kobo_backup_message,
+)
 from .public_provider_diagnostics import (
     CONNECT_FAILURE_CODE, canonical_public_provider_id,
 )
@@ -165,7 +169,15 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 _TASK_CORRELATION.fullmatch(match["body"])
                 if match["logger"] == "cifereca" else None
             )
-            if match["logger"] == "cifereca_numilog":
+            # This exact Core-owned Kobo decision is a small typed fact,
+            # not a general-purpose log parser or an inferred task link.
+            kobo_detail = (
+                public_kobo_backup_log(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
+            if kobo_detail:
+                message = public_kobo_backup_message(kobo_detail)
+            elif match["logger"] == "cifereca_numilog":
                 message = public_numilog_session_log(match["body"]) or (
                     "[contenu libre masqué : consulter le journal local]"
                 )
@@ -203,6 +215,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "module": ".".join(safe_parts)[:90],
                 "severity": match["level"].lower(),
                 "message": message[:240],
+                **({"detail": kobo_detail} if kobo_detail else {}),
                 **({"task_ref": task_correlation[1]} if task_correlation else {}),
                 # Neither the rotation suffix nor a moving tail line index
                 # participates in the ID. Distinct lines remain distinct.
@@ -301,6 +314,11 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                     "code": CONNECT_FAILURE_CODE,
                 }
                 message = "connexion fournisseur échouée"
+        if (category == "KOBO"
+                and operation == "automatic backup decision"
+                and type(diagnostics) is Diagnostics):
+            public_detail = public_kobo_backup_decision(row.get("detail"))
+            message = public_kobo_backup_message(public_detail) or "[opération masquée]"
         if category == "NUMILOG":
             public_detail = public_numilog_fields(
                 operation, row.get("detail"), row.get("duration_ms"),
