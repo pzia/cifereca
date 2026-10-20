@@ -281,8 +281,8 @@ def test_phone_and_postal_identifiers_are_decided_individually():
         status=200,
         response_headers={"content-type": "application/json"},
         response_body=json.dumps({
-            "phoneNumber": telephone,
-            "postalCode": postal,
+            "phoneNumber": int(telephone),
+            "postalCode": int(postal),
             "year": 2026,
             "price": 9.5,
         }),
@@ -310,7 +310,7 @@ def test_phone_and_postal_identifiers_are_decided_individually():
                     if row["name"] == "bodies/0001-response.txt")
         projected = json.loads(body)
         assert projected["phoneNumber"].startswith("PSEUDO_")
-        assert projected["postalCode"] == postal  # Explicit, warned KEEP.
+        assert projected["postalCode"] == int(postal)  # Explicit, warned KEEP.
         assert projected["year"] == 2026 and projected["price"] == 9.5
     finally:
         review.destroy()
