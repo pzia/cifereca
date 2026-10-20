@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.technical.browser-recorder",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "name": "Browser Recorder (technique)",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -11,11 +11,11 @@
     {
       "id": "ui.page.browser-recorder",
       "type": "ui.page",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "entrypoint": "browser_recorder_page:PLUGIN",
       "display_name": "Browser Recorder",
-      "description": "Capture HAR expurgée ; capture HTTP textuelle privée avec revue individuelle locale, sans ZIP ni upload.",
-      "help_text": "Désactivé par défaut. Chromium Playwright visible après consentement. Mode classique : HAR métadonnées seulement et rejeu GET supervisé. Mode HTTP privé séparé : requêtes/réponses textuelles bornées en mémoire, choix identifiant par identifiant (anonymiser / conserver / exclure), aperçu local et effacement. Aucun export des corps, aucun ZIP, aucun envoi LLM ni profil persistant. Installer Playwright/Chromium volontairement.",
+      "description": "HAR expurgé et parcours HTTP privé avec revue individuelle et export ZIP volontaire.",
+      "help_text": "Désactivé par défaut. Chromium Playwright visible après consentement. HAR classique : métadonnées expurgées et rejeu GET supervisé uniquement. Parcours HTTP privé : corps textuels bornés en mémoire, choix par identifiant, aperçu local, préparation d'un ZIP structurel filtré, consultation de chaque membre et confirmation séparée avant l'enregistrement 0600 local. Aucun téléversement vers un LLM. Le dépistage des secrets est heuristique : relire toute archive avant partage. Pas de session persistante ni capture à l'activation.",
       "enabled_by_default": false,
       "priority": 35,
       "instantiation": "singleton_public",
@@ -23,7 +23,8 @@
         "browser.recorder.capture",
         "browser.recorder.replay.manual",
         "browser.recorder.har.sanitized",
-        "browser.recorder.http.private.review"
+        "browser.recorder.http.private.review",
+        "browser.recorder.http.reviewed_zip.local"
       ],
       "requires": [],
       "recommends": [],
