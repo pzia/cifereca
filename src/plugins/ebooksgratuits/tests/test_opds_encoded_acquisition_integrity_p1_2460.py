@@ -28,8 +28,7 @@ BAD_PATHS = [
     "/index.php/fetch/%252e%252e/account/private.epub",
     "/index.php/fetch/%252fprivate.epub",
     "/index.php/fetch/%255cprivate.epub",
-    "/index.php/fetch/./42.epub",
-    "/index.php/fetch/../fetch/42.epub",
+    "/index.php/fetch/../account/private.epub",
 ]
 
 
