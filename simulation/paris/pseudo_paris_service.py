@@ -1082,6 +1082,31 @@ class ParisFakeApp:
         path = parsed.path.rstrip("/") or "/"
         qs = parse_qs(parsed.query, keep_blank_values=True)
 
+        # P0 #771: opt-in, stateless failures on existing PNB routes only.
+        # Reject before any loan/return/renewal mutation or ACSM materialization.
+        fault_routes = {
+            f"{ACCOUNT_SERVICE}/ListLoans",
+            f"{ACCOUNT_SERVICE}/DownloadDigitalDocument",
+            f"{ACCOUNT_SERVICE}/RenewLoans",
+            f"{ACCOUNT_SERVICE}/ReturnDigitalLoan",
+            "/numerique/ASSARedirect.ashx",
+        }
+        faults = qs.get("ux_fault", [])
+        if path in fault_routes and len(faults) == 1 and faults[0] in {
+            "expired", "429", "503",
+        }:
+            fault = faults[0]
+            code, label = {
+                "expired": (HTTPStatus.UNAUTHORIZED, "Session fictive expirée"),
+                "429": (HTTPStatus.TOO_MANY_REQUESTS, "Limite fictive atteinte"),
+                "503": (HTTPStatus.SERVICE_UNAVAILABLE, "Service fictif indisponible"),
+            }[fault]
+            payload = {"success": False, "message": label, "errors": [{"message": label}]}
+            return self.send_json(
+                handler, payload, code,
+                headers={"Retry-After": "2"} if fault == "429" else None,
+            )
+
         if path == "/":
             return self.root(handler)
         if path == "/health":

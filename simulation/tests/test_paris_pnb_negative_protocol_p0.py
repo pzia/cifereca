@@ -153,6 +153,53 @@ class ParisPNBNegativeHTTPTests(unittest.TestCase):
         self.assertFalse(reply["success"])
         self.assertEqual(self.count_loans(), 1)
 
+    def test_opt_in_pnb_http_failures_are_stateless_and_recover(self):
+        # Existing PNB endpoints only: fault is in the query, never in
+        # credentials, provider HTML or any persistent loan state.
+        endpoints = (
+            ("/ListLoans", "GET", None),
+            ("/DownloadDigitalDocument", "POST", {"ean": self.digital}),
+            ("/RenewLoans", "POST", {"userUniqueIdentifier": "", "loans": []}),
+            ("/ReturnDigitalLoan", "POST", {"userUniqueIdentifier": "", "id": "missing"}),
+        )
+        for route, method, payload in endpoints:
+            for fault, expected in (("expired", 401), ("429", 429), ("503", 503)):
+                with self.subTest(route=route, fault=fault):
+                    path = PARIS.ACCOUNT_SERVICE + route + "?ux_fault=" + fault
+                    if method == "POST":
+                        status, reply = self.post_json(route + "?ux_fault=" + fault, payload)
+                        self.assertFalse(reply["success"])
+                    else:
+                        with self.assertRaises(HTTPError) as caught:
+                            self.http.get(path)
+                        status = caught.exception.code
+                    self.assertEqual(status, expected)
+                    self.assertEqual(self.count_loans(), 0)
+        with self.assertRaises(HTTPError) as caught:
+            self.http.get(PARIS.ACCOUNT_SERVICE + "/ListLoans?ux_fault=429")
+        self.assertEqual(caught.exception.headers.get("Retry-After"), "2")
+        self.assertEqual(self.http.get("/health?ux_fault=503")[0], 200)
+        status, reply = self.post_json("/DownloadDigitalDocument?ux_fault=unknown", {"ean": self.digital})
+        self.assertEqual(status, 200)
+        self.assertTrue(reply["success"])
+        self.assertEqual(self.count_loans(), 0)
+        self.assertFalse(self.cache.acsm_path(self.digital).exists())
+
+        # The borrow redirect is mutable: all injected failures must happen
+        # before a loan is created. Its healthy fallback remains unchanged.
+        from urllib.parse import quote as urlquote
+        redirect = ("/numerique/ASSARedirect.ashx?url=" + urlquote(
+            "/fake/loan-book.ashx?ean=" + urlquote(self.digital, safe=""), safe="",
+        ))
+        for fault, expected in (("expired", 401), ("429", 429), ("503", 503)):
+            with self.subTest(borrow=fault), self.assertRaises(HTTPError) as caught:
+                self.http.get(redirect + "&ux_fault=" + fault)
+            self.assertEqual(caught.exception.code, expected)
+            self.assertEqual(self.count_loans(), 0)
+        self.assertFalse(self.cache.acsm_path(self.digital).exists())
+        self.assertEqual(self.redirect(self.digital)[0], 302)
+        self.assertEqual(self.count_loans(), 1)
+
     def test_pnb_delivery_requires_existing_digital_record_no_real_fulfillment(self):
         endpoint = "/DownloadDigitalDocument"
         for record in ("missing-fake-record", self.physical):
