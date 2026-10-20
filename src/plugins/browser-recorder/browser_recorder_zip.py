@@ -19,7 +19,7 @@ import stat
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
-from browser_recorder import RecorderError, SAFE_SEGMENTS
+from browser_recorder import RecorderError, SAFE_SEGMENTS, site_origin
 from browser_recorder_review import _SECRETS, _IDS, _JWT, _variants
 
 ZIP_SCHEMA = "cifereca.browser-recorder.approved-zip/1"
@@ -41,13 +41,23 @@ _SAFE_CLASS = frozenset((
 ))
 
 
-def _safe_url(url: str, approved: frozenset[str]) -> str:
+def _safe_url(url: str, approved: frozenset[str],
+              allowed_origins: frozenset[str]) -> str:
     if type(url) is not str or len(url) > 4096:
         raise RecorderError("bundle_invalid_url")
     try:
         p = urlsplit(url)
         if p.username or p.password or p.fragment and len(p.fragment) > 4096:
             raise ValueError("unsafe")
+        if p.scheme or p.netloc:
+            try:
+                observed_origin = site_origin(url)
+            except RecorderError:
+                return "[UNSAFE_TARGET]"
+            if observed_origin not in allowed_origins:
+                # A browser may visit a third-party identity provider as part
+                # of the user's journey; its unapproved URL is not shareable.
+                return "[OUT_OF_SCOPE]"
         # Publication of a path is not proof of an authentication grant.
         path = "/".join(
             part if part.casefold() in _SAFE_PATH or part in approved
@@ -310,6 +320,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         + ["PSEUDO_" + c.key for c in review.candidates()
            if c.decision == "anonymize"]
     )
+    allowed_origins = frozenset(review.trace.origins)
     files = {}
     timeline = []
     for entry in preview["exchanges"]:
@@ -323,8 +334,8 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
             "exchange_id": eid, "method": entry["method"],
             "page_id": entry["page_id"], "started_ms": entry["started_ms"],
             "duration_ms": entry["duration_ms"], "status": entry["status"],
-            "url": _safe_url(entry["url"], approved),
-            "redirect_to": (_safe_url(entry["redirect_to"], approved)
+            "url": _safe_url(entry["url"], approved, allowed_origins),
+            "redirect_to": (_safe_url(entry["redirect_to"], approved, allowed_origins)
                             if entry["redirect_to"] else None),
             "mime": entry["mime"], "network_error": entry["network_error"],
             "request_headers": _safe_headers(entry["request_headers"]),
