@@ -736,11 +736,15 @@ class NumilogSession(ProviderSession):
             )
             if (source == 'direct_url' and selected_link is None
                     and url_origin(url) != url_origin(self.library_url)
-                    and url_origin(url) not in self.allowed_origins
+                    and url_origin(url) not in ALLOWED_ACSM_ORIGINS
+                    and (url_origin(url) not in self.allowed_origins
+                         or urlsplit(url).path.casefold()
+                         != '/pages/compte/readbook.ashx')
                     and bool(urlsplit(url).query)):
-                # No caller may turn a raw external URL into a capability:
-                # arbitrary publishers are reachable ONLY via an owned Links
-                # selection, not as a direct_url convenience path.
+                # The historical foreign-origin readBook navigation is
+                # harmless without a private-library referrer; a signed
+                # handler is NOT. Even a known Numilog origin cannot make
+                # an unbound delivery URL an acquired purchase.
                 raise ProviderError(
                     'Numilog : livraison externe non liée à un achat ; téléchargement arrêté'
                 )
