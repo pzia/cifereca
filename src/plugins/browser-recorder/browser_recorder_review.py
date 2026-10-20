@@ -388,6 +388,7 @@ class IdentifierReview:
                 "request_headers": {k: clean(v) for k, v in entry.request_headers.items()},
                 "response_headers": {k: clean(v) for k, v in entry.response_headers.items()},
                 "network_error": entry.network_error,
+                "metadata_only": entry.metadata_only,
             })
         return {
             "schema": "cifereca.browser-recorder.review-preview/1",
