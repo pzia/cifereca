@@ -70,6 +70,24 @@ class Combo(Widget):
     def get_active_id(self):
         return self.value
 
+    def remove_all(self):
+        self.options.clear()
+        self.value = None
+
+
+class Check(Widget):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.active = False
+
+    def set_active(self, active):
+        self.active = bool(active)
+        if "toggled" in self.callbacks:
+            self.callbacks["toggled"](self)
+
+    def get_active(self):
+        return self.active
+
 
 class Gtk:
     Orientation = NS(VERTICAL=1, HORIZONTAL=2)
@@ -81,6 +99,7 @@ class Gtk:
     ScrolledWindow = Widget
     TextView = Widget
     ComboBoxText = Combo
+    CheckButton = Check
 
 
 class GLib:
@@ -123,7 +142,7 @@ class FakeTasks:
         return handle
 
 
-def make_panel(monkeypatch, *, allowed=True, busy=False):
+def make_panel(monkeypatch, *, allowed=True, busy=False, export_directory=None):
     tasks = FakeTasks()
     site = NS(get_text=lambda: ORIGIN + "/catalog")
     consent = NS(get_active=lambda: allowed)
@@ -142,6 +161,7 @@ def make_panel(monkeypatch, *, allowed=True, busy=False):
     monkeypatch.setattr(review_ui, "record_http", recorder)
     panel = review_ui.PrivateReviewPanel(
         Gtk, GLib, tasks, site, consent, legacy_running=lambda: busy,
+        export_directory=export_directory,
     )
     return panel, tasks, raw
 
@@ -197,3 +217,82 @@ def test_closing_during_capture_destroys_late_private_result(monkeypatch):
     panel.destroy()
     handle.finish()
     assert raw.exchanges == []
+
+
+
+def _capture_and_decide(panel, tasks):
+    panel.begin()
+    panel.stop_capture()
+    tasks.handles[0].finish()
+    for row, combo in zip(
+        panel._review.local_rows(),
+        [r.children[-1] for r in panel.candidates_box.children],
+    ):
+        combo.set_active_id("anonymize" if row["value"] == "ACC77" else "keep")
+
+
+def test_exact_zip_preview_is_separate_from_explicit_export(tmp_path, monkeypatch):
+    from hashlib import sha256
+    from zipfile import ZipFile
+
+    panel, tasks, raw = make_panel(
+        monkeypatch, export_directory=tmp_path / "exports",
+    )
+    _capture_and_decide(panel, tasks)
+    assert not panel.export_button.sensitive
+    panel.prepare_zip()
+    assert panel._bundle_plan is not None
+    assert not list(tmp_path.iterdir())  # preparation never writes
+    assert "SHA-256" in panel.bundle_summary.label
+    assert not panel.export_button.sensitive
+    assert panel.bundle_member.options
+    chosen = panel.bundle_member.get_active_id()
+    member = next(x for x in panel._bundle_preview["members"]
+                  if x["name"] == chosen)
+    assert panel.bundle_text.get_buffer().text == member["text"]
+    assert sha256(member["text"].encode()).hexdigest() == member["sha256"]
+    panel.export_zip()
+    assert not list(tmp_path.iterdir())  # no explicit confirmation
+    panel.export_confirm.set_active(True)
+    assert panel.export_button.sensitive
+    panel.export_zip()
+    outputs = list((tmp_path / "exports").glob("*.zip"))
+    assert len(outputs) == 1
+    with ZipFile(outputs[0]) as zf:
+        assert zf.read(chosen).decode("utf-8") == member["text"]
+        all_plain = "".join(zf.read(x).decode("utf-8") for x in zf.namelist())
+        assert "FAKE_AUTH_SECRET" not in all_plain
+        assert "ACC77" not in all_plain
+    assert not panel.export_button.sensitive
+    assert panel._bundle_plan is None
+    panel.destroy()
+    assert raw.exchanges == []
+
+
+def test_changed_identifier_decision_revokes_prepared_zip(tmp_path, monkeypatch):
+    panel, tasks, raw = make_panel(
+        monkeypatch, export_directory=tmp_path / "exports",
+    )
+    _capture_and_decide(panel, tasks)
+    panel.prepare_zip()
+    panel.export_confirm.set_active(True)
+    combo = panel.candidates_box.children[0].children[-1]
+    combo.set_active_id("exclude")
+    assert panel._bundle_plan is None
+    assert not panel.export_confirm.get_active()
+    assert panel.bundle_text.get_buffer().text == ""
+    panel.export_zip()
+    assert list(tmp_path.iterdir()) == []
+    panel.destroy()
+
+
+def test_abandoned_zip_review_discards_unexported_bytes(tmp_path, monkeypatch):
+    panel, tasks, raw = make_panel(
+        monkeypatch, export_directory=tmp_path / "exports",
+    )
+    _capture_and_decide(panel, tasks)
+    panel.prepare_zip()
+    assert panel._bundle_plan is not None
+    panel.destroy()
+    assert panel._bundle_plan is None and raw.exchanges == []
+    assert list(tmp_path.iterdir()) == []

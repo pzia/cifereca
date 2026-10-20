@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.1.1, revue HTTP expérimentale)
+# Browser Recorder — outil technique opt-in (0.1.2, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -55,17 +55,16 @@ sensibles** : ne jamais le journaliser, sérialiser ou transmettre.
 `trace.destroy()` efface les références contrôlées quand la revue est
 abandonnée. Aucune écriture disque n'est autorisée par cette API.
 
-**Non livré à ce stade** : interface de revue identifiant par identifiant
-(#2529), export ZIP approuvé (#2530), recette Chromium réel (#2531).
-Aucun export ni upload de contenu HTTP brut n'est disponible. L'ancienne
-interface et son export restent inchangés jusqu'à l'intégration du
-consentement et de la revue, pour éviter toute fuite involontaire.
+**Livré séparément** : revue individuelle (#2529) et archive filtrée
+explicitement exportable localement (#2530). La recette Chromium/GTK réelle
+(#2531) reste à réaliser. Aucune trace HTTP brute n'est exportée ni
+transmise ; l'ancien HAR reste strictement limité aux métadonnées.
 
 
 
 ## Travail P1 #2529 — revue individuelle des identifiants en mémoire
 
-Le module sans interface `browser_recorder_review.py` propose localement,
+Le module `browser_recorder_review.py` propose localement,
 pour chaque **valeur** rencontrée dans une trace privée `PrivateHttpTrace`,
 une catégorie et ses contextes (route, paramètres, JSON/XML/texte, en-têtes
 techniques). Les valeurs détectées ont des identifiants de revue stables
@@ -88,11 +87,41 @@ n'est précochée. Quitter la page détruit les références privées contrôlé
 Le HAR v0.1 reste une action distincte ; aucune trace HTTP privée n'y est
 ajoutée.
 
-Cette fonctionnalité ne fait **aucun export** et n'écrit aucun fichier
-contenant les nouveaux corps HTTP. Même après toutes les décisions, son
-champ `approved_for_export` reste `false`. L'aperçu GTK est limité à
-80 000 caractères et ne prétend pas être l'aperçu exhaustif du futur ZIP.
-La recette GTK/Chromium réelle, le rescannage final des secrets et la
-confirmation explicite du ZIP restent nécessaires dans #2529/#2530/#2531.
-Ne jamais partager la trace brute ni les valeurs de revue locale.
+Cette étape de revue ne **publie pas** de données HTTP. Même après toutes
+les décisions, le champ `approved_for_export` de l'aperçu brut reste
+`false`. L'aperçu GTK est limité à 80 000 caractères et n'est pas celui
+du ZIP. La préparation distincte du ZIP applique les projections
+structurelles conservatrices ci-dessous. Ne jamais partager la trace brute
+ni les valeurs de revue locale.
 
+
+
+## Travail P1 #2530 — archive ZIP filtrée et export local explicite
+
+Le module `browser_recorder_zip.py` prépare une **archive ZIP versionnée**
+à partir des décisions individuelles de `IdentifierReview`, sans accès
+réseau ni écriture spontanée. Les valeurs inconnues de query/path et les
+textes libres non approuvés deviennent des marqueurs ; JSON conserve sa
+structure et les identifiants explicitement gardés ou pseudonymisés ;
+HTML/XML est réduit à un squelette de balises/sélecteurs génériques.
+Les corps binaires et les licences/DRM restent exclus.
+
+Le plan fige **les octets exacts** et permet une prévisualisation locale
+de chaque membre avec son empreinte SHA-256. Après avoir décidé **chaque**
+identifiant, cliquer « Préparer l'aperçu exact du ZIP ». La liste présente
+les membres et permet de lire **leur texte exact, sans troncature**. La
+case de confirmation est décochée initialement. « Exporter ce ZIP localement »
+n'enregistre qu'après cette confirmation ; tout changement de décision
+invalide immédiatement le plan. Aucun upload n'est effectué. Bornes : 240 échanges,
+600 membres, 4 Mio décompressés, 2 Mio ZIP ; aucun chemin de membre libre
+ni profil Playwright. Le fichier local utilise un nom aléatoire et le mode
+0600, avec refus des destinations finales symboliques.
+
+**Attention avant partage externe :** la détection et le rescannage des
+valeurs sensibles restent heuristiques et **ne garantissent pas
+l'anonymat absolu**. Ce flux est expérimental ; seules des fixtures
+synthétiques ont été utilisées dans les tests automatiques. La recette
+Chromium/Playwright et GTK réelle (#2531) doit encore être effectuée ;
+un export contenant des données privées doit être relu soigneusement
+avant toute transmission volontaire. Ne jamais déduire un droit
+d'acquisition d'un JSON partiellement préservé.
