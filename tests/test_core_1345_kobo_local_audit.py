@@ -151,6 +151,84 @@ def test_two_identities_are_not_merged_even_when_bytes_equal(tmp_path):
 
 
 
+
+def test_same_identity_two_kobo_accounts_do_not_share_catalogue_proposals(
+    tmp_path, monkeypatch,
+):
+    """A catalogue product ID has no credential: it cannot prove either account."""
+    service, session = _service(tmp_path, [])
+    try:
+        service.storage.provider_connection_put({
+            "provider_id": "kobo", "credential_id": "vault-2",
+            "identity_id": "default", "label": "Private second account",
+        })
+        first = service._kobo_backup_target_dir("default") / "PRIVATE-shared.epub"
+        _write_epub(first)
+        sha = hashlib.sha256(first.read_bytes()).hexdigest()
+        # Only the first account recorded a specific local artifact and SHA.
+        _backup(service, "identical-product", first, credential="vault-1",
+                sha=sha)
+        _backup(service, "identical-product", credential="vault-2")
+        # The catalogue knows only identity + product: not the account.
+        _catalog(service, "identical-product", first)
+        _no_mutation(service, monkeypatch)
+        monkeypatch.setattr(
+            session, "backup_manifest",
+            lambda: pytest.fail("No network access in the audit"),
+        )
+
+        second_only = kobo_local_reconciliation_audit(
+            service, credential_id="vault-2",
+        )
+        assert second_only["counts"]["backup_rows"] == 1
+        assert second_only["counts"]["linked_files_verified"] == 0
+        assert second_only["counts"]["unproven_catalogue_links"] == 0
+        assert second_only["counts"]["missing_or_unlinked"] == 1
+        assert second_only["downloads_authorized"] is False
+
+        first_only = kobo_local_reconciliation_audit(
+            service, credential_id="vault-1",
+        )
+        assert first_only["counts"]["linked_files_verified"] == 1
+        assert first_only["counts"]["unproven_catalogue_links"] == 0
+        assert first_only["counts"]["active_entitlements_unmaterialized"] == 0
+
+        both = kobo_local_reconciliation_audit(service)
+        assert len(both["accounts"]) == 2
+        assert both["counts"]["linked_files_verified"] == 1
+        assert both["counts"]["unproven_catalogue_links"] == 0
+        assert both["mutations_authorized"] is False
+        assert both["downloads_authorized"] is False
+        assert first.read_bytes()
+        for report in (second_only, first_only, both):
+            serialized = json.dumps(report)
+            assert "vault-1" not in serialized
+            assert "vault-2" not in serialized
+            assert "identical-product" not in serialized
+            assert str(first) not in serialized
+            assert sha not in serialized
+    finally:
+        service.close()
+
+
+def test_single_kobo_credential_still_uses_catalogue_suggestions(tmp_path):
+    """The conservative shared-identity rule must not suppress normal audits."""
+    service, _session = _service(tmp_path, [])
+    try:
+        file = service._kobo_backup_target_dir("default") / "PRIVATE-catalogue.epub"
+        _write_epub(file)
+        _backup(service, "catalogue-only")
+        _catalog(service, "catalogue-only", file)
+        report = kobo_local_reconciliation_audit(
+            service, credential_id="vault-1",
+        )
+        assert report["counts"]["linked_files_verified"] == 1
+        assert report["counts"]["unproven_catalogue_links"] == 1
+        assert report["downloads_authorized"] is False
+    finally:
+        service.close()
+
+
 def test_entitlements_without_verified_local_artifacts_are_manual_only(tmp_path):
     service, session = _service(tmp_path, [])
     target = service._kobo_backup_target_dir("default") / "verified.epub"
