@@ -8,6 +8,7 @@ entitlement may be reassigned or an original safely deleted.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
@@ -18,10 +19,24 @@ from ..library_files import safe_library_component
 from .kobo_backup import _kobo_preview_paths
 
 _MAX_RECORDS = 4096
-_MAX_FILES = 256
+# Covers a Kobo account with >522 recorded books without assuming that
+# every notice is already backed by a distinct local file. Hard ceilings
+# remain global (across identities): no open-ended filesystem traversal.
+_MAX_FILES = 2048
 _MAX_FILE_BYTES = 512 * 1024 * 1024
+_MAX_TOTAL_HASH_BYTES = 64 * 1024 * 1024 * 1024
 _MAX_CASES = 24
-_MAX_DIRECTORY_ENTRIES = 256
+_MAX_DIRECTORY_ENTRIES = 4096
+
+
+@dataclass
+class _HashBudget:
+    remaining: int
+
+
+# Internal sentinel only: insufficient budget is different from an invalid
+# local artifact. Neither case is evidence permitting another download.
+_HASH_BUDGET_EXHAUSTED = object()
 
 
 def _unindexed_identity_files(
@@ -75,7 +90,10 @@ def _unindexed_identity_files(
 
 
 
-def _read_hash_within(path_text: object, roots: tuple[Path, ...]) -> tuple[str, int, str] | None:
+def _read_hash_within(
+    path_text: object, roots: tuple[Path, ...], *,
+    budget: _HashBudget | None = None,
+) -> tuple[str, int, str] | None | object:
     """Hash a regular file via no-follow directory descriptors below one root.
 
     Reject missing, legacy/out-of-identity, symlinked or non-regular paths.
@@ -132,13 +150,26 @@ def _read_hash_within(path_text: object, roots: tuple[Path, ...]) -> tuple[str, 
                         or before.st_size < 1 or before.st_size > _MAX_FILE_BYTES
                     ):
                         return None
+                    # No bytes are read if the *remaining global* hash budget
+                    # cannot cover the complete file. File size is checked on
+                    # the already-open, no-follow descriptor, not an unsafe
+                    # path-level stat. Future records may still fit the budget.
+                    if budget is not None and before.st_size > budget.remaining:
+                        return _HASH_BUDGET_EXHAUSTED
                     digest = hashlib.sha256()
                     total = 0
-                    while True:
-                        data = stream.read(1024 * 1024)
+                    while total < before.st_size:
+                        chunk = min(1024 * 1024, before.st_size - total)
+                        if budget is not None:
+                            chunk = min(chunk, budget.remaining)
+                            if chunk <= 0:
+                                return _HASH_BUDGET_EXHAUSTED
+                        data = stream.read(chunk)
                         if not data:
                             break
                         total += len(data)
+                        if budget is not None:
+                            budget.remaining -= len(data)
                         if total > _MAX_FILE_BYTES:
                             return None
                         digest.update(data)
@@ -269,6 +300,7 @@ def kobo_local_reconciliation_audit(
         or len(entitlements) > _MAX_RECORDS
     )
     checks_left = _MAX_FILES
+    hash_budget = _HashBudget(_MAX_TOTAL_HASH_BYTES)
     account_results = []
     # (identity, digest, byte count) -> distinct (item, path) assertions.
     identical: dict[tuple[str, str, int], set[tuple[str, str]]] = defaultdict(set)
@@ -334,7 +366,14 @@ def kobo_local_reconciliation_audit(
                     counts["unverified_placements"] += 1
                     continue
                 checks_left -= 1
-                result = _read_hash_within(proposed, roots)
+                result = _read_hash_within(proposed, roots, budget=hash_budget)
+                if result is _HASH_BUDGET_EXHAUSTED:
+                    # A full pass is impossible under the cumulative read
+                    # ceiling. Continue examining other, smaller candidates
+                    # but never call this report complete.
+                    limited = True
+                    counts["unverified_placements"] += 1
+                    continue
                 if result is None:
                     counts["unverified_placements"] += 1
                     continue
@@ -422,6 +461,8 @@ def kobo_local_reconciliation_audit(
         "truncated": limited,
         "files_hashed_limit": _MAX_FILES,
         "directory_entries_limit": _MAX_DIRECTORY_ENTRIES,
+        "total_hash_bytes_limit": _MAX_TOTAL_HASH_BYTES,
+        "total_hash_bytes_read": _MAX_TOTAL_HASH_BYTES - hash_budget.remaining,
         "offline": True, "read_only": True, "dry_run": True,
         "mutations_authorized": False, "downloads_authorized": False,
         "classification": "local_hash_evidence_not_entitlement_authority",
@@ -432,6 +473,7 @@ def kobo_local_reconciliation_audit(
             "Only persisted Kobo backup, active rights and explicit catalogue paths were considered.",
             "Legacy paths outside the owning identity directory are not read.",
             "Only immediate identity-owned folders are enumerated, up to the shared scan limit.",
+            "The global SHA audit is bounded by file count, per-file size and cumulative bytes read.",
             "Unindexed file names are candidates, not proven Kobo ownership or orphans.",
             "Legacy paths in the shared global library root cannot be assigned to an identity.",
             "No remote rights refresh or EPUB/DRM inspection.",
