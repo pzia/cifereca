@@ -101,9 +101,27 @@ def public_numilog_message(operation: str, fields: dict) -> str | None:
     return (operation + ''.join(f' {key}={value}' for key, value in pairs))[:500]
 
 
-def public_numilog_session_log(body: str) -> str | None:
-    """Accept the entire fixed producer trace, never a matching substring."""
+def public_numilog_session_fields(body: object) -> dict:
+    """Decode only the exact closed session trace from the Numilog producer.
+
+    A matching prefix plus arbitrary account details is not evidence. This
+    merely projects a plugin-emitted observation; it does not attest a Core
+    operation, an account, or any link to another task.
+    """
+    if type(body) is not str or len(body) > 200:
+        return {}
     match = _SESSION_LOG.fullmatch(body)
     if match is None or match[2] not in _SESSION_REASONS:
+        return {}
+    return {'connected': match[1] == 'True', 'reason': match[2]}
+
+
+def public_numilog_session_log(body: str) -> str | None:
+    """Accept the entire fixed producer trace, never a matching substring."""
+    fields = public_numilog_session_fields(body)
+    if not fields:
         return None
-    return f'TRACE numilog session connected={match[1]} reason={match[2]}'
+    return (
+        f"TRACE numilog session connected={fields['connected']}"
+        f" reason={fields['reason']}"
+    )
