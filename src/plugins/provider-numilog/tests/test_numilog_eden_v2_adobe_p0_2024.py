@@ -6,13 +6,14 @@ The LCP alternative must never be fetched or interpreted as Adobe.
 from __future__ import annotations
 
 import re
+import socket
 
 import httpx
 import pytest
 
 from cifereca.plugin_api import ProviderError
 from cifereca_numilog_html import (
-    DeliverySelectionError, _is_eden_adobe_download, delivery_url,
+    DeliverySelectionError, _attested_public_https, delivery_url,
 )
 from tests.test_numilog_no_stream_confirmation_p0 import (
     confirmation_without_stream, INVENTORY_DWLD, READ_DWLD, LANDING,
@@ -144,9 +145,9 @@ def test_unbound_eden_and_lcp_are_not_automatically_downloaded(tmp_path):
 
 @pytest.mark.parametrize('attack', [
     'adobe_lcp_flag', 'wrong_product', 'wrong_copy', 'wrong_pid',
-    'wrong_uid', 'wrong_tid', 'lcp_wrong_tid', 'lcp_other_product',
+    'lcp_other_product', 'private_ip', 'local_name', 'http_link',
     'duplicate_adobe', 'duplicate_lcp', 'lcp_only', 'adobe_only_other_host',
-    'bad_route', 'unknown_query', 'duplicate_query', 'short_token',
+    'duplicate_query', 'userinfo', 'fragment',
     'unrelated_modal', 'wrong_order_ref', 'foreign_card', 'other_readbook',
 ])
 def test_malformed_or_foreign_eden_alternative_never_authorizes_get(attack):
@@ -165,12 +166,6 @@ def test_malformed_or_foreign_eden_alternative_never_authorizes_get(attack):
         )
     elif attack == 'wrong_pid':
         html = html.replace('pid=9001', 'pid=9002')
-    elif attack == 'wrong_uid':
-        html = html.replace('uid=1111111111111111', 'uid=3333333333333333', 1)
-    elif attack == 'wrong_tid':
-        html = html.replace('tid=2222222222222222', 'tid=3333333333333333', 1)
-    elif attack == 'lcp_wrong_tid':
-        html = html.replace(SIGNED_LCP, SIGNED_LCP.replace('tid=2222222222222222', 'tid=4444444444444444'))
     elif attack == 'lcp_other_product':
         html = html.replace(
             "ProductId: 9001, IndexExemplaire: 1, DrmTechnlology: 'LCP'",
@@ -184,14 +179,18 @@ def test_malformed_or_foreign_eden_alternative_never_authorizes_get(attack):
         html = html.replace("DrmTechnlology: 'ADOBE'", "DrmTechnlology: 'LCP'")
     elif attack == 'adobe_only_other_host':
         html = html.replace(SIGNED_ADOBE, SIGNED_ADOBE.replace('services.numilog.com', 'evil.invalid'))
-    elif attack == 'bad_route':
-        html = html.replace('HandlerEdenDownloadLinkV2.ashx', 'OtherHandler.ashx')
-    elif attack == 'unknown_query':
-        html = html.replace(SIGNED_ADOBE, SIGNED_ADOBE + '&extra=untrusted')
+    elif attack == 'private_ip':
+        html = html.replace(SIGNED_ADOBE, SIGNED_ADOBE.replace('services.numilog.com', '127.0.0.1'))
+    elif attack == 'local_name':
+        html = html.replace(SIGNED_ADOBE, SIGNED_ADOBE.replace('services.numilog.com', 'localhost'))
+    elif attack == 'http_link':
+        html = html.replace(SIGNED_ADOBE, SIGNED_ADOBE.replace('https://', 'http://'))
+    elif attack == 'userinfo':
+        html = html.replace(SIGNED_ADOBE, SIGNED_ADOBE.replace('https://', 'https://fake:fake@'))
+    elif attack == 'fragment':
+        html = html.replace(SIGNED_ADOBE, SIGNED_ADOBE + '#bad')
     elif attack == 'duplicate_query':
-        html = html.replace(SIGNED_ADOBE, SIGNED_ADOBE + '&uid=3333333333333333')
-    elif attack == 'short_token':
-        html = html.replace(SIGNED_ADOBE, SIGNED_ADOBE.replace('uid=1111111111111111', 'uid=1'))
+        html = html.replace(SIGNED_ADOBE, SIGNED_ADOBE + '&pid=9001')
     elif attack == 'unrelated_modal':
         html = html.replace('ModalDownload(9001, 1)', 'ModalDownload(9002, 1)')
     elif attack == 'wrong_order_ref':
@@ -207,12 +206,21 @@ def test_malformed_or_foreign_eden_alternative_never_authorizes_get(attack):
                      require_bound_confirmation=True, allow_missing_readbook=True)
 
 
-def test_eden_adobe_route_does_not_accept_lcp_or_duplicate_params():
-    assert _is_eden_adobe_download(SIGNED_ADOBE, ALLOWED, expected_product='9001')
-    assert not _is_eden_adobe_download(SIGNED_LCP, ALLOWED, expected_product='9001')
-    assert not _is_eden_adobe_download(SIGNED_ADOBE, ALLOWED, expected_product='9002')
-    assert not _is_eden_adobe_download(SIGNED_ADOBE + '&tid=EXTRA', ALLOWED)
-    assert not _is_eden_adobe_download(SIGNED_ADOBE, {('https', 'www.numilog.com', 443)})
+def test_public_https_policy_is_independent_from_known_endpoints():
+    assert _attested_public_https(SIGNED_ADOBE)
+    assert _attested_public_https(SIGNED_LCP)  # safe URL, NOT LCP support
+    assert _attested_public_https('https://publisher-delivery.org/new/route?license=FAKE')
+    for disallowed in (
+        'http://publisher-delivery.org/file',
+        'https://localhost/delivery',
+        'https://127.0.0.1/delivery',
+        'https://[::1]/delivery',
+        'https://metadata.google.internal/license',
+        'https://username:password@publisher-delivery.org/file',
+        'https://publisher-delivery.org:8443/file',
+        'https://publisher-delivery.org/file#fragment',
+    ):
+        assert not _attested_public_https(disallowed)
 
 
 @pytest.mark.parametrize('outcome', ['html', 'bad_acsm', 'forbidden', 'redirect_offsite'])
