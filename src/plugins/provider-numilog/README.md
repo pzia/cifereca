@@ -1,3 +1,44 @@
+## 0.1.79 — livraison autorisée par le tableau Links (#2024 P0)
+
+La confirmation liée au compte et à la carte de l'achat est
+l'**autorité de provenance** du lien : le parseur n'impose plus une
+liste figée de domaines, handlers ou formats de jetons à la valeur
+`link`. Pour une édition avec alternatives `ADOBE` / `LCP`, il
+sélectionne uniquement l'unique entrée `ADOBE`; la variante
+`LCP` n'est pas interrogée. Pour `NOT_SPECIFIED` / `EPUB`,
+le téléchargement direct reste validé comme EPUB.
+
+Les conditions de sélection restent strictes : origine HTTPS Numilog
+de la **page de confirmation**, `readBook` ou href de la carte achetée,
+lien explicite `ModalDownload`, identifiants produit/exemplaire
+concordants, entrée `Links` littérale unique par technologie et
+contradictions de query `pid/productid/DRM` refusées.
+Aucune URL de la page seule, d'une fiche publique ou d'un script
+non lié n'autorise une acquisition.
+
+L'URL de livraison sélectionnée est une **capacité éphémère** : aucune
+publication de la query, aucun lien persistant, aucun fallback LCP.
+Avant requête sur une nouvelle destination, le transport impose HTTPS,
+pas de credentials/fragment/port non standard ni d'IP littérale ou
+de nom local/réservé, et rejette toute résolution DNS privée/non globale.
+Sur les destinations attestées hors origine de la bibliothèque, les
+cookies de session Numilog sont supprimés ; chaque redirection HTTPS
+est vérifiée avant de poursuivre (limite 12 sauts). La vérification DNS
+préalable n'est pas un transport DNS-pinné et ne prétend pas empêcher
+à elle seule toutes les variantes de DNS rebinding.
+
+Les résultats reçus sont **inspectés**, et non déduits du libellé
+ADOBE/EPUB : ACSM seulement après identité + broker ADEPT disponibles,
+EPUB non protégé seulement après validation structurelle.
+Les tests MockTransport/DNS simulés couvrent plusieurs fournisseurs,
+l'absence de whitelist, la protection des cookies, les duplications,
+des destinations non publiques, les redirections et les éditions
+étrangères. Aucune signature privée n'a été utilisée. Cela ne prouve
+pas une livraison réelle, ni l'échec du worker automatique.
+
+
+---
+
 ## 0.1.78 — livraison EPUB direct signée et liée à l'achat (#2024 P0)
 
 Le fournisseur publie, sur certaines confirmations sans streaming, un

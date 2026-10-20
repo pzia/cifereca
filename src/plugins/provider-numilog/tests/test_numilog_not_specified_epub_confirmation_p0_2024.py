@@ -153,8 +153,8 @@ def test_direct_confirmation_href_is_accepted_only_from_fresh_owned_card(tmp_pat
 
 @pytest.mark.parametrize("mutation", [
     "modal_other_product", "modal_other_copy", "links_other_product",
-    "links_other_copy", "wrong_query_product", "wrong_url_path",
-    "other_origin", "unknown_query", "repeated_param", "missing_format",
+    "links_other_copy", "wrong_query_product",
+    "other_origin", "missing_format",
     "other_format", "lcp", "two_direct_options", "foreign_card",
     "unrelated_readbook", "other_order_ref",
 ])
@@ -173,14 +173,8 @@ def test_unproven_direct_link_never_authorizes_signed_get(mutation):
                             "IndexExemplaire: 2, DrmTechnlology: 'NOT_SPECIFIED'")
     elif mutation == "wrong_query_product":
         html = html.replace("productid=9001", "productid=9999")
-    elif mutation == "wrong_url_path":
-        html = html.replace("HandlerDilicomDownloadLink.ashx", "OtherDownload.ashx")
     elif mutation == "other_origin":
         html = html.replace("services.numilog.com", "untrusted.invalid")
-    elif mutation == "unknown_query":
-        html = html.replace("idcmd=42", "idcmd=42&extra=opaque")
-    elif mutation == "repeated_param":
-        html = html.replace("idcmd=42", "idcmd=42&idcmd=43")
     elif mutation == "missing_format":
         html = html.replace("format: 'EPUB', ", "")
     elif mutation == "other_format":
@@ -257,3 +251,21 @@ def test_signed_direct_get_is_validated_and_never_calls_adept(tmp_path, failure)
         _assert_clean(tmp_path)
     finally:
         session.close()
+
+
+@pytest.mark.parametrize('candidate', [
+    SIGNED_EPUB.replace('HandlerDilicomDownloadLink.ashx', 'FutureSignedDownload.ashx'),
+    SIGNED_EPUB + '&extra=opaque',
+    SIGNED_EPUB + '&idcmd=43',
+    'https://new-publisher.org/private/delivery?productid=9001&opaque=FAKE',
+])
+def test_owned_direct_epub_uses_confirmation_provenance_not_endpoint_table(candidate):
+    assert candidate != SIGNED_EPUB
+    page = confirmation().replace(SIGNED_EPUB, candidate)
+    selected = {}
+    resolved = delivery_url(
+        page, LANDING, expected_readbook=READ_FOURTH,
+        allowed_origins=ALLOW_EPUB, require_bound_confirmation=True,
+        allow_missing_readbook=True, selection=selected,
+    )
+    assert resolved == candidate and selected == {'kind': 'epub_direct'}

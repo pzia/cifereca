@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from html import unescape
 from html.parser import HTMLParser
 import json
+import ipaddress
 import re
 from unicodedata import category
 from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qs
@@ -454,6 +455,67 @@ def _field(block, name):
     return values[0] if len(values) == 1 else None
 
 
+def _attested_public_https(value):
+    """Network-independent policy for a URL in the confirmed owned Links array.
+
+    No download origin/endpoint whitelist. Reject local/private network
+    identifiers and malformed URLs before making the actual network request.
+    The provider checks DNS resolution separately immediately before GET.
+    """
+    if type(value) is not str or len(value) > 4096 or not _raw_delivery_url_safe(value):
+        return False
+    try:
+        p = urlsplit(value)
+        hostname = (p.hostname or '').casefold()
+        if (p.scheme != 'https' or p.username or p.password or p.fragment
+                or p.port not in (None, 443) or not p.path.startswith('/')
+                or not p.netloc or chr(92) in value):
+            return False
+        # No single-label, IPv4/IPv6 literal, numeric-looking or local DNS
+        # names; accepting *any* domain does not authorize internal services.
+        if (hostname.endswith('.') or len(hostname) > 253
+                or hostname.endswith(('.localhost', '.local', '.internal',
+                                       '.home.arpa', '.lan', '.onion',
+                                       '.invalid', '.test', '.example'))
+                or hostname in {'localhost', 'metadata.google.internal'}):
+            return False
+        try:
+            ipaddress.ip_address(hostname)
+            return False
+        except ValueError:
+            pass
+        labels = hostname.split('.')
+        return (len(labels) >= 2 and all(
+            re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label)
+            for label in labels
+        ) and not all(part.isdecimal() for part in labels)
+            and not any(pth in {'.', '..'} for pth in p.path.split('/')))
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
+def _attested_query_matches_product(url, product, drm):
+    """Optional recognized query IDs cannot contradict the selected JS row.
+
+    No expected vendor hostname or endpoint is hard-coded here; unfamiliar
+    opaque signature parameters remain the vendor's responsibility.
+    """
+    try:
+        fields = parse_qs(
+            urlsplit(url).query, keep_blank_values=True, max_num_fields=64,
+        )
+        for key in ('pid', 'productid'):
+            if key in fields and fields[key] != [product]:
+                return False
+        if drm in {'ADOBE', 'NOT_SPECIFIED'} and 'DRM' in fields:
+            # Explicit LCP markers contradict a non-LCP Links entry.
+            if len(fields['DRM']) != 1 or fields['DRM'][0].upper() == 'LCP':
+                return False
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 def _is_direct_epub_download(value, allowed_origins, *, expected_product=None):
     """Only the observed signed Numilog handler, never another service URL.
 
@@ -490,6 +552,47 @@ def _is_direct_epub_download(value, allowed_origins, *, expected_product=None):
         return False
 
 
+
+def _eden_v2_fields(value, allowed_origins, *, drm=None, expected_product=None):
+    """Only the observed signed Eden V2 handler; never expose URL or tokens."""
+    if not _raw_delivery_url_safe(value) or len(value) > 4096:
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (origin(value) != ('https', 'services.numilog.com', 443)
+                or origin(value) not in allowed_origins
+                or parsed.username or parsed.password or parsed.fragment
+                or parsed.path != '/v4.0/HandlerDownloadLinks/HandlerEdenDownloadLinkV2.ashx'
+                or not parsed.query or chr(92) in value):
+            return None
+        fields = parse_qs(parsed.query, keep_blank_values=True,
+                          strict_parsing=True, max_num_fields=4)
+        keys = {'pid', 'uid', 'tid'}
+        if set(fields) != (keys | ({'DRM'} if drm == 'LCP' else set())):
+            return None
+        if any(len(v) != 1 for v in fields.values()):
+            return None
+        if (not re.fullmatch(r'[0-9]{1,16}', fields['pid'][0])
+                or (expected_product is not None
+                    and fields['pid'][0] != expected_product)):
+            return None
+        if not all(re.fullmatch(r'[0-9a-fA-F]{16,64}', fields[key][0])
+                   for key in ('uid', 'tid')):
+            return None
+        if drm == 'LCP' and fields['DRM'] != ['LCP']:
+            return None
+        return fields
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _is_eden_adobe_download(value, allowed_origins, *, expected_product=None):
+    """Accept ADOBE route without DRM flag; explicitly reject DRM=LCP."""
+    return _eden_v2_fields(
+        value, allowed_origins, expected_product=expected_product,
+    ) is not None
+
+
 def _owned_delivery_candidates(node, *, allowed_origins):
     """Inspect descendant scripts, never evaluate JS or fetch a signed URL."""
     deliveries = []
@@ -517,25 +620,14 @@ def _owned_delivery_candidates(node, *, allowed_origins):
                 continue
             try:
                 decoded_url = unescape(url)
-                if not _raw_delivery_url_safe(decoded_url):
+                # Exact product/copy/technology is checked on the owning
+                # card and again in the confirmation. The *merchant page*,
+                # not this plugin's hard-coded endpoint table, authorizes
+                # the selected delivery URL. The target must still be safe.
+                if (not _attested_public_https(decoded_url)
+                        or not _attested_query_matches_product(decoded_url, product, drm)):
                     continue
-                if delivery_kind == 'acsm':
-                    parsed = urlsplit(decoded_url)
-                    # Preserve the existing tightly scoped Adobe endpoint.
-                    if (
-                        origin(decoded_url) not in allowed_origins
-                        or origin(decoded_url) != ('https', 'entrepot2r.numilog.com', 443)
-                        or parsed.username or parsed.password or parsed.fragment
-                        or parsed.path != '/fulfillment/URLLink.acsm'
-                        or not parsed.query or any(c.isspace() for c in url)
-                        or chr(92) in url or not _raw_delivery_url_safe(url)
-                    ):
-                        continue
-                elif not _is_direct_epub_download(
-                    decoded_url, allowed_origins, expected_product=product,
-                ):
-                    continue
-            except (TypeError, ValueError, AttributeError):
+            except (ValueError, TypeError, AttributeError):
                 continue
             deliveries.append(OwnedDelivery(product, index, decoded_url, delivery_kind))
     return deliveries
@@ -699,7 +791,8 @@ def _confirmation_readbook_binding(observed, expected):
 
 def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
                            allow_missing_readbook=False,
-                           allow_owned_confirmation_without_readbook=False):
+                           allow_owned_confirmation_without_readbook=False,
+                           selection=None):
     """Bind the observed global Links array to ONE explicitly selected card.
 
     A single signed URL is not sufficient when a confirmation names another
@@ -727,6 +820,23 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
     )
     require(len(candidates) == 1)
     candidate = candidates[0]
+    # The vendor may publish both Adobe and LCP for *one* purchased copy.
+    # Neither is a second book: choose the one ADOBE option only after the
+    # selected card proves that every Links entry is for the same edition.
+    # A new vendor hostname/path need not trigger a plugin update.
+    blocks = [m.group(0) for m in _JS_OBJECT.finditer(literal.group(1))]
+    require(1 <= len(blocks) <= 16 and all(
+        _field(block, 'ProductId') == candidate.product_id
+        and _field(block, 'IndexExemplaire') == candidate.copy_index
+        for block in blocks
+    ))
+    if candidate.delivery_kind == 'acsm':
+        require(sum(_field(block, 'DrmTechnlology') == 'ADOBE'
+                    for block in blocks) == 1)
+        require(sum(_field(block, 'DrmTechnlology') == 'LCP'
+                    for block in blocks) <= 1)
+        require(all(_field(block, 'DrmTechnlology') in {'ADOBE', 'LCP'}
+                    for block in blocks))
     if candidate.delivery_kind == 'epub_direct':
         # A second edition or direct alternative is never silently ignored.
         blocks = [m.group(0) for m in _JS_OBJECT.finditer(literal.group(1))]
@@ -822,7 +932,9 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
               and (allow_missing_readbook or allow_owned_confirmation_without_readbook)):
             mode = dict(expected[1]).get('m')
             require(
-                (allow_missing_readbook and mode == ('dwld',))
+                (allow_missing_readbook and (mode == ('dwld',)
+                    or (mode == ('download',) and candidate.delivery_kind == 'acsm'
+                        and not _is_fulfillment_acsm(candidate.url, allowed))))
                 or (allow_owned_confirmation_without_readbook
                     and candidate.delivery_kind == 'epub_direct'
                     and mode in {('dwld',), ('download',)})
@@ -879,13 +991,15 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
         require(call is not None)
         bindings.append(call.groups())
     require(bindings == [(candidate.product_id, candidate.copy_index)])
+    if selection is not None:
+        selection['kind'] = candidate.delivery_kind
     return candidate.url
 
 
 def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
                  expected_readbook=None, require_bound_confirmation=False,
                  allow_missing_readbook=False,
-                 allow_owned_confirmation_without_readbook=False):
+                 allow_owned_confirmation_without_readbook=False, selection=None):
     """Locate a single allowlisted delivery; optionally require an owned binding.
 
     When an HTML page also has a login widget, callers may only follow a
@@ -899,6 +1013,7 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
     candidates = set()
     signed_acsm = set()
     signed_epub = set()
+    signed_eden = set()
     signed_shapes = html_links = html_scripts = 0
     for node in root.walk():
         values = [('href', node.attrs.get('href') or '')]
@@ -941,6 +1056,8 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
                     candidates.add(url)
                     if _is_fulfillment_acsm(url, allowed):
                         signed_acsm.add(url)
+                    if _is_eden_adobe_download(url, allowed):
+                        signed_eden.add(url)
                     if _is_direct_epub_download(url, allowed):
                         signed_epub.add(url)
             except (ValueError, AttributeError, TypeError):
@@ -957,6 +1074,7 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
         root, base_url, expected_readbook, allowed,
         allow_missing_readbook=allow_missing_readbook,
         allow_owned_confirmation_without_readbook=allow_owned_confirmation_without_readbook,
+        selection=selection,
     )
     if require_bound_confirmation:
         # A shared login widget does not by itself prove authentication
@@ -965,15 +1083,17 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
         # combination may authorize following the signed ACSM.
         if bound_confirmation is None:
             raise DeliverySelectionError('missing')
-        if signed_acsm | signed_epub != {bound_confirmation}:
+        if ((signed_acsm | signed_epub | signed_eden) - {bound_confirmation}
+                or not _attested_public_https(bound_confirmation)):
             raise DeliverySelectionError('ambiguous')
         return bound_confirmation
     if bound_confirmation is not None:
-        if signed_acsm | signed_epub != {bound_confirmation}:
+        if ((signed_acsm | signed_epub | signed_eden) - {bound_confirmation}
+                or not _attested_public_https(bound_confirmation)):
             raise DeliverySelectionError('ambiguous')
         return bound_confirmation
     # A signed direct EPUB must never be followed from an arbitrary script.
-    if signed_epub:
+    if signed_epub or signed_eden:
         raise DeliverySelectionError('ambiguous')
     # Pages intermédiaires may contain harmless site navigation and a
     # SINGLE signed ACSM. Prefer that exact delivery over ordinary permitted

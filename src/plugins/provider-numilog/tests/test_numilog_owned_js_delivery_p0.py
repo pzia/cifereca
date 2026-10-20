@@ -202,7 +202,6 @@ def test_owned_cards_are_never_auto_downloaded_during_multiple_inventory_refresh
     SIGNED.replace("entrepot2r.numilog.com", "entrepot2r.numilog.com:0"),
     SIGNED.replace("https://", "https://user:pass@", 1),
     SIGNED + "#fragment",
-    "https://entrepot2r.numilog.com/fulfillment/other.acsm?fake=1",
 ])
 def test_html_owned_object_refuses_untrusted_destinations_before_get(tmp_path, bad):
     page = _page(_card(12, 9001, bad))
@@ -217,6 +216,21 @@ def test_html_owned_object_refuses_untrusted_destinations_before_get(tmp_path, b
         _assert_no_stage(tmp_path)
     finally:
         session.close()
+
+
+
+def test_unrecognized_signed_handler_in_owned_card_remains_attestable():
+    """A new vendor handler must not require a plugin-domain/path update.
+
+    The Links entry and its exact product/copy binding are what matter.
+    Parsing an inventory never consumes that signed link.
+    """
+    new_handler = 'https://entrepot2r.numilog.com/fulfillment/other.acsm?fake=1'
+    page = _page(_card(12, 9001, new_handler))
+    rows, _ = parse_library_page(page, delivery_evidence=True)
+    assert len(rows) == 1
+    assert rows[0]['delivery'].url == new_handler
+    assert rows[0]['delivery'].delivery_kind == 'acsm'
 
 
 @pytest.mark.parametrize("form", ["global", "two-objects", "different-product", "different-index", "not-adobe"])
