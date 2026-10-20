@@ -27,6 +27,11 @@ _MAX_FILE_BYTES = 512 * 1024 * 1024
 _MAX_TOTAL_HASH_BYTES = 64 * 1024 * 1024 * 1024
 _MAX_CASES = 24
 _MAX_DIRECTORY_ENTRIES = 4096
+# Diagnostic causes only: never include a filesystem path, item or account.
+_TRUNCATION_REASONS = frozenset({
+    "record_budget", "hash_attempt_budget", "hash_byte_budget",
+    "product_path_budget", "directory_entry_budget", "directory_scan_unavailable",
+})
 
 
 @dataclass
@@ -40,7 +45,8 @@ _HASH_BUDGET_EXHAUSTED = object()
 
 
 def _unindexed_identity_files(
-    root: Path, indexed_paths: set[str], budget: int,
+    root: Path, indexed_paths: set[str], budget: int, *,
+    truncation_reasons: set[str] | None = None,
 ) -> tuple[int, int, bool]:
     """Count possible local files in ONE identity directory, never open them.
 
@@ -48,7 +54,13 @@ def _unindexed_identity_files(
     intentionally nonrecursive: a file absent from our persisted index is
     merely a *candidate*, not proof of an orphan or Kobo ownership.
     """
-    if budget <= 0 or not root.is_absolute() or not hasattr(os, "O_NOFOLLOW"):
+    if budget <= 0:
+        if truncation_reasons is not None:
+            truncation_reasons.add("directory_entry_budget")
+        return 0, 0, True
+    if not root.is_absolute() or not hasattr(os, "O_NOFOLLOW"):
+        if truncation_reasons is not None:
+            truncation_reasons.add("directory_scan_unavailable")
         return 0, 0, True
     flags = (
         os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_DIRECTORY", 0)
@@ -67,6 +79,8 @@ def _unindexed_identity_files(
         with os.scandir(fd) as entries:
             for entry in entries:
                 if inspected >= budget:
+                    if truncation_reasons is not None:
+                        truncation_reasons.add("directory_entry_budget")
                     return candidates, inspected, True
                 inspected += 1
                 if not entry.name.lower().endswith((".epub", ".pdf")):
@@ -82,6 +96,8 @@ def _unindexed_identity_files(
         return 0, inspected, False
     except (OSError, ValueError, TypeError):
         # Permission errors, symlinked ancestors and races are inconclusive.
+        if truncation_reasons is not None:
+            truncation_reasons.add("directory_scan_unavailable")
         return candidates, inspected, True
     finally:
         if fd >= 0:
@@ -303,6 +319,9 @@ def kobo_local_reconciliation_audit(
         len(records) > _MAX_RECORDS or len(catalog) > _MAX_RECORDS
         or len(entitlements) > _MAX_RECORDS
     )
+    truncation_reasons: set[str] = set()
+    if limited:
+        truncation_reasons.add("record_budget")
     checks_left = _MAX_FILES
     hash_budget = _HashBudget(_MAX_TOTAL_HASH_BYTES)
     account_results = []
@@ -353,6 +372,7 @@ def kobo_local_reconciliation_audit(
             catalogue_paths = by_catalog.get((identity, product), ())
             if len(catalogue_paths) > 8:
                 limited = True
+                truncation_reasons.add("product_path_budget")
             proposals.extend(catalogue_paths[:8])
             # Known catalogue links are suggestions, not authorization.
             if not stored:
@@ -367,6 +387,7 @@ def kobo_local_reconciliation_audit(
                 attempted_paths.add(proposed)
                 if checks_left == 0:
                     limited = True
+                    truncation_reasons.add("hash_attempt_budget")
                     counts["unverified_placements"] += 1
                     continue
                 checks_left -= 1
@@ -376,6 +397,7 @@ def kobo_local_reconciliation_audit(
                     # ceiling. Continue examining other, smaller candidates
                     # but never call this report complete.
                     limited = True
+                    truncation_reasons.add("hash_byte_budget")
                     counts["unverified_placements"] += 1
                     continue
                 if result is None:
@@ -434,6 +456,7 @@ def kobo_local_reconciliation_audit(
         for index, directory in enumerate(roots):
             count, inspected, incomplete = _unindexed_identity_files(
                 directory, indexed_paths[identity], directory_entries_left,
+                truncation_reasons=truncation_reasons,
             )
             directory_entries_left -= inspected
             counts["unindexed_regular_file_candidates"] += count
@@ -441,6 +464,10 @@ def kobo_local_reconciliation_audit(
                 counts["identity_flat_file_candidates"] += count
             if incomplete:
                 limited = True
+                # A future/legacy scan implementation may not report a more
+                # specific cause; never publish a partial audit with no cause.
+                if not truncation_reasons:
+                    truncation_reasons.add("directory_scan_unavailable")
         if counts["unindexed_regular_file_candidates"]:
             case("unindexed_identity_file_candidate",
                  counts["unindexed_regular_file_candidates"])
@@ -463,6 +490,9 @@ def kobo_local_reconciliation_audit(
         "counts": totals,
         "catalogue_entries_without_product_identity": unlinked_catalog,
         "truncated": limited,
+        "truncation_reasons": sorted(truncation_reasons),
+        "hash_attempts_used": _MAX_FILES - checks_left,
+        "directory_entries_inspected": _MAX_DIRECTORY_ENTRIES - directory_entries_left,
         "files_hashed_limit": _MAX_FILES,
         "directory_entries_limit": _MAX_DIRECTORY_ENTRIES,
         "total_hash_bytes_limit": _MAX_TOTAL_HASH_BYTES,
@@ -478,6 +508,7 @@ def kobo_local_reconciliation_audit(
             "Legacy paths outside the owning identity directory are not read.",
             "Only immediate identity-owned folders are enumerated, up to the shared scan limit.",
             "The global SHA audit is bounded by file count, per-file size and cumulative bytes read.",
+            "Truncation reasons are fixed technical codes, not proof that a file or right is missing.",
             "Unindexed file names are candidates, not proven Kobo ownership or orphans.",
             "Legacy paths in the shared global library root cannot be assigned to an identity.",
             "No remote rights refresh or EPUB/DRM inspection.",
