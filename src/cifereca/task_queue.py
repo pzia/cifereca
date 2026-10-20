@@ -101,6 +101,7 @@ class PriorityExecutor:
                 self._queue.task_done()
 
     def shutdown(self, *, wait: bool = False, cancel_futures: bool = True) -> None:
+        cancelled: list[Future[Any]] = []
         with self._lock:
             if self._closed:
                 return
@@ -113,10 +114,15 @@ class PriorityExecutor:
                         break
                     if future is not None:
                         self._pending -= 1
-                        future.cancel()
+                        cancelled.append(future)
                     self._queue.task_done()
             for _ in self._threads:
                 self._queue.put((10_000, next(self._sequence), None, None))
+        # Future.cancel() synchronously invokes arbitrary user callbacks.
+        # Never call it under the pool lock: callbacks may inspect admission
+        # metrics, submit more work or call shutdown themselves.
+        for future in cancelled:
+            future.cancel()
         if wait:
             for thread in self._threads:
                 thread.join()
