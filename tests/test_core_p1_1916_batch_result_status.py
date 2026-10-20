@@ -25,10 +25,13 @@ def test_only_core_classifies_stale_partial_and_unavailable():
     assert _search_batch_status([live], ["PRIVATE_URL"], "") == "partial"
     assert _search_batch_status([live], ["PRIVATE_URL"], "ProviderSearchFailed") == "partial"
     assert _search_batch_status([], [], "SearchAccessDenied") == "unavailable"
-    assert _search_batch_status([stale], ["PRIVATE"], "SearchTemporarilyUnavailable") == "known_catalog_stale"
+    assert _search_batch_status([stale], ["PRIVATE"], "SearchTemporarilyUnavailable") == "partial"
+    assert _search_batch_status([stale], ["PRIVATE"], "SearchTemporarilyUnavailable", stale_attested=True) == "known_catalog_stale"
+    assert _search_batch_status([stale], [], "", stale_attested=True) == "live"
+    assert _search_batch_status([], [], "SearchTemporarilyUnavailable", stale_attested=True) == "unavailable"
     assert _search_batch_status([live], [], "", cached=True) == "cached"
-    assert _search_batch_status([stale], [], "", cached=True) == "known_catalog_stale"
-    assert _search_batch_status([live, stale], [], "", cached=True) == "known_catalog_stale"
+    assert _search_batch_status([stale], [], "", cached=True) == "cached"
+    assert _search_batch_status([live, stale], [], "", cached=True) == "cached"
 
 
 def test_progressive_source_batches_publish_status_without_exposing_errors(tmp_path, monkeypatch):

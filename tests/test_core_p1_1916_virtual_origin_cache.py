@@ -62,7 +62,7 @@ def test_multi_session_ambiguous_origin_cache_is_recomputed_not_silently_dropped
         service.close()
 
 
-def test_virtual_origin_stale_cached_batch_keeps_provenance(tmp_path, monkeypatch):
+def test_virtual_origin_cannot_forge_core_offline_provenance(tmp_path, monkeypatch):
     service = _service(tmp_path)
     try:
         calls = []
@@ -81,8 +81,8 @@ def test_virtual_origin_stale_cached_batch_keeps_provenance(tmp_path, monkeypatc
         assert calls == ["virtual"]
         assert len(seen) == 1 and seen[0].cached
         assert seen[0].provider_id == "virtual"
-        assert seen[0].result_status == "known_catalog_stale"
+        assert seen[0].result_status == "cached"
         assert seen[0].results[0].source_provider == "origin.bookstore"
-        assert seen[0].results[0].metadata["search_provenance"] == "known_catalog_stale"
+        assert "search_provenance" not in seen[0].results[0].metadata
     finally:
         service.close()
