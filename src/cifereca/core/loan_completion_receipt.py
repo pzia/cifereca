@@ -1,4 +1,4 @@
-"""Pure successful digital-loan acquisition receipt projection (#1120 P0).
+"""Pure digital-loan acquisition success projections (#1120 P0).
 
 Keep the existing storage/public API contract and preserve legacy nullable
 metadata. No loan return, Adobe runtime, retry, filesystem mutation, or
