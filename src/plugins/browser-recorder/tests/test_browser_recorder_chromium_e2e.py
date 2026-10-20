@@ -55,6 +55,10 @@ def catalog_page():
         await response.text();
         response = await fetch('/ratelimit');
         await response.text();
+        response = await fetch('/unauthorized');
+        await response.text();
+        response = await fetch('/forbidden');
+        await response.text();
         response = await fetch('/binary.png');
         await response.arrayBuffer();
         response = await fetch('/uuid?uuid={UUID}');
@@ -122,6 +126,10 @@ def fake_bookstore():
             elif target == "/ratelimit":
                 self.send(429, b'{"error":"rate_limited","retryAfter":5}',
                           "application/json", {"Retry-After": "5"})
+            elif target == "/unauthorized":
+                self.send(401, b'{"error":"authentication_required"}')
+            elif target == "/forbidden":
+                self.send(403, b'{"error":"access_denied"}')
             elif target == "/binary.png":
                 self.send(200, b"\x89PNG\r\n\x1a\nFICTIONAL_BINARY", "image/png")
             elif target == "/uuid":
@@ -185,7 +193,16 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
     )
     try:
         assert stop.is_set(), "Fake-browser journey did not finish"
-        assert len(trace.exchanges) >= 8
+        assert len(trace.exchanges) >= 10
+        # HTTP 401/403 are observed responses, not permission to retry
+        # authentication or replay a protected request.
+        assert {401, 403}.issubset({e.status for e in trace.exchanges})
+        assert any(e.status == 401 and e.mime == "application/json"
+                   and e.response_body and "authentication_required" in e.response_body
+                   for e in trace.exchanges)
+        assert any(e.status == 403 and e.mime == "application/json"
+                   and e.response_body and "access_denied" in e.response_body
+                   for e in trace.exchanges)
         assert any(e.method == "POST" and e.status == 302
                    for e in trace.exchanges)
         assert any(e.status == 429 and e.mime == "application/json"
@@ -212,6 +229,8 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
         # The passive collector generated no replay or additional mutation:
         assert [x for x in calls if x[0] == "POST"] == [("POST", "/login")]
         assert len([x for x in calls if x == ("GET", "/api/books")]) == 1
+        assert len([x for x in calls if x == ("GET", "/unauthorized")]) == 1
+        assert len([x for x in calls if x == ("GET", "/forbidden")]) == 1
 
         review = IdentifierReview(trace)
         try:
