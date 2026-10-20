@@ -32,14 +32,15 @@ temporelle n'est jamais une corrélation.
 | `NUMILOG / startup_materialization` | Émission Core validée avant log/collecteur | Phases, causes, compteurs, références quand réellement émises | Résultat de worker ≠ résultat d'acquisition ; pas de vérité sur une livraison non observée |
 | `source_sync` start/terminal | Producteur Core `synchronize_account_source`, registre fournisseur et contexte worker | `provider_id` ou `source_inconnue`, phase/statut/code fermés, compteurs/durée si attestés, `task_ref` si présent | Pas de code HTTP/fournisseur ni garantie d'achats téléchargés |
 | `kobo_adept` terminal | Plugin **et package runtime** vérifiés par Core ; émetteur réservé | Opération ADEPT qualifiée, phase terminale, code connu ou `code_non_disponible`, durée/code retour si observés, référence worker éventuelle | Pas de causes Adobe inventées, callback brut, contenu de processus ni association fournisseur déduite |
-| Échec connexion `PLUGIN / provider connect` | ID vérifié du registre Core ; échec validé | Slug public qualifié et code fermé | L'alias configuré n'est pas public ; generic `Diagnostics.add` de plugin n'atteste rien |
+| Échec connexion `PLUGIN / provider connect` | ID vérifié du registre Core ; échec validé | Slug public qualifié et code fermé, dans les deux canaux (#2380) | L'alias configuré n'est pas public ; generic `Diagnostics.add` de plugin n'atteste rien |
 | Autres diagnostics/TRACE historiques | Aucune preuve de schéma commun | Vocabulaire fixe limité ou message masqué | Pas de promesse de symétrie des deux sources ni de task_ref |
 
 Références de schéma : [Kobo](CORE-P0-2380-KOBO-DECISION-CHANNELS.md),
 [Numilog](CORE-P0-2380-NUMILOG-SHARED-EMISSION.md),
 [source-sync](CORE-P0-2380-SOURCE-SYNC-EVENTS.md),
 [ADEPT](CORE-P0-2380-ADEPT-EVENTS.md),
-[connexions](CORE-P1-2370-CONNECTION-DIAGNOSTICS.md).
+[connexions](CORE-P1-2370-CONNECTION-DIAGNOSTICS.md) et
+[deux canaux de connexion](CORE-P0-2380-CONNECTION-CHANNELS.md).
 
 ## Couverture, rétention et tiers
 
