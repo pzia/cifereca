@@ -129,7 +129,7 @@ def main():
             text=True, timeout=3,
         )
         def native_int(key):
-            found = re.search(r"^\\s*" + re.escape(key) + r":\\s*(-?\\d+)\\s*$",
+            found = re.search(r"^\s*" + re.escape(key) + r":\s*(-?\d+)\s*$",
                               native_raw, re.MULTILINE)
             assert found, ("Missing native X11 geometry field", key)
             return int(found.group(1))
