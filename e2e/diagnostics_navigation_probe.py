@@ -1699,8 +1699,8 @@ def main() -> int:
             subtitle = row.get_subtitle()
             # The real Gutenberg fixture is disabled; Gallica is enabled.
             expected_activation = "Désactivée" if provider == "gutenberg" else "Activée"
-            assert f"Catalogue consultable · {expected_activation} · Connectée" in subtitle
-            assert "Synchronisation des données non prise en charge" in subtitle
+            assert f"Recherche de catalogue distincte, si disponible · {expected_activation} · Connectée" in subtitle
+            assert "Inventaire synchronisé non pris en charge" in subtitle
             assert subtitle.count("\n") == 1
             assert "Échec" not in subtitle
             assert any(isinstance(node, Gtk.Switch) for node in walk(sync_action_row(row)))

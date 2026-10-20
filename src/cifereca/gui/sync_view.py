@@ -454,7 +454,13 @@ def sync_source_presentation(source: object) -> SyncSourcePresentation:
             summary += "\nPortée de cette source : données en ligne prises en charge."
         summary += "\nOpération ciblée : ne lance pas la synchronisation globale au démarrage."
     else:
-        summary += "\nCatalogue public consultable indépendamment de la synchronisation."
+        # A non-sync-capable Account can be a catalogue search, a technical
+        # source or a disabled plugin. Search capability != refresh capability;
+        # neither is proof that this is a public catalogue.
+        summary += (
+            "\nCette source ne fournit pas d’inventaire synchronisable. "
+            "Une recherche de catalogue, si disponible, est une opération distincte."
+        )
     # A Kobo source refresh only updates online metadata. It is deliberately
     # NOT equivalent to the separate opt-in Kobo backup/acquisition operation.
     kobo_notices_only = getattr(source, "provider_id", "") == "kobo"

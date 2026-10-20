@@ -103,8 +103,8 @@ def test_gtk_controller_titles_disambiguate_public_catalogues_only_when_same_nam
     ]
     assert "Fournisseur : paris" in rows[0].subtitle
     for row in rows[1:]:
-        assert "Catalogue consultable" in row.subtitle
-        assert "Synchronisation des données non prise en charge" in row.subtitle
+        assert "Recherche de catalogue distincte, si disponible" in row.subtitle
+        assert "Inventaire synchronisé non pris en charge" in row.subtitle
         assert len(row.suffixes) == 1  # activation switch; no ghost sync
     assert window.runner.tasks == []
     assert all(name == "sources" for name, *_ in calls)
