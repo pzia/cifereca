@@ -107,6 +107,40 @@ def test_guard_is_transaction_scoped_and_retryable_does_not_block():
               entitlement_id="entitlement-a", force_refresh=False)
 
 
+class _HostileProvenance:
+    def __str__(self):
+        raise AssertionError("never stringify private saved provenance")
+
+    def __bool__(self):
+        raise AssertionError("never coerce private saved provenance")
+
+
+@pytest.mark.parametrize("metadata,prior_entitlement", [
+    ([], "entitlement-a"),
+    ("private account data", "entitlement-a"),
+    ({"provider_loan_id": 12345}, "entitlement-a"),
+    ({"provider_loan_id": _HostileProvenance()}, "entitlement-a"),
+    ({"provider_loan_id": ""}, "entitlement-a"),
+    ({"provider_loan_id": "loan-a"}, _HostileProvenance()),
+    ({"provider_loan_id": "loan-a"}, False),
+])
+def test_corrupt_persisted_adept_attention_fails_closed_without_auto_retry(
+    metadata, prior_entitlement,
+):
+    row = {
+        "status": "attention_required",
+        "strategy": "loan_auto",
+        "executor": "kobo-adept",
+        "metadata": metadata,
+        "entitlement_id": prior_entitlement,
+    }
+    opts = {"provider_loan_id": "loan-a", "entitlement_id": "entitlement-a"}
+    assert blocked_automatic_adept_retry(row, force_refresh=False, **opts)
+    # A deliberate user refresh can still handle the failure via existing
+    # acquisition guards; this change never performs the refresh itself.
+    assert not blocked_automatic_adept_retry(row, force_refresh=True, **opts)
+
+
 def test_exit_code_is_not_mistaken_for_adobe_license_error():
     assert adept_attention_code("adept_error", "acsmdownloader failed (1) exit 10",
                                 executor="kobo-adept") == "adept_error"
