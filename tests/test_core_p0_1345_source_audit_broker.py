@@ -207,3 +207,71 @@ def test_2498_partial_or_hostile_shared_budgets_fail_closed(monkeypatch, mutatio
     result = broker.audit_local_reconciliation(source.source_id)
     assert not result.ok and result.facts["status"] == "audit_unavailable"
     assert "PRIVATE" not in repr(result) and "private.invalid" not in repr(result)
+
+
+def test_2498_closed_truncation_causes_and_actual_attempt_counts_are_public(
+    monkeypatch,
+):
+    service, broker, source, _ = _broker()
+    report = _report()
+    report.update(
+        truncated=True,
+        files_hashed_limit=2048, directory_entries_limit=4096,
+        total_hash_bytes_limit=64 * 1024 ** 3,
+        total_hash_bytes_read=1253 * 1024 ** 2,
+        truncation_reasons=["directory_scan_unavailable", "product_path_budget"],
+        hash_attempts_used=517, directory_entries_inspected=520,
+        private_diagnostic="https://private.invalid?token=PRIVATE",
+    )
+    _stub(monkeypatch, lambda: report)
+    result = broker.audit_local_reconciliation(source.source_id)
+    assert result.ok
+    assert result.facts["truncation_reasons"] == [
+        "directory_scan_unavailable", "product_path_budget",
+    ]
+    assert result.facts["hash_attempts_used"] == 517
+    assert result.facts["directory_entries_inspected"] == 520
+    assert "PRIVATE" not in repr(result)
+    assert "private.invalid" not in repr(result)
+    assert "private_diagnostic" not in repr(result)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r.pop("hash_attempts_used"),
+    lambda r: r.pop("truncation_reasons"),
+    lambda r: r.update(truncation_reasons="directory_scan_unavailable"),
+    lambda r: r.update(truncation_reasons=["PRIVATE_KEY"]),
+    lambda r: r.update(truncation_reasons=[True]),
+    lambda r: r.update(truncation_reasons=["hash_byte_budget", "hash_byte_budget"]),
+    lambda r: r.update(truncation_reasons=["product_path_budget", "hash_byte_budget"]),
+    lambda r: r.update(truncation_reasons=[]),
+    lambda r: r.update(hash_attempts_used=True),
+    lambda r: r.update(hash_attempts_used=2049),
+    lambda r: r.update(hash_attempts_used="PRIVATE_ACCOUNT"),
+    lambda r: r.update(directory_entries_inspected=-1),
+    lambda r: r.update(directory_entries_inspected=4097),
+    lambda r: r.update(directory_entries_inspected={"secret": "PRIVATE"}),
+    lambda r: r.update(truncated=False),
+    lambda r: r.pop("files_hashed_limit"),
+])
+def test_2498_malformed_truncation_evidence_is_rejected_at_broker(
+    monkeypatch, mutation,
+):
+    service, broker, source, _ = _broker()
+    report = _report()
+    report.update(
+        truncated=True,
+        files_hashed_limit=2048, directory_entries_limit=4096,
+        total_hash_bytes_limit=64 * 1024 ** 3,
+        total_hash_bytes_read=1253 * 1024 ** 2,
+        truncation_reasons=["directory_scan_unavailable"],
+        hash_attempts_used=517, directory_entries_inspected=520,
+    )
+    mutation(report)
+    _stub(monkeypatch, lambda: report)
+    result = broker.audit_local_reconciliation(source.source_id)
+    assert result.ok is False
+    assert result.facts["status"] == "audit_unavailable"
+    assert result.facts["acquisition_authorized"] is False
+    assert "PRIVATE" not in repr(result)
+    assert "directory_scan_unavailable" not in repr(result)
