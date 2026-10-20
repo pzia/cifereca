@@ -184,3 +184,24 @@ def test_2498_incomplete_reason_tuple_is_not_advertised_as_provenance():
     assert sync_local_reconciliation_presentation(report) == (
         "Audit local indisponible. Aucun fichier modifié."
     )
+
+
+def test_2498_scoped_persisted_row_origins_explain_history_without_identifiers():
+    label = sync_local_reconciliation_presentation(_result(
+        truncated=True,
+        files_hashed_limit=2048, directory_entries_limit=4096,
+        total_hash_bytes_limit=64 * 1024 ** 3, total_hash_bytes_read=0,
+        truncation_reasons=[
+            "active_entitlements_budget", "backup_records_budget",
+            "catalogue_rows_budget",
+        ],
+        hash_attempts_used=517, directory_entries_inspected=527,
+        private_path="/home/PRIVATE_PERSON", token="PRIVATE_TOKEN",
+    ))
+    assert "plafond de lignes de sauvegarde Kobo" in label
+    assert "plafond de lignes du catalogue Kobo" in label
+    assert "plafond de lignes de droits Kobo actifs" in label
+    assert "historique et doublons possibles" in label
+    assert "pas sur les livres distincts" in label
+    assert "Aucune réconciliation, acquisition ni suppression autorisée" in label
+    assert "PRIVATE" not in label and "/home/" not in label

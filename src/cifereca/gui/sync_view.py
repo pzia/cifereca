@@ -227,6 +227,9 @@ def sync_local_reconciliation_presentation(result: object) -> str:
     # Legacy audits with no reason tuple keep the original generic message.
     known_truncation_reasons = {
         "record_budget": "plafond de lignes persistées",
+        "backup_records_budget": "plafond de lignes de sauvegarde Kobo",
+        "catalogue_rows_budget": "plafond de lignes du catalogue Kobo",
+        "active_entitlements_budget": "plafond de lignes de droits Kobo actifs",
         "hash_attempt_budget": "plafond de tentatives SHA",
         "hash_byte_budget": "budget d’octets de lecture SHA",
         "product_path_budget": "plus de huit chemins candidats par produit",
@@ -256,6 +259,14 @@ def sync_local_reconciliation_presentation(result: object) -> str:
             reason_label = "Causes attestées : " + ", ".join(
                 known_truncation_reasons[reason] for reason in reasons
             ) + ". "
+            if any(reason in {
+                "backup_records_budget", "catalogue_rows_budget",
+                "active_entitlements_budget",
+            } for reason in reasons):
+                reason_label += (
+                    "Plafond sur les lignes persistées du périmètre choisi "
+                    "(historique et doublons possibles), pas sur les livres distincts. "
+                )
         budget_label += (
             f"Tentatives SHA : {attempts}/{values[0]} · "
             f"entrées inspectées : {inspected}/{values[1]}. "
