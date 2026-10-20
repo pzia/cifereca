@@ -266,7 +266,7 @@ def test_http_failure_codes_never_expose_private_request_uri(
         assert batches[0].error_code == expected_code
         assert "SIGNED_SECRET" not in str(batches)
         assert "SIGNED_SECRET" not in str(summary)
-        assert bool(batches[0].results) is (status in {429, 503})
+        assert bool(batches[0].results) is (status in {408, 429, 503})
         assert summary.providers_failed == 1
     finally:
         service.close()
