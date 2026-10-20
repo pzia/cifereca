@@ -486,3 +486,80 @@ def test_real_chromium_interrupted_capture_erases_private_trace(
     assert not list(tmp_path.iterdir())
     assert calls.count(("GET", "/welcome")) == 1
     assert not any(method == "POST" for method, _path in calls)
+
+
+
+def test_real_chromium_operator_pause_skips_network_until_explicit_resume(
+    fake_bookstore, monkeypatch,
+):
+    """Only a fake localhost origin: real Playwright network events, no replay."""
+    from playwright.sync_api import sync_playwright
+
+    server, _stop, calls = fake_bookstore
+    origin = f"http://127.0.0.1:{server.server_port}"
+    original_site_origin = http_recorder.site_origin
+
+    def local_test_origin(url):
+        parsed = urlsplit(url)
+        if (parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+                and parsed.port == server.server_port
+                and not parsed.username and not parsed.password):
+            return origin
+        return original_site_origin(url)
+
+    monkeypatch.setattr(http_recorder, "site_origin", local_test_origin)
+    control = http_recorder.CapturePause()
+    trace = http_recorder.PrivateHttpTrace(
+        (origin,), pause_control=control,
+    )
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=False)
+            try:
+                context = browser.new_context(
+                    accept_downloads=False, service_workers="block",
+                )
+                try:
+                    context.on("request", trace.request)
+                    context.on("response", trace.response)
+                    context.on("requestfinished", trace.finished)
+                    context.on("requestfailed", trace.failed)
+                    page = context.new_page()
+                    page.goto(origin + "/welcome", wait_until="load")
+
+                    # A real HTTP GET still occurs in the browser, but the
+                    # observer must not retain its URL, headers or body.
+                    control.set_paused(True)
+                    assert "<books>" in page.evaluate(
+                        "fetch('/meta.xml').then(r => r.text())"
+                    )
+                    page.wait_for_timeout(100)
+                    assert control.state()[0] is True
+
+                    control.set_paused(False)
+                    assert page.evaluate(
+                        "fetch('/ratelimit').then(r => r.text())"
+                        ".then(t => t.includes('rate_limited'))"
+                    ) is True
+                    page.wait_for_timeout(100)
+                finally:
+                    context.close()
+            finally:
+                browser.close()
+
+        paths = [urlsplit(entry.url).path for entry in trace.exchanges]
+        assert paths.count("/meta.xml") == 0
+        assert paths.count("/ratelimit") == 1
+        limited = next(entry for entry in trace.exchanges
+                       if urlsplit(entry.url).path == "/ratelimit")
+        assert limited.status == 429
+        assert limited.mime == "application/json"
+        assert limited.response_body_state == "captured"
+        assert limited.response_body and "rate_limited" in limited.response_body
+        assert trace.omitted["paused"] >= 1
+        assert calls.count(("GET", "/meta.xml")) == 1
+        assert calls.count(("GET", "/ratelimit")) == 1
+        assert not any(method == "POST" for method, _path in calls)
+    finally:
+        trace.destroy()
+        assert trace.exchanges == [] and trace._pending == {}
