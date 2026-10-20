@@ -31,11 +31,20 @@ def _build_sync_page(self):
         return Gtk.Label(label="Synchronisation indisponible")
     page_token = object()
     self._sync_page_token = page_token
-    scroll = Gtk.ScrolledWindow(); scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    # #2141: keep the account context and global actions visible while only
+    # the potentially long list of sources scrolls. Previously the whole page
+    # lived inside this ScrolledWindow and lost its identity/status on scroll.
+    root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    scroll = Gtk.ScrolledWindow()
+    scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    scroll.set_vexpand(True)
     outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-    for edge in ("top", "bottom", "start", "end"):
+    for edge in ("bottom", "start", "end"):
         getattr(outer, "set_margin_" + edge)(20)
     heading = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    for edge in ("top", "start", "end"):
+        getattr(heading, "set_margin_" + edge)(20)
+    heading.set_margin_bottom(8)
     title = Gtk.Label(label="Synchronisation", xalign=0); title.set_hexpand(True); add_css(title, "page-title")
     title.set_wrap(True)
     title.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -47,9 +56,22 @@ def _build_sync_page(self):
     self._sync_summary = Gtk.Label(label="Sélectionnez une identité", xalign=0)
     self._sync_summary.set_wrap(True)
     heading.append(self._sync_summary)
+    # Aggregated, closed-state attention summary is independent from
+    # per-account acquisition or inventory consent, and reveals no account ID.
+    alert_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    alert_icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+    alert_text = Gtk.Label(label="", xalign=0)
+    alert_text.set_wrap(True)
+    alert_row.append(alert_icon)
+    alert_row.append(alert_text)
+    alert_row.set_visible(False)
+    self._sync_attention_row = alert_row
+    self._sync_attention_icon = alert_icon
+    self._sync_attention_text = alert_text
+    heading.append(alert_row)
     add_sync_action(heading, refresh)
     add_sync_action(heading, all_now)
-    outer.append(sync_action_row(heading))
+    root.append(sync_action_row(heading))
     scope_note = Gtk.Label(
         label="Synchroniser met à jour les notices et droits en ligne, sans télécharger de livre. "
         "Les outils et téléchargements se trouvent dans chaque compte.",
@@ -92,7 +114,9 @@ def _build_sync_page(self):
             kind="source-sync",
         )
     all_now.connect("clicked", sync_all)
-    scroll.set_child(outer); return scroll
+    scroll.set_child(outer)
+    root.append(scroll)
+    return root
 
 
 def _refresh_sync_page(self) -> None:
@@ -110,6 +134,10 @@ def _refresh_sync_page(self) -> None:
     identity = self.service.current_identity
     all_now = getattr(self, "_sync_all_button", None)
     summary = getattr(self, "_sync_summary", None)
+    alert_row = getattr(self, "_sync_attention_row", None)
+    if alert_row is not None:
+        # Reset before all early returns (no broker, no identity, stale scope).
+        alert_row.set_visible(False)
     if summary is not None:
         summary.set_label("État des sources indisponible")
     global_label = sync_identity_action_label(identity)
@@ -168,6 +196,22 @@ def _refresh_sync_page(self) -> None:
             f"{len(rows)} source(s) · "
             f"{sum(item.action_enabled for item in presentations)} synchronisable(s) maintenant"
         )
+    if alert_row is not None:
+        # Never use provider diagnostics or source labels in the global
+        # attention count; the bounded fixed-state projection is shared with
+        # the individual per-account indicators.
+        alerts = [sync_source_attention(source) for source in rows]
+        errors = sum(alert is not None and alert[0] == "error" for alert in alerts)
+        warnings = sum(alert is not None and alert[0] == "warning" for alert in alerts)
+        if errors or warnings:
+            self._sync_attention_icon.set_from_icon_name(
+                "dialog-error-symbolic" if errors else "dialog-warning-symbolic"
+            )
+            self._sync_attention_text.set_label(
+                f"À vérifier : {errors} échec(s) · {warnings} avertissement(s). "
+                "Consultez les comptes signalés ci-dessous."
+            )
+            alert_row.set_visible(True)
     if all_now is not None:
         all_now.set_sensitive(actionable)
         all_now.set_tooltip_text(

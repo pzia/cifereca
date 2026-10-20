@@ -35,6 +35,7 @@ class Icon:
         return cls(name)
 
     def set_valign(self, *args): pass
+    def set_from_icon_name(self, name): self.icon_name = name
     def set_tooltip_text(self, text): self.tooltip = text
     def add_css_class(self, name): self.css_classes.add(name)
 
@@ -49,6 +50,7 @@ class Widget:
         self.handlers = {}
         self.sensitive = True
         self.active = False
+        self.visible = True
         self.child = None
         self.subtitle = None
 
@@ -57,6 +59,7 @@ class Widget:
     def set_margin_top(self, *args): pass
     set_margin_bottom = set_margin_start = set_margin_end = set_margin_top
     def set_hexpand(self, *args): pass
+    def set_vexpand(self, *args): pass
     def set_wrap(self, *args): pass
     def set_wrap_mode(self, *args): pass
     def set_width_chars(self, *args): pass
@@ -68,6 +71,8 @@ class Widget:
     def set_label(self, label): self.label = label
     def get_label(self): return self.label
     def set_sensitive(self, sensitive): self.sensitive = sensitive
+    def set_visible(self, visible): self.visible = visible
+    def get_visible(self): return self.visible
     def set_active(self, active): self.active = active
     def get_active(self): return self.active
     def get_child(self): return self.child
