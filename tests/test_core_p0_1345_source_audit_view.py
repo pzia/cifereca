@@ -112,3 +112,75 @@ def test_2498_malformed_or_hostile_budgets_are_not_interpolated(changes):
     assert "Plafonds partagés" not in text
     assert "PRIVATE" not in text and "https://" not in text
     assert "Aucune réconciliation" in text
+
+
+def test_2498_partial_audit_names_exact_causes_without_claiming_missing_books():
+    report = _result(
+        truncated=True,
+        files_hashed_limit=2048, directory_entries_limit=4096,
+        total_hash_bytes_limit=64 * 1024 ** 3,
+        total_hash_bytes_read=1253 * 1024 ** 2,
+        truncation_reasons=["directory_scan_unavailable", "product_path_budget"],
+        hash_attempts_used=1740, directory_entries_inspected=700,
+        private_path="/home/PRIVATE_NAME", account="PRIVATE_ACCOUNT",
+    )
+    label = sync_local_reconciliation_presentation(report)
+    assert "Audit partiel" in label
+    assert "Causes attestées :" in label
+    assert "inspection d’un répertoire indisponible" in label
+    assert "plus de huit chemins candidats par produit" in label
+    assert "Tentatives SHA : 1740/2048" in label
+    assert "entrées inspectées : 700/4096" in label
+    assert "1253/65536 Mio" in label
+    assert "droits sans artefact confirmé" in label
+    assert "Aucune réconciliation, acquisition ni suppression autorisée" in label
+    assert "PRIVATE" not in label and "/home/" not in label
+
+
+def test_2498_legacy_partial_audit_keeps_generic_limit_caption():
+    label = sync_local_reconciliation_presentation(_result(truncated=True))
+    assert "Audit partiel" in label
+    assert "Causes attestées" not in label
+    assert "Tentatives SHA" not in label
+
+
+@pytest.mark.parametrize("changed", [
+    {"truncation_reasons": "PRIVATE_TOKEN"},
+    {"truncation_reasons": ["PRIVATE_REASON"]},
+    {"truncation_reasons": [False]},
+    {"truncation_reasons": ["hash_byte_budget", "hash_byte_budget"]},
+    {"truncation_reasons": ["product_path_budget", "hash_byte_budget"]},
+    {"truncation_reasons": []},
+    {"hash_attempts_used": "PRIVATE_USER"},
+    {"hash_attempts_used": True},
+    {"hash_attempts_used": 2049},
+    {"directory_entries_inspected": 4097},
+    {"directory_entries_inspected": -1},
+    {"directory_entries_inspected": ["PRIVATE"]},
+    {"truncated": False},
+])
+def test_2498_hostile_or_contradictory_reasons_never_enter_gui(changed):
+    base = dict(
+        truncated=True,
+        files_hashed_limit=2048, directory_entries_limit=4096,
+        total_hash_bytes_limit=64 * 1024 ** 3,
+        total_hash_bytes_read=1253 * 1024 ** 2,
+        truncation_reasons=["directory_scan_unavailable"],
+        hash_attempts_used=517, directory_entries_inspected=520,
+    )
+    label = sync_local_reconciliation_presentation(_result(**(base | changed)))
+    assert label == "Audit local indisponible. Aucun fichier modifié."
+
+
+def test_2498_incomplete_reason_tuple_is_not_advertised_as_provenance():
+    report = _result(
+        truncated=True,
+        files_hashed_limit=2048, directory_entries_limit=4096,
+        total_hash_bytes_limit=64 * 1024 ** 3,
+        total_hash_bytes_read=1253 * 1024 ** 2,
+        truncation_reasons=["directory_scan_unavailable"],
+        hash_attempts_used=517,
+    )
+    assert sync_local_reconciliation_presentation(report) == (
+        "Audit local indisponible. Aucun fichier modifié."
+    )
