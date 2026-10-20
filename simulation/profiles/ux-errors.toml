@@ -51,6 +51,12 @@ enabled = true
 books = 2000
 seed = 20261006
 
+# P0 #771: negative HTML catalogue fixtures are opt-in via ux_fault.
+[services.ebooksgratuits]
+enabled = true
+books = 250
+seed = 20261006
+
 # Fixtures offline pour les modules jeunesse / critique / constellations / EPUB.
 [specialized]
 enabled = true
