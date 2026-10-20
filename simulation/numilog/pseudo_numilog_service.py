@@ -350,10 +350,84 @@ class NumilogFakeApp:
         ).encode("utf-8")
         self.send_bytes(handler, HTTPStatus.OK, "application/vnd.adobe.adept+xml", body)
 
+    def negative_protocol(self, handler, path: str, qs: dict[str, list[str]]) -> bool:
+        """Opt-in fixture responses on existing Numilog routes only (#771).
+
+        Keep production-like default paths, credentials and fake download assets
+        unchanged. In particular, faults cannot create a purchase or file.
+        """
+        fault = (qs.get("ux_fault") or [""])[0]
+        inventory = path.lower() == "/pages/compte/meslivres.aspx"
+        login = path == "/Login.Aspx/AuthUser" and handler.command == "POST"
+        delivery = path in {"/Pages/Compte/readBook.ashx", "/Services/Delivery.ashx"}
+        asset = __import__("re").fullmatch(r"/downloads/\\d+\\.(epub|acsm)", path)
+        if not (inventory or login or delivery or asset):
+            return False
+
+        if fault == "429":
+            self.send_bytes(handler, HTTPStatus.TOO_MANY_REQUESTS, "text/plain",
+                            b"fake rate limit", {"Retry-After": "3"})
+            return True
+        if fault == "503":
+            self.send_bytes(handler, HTTPStatus.SERVICE_UNAVAILABLE, "text/plain",
+                            b"fake temporary outage")
+            return True
+        if login and fault == "auth_rejected":
+            self.send_json(handler, {"d": json.dumps({
+                "AuthSuccess": False, "Message": "Identifiants invalides"
+            })})
+            return True
+        if inventory and fault == "session_expired":
+            self.send_bytes(handler, HTTPStatus.UNAUTHORIZED, "text/html",
+                            b"<html><body>Session expiree</body></html>")
+            return True
+        if inventory and fault == "bad_inventory":
+            self.send_bytes(handler, HTTPStatus.OK, "text/html",
+                            b"<html><body>Unexpected login screen</body></html>")
+            return True
+        if inventory and fault == "empty_inventory":
+            self.send_bytes(handler, HTTPStatus.OK, "text/html",
+                            b"<html><body><table id='myTable'></table></body></html>")
+            return True
+        if inventory and fault == "broken_next":
+            try:
+                page = int((qs.get("page") or ["1"])[0])
+            except ValueError:
+                page = 1
+            if page >= 2:
+                self.send_bytes(handler, HTTPStatus.SERVICE_UNAVAILABLE, "text/plain",
+                                b"fake interrupted pagination")
+                return True
+            # Preserve the normal first page so it offers a next link.
+            return False
+        if delivery and fault == "expired_link":
+            self.send_bytes(handler, HTTPStatus.GONE, "text/plain", b"fake expired link")
+            return True
+        if path == "/Services/Delivery.ashx" and fault == "missing_format":
+            self.send_bytes(handler, HTTPStatus.OK, "text/html",
+                            b"<html><body>Format unavailable</body></html>")
+            return True
+        if asset and fault == "wrong_mime":
+            self.send_bytes(handler, HTTPStatus.OK, "text/html",
+                            b"<html><body>Not a book</body></html>")
+            return True
+        if asset and asset.group(1) == "epub" and fault == "invalid_epub":
+            self.send_bytes(handler, HTTPStatus.OK, "application/epub+zip",
+                            b"not a zip or EPUB")
+            return True
+        if asset and asset.group(1) == "acsm" and fault == "invalid_acsm":
+            self.send_bytes(handler, HTTPStatus.OK, "application/vnd.adobe.adept+xml",
+                            b"<fulfillmentToken")
+            return True
+        return False
+
     def route(self, handler: BaseHTTPRequestHandler):
         parsed = urlsplit(handler.path)
         path = parsed.path
         qs = parse_qs(parsed.query, keep_blank_values=True)
+
+        if self.negative_protocol(handler, path, qs):
+            return
 
         if path == "/":
             return self.home(handler)
