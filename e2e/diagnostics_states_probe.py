@@ -310,7 +310,7 @@ def main():
 
     def d01():
         switch("empty")
-        until(lambda: "Sources non alimentées" in " ".join(labels())
+        until(lambda: "Canaux de diagnostic : états indisponibles" in " ".join(labels())
               and len(broker[0].event_queries) == 1, verify_d01)
 
     def verify_d01():
@@ -325,7 +325,7 @@ def main():
 
     def verify_d02():
         assert has("Alimentée")
-        assert not has("Sources non alimentées — aucune donnée disponible")
+        assert not has("Canaux de diagnostic indisponibles — aucune donnée exploitable")
         assert broker[0].checks == 0
         # D02 requires an EXPLICIT zero-anomaly diagnosis with a time window.
         # The generic '0 events' header alone must not be misreported as PASS.

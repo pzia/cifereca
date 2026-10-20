@@ -46,9 +46,9 @@ def test_explorer_distinguishes_missing_sources_from_empty_results():
     """
     source = ast.get_source_segment(SOURCE.read_text(encoding="utf-8"), _build()) or ""
     for fragment in (
-        "source_summaries(current_page)",
+        "diagnostic_channel_caption(current_page)",
         "journals_sources.set_text",
-        "Sources non alimentées ou indisponibles",
+        "Canaux de diagnostic : actualisation requise",
         "Aucun événement sur cette page.",
         "Données indisponibles",
         "Source indisponible",

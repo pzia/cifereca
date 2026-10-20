@@ -11,6 +11,7 @@ from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_conse
 from diagnostics_explorer import (
     SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
     sanitized_rows, module_groups, linked_operation_groups, source_summaries, explorer_header,
+    diagnostic_channel_caption,
     next_page_offset, selectable_event_ids, export_selected_events,
     empty_observation, local_timestamp_label,
 )
@@ -691,7 +692,7 @@ class DiagnosticsPagePlugin:
         journals_limits.add_css_class("dim-label")
         journals_tab.append(journals_limits)
 
-        journals_sources = Gtk.Label(label="Sources non alimentées", xalign=0)
+        journals_sources = Gtk.Label(label="Canaux de diagnostic : actualisation requise", xalign=0)
         journals_sources.set_wrap(True)
         journals_sources.add_css_class("dim-label")
         journals_tab.append(journals_sources)
@@ -1148,19 +1149,7 @@ class DiagnosticsPagePlugin:
             valid_ids = selectable_event_ids(rows)
             if selection_json is None:
                 selected_event_ids.intersection_update(valid_ids)
-            states = source_summaries(current_page)
-            if states:
-                journals_sources.set_text("  ·  ".join(
-                    f"{state['source']} : {state['label']}" +
-                    (f" — {state['reason']}" if state.get("reason") else "") +
-                    (
-                        f" · dernier événement publié : {local_timestamp_label(state['last_event'])}"
-                        if state.get("last_event") else ""
-                    )
-                    for state in states
-                ))
-            else:
-                journals_sources.set_text("Sources non alimentées ou indisponibles")
+            journals_sources.set_text(diagnostic_channel_caption(current_page))
             journals_summary.set_text(explorer_header(
                 current_page, rows, search=search_filter.get_text().strip()
             ))

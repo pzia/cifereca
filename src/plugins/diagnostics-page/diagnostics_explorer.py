@@ -299,10 +299,65 @@ def source_summaries(payload: Mapping[str, Any]) -> list[dict[str, str]]:
     return states
 
 
+
+_CHANNEL_LABELS = {
+    "core_events": "Événements Core (mémoire)",
+    "app_log": "Journal applicatif (lecture bornée)",
+    "inconnue": "Canal non identifié",
+}
+_CHANNEL_REASON_LABELS = {
+    "log_tail_bounded": "Lecture volontairement bornée : lignes anciennes possibles hors extrait",
+    "log_source_incomplete": "Journal incomplet ou partiellement inaccessible",
+    "no_matching_events": "Aucune ligne technique admissible dans cet extrait",
+    "diagnostics_disabled": "Collecteur Core désactivé",
+    "snapshot_unavailable": "Événements Core indisponibles",
+    "no_recorded_events": "Aucun événement Core enregistré",
+    "snapshot_records_incomplete": "Historique mémoire borné ou événements écartés",
+}
+
+
+def diagnostic_channel_caption(payload: Mapping[str, Any]) -> str:
+    """Explain channel availability, never account/provider connection health.
+
+    Labels and reasons come exclusively from the closed, validated Core broker
+    vocabulary. No source name, exception or reason supplied by a plugin is
+    stringified into GTK or an AI/export payload.
+    """
+    states = source_summaries(payload)
+    if not states:
+        return (
+            "Canaux de diagnostic : états indisponibles "
+            "(événements Core / journal applicatif)."
+        )
+    parts = []
+    for state in states:
+        label = _CHANNEL_LABELS[state["source"]]
+        status_label = state["label"]
+        if state["source"] == "core_events" and state["status"] == "partial" and (
+            state.get("reason") != "snapshot_records_incomplete"
+        ):
+            # A bounded in-memory snapshot cannot be explained by log-file
+            # rotation. Never call that state a truncated journal.
+            status_label = "Historique Core partiel (couverture incomplète)"
+        item = f"{label} : {status_label}"
+        reason = state.get("reason")
+        if reason:
+            item += " — " + _CHANNEL_REASON_LABELS.get(reason, "Raison non disponible")
+        if state.get("last_event"):
+            item += " · dernier événement publié : " + local_timestamp_label(
+                state["last_event"]
+            )
+        parts.append(item)
+    return (
+        "Canaux de diagnostic — " + " · ".join(parts)
+        + ". Ces états ne décrivent pas la connexion aux fournisseurs."
+    )
+
+
 def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
                     *, search: str = "") -> str:
     if not isinstance(payload, Mapping):
-        return "Sources non alimentées — aucune donnée disponible"
+        return "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     def bounded_count(value: Any) -> int:
         # The broker contract uses numeric counts. Do not call __int__
         # on arbitrary objects supplied by a malformed broker response.
@@ -316,7 +371,7 @@ def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
     offset = bounded_count(payload.get("offset"))
     shown = len(rows)
     if not payload.get("sources"):
-        return "Sources non alimentées — aucune donnée disponible"
+        return "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     suffix = " · recherche dans cette page uniquement" if search else ""
     return f"{shown} événements affichés · {total} disponibles · page à partir de {offset + 1}{suffix}"
 

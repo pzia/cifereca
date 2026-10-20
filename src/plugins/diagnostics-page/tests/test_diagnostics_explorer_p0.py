@@ -9,7 +9,8 @@ import pytest
 from diagnostics_explorer import (
     PAGE_SIZE, SOURCES, SEVERITIES, PERIODS,
     explorer_since, fetch_explorer_page, sanitized_rows, module_groups,
-    source_summaries, explorer_header, export_selected_events, next_page_offset,
+    source_summaries, diagnostic_channel_caption, explorer_header,
+    export_selected_events, next_page_offset,
     selectable_event_ids,
 )
 
@@ -124,7 +125,7 @@ def test_availability_states_are_explicit_even_when_sources_have_no_events():
         "Journal partiel (rotation / troncation)", "Désactivée",
     ]
     assert explorer_header({"sources": [], "total": 0}, []) == (
-        "Sources non alimentées — aucune donnée disponible"
+        "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     )
     assert "recherche dans cette page uniquement" in explorer_header(
         {"sources": [{"source": "app_log"}], "total": 40, "offset": 50},
@@ -342,7 +343,7 @@ def test_invalid_sort_direction_rejected_cleanly(sort):
 @pytest.mark.parametrize("payload", [None, [], "unexpected", 123, object()])
 def test_header_refuses_non_mapping_broker_response(payload):
     assert explorer_header(payload, []) == (
-        "Sources non alimentées — aucune donnée disponible"
+        "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     )
 
 
@@ -525,8 +526,12 @@ def test_journals_ui_shows_optional_expurgated_source_reasons():
     from pathlib import Path
     page = (Path(__file__).parents[1] /
             "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
-    assert 'state.get("reason")' in page
-    assert 'source_summaries(current_page)' in page
+    helper = (Path(__file__).parents[1] /
+              "diagnostics_explorer.py").read_text(encoding="utf-8")
+    assert 'diagnostic_channel_caption(current_page)' in page
+    assert 'states = source_summaries(payload)' in helper
+    assert 'reason = state.get("reason")' in helper
+    assert '_CHANNEL_REASON_LABELS.get(reason,' in helper
 
 
 def test_source_summaries_normalize_only_valid_last_event_dates():
@@ -581,8 +586,12 @@ def test_journals_show_last_published_event_from_broker():
     from pathlib import Path
     page = (Path(__file__).parents[1] /
             "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
-    assert "dernier événement publié : {local_timestamp_label(state['last_event'])}" in page
-    assert "source_summaries(current_page)" in page
+    helper = (Path(__file__).parents[1] /
+              "diagnostics_explorer.py").read_text(encoding="utf-8")
+    assert "diagnostic_channel_caption(current_page)" in page
+    assert "dernier événement publié :" in helper
+    assert 'local_timestamp_label(' in helper
+    assert 'state["last_event"]' in helper
 
 
 def test_log_source_incomplete_reason_is_public_but_free_text_stays_hidden():
@@ -618,3 +627,81 @@ def test_incomplete_snapshot_code_is_shared_without_free_text_provenance():
     assert public_source_evidence(payload["sources"][0])["reason"] == row[0]["reason"]
     assert "reason" not in row[1]
     assert "Alice Dupont" not in json.dumps(row)
+
+
+def test_diagnostic_channel_caption_explains_two_channels_not_provider_sources():
+    caption = diagnostic_channel_caption({
+        "sources": [
+            {"source": "core_events", "status": "available",
+             "last_event": "2026-10-20T17:55:29+00:00"},
+            {"source": "app_log", "status": "partial",
+             "reason": "log_tail_bounded",
+             "last_event": "2026-10-20T17:55:29+00:00"},
+        ],
+    })
+    assert "Canaux de diagnostic" in caption
+    assert "Événements Core (mémoire) : Alimentée" in caption
+    assert "Journal applicatif (lecture bornée) : Journal partiel" in caption
+    assert "Lecture volontairement bornée" in caption
+    assert "connexion aux fournisseurs" in caption
+    assert "17:55:29" not in caption or "heure locale" in caption
+    for forbidden in ("PRIVATE_ACCOUNT", "source Numilog déconnectée"):
+        assert forbidden not in caption
+
+
+def test_channel_caption_distinguishes_disabled_empty_unavailable_from_partial():
+    caption = diagnostic_channel_caption({"sources": [
+        {"source": "core_events", "status": "disabled",
+         "reason": "diagnostics_disabled"},
+        {"source": "app_log", "status": "empty",
+         "reason": "no_matching_events"},
+    ]})
+    assert "Désactivée" in caption and "Collecteur Core désactivé" in caption
+    assert "Pas d’événement enregistré" in caption
+    assert "Aucune ligne technique admissible" in caption
+    assert "Indisponible" not in caption
+
+
+@pytest.mark.parametrize("payload", [
+    None, [], "PRIVATE_ACCOUNT", {"sources": "PRIVATE_ACCOUNT"},
+    {"sources": []},
+])
+def test_missing_channel_states_do_not_claim_sources_disconnected(payload):
+    caption = diagnostic_channel_caption(payload)
+    assert caption == (
+        "Canaux de diagnostic : états indisponibles "
+        "(événements Core / journal applicatif)."
+    )
+    assert "PRIVATE" not in caption
+
+
+def test_channel_caption_refuses_hostile_source_reason_and_timestamp():
+    class Private:
+        def __str__(self):
+            raise AssertionError("must not stringify secret")
+
+    caption = diagnostic_channel_caption({
+        "sources": [{
+            "source": "PRIVATE_ACCOUNT", "status": "PRIVATE_STATUS",
+            "reason": "PRIVATE_TOKEN", "last_event": Private(),
+        }, {
+            "source": "app_log", "status": "partial",
+            "reason": "PRIVATE_HTTP_URL",
+            "last_event": "PRIVATE_TIMESTAMP",
+        }],
+    })
+    assert "Canal non identifié : Indisponible" in caption
+    assert "Journal applicatif (lecture bornée)" in caption
+    for forbidden in ("PRIVATE", "HTTP_URL", "TOKEN", "Timestamp"):
+        assert forbidden not in caption
+
+
+def test_partial_core_memory_is_not_described_as_rotated_application_journal():
+    text = diagnostic_channel_caption({"sources": [
+        {"source": "core_events", "status": "partial"},
+        {"source": "app_log", "status": "partial",
+         "reason": "log_tail_bounded"},
+    ]})
+    assert "Événements Core (mémoire) : Historique Core partiel" in text
+    assert "Journal applicatif (lecture bornée) : Journal partiel" in text
+    assert "rotation" not in text.split("Journal applicatif", 1)[0]

@@ -61,6 +61,9 @@ def test_local_presentation_never_rewrites_utc_export_or_event_reference():
 def test_gtk_renders_explicit_local_label_for_rows_and_source_coverage():
     source = (Path(__file__).resolve().parents[1] /
               "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
+    helper = (Path(__file__).resolve().parents[1] /
+              "diagnostics_explorer.py").read_text(encoding="utf-8")
     assert "local_timestamp_label(row['timestamp'])" in source
-    assert "local_timestamp_label(state['last_event'])" in source
+    assert "diagnostic_channel_caption(current_page)" in source
+    assert "local_timestamp_label(" in helper and 'state["last_event"]' in helper
     assert "export_selected_events(" in source
