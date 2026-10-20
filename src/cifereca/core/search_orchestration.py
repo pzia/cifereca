@@ -693,13 +693,21 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             rows = [SearchResult(**x) for x in cached]
             groups: dict[str, list[SearchResult]] = {}
             for row in rows: groups.setdefault(str(row.source_provider or "unknown"), []).append(row)
-            for pid in sorted(groups):
+            # The cache holds only rows, including a legitimate empty list.
+            # Its key already binds the exact selected source set. Re-emit one
+            # cached verdict for *each* selected provider, including providers
+            # that returned a successful empty catalogue. Otherwise an all-zero
+            # response silently loses every source status in the GTK UI.
+            delivered = 0
+            for session in searchable:
                 if request_cancelled():
                     break
                 emit(CatalogSearchBatch(
-                    pid, self.provider_display_name(pid), tuple(groups[pid]),
+                    session.provider_id, session.descriptor.display_name,
+                    tuple(groups.get(session.provider_id, ())),
                     cached=True, result_status="cached",
                 ))
+                delivered += 1
             cancelled = request_cancelled()
             if not cancelled:
                 with self._search_generation_lock:
@@ -708,7 +716,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     else:
                         cancelled = True
             completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            return CatalogSearchSummary(query, len(rows), len(groups), len(groups), 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
+            return CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
 
     aggregate: list[SearchResult] = []
     warnings: list[str] = []
