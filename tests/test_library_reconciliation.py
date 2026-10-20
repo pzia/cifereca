@@ -19,6 +19,7 @@ from cifereca.core.library_reconciliation import EvidenceSnapshot, _COLUMNS, rea
 
 def epub(path, title='PRIVATE_TITLE', identifier='9780000000000', xml=None):
     with zipfile.ZipFile(path, 'w') as z:
+        z.writestr('mimetype', b'application/epub+zip')
         z.writestr('META-INF/container.xml', "<container><rootfile full-path='content.opf'/></container>")
         z.writestr('content.opf', xml or (
             "<package><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'>"
@@ -124,6 +125,13 @@ class InventoryTests(unittest.TestCase):
         self.assertIn('hash_byte_budget', result.reasons)
         result = self.scan(limits=InventoryLimits(file_bytes=1))
         self.assertIn('file_byte_budget', result.reasons)
+
+    def test_cumulative_metadata_budget_does_not_drop_byte_observations(self):
+        result = self.scan(limits=InventoryLimits(metadata_bytes=1))
+        self.assertIn('metadata_byte_budget', result.reasons)
+        self.assertEqual(result.metadata_bytes, 0)
+        self.assertEqual(result.files[0].metadata, {})
+        self.assertIsNotNone(result.files[0].sha256)
 
     def test_entry_file_and_cancel_limits(self):
         epub(self.library/'another.epub')
@@ -334,6 +342,19 @@ class GraphTests(unittest.TestCase):
         self.assertIn('hash_mismatch', reconcile(self.inventory, self.snapshot).files[0])
         self.snapshot.tables['artifacts'][0]['sha256'] = self.inventory.files[0].sha256
         self.snapshot.tables['acquisition_ledger'].append(dict(self.ledger, account_id='other'))
+        self.assertNotIn('confirmed_link', reconcile(self.inventory, self.snapshot).files[0])
+
+    def test_readable_opf_but_bad_member_crc_blocks_link_confirmation(self):
+        raw = self.book.read_bytes().replace(b'not needed', b'corruption')
+        self.book.write_bytes(raw)
+        self.inventory = scan_identity_roots({'alice': (self.root,)})
+        observation = self.inventory.files[0]
+        self.assertEqual(observation.validation, 'ok')
+        self.assertNotEqual(observation.structure_validation, 'epub_structure_crc_ok')
+        # Even a persisted SHA of these exact damaged bytes is insufficient.
+        artifact = 'sha256:'+observation.sha256
+        self.snapshot.tables['artifacts'][0].update(artifact_id=artifact, sha256=observation.sha256, size=observation.size)
+        self.ledger['artifact_id'] = self.placement['artifact_id'] = artifact
         self.assertNotIn('confirmed_link', reconcile(self.inventory, self.snapshot).files[0])
 
     def test_unattested_or_expiring_or_loan_right_cannot_confirm(self):
