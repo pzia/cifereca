@@ -82,6 +82,7 @@ class DiagnosticEntry:
     verified_source_sync: bool = False
     verified_kobo_adept: bool = False
     verified_numilog_startup: bool = False
+    verified_kobo_backup_decision: bool = False
 
 
 class Diagnostics:
@@ -191,6 +192,40 @@ class Diagnostics:
         with self._lock:
             self._items.append(entry)
 
+    def add_core_kobo_backup_decision(self, detail: object, *, level: str = "normal") -> None:
+        """Publish a Kobo opening decision only from its dedicated Core producer.
+
+        Preserve the independent existing TRACE log. Generic add() does not
+        attest a decision, even if a plugin supplies plausible closed fields.
+        """
+        from .core.diagnostic_kobo_projection import public_kobo_backup_decision
+
+        fields = public_kobo_backup_decision(detail)
+        if not fields or not self.enabled:
+            return
+        if self.LEVELS.get(level, 1) > self.LEVELS.get(self.level, 1):
+            return
+        status = "warning" if fields["status"] in {"partial", "error"} else "ok"
+        if self.level == "errors" and status == "ok":
+            return
+        # Retain only the original, closed field names expected by the public
+        # projector: never carry account IDs, signed URLs or free text.
+        safe_detail = {
+            "status": fields["status"],
+            "persisted_enabled": fields["enabled"],
+            "connected_kobo": fields["connected"],
+            "eligible_kobo": fields["eligible"],
+            "interval_minutes": fields["interval_minutes"],
+        }
+        entry = DiagnosticEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            category="KOBO", operation="automatic backup decision",
+            status=status, detail=safe_detail,
+            verified_kobo_backup_decision=True,
+        )
+        with self._lock:
+            self._items.append(entry)
+
     def add_core_source_sync(self, provider_id: str, *, phase: str, status: str,
                              code: str, duration_ms: int | None = None,
                              counts: dict | None = None) -> None:
@@ -286,6 +321,8 @@ class Diagnostics:
                     row.pop("verified_kobo_adept", None)
                 if row.get("verified_numilog_startup") is False:
                     row.pop("verified_numilog_startup", None)
+                if row.get("verified_kobo_backup_decision") is False:
+                    row.pop("verified_kobo_backup_decision", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
