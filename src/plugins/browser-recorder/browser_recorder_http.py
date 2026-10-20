@@ -96,6 +96,7 @@ class PrivateExchange:
     method: str
     url: str = field(repr=False)
     started_ms: int = 0
+    duration_ms: int = 0
     status: int = 0
     mime: str = ""
     page_id: int = 0
@@ -135,10 +136,30 @@ class PrivateHttpTrace:
         self._pending: dict[int, PrivateExchange] = {}
         self._responses: dict[int, object] = {}
         self._begin = monotonic()
+        self.paused = False
+        self._tab_numbers: dict[int, int] = {}
 
     def __repr__(self):
         return (f"PrivateHttpTrace(exchanges={len(self.exchanges)}, "
                 f"omissions={sum(self.omitted.values())})")
+
+    def pause(self) -> None:
+        self.paused = True
+
+    def resume(self) -> None:
+        self.paused = False
+
+    def _tab(self, request) -> int:
+        # Request.frame is unavailable during certain navigation requests;
+        # this is diagnostic only and never changes the capture's security.
+        try:
+            page = request.frame.page
+        except Exception:
+            return 0
+        key = id(page)
+        if key not in self._tab_numbers:
+            self._tab_numbers[key] = len(self._tab_numbers) + 1
+        return self._tab_numbers[key]
 
     def _take_text(self, raw: bytes) -> str | None:
         if len(raw) > self.max_body or len(raw) > self.total_body:
@@ -151,6 +172,8 @@ class PrivateHttpTrace:
         return decoded
 
     def request(self, req) -> None:
+        if self.paused:
+            return
         try:
             origin = _url_origin(req.url)
             if origin not in self.origins:
@@ -167,6 +190,7 @@ class PrivateHttpTrace:
                 sequence=len(self.exchanges) + 1, method=method,
                 url=str(req.url),
                 started_ms=int((monotonic() - self._begin) * 1000),
+                page_id=self._tab(req),
                 request_headers=_headers(req),
             )
             self.exchanges.append(entry)
@@ -207,6 +231,8 @@ class PrivateHttpTrace:
         resp = self._responses.pop(key, None)
         if entry is None:
             return
+        entry.duration_ms = max(0, int((monotonic() - self._begin) * 1000)
+                                - entry.started_ms)
         sizes = _sizes(req)
         request_length = _length(entry.request_headers)
         actual_request = sizes.get("requestBodySize")
@@ -273,6 +299,8 @@ class PrivateHttpTrace:
         entry = self._pending.pop(id(req), None)
         self._responses.pop(id(req), None)
         if entry is not None:
+            entry.duration_ms = max(0, int((monotonic() - self._begin) * 1000)
+                                    - entry.started_ms)
             entry.network_error = True
             entry.response_body_state = "network_error"
             self.omitted["network_error"] += 1
@@ -289,6 +317,7 @@ class PrivateHttpTrace:
         self.exchanges.clear()
         self._pending.clear()
         self._responses.clear()
+        self._tab_numbers.clear()
 
 
 def record_http(start_url: str, stop: Event, *,
