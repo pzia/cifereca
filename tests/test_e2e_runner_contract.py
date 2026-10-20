@@ -589,7 +589,9 @@ def test_771_real_gtk_public_fault_search_is_registered_and_selected():
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
-    assert module.select(["e2e/public_fault_search_probe.py"]) == ("public-fault-search-1366",)
+    assert module.select(["e2e/public_fault_search_probe.py"]) == (
+        "public-fault-search-1366", "kobo-fault-search-1366",
+    )
 
 
 def test_771_kobo_real_catalogue_http_faults_surface_in_native_gtk():
