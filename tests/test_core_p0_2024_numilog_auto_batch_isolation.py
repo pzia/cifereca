@@ -111,7 +111,7 @@ def test_cancellation_never_continues_to_next_edition(tmp_path, monkeypatch):
         with pytest.raises(Cancelled):
             execute(broker, account.identity_id, 'startup')
         assert visited == [rows[0].record_id] and calls == []
-        assert broker.numilog_materialization_run_status(sid)['status'] == 'failed'
+        assert broker.numilog_materialization_run_status(sid)['status'] == 'blocked'
     finally:
         service.close()
 
