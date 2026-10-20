@@ -29,3 +29,35 @@ Dans l'interface, conserver le même site HTTPS et renseigner le nom `.har` (aut
 ## Limites de confiance
 
 Le navigateur peut toujours afficher des informations privées et contacter des hôtes tiers **dans la session** pendant une connexion normale ; ce n'est pas un proxy de sécurité et ne bloque pas le trafic réel. Le plugin ne collecte aucun de ces contenus tiers dans l'export. Les sessions sont terminées à l'arrêt ; pas de persistance de mots de passe ou d'état Playwright. Fermer Cifereca termine une capture en cours, sans la sauvegarder si l'arrêt explicite n'a pas eu lieu. Les tests automatisés emploient uniquement des faux objets Playwright ; aucune authentification fournisseur réelle n'est revendiquée.
+
+## Travail P1 #2528 — collecteur HTTP en mémoire (sans export utilisateur)
+
+Un nouveau module optionnel `browser_recorder_http.py` est disponible comme
+**fondation technique** de la future v0.2 ; il ne modifie pas le bouton
+« Arrêter / enregistrer » de v0.1.0, qui produit toujours un HAR expurgé
+**sans corps**. La nouvelle API `record_http(...)` lance un Chromium visible
+et collecte dans `PrivateHttpTrace` une chronologie de requêtes-réponses
+pour les origines explicitement autorisées (par défaut, seule l'origine de
+départ). Les échanges sont identifiés, les redirections et les erreurs
+réseau sont distinguées, et les corps textuels JSON/HTML/XML/plain peuvent
+être conservés **uniquement en mémoire privée**. Aucun replay HTTP n'est
+déclenché par le collecteur.
+
+Limites fermées par session : 240 échanges, 32 Kio par corps, 768 Kio de corps
+cumulés, 15 minutes, six origines explicites au maximum. Les corps binaires
+et compressés sont omis ; la lecture de corps HTTP exige à la fois une
+longueur déclarée et un compteur de taille réel Playwright disponibles et
+sous les plafonds. Les réponses sans longueur sûre sont omises plutôt que
+copiées par une API qui chargerait une quantité imprévisible en mémoire.
+Les cookies/Authorization/en-têtes secrets ne sont jamais conservés.
+L'objet privé contient néanmoins des URL et textes **potentiellement
+sensibles** : ne jamais le journaliser, sérialiser ou transmettre.
+`trace.destroy()` efface les références contrôlées quand la revue est
+abandonnée. Aucune écriture disque n'est autorisée par cette API.
+
+**Non livré à ce stade** : interface de revue identifiant par identifiant
+(#2529), export ZIP approuvé (#2530), recette Chromium réel (#2531).
+Aucun export ni upload de contenu HTTP brut n'est disponible. L'ancienne
+interface et son export restent inchangés jusqu'à l'intégration du
+consentement et de la revue, pour éviter toute fuite involontaire.
+
