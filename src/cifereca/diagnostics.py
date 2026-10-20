@@ -114,33 +114,52 @@ class Diagnostics:
 
     def add_core_provider_connect_failure(
         self, provider_id: str, *, singleton: bool = False,
-        duration_ms: int | None = None,
+        duration_ms: int | None = None, code: str = "provider_connect_failed",
     ) -> None:
-        """Core-owned closed producer, not part of the plugin Diagnostics broker.
+        """Emit one closed, Core-verified failure to both independent channels.
 
-        The caller must have matched provider_id to a registered Core provider;
-        this final validation prevents publication of arbitrary credential,
-        account or user-controlled names. Generic add() never sets the
-        verified provenance bit consumed by the public event feed.
+        The caller must have matched the public provider id and failure code
+        to the Core registry/connection decision. Generic add() never grants
+        this provenance; no account, credential, exception or task reference
+        is published. A disabled collector does not disable the bounded log.
         """
         from .core.public_provider_diagnostics import (
-            CONNECT_FAILURE_CODE, UNKNOWN_PROVIDER, canonical_public_provider_id,
+            UNKNOWN_PROVIDER, CONNECT_FAILURE_CODE, MISSING_PROVIDER_CODE,
+            canonical_public_provider_id, public_connection_fields,
+            public_connection_log_message,
         )
-        if not self.enabled:
-            return
         slug = canonical_public_provider_id(provider_id) or UNKNOWN_PROVIDER
-        time_ms = (duration_ms if type(duration_ms) is int
-                   and 0 <= duration_ms <= 600000 else None)
-        entry = DiagnosticEntry(
-            timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-            category="PLUGIN",
-            operation="public provider connect" if singleton else "provider connect",
-            status="error", duration_ms=time_ms,
-            detail={"code": CONNECT_FAILURE_CODE, "provider_id": slug},
-            verified_public_provider_id=slug,
+        fixed_code = (
+            code if type(code) is str and code in {
+                CONNECT_FAILURE_CODE, MISSING_PROVIDER_CODE,
+            } else CONNECT_FAILURE_CODE
         )
-        with self._lock:
-            self._items.append(entry)
+        fields = public_connection_fields({
+            "provider_id": slug, "code": fixed_code,
+        })
+        if not fields:
+            return
+        logger = logging.getLogger("cifereca")
+        if self.enabled:
+            time_ms = (duration_ms if type(duration_ms) is int
+                       and 0 <= duration_ms <= 600000 else None)
+            entry = DiagnosticEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                category="PLUGIN",
+                operation="public provider connect" if singleton else "provider connect",
+                status="error", duration_ms=time_ms,
+                detail=fields,
+                verified_public_provider_id=slug,
+            )
+            with self._lock:
+                self._items.append(entry)
+        try:
+            if logger.isEnabledFor(logging.ERROR):
+                logger.error(public_connection_log_message(fields))
+        except Exception:
+            # Optional logging is never allowed to turn a connection failure
+            # into a different outcome or leak the handler's private message.
+            pass
 
     def clear(self) -> None:
         with self._lock:
