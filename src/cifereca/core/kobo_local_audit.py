@@ -29,7 +29,9 @@ _MAX_CASES = 24
 _MAX_DIRECTORY_ENTRIES = 4096
 # Diagnostic causes only: never include a filesystem path, item or account.
 _TRUNCATION_REASONS = frozenset({
-    "record_budget", "hash_attempt_budget", "hash_byte_budget",
+    # Keep the old aggregate code valid for historical v1 reports.
+    "record_budget", "backup_records_budget", "catalogue_rows_budget",
+    "active_entitlements_budget", "hash_attempt_budget", "hash_byte_budget",
     "product_path_budget", "directory_entry_budget", "directory_scan_unavailable",
 })
 
@@ -315,13 +317,21 @@ def kobo_local_reconciliation_audit(
         if raw_path and type(raw_path) is str:
             by_catalog[(identity, product)].append(raw_path)
 
-    limited = (
-        len(records) > _MAX_RECORDS or len(catalog) > _MAX_RECORDS
-        or len(entitlements) > _MAX_RECORDS
-    )
-    truncation_reasons: set[str] = set()
-    if limited:
-        truncation_reasons.add("record_budget")
+    # These are persisted ROWS within the selected local scope, not a count
+    # of distinct books: backup rows may include older/repeated attempts,
+    # catalogue rows include non-local/historical states, while rights are
+    # already restricted to ACTIVE rows for the selected credentials.
+    # Report only fixed origin codes; never publish row contents or IDs.
+    persisted_row_budgets = {
+        "backup_records_budget": len(records),
+        "catalogue_rows_budget": len(catalog),
+        "active_entitlements_budget": len(entitlements),
+    }
+    truncation_reasons: set[str] = {
+        reason for reason, count in persisted_row_budgets.items()
+        if count > _MAX_RECORDS
+    }
+    limited = bool(truncation_reasons)
     checks_left = _MAX_FILES
     hash_budget = _HashBudget(_MAX_TOTAL_HASH_BYTES)
     account_results = []
