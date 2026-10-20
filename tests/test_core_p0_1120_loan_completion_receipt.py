@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 import ast
 from pathlib import Path
 
-from cifereca.core.loan_completion_receipt import completed_receipt
+from cifereca.core.loan_completion_receipt import completed_receipt, completed_outcome
 
 
 def _receipt(tmp_path, *, is_acsm, force_refresh, previous):
@@ -107,3 +107,76 @@ def test_library_service_still_records_then_cleans_up_then_diagnoses():
             < at("self._cleanup_acsm_after_success")
             < at("self._diagnose_adept_binding"))
     assert at("self.storage.acquisition_put") < at("self._cleanup_acsm_after_success")
+
+
+def test_success_outcome_keeps_exact_direct_epub_contract_without_adept_access():
+    class ForbiddenBinding:
+        def get(self, *_args, **_kwargs):
+            raise AssertionError("direct delivery must not inspect ADEPT")
+    loan = NS(id="private-loan-ref", title="secret-title")
+    result = completed_outcome(
+        loan=loan, final_path=Path("/fictional/library/book.epub"),
+        acquisition_kind="file", adept_binding=ForbiddenBinding(),
+        decision=NS(action="reuse", reason="already_present", source="local"),
+    )
+    assert result == {
+        "status": "complete",
+        "loan_id": "private-loan-ref",
+        "path": "/fictional/library/book.epub",
+        "adept_return_available": False,
+        "decision": "reuse",
+        "reason": "already_present",
+        "source": "local",
+    }
+    assert "secret-title" not in repr(result)
+
+
+def test_success_outcome_preserves_adept_return_flag_without_inventing_rights():
+    loan = NS(id="loan-2")
+    decision = NS(action="acquire", reason="force_refresh", source="provider")
+    for binding, expected in [
+        ({"return_available": True}, True),
+        ({"return_available": False}, False),
+        ({}, False),
+    ]:
+        result = completed_outcome(
+            loan=loan, final_path=Path("/fictional/book.pdf"),
+            acquisition_kind="acsm", adept_binding=binding, decision=decision,
+        )
+        assert result["adept_return_available"] is expected
+        assert result["status"] == "complete"
+        assert result["decision"] == "acquire"
+        assert result["reason"] == "force_refresh"
+        assert result["source"] == "provider"
+
+
+def test_success_outcome_is_pure_and_does_not_touch_files(tmp_path):
+    path = tmp_path / "missing.epub"
+    assert not path.exists()
+    output = completed_outcome(
+        loan=NS(id="L"), final_path=path,
+        acquisition_kind="file", adept_binding=None,
+        decision=NS(action="download", reason="missing", source="provider"),
+    )
+    assert output["path"] == str(path)
+    assert not path.exists()
+
+
+def test_loan_success_projection_stays_after_ledger_and_adept_cleanup():
+    path = Path(__file__).parents[1] / "src" / "cifereca" / "services.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    service = next(n for n in tree.body
+                   if isinstance(n, ast.ClassDef) and n.name == "LibraryService")
+    method = next(n for n in service.body
+                  if isinstance(n, ast.FunctionDef)
+                  and n.name == "_acquire_active_loan_automatically_guarded")
+    calls = {
+        ast.unparse(node.func): node.lineno
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+    }
+    assert (calls["loan_completion_receipt.completed_receipt"]
+            < calls["self._cleanup_acsm_after_success"]
+            < calls["self._diagnose_adept_binding"]
+            < calls["loan_completion_receipt.completed_outcome"])
+    assert "self.storage.acquisition_put" in calls

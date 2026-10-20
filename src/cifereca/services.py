@@ -2892,15 +2892,12 @@ class LibraryService:
             if acquisition.kind == "acsm":
                 self._diagnose_adept_binding(adept_binding, provider_loan_id=loan.id)
             _TRACE_LOG.info("TRACE download loan_auto complete loan_ref=%s dt=%.3fs", trace_ref, time.monotonic()-started)
-            return {
-                "status": "complete",
-                "loan_id": loan.id,
-                "path": str(final_path),
-                "adept_return_available": bool(acquisition.kind == "acsm" and adept_binding.get("return_available")),
-                "decision": decision.action,
-                "reason": decision.reason,
-                "source": decision.source,
-            }
+            return loan_completion_receipt.completed_outcome(
+                loan=loan, final_path=final_path,
+                acquisition_kind=acquisition.kind,
+                adept_binding=adept_binding if acquisition.kind == "acsm" else None,
+                decision=decision,
+            )
         except (KoboAdeptError, UserFacingError) as exc:
             if retained_acsm is not None and retained_acsm.exists():
                 _TRACE_LOG.info("TRACE download acsm cleanup loan_ref=%s action=keep reason=adept_error", trace_ref)
