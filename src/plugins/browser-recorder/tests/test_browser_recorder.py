@@ -254,3 +254,33 @@ def test_explicit_save_request_allows_har(tmp_path):
     filename = record(ORIGIN + "/books", tmp_path, stopped,
                       save_requested=save_requested, factory=lambda: FakePW(context))
     assert (tmp_path / filename).is_file()
+
+
+def test_exchange_ids_redirect_and_network_error_without_failure_text():
+    capture = Capture(ORIGIN)
+    first = FakeRequest(ORIGIN + "/books?secret=HIDDEN")
+    second = FakeRequest(ORIGIN + "/account/HIDDEN")
+    third = FakeRequest(ORIGIN + "/search")
+    capture.request(first)
+    capture.request(second)
+    capture.request(third)
+    redirect = FakeResponse(first)
+    redirect.status = 302
+    capture.response(redirect)
+    capture.request_failed(second)
+    ok = FakeResponse(third)
+    capture.response(ok)
+    entries = capture.document()["log"]["entries"]
+    assert [e["_cifereca"]["exchange_id"] for e in entries] == [1, 2, 3]
+    assert [e["_cifereca"]["outcome"] for e in entries] == [
+        "redirect", "network_error", "response",
+    ]
+    assert [e["response"]["status"] for e in entries] == [302, 0, 200]
+    assert "HIDDEN" not in json.dumps(entries)
+    assert "secret=" not in json.dumps(entries)
+
+
+def test_failure_without_recorded_request_is_ignored():
+    capture = Capture(ORIGIN)
+    capture.request_failed(FakeRequest("https://foreign.example/private"))
+    assert capture.document()["log"]["entries"] == []
