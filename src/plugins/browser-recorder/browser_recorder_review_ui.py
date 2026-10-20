@@ -16,6 +16,26 @@ from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
 
 
+def _metadata_only_origins(raw: str, primary: str) -> tuple[str, ...]:
+    """Validate opt-in third-party origins; never echo private input in errors."""
+    if type(raw) is not str or len(raw) > 512:
+        raise RecorderError("invalid_origin")
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    if len(parts) > 4:
+        raise RecorderError("invalid_origin")
+    selected = []
+    for candidate in parts:
+        origin = site_origin(candidate)
+        # Accept only absolute HTTPS origins, never arbitrary URL paths,
+        # queries, fragments, usernames or silent same-host capture.
+        if candidate not in {origin, origin + "/"} or origin == primary:
+            raise RecorderError("invalid_origin")
+        if origin in selected:
+            raise RecorderError("invalid_origin")
+        selected.append(origin)
+    return tuple(selected)
+
+
 class PrivateReviewPanel:
     def __init__(self, Gtk, GLib, tasks, site, consent, legacy_running,
                  export_directory=None):
@@ -48,6 +68,17 @@ class PrivateReviewPanel:
                   "L'export n'a lieu qu'après prévisualisation et confirmation.",
             xalign=0, wrap=True,
         ))
+        box.append(Gtk.Label(
+            label="Hôtes tiers facultatifs (HTTPS, séparés par des virgules) : "
+                  "métadonnées de requête seulement, jamais URL ni corps. "
+                  "Laissez vide pour exclure tout trafic tiers.",
+            xalign=0, wrap=True,
+        ))
+        self.third_party_origins = Gtk.Entry()
+        self.third_party_origins.set_placeholder_text(
+            "https://identite.exemple.org, https://auth.exemple.org"
+        )
+        box.append(self.third_party_origins)
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.start = Gtk.Button(label="Démarrer HTTP privé")
         self.stop = Gtk.Button(label="Arrêter / revoir")
@@ -145,6 +176,9 @@ class PrivateReviewPanel:
             and not self.legacy_running()
         )
         self.stop.set_sensitive(not self._closed and busy)
+        self.third_party_origins.set_sensitive(
+            not self._closed and not busy and self._trace is None
+        )
         can_pause = (not self._closed and busy and self._pause_control is not None
                      and self._stop is not None and not self._stop.is_set())
         self.pause_button.set_sensitive(can_pause)
@@ -206,9 +240,15 @@ class PrivateReviewPanel:
             return
         try:
             start_url = self.site.get_text().strip()
-            site_origin(start_url)
+            primary = site_origin(start_url)
+            metadata_only_origins = _metadata_only_origins(
+                self.third_party_origins.get_text(), primary,
+            )
         except RecorderError:
-            self.status.set_label("Origine HTTPS publique valide requise.")
+            self.status.set_label(
+                "Origines HTTPS invalides : saisir au plus 4 hôtes tiers, "
+                "sans chemin ni identifiant. Aucun navigateur lancé."
+            )
             return
         self._discard_private()
         self._generation += 1
@@ -220,7 +260,10 @@ class PrivateReviewPanel:
         self.status.set_label("Navigateur HTTP privé en cours, sans export…")
 
         def work(_control):
-            return record_http(start_url, stop, pause_control=pause_control)
+            return record_http(
+                start_url, stop, pause_control=pause_control,
+                metadata_only_origins=metadata_only_origins,
+            )
 
         try:
             handle = self.tasks.submit(
