@@ -73,12 +73,12 @@ def test_four_owned_no_stream_drmfree_epub_uses_direct_validation_no_adept(tmp_p
         assert origin == LIBRARY
         assert requested == [LIBRARY, LIBRARY, READ_FOURTH]
         assert importer.calls == []  # An unprotected EPUB never enters ADEPT.
-        terminal = [kw["detail"] for args, kw in diagnostics.events
+        terminal = [(args[2], kw["detail"]) for args, kw in diagnostics.events
                     if args[:2] == ("NUMILOG", "acquisition_delivery")
                     and kw["detail"].get("phase") == "completed"]
         assert len(terminal) == 1
-        assert terminal[0]["code"] == "epub_complete"
-        assert terminal[0]["status"] == "ok"
+        assert terminal[0][1]["code"] == "epub_complete"
+        assert terminal[0][0] == "ok"
         assert not any("stream" in url or "acsm" in url for url in requested)
         _assert_clean(tmp_path)
     finally:
@@ -109,9 +109,9 @@ def test_owned_no_stream_corrupt_epub_is_not_a_saved_purchase(tmp_path):
         assert importer.calls == []
         assert not list(tmp_path.glob("*.epub"))
         _assert_clean(tmp_path)
-        final = [kw["detail"] for args, kw in diagnostics.events
+        final = [(args[2], kw["detail"]) for args, kw in diagnostics.events
                  if args[:2] == ("NUMILOG", "acquisition_delivery")
                  and kw["detail"].get("phase") == "completed"]
-        assert len(final) == 1 and final[0]["status"] == "error"
+        assert len(final) == 1 and final[0][0] == "error"
     finally:
         session.close()
