@@ -171,8 +171,20 @@ def main():
         report.setdefault("native_1300_geometry", {})[route] = sample
         report["ux611_probe_stage"] = "strict_native_geometry"
         assert sample["display"] == {"width": 1300, "height": 768}, sample["display"]
-        for geom in (native, sample["gtk_toplevel"], sample["gdk_surface"]):
+        # Client-side decorations reserve a GTK content inset (5px per side
+        # with Adwaita on the CI X11 runtime). GDK surface and native X11 are
+        # the actual outer window, *not* Gtk.Window's content allocation.
+        for geom in (native, sample["gdk_surface"]):
             assert (geom["width"], geom["height"]) == (1300, 768), geom
+        inset_width = native["width"] - sample["gtk_toplevel"]["width"]
+        inset_height = native["height"] - sample["gtk_toplevel"]["height"]
+        sample["gtk_content_insets"] = {
+            "horizontal_total": inset_width, "vertical_total": inset_height,
+        }
+        assert 0 <= inset_width <= 32 and 0 <= inset_height <= 32, (
+            "Native outer window and GTK content differ beyond decorations",
+            inset_width, inset_height,
+        )
         assert 0 < sample["shell_after_sidebar"]["width"] <= 1300
         assert sample["page"]["width"] <= sample["shell_after_sidebar"]["width"]
         report["ux611_probe_stage"] = "paned_allocations"
