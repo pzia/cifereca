@@ -519,7 +519,9 @@ def _safe_opds_link(feed_url, href, kind):
             # route into an account/admin action after server decoding.
             parts = decoded_path.casefold().split('/')
             if (not allowed_feed or '\\' in decoded_path
-                    or any(segment in {'.', '..'} for segment in parts)
+                    or any(segment in {'.', '..', 'account', 'admin',
+                                       'customer', 'login', 'checkout',
+                                       'session'} for segment in parts)
                     or '%25' in path
                     or '%2f' in path or '%5c' in path):
                 return None
