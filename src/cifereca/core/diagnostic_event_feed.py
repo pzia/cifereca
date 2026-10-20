@@ -23,7 +23,8 @@ from .diagnostic_kobo_projection import (
 )
 from .numilog_startup_diagnostics import public_log_fields as public_numilog_startup_log
 from .public_provider_diagnostics import (
-    CONNECT_FAILURE_CODE, canonical_public_provider_id,
+    public_connection_fields,
+    public_connection_log_fields,
 )
 from .diagnostic_source_sync import (
     public_fields as public_source_sync_fields,
@@ -196,7 +197,13 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             adept_detail = (
                 public_adept_log(match["body"]) if match["logger"] == "cifereca" else {}
             )
-            if adept_detail:
+            connection_detail = (
+                public_connection_log_fields(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
+            if connection_detail:
+                message = "connexion fournisseur échouée"
+            elif adept_detail:
                 message = public_adept_message(adept_detail)
             elif source_sync_detail:
                 message = public_source_sync_message(source_sync_detail)
@@ -245,6 +252,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "severity": match["level"].lower(),
                 "message": message[:500] if numilog_detail or source_sync_detail or adept_detail else message[:240],
                 **({"detail": kobo_detail} if kobo_detail else {}),
+                **({"detail": connection_detail, "status": "error"} if connection_detail else {}),
                 **({"detail": numilog_detail} if numilog_detail else {}),
                 **({"detail": source_sync_detail, "status": source_sync_detail["status"]}
                    if source_sync_detail else {}),
@@ -334,18 +342,11 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         if (category == "PLUGIN"
                 and operation in {"provider connect", "public provider connect"}
                 and status in {"error", "failed"}
-                and type(diagnostics) is Diagnostics
-                and type(row.get("detail")) is dict
-                and row["detail"].get("code") == CONNECT_FAILURE_CODE):
-            identifier = canonical_public_provider_id(
-                row["detail"].get("provider_id")
-            )
-            if (identifier is not None and
-                    row.get("verified_public_provider_id") == identifier):
-                public_detail = {
-                    "provider_id": identifier,
-                    "code": CONNECT_FAILURE_CODE,
-                }
+                and type(diagnostics) is Diagnostics):
+            validated = public_connection_fields(row.get("detail"))
+            if (validated and row.get("verified_public_provider_id")
+                    == validated["provider_id"]):
+                public_detail = validated
                 message = "connexion fournisseur échouée"
         if (category == "KOBO"
                 and operation == "automatic backup decision"
