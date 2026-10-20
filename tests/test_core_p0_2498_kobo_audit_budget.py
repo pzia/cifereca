@@ -148,3 +148,37 @@ def test_directory_scan_remains_bounded_independently_from_sha_budget(
         assert report["downloads_authorized"] is False
     finally:
         service.close()
+
+
+def test_no_follow_unsupported_platform_fails_closed_without_reading(
+    tmp_path, monkeypatch,
+):
+    """No SHA may be read if the platform cannot reject symlink traversal."""
+    folder = tmp_path / "private"
+    folder.mkdir()
+    path = folder / "private.epub"
+    path.write_bytes(b"synthetic-epub")
+    monkeypatch.delattr(audit.os, "O_NOFOLLOW", raising=False)
+    # A valid file is deliberately not read: returning a digest would be
+    # unsafe because a symlinked parent could escape the owning identity.
+    assert audit._read_hash_within(str(path), (folder,)) is None
+
+
+def test_no_follow_missing_preserves_partial_evidence_and_no_download(
+    tmp_path, monkeypatch,
+):
+    service, _ = _service(tmp_path, [])
+    rows = _fake_rows(service._kobo_backup_target_dir("default"), 1)
+    _audit_fixture(service, monkeypatch, rows)
+    monkeypatch.delattr(audit.os, "O_NOFOLLOW", raising=False)
+    try:
+        report = audit.kobo_local_reconciliation_audit(service)
+        assert report["counts"]["backup_rows"] == 1
+        assert report["counts"]["linked_files_verified"] == 0
+        assert report["counts"]["unverified_placements"] >= 1
+        assert report["counts"]["active_entitlements_unmaterialized"] == 1
+        assert report["downloads_authorized"] is False
+        assert report["mutations_authorized"] is False
+        assert report["read_only"] and report["offline"]
+    finally:
+        service.close()
