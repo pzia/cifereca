@@ -107,6 +107,10 @@ def fake_bookstore():
                     "Location": "/welcome?session=" + COOKIE,
                     "Set-Cookie": "session=" + COOKIE + "; SameSite=Lax",
                 })
+            elif target == "/temporary":
+                self.send(307, b"", extra={"Location": "/post-target"})
+            elif target == "/post-target":
+                self.send(200, b'{"accepted":true}')
             else:
                 self.send(404, b'{"error":"not_found"}')
 
@@ -137,6 +141,8 @@ def fake_bookstore():
                 self.send(401, b'{"error":"authentication_required"}')
             elif target == "/forbidden":
                 self.send(403, b'{"error":"access_denied"}')
+            elif target == "/bad-request":
+                self.send(400, b'{"error":"invalid_input"}')
             elif target == "/binary.png":
                 self.send(200, b"\x89PNG\r\n\x1a\nFICTIONAL_BINARY", "image/png")
             elif target == "/uuid":
@@ -560,6 +566,88 @@ def test_real_chromium_operator_pause_skips_network_until_explicit_resume(
         assert calls.count(("GET", "/meta.xml")) == 1
         assert calls.count(("GET", "/ratelimit")) == 1
         assert not any(method == "POST" for method, _path in calls)
+    finally:
+        trace.destroy()
+        assert trace.exchanges == [] and trace._pending == {}
+
+
+
+def test_real_chromium_post_307_redirect_and_http_400_are_passive(
+    fake_bookstore, monkeypatch,
+):
+    """User's browser follows 307 once; the collector does not replay POST."""
+    from playwright.sync_api import sync_playwright
+
+    server, _stop, calls = fake_bookstore
+    origin = f"http://127.0.0.1:{server.server_port}"
+    original_site_origin = http_recorder.site_origin
+
+    def local_test_origin(url):
+        parsed = urlsplit(url)
+        if (parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+                and parsed.port == server.server_port
+                and not parsed.username and not parsed.password):
+            return origin
+        return original_site_origin(url)
+
+    monkeypatch.setattr(http_recorder, "site_origin", local_test_origin)
+    trace = http_recorder.PrivateHttpTrace((origin,))
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=False)
+            try:
+                context = browser.new_context(
+                    accept_downloads=False, service_workers="block",
+                )
+                try:
+                    context.on("request", trace.request)
+                    context.on("response", trace.response)
+                    context.on("requestfinished", trace.finished)
+                    context.on("requestfailed", trace.failed)
+                    page = context.new_page()
+                    page.goto(origin + "/welcome", wait_until="load")
+                    # Chromium, not the recorder, follows a 307 preserving
+                    # POST and body. No authenticated server is involved.
+                    assert page.evaluate(
+                        "fetch('/temporary', {method: 'POST',"
+                        "headers: {'Content-Type': 'application/json'},"
+                        "body: JSON.stringify({bookId: 214})})"
+                        ".then(r => r.json()).then(v => v.accepted)"
+                    ) is True
+                    # fetch() resolves at headers: drain the 400 JSON body
+                    # before the recorder's requestfinished event is expected.
+                    assert page.evaluate(
+                        "fetch('/bad-request').then(async r => {"
+                        "const body = await r.text();"
+                        "return body.includes('invalid_input') ? r.status : 0;"
+                        "})"
+                    ) == 400
+                    page.wait_for_timeout(160)
+                finally:
+                    context.close()
+            finally:
+                browser.close()
+
+        temporary = [e for e in trace.exchanges
+                     if urlsplit(e.url).path == "/temporary"]
+        forwarded = [e for e in trace.exchanges
+                     if urlsplit(e.url).path == "/post-target"]
+        rejected = [e for e in trace.exchanges
+                    if urlsplit(e.url).path == "/bad-request"]
+        assert len(temporary) == len(forwarded) == len(rejected) == 1
+        assert temporary[0].method == forwarded[0].method == "POST"
+        assert temporary[0].status == 307
+        assert temporary[0].redirect_to == "/post-target"
+        assert temporary[0].response_body_state == "redirect"
+        assert forwarded[0].status == 200
+        assert rejected[0].method == "GET" and rejected[0].status == 400
+        assert rejected[0].mime == "application/json"
+        assert rejected[0].response_body and "invalid_input" in rejected[0].response_body
+        assert rejected[0].network_error is False
+        assert calls.count(("POST", "/temporary")) == 1
+        assert calls.count(("POST", "/post-target")) == 1
+        assert calls.count(("GET", "/bad-request")) == 1
+        assert not any(path == "/login" for _method, path in calls)
     finally:
         trace.destroy()
         assert trace.exchanges == [] and trace._pending == {}
