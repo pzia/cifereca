@@ -87,11 +87,9 @@ class X11Input:
             C.c_void_p, C.c_ulong, C.c_uint, C.c_uint,
         ]
         self.x11.XResizeWindow.restype = C.c_int
-        if not self.x11.XResizeWindow(self.display, xid, width, height):
-            # XResizeWindow returns a status-like value on the Xlib binding,
-            # but only ConfigureNotify and the GTK allocation are proof.
-            # Do not mask failure with a synthetic allocation.
-            pass
+        # Xlib request completion is not proof of a GTK allocation. The
+        # caller must observe ConfigureNotify and assert the real size.
+        self.x11.XResizeWindow(self.display, xid, width, height)
         self.x11.XSync(self.display, False)
 
     def window_point(self, window, x: float, y: float) -> tuple[int, int]:
