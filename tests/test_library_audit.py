@@ -9,7 +9,7 @@ import pytest
 
 from cifereca.core.library_audit import audit_library
 from cifereca.core.library_inventory import InventoryLimits
-from test_library_reconciliation import epub, fixture_db, filesystem
+from tests.test_library_reconciliation import epub, fixture_db, filesystem
 
 
 @pytest.fixture
