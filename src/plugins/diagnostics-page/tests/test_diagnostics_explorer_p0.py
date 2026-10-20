@@ -9,7 +9,8 @@ import pytest
 from diagnostics_explorer import (
     PAGE_SIZE, SOURCES, SEVERITIES, PERIODS,
     explorer_since, fetch_explorer_page, sanitized_rows, module_groups,
-    source_summaries, explorer_header, export_selected_events, next_page_offset,
+    source_summaries, diagnostic_channel_caption, explorer_header,
+    export_selected_events, next_page_offset,
     selectable_event_ids,
 )
 
@@ -618,3 +619,70 @@ def test_incomplete_snapshot_code_is_shared_without_free_text_provenance():
     assert public_source_evidence(payload["sources"][0])["reason"] == row[0]["reason"]
     assert "reason" not in row[1]
     assert "Alice Dupont" not in json.dumps(row)
+
+
+def test_diagnostic_channel_caption_explains_two_channels_not_provider_sources():
+    caption = diagnostic_channel_caption({
+        "sources": [
+            {"source": "core_events", "status": "available",
+             "last_event": "2026-10-20T17:55:29+00:00"},
+            {"source": "app_log", "status": "partial",
+             "reason": "log_tail_bounded",
+             "last_event": "2026-10-20T17:55:29+00:00"},
+        ],
+    })
+    assert "Canaux de diagnostic" in caption
+    assert "Événements Core (mémoire) : Alimentée" in caption
+    assert "Journal applicatif (lecture bornée) : Journal partiel" in caption
+    assert "Lecture volontairement bornée" in caption
+    assert "connexion aux fournisseurs" in caption
+    assert "17:55:29" not in caption or "heure locale" in caption
+    for forbidden in ("PRIVATE_ACCOUNT", "source Numilog déconnectée"):
+        assert forbidden not in caption
+
+
+def test_channel_caption_distinguishes_disabled_empty_unavailable_from_partial():
+    caption = diagnostic_channel_caption({"sources": [
+        {"source": "core_events", "status": "disabled",
+         "reason": "diagnostics_disabled"},
+        {"source": "app_log", "status": "empty",
+         "reason": "no_matching_events"},
+    ]})
+    assert "Désactivée" in caption and "Collecteur Core désactivé" in caption
+    assert "Pas d’événement enregistré" in caption
+    assert "Aucune ligne technique admissible" in caption
+    assert "Indisponible" not in caption
+
+
+@pytest.mark.parametrize("payload", [
+    None, [], "PRIVATE_ACCOUNT", {"sources": "PRIVATE_ACCOUNT"},
+    {"sources": []},
+])
+def test_missing_channel_states_do_not_claim_sources_disconnected(payload):
+    caption = diagnostic_channel_caption(payload)
+    assert caption == (
+        "Canaux de diagnostic : états indisponibles "
+        "(événements Core / journal applicatif)."
+    )
+    assert "PRIVATE" not in caption
+
+
+def test_channel_caption_refuses_hostile_source_reason_and_timestamp():
+    class Private:
+        def __str__(self):
+            raise AssertionError("must not stringify secret")
+
+    caption = diagnostic_channel_caption({
+        "sources": [{
+            "source": "PRIVATE_ACCOUNT", "status": "PRIVATE_STATUS",
+            "reason": "PRIVATE_TOKEN", "last_event": Private(),
+        }, {
+            "source": "app_log", "status": "partial",
+            "reason": "PRIVATE_HTTP_URL",
+            "last_event": "PRIVATE_TIMESTAMP",
+        }],
+    })
+    assert "Canal non identifié : Indisponible" in caption
+    assert "Journal applicatif (lecture bornée)" in caption
+    for forbidden in ("PRIVATE", "HTTP_URL", "TOKEN", "Timestamp"):
+        assert forbidden not in caption
