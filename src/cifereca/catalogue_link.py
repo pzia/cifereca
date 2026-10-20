@@ -111,6 +111,22 @@ def catalogue_notice_url(row, *, base=None, provider=None):
             continue
         if reference and page_key(safe) == page_key(reference):
             continue
+        # Historical EbooksGratuits OPDS rows used the search/feed URL as
+        # friendly_url when no HTML alternate existed. Those rows can still
+        # reside in Core's catalogue cache after the provider fix (#2460).
+        # At the presentation boundary a COPS Atom/feed/fetch endpoint can
+        # NEVER become a readable book notice, even when stored as a
+        # friendly_url or nested product_url. No cache migration or HTTP GET.
+        if provider == 'ebooksgratuits':
+            path = unquote(unquote(parts.path)).casefold().rstrip('/')
+            if (path.endswith(('.xml', '.atom', '.opds'))
+                    or path in {'/feed', '/feed.php', '/fetch.php',
+                                '/index.php/feed', '/index.php/feed.php',
+                                '/index.php/fetch', '/index.php/fetch.php',
+                                '/index.php/opensearch.xml'}
+                    or path.startswith(('/index.php/feed/',
+                                        '/index.php/fetch/'))):
+                continue
         # Numilog currently exposes the authenticated personal-library index
         # as friendly_url for every holding, without a per-book public notice.
         if provider == 'numilog' and parts.path.rstrip('/').casefold() == '/pages/compte/meslivres.aspx':
