@@ -312,15 +312,18 @@ def sync_source_row_labels(sources: object) -> tuple[str, ...]:
 
 
 def sync_source_attention(source: object) -> tuple[str, str] | None:
-    """Return a closed-severity, safe alert for a synchronisable account.
+    """Expose the most severe closed-state alert, never a provider payload.
 
-    Only Core-enumerated state and phase codes may influence the wording.
-    Never interpolate error bodies, account IDs, provider descriptions,
-    untrusted phase strings or success timestamps into the attention line.
-    An inventory success cannot conceal a failed local materialization.
+    A warning in a local phase must not hide an error in inventory or in the
+    source-wide status. Within the same severity, prefer local materialization,
+    then inventory/rights, then generic sync and disconnection. This projection
+    is presentation-only: it grants no acquisition or synchronization rights.
     """
     if getattr(source, "sync_capable", None) is not True:
         return None
+    # Each candidate is a fixed UI label. Phase and status values are used
+    # solely as dictionary keys; arbitrary upstream data never becomes text.
+    candidates: list[tuple[str, str]] = []
     entries = getattr(source, "phase_states", ())
     if isinstance(entries, (tuple, list)) and len(entries) <= 8:
         phase_labels = (
@@ -342,20 +345,26 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
                 raw = getattr(row, "status", None)
                 issue = words.get(raw) if type(raw) is str else None
                 if issue:
-                    return issue[0], f"{label} : {issue[1]}"
+                    candidates.append((issue[0], f"{label} : {issue[1]}"))
     raw_status = getattr(source, "status", None)
     status = raw_status.strip().casefold() if type(raw_status) is str and len(raw_status) <= 64 else ""
     raw_error = getattr(source, "error", None)
-    # The text of a provider error is never a safe display value.
+    # Provider errors are opaque; never display their text, paths or URLs.
     error_present = type(raw_error) is str and bool(raw_error)
     if error_present or status in {"error", "failed"}:
-        return "error", "Synchronisation : échec — action nécessaire"
-    if status in {"blocked", "attention_required"}:
-        return "warning", "Synchronisation : action nécessaire"
-    if status == "partial":
-        return "warning", "Synchronisation : résultat partiel"
+        candidates.append(("error", "Synchronisation : échec — action nécessaire"))
+    elif status in {"blocked", "attention_required"}:
+        candidates.append(("warning", "Synchronisation : action nécessaire"))
+    elif status == "partial":
+        candidates.append(("warning", "Synchronisation : résultat partiel"))
     if getattr(source, "enabled", None) is True and getattr(source, "connected", None) is False:
-        return "warning", "Compte déconnecté — reconnexion nécessaire"
+        candidates.append(("warning", "Compte déconnecté — reconnexion nécessaire"))
+    # Stable precedence independent of upstream phase ordering. A severe
+    # source-wide failure must win over an earlier local partial warning.
+    for severity in ("error", "warning"):
+        for candidate in candidates:
+            if candidate[0] == severity:
+                return candidate
     return None
 
 

@@ -63,3 +63,21 @@ def test_no_identity_keeps_attention_hidden_and_global_sync_disabled():
     assert not window._sync_all_button.sensitive
     assert not calls
     assert page.children[1].child is not None
+
+
+def test_header_counts_strongest_failure_per_account_not_first_phase_warning():
+    from types import SimpleNamespace as NS
+    source = _source(provider_id="paris", source_id="mixed", status="failed",
+                     error="https://private.invalid/?token=SECRET_2141",
+                     phase_states=(NS(phase="materialize", status="partial"),))
+    window, _, calls, _, _ = _fixture(sources=[source])
+    row = window._sync_sources_box.children[0].children[0]
+    assert row.subtitle.startswith("Synchronisation : échec — action nécessaire\n")
+    assert window._sync_attention_text.label.startswith(
+        "À vérifier : 1 échec(s) · 0 avertissement(s)."
+    )
+    assert window._sync_attention_icon.icon_name == "dialog-error-symbolic"
+    assert "SECRET_2141" not in row.subtitle
+    assert "SECRET_2141" not in window._sync_attention_text.label
+    assert not window.runner.tasks
+    assert calls == [("sources", "alice")]
