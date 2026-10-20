@@ -1241,9 +1241,11 @@ def _refresh_sync_page(self) -> None:
                 dialog = Adw.MessageDialog.new(
                     self, f"Planifier les notices {provider_label} ?",
                     f"Compte : {account_label}.\n\n"
-                    "Ce réglage autorise seulement la consultation du catalogue "
-                    "personnel et des droits du compte, sans téléchargement, "
-                    "ADEPT ni acquisition. La cadence est limitée par le "
+                    "Ce réglage autorise uniquement la mise à jour des "
+                    "notices des livres possédés et des droits du compte : "
+                    "aucune acquisition, aucun EPUB/ACSM et aucun ADEPT. "
+                    "Le catalogue commercial public est une recherche "
+                    "distincte. La cadence est limitée par le "
                     f"dernier essai et un intervalle de {prior_minutes} min. "
                     "L’actualisation périodique nécessite un ordonnanceur actif. "
                     "Vous pourrez revenir au mode manuel à tout moment.",
