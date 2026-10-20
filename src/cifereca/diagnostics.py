@@ -10,19 +10,47 @@ from typing import Any
 
 from .diagnostic_task_context import numilog_task_reference
 
-# This is the last-resort in-memory redactor, not a substitute for the
-# closed producer schemas used by diagnostics.events. Sensitive *field names*
-# must not allow an unrecognisable account/profile/title value into the legacy
-# Settings text export merely because it is not an email or a URL.
-SENSITIVE_KEYS = re.compile(
-    r"pass|password|cookie|token|secret|readerid|barcode|session|authorization"
-    r"|(?:^|[_-])(?:credential(?:[_-]?id)?|account[_-]?id|identity[_-]?id"
+# Public redact()/redact_text() is also used by book/sync UI. Its legacy
+# contract must not mask a book title or a non-sensitive presence boolean.
+SENSITIVE_KEYS = re.compile(r"pass|password|cookie|token|secret|readerid|barcode|session|authorization", re.I)
+
+# Additional *generic diagnostic collector* guard only. This never modifies
+# the public redaction helper used by Library and Synchronisation views.
+_DIAGNOSTIC_PRIVATE_KEYS = re.compile(
+    r"(?:^|[_-])(?:credential(?:[_-]?id)?|account[_-]?id|identity[_-]?id"
     r"|profile[_-]?id|loan[_-]?id|source[_-]?item[_-]?id|book[_-]?title"
     r"|title|filename|file[_-]?path|local[_-]?path|acsm|license|licence"
     r"|signed[_-]?url|delivery[_-]?url|source[_-]?url|headers?|api[_-]?key)"
     r"(?:$|[_-])",
     re.I,
 )
+
+
+def _redact_generic_diagnostic_detail(detail: dict) -> dict:
+    """Fail closed on private values of otherwise well-formed free-form keys.
+
+    This is supplementary to each producer's typed public projection. Pure
+    booleans ending in _present are non-identifying existence observations;
+    preserve these for established ADEPT diagnostics without retaining IDs.
+    """
+    def guard(value):
+        if type(value) is dict:
+            return {
+                key: (
+                    "<redacted>"
+                    if (type(key) is str and _DIAGNOSTIC_PRIVATE_KEYS.search(key)
+                        and not (key.endswith("_present") and type(item) is bool))
+                    else guard(item)
+                )
+                for key, item in value.items()
+            }
+        if type(value) is list:
+            return [guard(item) for item in value]
+        return value
+
+    return guard(redact(detail))
+
+
 _GENERIC_STATUSES = frozenset({
     "ok", "error", "warning", "failed", "success", "partial", "running",
     "complete", "completed", "attention_required", "retryable_error",
@@ -132,7 +160,7 @@ class Diagnostics:
         # crash a workflow or gain a printable representation of a private
         # object by way of its __str__/__bool__/__eq__ hooks.
         try:
-            safe_detail = redact(detail) if type(detail) is dict else {}
+            safe_detail = _redact_generic_diagnostic_detail(detail) if type(detail) is dict else {}
         except Exception:
             safe_detail = {}
         entry = DiagnosticEntry(
