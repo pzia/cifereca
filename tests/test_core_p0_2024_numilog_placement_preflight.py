@@ -55,15 +55,19 @@ def test_preflight_sql_queries_right_ledger_and_placement_in_one_snapshot(tmp_pa
     service, account, session, calls, item, entitlement, broker, sid = _rig(tmp_path)
     try:
         sql = []
-        with service.storage._lock, service.storage._connect() as db:
-            db.set_trace_callback(sql.append)
-            try:
-                _check(
-                    broker.preflight_numilog_purchase(sid, item),
-                    "candidate_unverified", candidate=True,
-                )
-            finally:
-                db.set_trace_callback(None)
+        # _lock is a non-reentrant threading.Lock. Holding it while
+        # calling the broker deadlocks when the broker enters Storage again.
+        # _connect() is thread-local: attach the read-only SQL trace to the
+        # same connection, but let the production method own its lock.
+        db = service.storage._connect()
+        db.set_trace_callback(sql.append)
+        try:
+            _check(
+                broker.preflight_numilog_purchase(sid, item),
+                "candidate_unverified", candidate=True,
+            )
+        finally:
+            db.set_trace_callback(None)
         lookup = [s for s in sql if "FROM placements" in s
                   and "source_item_id=" in s]
         assert len(lookup) == 1
