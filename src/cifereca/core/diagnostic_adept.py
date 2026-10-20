@@ -16,6 +16,12 @@ ERROR_CODES = frozenset({
     "kobo_adept_timeout", "kobo_adept_launch_error", "kobo_adept_invalid_json",
     "kobo_adept_invalid_utf8", "kobo_adept_invalid_response", "kobo_adept_output_too_large",
 })
+# These are parser branches, not upstream CLI error codes. Never emit JSON
+# keys, output fragments or profile identifiers to explain a response error.
+_RESPONSE_VALIDATION_REASONS = frozenset({
+    "json_not_object", "ok_missing", "ok_not_boolean",
+    "success_with_error", "exit_nonzero_with_success",
+})
 _METRICS = {"duration_ms": (0, 86_400_000), "stdout_bytes": (0, 67_108_864),
             "stderr_bytes": (0, 67_108_864), "returncode": (-255, 255)}
 
@@ -23,7 +29,7 @@ _METRICS = {"duration_ms": (0, 86_400_000), "stdout_bytes": (0, 67_108_864),
 def public_fields(value: object) -> dict:
     if type(value) is not dict or set(value) - {
         "schema_version", "plugin_id", "operation_kind", "operation", "phase",
-        "status", "code", "retryable", "task_ref", *_METRICS,
+        "status", "code", "retryable", "task_ref", "validation_reason", *_METRICS,
     }:
         return {}
     for key, expected in (("plugin_id", PLUGIN_ID), ("operation_kind", "kobo_adept"),
@@ -41,6 +47,12 @@ def public_fields(value: object) -> dict:
             (status == "failed" and code in ERROR_CODES | {"code_non_disponible"})):
         return {}
     if "retryable" in value and (code not in ERROR_CODES or type(value["retryable"]) is not bool):
+        return {}
+    if "validation_reason" in value and (
+        status != "failed" or code != "kobo_adept_invalid_response"
+        or type(value["validation_reason"]) is not str
+        or value["validation_reason"] not in _RESPONSE_VALIDATION_REASONS
+    ):
         return {}
     for key, (low, high) in _METRICS.items():
         if key in value and (type(value[key]) is not int or not low <= value[key] <= high):
@@ -71,6 +83,10 @@ def from_runtime(detail: object, status: object) -> dict:
                   code=code if status == "error" else "completed")
     if status == "error" and code in ERROR_CODES and type(detail.get("retryable")) is bool:
         fields["retryable"] = detail["retryable"]
+    reason = detail.get("validation_reason")
+    if (status == "error" and code == "kobo_adept_invalid_response"
+            and type(reason) is str and reason in _RESPONSE_VALIDATION_REASONS):
+        fields["validation_reason"] = reason
     for key, (low, high) in _METRICS.items():
         value = detail.get(key)
         if type(value) is int and low <= value <= high:
