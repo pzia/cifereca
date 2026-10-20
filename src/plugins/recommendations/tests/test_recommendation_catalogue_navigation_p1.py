@@ -238,3 +238,36 @@ def test_attested_isbn_never_becomes_fuzzy_title_query_or_auto_remote_search():
         "recommendation.search.title.")]) == 0
     assert all(a.uri == "" for a in detail.actions)
     assert calls == []
+
+
+
+def test_multi_provider_exact_editions_offer_explicit_offline_source_filter():
+    """Explicit provider filters do not grant a loan, account or download."""
+    variants = (_variant(), _variant(ISBN_2, provider="paris",
+                                     credential="paris-1", record="notice-paris"))
+    view, identity, calls, detail, row = _view(variants)
+    targeted = [action for action in detail.actions
+                if action.id.startswith("recommendation.search.provider.")]
+    assert len(targeted) == 2
+    assert not calls  # Displaying a recommendation is network-inert.
+    assert all(action.uri == "" for action in targeted)
+    assert targeted[0].callback() is True
+    assert calls == [((ISBN_1,), {
+        "field": "isbn", "online": False, "identity_id": "reader-1",
+        "providers": ("kobo",),
+    })]
+    identity[0] = "reader-2"
+    assert targeted[1].callback() is False
+    assert len(calls) == 1
+
+
+def test_old_targeted_provider_action_cannot_escape_selection_epoch():
+    variants = (_variant(), _variant(ISBN_2, provider="paris",
+                                     credential="paris-1", record="notice-paris"))
+    view, _identity, calls, detail, row = _view(variants)
+    old = next(a.callback for a in detail.actions
+               if a.id.startswith("recommendation.search.provider."))
+    view._selected_row(None)
+    view._selected_row(row)
+    assert old() is False
+    assert not calls

@@ -1021,10 +1021,12 @@ class UiSearchNavigationHost(UiPageHost, Protocol):
 
     Online requires explicit user activation. The host never silently switches
     identity or inherits stale provider/type filters from a previous query.
+    Explicit providers must be currently searchable; no credential is passed.
     """
     def search_books(
         self, query: str, *, field: str = "title",
         online: bool = False, identity_id: str | None = None,
+        providers: tuple[str, ...] = (),
     ) -> bool: ...
 
 

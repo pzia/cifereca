@@ -117,11 +117,13 @@ class _UiHost:
     def search_books(
         self, query: str, *, field: str = "title",
         online: bool = False, identity_id: str | None = None,
+        providers: tuple[str, ...] = (),
     ) -> bool:
         if not self._window_alive():
             return False
         return self.window.search_books(
             query, field=field, online=online, identity_id=identity_id,
+            providers=providers,
         )
     def build_action_bar(self, actions):
         bar = AdaptiveActionBar()
