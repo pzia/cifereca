@@ -581,7 +581,7 @@ def test_journals_show_last_published_event_from_broker():
     from pathlib import Path
     page = (Path(__file__).parents[1] /
             "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
-    assert "dernier événement publié : {state['last_event']}" in page
+    assert "dernier événement publié : {local_timestamp_label(state['last_event'])}" in page
     assert "source_summaries(current_page)" in page
 
 
