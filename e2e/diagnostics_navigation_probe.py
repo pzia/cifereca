@@ -1468,6 +1468,25 @@ def main() -> int:
                            "Source déconnectée fictive", "Achats Numilog fictifs",
                        }]
         assert len(source_rows) == 7
+        # #2141: a failed account must expose a high-contrast, account-local
+        # indicator BEFORE its secondary tools are opened; no raw broker error
+        # and no action/permission mutation accompanies the passive render.
+        failed_paris = next(
+            row for row in walk(w._sync_sources_box)
+            if isinstance(row, Adw.ActionRow)
+            and row.get_title() == "Paris homonyme · paris · connexion 2/2"
+        )
+        assert failed_paris.get_subtitle().startswith(
+            "Synchronisation : échec — action nécessaire\n"
+        )
+        assert "PRIVATE_SYNC_ERROR" not in failed_paris.get_subtitle()
+        alerts = [
+            node for node in walk(failed_paris)
+            if isinstance(node, Gtk.Image)
+            and node.get_icon_name() == "dialog-error-symbolic"
+        ]
+        assert len(alerts) == 1
+        report["checks"]["P0_2141_failed_account_indicator_visible_before_tools"] = True
         for row in source_rows:
             buttons = [node for node in walk(sync_action_row(row))
                        if isinstance(node, Gtk.Button)]
