@@ -299,18 +299,29 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
 
                 attempts += 1
                 observe("acquisition")
-                with trace.acquisition():
-                    acquired = broker.service.acquire_direct_item(
-                        row, _admission=admission,
-                    )
-                # The provider created a durable receipt under the lock;
-                # index without downloading again. Failed indexing leaves
-                # an attention-required receipt and is NOT auto-retried.
-                observe("index")
-                index_delivered(broker.service, acquired, title=row.title)
-                total += 1
-                if control is not None and callable(getattr(control, "report", None)):
-                    control.report(current=total, message="Sauvegarde Numilog")
+                try:
+                    with trace.acquisition():
+                        acquired = broker.service.acquire_direct_item(
+                            row, _admission=admission,
+                        )
+                    # The provider created a durable receipt under the lock;
+                    # index without downloading again. Failed indexing leaves
+                    # an attention-required receipt and is NOT auto-retried.
+                    observe("index")
+                    index_delivered(broker.service, acquired, title=row.title)
+                    total += 1
+                    if control is not None and callable(getattr(control, "report", None)):
+                        control.report(current=total, message="Sauvegarde Numilog")
+                except Cancelled:
+                    raise
+                except Exception:
+                    # One unverified/corrupt/blocked edition must not starve
+                    # the independently authorized remaining purchases.
+                    # Never retry this edition in this run, never replay its
+                    # signed ACSM, and preserve the first failure phase/code.
+                    trace.fail()
+                    failures += 1
+                    continue
         except Cancelled:
             trace.fail("interrupted")
             interrupted = True
