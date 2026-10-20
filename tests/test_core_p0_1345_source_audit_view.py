@@ -74,3 +74,41 @@ def test_non_mapping_receipt_is_not_interpreted():
     assert sync_local_reconciliation_presentation(NS(ok=True, facts="PRIVATE")) == (
         "Audit local indisponible. Aucun fichier modifié."
     )
+
+
+def test_2498_shared_audit_limits_are_visible_without_claiming_missing_books():
+    report = _result(
+        truncated=True,
+        files_hashed_limit=2048,
+        directory_entries_limit=4096,
+        total_hash_bytes_limit=64 * 1024 ** 3,
+        total_hash_bytes_read=5 * 1024 ** 2,
+        accounts=[{"account": "PRIVATE_ACCOUNT", "path": "/PRIVATE"}],
+    )
+    text = sync_local_reconciliation_presentation(report)
+    assert "Audit partiel" in text
+    assert "Plafonds partagés : 2048 vérifications SHA" in text
+    assert "4096 entrées inspectées" in text
+    assert "5/65536 Mio de lecture cumulée" in text
+    assert "PRIVATE" not in text and "/PRIVATE" not in text
+    assert "Aucune réconciliation" in text
+
+
+@pytest.mark.parametrize("changes", [
+    {"files_hashed_limit": True},
+    {"files_hashed_limit": 100_001},
+    {"directory_entries_limit": "PRIVATE"},
+    {"total_hash_bytes_limit": -1},
+    {"total_hash_bytes_read": 10 ** 13},
+    {"total_hash_bytes_read": "https://private.invalid?token=PRIVATE"},
+])
+def test_2498_malformed_or_hostile_budgets_are_not_interpolated(changes):
+    defaults = dict(
+        files_hashed_limit=2048, directory_entries_limit=4096,
+        total_hash_bytes_limit=64 * 1024 ** 3,
+        total_hash_bytes_read=0,
+    )
+    text = sync_local_reconciliation_presentation(_result(**(defaults | changes)))
+    assert "Plafonds partagés" not in text
+    assert "PRIVATE" not in text and "https://" not in text
+    assert "Aucune réconciliation" in text
