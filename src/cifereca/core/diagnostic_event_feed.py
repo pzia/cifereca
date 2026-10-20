@@ -25,6 +25,11 @@ from .numilog_startup_diagnostics import public_log_fields as public_numilog_sta
 from .public_provider_diagnostics import (
     CONNECT_FAILURE_CODE, canonical_public_provider_id,
 )
+from .diagnostic_source_sync import (
+    public_fields as public_source_sync_fields,
+    public_log_fields as public_source_sync_log,
+    public_message as public_source_sync_message,
+)
 from ..diagnostics import Diagnostics
 
 _LOG_LINE = re.compile(
@@ -180,7 +185,13 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_numilog_startup_log(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
-            if numilog_detail:
+            source_sync_detail = (
+                public_source_sync_log(match["body"])
+                if match["logger"] == "cifereca" else {}
+            )
+            if source_sync_detail:
+                message = public_source_sync_message(source_sync_detail)
+            elif numilog_detail:
                 message = public_numilog_message("startup_materialization", numilog_detail)
             elif kobo_detail:
                 message = public_kobo_backup_message(kobo_detail)
@@ -221,9 +232,11 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "source": "app_log",
                 "module": ".".join(safe_parts)[:90],
                 "severity": match["level"].lower(),
-                "message": message[:500] if numilog_detail else message[:240],
+                "message": message[:500] if numilog_detail or source_sync_detail else message[:240],
                 **({"detail": kobo_detail} if kobo_detail else {}),
                 **({"detail": numilog_detail} if numilog_detail else {}),
+                **({"detail": source_sync_detail, "status": source_sync_detail["status"]}
+                   if source_sync_detail else {}),
                 **({"task_ref": task_correlation[1]} if task_correlation else {}),
                 # Neither the rotation suffix nor a moving tail line index
                 # participates in the ID. Distinct lines remain distinct.
@@ -327,6 +340,16 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 and type(diagnostics) is Diagnostics):
             public_detail = public_kobo_backup_decision(row.get("detail"))
             message = public_kobo_backup_message(public_detail) or "[opération masquée]"
+        source_sync_detail = {}
+        if (category == "SYNC" and operation == "source sync"
+                and type(diagnostics) is Diagnostics
+                and row.get("verified_source_sync") is True):
+            source_sync_detail = public_source_sync_fields(row.get("detail"))
+            if source_sync_detail:
+                public_detail = source_sync_detail
+                message = public_source_sync_message(public_detail)
+                severity = ("error" if public_detail["status"] == "failed" else
+                            "warning" if public_detail["status"] == "cancelled" else "info")
         if category == "NUMILOG":
             public_detail = public_numilog_fields(
                 operation, row.get("detail"), row.get("duration_ms"),
@@ -357,9 +380,10 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "severity": severity,
             "message": message,
             **({"detail": public_detail} if public_detail else {}),
-            "status": status if status in {"ok", "error", "failed", "warning",
+            "status": source_sync_detail["status"] if source_sync_detail else (
+                status if status in {"ok", "error", "failed", "warning",
                                          "attention_required", "partial", "success"}
-                       else "unknown",
+                else "unknown"),
             "event_id": event_id,
         })
     state = {
