@@ -81,6 +81,7 @@ class DiagnosticEntry:
     verified_public_provider_id: str | None = None
     verified_source_sync: bool = False
     verified_kobo_adept: bool = False
+    verified_numilog_startup: bool = False
 
 
 class Diagnostics:
@@ -164,6 +165,31 @@ class Diagnostics:
     def clear(self) -> None:
         with self._lock:
             self._items.clear()
+
+    def add_core_numilog_startup(self, detail: object) -> None:
+        """Core-only attested startup facts; generic add() is not provenance.
+
+        The startup producer already writes the independent canonical log.
+        This entry only publishes the same checked fields to the in-memory
+        collector, never a signed URL, exception or provider payload.
+        """
+        from .core.numilog_startup_diagnostics import public_fields
+
+        fields = public_fields(detail)
+        if not fields or not self.enabled:
+            return
+        status = ("error" if fields["status"] in {"failed", "partial"}
+                  else "warning" if fields["status"] == "blocked" else "ok")
+        if self.level == "errors" and status == "ok":
+            return
+        entry = DiagnosticEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            category="NUMILOG", operation="startup_materialization",
+            status=status, detail=fields, task_ref=fields.get("task_ref"),
+            verified_numilog_startup=True,
+        )
+        with self._lock:
+            self._items.append(entry)
 
     def add_core_source_sync(self, provider_id: str, *, phase: str, status: str,
                              code: str, duration_ms: int | None = None,
