@@ -42,6 +42,7 @@ def test_refinement_rejects_generation_change_during_offline_filter(
     module = importlib.import_module(module_name)
     original = getattr(module, function_name)
     s = session()
+    page = s._register_public_page(PAGE, s._navigation_epoch_snapshot())
     calls = []
 
     def interrupted(*args, **kwargs):
@@ -54,7 +55,7 @@ def test_refinement_rejects_generation_change_during_offline_filter(
 
     monkeypatch.setattr(module, function_name, interrupted)
     try:
-        args = ([PAGE] if method == "refine_loaded_pages" else PAGE,)
+        args = ([page] if method == "refine_loaded_pages" else page,)
         with pytest.raises(ProviderError, match="navigation_invalidated"):
             getattr(s, method)(*args, author="Mourlevat")
         assert calls == ["offline"]
@@ -71,6 +72,7 @@ def test_product_selection_rejects_reconnect_during_validation_before_get(
     import cifereca_numilog_public_local_filter as local_filter
     checked = local_filter._validate_page
     s = session()
+    page = s._register_public_page(PAGE, s._navigation_epoch_snapshot())
     fetches = []
 
     def interrupted(page):
@@ -87,7 +89,7 @@ def test_product_selection_rejects_reconnect_during_validation_before_get(
                         lambda *_args: fetches.append("product") or {})
     try:
         with pytest.raises(ProviderError, match="navigation_invalidated"):
-            s.enrich_loaded_page_product(PAGE, PAGE.items[0].record_id)
+            s.enrich_loaded_page_product(page, page.items[0].record_id)
         assert fetches == []
     finally:
         s.close()
@@ -96,7 +98,8 @@ def test_product_selection_rejects_reconnect_during_validation_before_get(
 def test_unchanged_generation_keeps_offline_page_refinement(monkeypatch):
     s = session()
     try:
-        refined = s.refine_loaded_page(PAGE, author="Mourlevat")
+        page = s._register_public_page(PAGE, s._navigation_epoch_snapshot())
+        refined = s.refine_loaded_page(page, author="Mourlevat")
         assert refined.scope == "loaded_public_page_only"
         assert refined.matching_count >= 1
         assert all(not item.owned and not item.downloadable
