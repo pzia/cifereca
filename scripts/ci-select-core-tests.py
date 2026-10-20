@@ -22,6 +22,14 @@ UI_AUX_FILES = {
 FULL_CORE_FILES = {
     "pyproject.toml",
     "scripts/ci-select-core-tests.py",
+    # #2141: the page's actual GTK composition, action grouping and
+    # presentation are covered by legacy test_core_p0_* suites, not only
+    # the narrow test_core_ui_* subset. Run ALL Core tests before merging
+    # changes to these cross-cutting Synchronisation modules.
+    "src/cifereca/gui/sync_controller.py",
+    "src/cifereca/gui/sync_action_layout.py",
+    "src/cifereca/gui/sync_source_details.py",
+    "src/cifereca/gui/sync_view.py",
 }
 UI_TEST_GLOBS = (
     "tests/test_core_ui_*.py",

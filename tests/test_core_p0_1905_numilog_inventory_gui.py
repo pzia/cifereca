@@ -18,8 +18,15 @@ def _sources():
     ) for i in (1, 2)]
 
 
-def _control(window, index=0):
-    group = window._sync_sources_box.children[index]
+def _control(window, index=0, *, source_id=None):
+    groups = window._sync_sources_box.children
+    if source_id is None:
+        group = groups[index]
+    else:
+        matched = [group for group in groups
+                   if group._cifereca_sync_source_id == source_id]
+        assert len(matched) == 1, "Inventory policy must target exactly one account"
+        group = matched[0]
     assert len(group.children) == 4  # source, preview, backup consent, inventory
     backup = group.children[2]
     assert backup.title == "Sauvegarde automatique des achats Numilog"
@@ -62,7 +69,11 @@ def test_disconnected_numilog_can_revoke_existing_inventory_consent(monkeypatch)
         monkeypatch, sources=sources,
         inventory={"numilog-1": {"mode": "periodic", "interval_minutes": 30}},
     )
-    button, _ = _control(w)
+    # The still-connected second account now precedes the disabled first.
+    assert w._sync_sources_box.children[0]._cifereca_sync_source_id == "numilog-2"
+    button, row = _control(w, source_id="numilog-1")
+    assert button.label == "Désactiver les actualisations"
+    assert "périodique autorisée" in row.subtitle
     assert button.sensitive
     button.click()
     assert modes["numilog-1"] == {"mode": "manual", "interval_minutes": 30}

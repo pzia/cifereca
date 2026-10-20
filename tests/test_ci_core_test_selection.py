@@ -147,3 +147,19 @@ def test_component_change_always_keeps_explicit_changed_regression():
     )
     assert mode == "ui-component"
     assert "tests/test_storage.py" in targets
+
+def test_2141_sync_page_changes_cannot_skip_cross_cutting_p0_regressions():
+    """The 4 post-merge failures escaped the narrow CoreUI selector."""
+    selector = _module()
+    for path in (
+        "src/cifereca/gui/sync_controller.py",
+        "src/cifereca/gui/sync_action_layout.py",
+        "src/cifereca/gui/sync_source_details.py",
+        "src/cifereca/gui/sync_view.py",
+    ):
+        assert selector.select([path], ROOT) == ("full", ["tests"])
+        assert selector.select([path, "tests/test_core_ui_1347_sync_action_scope.py"], ROOT) == (
+            "full", ["tests"]
+        )
+    # Keep unrelated GUI component PRs fast: never globally widen the selector.
+    assert selector.select(["src/cifereca/gui/query_controls.py"], ROOT)[0] == "ui-component"

@@ -88,8 +88,15 @@ def fixture(monkeypatch, sources=None):
     return window, broker, calls
 
 
-def controls(window, idx=0):
-    group = window._sync_sources_box.children[idx]
+def controls(window, idx=0, *, source_id=None):
+    groups = window._sync_sources_box.children
+    if source_id is None:
+        group = groups[idx]
+    else:
+        matched = [group for group in groups
+                   if group._cifereca_sync_source_id == source_id]
+        assert len(matched) == 1, "Kobo controls must belong to exactly one account"
+        group = matched[0]
     source_row = group.children[0]
     acquisition_row = group.children[3]
     # Keep the new mutating controls on their *own* row. Otherwise the
@@ -212,10 +219,15 @@ def test_disconnected_kobo_and_other_providers_cannot_start_download(monkeypatch
         harness._source(source_id="pa", provider_id="paris"),
     ]
     w, broker, calls = fixture(monkeypatch, sources=providers)
-    # Paris creates no acquisition button at all.
-    assert not controls(w, 0)[0].sensitive
-    assert len(w._sync_sources_box.children[1].children[0].suffixes) == 2
-    controls(w, 0)[0].click()
+    # Account-first ordering puts connected Paris ahead of disconnected Kobo.
+    # Neither the account index nor the adjacent provider may decide
+    # which source owns the (disabled) acquisition control.
+    assert w._sync_sources_box.children[0]._cifereca_sync_source_id == "pa"
+    assert not controls(w, source_id="ko")[0].sensitive
+    paris = next(group for group in w._sync_sources_box.children
+                 if group._cifereca_sync_source_id == "pa")
+    assert len(paris.children[0].suffixes) == 2
+    controls(w, source_id="ko")[0].click()
     assert w.runner.tasks == []
 
 
