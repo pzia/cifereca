@@ -599,6 +599,10 @@ def test_2095_failed_kobo_audit_exports_only_closed_physical_click_state():
             "clicked_signal": False,
             "broker_calls": 0,
             "subtitle_phase": "initial",
+            "row_recreated": False,
+            "preview_generation_changed": False,
+            "identity_generation_changed": False,
+            "page_rebuilt": False,
         }
         report.write_text(json.dumps({
             "kobo_audit_observation": evidence,
@@ -614,6 +618,10 @@ def test_2095_failed_kobo_audit_exports_only_closed_physical_click_state():
             {**evidence, "broker_calls": True},
             {**evidence, "broker_calls": 3},
             {**evidence, "subtitle_phase": secret},
+            {**evidence, "row_recreated": 1},
+            {**evidence, "preview_generation_changed": secret},
+            {**evidence, "identity_generation_changed": None},
+            {**evidence, "page_rebuilt": 1},
             {**evidence, "private": secret},
             [evidence],
         ):

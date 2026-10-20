@@ -129,10 +129,16 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
             if (type(observation) is not dict
                     or set(observation) != {
                         "clicked_signal", "broker_calls", "subtitle_phase",
+                        "row_recreated", "preview_generation_changed",
+                        "identity_generation_changed", "page_rebuilt",
                     }
                     or type(observation["clicked_signal"]) is not bool
                     or type(observation["broker_calls"]) is not int
                     or not 0 <= observation["broker_calls"] <= 2
+                    or any(type(observation[key]) is not bool for key in (
+                        "row_recreated", "preview_generation_changed",
+                        "identity_generation_changed", "page_rebuilt",
+                    ))
                     or type(observation["subtitle_phase"]) is not str
                     or observation["subtitle_phase"] not in {
                         "initial", "in_progress", "other",
@@ -141,6 +147,8 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
             result["kobo_audit_observation"] = {
                 key: observation[key] for key in (
                     "clicked_signal", "broker_calls", "subtitle_phase",
+                    "row_recreated", "preview_generation_changed",
+                    "identity_generation_changed", "page_rebuilt",
                 )
             }
         duration = data.get("duration_seconds")

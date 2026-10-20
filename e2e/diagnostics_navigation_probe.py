@@ -2372,6 +2372,16 @@ def main() -> int:
             f["audit_stable_checks"] = 0
             later(130, loan_sync_audit_click)
             return
+        # Only local object identity/generation snapshots. Publication exports
+        # four closed booleans, never IDs, account details or GTK contents.
+        f["audit_row_at_click"] = next(
+            row for row in walk(w._sync_sources_box)
+            if isinstance(row, Adw.ActionRow)
+            and row.get_title() == "Vérification des fichiers et rapprochements"
+        )
+        f["audit_preview_generation_at_click"] = getattr(w, "_sync_preview_generation", None)
+        f["audit_identity_generation_at_click"] = getattr(w, "_identity_context_generation", None)
+        f["audit_page_token_at_click"] = getattr(w, "_sync_page_token", None)
         # Exactly one genuine XTEST press/release on a proven GTK hover target.
         device[0].click(sx, sy)
         report["pointer_actions"].append({
@@ -2399,6 +2409,19 @@ def main() -> int:
                 report["kobo_audit_observation"] = {
                     "clicked_signal": f["audit_click_signal_seen"] is True,
                     "broker_calls": min(len(f["audit_calls"]), 2),
+                    "row_recreated": audit_row is not f.get("audit_row_at_click"),
+                    "preview_generation_changed": (
+                        getattr(w, "_sync_preview_generation", None)
+                        != f.get("audit_preview_generation_at_click")
+                    ),
+                    "identity_generation_changed": (
+                        getattr(w, "_identity_context_generation", None)
+                        != f.get("audit_identity_generation_at_click")
+                    ),
+                    "page_rebuilt": (
+                        getattr(w, "_sync_page_token", None)
+                        is not f.get("audit_page_token_at_click")
+                    ),
                     "subtitle_phase": (
                         "in_progress" if subtitle == "Inspection locale en cours (lecture seule)…"
                         else "initial" if subtitle == (
