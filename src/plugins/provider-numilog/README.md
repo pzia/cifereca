@@ -1,3 +1,34 @@
+## 0.1.79 — livraison Eden V2 Adobe et LCP alternatifs (#2024 P0)
+
+Une confirmation Numilog observée fournit désormais deux entrées `Links`
+pour le **même produit/exemplaire** : `LCP` avec `DRM=LCP` et `ADOBE`
+sans ce paramètre, sur la route HTTPS exacte du gestionnaire
+`services.numilog.com/v4.0/HandlerDownloadLinks/HandlerEdenDownloadLinkV2.ashx`.
+Le parseur ne reproduit ni n'enregistre les jetons signés ; il vérifie
+strictement les noms `pid/uid/tid`, les formats et bornes des valeurs,
+l'unicité, l'égalité `pid=ProductId` et la concordance des deux variantes
+`pid/uid/tid`. La paire produit/copie, l'unique bouton ModalDownload,
+la carte de confirmation liée à l'achat et l'éventuel readBook de la
+carte restent obligatoires. L'absence de streaming après le 302 direct
+autorise le mode `download` sur **cette forme Eden V2 seulement**.
+
+Le provider sélectionne **exclusivement la variante ADOBE** et bloque
+une URL Eden V2 non liée à la carte avant GET. Le broker d'acquisition,
+la vérification de propriétaire, la détection structurale ACSM et le
+runtime ADEPT existants restent obligatoires. Aucun téléchargement LCP
+n'est effectué : la prise en charge LCP ne fait pas partie de cette
+version. Les réponses HTML/403, redirections hors origine et contenus
+ACSM invalides échouent sans publication.
+
+Tests fictifs et hors réseau :
+`test_numilog_eden_v2_adobe_p0_2024.py`, variations de formulaire
+de connexion partagé, redirection, modes `dwld/download`, édition
+mismatched, jetons et copies adverses, LCP refusé et broker ADEPT.
+Le fait que Numilog offre ADOBE ne prouve **pas** qu'une récupération
+réelle réussisse, ni la cause antérieure d'un worker automatique.
+
+---
+
 ## 0.1.78 — livraison EPUB direct signée et liée à l'achat (#2024 P0)
 
 Le fournisseur publie, sur certaines confirmations sans streaming, un
