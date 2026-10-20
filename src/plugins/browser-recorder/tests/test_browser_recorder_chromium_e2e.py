@@ -154,8 +154,12 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
             return origin
         return original_site_origin(url)
 
-    # Strictly test-scoped authority for ONE synthetic localhost server.
+    # Strictly test-scoped authority for ONE synthetic localhost server,
+    # including the independently validated ZIP projection. Production
+    # still refuses HTTP and local IP literals without these monkeypatches.
+    import browser_recorder_zip as zip_module
     monkeypatch.setattr(http_recorder, "site_origin", local_test_origin)
+    monkeypatch.setattr(zip_module, "site_origin", local_test_origin)
     trace = http_recorder.record_http(
         origin + "/catalog", stop, origins=(origin,), max_seconds=25,
     )
