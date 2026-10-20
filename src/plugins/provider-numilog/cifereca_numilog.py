@@ -742,7 +742,7 @@ class NumilogSession(ProviderSession):
                 # arbitrary publishers are reachable ONLY via an owned Links
                 # selection, not as a direct_url convenience path.
                 raise ProviderError(
-                    'Numilog : lien externe non lié à un achat ; téléchargement arrêté'
+                    'Numilog : livraison externe non liée à un achat ; téléchargement arrêté'
                 )
             for hop in range(12):
                 trace.fail('adept_unconfirmed')
