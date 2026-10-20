@@ -231,13 +231,13 @@ def resolve_readzis_recommendation(recommendation_url: str, *, lid: str,
     except httpx.HTTPError:
         raise ProviderError("Numilog : public_readzis_network_unavailable") from None
 
-    if type(location) is not str or not 0 < len(location) <= 512:
+    if type(location) is not str or not 0 < len(location) <= 4096:
         raise ProviderError("Numilog : public_readzis_redirect_unverified")
     try:
         parsed = urlsplit(location)
         if (parsed.scheme != "https" or parsed.netloc != "www.numilog.com"
                 or parsed.fragment or parsed.username or parsed.password
-                or chr(92) in location or any(ch.isspace() for ch in location)
+                or chr(92) in parsed.path or any(ch.isspace() for ch in parsed.path)
                 or any(segment in (".", "..") for segment in parsed.path.split("/"))):
             raise ValueError("untrusted location")
         # The marketing query is opaque and irrelevant: do not inspect,
