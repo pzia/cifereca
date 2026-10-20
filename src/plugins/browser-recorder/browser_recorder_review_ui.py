@@ -181,7 +181,9 @@ class PrivateReviewPanel:
                     self._trace = result
                     try:
                         self._review = IdentifierReview(result)
-                    except RecorderError:
+                    except Exception:
+                        # Never show exception text from a provider response
+                        # or URL that might contain a token.
                         result.destroy()
                         self._trace = None
                         self.status.set_label(
@@ -221,7 +223,7 @@ class PrivateReviewPanel:
             # Candidate values are shown only to the local operator.
             label = Gtk.Label(
                 label=f"{row['key']} · {row['kind']} · {row['occurrences']}× : "
-                      f"{row['value'][:120]}",
+                      f"{row['value']}",
                 xalign=0, wrap=True,
             )
             label.set_selectable(True)
