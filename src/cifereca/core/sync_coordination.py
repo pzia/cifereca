@@ -629,11 +629,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         # Optional persistence must neither fail the opening nor reveal a
         # filesystem, plugin or database exception class in TRACE.
         logger.warning("TRACE kobo backup decision persistence error code=decision_save_failed")
-    self.diagnostics.add(
-        "KOBO", "automatic backup decision",
-        "warning" if kobo_decision["status"] in ("partial", "error") else "ok",
-        detail=kobo_decision, level="normal",
-    )
+    self.diagnostics.add_core_kobo_backup_decision(kobo_decision, level="normal")
     for identity in self.identities:
         emit("adept_inventory", identity_id=identity.identity_id, result=self._reconcile_identity_adept_inventory(identity.identity_id))
     self.last_loans = sorted(all_loans, key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
