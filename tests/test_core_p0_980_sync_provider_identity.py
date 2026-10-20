@@ -94,15 +94,18 @@ def test_gtk_controller_titles_disambiguate_public_catalogues_only_when_same_nam
     ]
     window, broker, calls, _build, _page = _fixture(sources=sources)
     rows = [group.children[0] for group in window._sync_sources_box.children]
+    # #2141: genuine synchronisable accounts are presented before public
+    # catalogues; provider disambiguation remains in the public titles.
     assert [row.title for row in rows] == [
+        "Paris · Camille",
         "Catalogue public · gutenberg",
         "Catalogue public · gallica",
-        "Paris · Camille",
     ]
-    assert all("Fournisseur : " in row.subtitle for row in rows)
-    assert "Fournisseur : gutenberg" in rows[0].subtitle
-    assert "Fournisseur : gallica" in rows[1].subtitle
-    assert "Fournisseur : paris" in rows[2].subtitle
+    assert "Fournisseur : paris" in rows[0].subtitle
+    for row in rows[1:]:
+        assert "Catalogue consultable" in row.subtitle
+        assert "Synchronisation des données non prise en charge" in row.subtitle
+        assert len(row.suffixes) == 1  # activation switch; no ghost sync
     assert window.runner.tasks == []
     assert all(name == "sources" for name, *_ in calls)
 

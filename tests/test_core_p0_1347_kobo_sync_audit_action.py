@@ -24,7 +24,12 @@ def _receipt(*, truncated=False):
 def _audit_controls(window):
     group = window._sync_sources_box.children[0]
     row = group.children[0]
-    return row.suffixes[3], group.children[2]
+    # An unsupported/disconnected source has no ghost Sync button (#2141).
+    # Find the audit by its action, not an old positional suffix index.
+    matches = [button for button in row.suffixes
+               if button.label == "Vérifier les fichiers…"]
+    assert len(matches) == 1
+    return matches[0], group.children[2]
 
 
 def test_sync_page_audit_is_explicit_and_updates_redacted_summary():
@@ -54,10 +59,15 @@ def test_audit_remains_available_if_kobo_is_disabled_and_disconnected():
     source = _source(enabled=False, connected=False, sync_capable=False)
     window, broker, calls, _, _ = _fixture(sources=[source])
     row = _source_row(window)
-    assert row.suffixes[1].sensitive is False  # refresh disallowed
-    assert row.suffixes[2].sensitive is False  # manifest preview disabled
-    assert row.suffixes[3].sensitive is True  # purely local audit
-    row.suffixes[3].click()
+    # Disabled public/unsupported sync is absent, not an index placeholder.
+    assert not any(button.label and button.label.startswith("Synchroniser ")
+                   for button in row.suffixes)
+    previews = [button for button in row.suffixes
+                if button.label == "Aperçu local…"]
+    assert len(previews) == 1 and not previews[0].sensitive
+    audit_button, _ = _audit_controls(window)
+    assert audit_button.sensitive  # purely local audit remains available
+    audit_button.click()
     assert window.runner.tasks[0].work() is not None
     assert ("audit", source.source_id) in calls
     assert not any(name == "sync-source" for name, *_ in calls)
