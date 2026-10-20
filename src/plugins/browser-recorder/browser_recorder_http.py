@@ -25,7 +25,7 @@ _ALLOWED_MIME = frozenset((
     "application/javascript", "text/javascript",
 ))
 _TECHNICAL_HEADERS = frozenset((
-    "content-type", "content-length", "accept", "accept-language",
+    "content-type", "content-length", "content-encoding", "accept", "accept-language",
     "retry-after", "x-ratelimit-limit", "x-ratelimit-remaining",
     "x-ratelimit-reset", "cache-control", "etag", "last-modified",
 ))
