@@ -86,6 +86,10 @@ class PrivateReviewPanel:
     def is_recording(self):
         return self._handle is not None and not self._handle.done()
 
+    def has_private_data(self):
+        return (self.is_recording()
+                or self._trace is not None or self._review is not None)
+
     def _refresh(self):
         busy = self.is_recording()
         self.start.set_sensitive(
