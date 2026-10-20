@@ -78,6 +78,7 @@ def test_buttons_are_same_objects_below_full_width_description_and_keep_callback
     assert all(button.options["halign"] == 1 for button in buttons)
     assert all(button.options["hexpand"] is False for button in buttons)
     assert all(caption.options["wrap"] is True for caption in captions)
+    assert all(caption.options["width_chars"] == 28 for caption in captions)
     assert [button.options["sensitive"] for button in buttons] == [True, False]
     assert row.options["subtitle"] == "Long état de plusieurs lignes"
     buttons[0].clicked()
