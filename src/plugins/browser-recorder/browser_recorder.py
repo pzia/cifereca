@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlsplit
 
 MAX_EVENTS = 300
 MAX_BYTES = 256_000
+MAX_TEXT_RESPONSE_BYTES = 64 * 1024
 SCHEMA = "cifereca.browser-recorder/1"
 REDACTED = "~redacted~"
 # Only these known, nonspecific URL components can leave the browser process.
@@ -113,6 +114,39 @@ def _request_entry(method: str, url: str, started: str) -> dict:
     }
 
 
+_TEXT_MIMES = frozenset((
+    "text/html", "text/plain", "text/xml", "text/css",
+    "application/json", "application/xml", "application/xhtml+xml",
+    "application/ld+json",
+))
+
+
+def classify_response_metadata(headers) -> dict:
+    """Closed MIME/size classification without fetching response bytes.
+
+    An advertised Content-Length is not a memory guarantee. Therefore this
+    phase intentionally never calls response.body()/text(); it supplies a
+    bounded, non-sensitive classification for the future private reviewer.
+    """
+    try:
+        mime = str(headers.get("content-type", "")).split(";", 1)[0].strip().lower()
+        size = str(headers.get("content-length", "")).strip()
+    except (AttributeError, TypeError, ValueError):
+        return {"mime": "unknown", "body_state": "body_omitted"}
+    textual = mime in _TEXT_MIMES or (
+        mime.startswith("text/") and len(mime) <= 50
+    ) or (mime.startswith("application/") and
+          (mime.endswith("+json") or mime.endswith("+xml")) and len(mime) <= 80)
+    # Never preserve arbitrary vendor MIME parameters or private headers.
+    if not textual:
+        return {"mime": "binary" if mime else "unknown",
+                "body_state": "binary_skipped" if mime else "body_omitted"}
+    advertised = int(size) if size.isdecimal() and len(size) <= 10 else None
+    if advertised is not None and advertised > MAX_TEXT_RESPONSE_BYTES:
+        return {"mime": "text", "body_state": "truncated"}
+    return {"mime": "text", "body_state": "body_omitted"}
+
+
 class Capture:
     def __init__(self, origin: str, *, limit: int = MAX_EVENTS) -> None:
         self.origin = site_origin(origin)
@@ -148,6 +182,13 @@ class Capture:
             entry["_cifereca"]["outcome"] = (
                 "redirect" if 300 <= status <= 399 else "response"
             )
+            try:
+                meta = classify_response_metadata(response.headers)
+            except Exception:
+                # A browser adapter or test double must not turn arbitrary
+                # headers into a captured error or a traceback with secrets.
+                meta = {"mime": "unknown", "body_state": "body_omitted"}
+            entry["_cifereca"].update(meta)
 
     def request_failed(self, request) -> None:
         """Associate failures with requests, without inspecting error text.
