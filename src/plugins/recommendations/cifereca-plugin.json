@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.recommendations",
-    "version": "0.2.28",
+    "version": "0.2.29",
     "name": "Recommandations CIFERECA",
     "publisher": "CIFERECA",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "ui.page.recommendations",
       "type": "ui.page",
-      "version": "0.2.28",
+      "version": "0.2.29",
       "entrypoint": "recommendations:PLUGIN",
       "display_name": "Recommandations",
       "description": "Recommande des livres à partir de la bibliothèque du profil et des catalogues connectés.",
@@ -90,7 +90,7 @@
     {
       "id": "recommendation.book-reference.recommendations",
       "type": "recommendation",
-      "version": "0.2.28",
+      "version": "0.2.29",
       "entrypoint": "recommendation_bridge:PLUGIN",
       "display_name": "Recommandations à partir d’un livre",
       "description": "Active une recommandation centrée sur un livre et ouvre la page Recommendations.",
