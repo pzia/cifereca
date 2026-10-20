@@ -242,6 +242,12 @@ def parse_public_detail_jsonld(html, product_url):
     observed_isbn = _isbn(node.get("isbn"))
     if observed_isbn:
         fields["isbn_edition_unspecified"] = observed_isbn
+    # Official product JSON-LD may publish only gtin13. Preserve the raw
+    # *typed GTIN fact*, not a purchased EPUB/PDF ISBN or media/rights proof.
+    # If isbn and gtin13 disagree they remain two distinct public facts.
+    observed_gtin13 = _isbn(node.get("gtin13"))
+    if observed_gtin13:
+        fields["public_gtin13_edition_unspecified"] = observed_gtin13
     authors = node.get("author")
     if isinstance(authors, (str, dict)):
         authors = [authors]
@@ -434,6 +440,7 @@ def validated_public_jsonld_fields(detail, product_url):
     allowed = {
         "title": 512, "description": 16000, "language": 80,
         "published_at": 32, "isbn_edition_unspecified": 32,
+        "public_gtin13_edition_unspecified": 13,
         "authors": 32, "publisher": 256,
         "translators": 16, "illustrators": 16, "contributors": 16,
         "public_edition_label": 256, "public_age_range_label": 80,
@@ -470,7 +477,7 @@ def validated_public_jsonld_fields(detail, product_url):
                         ("http://", "https://", "javascript:", "data:"))):
                 raise PublicDetailError("public_jsonld_evidence_unverified")
             qualified = value
-        elif key == "isbn_edition_unspecified":
+        elif key in {"isbn_edition_unspecified", "public_gtin13_edition_unspecified"}:
             if type(value) is not str or _isbn(value) != value:
                 raise PublicDetailError("public_jsonld_evidence_unverified")
             qualified = value
