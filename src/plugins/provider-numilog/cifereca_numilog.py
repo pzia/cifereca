@@ -26,7 +26,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.79'
+VERSION = '0.1.80'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -579,12 +579,31 @@ class NumilogSession(ProviderSession):
                 )
             # Never accept caller-supplied public links, cached entitlement or
             # arbitrary private delivery references. Only fresh Mes Livres.
-            owned = self._normalize(matches[0])
+            row = matches[0]
+            owned = self._normalize(row)
             if owned.friendly_url is None:
-                return owned
+                recommendation = row.get('readzis_url')
+                if type(recommendation) is not str:
+                    return owned
+                from cifereca_numilog_public_client import resolve_readzis_recommendation
+                # This commercial share visit is allowed ONLY on explicit
+                # enrichment. The cache key is a digest, never the link or its
+                # private record ID; only a stripped canonical URL is cached.
+                key = ('readzis', hashlib.sha256(recommendation.encode()).hexdigest())
+                resolved = self._owned_public_cache.get(
+                    key, lambda: resolve_readzis_recommendation(
+                        recommendation, lid=row['lid'],
+                    ),
+                )
+                self._ensure_enrichment_identity(binding)
+                owned = replace(
+                    owned, friendly_url=resolved,
+                    metadata={**owned.metadata,
+                              'public_url_evidence': 'numilog.library_readzis_redirect'},
+                )
             from cifereca_numilog_enrichment import merge_attested_owned_direct_public_detail
-            # One explicit, anonymous product GET, sharing the existing
-            # bounded public cache, cooldown and 429 response handling.
+            # Public product GET is separately budgeted: never follow the
+            # tracking/trackid destination from the recommendation redirect.
             detail = self.public_product_detail(owned.friendly_url)
             self._ensure_enrichment_identity(binding)
             result = merge_attested_owned_direct_public_detail(owned, detail)
