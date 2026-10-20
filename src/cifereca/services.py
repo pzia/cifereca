@@ -2765,6 +2765,11 @@ class LibraryService:
         the destination and hands every ACSM to Adept; no ADEPT implementation
         leaks into Paris.
         """
+        # The entrypoint is also called directly by existing integrations.
+        # A truthy non-bool must never act like a deliberate reacquisition
+        # (especially when an ACSM may be one-use). Mirror the strict ADEPT
+        # retry predicate before planning local reuse or provider staging.
+        force_refresh = force_refresh is True
         started = time.monotonic()
         trace_ref = loan_trace_ref(loan, None)
         _TRACE_LOG.info(
