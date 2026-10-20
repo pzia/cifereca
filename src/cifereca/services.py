@@ -2950,14 +2950,7 @@ class LibraryService:
             # A bounded subset of real process counters is useful even when
             # the runtime response text is untrusted and cannot be echoed.
             public_process = failure_fields(code=code, process=process, loan_ref=None)
-            safe_facts = [
-                f"{key}={public_process[key]}" for key in (
-                    "returncode", "duration_ms", "stdout_bytes",
-                    "stderr_bytes", "artifact_bytes", "artifact_present",
-                ) if key in public_process
-            ]
-            if safe_facts:
-                message += " (" + ", ".join(safe_facts) + ")"
+            message += loan_failure_evidence.public_process_suffix(public_process)
             # This is a decoder/transport-contract failure, *not* an Adobe
             # licensing decision. The next opening may retry it automatically.
             # Never infer a named Adobe refusal from a generic CLI exit code.
