@@ -1,3 +1,37 @@
+## 1.2.28 — diagnostic fermé lorsque l'exécutable Kobo-ADEPT manque (#979 P0)
+
+La commande `run_json()` conservait déjà le contrat public
+`AttentionRequired(code="kobo_adept_missing")` en cas de
+`FileNotFoundError`, mais **ne publiait aucun diagnostic structuré** :
+un export pouvait simplement afficher « kobo adept », impossible à
+attribuer à cette cause technique sans l'exception privée.
+
+Le runtime publie désormais **uniquement** le code technique fermé
+`kobo_adept_missing`, `retryable=false`, la famille d'opération
+déjà qualifiée et la durée mesurée via `report_diagnostic`. Aucune
+sortie de processus n'existe dans ce cas ; ses compteurs sont donc
+omis. Le type d'exception, son code, son message utilisateur fixe et
+la sémantique métier de l'appelant ne changent **pas**.
+
+L'exception système peut mentionner le chemin du binaire, un profil,
+une URL signée ou des arguments privés : ni `filename`, ni
+`str(exception)`, ni `repr` ni traceback ne traversent la frontière.
+Un callback de diagnostic défaillant ne modifie jamais l'échec
+`AttentionRequired` ; une commande suivante réussie ne propage
+aucun ancien code d'erreur.
+
+Tests hors réseau :
+`tests/test_adept_missing_binary_diagnostic_p0_979.py` (chemins
+et arguments factices hostiles, callback en erreur, non-rétention).
+
+**Limite** : cette livraison ne confirme **aucune** cause d'activation
+Adobe/libgourou, n'ajoute pas de nouveau code métier fournisseur et
+n'explique pas a posteriori les trois événements opaques observés sur
+la machine utilisateur. Le contrat structuré réel `kobo-adept-next`
+et les actions contextualisées Core/UI restent ouverts dans #979.
+
+---
+
 # Contrat d'erreur Kobo-ADEPT / ACSM (P0 #979)
 
 ## État
