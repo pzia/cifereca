@@ -177,17 +177,19 @@ class EbooksGratuitsApp:
         self.cache = cache
 
     @staticmethod
-    def _send(handler, status: int, content_type: str, body: bytes) -> None:
+    def _send(handler, status: int, content_type: str, body: bytes, *, headers: dict[str, str] | None = None) -> None:
         handler.send_response(status)
         handler.send_header("Content-Type", content_type)
         handler.send_header("Content-Length", str(len(body)))
         handler.send_header("Cache-Control", "no-store")
+        for name, value in (headers or {}).items():
+            handler.send_header(name, value)
         handler.end_headers()
         if handler.command != "HEAD":
             handler.wfile.write(body)
 
-    def send_text(self, handler, status: int, content_type: str, text: str) -> None:
-        self._send(handler, status, content_type + "; charset=utf-8", text.encode("utf-8"))
+    def send_text(self, handler, status: int, content_type: str, text: str, *, headers: dict[str, str] | None = None) -> None:
+        self._send(handler, status, content_type + "; charset=utf-8", text.encode("utf-8"), headers=headers)
 
     def send_json(self, handler, payload: dict, status: int = HTTPStatus.OK) -> None:
         self.send_text(handler, status, "application/json", json.dumps(payload, ensure_ascii=False))
@@ -261,11 +263,47 @@ class EbooksGratuitsApp:
             write_epub(path, self.cache.as_book(row))
         self._send(handler, HTTPStatus.OK, "application/epub+zip", path.read_bytes())
 
+    def _inject_fault(self, handler, route: str, fault: str) -> bool:
+        """Opt-in HTTP negatives only; never materialize an EPUB or mutate data."""
+        if fault == "429":
+            self.send_text(handler, HTTPStatus.TOO_MANY_REQUESTS, "text/plain",
+                           "synthetic rate limit", headers={"Retry-After": "3"})
+            return True
+        if fault == "503":
+            self.send_text(handler, HTTPStatus.SERVICE_UNAVAILABLE, "text/plain",
+                           "synthetic unavailable")
+            return True
+        if route in {"/", "/ebooks.php", "/details.php"}:
+            if fault == "login_html":
+                self.send_text(handler, HTTPStatus.OK, "text/html",
+                               "<html><body><form id='login'>"
+                               "<input name='username'></form></body></html>")
+                return True
+            if fault == "malformed_html":
+                self.send_text(handler, HTTPStatus.OK, "text/html",
+                               "<html><body><ul><li>broken fixture")
+                return True
+        if route == "/newsendbook.php":
+            if fault == "expired_link":
+                self.send_text(handler, HTTPStatus.GONE, "text/plain", "synthetic expired link")
+                return True
+            if fault in {"wrong_mime", "missing_format"}:
+                self.send_text(handler, HTTPStatus.OK, "text/html",
+                               "<html><body>no EPUB available</body></html>")
+                return True
+            if fault == "invalid_epub":
+                self._send(handler, HTTPStatus.OK, "application/epub+zip", b"not a ZIP/EPUB")
+                return True
+        return False
+
     def route_get(self, handler):
         parsed = urlsplit(handler.path)
         qs = parse_qs(parsed.query, keep_blank_values=True)
         if parsed.path == "/health":
             return self.send_json(handler, {"ok": True, "books": self.cache.count()})
+        if parsed.path in {"/", "/ebooks.php", "/details.php", "/newsendbook.php"}:
+            if self._inject_fault(handler, parsed.path, (qs.get("ux_fault") or [""])[0]):
+                return
         if parsed.path in {"/", "/ebooks.php"}:
             return self.page(
                 handler,
@@ -285,6 +323,9 @@ class EbooksGratuitsApp:
         parsed = urlsplit(handler.path)
         if parsed.path != "/ebooks.php":
             return self.send_text(handler, HTTPStatus.NOT_FOUND, "text/plain", "route inconnue")
+        qs = parse_qs(parsed.query, keep_blank_values=True)
+        if self._inject_fault(handler, parsed.path, (qs.get("ux_fault") or [""])[0]):
+            return
         length = int(handler.headers.get("Content-Length") or 0)
         body = handler.rfile.read(min(length, 64 * 1024)).decode("utf-8", errors="replace")
         form = parse_qs(body, keep_blank_values=True)
