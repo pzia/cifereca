@@ -158,10 +158,18 @@ def test_same_identity_two_kobo_accounts_do_not_share_catalogue_proposals(
     """A catalogue product ID has no credential: it cannot prove either account."""
     service, session = _service(tmp_path, [])
     try:
-        service.storage.provider_connection_put({
-            "provider_id": "kobo", "credential_id": "vault-2",
-            "identity_id": "default", "label": "Private second account",
-        })
+        # Normal writes rightly forbid a second Kobo account for an identity.
+        # This fixture represents legacy/corrupt SQLite rows that a read-only
+        # audit must not silently use to cross-assign catalogue evidence.
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute(
+                "INSERT INTO provider_connections("
+                "connection_id,identity_id,provider_id,credential_id,label,"
+                "enabled,metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                ("legacy-duplicate", "default", "kobo", "vault-2",
+                 "Private second account", 1, "{}", 0, 0),
+            )
         first = service._kobo_backup_target_dir("default") / "PRIVATE-shared.epub"
         _write_epub(first)
         sha = hashlib.sha256(first.read_bytes()).hexdigest()
