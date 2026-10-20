@@ -63,6 +63,37 @@ class X11Input:
         y = round(origin_y.value + rect.get_y() + rect.get_height() / 2 + transform_y)
         return x, y
 
+    def resize_toplevel(self, window, width: int, height: int) -> None:
+        """Ask X11 to actually resize a mapped GTK toplevel (not its default).
+
+        Gtk.Window.set_default_size() only supplies initial geometry and
+        need not change an already-mapped window. The probe still verifies
+        the resulting allocated GTK width and all 760px layout assertions.
+        """
+        if (type(width) is not int or type(height) is not int
+                or not 1 <= width <= 8192 or not 1 <= height <= 8192):
+            raise RuntimeError("X11 toplevel resize dimensions invalid")
+        from native_capture import pointer
+        native = window.get_native()
+        if native is not window or native.get_surface() is None:
+            raise RuntimeError("X11 GTK toplevel has no native surface")
+        lib = C.CDLL("libgtk-4.so.1")
+        lib.gdk_x11_surface_get_xid.argtypes = [C.c_void_p]
+        lib.gdk_x11_surface_get_xid.restype = C.c_ulong
+        xid = lib.gdk_x11_surface_get_xid(pointer(native.get_surface()))
+        if not xid:
+            raise RuntimeError("X11 GTK toplevel has no valid XID")
+        self.x11.XResizeWindow.argtypes = [
+            C.c_void_p, C.c_ulong, C.c_uint, C.c_uint,
+        ]
+        self.x11.XResizeWindow.restype = C.c_int
+        if not self.x11.XResizeWindow(self.display, xid, width, height):
+            # XResizeWindow returns a status-like value on the Xlib binding,
+            # but only ConfigureNotify and the GTK allocation are proof.
+            # Do not mask failure with a synthetic allocation.
+            pass
+        self.x11.XSync(self.display, False)
+
     def window_point(self, window, x: float, y: float) -> tuple[int, int]:
         """Convert a GTK toplevel-local hit point to the X11 root display.
 
