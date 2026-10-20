@@ -1,6 +1,6 @@
 """Bounded EPUB metadata/cover inspection, independent of network and DRM."""
 from __future__ import annotations
-import hashlib, os, re, tempfile, zipfile
+import hashlib, os, re, struct, tempfile, zipfile, zlib
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree as ET
@@ -17,14 +17,17 @@ _SAFE_EPUB_REJECTION_CODES=frozenset({
     'unsafe_xml', 'ambiguous_or_missing_entry', 'oversized_or_symlink_entry',
     'oversized_entry', 'external_resource', 'invalid_member',
     'escaping_member', 'unsafe_cache_path', 'too_many_entries',
-    'missing_opf', 'missing_metadata',
+    'missing_opf', 'missing_metadata', 'oversized_directory',
+    'unsupported_zip_directory',
 })
 
 def cover_cache_dir():
     root=cache_dir()/'epub-covers-v1';root.mkdir(parents=True,exist_ok=True);return root
 
 def _xml(data):
-    if b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():raise ValueError('unsafe_xml')
+    # UTF-16/32 declarations must not bypass the DTD/entity rejection.
+    declarations=data.replace(b'\x00',b'').upper()
+    if b'<!DOCTYPE' in declarations or b'<!ENTITY' in declarations:raise ValueError('unsafe_xml')
     return ET.fromstring(data)
 
 def _read(archive,name,limit):
@@ -99,9 +102,40 @@ def _publish_cover(data,kind):
             Path(temp).unlink(missing_ok=True)
     return name
 
-def inspect_epub(path):
+def _bounded_directory(stream):
+    """Reject huge central directories BEFORE ZipFile allocates their entries.
+
+    Metadata-only audit accepts ordinary single-volume ZIP, not ZIP64. The
+    caller owns this already-open stream; never reopen a mutable pathname.
+    """
+    stream.seek(0,2);size=stream.tell()
+    stream.seek(max(0,size-65557));tail=stream.read(65557)
+    offset=tail.rfind(b'PK\x05\x06')
+    if offset<0 or len(tail)-offset<22:raise zipfile.BadZipFile()
+    _,disk,start_disk,on_disk,count,central_size,central_offset,comment=struct.unpack_from('<4s4H2LH',tail,offset)
+    if (disk or start_disk or on_disk!=count or count==65535
+            or central_size==0xffffffff or central_offset==0xffffffff
+            or offset+22+comment!=len(tail)):
+        raise ValueError('unsupported_zip_directory')
+    if count>MAX_ENTRIES:raise ValueError('too_many_entries')
+    if central_size>8*1024*1024:raise ValueError('oversized_directory')
+    stream.seek(0)
+
+def inspect_epub(path, *, metadata_only=False):
+    """Inspect an EPUB; metadata_only never reads/publishes a cover or cache.
+
+    For race-safe audit use an already-open binary stream. Path callers retain
+    the historic cover behavior unless metadata_only is explicitly requested.
+    """
+    if metadata_only and isinstance(path,(str,os.PathLike)):
+        try:
+            with open(path,'rb') as stream:
+                return inspect_epub(stream,metadata_only=True)
+        except OSError:
+            return {'epub_metadata_schema':SCHEMA,'epub_metadata':{},'epub_status':'unreadable_metadata','epub_cover_status':'metadata_unreadable'}
     result={'epub_metadata_schema':SCHEMA,'epub_metadata':{},'epub_status':'unavailable'}
     try:
+        if metadata_only:_bounded_directory(path)
         with zipfile.ZipFile(path) as archive:
             if len(archive.infolist())>MAX_ENTRIES:raise ValueError('too_many_entries')
             container=_xml(_read(archive,'META-INF/container.xml',MAX_XML))
@@ -144,6 +178,9 @@ def inspect_epub(path):
                 'subjects':values.get('subject',[]),'description':'\n\n'.join(values.get('description',[])) or None,
                 'rights':values.get('rights',[]),'series':series,'original':original,'source':'epub','opf':opf}
             result.update(epub_metadata=normalized,epub_status='ok')
+            if metadata_only:
+                result['epub_cover_status']='not_requested'
+                return result
             items=list(manifest) if manifest is not None else []
             candidates=[node for node in items if 'cover-image' in node.attrib.get('properties','').split()]
             candidates.extend(node for node in items if node.attrib.get('id')==cover_id and node not in candidates)
@@ -194,7 +231,7 @@ def inspect_epub(path):
                         member=_member(str(PurePosixPath(opf).parent),href)
                         if publish(member,method) or page_image(member,method):break
                     except (ValueError,OSError,ET.ParseError,KeyError,zipfile.BadZipFile,RuntimeError):continue
-    except (ValueError,OSError,ET.ParseError,KeyError,zipfile.BadZipFile,RuntimeError) as exc:
+    except (ValueError,OSError,ET.ParseError,KeyError,zipfile.BadZipFile,RuntimeError,EOFError,zlib.error) as exc:
         # ValueError is not a safe text contract: a ZIP/EPUB parser may
         # incorporate filenames or manifest values. Keep our own exact
         # codes only, without ever invoking exception __str__/__repr__.
