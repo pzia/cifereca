@@ -256,7 +256,7 @@ class EbooksSession(ProviderSession):
             timeout=float(self.options.get('timeout_seconds',30)),
             follow_redirects=True, trust_env=False,
             headers={
-                'User-Agent':'Cifereca-EbooksGratuits/0.1.23',
+                'User-Agent':'Cifereca-EbooksGratuits/0.1.24',
                 'Accept-Language':'fr-FR,fr;q=0.9',
             },
         )
@@ -519,13 +519,32 @@ def _safe_opds_link(feed_url, href, kind):
             # route into an account/admin action after server decoding.
             parts = decoded_path.casefold().split('/')
             if (not allowed_feed or '\\' in decoded_path
-                    or any(segment in {'.', '..'} for segment in parts)
+                    or any(segment in {'.', '..', 'account', 'admin',
+                                       'customer', 'login', 'checkout',
+                                       'session'} for segment in parts)
                     or '%25' in path
                     or '%2f' in path or '%5c' in path):
                 return None
         return dst.geturl()
     except ValueError:
         return None
+
+
+
+def _opds_source_link(session, source_feed_url, raw_href, kind):
+    """Resolve an Atom link against ITS document, then recheck trusted root.
+
+    A nested COPS feed can publish ../fetch/42.epub or a relative next
+    subsection. Resolving it against the configured /index.php/feed root
+    silently changes the URL and misclassifies real offers as unavailable.
+    Both checks must succeed: the source document is not authority to
+    cross origins, even if a caller supplies a forged feed_url.
+    """
+    resolved = _safe_opds_link(source_feed_url, raw_href, kind)
+    if resolved is None:
+        return None
+    return (resolved if _safe_opds_link(session.opds_feed_url, resolved, kind)
+            == resolved else None)
 
 
 class _BoundedOPDSTree(ET.TreeBuilder):
@@ -671,20 +690,20 @@ def _opds_search_url(session,root,base,query):
         if rel!='search':
             continue
         if 'opensearchdescription+xml' in mime:
-            address=_safe_opds_link(session.opds_feed_url,raw,'feed')
+            address=_opds_source_link(session,base,raw,'feed')
             if not address: continue
-            description,_=_opds_fetch(session,address)
+            description,description_url=_opds_fetch(session,address)
             if description.tag.rsplit('}',1)[-1]!='OpenSearchDescription':
                 raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
             for child in description:
                 if child.tag.rsplit('}',1)[-1]!='Url': continue
                 if 'atom+xml' not in child.get('type','').lower(): continue
                 expanded=_opds_template(child.get('template',''),query)
-                safe=_safe_opds_link(session.opds_feed_url,expanded,'feed') if expanded else None
+                safe=_opds_source_link(session,description_url,expanded,'feed') if expanded else None
                 if safe: return safe
         elif 'atom+xml' in mime:
             expanded=_opds_template(raw,query)
-            safe=_safe_opds_link(session.opds_feed_url,expanded,'feed') if expanded else None
+            safe=_opds_source_link(session,base,expanded,'feed') if expanded else None
             if safe: return safe
     raise ProviderCapabilityError('Ebooks libres et gratuits : search_route_unavailable')
 
@@ -702,7 +721,7 @@ def _opds_entry_is_book(session, entry, base):
     # create a fake public catalogue record. PDF-only acquisitions remain
     # visible as metadata-only records; this plugin downloads EPUB only.
     return any(
-        bool(_safe_opds_link(session.opds_feed_url, raw, 'download'))
+        bool(_opds_source_link(session, base, raw, 'download'))
         and (
             ('/acquisition' in rel
              and mime.split(';', 1)[0].strip()
@@ -724,7 +743,7 @@ def _opds_browse_url(session,root,base):
         title=(entry.findtext(ATOM+'title') or '').casefold()
         for r,m,raw,_ in _opds_links(entry,base):
             if 'atom+xml' not in m or '/acquisition' in r: continue
-            href=_safe_opds_link(session.opds_feed_url,raw,'feed')
+            href=_opds_source_link(session,base,raw,'feed')
             if href:
                 preference=0 if any(x in title for x in ('all books','tous les livres','tous les ebooks','all ebooks')) else 1
                 candidates.append((preference,href))
@@ -823,7 +842,7 @@ def _opds_items(session,feed,feed_url):
         if not entry_id:continue
         epub=None; alternate=None; thumbnail=None; formats=set()
         for rel,mime,raw,_ in _opds_links(entry,feed_url):
-            checked=(_safe_opds_link(session.opds_feed_url,raw,'download')
+            checked=(_opds_source_link(session,feed_url,raw,'download')
                      if mime.split(';',1)[0].strip()=='application/epub+zip'
                      else None)
             if checked and ('/acquisition' in rel or rel=='alternate'):
@@ -833,10 +852,10 @@ def _opds_items(session,feed,feed_url):
                 'text/html', 'application/xhtml+xml'
             }:
                 alternate=alternate or _opds_public_html_link(
-                    session.opds_feed_url,raw
+                    feed_url,raw
                 )
             if 'image/thumbnail' in rel or rel.endswith('/thumbnail'):
-                thumbnail=thumbnail or _safe_opds_link(session.opds_feed_url,raw,'detail')
+                thumbnail=thumbnail or _opds_source_link(session,feed_url,raw,'detail')
         author_nodes=entry.findall(ATOM+'author')
         authors=[_opds_text(n,ATOM+'name') for n in author_nodes]
         author=', '.join(n for n in authors if n) or None
@@ -919,7 +938,7 @@ def _opds_load_acquisition(session,initial,field,needle):
             # subsections cannot be counted as searched or empty.
             navigation = any(
                 'atom+xml' in mime and '/acquisition' not in rel
-                and _safe_opds_link(session.opds_feed_url,raw,'feed')
+                and _opds_source_link(session,actual,raw,'feed')
                 for entry in entries
                 if not _opds_entry_is_book(session,entry,actual)
                 for rel,mime,raw,_ in _opds_links(entry,actual)
@@ -940,7 +959,7 @@ def _opds_load_acquisition(session,initial,field,needle):
             for rel,mime,raw,_ in _opds_links(entry,actual):
                 if 'atom+xml' not in mime:
                     continue
-                href=_safe_opds_link(session.opds_feed_url,raw,'feed')
+                href=_opds_source_link(session,actual,raw,'feed')
                 if not href:continue
                 if needle and field in {'author','subject','category','genre'} and _fold(needle) in label:
                     rank=0

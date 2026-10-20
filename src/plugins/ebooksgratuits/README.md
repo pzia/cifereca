@@ -1,3 +1,39 @@
+## #1917 / #2460 — liens Atom relatifs résolus sur le flux exact (0.1.24)
+
+Les liens OPDS déclarés dans une page de recherche ou un
+sous-catalogue COPS ne sont pas forcément absolus. Par exemple,
+depuis `/index.php/feed/search/jefferson`, la référence
+`../../fetch/42.epub` pointe sur `/index.php/fetch/42.epub`.
+Le plugin cherchait jusqu'ici à la résoudre à partir de la **racine
+configurée** `/index.php/feed` et pouvait à tort rejeter un EPUB,
+une alternative HTML ou une sous-branche de recherche par auteur.
+Cette incohérence pouvait produire une couverture partielle ou
+une offre EPUB invisible, sans prouver la cause d'un échec live.
+
+Désormais, `_opds_source_link` applique **deux validations** :
+(1) résolution contre l'URL HTTP effective du **flux contenant le
+lien** ; (2) revalidation du résultat absolu contre l'origine et
+les routes autorisées de la racine OPDS configurée. Les cas déjà
+fonctionnels (URL absolue ou relative à la racine) restent acceptés.
+Les flux privés `account/admin/login/session/checkout` sous la
+route COPS `/index.php/feed/` sont refusés, comme les chemins
+traversants encodés. Aucune requête additionnelle, droit privé,
+nouvelle route serveur ou téléchargement automatique.
+
+Le même contrat s'applique à la recherche OpenSearch, aux liens
+de sous-catalogue, à la reconnaissance d'une entrée Book, aux
+offres EPUB, aux liens HTML alternatifs et aux miniatures. Le
+post-filtre auteur reste **limité aux pages chargées** et conserve
+son avertissement `partial_results` : cette correction ne prouve
+aucune couverture exhaustive ni changement du serveur COPS.
+
+Tests déterministes avec `httpx.MockTransport` :
+`tests/test_opds_relative_link_source_p1_1917.py`.
+Une recette sur une notice récente et une notice en échec,
+avec réponse fournisseur autorisée, reste à produire (#2460).
+
+---
+
 ## #2460 / #1917 — sécuriser les chemins d'acquisition EPUB OPDS (0.1.23)
 
 Les URLs d'acquisition COPS acceptées sur `/index.php/fetch/...`
