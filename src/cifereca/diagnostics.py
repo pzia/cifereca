@@ -33,20 +33,28 @@ def _redact_generic_diagnostic_detail(detail: dict) -> dict:
     booleans ending in _present are non-identifying existence observations;
     preserve these for established ADEPT diagnostics without retaining IDs.
     """
-    def guard(value):
+    def guard(value, depth=0):
+        if depth > 5:
+            return "<redacted>"
         if type(value) is dict:
-            return {
-                key: (
-                    "<redacted>"
-                    if (type(key) is str and _DIAGNOSTIC_PRIVATE_KEYS.search(key)
-                        and not (key.endswith("_present") and type(item) is bool))
-                    else guard(item)
-                )
-                for key, item in value.items()
-            }
+            result = {}
+            for key, item in list(value.items())[:64]:
+                # A dict key is data as well: never retain a URL, email,
+                # private path or hostile object disguised as a field name.
+                if (type(key) is not str or len(key) > 64 or
+                        re.fullmatch(r"[a-z][a-z0-9_]*", key, re.ASCII) is None):
+                    continue
+                if (_DIAGNOSTIC_PRIVATE_KEYS.search(key)
+                        and not (key.endswith("_present") and type(item) is bool)):
+                    result[key] = "<redacted>"
+                else:
+                    result[key] = guard(item, depth + 1)
+            return result
         if type(value) is list:
-            return [guard(item) for item in value]
-        return value
+            return [guard(item, depth + 1) for item in value[:100]]
+        if type(value) in (str, bool, int, float) or value is None:
+            return value
+        return "<redacted>"
 
     return guard(redact(detail))
 
