@@ -892,7 +892,9 @@ class SynchronizationBrokerImpl:
             return rejected("invalid_source")
 
         try:
-            from .core.kobo_local_audit import kobo_local_reconciliation_audit
+            from .core.kobo_local_audit import (
+                kobo_local_reconciliation_audit, _TRUNCATION_REASONS,
+            )
             raw = kobo_local_reconciliation_audit(
                 self.service, credential_id=credential,
             )
@@ -935,6 +937,37 @@ class SynchronizationBrokerImpl:
             ):
                 return rejected("audit_unavailable")
             budget = dict(zip(budget_keys, values))
+        # The new diagnostic is all-or-nothing: old v1 audit fixtures lacking
+        # these fields remain valid, but an incomplete/hostile reason list is
+        # never interpolated by a consumer. Causes are Core-owned fixed codes,
+        # and measured attempts are NOT the count of successful SHA digests.
+        reason_keys = (
+            "truncation_reasons", "hash_attempts_used",
+            "directory_entries_inspected",
+        )
+        reason_present = [key in raw for key in reason_keys] if isinstance(raw, dict) else []
+        reason_facts = {}
+        if reason_present and any(reason_present):
+            codes, attempts, inspected = (raw.get(key) for key in reason_keys)
+            if (
+                not all(reason_present) or not budget
+                or type(codes) is not list or len(codes) > len(_TRUNCATION_REASONS)
+                or any(type(code) is not str or code not in _TRUNCATION_REASONS
+                       for code in codes)
+                or codes != sorted(set(codes))
+                or type(raw.get("truncated")) is not bool
+                or bool(codes) != raw["truncated"]
+                or type(attempts) is not int
+                or not 0 <= attempts <= budget["files_hashed_limit"]
+                or type(inspected) is not int
+                or not 0 <= inspected <= budget["directory_entries_limit"]
+            ):
+                return rejected("audit_unavailable")
+            reason_facts = {
+                "truncation_reasons": list(codes),
+                "hash_attempts_used": attempts,
+                "directory_entries_inspected": inspected,
+            }
         if (
             not isinstance(raw, dict)
             or raw.get("schema") != "kobo.local.reconciliation.audit/1"
@@ -959,7 +992,7 @@ class SynchronizationBrokerImpl:
                 "read_only": True, "acquisition_authorized": False,
                 "offline": True, "truncated": raw["truncated"],
                 "counts": {name: counts[name] for name in allowed},
-                **budget,
+                **budget, **reason_facts,
             },
         )
 
