@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.78, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.79, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -19,13 +19,13 @@ from cifereca.plugin_api import (Account, CredentialField, ItemDetail, ProviderC
     ProviderPlugin, ProviderSession, SearchResult, inspect_artifact, publish_artifact_file)
 from cifereca_numilog_html import (BASE, LIBRARY, ParseError, DeliverySelectionError,
     OwnedDelivery, parse_library, parse_library_page, delivery_url, public_book_url,
-    html_response_kind)
+    html_response_kind, _is_eden_adobe_download)
 from cifereca_numilog_filename import publish
 from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category, public_http_code
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.78'
+VERSION = '0.1.79'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -679,7 +679,8 @@ class NumilogSession(ProviderSession):
         self._diag('téléchargement',format='ACSM/ADEPT',fulfillment=status)
         return produced,self.library_url
 
-    def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None,from_owned_confirmation=False):
+    def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None,from_owned_confirmation=False,
+                  from_owned_eden=False):
         with DeliveryTrace(self.diagnostics, source=source, connected_initial=self.connected) as trace:
             trace.fail('adept_unconfirmed')
             owner = identity_id
@@ -693,6 +694,10 @@ class NumilogSession(ProviderSession):
             )
             attested_confirmation_redirect = None
             start_url_for_confirmation = url
+            eden_authorized = (
+                from_owned_eden is True and source == 'owned_card'
+                and _is_eden_adobe_download(url, self.allowed_origins)
+            )
             owned_confirmation = (
                 from_owned_confirmation is True and source == 'owned_card'
                 and url_origin(url) == url_origin(self.library_url)
@@ -706,7 +711,20 @@ class NumilogSession(ProviderSession):
                 trace.fail('origin_rejected')
                 checked_url(url,self.allowed_origins)
                 trace.fail('adept_unconfirmed')
-                if url_origin(url) in ALLOWED_ACSM_ORIGINS:
+                is_eden_route = (
+                    url_origin(url) == ('https', 'services.numilog.com', 443)
+                    and urlsplit(url).path
+                        == '/v4.0/HandlerDownloadLinks/HandlerEdenDownloadLinkV2.ashx'
+                )
+                if is_eden_route and (
+                    not eden_authorized
+                    or not _is_eden_adobe_download(url, self.allowed_origins)
+                ):
+                    # No implicit LCP download and no unbound signed URL.
+                    raise ProviderError(
+                        'Numilog : livraison Eden non liée à cet achat ; téléchargement arrêté'
+                    )
+                if url_origin(url) in ALLOWED_ACSM_ORIGINS or is_eden_route:
                     # A signed link may be single-use. Validate ownership and
                     # the importer BEFORE consuming it, even after an ordinary
                     # readBook 302 or an HTML intermediary (#1883).
@@ -869,6 +887,9 @@ class NumilogSession(ProviderSession):
                                         result='owned_confirmation_binding', **evidence,
                                     )
                                     url = bound_url
+                                    eden_authorized = _is_eden_adobe_download(
+                                        bound_url, self.allowed_origins,
+                                    )
                                     trace.fail('redirect_limit')
                                     continue
                             # A shared site template can include a password form
@@ -951,6 +972,9 @@ class NumilogSession(ProviderSession):
                         self._diag('livraison HTML',phase='download',
                                    page_kind=page_kind,kind='intermediate',
                                    result='single_allowed_candidate',**evidence)
+                        eden_authorized = _is_eden_adobe_download(
+                            url, self.allowed_origins,
+                        )
                         trace.fail('redirect_limit')
                         continue
                     if mime not in {'application/epub+zip','application/octet-stream','application/zip',
@@ -1069,7 +1093,9 @@ class NumilogSession(ProviderSession):
                     book_id=self._id(row),source='owned_card' if entry_from_owned_card else 'readbook',
                     identity_id=owner,expected_readbook_url=row['href'],
                     from_owned_confirmation=type(row.get('confirmation')) is str
-                        and not isinstance(evidence, OwnedDelivery))
+                        and not isinstance(evidence, OwnedDelivery),
+                    from_owned_eden=isinstance(evidence, OwnedDelivery)
+                        and _is_eden_adobe_download(evidence.url, self.allowed_origins))
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
 
