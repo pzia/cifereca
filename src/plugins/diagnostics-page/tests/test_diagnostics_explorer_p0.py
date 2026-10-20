@@ -526,8 +526,12 @@ def test_journals_ui_shows_optional_expurgated_source_reasons():
     from pathlib import Path
     page = (Path(__file__).parents[1] /
             "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
-    assert 'state.get("reason")' in page
-    assert 'source_summaries(current_page)' in page
+    helper = (Path(__file__).parents[1] /
+              "diagnostics_explorer.py").read_text(encoding="utf-8")
+    assert 'diagnostic_channel_caption(current_page)' in page
+    assert 'states = source_summaries(payload)' in helper
+    assert 'reason = state.get("reason")' in helper
+    assert '_CHANNEL_REASON_LABELS.get(reason,' in helper
 
 
 def test_source_summaries_normalize_only_valid_last_event_dates():
@@ -582,8 +586,12 @@ def test_journals_show_last_published_event_from_broker():
     from pathlib import Path
     page = (Path(__file__).parents[1] /
             "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
-    assert "dernier événement publié : {local_timestamp_label(state['last_event'])}" in page
-    assert "source_summaries(current_page)" in page
+    helper = (Path(__file__).parents[1] /
+              "diagnostics_explorer.py").read_text(encoding="utf-8")
+    assert "diagnostic_channel_caption(current_page)" in page
+    assert "dernier événement publié :" in helper
+    assert 'local_timestamp_label(' in helper
+    assert 'state["last_event"]' in helper
 
 
 def test_log_source_incomplete_reason_is_public_but_free_text_stays_hidden():
