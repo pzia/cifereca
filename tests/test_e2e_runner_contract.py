@@ -25,7 +25,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "llm-settings-1366", "llm-settings-1600",
         "maintenance-tools-1366", "maintenance-tools-1600",
-        "startup", "core-navigation",
+        "startup", "core-navigation", "public-fault-search-1366",
     ]
 
 
@@ -565,3 +565,28 @@ def test_2141_kobo_audit_result_is_scoped_to_offline_account_after_sort():
     assert "row for row in walk(w._sync_sources_box)" not in (
         ast.get_source_segment(probe, methods["loan_sync_audit_result"])
     )
+
+
+def test_771_real_gtk_public_fault_search_is_registered_and_selected():
+    runner = _module()
+    scenario = runner.SCENARIOS["public-fault-search-1366"]
+    assert scenario["runner"] == "gtk-public-fault"
+    assert scenario["width"] == 1366
+    assert scenario["fixture"] == "search-filters"
+    source = (ROOT / "e2e/public_fault_search_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "MainWindow(self, core.config, core.library, core.diagnostics)",
+        "EbooksSession(", "EbooksGratuitsApp(",
+        "httpx.MockTransport", "CatalogSearchBatch(", "CatalogSearchSummary(",
+        "device[0].click_widget(ui[0].search_global_button)",
+        '"429"', '"503"', '"unavailable"', '"live"',
+        "no_implicit_download", "public_status_only",
+    ):
+        assert marker in source, marker
+    import importlib.util
+    selector_path = ROOT / "scripts/ci-select-e2e.py"
+    spec = importlib.util.spec_from_file_location("ci_select_e2e_p0_771", selector_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    assert module.select(["e2e/public_fault_search_probe.py"]) == ("public-fault-search-1366",)
