@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.1.0)
+# Browser Recorder — outil technique opt-in (0.1.1, revue HTTP expérimentale)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
