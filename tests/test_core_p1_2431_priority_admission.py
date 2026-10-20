@@ -34,6 +34,7 @@ def test_optional_cap_rejects_immediately_preserving_priorities_and_counters():
         running.result(timeout=3)
         high.result(timeout=3)
         low.result(timeout=3)
+        pool.shutdown(wait=True)
         assert order == ["first", "user", "background"]
         assert pool.admission_snapshot()["pending"] == 0
         assert pool.admission_snapshot()["active"] == 0
@@ -57,6 +58,7 @@ def test_cancelled_pending_task_never_runs_and_does_not_strand_shutdown():
             pool.submit(40, lambda: fired.append("unexpected"))
         release.set()
         first.result(timeout=3)
+        pool.shutdown(wait=True)
         assert cancelled.cancelled()
         assert pool.admission_snapshot()["pending"] == 0
         assert fired == []
