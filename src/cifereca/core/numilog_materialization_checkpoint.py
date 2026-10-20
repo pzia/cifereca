@@ -42,7 +42,11 @@ def _record(service, item, target_dir, identity_id, account_id, fingerprint):
         identity_id=identity_id, credential_id=item.source_credential,
         account_id=account_id, item_id=item.record_id,
     )
-    _require(evidence.get('acquisitions') == [])
+    _require(evidence.get('acquisitions') == []
+             and evidence.get('placement_conflict') is False)
+    # A placement might have appeared after the earlier locked admission
+    # snapshot. Never persist an index-pending receipt over a competing local
+    # Numilog placement, including one without an acquisition ledger row.
     # A durable local right can bind the receipt for the existing preview.
     # No local right is required for fresh provider delivery, and ambiguous,
     # stale or public evidence must never be guessed into an entitlement.
