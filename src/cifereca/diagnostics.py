@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import logging
 import re
 import threading
 from collections import deque
@@ -78,6 +79,7 @@ class DiagnosticEntry:
     # Only Core's fixed connection-failure producer may set this field.
     # Arbitrary plugin detail={"provider_id": ...} is NOT an attestation.
     verified_public_provider_id: str | None = None
+    verified_source_sync: bool = False
 
 
 class Diagnostics:
@@ -143,6 +145,54 @@ class Diagnostics:
         with self._lock:
             self._items.clear()
 
+    def add_core_source_sync(self, provider_id: str, *, phase: str, status: str,
+                             code: str, duration_ms: int | None = None,
+                             counts: dict | None = None) -> None:
+        """Internal producer; caller attests the provider via Core's registry.
+
+        Generic plugin add() cannot set the publication provenance flag.
+        The log and collector receive the same validated facts independently.
+        """
+        from .core.diagnostic_source_sync import public_fields, log_message
+        from .diagnostic_task_context import diagnostic_task_reference
+        logger = logging.getLogger("cifereca")
+        severity = logging.ERROR if status == "failed" else (
+            logging.WARNING if status == "cancelled" else logging.INFO)
+        record = self.enabled and (self.level != "errors" or status in {"failed", "cancelled"})
+        if not record and not logger.isEnabledFor(severity):
+            return
+        fields = dict(schema_version=1, provider_id=provider_id,
+                      operation_kind="source_sync", phase=phase, status=status, code=code)
+        if type(duration_ms) is int and 0 <= duration_ms <= 86_400_000:
+            fields["duration_ms"] = duration_ms
+        if type(counts) is dict:
+            for key in ("loans", "library"):
+                value = counts.get(key)
+                if type(value) is int and 0 <= value <= 1_000_000:
+                    fields[key] = value
+        fields = public_fields(fields)
+        if not fields:
+            return
+        reference = diagnostic_task_reference()
+        if reference is not None:
+            fields["task_ref"] = reference
+        fields = public_fields(fields)
+        if not fields:
+            return
+        if record:
+            entry = DiagnosticEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                category="SYNC", operation="source sync", status=status,
+                duration_ms=fields.get("duration_ms"), detail=fields,
+                task_ref=fields.get("task_ref"), verified_source_sync=True,
+            )
+            with self._lock:
+                self._items.append(entry)
+        try:
+            logger.log(severity, "%s", log_message(fields))
+        except Exception:
+            pass
+
     def snapshot(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = [asdict(x) for x in self._items]
@@ -151,6 +201,8 @@ class Diagnostics:
                     row.pop("task_ref", None)
                 if row.get("verified_public_provider_id") is None:
                     row.pop("verified_public_provider_id", None)
+                if row.get("verified_source_sync") is False:
+                    row.pop("verified_source_sync", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
