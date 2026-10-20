@@ -754,8 +754,9 @@ class NumilogSession(ProviderSession):
                 else:
                     checked_url(url, self.allowed_origins)
                 trace.fail('adept_unconfirmed')
-                if (url_origin(url) in ALLOWED_ACSM_ORIGINS
-                        or (attested_hop and selected_kind == 'acsm')):
+                if ((attested_hop and selected_kind == 'acsm')
+                        or (not attested_hop
+                            and url_origin(url) in ALLOWED_ACSM_ORIGINS)):
                     # A signed link may be single-use. Validate ownership and
                     # the importer BEFORE consuming it, even after an ordinary
                     # readBook 302 or an HTML intermediary (#1883).
