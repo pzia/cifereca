@@ -165,6 +165,23 @@ def test_absent_or_empty_saved_record_does_not_invent_adept_attention():
     assert not blocked_automatic_adept_retry({}, **opts)
 
 
+
+@pytest.mark.parametrize("bad_override", [
+    "true", "false", "1", 1, [True], {"force": True}, _HostileProvenance(),
+])
+def test_only_native_true_allows_explicit_adept_retry(bad_override):
+    """Truthiness/coercion of a hostile caller value cannot reconsume an ACSM."""
+    row = {
+        "status": "attention_required", "strategy": "loan_auto",
+        "executor": "kobo-adept", "entitlement_id": "entitlement-a",
+        "metadata": {"provider_loan_id": "loan-a"},
+    }
+    opts = {"provider_loan_id": "loan-a", "entitlement_id": "entitlement-a"}
+    assert blocked_automatic_adept_retry(row, force_refresh=bad_override, **opts)
+    assert blocked_automatic_adept_retry(row, force_refresh=False, **opts)
+    assert not blocked_automatic_adept_retry(row, force_refresh=True, **opts)
+
+
 def test_exit_code_is_not_mistaken_for_adobe_license_error():
     assert adept_attention_code("adept_error", "acsmdownloader failed (1) exit 10",
                                 executor="kobo-adept") == "adept_error"
