@@ -29,13 +29,26 @@ def blocked_automatic_adept_retry(
         return False
     if previous.get("executor") != "kobo-adept" or previous.get("strategy") != "loan_auto":
         return False
-    metadata = previous.get("metadata") or {}
-    if not isinstance(metadata, dict):
+    metadata = previous.get("metadata")
+    if metadata is None:
+        metadata = {}  # Old rows lack this field: retry remains explicit-only.
+    if type(metadata) is not dict:
+        # A corrupt saved attention is not evidence of a *different* loan.
+        # Never consume a potentially one-use ACSM because provenance cannot
+        # be decoded; explicit force_refresh remains available to the user.
+        return True
+    original_loan_id = metadata.get("provider_loan_id")
+    if original_loan_id is not None and (
+        type(original_loan_id) is not str or not original_loan_id
+    ):
+        return True
+    if original_loan_id and original_loan_id != provider_loan_id:
         return False
-    original_loan_id = str(metadata.get("provider_loan_id") or "")
-    if original_loan_id and original_loan_id != str(provider_loan_id):
-        return False
-    prior_entitlement = str(previous.get("entitlement_id") or "")
+    prior_entitlement = previous.get("entitlement_id")
+    if prior_entitlement is not None and (
+        type(prior_entitlement) is not str or not prior_entitlement
+    ):
+        return True
     if prior_entitlement and entitlement_id and prior_entitlement != entitlement_id:
         return False
     return True
