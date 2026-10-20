@@ -232,7 +232,15 @@ class IdentifierReview:
                 raw = unquote(part)
                 if _UUID.fullmatch(raw) or raw.isdecimal():
                     self._observe("id", raw, where + ":path")
-        self._text(text, where)
+        # Query values were already URL-decoded above. Scanning the raw URL
+        # again invents a second "identifier" for its percent-encoded form,
+        # breaking one decision = one value across JSON and URL.
+        self._text(parsed.path, where + ":pathtext")
+        if parsed.fragment:
+            # Browser fragments are never HTTP request parameters. A fragment
+            # may embed OAuth/session credentials; fail closed on the whole
+            # value without offering an option to keep it.
+            self._observe("access_token", parsed.fragment, where + ":fragment")
 
     def _scan_exchange(self, entry):
         prefix = str(entry.sequence)
