@@ -88,7 +88,7 @@ def test_2498_shared_audit_limits_are_visible_without_claiming_missing_books():
     text = sync_local_reconciliation_presentation(report)
     assert "Audit partiel" in text
     assert "Plafonds partagés : 2048 vérifications SHA" in text
-    assert "4096 entrées inspectées" in text
+    assert "4096 entrées max." in text
     assert "5/65536 Mio de lecture cumulée" in text
     assert "PRIVATE" not in text and "/PRIVATE" not in text
     assert "Aucune réconciliation" in text
