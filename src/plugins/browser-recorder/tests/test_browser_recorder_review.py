@@ -205,3 +205,64 @@ def test_html_password_hidden_token_and_bearer_text_never_survive_preview():
     assert result.count("[SECRET]") >= 3
     review.destroy()
     trace.destroy()
+
+
+def test_mandatory_secret_inside_alphanumeric_payload_is_never_previewed():
+    """Secret values are excluded even when wrapped in unrelated characters.
+
+    Ordinary approved identifiers still use whole-value boundaries so an
+    unrelated identifier containing their digits is not rewritten.
+    """
+    credential = "FICTIONAL_SecretToken_ABC9"
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST", url=ORIGIN + "/api?BookId=214",
+        request_headers={"content-type": "application/json"},
+        request_body=json.dumps({
+            "access_token": credential,
+            "note": "before" + credential + "after",
+            "bookId": "214",
+            "unrelated": "1214",
+        }),
+        response_headers={"content-type": "application/json"},
+        response_body=json.dumps({
+            "message": "left" + credential + "right",
+            "orderId": "214",
+            "otherOrder": "1214",
+        }),
+    ))
+    review = IdentifierReview(trace)
+    try:
+        assert credential not in {row["value"] for row in review.local_rows()}
+        assert any(row["value"] == "214" for row in review.local_rows())
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        output = review.preview()
+        serialized = json.dumps(output)
+        assert credential not in serialized
+        assert "before" + credential not in serialized
+        assert "left" + credential not in serialized
+        assert "before[SECRET]after" in serialized
+        assert "left[SECRET]right" in serialized
+        assert "1214" in serialized
+        assert "PSEUDO_" in serialized
+    finally:
+        review.destroy()
+        trace.destroy()
+
+
+def test_mandatory_secret_scrubs_unbounded_substring_variants():
+    from browser_recorder_review import _replace
+    from urllib.parse import quote
+
+    secret = "FICTIONAL a+b@example.org"
+    encoded = quote(secret, safe="")
+    output = _replace(
+        "xx" + secret + "yy " + "zz" + encoded + "ww",
+        {secret: "[SECRET]", "214": "PSEUDO_I0001"},
+        secret_values=frozenset((secret,)),
+    )
+    assert secret not in output
+    assert encoded not in output
+    assert output == "xx[SECRET]yy zz[SECRET]ww"
+    assert _replace("1214 214", {"214": "PSEUDO_I0001"}) == "1214 PSEUDO_I0001"

@@ -76,17 +76,31 @@ def _variants(value: str) -> set[str]:
     return {item for item in forms if item}
 
 
-def _replace(text: str, replacements: dict[str, str]) -> str:
+def _replace(
+    text: str, replacements: dict[str, str], *, secret_values=frozenset(),
+) -> str:
+    """Scrub mandatory secrets even inside unstructured alphanumeric text.
+
+    Boundary matching is useful for ordinary identifiers (BookId 214 must
+    not rewrite 1214). It is UNSAFE for an attested password/token: a provider
+    can embed the same credential between arbitrary letters or digits.
+    Prioritize mandatory secret forms when variant encodings overlap.
+    """
     forms = {}
     for original, subst in replacements.items():
+        mandatory_secret = original in secret_values
         for form in _variants(original):
-            forms[form] = subst
-            if "%" in form:
-                forms[form.lower()] = subst
-                forms[form.upper()] = subst
+            variants = (form, form.lower(), form.upper()) if "%" in form else (form,)
+            for variant in variants:
+                previous = forms.get(variant)
+                if previous is None or (mandatory_secret and not previous[1]):
+                    forms[variant] = (subst, mandatory_secret)
     for form in sorted(forms, key=len, reverse=True):
-        pattern = r"(?<![A-Za-z0-9])" + re.escape(form) + r"(?![A-Za-z0-9])"
-        text = re.sub(pattern, lambda _m, value=forms[form]: value, text)
+        subst, mandatory_secret = forms[form]
+        pattern = re.escape(form)
+        if not mandatory_secret:
+            pattern = r"(?<![A-Za-z0-9])" + pattern + r"(?![A-Za-z0-9])"
+        text = re.sub(pattern, lambda _m, value=subst: value, text)
     return text
 
 
@@ -307,7 +321,9 @@ class IdentifierReview:
                 dropped += 1
                 continue
             def clean(value):
-                return None if value is None else _replace(str(value), replacements)
+                return None if value is None else _replace(
+                    str(value), replacements, secret_values=self._secret_values,
+                )
             rows.append({
                 "exchange_id": entry.sequence, "method": entry.method,
                 "page_id": entry.page_id, "started_ms": entry.started_ms,
