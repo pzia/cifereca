@@ -17,10 +17,10 @@ from tests.test_numilog_no_stream_confirmation_p0 import (
     confirmation_without_stream, LANDING,
 )
 from tests.test_numilog_no_stream_drmfree_epub_p0_2024 import (
-    INVENTORY, READ_FOURTH, fake_epub_bytes,
+    INVENTORY, READ_FOURTH, LIBRARY, fake_epub_bytes,
 )
 from tests.test_numilog_signed_acsm_transport_p0 import (
-    LIBRARY, SIGNED as SIGNED_ACSM, _assert_clean, setup,
+    SIGNED as SIGNED_ACSM, _assert_clean, setup,
 )
 
 SIGNED_EPUB = (
