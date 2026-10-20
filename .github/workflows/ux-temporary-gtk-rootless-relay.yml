@@ -34,6 +34,29 @@ jobs:
           python3 environnements/openai-chat-debian/bootstrap.py \
             --download-only --deb-cache "$GITHUB_WORKSPACE/.gtk-deb-cache"
           test -f .gtk-deb-cache/.gtk4-cache-profile.json
+          # APT escapes the epoch ':' as '%3a' in archive basenames.
+          # The reviewed package allowlist expects the decoded Debian name.
+          # Rename only such strictly verified filenames, preserving bytes.
+          python3 - <<'PY'
+          from pathlib import Path
+          from urllib.parse import unquote
+          import importlib.util
+          spec = importlib.util.spec_from_file_location("validator", "scripts/ci-validate-gtk-relay-cache.py")
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          renamed = 0
+          for src in Path(".gtk-deb-cache").glob("*.deb"):
+              if mod.DEB_NAME.fullmatch(src.name):
+                  continue
+              name = unquote(src.name)
+              dst = src.with_name(name)
+              if (name == src.name or not mod.DEB_NAME.fullmatch(name)
+                      or dst.exists() or not src.is_file()):
+                  raise ValueError("unexpected unreviewed Debian package name")
+              src.rename(dst)
+              renamed += 1
+          print("Strictly reviewed APT epoch-escaped names normalized:", renamed)
+          PY
           # Debug only the fixed cache validator classification, never log
           # source files, private state, package contents or screenshots.
           python3 - <<'PY'
