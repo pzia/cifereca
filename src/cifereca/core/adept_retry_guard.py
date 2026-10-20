@@ -23,7 +23,14 @@ def blocked_automatic_adept_retry(
     where known. Pre-fix rows without provenance are held conservatively: they
     are never retried implicitly, but explicit force_refresh can resume them.
     """
-    if force_refresh or not previous:
+    if force_refresh or previous is None:
+        return False
+    # A damaged persisted record must not raise during automatic opening or
+    # license a new fetch of a potentially consumed one-use ACSM. Avoid
+    # truthiness on foreign objects before checking the exact storage shape.
+    if type(previous) is not dict:
+        return True
+    if not previous:
         return False
     if previous.get("status") != "attention_required":
         return False
