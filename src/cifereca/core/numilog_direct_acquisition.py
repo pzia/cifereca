@@ -22,6 +22,11 @@ def acquire_numilog_direct(
     # detached account or to race an existing manual/materialize run.
     # Numilog resolves delivery URLs afresh *inside* download_direct.
     from .numilog_manual_acquisition import require_source
+    from .numilog_startup_diagnostics import acquisition_refusal
+    from ..plugin_api import Cancelled
+    # Only the *first* failed boundary is recorded by the opt-in startup
+    # trace. These closed values never expose the error's private contents.
+    stage = "acquisition_source_unavailable"
     try:
         with InterProcessLock(acquisition_lock_file()):
             identity, pinned_session, pinned_account_id = require_source(
@@ -40,6 +45,7 @@ def acquire_numilog_direct(
                     account_id=pinned_account_id,
                 )
 
+            stage = "acquisition_local_conflict"
             if service.storage.numilog_purchase_has_local_conflict(
                 credential_id=item.source_credential,
                 item_id=item.record_id,
@@ -47,6 +53,7 @@ def acquire_numilog_direct(
                 raise ProviderConfigurationError(
                     "Numilog : acquisition existante ; rapprochement local requis"
                 )
+            stage = "acquisition_root_unavailable"
             target_dir = service.library_identity_provider_dir(
                 identity.identity_id, "numilog",
             )
@@ -64,15 +71,19 @@ def acquire_numilog_direct(
                 item.record_id.encode("utf-8"),
             ).hexdigest()[:32] + ".epub"
             expected_path = target_dir / expected_name
+            stage = "acquisition_file_conflict"
             if expected_path.exists() or expected_path.is_symlink():
                 raise ProviderConfigurationError(
                     "Numilog : fichier local candidat ; rapprochement requis"
                 )
             from .numilog_publication_guard import require_tracked_publications
+            stage = "acquisition_publication_guard"
             require_tracked_publications(service, identity.identity_id, target_dir)
             # Recheck the exact caller/source after bounded filesystem
             # inspection and immediately before any provider I/O.
+            stage = "acquisition_admission_failed"
             item = readmit()
+            stage = "acquisition_delivery_failed"
             try:
                 path, _private_url = pinned_session.download_direct(
                     item, target_dir,
@@ -89,6 +100,7 @@ def acquire_numilog_direct(
             # The provider may release its per-session lock before
             # returning. A reconnect/rebind during HTTP or ADEPT must
             # not be committed under a different identity.
+            stage = "acquisition_admission_failed"
             readmit()
             refreshed = require_source(service, item, session=pinned_session)
             if (refreshed[0].identity_id != identity.identity_id
@@ -97,6 +109,7 @@ def acquire_numilog_direct(
                     "Numilog : rattachement du compte modifié"
                 )
             from .numilog_manual_acquisition import require_local_artifact
+            stage = "acquisition_artifact_invalid"
             require_local_artifact(path, target_dir)
             from dataclasses import replace
             # Never pass unverified private cover/link metadata to
@@ -107,6 +120,7 @@ def acquire_numilog_direct(
                 item, thumbnail_url=None, friendly_url=None,
                 download_url=None, metadata={},
             )
+            stage = "acquisition_post_delivery_failed"
             service.acquisition.run_post_download(
                 clean_item, path, "", target_dir,
             )
@@ -120,8 +134,10 @@ def acquire_numilog_direct(
                     )
             # Post-download hooks may remove or replace the file.
             # Attest the final artifact, not just its pre-hook path.
+            stage = "acquisition_artifact_invalid"
             require_local_artifact(path, target_dir)
             from .numilog_materialization_checkpoint import record
+            stage = "acquisition_receipt_failed"
             checkpoint_id = record(
                 service, item, path, target_dir, identity.identity_id, pinned_account_id,
                 validate=final_admission,
@@ -142,6 +158,12 @@ def acquire_numilog_direct(
                           "numilog_checkpoint_id": checkpoint_id},
             )
     except LockBusyError:
+        acquisition_refusal("acquisition_lock_busy")
         raise ProviderConfigurationError(
             "Numilog : acquisition locale déjà en cours"
         ) from None
+    except Cancelled:
+        raise
+    except Exception:
+        acquisition_refusal(stage)
+        raise

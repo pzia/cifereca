@@ -15,7 +15,15 @@ PHASES = frozenset({"admission", "durable_claim", "manifest_fetch", "rights_mirr
 CODES = frozenset({"started", "complete", "not_due", "consent_revoked", "admission_failed",
     "claim_failed", "manifest_failed", "manifest_invalid", "rights_mirror_failed",
     "preflight_failed", "acquisition_failed", "adept_failed", "index_failed",
-    "receipt_finalize_failed", "interrupted", "adept_complete"})
+    "receipt_finalize_failed", "interrupted", "adept_complete",
+    # Refusal boundaries in the locked Numilog acquisition executor. These
+    # contain no exception string, URL, filename, product ID or account.
+    "acquisition_lock_busy", "acquisition_source_unavailable",
+    "acquisition_local_conflict", "acquisition_root_unavailable",
+    "acquisition_file_conflict", "acquisition_publication_guard",
+    "acquisition_admission_failed", "acquisition_delivery_failed",
+    "acquisition_post_delivery_failed", "acquisition_artifact_invalid",
+    "acquisition_receipt_failed"})
 STATUSES = frozenset({"running", "complete", "partial", "failed", "blocked", "not_due"})
 COUNTS = ("attempted", "downloaded", "skipped", "failed")
 _KEY = "sync.source.numilog.materialization.diagnostic.v1."
@@ -176,6 +184,21 @@ class StartupTrace:
             yield
         finally:
             _ACTIVE.reset(token)
+
+
+_ACQUISITION_DENIAL_CODES = frozenset(code for code in CODES
+    if code.startswith("acquisition_") and code != "acquisition_failed")
+
+
+def acquisition_refusal(code):
+    """Record only a closed failure boundary within the active startup run.
+
+    This must never become an authorization, retry signal or logger of
+    untrusted exception details. Manual acquisitions have no active trace.
+    """
+    trace = _ACTIVE.get()
+    if trace is not None and code in _ACQUISITION_DENIAL_CODES:
+        trace.fail(code)
 
 
 @contextmanager
