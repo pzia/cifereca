@@ -86,7 +86,12 @@ def preflight(broker: Any, account: Any, source_id: str, item_id: Any) -> SyncRe
         return _response("source_changed")
     rights = evidence.get("entitlements")
     ledger = evidence.get("acquisitions")
-    if type(rights) is not list or type(ledger) is not list:
+    placement_conflict = evidence.get("placement_conflict")
+    if (type(rights) is not list or type(ledger) is not list
+            or type(placement_conflict) is not bool):
+        # A broken/older evidence projection cannot be used to authorize
+        # an attempt without checking the same placement guard as the
+        # locked executor. No private path/owner leaves this boundary.
         return _response("evidence_unavailable")
     if len(rights) > 1 or len(ledger) > 2:
         return _response("needs_reconciliation")
@@ -109,9 +114,10 @@ def preflight(broker: Any, account: Any, source_id: str, item_id: Any) -> SyncRe
         or not right["entitlement_id"]
     ):
         return _response("purchase_unproven")
-    if ledger:
-        # Neither "complete" nor a failed/in-flight acquisition makes a
-        # missing-file claim; check the existing materialization evidence first.
+    if ledger or placement_conflict:
+        # The locked executor rejects either prior acquisitions OR an existing
+        # Numilog placement. Both require offline reconciliation, never a
+        # new signed URL / duplicate file / misleading "acquirable" preview.
         return _response("needs_reconciliation")
     if metadata.get("downloadable") is False:
         return _response("not_downloadable")
