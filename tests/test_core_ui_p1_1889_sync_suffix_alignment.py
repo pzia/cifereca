@@ -71,7 +71,10 @@ def test_non_kobo_sources_and_disabled_actions_remain_centered(monkeypatch):
     labels = _check_all_suffixes(window)
     assert len(labels) == 9
     # Numilog backup consent is a distinct, centered, default-disabled action.
-    numilog_group = window._sync_sources_box.children[0]
+    numilog_group = next(
+        group for group in window._sync_sources_box.children
+        if group.children[0].title == "Compte Numilog"
+    )
     assert numilog_group.children[2].title == "Sauvegarde automatique des achats Numilog"
     assert not numilog_group.children[2].suffixes[0].sensitive
 
