@@ -124,6 +124,46 @@ def test_symlink_is_rejected_before_any_file_content_access(tmp_path):
     assert result["sources"][0]["status"] == "unavailable"
 
 
+def test_symlinked_log_ancestor_is_refused_even_for_valid_trace(tmp_path):
+    # Protect every path component, not only the final log file.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    make_log(
+        outside / "cifereca.log",
+        "2026-10-11 07:00:00,000 INFO cifereca [Worker] TRACE sync source status=ok",
+    )
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unsupported")
+    result = query_diagnostic_events(
+        Diagnostics(), log_path=alias / "cifereca.log", source="app_log",
+    )
+    assert result["events"] == []
+    assert result["sources"][0]["status"] == "unavailable"
+    assert result["status"] == "unavailable"
+
+
+def test_no_follow_unavailable_refuses_log_content_but_preserves_core_events(
+    tmp_path, monkeypatch,
+):
+    import cifereca.core.diagnostic_event_feed as feed
+
+    log = tmp_path / "cifereca.log"
+    make_log(
+        log,
+        "2026-10-11 07:00:00,000 INFO cifereca [Worker] TRACE sync source status=ok",
+    )
+    diagnostics = Diagnostics()
+    diagnostics.add("CORE", "sync source", "ok")
+    monkeypatch.delattr(feed.os, "O_NOFOLLOW", raising=False)
+    result = query_diagnostic_events(diagnostics, log_path=log)
+    assert all(row["source"] == "core_events" for row in result["events"])
+    assert next(row for row in result["sources"] if row["source"] == "app_log")["status"] == "unavailable"
+    assert len(result["events"]) == 1
+
+
 @pytest.mark.parametrize("kwargs", [
     {"limit": 0}, {"limit": 101}, {"limit": True}, {"offset": -1},
     {"offset": 10001}, {"source": "/etc/passwd"}, {"severity": "CRITICAL-SECRETS"},
