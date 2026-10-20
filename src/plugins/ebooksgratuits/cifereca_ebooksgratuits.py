@@ -256,7 +256,7 @@ class EbooksSession(ProviderSession):
             timeout=float(self.options.get('timeout_seconds',30)),
             follow_redirects=True, trust_env=False,
             headers={
-                'User-Agent':'Cifereca-EbooksGratuits/0.1.24',
+                'User-Agent':'Cifereca-EbooksGratuits/0.1.25',
                 'Accept-Language':'fr-FR,fr;q=0.9',
             },
         )
@@ -904,6 +904,29 @@ def _opds_items(session,feed,feed_url):
     return items
 
 
+
+def _opds_author_navigation_match(query, label):
+    """Rank ONLY an author-shaped COPS navigation label in inverse order.
+
+    A navigation entry is not a Book/Atom author assertion. Restrict the
+    permutation to the conventional 'Surname, Forename' *single person*
+    shape, with no extra author delimiters or descriptive route text. The
+    actual returned books still require their own Atom author proof.
+    """
+    if type(query) is not str or type(label) is not str or len(label) > 256:
+        return False
+    if (label.count(',') != 1 or any(marker in label for marker in
+            (';', '&', '/', '|', '\\n', '\\r'))):
+        return False
+    surname, forename = (part.strip() for part in label.split(','))
+    if (not surname or not forename
+            or not all(re.fullmatch(r"[^\\W_]+(?:[ '\\-][^\\W_]+)*",
+                                     part, flags=re.UNICODE)
+                       for part in (surname, forename))):
+        return False
+    return _opds_author_match(query, (label,))
+
+
 def _opds_load_acquisition(session,initial,field,needle):
     """Follow bounded COPS navigation: search -> Books/Authors/Tags -> entries.
 
@@ -961,7 +984,13 @@ def _opds_load_acquisition(session,initial,field,needle):
                     continue
                 href=_opds_source_link(session,actual,raw,'feed')
                 if not href:continue
-                if needle and field in {'author','subject','category','genre'} and _fold(needle) in label:
+                if needle and field in {'author','subject','category','genre'} and (
+                        _fold(needle) in label
+                        or (field == 'author'
+                            and _opds_author_navigation_match(needle, _opds_text(entry, ATOM+'title') or ''))):
+                    # The inverse-order check only prioritizes a proven
+                    # server-issued navigation link; after following it,
+                    # book rows STILL require explicit Atom author names.
                     rank=0
                 elif any(token in label or token in identifier for token in wanted):
                     rank=1
