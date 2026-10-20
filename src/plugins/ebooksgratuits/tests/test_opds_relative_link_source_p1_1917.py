@@ -34,7 +34,7 @@ BOOK = f'''<feed xmlns="{ATOM}"><entry>
 </entry></feed>'''
 
 SEARCH_NAV = f'''<feed xmlns="{ATOM}"><entry>
-<id>urn:facet:authors</id><title>Auteurs</title>
+<id>urn:facet:authors</id><title>Livres et auteurs</title>
 <link rel="subsection" type="application/atom+xml" href="../authors"/>
 </entry></feed>'''
 
