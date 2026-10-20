@@ -140,3 +140,82 @@ def test_ui_action_distinguishes_book_notice_from_generic_catalogue():
     facade = next(n for n in cls.body
                   if isinstance(n, ast.FunctionDef) and n.name == "_add_catalogue_action")
     assert "public_catalogue_action_controller.add_catalogue_action" in ast.unparse(facade)
+
+
+# Regression #2460: the old EbooksGratuits COPS provider persisted a
+# search/feed URL in friendly_url if no HTML alternate was available.
+# The provider now returns None for new records; Core must refuse stale
+# cached rows, too, without a network call or destructive cache migration.
+@pytest.mark.parametrize("xml_link", [
+    "https://opds2.ebooksgratuits.org/index.php/feed",
+    "https://opds2.ebooksgratuits.org/index.php/feed/search?q=roman",
+    "https://opds2.ebooksgratuits.org/index.php/%66eed/search?q=roman",
+    "https://opds2.ebooksgratuits.org/index.php/%2566eed/search?q=roman",
+    "https://opds2.ebooksgratuits.org/index.php/opensearch.xml",
+    "https://opds2.ebooksgratuits.org/feed",
+    "https://opds2.ebooksgratuits.org/index.php/fetch/42",
+    "https://opds2.ebooksgratuits.org/index.php/fetch/42.epub",
+    "https://opds2.ebooksgratuits.org/book/42.atom",
+    "https://opds2.ebooksgratuits.org/book/42.opds",
+])
+def test_cached_ebooksgratuits_opds_routes_are_not_html_notices(xml_link):
+    host = _service_host("ebooksgratuits",
+                         "https://opds2.ebooksgratuits.org/")
+    row = {
+        "provider_id": "ebooksgratuits",
+        "title": "Exemple public",
+        "friendly_url": xml_link,
+        "metadata": {
+            "acquisition_source": "opds-calibre",
+            "product_url": xml_link,
+        },
+    }
+    assert catalogue_notice_url(row, provider="ebooksgratuits") is None
+    assert document_links(row) == ()
+    assert _target(host, row) == (
+        "catalogue", "https://opds2.ebooksgratuits.org/"
+    )
+
+
+def test_cached_xml_link_does_not_hide_independent_attested_html_alternate():
+    host = _service_host("ebooksgratuits",
+                         "https://opds2.ebooksgratuits.org/")
+    html = "https://opds2.ebooksgratuits.org/index.php/page/book/42"
+    row = {
+        "provider_id": "ebooksgratuits",
+        "friendly_url": "https://opds2.ebooksgratuits.org/index.php/feed/search?q=42",
+        "metadata": {
+            "product_url": html,
+            "acquisition_source": "opds-calibre",
+        },
+    }
+    assert _target(host, row) == ("notice", html)
+    assert [link.url for link in document_links(row)] == [html]
+
+
+def test_document_links_drop_cached_opds_xml_but_preserve_html():
+    xml = "https://opds2.ebooksgratuits.org/index.php/feed/item/42"
+    html = "https://opds2.ebooksgratuits.org/index.php/page/book/42"
+    row = {
+        "source_provider": "ebooksgratuits",
+        "metadata": {
+            "acquisition_source": "opds-calibre",
+            "document_links": [
+                {"relation": "notice", "url": xml, "label": "Voir en ligne"},
+                {"relation": "notice", "url": html, "label": "Ouvrir la notice"},
+            ],
+        },
+    }
+    assert [(link.label, link.url) for link in document_links(row)] == [
+        ("Ouvrir la notice", html),
+    ]
+
+
+def test_legacy_ebooksgratuits_html_notice_is_still_public():
+    host = _service_host("ebooksgratuits",
+                         "https://www.ebooksgratuits.com/")
+    detail_url = "https://www.ebooksgratuits.com/details.php?book=42"
+    row = {"source_provider": "ebooksgratuits",
+           "friendly_url": detail_url}
+    assert _target(host, row) == ("notice", detail_url)
+    assert document_links(row)[0].url == detail_url

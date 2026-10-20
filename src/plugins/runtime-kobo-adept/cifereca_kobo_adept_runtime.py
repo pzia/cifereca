@@ -48,7 +48,8 @@ _RUNTIME_DIAGNOSTIC_FAILURE_CODES = frozenset({
     'adept_error',
     'adept_license_already_fulfilled_by_another_user',
     'profile_missing', 'invalid_profile',
-    'kobo_adept_failed', 'kobo_adept_timeout', 'kobo_adept_launch_error',
+    'kobo_adept_failed', 'kobo_adept_missing',
+    'kobo_adept_timeout', 'kobo_adept_launch_error',
     'kobo_adept_invalid_json', 'kobo_adept_invalid_utf8',
     'kobo_adept_invalid_response', 'kobo_adept_output_too_large',
 })
@@ -217,12 +218,38 @@ class KoboAdeptRuntime:
                 input=json.dumps(payload, ensure_ascii=False).encode('utf-8') if payload is not None else None,
                 capture_output=True, timeout=timeout, check=False)
         except FileNotFoundError:
-            self.last_run_diagnostic['duration_ms'] = int((time.monotonic()-started)*1000)
+            # The process never started: no stdout/stderr exists. Preserve
+            # the historical AttentionRequired contract, but expose the
+            # already-closed CLI-missing code via the safe diagnostic
+            # callback rather than an unqualified "kobo adept" failure.
+            # Never read the exception's .filename, .args or repr: argv
+            # and configured binaries may contain private local paths.
+            self.last_run_diagnostic.update(
+                duration_ms=int((time.monotonic()-started)*1000),
+                error_code='kobo_adept_missing',
+                retryable=False,
+            )
+            self._report(
+                f"Kobo-Adept {self.last_run_diagnostic['operation']}",
+                "error", level="normal",
+            )
             raise AttentionRequired("Kobo-Adept n'est pas installé.", code='kobo_adept_missing') from None
         except subprocess.TimeoutExpired as exc:
             statistics(exc.output, exc.stderr)
             self.last_run_diagnostic.update(stdout_mode='timeout', stdout_summary='sortie partielle après délai')
-            fail("Kobo-Adept a dépassé le délai d'exécution.", 'kobo_adept_timeout', retryable=True)
+            # A timed-out ACSM fulfillment may already have consumed a
+            # one-time license upstream. Never advertise an automatic retry:
+            # inspect the exact local artifact/receipt before any new attempt.
+            # This is a transport uncertainty, NOT an Adobe error diagnosis.
+            acsm_fulfillment = (
+                type(args) in (list, tuple) and len(args) >= 2
+                and args[0] == 'download' and args[1] == 'request'
+                and type(payload) is dict
+                and type(payload.get('source')) is dict
+                and payload['source'].get('type') == 'acsm'
+            )
+            fail("Kobo-Adept a dépassé le délai d'exécution.",
+                 'kobo_adept_timeout', retryable=not acsm_fulfillment)
         except OSError as exc:
             self.last_run_diagnostic.update(duration_ms=int((time.monotonic()-started)*1000), launch_error=type(exc).__name__)
             fail('Kobo-Adept ne peut pas être exécuté.', 'kobo_adept_launch_error')
