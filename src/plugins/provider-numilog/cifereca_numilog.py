@@ -736,7 +736,7 @@ class NumilogSession(ProviderSession):
             )
             if (source == 'direct_url' and selected_link is None
                     and url_origin(url) != url_origin(self.library_url)
-                    and url_origin(url) not in ALLOWED_ACSM_ORIGINS
+                    and url_origin(url) not in self.allowed_origins
                     and bool(urlsplit(url).query)):
                 # No caller may turn a raw external URL into a capability:
                 # arbitrary publishers are reachable ONLY via an owned Links
