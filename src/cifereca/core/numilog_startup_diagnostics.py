@@ -182,9 +182,7 @@ class StartupTrace:
         except Exception:
             pass  # an optional log handler cannot alter acquisition outcomes
         try:
-            self.service.diagnostics.add("NUMILOG", "startup_materialization",
-                "error" if status in {"failed", "partial"} else "warning" if status == "blocked" else "ok",
-                detail=fields)
+            self.service.diagnostics.add_core_numilog_startup(fields)
         except Exception:
             pass
         try:
