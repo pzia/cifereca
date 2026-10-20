@@ -11,7 +11,7 @@ from pathlib import Path
 from threading import Event
 
 from browser_recorder import RecorderError, site_origin
-from browser_recorder_http import record_http
+from browser_recorder_http import CapturePause, record_http
 from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
 
@@ -28,6 +28,7 @@ class PrivateReviewPanel:
         self._bundle_preview = None
         self._handle = None
         self._stop = None
+        self._pause_control = None
         self._trace = None
         self._review = None
         self._closed = False
@@ -50,9 +51,11 @@ class PrivateReviewPanel:
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.start = Gtk.Button(label="Démarrer HTTP privé")
         self.stop = Gtk.Button(label="Arrêter / revoir")
+        self.pause_button = Gtk.Button(label="Mettre en pause")
         self.preview_button = Gtk.Button(label="Prévisualiser les choix")
         self.clear = Gtk.Button(label="Effacer les données privées")
-        for button in (self.start, self.stop, self.preview_button, self.clear):
+        for button in (self.start, self.stop, self.pause_button,
+                       self.preview_button, self.clear):
             controls.append(button)
         box.append(controls)
         self.status = Gtk.Label(label="Aucune observation HTTP privée en mémoire.",
@@ -123,6 +126,7 @@ class PrivateReviewPanel:
 
         self.start.connect("clicked", lambda *_: self.begin())
         self.stop.connect("clicked", lambda *_: self.stop_capture())
+        self.pause_button.connect("clicked", lambda *_: self.toggle_pause())
         self.preview_button.connect("clicked", lambda *_: self.preview())
         self.clear.connect("clicked", lambda *_: self.discard())
         self._refresh()
@@ -141,6 +145,11 @@ class PrivateReviewPanel:
             and not self.legacy_running()
         )
         self.stop.set_sensitive(not self._closed and busy)
+        can_pause = (not self._closed and busy and self._pause_control is not None
+                     and self._stop is not None and not self._stop.is_set())
+        self.pause_button.set_sensitive(can_pause)
+        paused = self._pause_control.state()[0] if self._pause_control else False
+        self.pause_button.set_label("Reprendre HTTP privé" if paused else "Mettre en pause")
         self.preview_button.set_sensitive(
             not self._closed and not busy and self._review is not None
         )
@@ -206,10 +215,12 @@ class PrivateReviewPanel:
         generation = self._generation
         self._stop = Event()
         stop = self._stop
+        self._pause_control = CapturePause()
+        pause_control = self._pause_control
         self.status.set_label("Navigateur HTTP privé en cours, sans export…")
 
         def work(_control):
-            return record_http(start_url, stop)
+            return record_http(start_url, stop, pause_control=pause_control)
 
         try:
             handle = self.tasks.submit(
@@ -217,6 +228,7 @@ class PrivateReviewPanel:
             )
         except Exception:
             self._stop = None
+            self._pause_control = None
             self.status.set_label("Impossible de démarrer le navigateur privé.")
             self._refresh()
             return
@@ -239,6 +251,7 @@ class PrivateReviewPanel:
                 if self._handle is done:
                     self._handle = None
                 self._stop = None
+                self._pause_control = None
                 if message:
                     self.status.set_label(message)
                 else:
@@ -262,10 +275,23 @@ class PrivateReviewPanel:
 
         handle.add_done_callback(finished)
 
+    def toggle_pause(self):
+        if (self._closed or not self.is_recording() or self._pause_control is None
+                or self._stop is None or self._stop.is_set()):
+            return
+        previous = self._pause_control.state()[0]
+        self._pause_control.set_paused(not previous)
+        self.status.set_label(
+            "Capture HTTP privée suspendue ; aucun nouveau corps conservé."
+            if not previous else "Capture HTTP privée reprise."
+        )
+        self._refresh()
+
     def stop_capture(self):
         if self._stop is not None:
             self._stop.set()
             self.status.set_label("Arrêt demandé ; préparation de la revue…")
+            self._refresh()
 
     def _show_candidates(self):
         self._clear_candidates()
