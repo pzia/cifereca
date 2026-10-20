@@ -1,14 +1,9 @@
 name: Publish Debian 13 GTK4 rootless offline cache
 
 on:
-  # One-time publication for the user-requested Debian package cache.
-  # No publication on pull_request or on arbitrary pushes to main.
-  push:
-    branches:
-      - ux/tooling-gtk-debian13-asset-20261020
-    paths:
-      - .github/workflows/gtk-debian13-cache-asset.yml
-  # After review/merge, explicit manual release only.
+  # The initial 2026-10-20 asset was published by a one-time branch push
+  # (run 39458209715). Subsequent publications require explicit approval,
+  # a NEW release tag and a review on main. Never publish on PR/push.
   workflow_dispatch:
     inputs:
       confirm_publish:
@@ -28,13 +23,9 @@ jobs:
   build:
     if: >-
       github.repository == 'pzia/cifereca' &&
-      (
-        (github.event_name == 'push' &&
-         github.ref == 'refs/heads/ux/tooling-gtk-debian13-asset-20261020') ||
-        (github.event_name == 'workflow_dispatch' &&
-         github.ref == 'refs/heads/main' &&
-         inputs.confirm_publish == true)
-      )
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.confirm_publish == true
     permissions:
       contents: read
     runs-on: ubuntu-24.04
