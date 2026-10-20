@@ -7,9 +7,10 @@ import json
 from pathlib import Path
 import tarfile
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 import unittest
 
-from fetch_release_cache import main, _unpack_checked, PROFILE
+from fetch_release_cache import main, _unpack_checked, PROFILE, ASSET, RELEASE_SHA256
 
 
 def archive(path: Path, *, evil: str | None = None, bad_package: bool = False) -> str:
@@ -73,6 +74,21 @@ class GtkAssetTests(unittest.TestCase):
             tar.addfile(entry)
         with self.assertRaises(ValueError):
             _unpack_checked(self.asset, self.root)
+
+    def test_remote_manifest_is_not_sufficient_without_pinned_digest(self):
+        digest = archive(self.asset)
+        self.assertNotEqual(digest, RELEASE_SHA256)
+        dest = self.root / "missing"
+
+        def fake_download(url, output, _maxbytes):
+            if url.endswith("/SHA256SUMS"):
+                output.write_text(f"{digest}  {ASSET}\n")
+            else:
+                output.write_bytes(self.asset.read_bytes())
+
+        with patch("fetch_release_cache._fetch", side_effect=fake_download):
+            self.assertEqual(main(["--dest", str(dest)]), 2)
+        self.assertFalse(dest.exists())
 
     def test_digest_must_be_hex_and_filename_fixed(self):
         archive(self.asset)
