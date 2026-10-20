@@ -275,3 +275,73 @@ def test_non_finite_numeric_json_shape_fails_closed():
     assert _json_shape(10000, name="anonymousCode") == "[NUMBER]"
     assert _json_shape(9999, name="year") == 9999
     assert _json_shape(123456789, name="bookId", approved=frozenset({"123456789"})) == 123456789
+
+
+
+def test_zip_technical_headers_never_publish_unreviewed_string_values():
+    """A nominally safe header name is not proof its VALUE is public."""
+    from browser_recorder_zip import _safe_headers
+
+    headers = {
+        "content-type": "application/json; boundary=PRIVATE_MIME_BOUNDARY",
+        "accept": "application/json; profile=PRIVATE_PROFILE, */*",
+        "retry-after": "42",
+        "x-ratelimit-limit": "PRIVATE_ACCOUNT_000123",
+        "x-ratelimit-remaining": "7",
+        "x-ratelimit-reset": "PRIVATE_RESET",
+        "authorization": "Bearer PRIVATE_BEARER",
+    }
+    assert _safe_headers(headers) == {
+        "content-type": "application/json",
+        "accept": "application/json, */*",
+        "retry-after": "42",
+        "x-ratelimit-remaining": "7",
+    }
+    assert _safe_headers({
+        "content-type": "application/vnd.fictional+json",
+        "accept": "application/xml; q=0.5, text/html",
+        "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT",
+        "x-ratelimit-limit": "1000",
+    }) == {
+        "content-type": "application/vnd.fictional+json",
+        "accept": "application/xml, text/html",
+        "x-ratelimit-limit": "1000",
+    }
+    assert _safe_headers({"content-type": "text/html; charset=utf-8"}) == {
+        "content-type": "text/html",
+    }
+    assert _safe_headers({"content-type": "application/pdf", "accept": "PRIVATE"}) == {}
+
+
+def test_actual_zip_member_excludes_private_technical_header_values():
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/api/books", status=429,
+        response_headers={
+            "content-type": "application/json; profile=FICTIONAL_PRIVATE_MIME",
+            "retry-after": "123",
+            "x-ratelimit-limit": "FICTIONAL_PRIVATE_LIMIT",
+            "x-ratelimit-remaining": "3",
+        },
+        response_body='{"books":[]}',
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        plan = prepare_reviewed_zip(review)
+        summary = plan.preview()
+        member = next(v for v in summary["members"]
+                      if v["name"] == "exchanges/0001.json")
+        doc = json.loads(member["text"])
+        assert doc["response_headers"] == {
+            "content-type": "application/json",
+            "retry-after": "123",
+            "x-ratelimit-remaining": "3",
+        }
+        combined = json.dumps(summary)
+        assert "FICTIONAL_PRIVATE_MIME" not in combined
+        assert "FICTIONAL_PRIVATE_LIMIT" not in combined
+    finally:
+        review.destroy()
+        trace.destroy()
