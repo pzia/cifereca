@@ -208,9 +208,13 @@ def test_real_gtk4_large_identifier_list_requires_each_decision_and_scrolls(
         flush_glib()
         assert len(panel._review.local_rows()) == 80
         assert panel._review.pending() == 80
-        scroller = panel.candidates_box.get_parent()
+        # GTK4 automatically wraps a non-Scrollable Gtk.Box in a Viewport.
+        viewport = panel.candidates_box.get_parent()
+        assert isinstance(viewport, Gtk.Viewport)
+        scroller = viewport.get_parent()
         assert isinstance(scroller, Gtk.ScrolledWindow)
-        assert scroller.get_child() is panel.candidates_box
+        assert scroller.get_child() is viewport
+        assert viewport.get_child() is panel.candidates_box
         assert scroller.get_vadjustment().get_upper() > scroller.get_vadjustment().get_page_size()
 
         choices = []
