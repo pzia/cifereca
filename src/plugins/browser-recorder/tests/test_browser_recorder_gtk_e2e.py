@@ -161,3 +161,104 @@ def test_real_gtk4_private_review_zip_export_keyboard_controls(
         panel.destroy()
         window.close()
         flush_glib()
+
+
+@pytest.mark.parametrize("width", (1280, 1366))
+def test_real_gtk4_large_identifier_list_requires_each_decision_and_scrolls(
+    monkeypatch, tmp_path, width,
+):
+    """80 real GTK selectors, scroll, and no ZIP without individual choices.
+
+    Native widgets and allocations, synthetic traffic only; no XTEST input,
+    network, real account, or user secrets. Interactive UX remains separate.
+    """
+    import browser_recorder_review_ui as view
+
+    Gtk.init()
+    tasks = FakeTasks()
+    trace = PrivateHttpTrace((ORIGIN,))
+    suffix = "?" + "&".join(f"BookId={1000 + n}" for n in range(80))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/api/books" + suffix, status=200,
+    ))
+
+    def fake_http(start, stop, **_kw):
+        assert start.startswith(ORIGIN)
+        assert stop.is_set()
+        return trace
+
+    monkeypatch.setattr(view, "record_http", fake_http)
+    site = Gtk.Entry()
+    site.set_text(ORIGIN + "/api/books")
+    consent = Gtk.CheckButton()
+    consent.set_active(True)
+    panel = PrivateReviewPanel(
+        Gtk, GLib, tasks, site, consent, lambda: False,
+        export_directory=tmp_path / "exports",
+    )
+    window = Gtk.Window()
+    window.set_default_size(width, 850)
+    window.set_child(panel.widget)
+    window.present()
+    flush_glib()
+    try:
+        panel.start.emit("clicked")
+        panel.stop.emit("clicked")
+        tasks.handle.finish()
+        flush_glib()
+        assert len(panel._review.local_rows()) == 80
+        assert panel._review.pending() == 80
+        # GTK4 automatically wraps a non-Scrollable Gtk.Box in a Viewport.
+        viewport = panel.candidates_box.get_parent()
+        assert isinstance(viewport, Gtk.Viewport)
+        scroller = viewport.get_parent()
+        assert isinstance(scroller, Gtk.ScrolledWindow)
+        assert scroller.get_child() is viewport
+        assert viewport.get_child() is panel.candidates_box
+        assert scroller.get_vadjustment().get_upper() > scroller.get_vadjustment().get_page_size()
+
+        choices = []
+        child = panel.candidates_box.get_first_child()
+        while child is not None:
+            chooser = child.get_last_child()
+            assert isinstance(chooser, Gtk.ComboBoxText)
+            choices.append(chooser)
+            child = child.get_next_sibling()
+        assert len(choices) == 80
+        assert not panel.plan_button.get_sensitive()
+        assert not panel.export_button.get_sensitive()
+        assert not list(tmp_path.iterdir())
+
+        # A last-row edit should stay reachable after native scrolling.
+        scroller.get_vadjustment().set_value(
+            scroller.get_vadjustment().get_upper()
+            - scroller.get_vadjustment().get_page_size()
+        )
+        flush_glib()
+        assert scroller.get_vadjustment().get_value() > 0
+        choices[-1].set_active_id("keep")
+        assert panel._review.pending() == 79
+        for chooser in choices[:-1]:
+            chooser.set_active_id("anonymize")
+        flush_glib()
+        assert panel._review.pending() == 0
+        assert panel.plan_button.get_sensitive()
+        panel.plan_button.emit("clicked")
+        flush_glib()
+        assert panel._bundle_preview is not None
+        assert not panel.export_button.get_sensitive()
+        assert not list(tmp_path.iterdir())
+
+        # Reversing a decision revokes the frozen preview and consent.
+        choices[0].set_active_id("exclude")
+        assert panel._bundle_plan is None
+        assert not panel.export_confirm.get_active()
+        assert not panel.export_button.get_sensitive()
+        assert list(tmp_path.iterdir()) == []
+        panel.clear.emit("clicked")
+        flush_glib()
+        assert trace.exchanges == []
+    finally:
+        panel.destroy()
+        window.close()
+        flush_glib()
