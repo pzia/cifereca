@@ -1,0 +1,44 @@
+# TEMPORARY public-source fixture for user-authorized local GTK UX #2141.
+# Unmerged; no checkout archive, runtime state, screenshot, credentials or logs.
+name: UX temporary Cifereca GTK local fixture
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ux-temporary-gtk-local-fixture.yml'
+permissions:
+  contents: read
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build public Cifereca wheel from exact PR source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python3 -m pip wheel --disable-pip-version-check \
+            --no-deps --wheel-dir dist .
+          test "$(find dist -type f -name '*.whl' | wc -l)" -eq 1
+          python3 -m compileall -q e2e/diagnostics_navigation_probe.py
+          echo "Checked out source SHA: $(git rev-parse HEAD)"
+      - name: Deliver allowlisted public package and GTK probe sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: ux-cifereca-gtk-public-test-fixture
+          path: |
+            dist/*.whl
+            e2e/*.py
+            environnements/openai-chat-debian/*.py
+            environnements/openai-chat-debian/gtk-python
+            environnements/openai-chat-debian/headless
+            environnements/openai-chat-debian/env.sh
+            environnements/openai-chat-debian/run-cifereca
+            src/plugins/diagnostics-page/*.py
+            src/plugins/diagnostics-page/*.json
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 6
