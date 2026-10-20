@@ -32,6 +32,18 @@ def install_css(window, *, Gtk, Gdk) -> None:
     .cover-frame { border-radius: 7px; background: alpha(currentColor, 0.06); }
     .busy-bar { background: @headerbar_bg_color; border-top: 1px solid @borders; padding: 8px 14px; }
     .notification-bar { background: @headerbar_bg_color; border-top: 1px solid @borders; padding: 7px 12px; }
+    /* #2141: account cards and headings stay visually distinct with tools open. */
+    .sync-source-panel {
+        background: @card_bg_color;
+        border: 1px solid @borders;
+        border-radius: 14px;
+        padding: 14px;
+    }
+    .sync-source-heading .title {
+        font-size: 1.14em;
+        font-weight: 750;
+    }
+    .sync-source-heading .subtitle { opacity: 0.92; }
     .settings-tabs button { padding-left: 8px; padding-right: 8px; min-width: 0; }
     .activity-success { color: @success_color; }
     .activity-error { color: @error_color; }
