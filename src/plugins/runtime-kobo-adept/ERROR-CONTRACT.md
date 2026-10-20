@@ -1,3 +1,28 @@
+## 1.2.29 — timeout ACSM non réessayable sans preuve (#979 P0)
+
+Un `subprocess.TimeoutExpired` lors de `download request` avec
+`payload.source.type == "acsm"` n'est **pas** une preuve d'échec
+d'activation : la licence à usage unique peut avoir été consommée
+malgré le dépassement de délai. Le runtime conserve le code public
+fermé `kobo_adept_timeout` mais publie désormais **`retryable=false`**
+dans l'exception et le diagnostic expurgé. Les autres opérations
+conservent leur politique de timeout antérieure.
+
+Ce changement **n'annule aucun fulfillment** et ne déclenche aucune
+relecture d'ACSM, aucun retry, aucun accès au compte ou changement de
+broker/Core. Avant une nouvelle tentative manuelle, vérifier le reçu
+et l'artefact local exact. Ne pas interpréter le timeout comme
+`E_LIC_ALREADY_FULFILLED_BY_ANOTHER_USER`.
+
+Tests hors réseau : `tests/test_adept_acsm_timeout_retry_p0_979.py`
+(timeout synthétique ACSM/HTTP/Kobo/autres, données privées dans les
+sorties, absence de fuite, remise à zéro des diagnostics après succès).
+
+**Limite :** le contrat des erreurs métier Adobe de la CLI externe
+reste à qualifier et #979 demeure ouvert.
+
+---
+
 ## 1.2.28 — diagnostic fermé lorsque l'exécutable Kobo-ADEPT manque (#979 P0)
 
 La commande `run_json()` conservait déjà le contrat public
