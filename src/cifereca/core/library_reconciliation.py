@@ -24,7 +24,7 @@ _COLUMNS = {
     'artifacts': 'artifact_id sha256 size media_format',
     'placements': 'placement_id artifact_id path identity_id provider_id source_item_id state',
     'backup_items': 'provider_id credential_id item_id identity_id local_path sha256 size status',
-    'catalog_entries': 'catalog_entry_id artifact_id placement_id identity_id provider_id item_id',
+    'catalog_entries': 'catalog_entry_id artifact_id placement_id identity_id provider_id item_id metadata_json',
 }
 
 
@@ -127,6 +127,16 @@ def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
                 rows = rows[:remaining_rows]
                 remaining_rows -= len(rows)
                 result.tables[name] = [dict(zip(wanted, row)) for row in rows]
+                if name == 'catalog_entries':
+                    # Import here avoids the module-level snapshot/type cycle.
+                    from .library_metadata_candidates import identifiers
+                    for row in result.tables[name]:
+                        raw = row.pop('metadata_json', None)
+                        try:
+                            metadata = json.loads(raw) if type(raw) is str and len(raw) <= 65536 else {}
+                        except (ValueError, RecursionError):
+                            metadata = {}
+                        row['bibliographic_identifiers'] = identifiers(metadata)
                 if name == 'entitlements':
                     for row in result.tables[name]:
                         raw = row.pop('metadata_json', None)
@@ -171,7 +181,7 @@ class ReconciliationReport:
         return {'schema': 1, 'read_only': True, 'acquisition_authorized': False,
                 'status': 'incomplete_scan' if self.reasons else 'complete',
                 'adept_status': 'not_requested',
-                'not_evaluated': ['stored_path_missing', 'metadata_candidate', 'adept_unavailable'],
+                'not_evaluated': ['adept_unavailable'],
                 'reasons': sorted(self.reasons), 'counts': dict(sorted(counts.items())),
                 'edge_counts': dict(sorted(Counter(e.reason for e in self.edges).items()))}
 
@@ -190,9 +200,9 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
     tables = snapshot.tables
     artifacts = defaultdict(list)
     hashes = defaultdict(list)
-    for row in tables.get('artifacts', []):
+    for ai, row in enumerate(tables.get('artifacts', [])):
         artifacts[row['artifact_id']].append(row)
-        hashes[(row['sha256'], row['size'])].append(row)
+        hashes[(row['sha256'], row['size'])].append((ai, row))
     rights = tables.get('entitlements', [])
     acquisitions = defaultdict(list)
     for row in tables.get('acquisition_ledger', []):
@@ -226,6 +236,10 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
         backup_candidates = backup_hashes.get((observation.identity_id, observation.sha256, observation.size), [])
         if byte_candidates or backup_candidates:
             categories.add('present_unlinked')
+        for ai, _ in byte_candidates[:24]:
+            result.edges.append(EvidenceEdge(fi, 'artifacts', ai, 'artifact_sha_size_candidate', 'bytes'))
+        if len(byte_candidates) > 24:
+            result.reasons.add('comparison_budget')
         for bi, _ in backup_candidates[:24]:
             result.edges.append(EvidenceEdge(fi, 'backup_items', bi, 'backup_sha_size_candidate', 'bytes'))
         if len(backup_candidates) > 24:
@@ -303,6 +317,8 @@ def main(argv=None):
     import threading
     from dataclasses import asdict
     from .library_inventory import scan_identity_roots
+    from .library_stored_paths import inspect_stored_paths
+    from .library_metadata_candidates import metadata_candidates
 
     parser = argparse.ArgumentParser(description='Offline library reconciliation (no repair or acquisition).')
     parser.add_argument('--database', required=True, type=Path)
@@ -324,17 +340,19 @@ def main(argv=None):
             inventory = scan_identity_roots({k: tuple(v) for k, v in roots.items()}, cancelled=cancelled.is_set)
             snapshot = EvidenceSnapshot(reasons={'snapshot_cancelled'}) if cancelled.is_set() else read_quiescent_snapshot(args.database, cancelled=cancelled.is_set)
             report = reconcile(inventory, snapshot, cancelled=cancelled.is_set)
+            candidates = metadata_candidates(inventory, snapshot, cancelled=cancelled.is_set)
+            stored_paths = inspect_stored_paths(snapshot, {k: tuple(v) for k, v in roots.items()}, cancelled=cancelled.is_set)
         finally:
             signal.signal(signal.SIGINT, previous)
         if args.private_report is not None:
             private = {'privacy': 'local_private_do_not_share',
                        'inventory': asdict(inventory), 'snapshot': asdict(snapshot),
-                       'reconciliation': asdict(report)}
+                       'reconciliation': asdict(report), 'stored_paths': asdict(stored_paths), 'metadata_candidates': asdict(candidates)}
             fd = os.open(args.private_report, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
             with os.fdopen(fd, 'w', encoding='utf-8') as stream:
                 json.dump(private, stream, ensure_ascii=False, default=lambda value: sorted(value) if isinstance(value, set) else None)
-        print(json.dumps({'inventory': inventory.redacted(), 'reconciliation': report.redacted()}, sort_keys=True))
-        return 2 if inventory.reasons or report.reasons else 0
+        print(json.dumps({'inventory': inventory.redacted(), 'reconciliation': report.redacted(), 'stored_paths': stored_paths.redacted(), 'metadata_candidates': candidates.redacted()}, sort_keys=True))
+        return 2 if inventory.reasons or report.reasons or stored_paths.reasons or candidates.reasons else 0
     except (OSError, ValueError):
         # Never echo an input path, account identifier or raw parser exception.
         print(json.dumps({'status': 'reconciliation_unavailable', 'read_only': True,
