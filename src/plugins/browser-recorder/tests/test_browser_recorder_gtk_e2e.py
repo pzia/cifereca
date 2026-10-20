@@ -6,7 +6,6 @@ Complements real Chromium test_browser_recorder_chromium_e2e.py.
 from __future__ import annotations
 
 import json
-from threading import Event
 from types import SimpleNamespace as NS
 from zipfile import ZipFile
 
@@ -86,7 +85,7 @@ def test_real_gtk4_private_review_zip_export_keyboard_controls(
 
     def fake_http(start, stop, **_kw):
         assert start.startswith(ORIGIN)
-        assert isinstance(stop, Event.__class__) is False or stop.is_set()
+        assert stop.is_set()
         return trace
 
     monkeypatch.setattr(view, "record_http", fake_http)
