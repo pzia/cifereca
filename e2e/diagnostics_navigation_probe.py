@@ -1642,15 +1642,18 @@ def main() -> int:
         report["checks"]["P1_1889_gtk_sync_suffix_natural_height_centered"] = True
         report["checks"]["P0_kobo_acquisition_controls_keep_source_row_compact"] = True
         report["checks"]["P0_kobo_acquisition_off_by_default_on_sync_page"] = True
+        # #2141: public catalogue rows still expose their activation switch,
+        # but no fake grey Sync CTA. The fixed two-line presentation is concise
+        # and the ordering lets actual accounts occupy the first viewport.
         for provider in ("gutenberg", "gallica"):
             row = next(row for row in rows if row.get_title() == f"Catalogue public · {provider}")
-            assert f"Fournisseur : {provider}" in row.get_subtitle()
-            assert "Non prise en charge" in row.get_subtitle()
-            assert "Catalogue public consultable indépendamment" in row.get_subtitle()
-            assert "Échec" not in row.get_subtitle()
-            assert any(isinstance(node, Gtk.Button) and not node.get_sensitive()
-                       and "ne fournit pas de synchronisation" in (node.get_tooltip_text() or "")
-                       for node in walk(sync_action_row(row)))
+            subtitle = row.get_subtitle()
+            assert "Catalogue consultable · Activée · Connectée" in subtitle
+            assert "Synchronisation des données non prise en charge" in subtitle
+            assert subtitle.count("\\n") == 1
+            assert "Échec" not in subtitle
+            assert any(isinstance(node, Gtk.Switch) for node in walk(sync_action_row(row)))
+            assert not any(isinstance(node, Gtk.Button) for node in walk(sync_action_row(row)))
         paris = [next(row for row in rows
                       if row.get_title() == f"Paris homonyme · paris · connexion {i}/2")
                  for i in (1, 2)]
@@ -1678,6 +1681,17 @@ def main() -> int:
             if isinstance(group_child, Adw.PreferencesGroup):
                 source_groups.append(group_child)
             group_child = group_child.get_next_sibling()
+        # The two catalogue-only sources should no longer push accounts below
+        # the fold. Keep this assertion on live GTK group ordering, not a mock.
+        source_group_titles = []
+        for group in source_groups:
+            first = next((node for node in walk(group) if isinstance(node, Adw.ActionRow)), None)
+            if first is not None:
+                source_group_titles.append(first.get_title())
+        assert len(source_group_titles) == 11
+        assert all(title.startswith("Catalogue public · ") for title in source_group_titles[-2:])
+        assert all(not title.startswith("Catalogue public · ") for title in source_group_titles[:-2])
+        report["checks"]["P0_2141_sync_accounts_before_public_catalogues"] = True
         source_rows = []
         for group in source_groups:
             first_row = next(
