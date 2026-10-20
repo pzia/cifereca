@@ -1,3 +1,31 @@
+## #2460 / #1917 — sécuriser les chemins d'acquisition EPUB OPDS (0.1.23)
+
+Les URLs d'acquisition COPS acceptées sur `/index.php/fetch/...`
+doivent identifier **le même point d'accès après décodage du chemin**.
+Le contrôle précédent vérifiait surtout le préfixe littéral :
+`/index.php/fetch/%2e%2e/account/...`, `%2f`, `%5c` et les
+séquences doublement encodées `%25` pouvaient être interprétées comme
+une autre route après validation du fournisseur. La version 0.1.23
+refuse ces chemins **avant** de les publier dans une notice et
+**à nouveau** lors d'un téléchargement explicite depuis le cache.
+
+Les routes COPS déjà connues telles que `/index.php/fetch/42.epub`,
+`/index.php/fetch?id=42` et `/fetch.php?id=42&format=epub`
+restent admises (sans présumer de leur disponibilité réseau réelle).
+Ni l'EPUB ni la fiche HTML ne sont inventés ; aucun nouveau GET,
+aucun retry ni changement de permissions ou de politique de
+redirection `same_origin`. Les téléchargements déjà fonctionnels
+ne doivent pas être affectés. Une URL ambiguë rend l'offre non
+qualifiée, pas le catalogue entier « indisponible ».
+
+Tests synthétiques et hors réseau :
+`tests/test_opds_encoded_acquisition_integrity_p1_2460.py`
+(entrée Atom, ligne cachée en cache, et routes EPUB conservées).
+La cause des téléchargements échouant en réel et la recette GTK
+demeurent à qualifier dans #2460.
+
+---
+
 ## #1917 — auteurs OPDS conservés individuellement (0.1.22, 19/10/2026)
 
 Retour utilisateur : la recherche par auteur est « partielle ou inefficace ».
