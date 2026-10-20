@@ -140,3 +140,28 @@ def provider_failure_receipt(
         "attention_code": None,
         "metadata": metadata,
     }
+
+
+def public_process_suffix(fields: Mapping[str, Any]) -> str:
+    """Format only already-validated public runtime process measurements.
+
+    The caller first applies loan_failure_diagnostics.failure_fields to the
+    runtime's private payload. The suffix contains no callback text, paths,
+    profile, code guesses or Adobe license inference.
+    """
+    if type(fields) is not dict:
+        return ""
+    parts = []
+    for key, minimum, maximum in (
+        ("returncode", -255, 255),
+        ("duration_ms", 0, 86_400_000),
+        ("stdout_bytes", 0, 2**63 - 1),
+        ("stderr_bytes", 0, 2**63 - 1),
+        ("artifact_bytes", 0, 2**63 - 1),
+    ):
+        value = fields.get(key)
+        if type(value) is int and minimum <= value <= maximum:
+            parts.append(f"{key}={value}")
+    if type(fields.get("artifact_present")) is bool:
+        parts.append(f"artifact_present={fields['artifact_present']}")
+    return " (" + ", ".join(parts) + ")" if parts else ""
