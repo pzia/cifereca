@@ -1,4 +1,4 @@
-"""Provider externe Numilog 0.1.77, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
+"""Provider externe Numilog 0.1.78, bibliothèque privée, EPUB direct et ACSM/ADEPT."""
 from __future__ import annotations
 import hashlib
 import ipaddress
@@ -25,7 +25,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = '0.1.77'
+VERSION = '0.1.78'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -679,7 +679,7 @@ class NumilogSession(ProviderSession):
         self._diag('téléchargement',format='ACSM/ADEPT',fulfillment=status)
         return produced,self.library_url
 
-    def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None):
+    def _download(self,url,destination,*,title=None,author=None,book_id=None,source='direct_url',identity_id=None,expected_readbook_url=None,from_owned_confirmation=False):
         with DeliveryTrace(self.diagnostics, source=source, connected_initial=self.connected) as trace:
             trace.fail('adept_unconfirmed')
             owner = identity_id
@@ -692,6 +692,13 @@ class NumilogSession(ProviderSession):
                 expected_readbook_url if type(expected_readbook_url) is str else url
             )
             attested_confirmation_redirect = None
+            start_url_for_confirmation = url
+            owned_confirmation = (
+                from_owned_confirmation is True and source == 'owned_card'
+                and url_origin(url) == url_origin(self.library_url)
+                and urlsplit(url).path.casefold()
+                    == '/pages/commande/confirmationpaiement.aspx'
+            )
             for hop in range(12):
                 trace.fail('adept_unconfirmed')
                 if owner is not None:
@@ -834,6 +841,10 @@ class NumilogSession(ProviderSession):
                                             hop == 1 and attested_confirmation_redirect is not None
                                             and str(r.url) == attested_confirmation_redirect
                                         ),
+                                        allow_owned_confirmation_without_readbook=(
+                                            hop == 0 and owned_confirmation
+                                            and str(r.url) == start_url_for_confirmation
+                                        ),
                                     )
                                 except DeliverySelectionError as exc:
                                     bound_url = None
@@ -915,6 +926,10 @@ class NumilogSession(ProviderSession):
                                 allow_missing_readbook=(
                                     hop == 1 and attested_confirmation_redirect is not None
                                     and str(r.url) == attested_confirmation_redirect
+                                ),
+                                allow_owned_confirmation_without_readbook=(
+                                    hop == 0 and owned_confirmation
+                                    and str(r.url) == start_url_for_confirmation
                                 ),
                             )
                         except DeliverySelectionError as exc:
@@ -1019,7 +1034,8 @@ class NumilogSession(ProviderSession):
                     # signed ACSM GET. The broker will re-check it at import;
                     # direct EPUB fallback retains its existing contract.
                     self._identity_id()
-                    if self.acquisition_broker is None:
+                    if (evidence.delivery_kind == 'acsm'
+                            and self.acquisition_broker is None):
                         raise ProviderCapabilityError(
                             'Numilog : broker acquisition requis pour traiter un ACSM'
                         )
@@ -1051,7 +1067,9 @@ class NumilogSession(ProviderSession):
                 )
                 return self._download(start,directory/name,title=row['title'],author=item.author,
                     book_id=self._id(row),source='owned_card' if entry_from_owned_card else 'readbook',
-                    identity_id=owner,expected_readbook_url=row['href'])
+                    identity_id=owner,expected_readbook_url=row['href'],
+                    from_owned_confirmation=type(row.get('confirmation')) is str
+                        and not isinstance(evidence, OwnedDelivery))
             except httpx.HTTPError:
                 raise ProviderError('Numilog : erreur réseau pendant le téléchargement') from None
 
