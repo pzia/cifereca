@@ -175,3 +175,33 @@ def test_no_mutation_or_disk_export_during_review(tmp_path):
     assert list(tmp_path.iterdir()) == []
     review.destroy()
     trace.destroy()
+
+
+def test_html_password_hidden_token_and_bearer_text_never_survive_preview():
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/login?BookId=214",
+        response_body=(
+            '<form><input type="password" name="password" '
+            'value="PRIVATE_FORM_PASSWORD"/>'
+            '<input type="hidden" name="access_token" '
+            'value="PRIVATE_HIDDEN_TOKEN"/>'
+            '</form>'
+            '<pre>Authorization: Bearer PrivateBearerValue12345</pre>'
+        ),
+        response_headers={"content-type": "text/html"},
+    ))
+    review = IdentifierReview(trace)
+    candidates = _by_value(review)
+    assert "PRIVATE_FORM_PASSWORD" not in candidates
+    assert "PRIVATE_HIDDEN_TOKEN" not in candidates
+    assert "PrivateBearerValue12345" not in candidates
+    for entry in review.candidates():
+        review.decide(entry.key, "keep")
+    result = json.dumps(review.preview())
+    assert "PRIVATE_FORM_PASSWORD" not in result
+    assert "PRIVATE_HIDDEN_TOKEN" not in result
+    assert "PrivateBearerValue12345" not in result
+    assert result.count("[SECRET]") >= 3
+    review.destroy()
+    trace.destroy()
