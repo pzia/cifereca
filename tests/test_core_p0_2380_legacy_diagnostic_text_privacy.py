@@ -93,3 +93,44 @@ def test_missing_and_unknown_key_redaction_preserves_typed_counts():
         "path_kind": "confirmation_page",
         "downloaded": 1,
     }
+
+
+def test_hostile_plugin_fields_cannot_crash_collector_or_text_export():
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("must not stringify plugin-owned object")
+
+        def __bool__(self):
+            raise AssertionError("must not evaluate private object")
+
+        def __eq__(self, _other):
+            raise AssertionError("must not compare private object")
+
+    d = Diagnostics(level="errors")
+    # Invalid free fields must not be evaluated when filtering by severity.
+    d.add(Hostile(), Hostile(), Hostile(), duration_ms=Hostile(),
+          detail={Hostile(): "PRIVATE_KEY_VALUE"})
+    record, = d.snapshot()
+    assert record["category"] == "DIAGNOSTICS"
+    assert record["operation"] == "[opération masquée]"
+    assert record["status"] == "unknown"
+    assert record["duration_ms"] is None
+    assert record["detail"] == {}
+    assert "PRIVATE_KEY_VALUE" not in d.text("synthetic",
+        {Hostile(): "PRIVATE_EXTRA_VALUE"})
+    assert "PRIVATE_EXTRA_VALUE" not in d.text("synthetic",
+        {Hostile(): "PRIVATE_EXTRA_VALUE"})
+
+
+def test_an_invalid_field_name_also_hides_the_field_value():
+    d = Diagnostics()
+    d.add("CORE", "health check", detail={
+        "https://private.invalid/PRIVATE_NAME": "PRIVATE_VALUE",
+    })
+    exported = d.text("synthetic", {
+        "alice@example.invalid": "PRIVATE_EXTRA_VALUE",
+    })
+    assert "PRIVATE_NAME" not in exported
+    assert "PRIVATE_VALUE" not in exported
+    assert "PRIVATE_EXTRA_VALUE" not in exported
+    assert "[champ masqué]" in exported
