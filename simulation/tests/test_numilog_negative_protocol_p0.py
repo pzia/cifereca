@@ -128,10 +128,13 @@ class NumilogNegativeProtocolTests(unittest.TestCase):
         self.assertTrue(epub_path.exists())
 
     def test_fault_scope_excludes_public_catalogue_and_health(self):
-        for path in ("/health?ux_fault=503",
-                     "/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=&ux_fault=invalid_epub"):
-            status, _, _ = self.get(path)
-            self.assertEqual(status, 200)
+        status, _, _ = self.get("/health?ux_fault=503")
+        self.assertEqual(status, 200)
+        public = "/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query="
+        self.assertEqual(self.get(public)[0], 200)
+        # The independently validated public fixture rejects an unknown fault.
+        # Private protocol switches do not expand its allowed parameters.
+        self.assertEqual(self.get(public + "&ux_fault=invalid_epub")[0], 400)
         status, _, body = self.get("/Pages/Compte/MesLivres.aspx?page=1")
         self.assertEqual(status, 200)
         self.assertEqual(body.count(b'class="book"'), 3)
