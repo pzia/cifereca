@@ -222,6 +222,44 @@ def sync_local_reconciliation_presentation(result: object) -> str:
             f"{values[1]} entrées max. · "
             f"{used_mib}/{limit_mib} Mio de lecture cumulée. "
         )
+    # The Core broker may include a closed explanation of a partial audit.
+    # Never interpolate arbitrary reason strings or partially shaped fields.
+    # Legacy audits with no reason tuple keep the original generic message.
+    known_truncation_reasons = {
+        "record_budget": "plafond de lignes persistées",
+        "hash_attempt_budget": "plafond de tentatives SHA",
+        "hash_byte_budget": "budget d’octets de lecture SHA",
+        "product_path_budget": "plus de huit chemins candidats par produit",
+        "directory_entry_budget": "plafond d’entrées de répertoire",
+        "directory_scan_unavailable": "inspection d’un répertoire indisponible",
+    }
+    reason_keys = (
+        "truncation_reasons", "hash_attempts_used",
+        "directory_entries_inspected",
+    )
+    reason_label = ""
+    reason_present = [key in facts for key in reason_keys]
+    if any(reason_present):
+        reasons, attempts, inspected = (facts.get(key) for key in reason_keys)
+        if (
+            not all(reason_present) or not budget_label
+            or type(reasons) is not list or len(reasons) > len(known_truncation_reasons)
+            or any(type(reason) is not str or reason not in known_truncation_reasons
+                   for reason in reasons)
+            or reasons != sorted(set(reasons))
+            or bool(reasons) != facts["truncated"]
+            or type(attempts) is not int or not 0 <= attempts <= values[0]
+            or type(inspected) is not int or not 0 <= inspected <= values[1]
+        ):
+            return "Audit local indisponible. Aucun fichier modifié."
+        if reasons:
+            reason_label = "Causes attestées : " + ", ".join(
+                known_truncation_reasons[reason] for reason in reasons
+            ) + ". "
+        budget_label += (
+            f"Tentatives SHA : {attempts}/{values[0]} · "
+            f"entrées inspectées : {inspected}/{values[1]}. "
+        )
     return (
         f"Fichiers locaux vérifiés par SHA : {counts['linked_files_verified']} · "
         f"groupes de doublons binaires : {counts['binary_match_groups']} · "
@@ -229,7 +267,7 @@ def sync_local_reconciliation_presentation(result: object) -> str:
         f"Fichiers non indexés candidats : {counts['unindexed_regular_file_candidates']} · "
         f"placements incertains : {counts['unverified_placements']} · "
         f"droits sans artefact confirmé : {counts['active_entitlements_unmaterialized']}.\n"
-        f"{completeness} {budget_label}"
+        f"{completeness} {reason_label}{budget_label}"
         "Aucune réconciliation, acquisition ni suppression autorisée."
     )
 
