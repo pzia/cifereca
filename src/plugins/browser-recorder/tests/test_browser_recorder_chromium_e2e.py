@@ -651,3 +651,139 @@ def test_real_chromium_post_307_redirect_and_http_400_are_passive(
     finally:
         trace.destroy()
         assert trace.exchanges == [] and trace._pending == {}
+
+
+
+def test_real_chromium_second_origin_is_metadata_only_not_replayable(
+    fake_bookstore, monkeypatch, tmp_path: Path,
+):
+    """Two real loopback HTTP servers; third-party OAuth bytes never retained."""
+    from playwright.sync_api import sync_playwright
+    import browser_recorder_zip as zip_module
+
+    server, _stop, calls = fake_bookstore
+    primary = f"http://127.0.0.1:{server.server_port}"
+    observed = []
+
+    class IdentityHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_args):
+            # Never publish redirect state/query in test logs.
+            pass
+
+        def do_GET(self):
+            target = urlsplit(self.path).path
+            observed.append(("GET", target))
+            if target == "/oauth":
+                code, body = 302, b""
+                headers = {
+                    "Location": "/done?session=FICTIONAL_PRIVATE_OAUTH_SESSION",
+                    "Set-Cookie": "sid=FICTIONAL_PRIVATE_OAUTH_COOKIE",
+                }
+            elif target == "/done":
+                code, body, headers = 200, (
+                    b'{"access_token":"FICTIONAL_PRIVATE_ACCESS_TOKEN"}'
+                ), {}
+            else:
+                code, body, headers = 404, b"", {}
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+            self.wfile.flush()
+
+    identity = ThreadingHTTPServer(("127.0.0.1", 0), IdentityHandler)
+    identity.daemon_threads = True
+    thread = Thread(target=identity.serve_forever, daemon=True)
+    thread.start()
+    secondary = f"http://127.0.0.1:{identity.server_port}"
+    original_site_origin = http_recorder.site_origin
+
+    def local_test_origin(url):
+        parsed = urlsplit(url)
+        if (parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+                and not parsed.username and not parsed.password):
+            if parsed.port == server.server_port:
+                return primary
+            if parsed.port == identity.server_port:
+                return secondary
+        return original_site_origin(url)
+
+    monkeypatch.setattr(http_recorder, "site_origin", local_test_origin)
+    monkeypatch.setattr(zip_module, "site_origin", local_test_origin)
+    trace = http_recorder.PrivateHttpTrace(
+        (primary,), metadata_only_origins=(secondary,),
+    )
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=False)
+            try:
+                context = browser.new_context(
+                    accept_downloads=False, service_workers="block",
+                )
+                try:
+                    context.on("request", trace.request)
+                    context.on("response", trace.response)
+                    context.on("requestfinished", trace.finished)
+                    context.on("requestfailed", trace.failed)
+                    primary_tab = context.new_page()
+                    primary_tab.goto(primary + "/welcome", wait_until="load")
+                    secondary_tab = context.new_page()
+                    secondary_tab.goto(
+                        secondary + "/oauth?state=FICTIONAL_PRIVATE_STATE",
+                        wait_until="load",
+                    )
+                    secondary_tab.wait_for_timeout(160)
+                    assert "/done" in secondary_tab.url
+                finally:
+                    context.close()
+            finally:
+                browser.close()
+
+        identity_entries = [entry for entry in trace.exchanges
+                            if entry.metadata_only]
+        assert len(identity_entries) >= 2
+        assert {302, 200}.issubset({entry.status for entry in identity_entries})
+        for entry in identity_entries:
+            assert entry.method == "GET"
+            assert entry.url == "" and entry.redirect_to is None
+            assert entry.mime == ""
+            assert entry.request_headers == entry.response_headers == {}
+            assert entry.request_body is None and entry.response_body is None
+            assert entry.request_body_state == "body_omitted"
+            assert entry.response_body_state == "body_omitted"
+        assert calls.count(("GET", "/welcome")) == 1
+        assert observed.count(("GET", "/oauth")) == 1
+        assert observed.count(("GET", "/done")) == 1
+        assert not any(method == "POST" for method, _path in calls + observed)
+
+        review = IdentifierReview(trace)
+        try:
+            for candidate in review.candidates():
+                review.decide(candidate.key, "anonymize")
+            plan = prepare_reviewed_zip(review)
+            assert not list(tmp_path.iterdir())
+            serialized = json.dumps(plan.preview())
+            for private in (
+                secondary, "FICTIONAL_PRIVATE_STATE",
+                "FICTIONAL_PRIVATE_OAUTH_SESSION",
+                "FICTIONAL_PRIVATE_OAUTH_COOKIE",
+                "FICTIONAL_PRIVATE_ACCESS_TOKEN",
+            ):
+                assert private not in serialized
+            assert any(member["name"].startswith("exchanges/")
+                       and '"metadata_only":true' in member["text"]
+                       for member in plan.preview()["members"])
+        finally:
+            review.destroy()
+    finally:
+        trace.destroy()
+        identity.shutdown()
+        identity.server_close()
+        thread.join(timeout=3)
+        assert trace.exchanges == []
