@@ -44,3 +44,30 @@ jobs:
         if: always()
         run: |
           echo 'Synthetic HTTP fixture only; no screenshots, HAR, ZIP, browser profile, cookies or session artifacts uploaded.' >> "$GITHUB_STEP_SUMMARY"
+
+  gtk:
+    name: Real GTK4 · reviewed ZIP controls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install native GTK4/PyGObject/Xvfb test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi gir1.2-gtk-4.0 python3-pytest xvfb xauth
+      - name: Native GTK4 review and ZIP UI test with synthetic RAM trace
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/plugins/browser-recorder
+          GDK_BACKEND: x11
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -c 'import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk; assert Gtk is not None'
+          xvfb-run -a /usr/bin/python3 -m pytest -q -rs \
+            src/plugins/browser-recorder/tests/test_browser_recorder_gtk_e2e.py
+      - name: Never upload private UI data
+        if: always()
+        run: |
+          echo 'Synthetic local GTK values only; no screenshots, traces, or ZIP outputs published.' >> "$GITHUB_STEP_SUMMARY"
