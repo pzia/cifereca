@@ -38,7 +38,9 @@ def test_module_groups_event_ids_and_states_are_explicit_not_claimed_correlation
     assert "for row in group[\"events\"]:" in src
     assert "event_id = row[\"event_id\"]" in src
     assert "Aucun événement sur cette page" in src
-    assert "Sources non alimentées ou indisponibles" in src
+    assert "Canaux de diagnostic : actualisation requise" in src
+    assert "journals_sources.set_text(diagnostic_channel_caption(current_page))" in src
+    assert "Sources non alimentées" not in src
     assert "Actualisation en cours" in src
     assert "Données indisponibles" in src
     assert 'journals_copy.set_sensitive(bool(selected_event_ids) and not selection_busy)' in src
