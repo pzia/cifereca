@@ -210,7 +210,9 @@ def test_large_persisted_snapshot_marks_record_budget_not_missing_files(
             service, credential_id="vault-1",
         )
         assert report["truncated"] is True
-        assert report["truncation_reasons"] == ["record_budget"]
+        assert report["truncation_reasons"] == [
+            "active_entitlements_budget", "backup_records_budget",
+        ]
         assert report["counts"]["backup_rows"] == 4096
         assert report["hash_attempts_used"] == 0
         assert report["downloads_authorized"] is False
@@ -265,5 +267,102 @@ def test_more_than_eight_local_product_paths_has_specific_bounded_reason(
         assert report["downloads_authorized"] is False
         assert "PRIVATE-product-path-limit" not in json.dumps(report)
         assert str(tmp_path) not in json.dumps(report)
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("origin,reason", [
+    ("backup", "backup_records_budget"),
+    ("catalogue", "catalogue_rows_budget"),
+    ("rights", "active_entitlements_budget"),
+])
+def test_persisted_row_limit_identifies_exact_scoped_source_without_secrets(
+    tmp_path, monkeypatch, origin, reason,
+):
+    service, session = _service(tmp_path, [])
+    monkeypatch.setattr(audit, "_MAX_RECORDS", 2)
+    rows = [
+        {"credential_id": "vault-1", "identity_id": "default",
+         "item_id": f"PRIVATE_ITEM_{index}", "local_path": None}
+        for index in range(3)
+    ]
+    monkeypatch.setattr(
+        service.storage, "backup_list",
+        lambda provider: rows if origin == "backup" and provider == "kobo" else [],
+    )
+    monkeypatch.setattr(
+        service.storage, "catalog_entries",
+        lambda: [
+            {"provider_id": "kobo", "identity_id": "default",
+             "item_id": f"PRIVATE_ITEM_{index}", "local_state": "remote",
+             "metadata": {"private": "PRIVATE_KEY"}}
+            for index in range(3)
+        ] if origin == "catalogue" else [],
+    )
+    monkeypatch.setattr(
+        service.storage, "entitlements",
+        lambda **kwargs: [
+            {"credential_id": "vault-1", "identity_id": "default",
+             "item_id": f"PRIVATE_ITEM_{index}", "state": "active"}
+            for index in range(3)
+        ] if origin == "rights" else [],
+    )
+    monkeypatch.setattr(
+        session, "backup_manifest",
+        lambda: pytest.fail("audit must stay offline"),
+    )
+    try:
+        report = audit.kobo_local_reconciliation_audit(
+            service, credential_id="vault-1",
+        )
+        assert report["truncated"] is True
+        assert report["truncation_reasons"] == [reason]
+        assert report["hash_attempts_used"] == 0
+        assert report["offline"] and report["read_only"] and report["dry_run"]
+        assert report["downloads_authorized"] is False
+        assert report["mutations_authorized"] is False
+        assert "PRIVATE" not in json.dumps(report)
+        assert "vault-1" not in json.dumps(report)
+    finally:
+        service.close()
+
+
+def test_foreign_persisted_rows_do_not_consume_selected_record_budget(
+    tmp_path, monkeypatch,
+):
+    service, _ = _service(tmp_path, [])
+    monkeypatch.setattr(audit, "_MAX_RECORDS", 2)
+    monkeypatch.setattr(
+        service.storage, "backup_list",
+        lambda provider: [
+            {"credential_id": "OTHER_PRIVATE", "identity_id": "OTHER_PRIVATE",
+             "item_id": f"PRIVATE_{index}", "local_path": None}
+            for index in range(5)
+        ] if provider == "kobo" else [],
+    )
+    monkeypatch.setattr(
+        service.storage, "catalog_entries",
+        lambda: [
+            {"provider_id": "kobo", "identity_id": "OTHER_PRIVATE",
+             "item_id": f"PRIVATE_{index}", "local_state": "local"}
+            for index in range(5)
+        ],
+    )
+    monkeypatch.setattr(
+        service.storage, "entitlements",
+        lambda **kwargs: [
+            {"credential_id": "OTHER_PRIVATE", "identity_id": "OTHER_PRIVATE",
+             "item_id": f"PRIVATE_{index}", "state": "active"}
+            for index in range(5)
+        ],
+    )
+    try:
+        report = audit.kobo_local_reconciliation_audit(
+            service, credential_id="vault-1",
+        )
+        assert report["truncated"] is False
+        assert report["truncation_reasons"] == []
+        assert report["counts"]["backup_rows"] == 0
+        assert "OTHER_PRIVATE" not in json.dumps(report)
     finally:
         service.close()
