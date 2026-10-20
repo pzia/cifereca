@@ -251,7 +251,8 @@ def resolve_readzis_recommendation(recommendation_url: str, *, lid: str,
                     or any(len(v) != 1 for v in q.values())
                     or ('utm_source' in q and q['utm_source'] != ['readzis'])
                     or ('trackid' in q and not re.fullmatch(
-                        r'[A-Za-z0-9_-]{8,80}', q['trackid'][0]))):
+                        r'[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}',
+                        q['trackid'][0]))):
                 raise ValueError("untrusted tracking")
         canonical = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
         if (public_book_url(canonical, base_url=PUBLIC_ORIGIN + "/") != canonical
