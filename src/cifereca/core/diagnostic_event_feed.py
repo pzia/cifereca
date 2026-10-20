@@ -16,6 +16,7 @@ from typing import Any
 
 from .diagnostic_numilog_projection import (
     public_numilog_fields, public_numilog_message, public_numilog_session_log,
+    public_numilog_session_fields,
 )
 from .diagnostic_kobo_projection import (
     public_kobo_backup_decision, public_kobo_backup_log,
@@ -212,6 +213,10 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_numilog_startup_log(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
+            numilog_session_detail = (
+                public_numilog_session_fields(match["body"])
+                if match["logger"] == "cifereca_numilog" else {}
+            )
             source_sync_detail = (
                 public_source_sync_log(match["body"])
                 if match["logger"] == "cifereca" else {}
@@ -276,6 +281,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 **({"detail": kobo_detail} if kobo_detail else {}),
                 **({"detail": connection_detail, "status": "error"} if connection_detail else {}),
                 **({"detail": numilog_detail} if numilog_detail else {}),
+                **({"detail": numilog_session_detail} if numilog_session_detail else {}),
                 **({"detail": source_sync_detail, "status": source_sync_detail["status"]}
                    if source_sync_detail else {}),
                 **({"detail": adept_detail, "status": adept_detail["status"]} if adept_detail else {}),
