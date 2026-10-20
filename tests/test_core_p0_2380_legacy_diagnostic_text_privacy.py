@@ -127,8 +127,10 @@ def test_hostile_plugin_fields_cannot_crash_collector_or_text_export():
 
     d = Diagnostics(level="errors")
     # Invalid free fields must not be evaluated when filtering by severity.
+    # Force the already-existing errors-level eligibility so this test
+    # targets malformed payload safety, not the collector's level filter.
     d.add(Hostile(), Hostile(), Hostile(), duration_ms=Hostile(),
-          detail={Hostile(): "PRIVATE_KEY_VALUE"})
+          detail={Hostile(): "PRIVATE_KEY_VALUE"}, level="errors")
     record, = d.snapshot()
     assert record["category"] == "DIAGNOSTICS"
     assert record["operation"] == "[opération masquée]"
