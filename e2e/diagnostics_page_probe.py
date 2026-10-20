@@ -930,9 +930,13 @@ def main():
             # 760px bound and the original overflow/focus/clipboard checks.
             def request_narrow_bulk():
                 try:
+                    # set_default_size is only a hint for *initial*
+                    # geometry. This window is already mapped at 1366px;
+                    # request an actual X11 ConfigureNotify on its toplevel.
                     window[0].set_default_size(760, 790)
+                    device[0].resize_toplevel(window[0], 760, 790)
                 except Exception:
-                    raise AssertionError("GTK 760px resize request rejected") from None
+                    raise AssertionError("GTK/X11 760px resize request rejected") from None
                 until(lambda: window[0].get_width() <= 760,
                       lambda: verify_narrow_bulk(payload), seconds=5)
             later(request_narrow_bulk, 120)

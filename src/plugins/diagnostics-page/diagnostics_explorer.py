@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
 import json
+import re
 
 SOURCES = ("all", "core_events", "app_log")
 SEVERITIES = ("", "debug", "info", "warning", "error", "critical")
@@ -123,6 +124,11 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             key: redacted_detail(raw[key])[:500] if isinstance(raw.get(key), str) else ""
             for key in ("timestamp", "source", "module", "severity", "message", "status", "event_id")
         }
+        # Only explicitly published Core references may link observations.
+        # Never extract one from a timestamp, event ID or message text.
+        reference = published_task_reference(raw)
+        if reference is not None:
+            safe["task_ref"] = reference
         # Full text search is explicitly local to this 50-item broker page.
         if search and search.casefold() not in " ".join(
             safe[key] for key in ("timestamp", "source", "module", "severity", "message", "status")
@@ -145,6 +151,60 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
 
     results.sort(key=chronological_key, reverse=newest_first)
     return results
+
+
+def published_task_reference(row: Mapping[str, Any]) -> str | None:
+    """Consume an explicit public broker field; never manufacture provenance.
+
+    Core stores task_ref at top level on worker outcomes and in detail on
+    provider events. Contradictory or malformed references fail closed.
+    """
+    source = row.get("source")
+    if type(source) is not str or source not in ("core_events", "app_log"):
+        return None
+    values = []
+    if "task_ref" in row:
+        values.append(row["task_ref"])
+    detail = row.get("detail")
+    if isinstance(detail, Mapping) and "task_ref" in detail:
+        values.append(detail["task_ref"])
+    if not values or any(type(value) is not str or
+                         re.fullmatch(r"[0-9a-f]{12}", value) is None
+                         for value in values):
+        return None
+    return values[0] if all(value == values[0] for value in values) else None
+
+
+def linked_operation_groups(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group this page by explicit worker scope, not by apparent causality.
+
+    Unreferenced rows remain individual observations even at the same instant.
+    Provider/worker statuses and duplicate observations are kept independently.
+    """
+    groups: list[dict[str, Any]] = []
+    by_reference: dict[str, dict[str, Any]] = {}
+    for row in rows[:PAGE_SIZE]:
+        if not isinstance(row, dict):
+            continue
+        # sanitized_rows has already resolved/rejected contradictory origins.
+        # Do not reconsider retained display detail and revive a rejected ref.
+        reference = published_task_reference({
+            "source": row.get("source"), "task_ref": row.get("task_ref"),
+        })
+        group = by_reference.get(reference) if reference is not None else None
+        if group is None:
+            group = {"task_ref": reference, "events": [],
+                     "label": (f"Tâche {reference} · référence Core publiée"
+                               if reference else "Corrélation non disponible")}
+            groups.append(group)
+            if reference is not None:
+                by_reference[reference] = group
+        group["events"].append(row)
+    for group in groups:
+        levels = {row.get("severity") for row in group["events"]}
+        group["severity"] = next((level for level in _LEVELS if level in levels), "unknown")
+        group["count"] = len(group["events"])
+    return groups
 
 
 def module_groups(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
@@ -332,20 +392,28 @@ def export_selected_events(
     if not event_ids.issubset(selectable_event_ids(rows, max_rows=max_events)):
         raise ValueError("ambiguous or unidentified event selection")
     fields = ("timestamp", "source", "module", "severity", "message", "status", "event_id")
-    selected = [
-        {
+    selected = []
+    for row in rows:
+        if (not isinstance(row, dict) or type(row.get("event_id")) is not str
+                or row["event_id"] not in event_ids):
+            continue
+        item = {
             field: redacted_detail(value)[:500] if isinstance(value, str) else ""
             for field in fields
             for value in (row.get(field),)
         }
-        for row in rows
-        if isinstance(row, dict) and isinstance(row.get("event_id"), str)
-        and row["event_id"] in event_ids
-    ]
+        reference = published_task_reference({
+            "source": row.get("source"), "task_ref": row.get("task_ref"),
+        })
+        if reference is not None:
+            item["task_ref"] = reference
+        selected.append(item)
     if len(selected) > max_events:
         raise ValueError("too many selected events for one export")
     result = json.dumps({
-        "notice": "Événements expurgés du Core ; pas de corrélation de tâches prouvée",
+        "notice": "Événements expurgés du Core ; corrélation limitée aux task_ref "
+                  "publiées. Étapes potentiellement "
+                  "absentes ; aucune causalité déduite de l'heure ou des messages.",
         "events": selected,
     }, ensure_ascii=False, indent=2, allow_nan=False)
     try:
