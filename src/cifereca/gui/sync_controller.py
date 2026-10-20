@@ -223,8 +223,75 @@ def _refresh_sync_page(self) -> None:
             global_label if actionable
             else "Aucune source activée, connectée et synchronisable pour cette identité"
         )
+    def append_catalogue_searches():
+        """Read-only active catalogue inventory: never invent catalogue sync.
+
+        Sources may be singleton_public and have no Account. The Core's
+        declared capability snapshot is metadata-only and identity-scoped.
+        No switch, network request, sync job or download is created here.
+        """
+        reader = getattr(self.service, "catalogue_source_capabilities", None)
+        if not callable(reader):
+            return
+        try:
+            raw = reader(identity_id=scope.identity_id)
+        except Exception:
+            # A plugin/provider diagnostic can contain signed URLs, so do
+            # not echo it. Personal-library sync cards remain available.
+            return
+        if not sync_action_scope_current(self, scope):
+            return
+        if type(raw) not in (list, tuple) or len(raw) > 128:
+            return
+        catalogues = []
+        for item in raw:
+            provider = getattr(item, "provider_id", None)
+            if (type(provider) is not str or not 1 <= len(provider) <= 64
+                    or not all(char.isascii() and
+                               (char.isalnum() or char in "._-")
+                               for char in provider)
+                    or getattr(item, "catalog_search_supported", None) is not True
+                    or getattr(item, "catalog_refresh", None) != "unsupported"
+                    or getattr(item, "identity_scope", None) not in
+                        {"public", "authenticated"}):
+                continue
+            catalogues.append(item)
+        if not catalogues:
+            return
+        # A disclosure keeps the #2141 dense Synchronisation page usable.
+        # These are catalogue SEARCH capabilities, not synchronizable cards.
+        disclosure = Gtk.Expander(label=f"Catalogues · recherche ({len(catalogues)})")
+        disclosure.set_expanded(False)
+        group = Adw.PreferencesGroup()
+        group.set_title("Recherche de catalogues — aucune actualisation d’index")
+        for item in catalogues:
+            row = Adw.ActionRow()
+            # Only registered descriptor IDs, never credentials, can label
+            # a catalogue in this read-only section.
+            row.set_title(item.provider_id)
+            availability = (
+                "Recherche disponible"
+                if getattr(item, "catalog_search_available", None) is True
+                else "Recherche indisponible (source non connectée)"
+            )
+            scope_label = (
+                "Catalogue public"
+                if item.identity_scope == "public"
+                else "Catalogue avec compte"
+            )
+            row.set_subtitle(
+                f"{scope_label} · {availability}\n"
+                "Synchronisation de catalogue non prise en charge ; "
+                "aucun téléchargement."
+            )
+            group.add(row)
+        disclosure.set_child(group)
+        box.append(disclosure)
+
     if not rows:
-        box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0)); return
+        box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0))
+        append_catalogue_searches()
+        return
     # Prioritize actual sync-capable accounts. Public-only catalogues remain
     # reachable and activatable, but must not push Kobo/Numilog below the fold.
     ordered_sources = sorted(
@@ -1277,6 +1344,10 @@ def _refresh_sync_page(self) -> None:
 
             inventory_button.connect("clicked", change_inventory_schedule)
 
+    # Personal inventories come first. Public and authenticated catalogue
+    # searches remain an optional, collapsed second section.
+    if sync_action_scope_current(self, scope):
+        append_catalogue_searches()
 
 
 def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
