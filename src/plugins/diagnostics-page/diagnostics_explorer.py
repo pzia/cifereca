@@ -11,6 +11,25 @@ from typing import Any
 import json
 import re
 
+def local_timestamp_label(value: object) -> str:
+    """Present a broker UTC instant in the machine's local offset, GUI only.
+
+    Export/copy retains the canonical UTC timestamp. A malformed timestamp is
+    never interpolated as free text into the interface or a diagnostic log.
+    """
+    if type(value) is not str or not 1 <= len(value) <= 64:
+        return "Horodatage indisponible"
+    try:
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if instant.tzinfo is None:
+            return "Horodatage indisponible"
+        return instant.astimezone().isoformat(
+            sep=" ", timespec="milliseconds",
+        ) + " (heure locale)"
+    except (ValueError, OverflowError, OSError):
+        return "Horodatage indisponible"
+
+
 SOURCES = ("all", "core_events", "app_log")
 SEVERITIES = ("", "debug", "info", "warning", "error", "critical")
 PERIODS = ("all", "hour", "day", "week", "month")
