@@ -916,11 +916,11 @@ def _opds_author_navigation_match(query, label):
     if type(query) is not str or type(label) is not str or len(label) > 256:
         return False
     if (label.count(',') != 1 or any(marker in label for marker in
-            (';', '&', '/', '|', '\\n', '\\r'))):
+            (';', '&', '/', '|', '\n', '\r'))):
         return False
     surname, forename = (part.strip() for part in label.split(','))
     if (not surname or not forename
-            or not all(re.fullmatch(r"[^\\W_]+(?:[ '\\-][^\\W_]+)*",
+            or not all(re.fullmatch(r"[^\W_]+(?:[ '\-][^\W_]+)*",
                                      part, flags=re.UNICODE)
                        for part in (surname, forename))):
         return False
