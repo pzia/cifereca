@@ -394,14 +394,26 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 severity = ("error" if public_detail["status"] == "failed" else
                             "warning" if public_detail["status"] == "cancelled" else "info")
         if category == "NUMILOG":
-            public_detail = public_numilog_fields(
-                operation, row.get("detail"), row.get("duration_ms"),
+            # Startup facts must originate from the dedicated Core emitter.
+            # A generic plugin/diagnostics.add with a correctly shaped
+            # dictionary proves no source, phase, result or task provenance.
+            verified_startup = (
+                operation != "startup_materialization" or (
+                    type(diagnostics) is Diagnostics
+                    and row.get("verified_numilog_startup") is True
+                )
             )
-            task_ref = row.get("task_ref")
-            if (operation in {"acquisition_delivery", "session_state", "startup_materialization"}
-                    and type(task_ref) is str and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
-                public_detail["task_ref"] = task_ref
-            message = public_numilog_message(operation, public_detail) or "[opération masquée]"
+            if verified_startup:
+                public_detail = public_numilog_fields(
+                    operation, row.get("detail"), row.get("duration_ms"),
+                )
+                task_ref = row.get("task_ref")
+                if (operation in {"acquisition_delivery", "session_state", "startup_materialization"}
+                        and type(task_ref) is str and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
+                    public_detail["task_ref"] = task_ref
+                message = public_numilog_message(operation, public_detail) or "[opération masquée]"
+            else:
+                message = "[opération masquée]"
         base_id = _event_id("core_events", utc_stamp, category + ":" + operation)
         event_id = base_id
         # Two records may share the same timestamp/category/operation.
