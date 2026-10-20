@@ -475,7 +475,8 @@ def _attested_public_https(value):
         # names; accepting *any* domain does not authorize internal services.
         if (hostname.endswith('.') or len(hostname) > 253
                 or hostname.endswith(('.localhost', '.local', '.internal',
-                                       '.home.arpa', '.lan', '.onion'))
+                                       '.home.arpa', '.lan', '.onion',
+                                       '.invalid', '.test', '.example'))
                 or hostname in {'localhost', 'metadata.google.internal'}):
             return False
         try:
