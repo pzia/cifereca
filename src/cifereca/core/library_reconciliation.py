@@ -25,6 +25,8 @@ _COLUMNS = {
     'placements': 'placement_id artifact_id path identity_id provider_id source_item_id state',
     'backup_items': 'provider_id credential_id item_id identity_id local_path sha256 size status',
     'catalog_entries': 'catalog_entry_id artifact_id placement_id identity_id provider_id item_id metadata_json',
+    'adept_profile_bindings': 'scope_type scope_id profile_id',
+    'paris_borrower_adept_bindings': 'connection_identity_id borrower_identity_id profile_id',
 }
 
 
@@ -181,7 +183,7 @@ class ReconciliationReport:
         return {'schema': 1, 'read_only': True, 'acquisition_authorized': False,
                 'status': 'incomplete_scan' if self.reasons else 'complete',
                 'adept_status': 'not_requested',
-                'not_evaluated': ['adept_unavailable'],
+                'not_evaluated': ['adept_remote_inventory'],
                 'reasons': sorted(self.reasons), 'counts': dict(sorted(counts.items())),
                 'edge_counts': dict(sorted(Counter(e.reason for e in self.edges).items()))}
 
@@ -319,6 +321,7 @@ def main(argv=None):
     from .library_inventory import scan_identity_roots
     from .library_stored_paths import inspect_stored_paths
     from .library_metadata_candidates import metadata_candidates
+    from .library_evidence_scope import scope_evidence, group_evidence
 
     parser = argparse.ArgumentParser(description='Offline library reconciliation (no repair or acquisition).')
     parser.add_argument('--database', required=True, type=Path)
@@ -339,7 +342,9 @@ def main(argv=None):
         try:
             inventory = scan_identity_roots({k: tuple(v) for k, v in roots.items()}, cancelled=cancelled.is_set)
             snapshot = EvidenceSnapshot(reasons={'snapshot_cancelled'}) if cancelled.is_set() else read_quiescent_snapshot(args.database, cancelled=cancelled.is_set)
+            snapshot = scope_evidence(snapshot, tuple(roots))
             report = reconcile(inventory, snapshot, cancelled=cancelled.is_set)
+            groups = group_evidence(inventory, snapshot, report, tuple(roots))
             candidates = metadata_candidates(inventory, snapshot, cancelled=cancelled.is_set)
             stored_paths = inspect_stored_paths(snapshot, {k: tuple(v) for k, v in roots.items()}, cancelled=cancelled.is_set)
         finally:
@@ -347,11 +352,12 @@ def main(argv=None):
         if args.private_report is not None:
             private = {'privacy': 'local_private_do_not_share',
                        'inventory': asdict(inventory), 'snapshot': asdict(snapshot),
-                       'reconciliation': asdict(report), 'stored_paths': asdict(stored_paths), 'metadata_candidates': asdict(candidates)}
+                       'reconciliation': asdict(report), 'stored_paths': asdict(stored_paths), 'metadata_candidates': asdict(candidates),
+                       'groups': {'identities': groups.identities, **groups.redacted()}}
             fd = os.open(args.private_report, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
             with os.fdopen(fd, 'w', encoding='utf-8') as stream:
                 json.dump(private, stream, ensure_ascii=False, default=lambda value: sorted(value) if isinstance(value, set) else None)
-        print(json.dumps({'inventory': inventory.redacted(), 'reconciliation': report.redacted(), 'stored_paths': stored_paths.redacted(), 'metadata_candidates': candidates.redacted()}, sort_keys=True))
+        print(json.dumps({'inventory': inventory.redacted(), 'reconciliation': report.redacted(), 'stored_paths': stored_paths.redacted(), 'metadata_candidates': candidates.redacted(), 'groups': groups.redacted()}, sort_keys=True))
         return 2 if inventory.reasons or report.reasons or stored_paths.reasons or candidates.reasons else 0
     except (OSError, ValueError):
         # Never echo an input path, account identifier or raw parser exception.

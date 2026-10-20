@@ -48,7 +48,8 @@ permettant une réparation ultérieure.
   membres/spine/CRC. PDF `pdf_signature_only` signifie uniquement `%PDF-` présent,
   **pas** conformité PDF. Le graphe ne confirme pas un PDF sur cette seule base.
 - `read_quiescent_snapshot()` copie au plus 128 Mio d'une base stable sans
-  journal actif puis interroge **en mémoire** les six tables prévues. Il ne crée
+  journal actif puis interroge **en mémoire** les six tables de bibliothèque et les deux tables de
+  rattachements ADEPT locaux. Il ne crée
   pas de SHM/WAL, ne fait aucune migration, récupération ou checkpoint. Une base
   avec `-wal` ou `-journal` est refusée (`snapshot_live_journal`) plutôt que lue
   sans ses transactions. Une fermeture normale suffit généralement ; **ne pas
@@ -76,16 +77,29 @@ permettant une réparation ultérieure.
   Le snapshot ne conserve que ces identifiants bibliographiques des métadonnées
   catalogue (pas les blobs JSON, jetons ou URL). Budgets de références/candidats
   et annulation sont visibles.
+- La CLI restreint les lignes privées aux identités explicitement sélectionnées.
+  Les acquisitions contradictoires du même droit/compte restent conservées pour
+  ne pas transformer un conflit en confirmation. Les artefacts globaux, dépourvus
+  de compte ou de titre, servent seulement à comparer les octets.
+- Les compteurs par identité/fournisseur utilisent des indices d'identité
+  éphémères ; leur correspondance est uniquement dans le rapport privé local.
+  Un fichier sans lien confirmé reste `unattributed`, jamais Kobo/Numilog par
+  simple SHA, ISBN ou dossier. Les libellés fournisseurs exportés sont fermés.
+- Les références ADEPT lues sont les seuls rattachements persistés identité/profil
+  et emprunteur Paris/profil. `local_reference_only` ne prouve ni profil utilisable,
+  ni prêt actif, ni droit. Aucune licence/certificat/ACSM n'est lu et aucune CLI
+  ADEPT ou source fournisseur n'est exécutée.
 - Les relations sont des indices éphémères de fichiers et de lignes, avec raison
   et certitude (`bytes`/`attested`). Les sources ADEPT ne sont pas interrogées :
-  `adept_status=not_requested`. Aucun profil/licence/jeton n'est lu.
+  `adept_remote_inventory=not_requested`. Aucun fichier de profil/licence/jeton
+  n'est lu ; seuls les identifiants de rattachement SQLite sont conservés en privé.
 
 ## Suite de #2565 (non livrée par cette tranche)
 
 Snapshot sûr pendant une session avec WAL actif, rapprochements par édition au-delà
 des identifiants explicitement attestés,
 liens catalog_entries/backup plus riches,
-références ADEPT locales, compteurs par identité/fournisseur, API de service et
+inventaire ADEPT distant consenti, API de service et
 entrée Maintenance asynchrone avec filtres/inspection. L'absence de chemin dans
 cet inventaire ne suffit jamais à conclure `stored_path_missing` : seule la
 passe de contrôle explicite ci-dessus peut produire ce constat.
