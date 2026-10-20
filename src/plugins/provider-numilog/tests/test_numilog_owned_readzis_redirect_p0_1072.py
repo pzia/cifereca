@@ -135,6 +135,8 @@ def test_unqualified_redirects_never_start_product_get(monkeypatch, location, st
     "?trackid=" + SECRET + "%2F",
     "?utm_source=readzis&trackid=anything&unknown=value",
     "?anything=signed-looking-data",
+    "?arbitrary=" + ("x" * 1024),
+    "?trackid=" + SECRET + " with spaces",
     "",
 ])
 def test_redirect_query_is_ignored_entirely(monkeypatch, query):
