@@ -82,3 +82,29 @@ def provider_failure_metadata(
     if validation_failure:
         metadata.update({"repairable": True, "failure_stage": "post_adept_validation"})
     return metadata
+
+
+def adept_failure_outcome(
+    *, loan_id: str, status: str, message: str,
+    attention_code: str | None, code: str, process: dict[str, Any],
+) -> dict[str, Any]:
+    """Project the existing ADEPT/provider-classified failure response.
+
+    Values are already classified by the caller; this function does not
+    inspect provider exceptions, change retry decisions or publish messages.
+    """
+    return {
+        "status": status, "loan_id": loan_id, "error": message,
+        "code": attention_code if status == "attention_required" else code,
+        "process": process,
+    }
+
+
+def provider_failure_outcome(
+    *, loan_id: str, attention_code: str | None,
+) -> dict[str, Any]:
+    """The existing generic provider failure response, without side effects."""
+    return {
+        "status": "retryable_error", "loan_id": loan_id,
+        "code": attention_code, "error": "Acquisition du prêt indisponible",
+    }
