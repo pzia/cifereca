@@ -25,7 +25,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "llm-settings-1366", "llm-settings-1600",
         "maintenance-tools-1366", "maintenance-tools-1600",
-        "startup", "core-navigation", "public-fault-search-1366",
+        "startup", "core-navigation", "public-fault-search-1366", "kobo-fault-search-1366",
     ]
 
 
@@ -590,3 +590,31 @@ def test_771_real_gtk_public_fault_search_is_registered_and_selected():
     assert spec and spec.loader
     spec.loader.exec_module(module)
     assert module.select(["e2e/public_fault_search_probe.py"]) == ("public-fault-search-1366",)
+
+
+def test_771_kobo_real_catalogue_http_faults_surface_in_native_gtk():
+    runner = _module()
+    scenario = runner.SCENARIOS["kobo-fault-search-1366"]
+    assert scenario["plugin"] == "core"
+    assert scenario["runner"] == "gtk-public-fault"
+    assert scenario["provider"] == "kobo"
+    assert scenario["width"] == 1366
+    source = (ROOT / "e2e/public_fault_search_probe.py").read_text(encoding="utf-8")
+    for marker in (
+        "KoboSession(", "KoboVaultClient(", "KoboCatalogService(",
+        "fake.KoboFakeApp(", 'scope="catalog", field="all"',
+        "httpx.MockTransport(forward)", "valid_kobo_paths",
+        '"kobo-fault-search-1366"', "cache.acsm_dir",
+        "device[0].click_widget(ui[0].search_global_button)",
+    ):
+        assert marker in source, marker
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "ci_select_gtk_771_kobo", ROOT / "scripts/ci-select-e2e.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(mod)
+    assert mod.select(["e2e/public_fault_search_probe.py"]) == (
+        "public-fault-search-1366", "kobo-fault-search-1366",
+    )

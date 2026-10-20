@@ -644,6 +644,13 @@ class KoboFakeApp:
     def catalog_search(self, handler, qs):
         if not self.allows_catalog():
             return self.error(handler, HTTPStatus.NOT_FOUND, "not_found", "Catalogue désactivé")
+        # #771: the already-supported catalogue endpoint can explicitly replay
+        # the same HTTP status failures as the private manifest. Only these
+        # stateless failures are shared: cursor_loop remains manifest-only.
+        if (qs.get("ux_fault") or [""])[0] in {
+            "429", "503", "expired", "malformed_json",
+        }:
+            return self.manifest_fault(handler, qs)
         query = (qs.get("q") or [""])[0]
         field = (qs.get("field") or ["all"])[0]
         limit = max(1, min(MAX_SEARCH_LIMIT, int((qs.get("limit") or ["50"])[0] or 50)))
