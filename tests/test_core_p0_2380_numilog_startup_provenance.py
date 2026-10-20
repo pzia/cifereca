@@ -52,7 +52,7 @@ def test_real_startup_trace_preserves_checked_facts_and_attestation(tmp_path):
         diag, source="core_events", log_path=tmp_path / "unread",
     )["events"]
     assert row["detail"] == published
-    assert row["status"] == "failed"
+    assert row["status"] == "error"
     assert row["message"].startswith("startup_materialization")
     assert "task_ref" not in published
 
