@@ -201,6 +201,14 @@ SCENARIOS = {
         "runner": "gtk-public-fault",
         "width": 1366,
     },
+    "kobo-fault-search-1366": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": "P0 #771 : vrai KoboSession catalogue, HTTP 429/503/200 fictifs, vrai GTK, sans droits ni acquisition.",
+        "runner": "gtk-public-fault",
+        "width": 1366,
+        "provider": "kobo",
+    },
 }
 
 
@@ -429,6 +437,9 @@ def main() -> int:
                     xvfb, "-a", "-s", "-screen 0 1366x900x24",
                     args.python, str(ROOT / "e2e/public_fault_search_probe.py"),
                     "--out", str(scenario_dir),
+                    *([] if scenario.get("provider") is None else [
+                        "--provider", scenario["provider"],
+                    ]),
                 ]
             elif scenario.get("runner") == "gtk-detail":
                 width = scenario["width"]

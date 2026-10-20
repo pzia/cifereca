@@ -27,6 +27,7 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 for directory in (ROOT, ROOT / "src/plugins/ebooksgratuits",
+                  ROOT / "src/plugins/provider-kobo",
                   ROOT / "environnements/openai-chat-debian"):
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
@@ -43,6 +44,9 @@ from cifereca.gui.main_window import MainWindow
 from cifereca.gui.query_model import QueryState
 from cifereca.plugin_api import CatalogSearchBatch, CatalogSearchSummary
 from cifereca_ebooksgratuits import EbooksSession
+from cifereca_kobo import KoboSession, DESCRIPTOR as KOBO_DESCRIPTOR
+from cifereca_kobo_vault import KoboVaultClient
+from cifereca_kobo_catalog import KoboCatalogService
 from simulation.tests.test_fake_services_contract import load_module, RunningServer
 from x11_input import X11Input
 
@@ -50,24 +54,37 @@ from x11_input import X11Input
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--provider", choices=("ebooksgratuits", "kobo"),
+                        default="ebooksgratuits")
     args = parser.parse_args()
     if os.environ.get("GDK_BACKEND") != "x11" or not os.environ.get("DISPLAY"):
         raise SystemExit("Real GTK/XTEST/Xvfb required")
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
 
-    fake = load_module("ux771_ebooks_http", "ebooksgratuits/pseudo_ebooksgratuits_service.py")
+    is_kobo = args.provider == "kobo"
     work = TemporaryDirectory(prefix="ux771-offline-")
-    cache = fake.DatasetCache(Path(work.name) / "catalog", 8, 20261020, True)
-    catalog = RunningServer(
-        type("UX771EbooksHandler", (fake.Handler,), {
-            "app": fake.EbooksGratuitsApp(cache),
-        }), fake.EbooksGratuitsApp(cache),
-    )
+    if is_kobo:
+        fake = load_module("ux771_kobo_http", "kobo/pseudo_kobo_services.py")
+        cache = fake.DatasetCache(Path(work.name) / "catalog", 30, 6, 20261020, True)
+        fake_app = fake.KoboFakeApp(
+            cache, service="combined", token="kvt_e2e_only",
+            accept_any_token=False,
+        )
+        catalog = RunningServer(fake.Handler, fake_app)
+        query = str(cache.search_catalog("", "all", 0, 1)[1][0]["title"])
+    else:
+        fake = load_module("ux771_ebooks_http", "ebooksgratuits/pseudo_ebooksgratuits_service.py")
+        cache = fake.DatasetCache(Path(work.name) / "catalog", 8, 20261020, True)
+        fake_app = fake.EbooksGratuitsApp(cache)
+        catalog = RunningServer(
+            type("UX771EbooksHandler", (fake.Handler,), {"app": fake_app}),
+            fake_app,
+        )
+        first = cache.get(1)
+        assert first is not None
+        query = str(first["title"])
     catalog.__enter__()
-    first = cache.get(1)
-    assert first is not None
-    query = str(first["title"])
     fault = ["429"]
     http_statuses = []
     worker_count = [0]
@@ -77,9 +94,13 @@ def main() -> int:
     last_click = [0]
     screenshots = []
     report = {
-        "scenario": "public-fault-search-1366",
+        "scenario": "kobo-fault-search-1366" if is_kobo else "public-fault-search-1366",
         "status": "RUNNING",
-        "scope": "real GTK Search + real EbooksGratuits adapter + local synthetic HTTP and isolated Core batch bridge",
+        "scope": (
+            "real GTK Search + real Kobo catalogue adapter + local HTTP and isolated Core batch bridge"
+            if is_kobo else
+            "real GTK Search + real EbooksGratuits adapter + local synthetic HTTP and isolated Core batch bridge"
+        ),
         "checks": {},
         "snapshots": [],
     }
@@ -89,25 +110,32 @@ def main() -> int:
         def add(self, *args, **kwargs):
             return None
 
-    session = EbooksSession(
-        credential_id="public", label="", credentials={},
-        options={"base_url": catalog.base + "/", "search_page_size": 5,
-                 "acquisition_backend": "html"},
-        config={}, diagnostics=Diagnostics(), transport=None,
-    )
-    session.client.close()
-
     def forward(request: httpx.Request) -> httpx.Response:
-        # This injected mock transport only delegates the adapter's actual
-        # GET/POST request to our synthetic loopback service. Never a real host.
-        if (request.url.host != "127.0.0.1"
-                or request.url.port != catalog.server.server_port
-                or request.url.path != "/ebooks.php"
-                or request.method not in {"GET", "POST"}):
-            raise AssertionError("Unexpected outbound request")
-        target = request.url.copy_set_param("ux_fault", fault[0]) if fault[0] else request.url
+        # Both real adapters use only local routes; no arbitrary host or
+        # redirect may be requested. Fake Bearer data never enters evidence.
+        path = request.url.path
+        valid_kobo_paths = {
+            "/api/v2/status", "/api/v2/account", "/api/v2/catalog/search",
+        }
+        if request.url.host != "127.0.0.1" or request.url.port != catalog.server.server_port:
+            raise AssertionError("Unexpected outbound host")
+        if is_kobo:
+            if path not in valid_kobo_paths or request.method != "GET":
+                raise AssertionError("Kobo catalogue must not fetch private data")
+            probe_request = path == "/api/v2/catalog/search"
+        else:
+            if path != "/ebooks.php" or request.method not in {"GET", "POST"}:
+                raise AssertionError("Unexpected outbound request")
+            probe_request = True
+        target = (
+            request.url.copy_set_param("ux_fault", fault[0])
+            if fault[0] and probe_request else request.url
+        )
         post = request.method == "POST"
-        headers = {"Content-Type": "application/x-www-form-urlencoded"} if post else {}
+        headers = (
+            dict(request.headers) if is_kobo else
+            {"Content-Type": "application/x-www-form-urlencoded"} if post else {}
+        )
         outbound = Request(
             str(target), data=request.content if post else None,
             headers=headers, method=request.method,
@@ -117,10 +145,36 @@ def main() -> int:
                 status, response_headers, payload = response.status, dict(response.headers), response.read()
         except HTTPError as caught:
             status, response_headers, payload = caught.code, dict(caught.headers), caught.read()
-        http_statuses.append(status)
+        if probe_request:
+            http_statuses.append(status)
         return httpx.Response(status, headers=response_headers, content=payload, request=request)
 
-    session.client = httpx.Client(transport=httpx.MockTransport(forward), trust_env=False)
+    if is_kobo:
+        session = KoboSession(
+            descriptor=KOBO_DESCRIPTOR, credential_id="kobo-e2e", label="",
+            credentials={"api_token": "kvt_e2e_only"},
+            options={"base_url": catalog.base}, config={}, storage={},
+            diagnostics=Diagnostics(),
+        )
+        session.client.close()
+        session.client = KoboVaultClient(
+            catalog.base, "kvt_e2e_only", transport=httpx.MockTransport(forward),
+        )
+        session.catalog = KoboCatalogService(
+            session.client, credential_id=session.credential_id,
+            provider_id=session.provider_id,
+        )
+    else:
+        session = EbooksSession(
+            credential_id="public", label="", credentials={},
+            options={"base_url": catalog.base + "/", "search_page_size": 5,
+                     "acquisition_backend": "html"},
+            config={}, diagnostics=Diagnostics(), transport=None,
+        )
+        session.client.close()
+        session.client = httpx.Client(
+            transport=httpx.MockTransport(forward), trust_env=False,
+        )
     session.connect()
     core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
 
@@ -130,11 +184,13 @@ def main() -> int:
         # Only this E2E bridge replaces Core federation/installed plugin
         # discovery, and uses Core's published batch/result_status schema.
         assert force and text == query
-        assert field == "title"
+        assert field == ("all" if is_kobo else "title")
         assert not provider_ids and not content_types
         worker_count[0] += 1
         try:
-            books = tuple(session.search(text, field="title"))
+            books = tuple(session.search(
+                text, scope="catalog", field="all",
+            ) if is_kobo else session.search(text, field="title"))
             status = "live"
             warnings = ()
         except Exception:
@@ -144,7 +200,8 @@ def main() -> int:
         core.library.last_search = list(books)
         if on_batch is not None:
             on_batch(CatalogSearchBatch(
-                provider_id="ebooksgratuits", provider_label="Ebooks gratuits",
+                provider_id=("kobo" if is_kobo else "ebooksgratuits"),
+                provider_label=("Kobo" if is_kobo else "Ebooks gratuits"),
                 results=books, result_status=status,
             ))
         return CatalogSearchSummary(
@@ -193,6 +250,8 @@ def main() -> int:
 
     def no_implicit_download():
         assert not list(cache.epub_dir.glob("*.epub")), "Passive acquisition occurred"
+        if is_kobo:
+            assert not list(cache.acsm_dir.glob("*.acsm")), "Passive ACSM occurred"
         report["checks"]["no_implicit_download"] = True
 
     def public_status_only():
@@ -201,6 +260,8 @@ def main() -> int:
         assert ("UNTRUSTED_" not in caption + tooltip and query not in caption + tooltip)
         assert "127.0.0.1" not in caption + tooltip
         assert "ebooksgratuits" not in caption + tooltip
+        assert "kobo" not in (caption + tooltip).casefold()
+        assert "kvt_e2e_only" not in caption + tooltip
         report["checks"]["public_status_only"] = True
 
     def wait_until(predicate, callback, *, deadline=None):
@@ -232,6 +293,7 @@ def main() -> int:
         caption = count_label()
         expected = "indisponible" if fault[0] else "en ligne"
         assert expected in caption, "Missing closed public source status"
+        assert all(code in (200, 429, 503) for code in http_statuses)
         public_status_only()
         no_implicit_download()
         if fault[0]:
@@ -263,14 +325,18 @@ def main() -> int:
     def begin():
         ui[0].navigate("search")
         ui[0].search_controls.set_state(
-            QueryState(text=query, field="title", scope="all"), notify=False,
+            QueryState(text=query, field=("all" if is_kobo else "title"),
+                       scope="all"), notify=False,
         )
         # The actual GTK button is clicked only after the stack has settled.
         later(350, lambda: click_global("429"))
 
     class Application(Adw.Application):
         def __init__(self):
-            super().__init__(application_id="org.cifereca.UX771PublicFault")
+            super().__init__(application_id=(
+                "org.cifereca.UX771KoboFault" if is_kobo
+                else "org.cifereca.UX771PublicFault"
+            ))
 
         def do_activate(self):
             window = MainWindow(self, core.config, core.library, core.diagnostics)

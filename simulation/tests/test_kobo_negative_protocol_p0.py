@@ -50,6 +50,7 @@ class KoboNegativeProtocolTests(unittest.TestCase):
             cache, service="combined", token="kvt_fake_for_tests",
             accept_any_token=False,
         )
+        self.cache = cache
         self.server_context = RunningServer(KOBO.Handler, app)
         self.vault = self.server_context.__enter__()
 
@@ -141,6 +142,38 @@ class KoboNegativeProtocolTests(unittest.TestCase):
         )
         assert "kvt_fake_for_tests" not in repr(missing)
 
+
+    def test_opt_in_catalogue_search_failures_are_auth_scoped_and_recover(self):
+        vault = self.vault
+        auth = {"Authorization": "Bearer kvt_fake_for_tests"}
+        endpoint = "/api/v2/catalog/search?q=&field=all&limit=3&page=0"
+        status, _, original = vault.json(endpoint, headers=auth)
+        assert status == 200 and len(original["items"]) == 3
+        # A public request parameter must not bypass Vault Bearer checks.
+        _denied(Request(vault.base + endpoint + "&ux_fault=503"), code=401)
+        for fault, code, reason in (
+            ("429", 429, "rate_limited"),
+            ("503", 503, "temporary_unavailable"),
+            ("expired", 401, "expired_token"),
+        ):
+            req = Request(vault.base + endpoint + "&ux_fault=" + fault, headers=auth)
+            rejected = _denied(req, code=code, error=reason)
+            assert "kvt_fake_for_tests" not in repr(rejected)
+            if fault == "429":
+                with self.assertRaises(HTTPError) as caught:
+                    urlopen(req, timeout=3)
+                assert caught.exception.headers.get("Retry-After") == "2"
+        status, headers, malformed = vault.get(
+            endpoint + "&ux_fault=malformed_json", headers=auth,
+        )
+        assert status == 200 and headers.get_content_type() == "application/json"
+        with self.assertRaises(json.JSONDecodeError):
+            json.loads(malformed)
+        assert not list(self.cache.epub_dir.glob("*.epub"))
+        assert not list(self.cache.acsm_dir.glob("*.acsm"))
+        # Unrecognised faults are ignored; a healthy request is still identical.
+        assert vault.json(endpoint + "&ux_fault=unknown", headers=auth)[2] == original
+        assert vault.json(endpoint, headers=auth)[2] == original
 
     def test_opt_in_manifest_http_failures_do_not_change_default_inventory(self):
         vault = self.vault
