@@ -85,6 +85,7 @@ class NumilogNegativeProtocolTests(unittest.TestCase):
         status, _, first = self.get(path + "?page=1&ux_fault=broken_next")
         self.assertEqual(status, 200)
         self.assertIn(b'rel="next"', first)
+        self.assertIn(b'page=2&amp;ux_fault=broken_next', first)
         status, _, _ = self.get(path + "?page=2&ux_fault=broken_next")
         self.assertEqual(status, 503)
         # An unsupported switch never changes the normal fixture.

@@ -262,7 +262,12 @@ class NumilogFakeApp:
 </div>"""
             )
         last = (page * self.page_size) >= self.cache.count()
-        next_link = "" if last else f'<a rel="next" href="/Pages/Compte/MesLivres.aspx?page={page + 1}">Suivant</a>'
+        next_query = f"page={page + 1}"
+        # Keep the explicitly requested interruption across the generated
+        # pagination link; never make an ordinary listing fail implicitly.
+        if (qs.get("ux_fault") or [""])[0] == "broken_next":
+            next_query += "&amp;ux_fault=broken_next"
+        next_link = "" if last else f'<a rel="next" href="/Pages/Compte/MesLivres.aspx?{next_query}">Suivant</a>'
         body = (
             "<!doctype html><html><meta charset='utf-8'><title>Mes livres</title><body>"
             "<table id='myTable'>"
