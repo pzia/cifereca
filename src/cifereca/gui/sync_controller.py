@@ -79,7 +79,12 @@ def _build_sync_page(self):
     )
     scope_note.set_wrap(True)
     outer.append(scope_note)
-    self._sync_sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18); outer.append(self._sync_sources_box)
+    # Source panels consume the available scroll viewport width instead of
+    # inheriting a narrow natural width from their child labels/actions.
+    outer.set_hexpand(True)
+    self._sync_sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+    self._sync_sources_box.set_hexpand(True)
+    outer.append(self._sync_sources_box)
     refresh.connect(
         "clicked",
         lambda _b: self._refresh_sync_page()
