@@ -102,9 +102,28 @@ def _log_lines(
     (device, inode, byte offset) survives a rename to cifereca.log.1 on
     POSIX filesystems. It is never exposed outside the hashed event_id.
     """
+    # The local log may have been relocated through a symlinked directory,
+    # not only a symlinked leaf. Read only through no-follow directory FDs;
+    # without the platform guard, publish no log-derived events at all.
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        return [], "unavailable", None
+    directory_fd = -1
     try:
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-        fd = os.open(path, flags)
+        absolute = Path(os.path.abspath(path))
+        flags_dir = (
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        directory_fd = os.open("/", flags_dir)
+        for part in absolute.parts[1:-1]:
+            next_fd = os.open(part, flags_dir, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        flags = (
+            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        fd = os.open(absolute.name, flags, dir_fd=directory_fd)
         with os.fdopen(fd, "rb") as handle:
             identity = os.fstat(handle.fileno())
             if not stat.S_ISREG(identity.st_mode):
@@ -136,6 +155,9 @@ def _log_lines(
         return [], "missing", None
     except (OSError, ValueError):
         return [], "unavailable", None
+    finally:
+        if directory_fd >= 0:
+            os.close(directory_fd)
 
 
 def _latest_published_event(events: list[dict[str, Any]]) -> str | None:
