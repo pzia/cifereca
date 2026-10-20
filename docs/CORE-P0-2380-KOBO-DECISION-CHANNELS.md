@@ -35,3 +35,19 @@ sur journaux réels restant nécessaire.
 
 Les autres producteurs Kobo, Numilog, Paris/PNB et ADEPT et la
 référence commune des tâches relèvent toujours du P0 #2380.
+
+## Provenance attestée (20/10/2026)
+
+Le producteur d'ouverture Core appelle exclusivement
+`Diagnostics.add_core_kobo_backup_decision`, qui valide et réduit les
+champs à `status/persisted_enabled/connected_kobo/eligible_kobo/interval_minutes`
+avant la publication mémoire avec `verified_kobo_backup_decision=True`.
+Le feed `core_events` exige cette attestation exacte : un plugin utilisant
+`Diagnostics.add("KOBO", "automatic backup decision", ...)` reste masqué,
+même avec une structure de champs plausible. Le canal `app_log` conserve
+son TRACE Core canonique, validé indépendamment. Aucun `task_ref`
+supplémentaire ni corrélation temporelle n'est créé.
+
+La projection ne conserve jamais un ID de compte, chemin, URL ou texte libre ;
+le niveau `errors` conserve la décision partielle/erreur et ignore les statuts
+normaux. Cette évolution est testée sans compte réel, transfert ni ACSM.
