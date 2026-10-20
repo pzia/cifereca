@@ -350,7 +350,7 @@ def diagnostic_channel_caption(payload: Mapping[str, Any]) -> str:
 def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
                     *, search: str = "") -> str:
     if not isinstance(payload, Mapping):
-        return "Sources non alimentées — aucune donnée disponible"
+        return "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     def bounded_count(value: Any) -> int:
         # The broker contract uses numeric counts. Do not call __int__
         # on arbitrary objects supplied by a malformed broker response.
@@ -364,7 +364,7 @@ def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
     offset = bounded_count(payload.get("offset"))
     shown = len(rows)
     if not payload.get("sources"):
-        return "Sources non alimentées — aucune donnée disponible"
+        return "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     suffix = " · recherche dans cette page uniquement" if search else ""
     return f"{shown} événements affichés · {total} disponibles · page à partir de {offset + 1}{suffix}"
 
