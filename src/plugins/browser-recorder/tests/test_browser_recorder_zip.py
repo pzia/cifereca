@@ -298,12 +298,12 @@ def test_zip_technical_headers_never_publish_unreviewed_string_values():
         "x-ratelimit-remaining": "7",
     }
     assert _safe_headers({
-        "content-type": "application/*+json",
+        "content-type": "application/vnd.fictional+json",
         "accept": "application/xml; q=0.5, text/html",
         "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT",
         "x-ratelimit-limit": "1000",
     }) == {
-        "content-type": "application/vnd.fictional+json",
+        "content-type": "application/*+json",
         "accept": "application/xml, text/html",
         "x-ratelimit-limit": "1000",
     }
