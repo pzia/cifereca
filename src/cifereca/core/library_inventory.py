@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 import hashlib
+import json
 import os
 from pathlib import Path
 import stat
@@ -17,6 +18,7 @@ import time
 from typing import Callable
 
 from ..epub_metadata import inspect_epub
+from .library_structure import inspect_stream_structure
 
 
 @dataclass(frozen=True)
@@ -27,15 +29,16 @@ class InventoryLimits:
     hash_bytes: int = 64 * 1024 * 1024 * 1024
     seconds: float = 120
     depth: int = 48
+    metadata_bytes: int = 64*1024*1024
 
     def __post_init__(self):
-        ceilings = (100_000, 4096, 512*1024*1024, 64*1024*1024*1024, 600, 48)
+        ceilings = (100_000, 4096, 512*1024*1024, 64*1024*1024*1024, 600, 48, 64*1024*1024)
         for value, ceiling in zip((self.entries, self.files, self.file_bytes,
-                                   self.hash_bytes, self.seconds, self.depth), ceilings):
+                                   self.hash_bytes, self.seconds, self.depth, self.metadata_bytes), ceilings):
             if type(value) not in (int, float) or not 0 < value <= ceiling:
                 raise ValueError('invalid_inventory_limits')
         if any(type(v) is not int for v in (self.entries, self.files, self.file_bytes,
-                                           self.hash_bytes, self.depth)):
+                                           self.hash_bytes, self.depth, self.metadata_bytes)):
             raise ValueError('invalid_inventory_limits')
 
 
@@ -50,6 +53,7 @@ class FileObservation:
     metadata: dict = field(default_factory=dict)
     # Descriptor stat fingerprint, NOT a later action authorization.
     fingerprint: tuple = ()
+    structure_validation: str = 'not_checked'
 
 
 @dataclass(repr=False)
@@ -60,6 +64,8 @@ class Inventory:
     reasons: set[str] = field(default_factory=set)
     entries: int = 0
     hash_bytes: int = 0
+    structure_bytes: int = 0
+    metadata_bytes: int = 0
     skipped_symlinks: int = 0
     skipped_special: int = 0
 
@@ -69,10 +75,11 @@ class Inventory:
             'status': 'incomplete_scan' if self.reasons else 'complete',
             'reasons': sorted(self.reasons), 'entries': self.entries,
             'files': len(self.files), 'hashed_files': sum(f.sha256 is not None for f in self.files),
-            'hash_bytes': self.hash_bytes, 'skipped_symlinks': self.skipped_symlinks,
+            'hash_bytes': self.hash_bytes, 'structure_bytes': self.structure_bytes, 'metadata_bytes': self.metadata_bytes, 'skipped_symlinks': self.skipped_symlinks,
             'skipped_special': self.skipped_special,
             'unavailable_directories': len(self.unavailable_directories),
             'validation': dict(sorted(Counter(f.validation for f in self.files).items())),
+            'structure_validation': dict(sorted(Counter(f.structure_validation for f in self.files).items())),
         }
 
 
@@ -149,6 +156,7 @@ def scan_identity_roots(
         status = 'uninspected'
         digest = None
         metadata = {}
+        structure = 'not_checked'
         with os.fdopen(os.dup(fd), 'rb') as stream:
             if size > limits.file_bytes:
                 result.reasons.add('file_byte_budget')
@@ -177,17 +185,38 @@ def scan_identity_roots(
                     inspection = inspect_epub(stream, metadata_only=True)
                     status = inspection['epub_status']
                     metadata = inspection['epub_metadata']
+                    metadata_size = len(json.dumps(metadata, ensure_ascii=True).encode('utf-8'))
+                    if metadata_size > limits.metadata_bytes-result.metadata_bytes:
+                        metadata = {}
+                        result.reasons.add('metadata_byte_budget')
+                    else:
+                        result.metadata_bytes += metadata_size
                     if status != 'ok':
                         result.reasons.add('epub_parser_limit_or_invalid')
                 else:
                     status = 'pdf_signature_only' if stream.read(5) == b'%PDF-' else 'invalid_pdf_signature'
+            if digest is not None and status in {'ok', 'pdf_signature_only'}:
+                remaining = limits.hash_bytes-result.structure_bytes
+                def count_structure(size):
+                    result.structure_bytes += size
+                if remaining > 0 and not stopped():
+                    structure = inspect_stream_structure(
+                        stream, path.suffix.lower()[1:],
+                        max_bytes=min(1024*1024*1024, remaining),
+                        seconds=min(10, max(0.001, deadline-time.monotonic())),
+                        cancelled=cancelled, count_bytes=count_structure,
+                    )
+                else:
+                    structure = 'structure_byte_or_time_budget'
+                if structure not in {'epub_structure_crc_ok', 'pdf_structure_minimal'}:
+                    result.reasons.add('structure_limit_or_invalid')
             # Revalidate both opened inode and current pathname after parsing.
             current = os.stat(name, dir_fd=directory_fds[-1], follow_symlinks=False)
             if _fingerprint(before) != _fingerprint(os.fstat(fd)) or _fingerprint(before) != _fingerprint(current):
                 result.reasons.add('file_changed')
                 return
         result.files.append(FileObservation(identity, str(path), size, path.suffix.lower()[1:],
-                                            digest, status, metadata, _fingerprint(before)))
+                                            digest, status, metadata, _fingerprint(before), structure))
 
     directory_fds = []
 

@@ -286,6 +286,7 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
                 if (matching and len(ledger) == 1 and len(candidates) == 1
                         and placement['state'] == 'present'
                         and observation.validation == 'ok'
+                        and observation.structure_validation == 'epub_structure_crc_ok'
                         and observation.media_format == 'epub'
                         and candidates[0]['media_format'] in {'epub', 'kepub'}
                         and candidates[0]['artifact_id'] == 'sha256:' + observation.sha256):

@@ -36,17 +36,25 @@ permettant une réparation ultérieure.
 - `scan_identity_roots()` reçoit des capacités de racines validées par l'appelant.
   Il refuse chevauchements, symlinks dans les ancêtres/racines/entrées et fichiers
   spéciaux. Limites globales : entrées, fichiers, octets/fichier, octets SHA,
-  profondeur, durée ; progression expurgée et annulation injectable.
-- SHA et OPF sont lus sur le même descripteur ; inode, taille et dates de
+  profondeur, durée, métadonnées privées cumulées (64 Mio au maximum) ; progression expurgée et annulation injectable.
+- SHA, OPF et structure/CRC sont lus sur le même descripteur ; inode, taille et dates de
   modification sont revérifiés après lecture, ainsi que le nom courant du fichier.
   Le résultat n'est pas une garantie qu'un livre n'a pas changé ensuite.
 - `inspect_epub(..., metadata_only=True)` conserve l'extraction OPF existante,
   sans lire les images ni appeler le cache. Le répertoire central est borné
   **avant** construction de `ZipFile`. ZIP64/multivolume non pris en charge,
   limites ZIP/XML et rejet DTD/entités, y compris UTF-16/32.
-- EPUB `ok` signifie métadonnées OPF lisibles, **pas** validation de tous les
-  membres/spine/CRC. PDF `pdf_signature_only` signifie uniquement `%PDF-` présent,
-  **pas** conformité PDF. Le graphe ne confirme pas un PDF sur cette seule base.
+- EPUB `ok` signifie métadonnées OPF lisibles. Le champ distinct
+  `structure_validation=epub_structure_crc_ok` exige en plus les règles
+  structurelles du validateur Core (mimetype, conteneur, racines/package, doublons,
+  membres ZIP non chiffrés) et les CRC de tous les membres. L'adaptateur borne
+  entrées, octets décompressés cumulés (par fichier et par audit), ratio et durée ;
+  chaque bloc est annulable. Aucune couverture n'est extraite ou mise en cache.
+  Le graphe ne confirme un EPUB qu'avec ces deux contrôles réussis. Cela ne
+  remplace pas EPUBCheck ou une validation de rendu/spine/accessibilité.
+- PDF `pdf_structure_minimal` exige signature `%PDF-` et marqueur `%%EOF`,
+  **pas** conformité PDF ni preuve DRM. Le graphe ne confirme pas un PDF sur
+  cette seule base. Les résultats structurels incomplets/invalides restent visibles.
 - `read_quiescent_snapshot()` copie au plus 128 Mio d'une base stable sans
   journal actif puis interroge **en mémoire** les six tables de bibliothèque et les deux tables de
   rattachements ADEPT locaux. Il ne crée
@@ -57,7 +65,7 @@ permettant une réparation ultérieure.
 - `confirmed_link` exige un droit actif d'achat attesté par le manifeste personnel
   Kobo ou la bibliothèque authentifiée Numilog, le même compte/credential/identité/
   achat, un unique ledger `complete`, un placement explicite et un artefact
-  `sha256:` de même SHA/taille. Aucun droit n'est attribué par nom, ISBN ou SHA.
+  `sha256:` de même SHA/taille, et structure/CRC EPUB validés. Aucun droit n'est attribué par nom, ISBN ou SHA.
   Les snapshots incomplets ne produisent pas de confirmation.
 - `present_unlinked` est une correspondance d'octets avec un artefact ou une
   sauvegarde de la même identité, sans attribution de droits. Les liens refusés
