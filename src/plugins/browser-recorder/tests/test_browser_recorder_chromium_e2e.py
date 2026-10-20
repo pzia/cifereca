@@ -614,8 +614,13 @@ def test_real_chromium_post_307_redirect_and_http_400_are_passive(
                         "body: JSON.stringify({bookId: 214})})"
                         ".then(r => r.json()).then(v => v.accepted)"
                     ) is True
+                    # fetch() resolves at headers: drain the 400 JSON body
+                    # before the recorder's requestfinished event is expected.
                     assert page.evaluate(
-                        "fetch('/bad-request').then(r => r.status)"
+                        "fetch('/bad-request').then(async r => {"
+                        "const body = await r.text();"
+                        "return body.includes('invalid_input') ? r.status : 0;"
+                        "})"
                     ) == 400
                     page.wait_for_timeout(160)
                 finally:
