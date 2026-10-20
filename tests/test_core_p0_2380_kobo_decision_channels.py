@@ -38,7 +38,7 @@ def _log(path, line):
 
 def test_kobo_same_bounded_typed_decision_on_both_channels(tmp_path):
     diagnostics = Diagnostics()
-    diagnostics.add("KOBO", "automatic backup decision", "warning", detail=DECISION)
+    diagnostics.add_core_kobo_backup_decision(DECISION)
     log = tmp_path / "cifereca.log"
     _log(log, TRACE)
     report = query_diagnostic_events(diagnostics, log_path=log, limit=20)
