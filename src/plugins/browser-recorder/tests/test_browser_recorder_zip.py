@@ -242,7 +242,7 @@ def test_unreviewed_long_numeric_fields_do_not_escape_json_review():
     trace.exchanges.append(PrivateExchange(
         1, "GET", url=ORIGIN + "/api/books",
         response_body=json.dumps({
-            "telephone": 33612345678, "postalCode": 13000,
+            "opaqueMetric": 33612345678, "unknownCounter": 13000,
             "year": 2026, "price": 9.5, "bookId": 214,
         }),
         response_headers={"content-type": "application/json"}, status=200,
@@ -256,8 +256,8 @@ def test_unreviewed_long_numeric_fields_do_not_escape_json_review():
         text = next(m["text"] for m in summary["members"]
                     if m["name"] == "bodies/0001-response.txt")
         values = json.loads(text)
-        assert values["telephone"] == "[NUMBER]"
-        assert values["postalCode"] == "[NUMBER]"
+        assert values["opaqueMetric"] == "[NUMBER]"
+        assert values["unknownCounter"] == "[NUMBER]"
         assert values["year"] == 2026
         assert values["price"] == 9.5
         assert values["bookId"] == 214  # expressly reviewed and kept
