@@ -4,6 +4,7 @@ from .core import acsm_staging, loan_failure_evidence, adept_acquisition_return
 from .core import adept_artifact_publication
 from .core import loan_acquisition_admission, loan_local_preparation
 from .core import loan_provider_delivery
+from .core import loan_completion_receipt
 from .core import loan_adept_profile_guard
 from .core import manual_acsm_import
 from .core import provider_loan_return
@@ -2879,23 +2880,20 @@ class LibraryService:
                 inspect_artifact=inspect_artifact,
                 ProviderConfigurationError=ProviderConfigurationError,
             )
-            self.storage.acquisition_put({
-                **ledger_base, "status": "complete", "strategy": "loan_auto",
-                "artifact_id": scan.get("artifact_id"),
-                "executor": "kobo-adept" if acquisition.kind == "acsm" else "provider",
-                "metadata": {
-                    "path": str(final_path), "catalog_index": scan, "provider_loan_id": loan.id,
-                    "reacquisition": force_refresh,
-                    "acquisition_decision": decision.as_dict(),
-                    "preserved_artifact_path": str(previous_path) if force_refresh and previous_path and previous_path.is_file() else None,
-                    "adept_binding": adept_binding if acquisition.kind == "acsm" else None,
-                    "post_processed": True if acquisition.kind == "acsm" else None,
-                    "adept_artifact_drm": artifact_drm if acquisition.kind == "acsm" else None,
-                    "artifact_format": artifact_format or final_inspection.media_format,
-                    "artifact_protected": artifact_protected if acquisition.kind == "acsm" else final_inspection.protected,
-                    "hook_reported": bool(hook_info) if acquisition.kind == "acsm" else None,
-                },
-            })
+            # Receipt payload is now a pure projection; retain the storage
+            # write, cleanup, diagnostics and response in the original order.
+            self.storage.acquisition_put(
+                loan_completion_receipt.completed_receipt(
+                    ledger_base=ledger_base, scan=scan,
+                    acquisition_kind=acquisition.kind, final_path=final_path,
+                    loan=loan, force_refresh=force_refresh, decision=decision,
+                    previous_path=previous_path,
+                    adept_binding=adept_binding if acquisition.kind == "acsm" else None,
+                    artifact_drm=artifact_drm, artifact_format=artifact_format,
+                    artifact_protected=artifact_protected,
+                    hook_info=hook_info, final_inspection=final_inspection,
+                )
+            )
             if acquisition.kind == "acsm":
                 self._cleanup_acsm_after_success(retained_acsm, loan_id=loan.id)
                 retained_acsm = None
