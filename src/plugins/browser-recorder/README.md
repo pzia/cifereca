@@ -61,3 +61,29 @@ Aucun export ni upload de contenu HTTP brut n'est disponible. L'ancienne
 interface et son export restent inchangés jusqu'à l'intégration du
 consentement et de la revue, pour éviter toute fuite involontaire.
 
+
+
+## Travail P1 #2529 — revue individuelle des identifiants en mémoire
+
+Le module sans interface `browser_recorder_review.py` propose localement,
+pour chaque **valeur** rencontrée dans une trace privée `PrivateHttpTrace`,
+une catégorie et ses contextes (route, paramètres, JSON/XML/texte, en-têtes
+techniques). Les valeurs détectées ont des identifiants de revue stables
+(`I0001`, `I0002`…), distincts des identifiants de fournisseur.
+
+Chaque valeur reconnue exige une décision individuelle explicite avant de
+préparer une **prévisualisation locale seulement** : `anonymize` (même
+pseudonyme dans plusieurs échanges), `keep` (conserver la valeur avec risque
+résiduel) ou `exclude` (retirer l'échange qui contient la valeur).
+Les décisions peuvent être révisées. Les mots de passe, cookies, tokens,
+licences et autres secrets détectés ne sont jamais des candidats conservables
+et leurs valeurs sont masquées dans la prévisualisation. L'absence de
+détection n'est **pas une garantie d'anonymat**.
+
+Ce module ne fait **aucun export**, n'écrit aucun fichier et n'est pas encore
+relié à une interface GTK. Même après toutes les décisions, son champ
+`approved_for_export` reste `false`. L'intégration UI, une étape
+obligatoire de rescannage final et la confirmation du ZIP font encore partie
+des tickets #2529/#2530. Ne pas sérialiser ni partager la trace brute
+ni les valeurs de la revue locale.
+
