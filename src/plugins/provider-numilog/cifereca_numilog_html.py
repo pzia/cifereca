@@ -358,7 +358,10 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                 # An ambiguous card (multiple links, products, or revisions)
                 # never yields an attested ACSM. Never equate ProductId to lid.
                 delivery = _card_delivery(
-                    card, links, {('https', 'entrepot2r.numilog.com', 443)},
+                    card, links, {
+                        ('https', 'entrepot2r.numilog.com', 443),
+                        ('https', 'services.numilog.com', 443),
+                    },
                 )
                 if delivery is not None:
                     row['delivery'] = delivery  # transient, target-specific
