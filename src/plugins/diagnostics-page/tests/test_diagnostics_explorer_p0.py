@@ -125,7 +125,7 @@ def test_availability_states_are_explicit_even_when_sources_have_no_events():
         "Journal partiel (rotation / troncation)", "Désactivée",
     ]
     assert explorer_header({"sources": [], "total": 0}, []) == (
-        "Sources non alimentées — aucune donnée disponible"
+        "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     )
     assert "recherche dans cette page uniquement" in explorer_header(
         {"sources": [{"source": "app_log"}], "total": 40, "offset": 50},
@@ -343,7 +343,7 @@ def test_invalid_sort_direction_rejected_cleanly(sort):
 @pytest.mark.parametrize("payload", [None, [], "unexpected", 123, object()])
 def test_header_refuses_non_mapping_broker_response(payload):
     assert explorer_header(payload, []) == (
-        "Sources non alimentées — aucune donnée disponible"
+        "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     )
 
 
