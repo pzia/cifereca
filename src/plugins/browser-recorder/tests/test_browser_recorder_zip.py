@@ -171,3 +171,25 @@ def test_plain_text_binary_data_and_large_fragments_are_not_in_zip(tmp_path):
     assert list(tmp_path.iterdir()) == []
     review.destroy()
     trace.destroy()
+
+
+@pytest.mark.parametrize(("redirect", "marker"), [
+    ("https://thirdparty.example.org/login?code=PRIVATE_OAUTH", "[OUT_OF_SCOPE]"),
+    ("http://localhost/secret?code=PRIVATE_OAUTH", "[UNSAFE_TARGET]"),
+])
+def test_foreign_or_unsafe_redirect_does_not_enter_export(redirect, marker):
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/library",
+        status=302, redirect_to=redirect,
+    ))
+    review = IdentifierReview(trace)
+    for candidate in review.candidates():
+        review.decide(candidate.key, "anonymize")
+    plan = prepare_reviewed_zip(review)
+    preview = json.dumps(plan.preview())
+    assert "PRIVATE_OAUTH" not in preview
+    assert "thirdparty.example.org" not in preview
+    assert marker in preview
+    review.destroy()
+    trace.destroy()
