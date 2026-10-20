@@ -99,3 +99,40 @@ def test_not_due_is_a_valid_fresh_observation_of_old_completed_receipt():
     assert "0 tenté(s)" in text
     assert "Phase : durable_claim ; cause : not_due" in text
     assert row["attempted"] == 2 and row["downloaded"] == 1
+
+
+@pytest.mark.parametrize(("durable", "attempted", "downloaded", "failed"), [
+    ("failed", 1, 0, 1),
+    ("partial", 2, 1, 1),
+    ("blocked", 0, 0, 0),
+    ("running", 0, 0, 0),
+])
+def test_not_due_does_not_mask_a_prior_unsuccessful_receipt(
+    durable, attempted, downloaded, failed,
+):
+    """Screenshot #2024: no new claim must not turn last failure into 0 errors."""
+    row = {
+        **_receipt(
+            durable, attempted=attempted, downloaded=downloaded, failed=failed,
+        ),
+        "diagnostic": _diag("not_due", attempted=0, downloaded=0, failed=0),
+        "ignored_secret": PRIVATE,
+    }
+    row["diagnostic"].update(cause_phase="durable_claim", code="not_due")
+    before = deepcopy(row)
+    label = describe_run("on_start", row, now=NOW)
+    assert "Aucun nouvel essai" not in label
+    assert "Phase : durable_claim ; cause : not_due" not in label
+    assert "Prochain essai : après la prochaine ouverture" in label
+    if durable == "failed":
+        assert "Dernier essai en échec" in label
+        assert "1 tenté(s)" in label and "1 échec(s)" in label
+    elif durable == "partial":
+        assert "Dernier essai partiel" in label
+        assert "1 téléchargé(s)" in label and "1 échec(s)" in label
+    elif durable == "blocked":
+        assert "Dernier essai bloqué" in label
+    else:
+        assert "Sauvegarde en cours ou interrompue" in label
+    assert "NEVER_SHOW" not in label
+    assert row == before

@@ -111,7 +111,15 @@ def save(storage, source_id, clock, fields, *, claimed=False):
                 ("sync.source.numilog.materialization.result.v1." + source_id,)).fetchone()
             if receipt is not None:
                 try:
-                    if json.loads(receipt[0]).get("status") == "running":
+                    prior_status = json.loads(receipt[0]).get("status")
+                    if prior_status == "running":
+                        return
+                    if (fields["status"] == "not_due"
+                            and prior_status in {"failed", "partial", "blocked"}):
+                        # A throttled later opening did no work. Keep the
+                        # cause/phase of the last *actual* durable failure,
+                        # which would otherwise vanish from the UI while the
+                        # SQLite failure receipt remains unchanged.
                         return
                 except (ValueError, TypeError, AttributeError):
                     return

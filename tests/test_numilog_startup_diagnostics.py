@@ -147,6 +147,41 @@ def test_not_due_keeps_previous_receipt_and_never_retries_a_signed_download(tmp_
     finally: service.close()
 
 
+
+def test_not_due_preserves_previous_durable_failed_run_and_its_cause(tmp_path):
+    """A later throttled opening cannot erase the prior user's P0 failure."""
+    service, account, session, calls, broker, sid = _setup(tmp_path)
+    try:
+        _authorize(broker, sid)
+        session.library = explode
+        first = execute(broker, account.identity_id, "startup")
+        assert first.ok is False and first.facts["status"] == "failed"
+        old = broker.numilog_materialization_run_status(sid)
+        assert old["status"] == "failed"
+        assert old["diagnostic"]["cause_phase"] == "manifest_fetch"
+        assert old["diagnostic"]["code"] == "manifest_failed"
+        receipt = service.storage.numilog_materialization_run_status(sid)
+        second = execute(broker, account.identity_id, "startup")
+        assert second.ok is True and second.facts["status"] == "not_due"
+        # The no-op still emits its own current diagnostic event, but does
+        # not overwrite the previous failure's durable auxiliary evidence.
+        events = terminal(service)
+        assert [event["code"] for event in events] == [
+            "manifest_failed", "not_due",
+        ]
+        now = broker.numilog_materialization_run_status(sid)
+        assert now == old
+        assert service.storage.numilog_materialization_run_status(sid) == receipt
+        text = describe_run("on_start", now)
+        assert "Dernier essai en échec" in text
+        assert "Phase : manifest_fetch ; cause : manifest_failed" in text
+        assert "Aucun nouvel essai" not in text
+        assert calls == []
+        assert_private_absent(service, second, now, tmp_path)
+    finally:
+        service.close()
+
+
 def test_partial_accounts_have_distinct_ephemeral_runs_exact_counts_one_task(tmp_path, monkeypatch):
     service, broker, first, second = _two_accounts(tmp_path)
     a, sa, ca, sida = first; b, sb, cb, sidb = second
