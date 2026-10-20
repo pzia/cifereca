@@ -360,7 +360,7 @@ class NumilogFakeApp:
         inventory = path.lower() == "/pages/compte/meslivres.aspx"
         login = path == "/Login.Aspx/AuthUser" and handler.command == "POST"
         delivery = path in {"/Pages/Compte/readBook.ashx", "/Services/Delivery.ashx"}
-        asset = __import__("re").fullmatch(r"/downloads/\\d+\\.(epub|acsm)", path)
+        asset = __import__("re").fullmatch(r"/downloads/\d+\.(epub|acsm)", path)
         if not (inventory or login or delivery or asset):
             return False
 
