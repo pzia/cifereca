@@ -96,3 +96,29 @@ La recette GTK/Chromium réelle, le rescannage final des secrets et la
 confirmation explicite du ZIP restent nécessaires dans #2529/#2530/#2531.
 Ne jamais partager la trace brute ni les valeurs de revue locale.
 
+
+
+## Travail P1 #2530 — archive ZIP revue, prototype hors interface
+
+Le module `browser_recorder_zip.py` prépare une **archive ZIP versionnée**
+à partir des décisions individuelles de `IdentifierReview`, sans accès
+réseau ni écriture spontanée. Les valeurs inconnues de query/path et les
+textes libres non approuvés deviennent des marqueurs ; JSON conserve sa
+structure et les identifiants explicitement gardés ou pseudonymisés ;
+HTML/XML est réduit à un squelette de balises/sélecteurs génériques.
+Les corps binaires et les licences/DRM restent exclus.
+
+Le plan fige **les octets exacts** et permet une prévisualisation locale
+de chaque membre avec son empreinte SHA-256. La méthode d'enregistrement
+exige une prévisualisation préalable **et une confirmation explicite** :
+pas d'enregistrement depuis les boutons actuels. Bornes : 240 échanges,
+600 membres, 4 Mio décompressés, 2 Mio ZIP ; aucun chemin de membre libre
+ni profil Playwright. Le fichier local utilise un nom aléatoire et le mode
+0600, avec refus des destinations finales symboliques.
+
+**Ce n'est pas encore l'export utilisateur final :** l'interface GTK
+n'expose aucun bouton ZIP, le rescannage des valeurs sensibles est une
+défense en profondeur et **ne garantit pas l'anonymat absolu** ; les
+recettes réelles Chromium/GTK et revue manuelle des membres sont exigées
+avant d'activer cet export en production. Ne pas présenter un schéma JSON
+partiellement préservé comme une preuve des droits d'acquisition.
