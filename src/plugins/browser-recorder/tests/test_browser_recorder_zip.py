@@ -193,3 +193,24 @@ def test_foreign_or_unsafe_redirect_does_not_enter_export(redirect, marker):
     assert marker in preview
     review.destroy()
     trace.destroy()
+
+
+
+def test_unapproved_fake_pseudonyms_never_pass_only_by_prefix():
+    # An attacker can put a value whose bytes *look* like our pseudonyms
+    # into any endpoint. No syntactic prefix can grant export approval.
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST", url=ORIGIN + "/PSEUDO_INOT_APPROVED?opaque=PSEUDO_INOT_APPROVED",
+        request_body=json.dumps({"notes": "PSEUDO_INOT_APPROVED"}),
+        request_headers={"content-type": "application/json"},
+    ))
+    review = IdentifierReview(trace)
+    for candidate in review.candidates():
+        review.decide(candidate.key, "anonymize")
+    plan = prepare_reviewed_zip(review)
+    text = json.dumps(plan.preview())
+    assert "PSEUDO_INOT_APPROVED" not in text
+    assert "[UNREVIEWED]" in text or "~redacted~" in text
+    review.destroy()
+    trace.destroy()
