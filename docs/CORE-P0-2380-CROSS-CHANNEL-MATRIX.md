@@ -67,6 +67,27 @@ Références de schéma : [Kobo](CORE-P0-2380-KOBO-DECISION-CHANNELS.md),
   d'une sélection et son destinataire. Un plugin Python dans le processus
   n'est pas un périmètre d'isolation contre du code arbitrairement malveillant.
 
+## Renforcement de l'export historique
+
+Le producteur générique `Diagnostics.add` conserve la compatibilité des
+opérations connues, mais son **statut** n'accepte plus une chaîne libre :
+une valeur hors vocabulaire technique fermé devient `unknown` dès la
+collecte. Les clés reconnues comme privées (`account_id`, `credential_id`,
+`identity_id`, `profile_id`, `loan_id`, `source_item_id`, `book_title`,
+URL signée, ACSM, en-têtes) sont expurgées à l'insertion, y compris si leur
+valeur ne ressemble pas à un secret par sa forme. Dans l'ancien export
+`Diagnostics.text()`, les **noms de clé** qui ne correspondent pas à une
+syntaxe technique ASCII bornée sont masqués, notamment les URL et adresses
+insérées artificiellement comme clés. Les compteurs et codes reconnus
+restent lisibles ; les producteurs structurés attestés gardent leur propre
+schéma plus strict.
+
+**Limite** : c'est une défense additionnelle du collecteur historique, pas
+une autorisation de publier les clés libres restantes, ni une preuve que
+les messages d'origine du plugin ou d'un autre rapport sont tous sûrs. Les
+exports interopérables doivent privilégier `diagnostics.events` et ses
+projections closes ; les autres surfaces restent soumises à #2380.
+
 ## Recette de non-régression
 
 Tester séparément **l'émission commune**, la validation de chaque canal,
