@@ -256,7 +256,7 @@ class EbooksSession(ProviderSession):
             timeout=float(self.options.get('timeout_seconds',30)),
             follow_redirects=True, trust_env=False,
             headers={
-                'User-Agent':'Cifereca-EbooksGratuits/0.1.22',
+                'User-Agent':'Cifereca-EbooksGratuits/0.1.23',
                 'Accept-Language':'fr-FR,fr;q=0.9',
             },
         )
@@ -484,6 +484,17 @@ def _safe_opds_link(feed_url, href, kind):
                        for ch in decoded_query)):
             return None
         path=dst.path.lower()
+        if kind == 'download':
+            # Unlike feed navigation, the EPUB URL was checked only against
+            # a raw /index.php/fetch prefix. Encoded dot-segments, slashes or
+            # double-encoding can be interpreted as a DIFFERENT route by a
+            # public reverse proxy after validation. Do not hand such URLs
+            # to the broker, including when they come from a cached row.
+            if ('%2f' in path or '%5c' in path or '%25' in path
+                    or '\\' in decoded_path
+                    or any(segment in {'.', '..'}
+                           for segment in decoded_path.split('/'))):
+                return None
         # Calibre/COPS publishes a dedicated fetch route. A suffix .epub
         # alone is not enough: /index.php/account/private.epub can otherwise
         # masquerade as a public acquisition endpoint on the same origin.
