@@ -767,7 +767,8 @@ def _confirmation_readbook_binding(observed, expected):
 
 def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
                            allow_missing_readbook=False,
-                           allow_owned_confirmation_without_readbook=False):
+                           allow_owned_confirmation_without_readbook=False,
+                           selection=None):
     """Bind the observed global Links array to ONE explicitly selected card.
 
     A single signed URL is not sufficient when a confirmation names another
@@ -964,13 +965,15 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
         require(call is not None)
         bindings.append(call.groups())
     require(bindings == [(candidate.product_id, candidate.copy_index)])
+    if selection is not None:
+        selection['kind'] = candidate.delivery_kind
     return candidate.url
 
 
 def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
                  expected_readbook=None, require_bound_confirmation=False,
                  allow_missing_readbook=False,
-                 allow_owned_confirmation_without_readbook=False):
+                 allow_owned_confirmation_without_readbook=False, selection=None):
     """Locate a single allowlisted delivery; optionally require an owned binding.
 
     When an HTML page also has a login widget, callers may only follow a
@@ -1045,6 +1048,7 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
         root, base_url, expected_readbook, allowed,
         allow_missing_readbook=allow_missing_readbook,
         allow_owned_confirmation_without_readbook=allow_owned_confirmation_without_readbook,
+        selection=selection,
     )
     if require_bound_confirmation:
         # A shared login widget does not by itself prove authentication
