@@ -1,3 +1,38 @@
+## 0.1.78 — livraison EPUB direct signée et liée à l'achat (#2024 P0)
+
+Le fournisseur publie, sur certaines confirmations sans streaming, un
+`Links` littéral avec `DrmTechnlology='NOT_SPECIFIED'`,
+`format='EPUB'` et un lien de livraison signé sur
+`services.numilog.com/v4.0/HandlerDownloadLinks/HandlerDilicomDownloadLink.ashx`.
+Le parseur Numilog gère désormais explicitement cette **autre forme** de
+livraison : `OwnedDelivery.delivery_kind=epub_direct`, sans exécuter le
+JavaScript ni reproduire une URL réelle. Les paramètres de la signature sont
+acceptés uniquement sur le domaine et chemin HTTPS exacts, avec noms
+`productid/idcmd/date/hash`, bornes et unicité ; `productid` correspond
+au ProductId de `Links`, **jamais** au `lid` de MesLivres.
+
+Le GET est autorisé uniquement après preuve d'achat rechargée et compte/
+identité exacts, `ModalDownload(ProductId, IndexExemplaire)` de la carte,
+référence de confirmation concordante si publiée et unicité des candidats.
+L'absence de lien streaming sur la confirmation est acceptée après **302
+direct** du `readBook?m=dwld` sélectionné ou après lien de confirmation
+`disp=simple` présent dans cette seule carte de `MesLivres`. Une simple
+page de commande isolée, une autre édition, un doublon ou un script seul ne
+suffisent pas. Le lien signé demeure éphémère, jamais dans SearchResult,
+journal, réception durable ni diagnostic. Un EPUB valide est publié via
+la branche ZIP/EPUB existante, sans broker ADEPT ; ACSM et LCP conservent
+leurs restrictions.
+
+Tests synthétiques `test_numilog_not_specified_epub_confirmation_p0_2024.py` :
+4 achats, 302/confirmation ou lien explicite de la carte, faux compte/édition,
+lien signé altéré, mauvais MIME, EPUB corrompu, redirection interdite,
+formulaire de connexion global et absence d'acquisition ADEPT.
+La prise en charge d'un format ne valide **pas** la récupération chez un
+utilisateur donné : la recette réelle expurgée et le rapprochement achat/
+Artifact sans supprimer ni reconsommer un ACSM restent ouverts sous #2024.
+
+---
+
 ## 0.1.77 — invalidation des résultats publics après reconnexion (#1886 P0)
 
 Les parcours publics `browse_public_search` et `follow_public_link`

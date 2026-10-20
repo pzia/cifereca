@@ -1,3 +1,24 @@
+## 1.2.30 — famille de lancement OS expurgée (#979 P0)
+
+Un échec de lancement de sous-processus (OSError, hors FileNotFoundError)
+utilisait le nom de la classe d'exception Python dans le diagnostic
+`launch_error`, transmis aussi dans `KoboAdeptError.details` et
+`technical_detail`. Cette valeur n'est pas un vocabulaire fermé ; un
+nom de sous-classe privé pouvait ainsi traverser les exports.
+
+La famille publiée vaut désormais toujours `launch_error=os_error`, et
+le code métier demeure `kobo_adept_launch_error` avec
+`retryable=false`. Ni texte de l'exception, ni argv, ni stdout/stderr,
+ni secret ni opération supplémentaire n'est introduit. Le cas
+`FileNotFoundError` conserve son code dédié `kobo_adept_missing`.
+
+Test synthétique :
+`tests/test_adept_os_launch_closed_p0_979.py` (OSError,
+PermissionError et sous-classe portant un faux secret dans son nom).
+Ce correctif ne qualifie pas la cause Adobe/libgourou côté CLI externe.
+
+---
+
 ## 1.2.29 — timeout ACSM non réessayable sans preuve (#979 P0)
 
 Un `subprocess.TimeoutExpired` lors de `download request` avec

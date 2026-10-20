@@ -1,3 +1,33 @@
+## #1917 — rechercher une branche auteur NOM, Prénom dans OPDS/COPS (0.1.25, 20/10/2026)
+
+Certaines réponses de recherche OPDS peuvent présenter un **sous-catalogue
+de navigation**, et non les livres eux-mêmes. Quand une entrée navigable
+porte explicitement un libellé de personne `HUGO, Victor`, une recherche
+`Victor Hugo` ou `Hugo Victor` doit pouvoir choisir **ce lien publié**
+même si la chaîne complète n'est pas littéralement contiguë.
+
+La sélection prioritaire est strictement limitée à un **libellé de
+navigation auteur à une virgule** `NOM, Prénom`, sans séparateur
+multi-auteurs ni titre narratif. La route reste validée comme
+**lien Atom OPDS de même origine**, dans les mêmes limites existantes
+(5 niveaux, une seule branche à priorité équivalente). Chaque **livre
+retourné** subit ensuite le filtre `Atom author/name` individuel :
+le titre de branche seul n'atteste ni auteur d'un livre, ni résultat
+global ou achat. Si plusieurs branches sont qualifiées, une seule
+est parcourue avec `partial_results`. Le lien autorisé sélectionné peut naturellement faire l'objet d'un
+GET de navigation (au lieu d'un refus précédent) ; aucune autre branche
+n'est explorée et il n'y a ni repli réseau ni réinterrogation implicite.
+
+Tests hors réseau (`httpx.MockTransport`) :
+`tests/test_opds_author_navigation_order_p1_1917.py` :
+accents et ordre des noms, branches ambiguës, auteurs étrangers,
+URLs externes et avertissements sur zéro ligne. **Pas de capture
+live du serveur** ; une recette autorisée reste nécessaire pour
+confirmer l'impact utilisateur. Les téléchargements EPUB déjà
+fonctionnels restent inchangés.
+
+---
+
 ## #1917 / #2460 — liens Atom relatifs résolus sur le flux exact (0.1.24)
 
 Les liens OPDS déclarés dans une page de recherche ou un

@@ -11,7 +11,7 @@ import hashlib
 import inspect
 import re
 from concurrent.futures import FIRST_COMPLETED, wait
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from queue import Queue, Empty, Full
 from typing import Any, Callable
@@ -310,7 +310,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     if not force:
         cached = self.storage.cache_get("search", cache_key)
         if isinstance(cached, list):
-            self.last_search = [SearchResult(**x) for x in cached]
+            self.last_search = [_provider_search_row(SearchResult(**x)) for x in cached]
             # Never leak a warning from a previous, unrelated search.
             self.last_search_warnings = []
             self.diagnostics.add("CACHE", "search", detail={"hit": True, "results": len(self.last_search), "q_len": len(query), "providers": provider_key})
@@ -350,7 +350,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                     if "field" not in str(exc) or "unexpected keyword" not in str(exc):
                         raise
                     session_rows = session.search(variant, provider_scope)
-                for row in session_rows:
+                for raw_row in session_rows:
+                    row = _provider_search_row(raw_row)
                     key = (row.source_provider, row.docbase, row.record_id)
                     if key not in provider_seen:
                         provider_seen.add(key)
@@ -479,12 +480,28 @@ def _search_problem_label(code: str) -> str:
     return "échec de recherche"
 
 
+def _provider_search_row(row: SearchResult) -> SearchResult:
+    """Keep Core-owned provenance out of untrusted supplier and cache rows.
+
+    Only known_public_fallback may assign ``known_catalog_stale``. Never
+    mutate the provider's original row/metadata (it can be shared).
+    """
+    metadata = getattr(row, "metadata", None)
+    if isinstance(metadata, dict) and "search_provenance" in metadata:
+        return replace(row, metadata={
+            key: value for key, value in metadata.items()
+            if key != "search_provenance"
+        })
+    return row
+
+
 def _search_batch_status(
     rows: list[SearchResult] | tuple[SearchResult, ...],
     warnings: list[str] | tuple[str, ...],
     error_code: str,
     *,
     cached: bool = False,
+    stale_attested: bool = False,
 ) -> str:
     """Compute a closed Core verdict; never use arbitrary provider error text.
 
@@ -492,11 +509,7 @@ def _search_batch_status(
     distinguishable by the *existing* machine error_code, never relabelled as
     a public transport outage or evidence of a purchase.
     """
-    if any(
-        isinstance(getattr(row, "metadata", None), dict)
-        and row.metadata.get("search_provenance") == "known_catalog_stale"
-        for row in rows
-    ):
+    if stale_attested and error_code == "SearchTemporarilyUnavailable" and rows:
         return "known_catalog_stale"
     if error_code:
         return "partial" if rows else "unavailable"
@@ -540,7 +553,8 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
                 if "field" not in str(exc) or "unexpected keyword" not in str(exc):
                     raise
                 session_rows = session.search(variant, provider_scope)
-            for row in session_rows:
+            for raw_row in session_rows:
+                row = _provider_search_row(raw_row)
                 key = (row.source_provider, row.docbase, row.record_id)
                 if key not in provider_seen:
                     provider_seen.add(key); provider_rows.append(row)
@@ -600,7 +614,7 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
             provider_id=session.provider_id, catalog_generation=generation,
             publish=publish, cancelled=cancelled,
         )
-        rows = list(outcome.rows)
+        rows = [_provider_search_row(row) for row in outcome.rows]
         if field in {"title", "author"}:
             rows = [row for row in rows if self._field_match(field, query, row)]
         if str(scope or "all").casefold() == "unknown":
@@ -703,35 +717,49 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     if not force:
         cached = self.storage.cache_get("search", cache_key)
         if isinstance(cached, list):
-            rows = [SearchResult(**x) for x in cached]
+            rows = [_provider_search_row(SearchResult(**x)) for x in cached]
             groups: dict[str, list[SearchResult]] = {}
-            for row in rows: groups.setdefault(str(row.source_provider or "unknown"), []).append(row)
-            # The cache holds only rows, including a legitimate empty list.
-            # Its key already binds the exact selected source set. Re-emit one
-            # cached verdict for *each* selected provider, including providers
-            # that returned a successful empty catalogue. Otherwise an all-zero
-            # response silently loses every source status in the GTK UI.
-            delivered = 0
-            for session in searchable:
-                if request_cancelled():
+            selected = {session.provider_id for session in searchable}
+            ambiguous = False
+            for row in rows:
+                # A virtual aggregate can legitimately return books whose
+                # source_provider names an origin, not its selected session.
+                # With one selected session the producer is unambiguous.
+                if row.source_provider in selected:
+                    owner = row.source_provider
+                elif len(searchable) == 1:
+                    owner = searchable[0].provider_id
+                else:
+                    # The legacy list-only cache has lost which selected
+                    # session produced this origin. Never silently drop it or
+                    # assign its book to an unrelated source: redo the query.
+                    ambiguous = True
                     break
-                emit(CatalogSearchBatch(
-                    session.provider_id, session.descriptor.display_name,
-                    tuple(groups.get(session.provider_id, ())),
-                    cached=True, result_status=_search_batch_status(
-                        groups.get(session.provider_id, ()), (), "", cached=True
-                    ),
-                ))
-                delivered += 1
-            cancelled = request_cancelled()
-            if not cancelled:
-                with self._search_generation_lock:
-                    if request_current_locked():
-                        self.last_search = rows; self.last_search_warnings = []
-                    else:
-                        cancelled = True
-            completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            return CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
+                groups.setdefault(owner, []).append(row)
+            if not ambiguous:
+                # An empty 200 also earns a cached verdict; session ownership
+                # remains observable for the same selected provider set.
+                delivered = 0
+                for session in searchable:
+                    if request_cancelled():
+                        break
+                    emit(CatalogSearchBatch(
+                        session.provider_id, session.descriptor.display_name,
+                        tuple(groups.get(session.provider_id, ())),
+                        cached=True, result_status=_search_batch_status(
+                            groups.get(session.provider_id, ()), (), "", cached=True
+                        ),
+                    ))
+                    delivered += 1
+                cancelled = request_cancelled()
+                if not cancelled:
+                    with self._search_generation_lock:
+                        if request_current_locked():
+                            self.last_search = rows; self.last_search_warnings = []
+                        else:
+                            cancelled = True
+                completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                return CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
 
     aggregate: list[SearchResult] = []
     warnings: list[str] = []
@@ -742,6 +770,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     event_queue: Queue[ProviderSearchEvent] = Queue(maxsize=512)
 
     def publish_from_provider(event: ProviderSearchEvent) -> None:
+        # Streaming upserts must obey the same Core-owned provenance boundary
+        # before either a UI event or a provider batch becomes observable.
+        if event.kind == "upsert" and isinstance(event.result, SearchResult):
+            event = replace(event, result=_provider_search_row(event.result))
         # Bounded queue enforces backpressure on a noisy provider.
         while not request_cancelled():
             try:
@@ -848,6 +880,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 # records already mirrored in SQLite; they are never promoted
                 # to fresh catalogue results or purchase rights.
                 live_rows = provider_rows
+                stale_attested = False
                 if (
                     error_code == "SearchTemporarilyUnavailable"
                     and not live_rows and not request_cancelled()
@@ -861,6 +894,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     )
                     if previous:
                         provider_rows = list(previous)
+                        stale_attested = True
                         provider_warnings = [
                             f"{session.descriptor.display_name}: résultats connus, recherche en ligne indisponible"
                         ]
@@ -878,7 +912,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                         session.provider_id, session.descriptor.display_name, tuple(provider_rows),
                         tuple(provider_warnings), error_code, error_message, False,
                         int((time.monotonic() - provider_started) * 1000),
-                        _search_batch_status(provider_rows, provider_warnings, error_code),
+                        _search_batch_status(
+                            provider_rows, provider_warnings, error_code,
+                            stale_attested=stale_attested,
+                        ),
                     ))
                 if control is not None and callable(getattr(control, "report", None)):
                     try:

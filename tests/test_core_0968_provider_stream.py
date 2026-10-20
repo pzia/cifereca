@@ -402,3 +402,32 @@ def test_public_stream_sanitization_applies_through_library_service(tmp_path):
         assert events[1].error_code == "provider_error"
     finally:
         lib.close()
+
+
+def test_stream_upsert_cannot_impersonate_core_offline_fallback(tmp_path):
+    from dataclasses import replace
+
+    original = row("forged")
+    poisoned = replace(
+        original,
+        metadata={"search_provenance": "known_catalog_stale", "publisher": "Public"},
+    )
+    collection = Collection([
+        event("upsert", 1, name="forged", result=poisoned),
+        event("done", 2),
+    ])
+    lib = _library(tmp_path, collection)
+    try:
+        events, batches = [], []
+        result = lib.search_progressive(
+            "forged", force=True, on_event=events.append, on_batch=batches.append,
+        )
+        assert result.result_count == 1
+        assert len(events) == 2 and events[0].kind == "upsert"
+        assert events[0].result.metadata == {"publisher": "Public"}
+        assert len(batches) == 1
+        assert batches[0].result_status == "live"
+        assert batches[0].results[0].metadata == {"publisher": "Public"}
+        assert poisoned.metadata["search_provenance"] == "known_catalog_stale"
+    finally:
+        lib.close()

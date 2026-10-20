@@ -358,7 +358,10 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                 # An ambiguous card (multiple links, products, or revisions)
                 # never yields an attested ACSM. Never equate ProductId to lid.
                 delivery = _card_delivery(
-                    card, links, {('https', 'entrepot2r.numilog.com', 443)},
+                    card, links, {
+                        ('https', 'entrepot2r.numilog.com', 443),
+                        ('https', 'services.numilog.com', 443),
+                    },
                 )
                 if delivery is not None:
                     row['delivery'] = delivery  # transient, target-specific
@@ -406,6 +409,7 @@ class OwnedDelivery:
     product_id: str = field(repr=False)
     copy_index: str = field(repr=False)
     url: str = field(repr=False)
+    delivery_kind: str = field(default='acsm', repr=False)
 
 
 # Strictly bounded, non-evaluating extraction of simple JS object literals.
@@ -450,6 +454,42 @@ def _field(block, name):
     return values[0] if len(values) == 1 else None
 
 
+def _is_direct_epub_download(value, allowed_origins, *, expected_product=None):
+    """Only the observed signed Numilog handler, never another service URL.
+
+    Never persist or publish the signed query. ProductId comes from Links,
+    NOT from the MesLivres lid (they are distinct identifier namespaces).
+    """
+    if not _raw_delivery_url_safe(value) or len(value) > 4096:
+        return False
+    try:
+        parsed = urlsplit(value)
+        if (origin(value) != ('https', 'services.numilog.com', 443)
+                or origin(value) not in allowed_origins
+                or parsed.username or parsed.password or parsed.fragment
+                or parsed.path != '/v4.0/HandlerDownloadLinks/HandlerDilicomDownloadLink.ashx'
+                or not parsed.query or chr(92) in value):
+            return False
+        fields = parse_qs(
+            parsed.query, keep_blank_values=True,
+            strict_parsing=True, max_num_fields=8,
+        )
+        if set(fields) != {'productid', 'idcmd', 'date', 'hash'}:
+            return False
+        product, order = fields['productid'], fields['idcmd']
+        date, signature = fields['date'], fields['hash']
+        return (
+            len(product) == len(order) == len(date) == len(signature) == 1
+            and bool(re.fullmatch(r'[0-9]{1,16}', product[0]))
+            and bool(re.fullmatch(r'[0-9]{1,20}', order[0]))
+            and (expected_product is None or product[0] == expected_product)
+            and 0 < len(date[0]) <= 128
+            and 0 < len(signature[0]) <= 256
+        )
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 def _owned_delivery_candidates(node, *, allowed_origins):
     """Inspect descendant scripts, never evaluate JS or fetch a signed URL."""
     deliveries = []
@@ -465,29 +505,39 @@ def _owned_delivery_candidates(node, *, allowed_origins):
             index = _field(block, 'IndexExemplaire')
             drm = _field(block, 'DrmTechnlology')
             url = _field(block, 'link')
-            if (not product or not product.isdecimal() or not index
-                    or not index.isdecimal() or str(drm).upper() != 'ADOBE'
+            delivery_kind = (
+                'acsm' if drm == 'ADOBE' else
+                'epub_direct' if drm == 'NOT_SPECIFIED'
+                and _field(block, 'format') == 'EPUB' else None
+            )
+            if (not product or not re.fullmatch(r'[0-9]{1,16}', product)
+                    or not index or not re.fullmatch(r'[0-9]{1,16}', index)
+                    or delivery_kind is None
                     or not isinstance(url, str) or len(url) > 4096):
                 continue
             try:
                 decoded_url = unescape(url)
                 if not _raw_delivery_url_safe(decoded_url):
                     continue
-                parsed = urlsplit(decoded_url)
-                # Only the exact ACSM delivery origin/path, with no user-info,
-                # fragment, whitespace, relative URL, or disguised port.
-                if (
-                    origin(decoded_url) not in allowed_origins
-                    or origin(decoded_url) != ('https', 'entrepot2r.numilog.com', 443)
-                    or parsed.username or parsed.password or parsed.fragment
-                    or parsed.path != '/fulfillment/URLLink.acsm'
-                    or not parsed.query or any(c.isspace() for c in url)
-                    or '\\' in url or not _raw_delivery_url_safe(url)
+                if delivery_kind == 'acsm':
+                    parsed = urlsplit(decoded_url)
+                    # Preserve the existing tightly scoped Adobe endpoint.
+                    if (
+                        origin(decoded_url) not in allowed_origins
+                        or origin(decoded_url) != ('https', 'entrepot2r.numilog.com', 443)
+                        or parsed.username or parsed.password or parsed.fragment
+                        or parsed.path != '/fulfillment/URLLink.acsm'
+                        or not parsed.query or any(c.isspace() for c in url)
+                        or chr(92) in url or not _raw_delivery_url_safe(url)
+                    ):
+                        continue
+                elif not _is_direct_epub_download(
+                    decoded_url, allowed_origins, expected_product=product,
                 ):
                     continue
             except (TypeError, ValueError, AttributeError):
                 continue
-            deliveries.append(OwnedDelivery(product, index, decoded_url))
+            deliveries.append(OwnedDelivery(product, index, decoded_url, delivery_kind))
     return deliveries
 
 
@@ -511,6 +561,18 @@ def _card_delivery(card, links, allowed_origins):
     if len(items) != 1:
         return None
     item = items[0]
+    if item.delivery_kind == 'epub_direct':
+        # A signed direct EPUB must have ONE exact action in this owned card.
+        actions = [n.attrs.get('onclick', '') for n in card.walk()
+                   if re.search(r'\bModalDownload\s*\(', n.attrs.get('onclick', ''))]
+        if len(actions) != 1:
+            return None
+        selected = re.fullmatch(
+            r'\s*ModalDownload\(\s*([0-9]{1,16})\s*,\s*([0-9]{1,16})\s*\)\s*;?\s*',
+            actions[0],
+        )
+        if selected is None or selected.groups() != (item.product_id, item.copy_index):
+            return None
     attributes = (
         ('data-product-id', item.product_id),
         ('data-index-exemplaire', item.copy_index),
@@ -636,7 +698,8 @@ def _confirmation_readbook_binding(observed, expected):
 
 
 def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
-                           allow_missing_readbook=False):
+                           allow_missing_readbook=False,
+                           allow_owned_confirmation_without_readbook=False):
     """Bind the observed global Links array to ONE explicitly selected card.
 
     A single signed URL is not sufficient when a confirmation names another
@@ -664,6 +727,18 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
     )
     require(len(candidates) == 1)
     candidate = candidates[0]
+    if candidate.delivery_kind == 'epub_direct':
+        # A second edition or direct alternative is never silently ignored.
+        blocks = [m.group(0) for m in _JS_OBJECT.finditer(literal.group(1))]
+        require(1 <= len(blocks) <= 16 and all(
+            _field(block, 'ProductId') == candidate.product_id
+            and _field(block, 'IndexExemplaire') == candidate.copy_index
+            for block in blocks
+        ))
+        require(sum(
+            _field(block, 'DrmTechnlology') == 'NOT_SPECIFIED'
+            and _field(block, 'format') == 'EPUB' for block in blocks
+        ) == 1)
     expected = _readbook_coordinates(expected_readbook, base_url)
     require(expected is not None)
     # Never extend the streaming equivalence to arbitrary HTML landings:
@@ -743,8 +818,15 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
         )
         if matched_readbook:
             require(len(readbooks) == 1)
-        elif not readbooks and allow_missing_readbook and allow_stream_identity:
-            require(dict(expected[1]).get('m') == ('dwld',))
+        elif (not readbooks and allow_stream_identity
+              and (allow_missing_readbook or allow_owned_confirmation_without_readbook)):
+            mode = dict(expected[1]).get('m')
+            require(
+                (allow_missing_readbook and mode == ('dwld',))
+                or (allow_owned_confirmation_without_readbook
+                    and candidate.delivery_kind == 'epub_direct'
+                    and mode in {('dwld',), ('download',)})
+            )
             # Some purchases have NO streaming capability and therefore no
             # readBook link on the confirmation card. The caller may assert
             # this fallback ONLY after a direct, checked HTTP 302 from this
@@ -802,7 +884,8 @@ def _confirmation_delivery(root, base_url, expected_readbook, allowed, *,
 
 def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
                  expected_readbook=None, require_bound_confirmation=False,
-                 allow_missing_readbook=False):
+                 allow_missing_readbook=False,
+                 allow_owned_confirmation_without_readbook=False):
     """Locate a single allowlisted delivery; optionally require an owned binding.
 
     When an HTML page also has a login widget, callers may only follow a
@@ -815,6 +898,7 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
     allowed=set(allowed_origins or {origin('https://services.numilog.com/')})
     candidates = set()
     signed_acsm = set()
+    signed_epub = set()
     signed_shapes = html_links = html_scripts = 0
     for node in root.walk():
         values = [('href', node.attrs.get('href') or '')]
@@ -857,6 +941,8 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
                     candidates.add(url)
                     if _is_fulfillment_acsm(url, allowed):
                         signed_acsm.add(url)
+                    if _is_direct_epub_download(url, allowed):
+                        signed_epub.add(url)
             except (ValueError, AttributeError, TypeError):
                 continue
     if evidence is not None:
@@ -870,6 +956,7 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
     bound_confirmation = _confirmation_delivery(
         root, base_url, expected_readbook, allowed,
         allow_missing_readbook=allow_missing_readbook,
+        allow_owned_confirmation_without_readbook=allow_owned_confirmation_without_readbook,
     )
     if require_bound_confirmation:
         # A shared login widget does not by itself prove authentication
@@ -878,10 +965,15 @@ def delivery_url(text, base_url, *, allowed_origins=None, evidence=None,
         # combination may authorize following the signed ACSM.
         if bound_confirmation is None:
             raise DeliverySelectionError('missing')
-        if signed_acsm != {bound_confirmation}:
+        if signed_acsm | signed_epub != {bound_confirmation}:
             raise DeliverySelectionError('ambiguous')
         return bound_confirmation
-    if bound_confirmation is not None and signed_acsm != {bound_confirmation}:
+    if bound_confirmation is not None:
+        if signed_acsm | signed_epub != {bound_confirmation}:
+            raise DeliverySelectionError('ambiguous')
+        return bound_confirmation
+    # A signed direct EPUB must never be followed from an arbitrary script.
+    if signed_epub:
         raise DeliverySelectionError('ambiguous')
     # Pages intermédiaires may contain harmless site navigation and a
     # SINGLE signed ACSM. Prefer that exact delivery over ordinary permitted
