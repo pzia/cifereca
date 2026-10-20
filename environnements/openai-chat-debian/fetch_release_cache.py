@@ -20,6 +20,8 @@ from tempfile import TemporaryDirectory
 from urllib.request import urlopen
 
 RELEASE_TAG = "gtk4-debian13-trixie-amd64-20261020"
+# Pin the immutable release tarball digest (in addition to its SHA256SUMS).
+RELEASE_SHA256 = "994827c014446ffdd37016a18c4e457ef2ad225a1de84f9c738efc23f60324e4"
 ASSET = "gtk4-deb-cache-debian13-trixie-amd64.tar.gz"
 RELEASE_BASE = f"https://github.com/pzia/cifereca/releases/download/{RELEASE_TAG}"
 PROFILE = {"distro": "debian", "codename": "trixie", "architecture": "amd64"}
@@ -134,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
                 if match is None:
                     raise ValueError("invalid release checksum")
                 expected = match.group(1)
+                if expected != RELEASE_SHA256:
+                    raise ValueError("release digest is not the reviewed asset")
             else:
                 archive = args.archive
                 expected = args.sha256
