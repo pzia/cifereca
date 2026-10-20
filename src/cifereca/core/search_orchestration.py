@@ -705,31 +705,47 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         if isinstance(cached, list):
             rows = [SearchResult(**x) for x in cached]
             groups: dict[str, list[SearchResult]] = {}
-            for row in rows: groups.setdefault(str(row.source_provider or "unknown"), []).append(row)
-            # The cache holds only rows, including a legitimate empty list.
-            # Its key already binds the exact selected source set. Re-emit one
-            # cached verdict for *each* selected provider, including providers
-            # that returned a successful empty catalogue. Otherwise an all-zero
-            # response silently loses every source status in the GTK UI.
-            delivered = 0
-            for session in searchable:
-                if request_cancelled():
+            selected = {session.provider_id for session in searchable}
+            ambiguous = False
+            for row in rows:
+                # A virtual aggregate can legitimately return books whose
+                # source_provider names an origin, not its selected session.
+                # With one selected session the producer is unambiguous.
+                if row.source_provider in selected:
+                    owner = row.source_provider
+                elif len(searchable) == 1:
+                    owner = searchable[0].provider_id
+                else:
+                    # The legacy list-only cache has lost which selected
+                    # session produced this origin. Never silently drop it or
+                    # assign its book to an unrelated source: redo the query.
+                    ambiguous = True
                     break
-                emit(CatalogSearchBatch(
-                    session.provider_id, session.descriptor.display_name,
-                    tuple(groups.get(session.provider_id, ())),
-                    cached=True, result_status="cached",
-                ))
-                delivered += 1
-            cancelled = request_cancelled()
-            if not cancelled:
-                with self._search_generation_lock:
-                    if request_current_locked():
-                        self.last_search = rows; self.last_search_warnings = []
-                    else:
-                        cancelled = True
-            completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            return CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
+                groups.setdefault(owner, []).append(row)
+            if not ambiguous:
+                # An empty 200 also earns a cached verdict; session ownership
+                # remains observable for the same selected provider set.
+                delivered = 0
+                for session in searchable:
+                    if request_cancelled():
+                        break
+                    emit(CatalogSearchBatch(
+                        session.provider_id, session.descriptor.display_name,
+                        tuple(groups.get(session.provider_id, ())),
+                        cached=True, result_status=_search_batch_status(
+                            groups.get(session.provider_id, ()), (), "", cached=True
+                        ),
+                    ))
+                    delivered += 1
+                cancelled = request_cancelled()
+                if not cancelled:
+                    with self._search_generation_lock:
+                        if request_current_locked():
+                            self.last_search = rows; self.last_search_warnings = []
+                        else:
+                            cancelled = True
+                completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                return CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
 
     aggregate: list[SearchResult] = []
     warnings: list[str] = []
