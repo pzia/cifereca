@@ -153,3 +153,28 @@ def test_an_invalid_field_name_also_hides_the_field_value():
     assert "PRIVATE_VALUE" not in exported
     assert "PRIVATE_EXTRA_VALUE" not in exported
     assert "[champ masqué]" in exported
+
+
+def test_generic_collector_drops_nested_freeform_keys_and_foreign_values():
+    class Opaque:
+        def __str__(self):
+            raise AssertionError("provider-owned object must not be displayed")
+
+    diagnostic = Diagnostics()
+    diagnostic.add("CORE", "health check", "warning", detail={
+        "nested": {
+            "https://private.invalid/LOAN/RAW_ID_987": "RAW_VALUE_987",
+            "safe_counter": 2,
+            "private_object": Opaque(),
+        },
+        "credential_id": "NOT_RECOGNISABLE_AS_SECRET_987",
+    })
+    row, = diagnostic.snapshot()
+    assert row["detail"]["nested"] == {
+        "safe_counter": 2, "private_object": "<redacted>",
+    }
+    assert row["detail"]["credential_id"] == "<redacted>"
+    text = diagnostic.text("synthetic")
+    for secret in ("RAW_ID_987", "RAW_VALUE_987",
+                   "NOT_RECOGNISABLE_AS_SECRET_987"):
+        assert secret not in text
