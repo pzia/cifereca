@@ -275,3 +275,27 @@ def test_2498_malformed_truncation_evidence_is_rejected_at_broker(
     assert result.facts["acquisition_authorized"] is False
     assert "PRIVATE" not in repr(result)
     assert "directory_scan_unavailable" not in repr(result)
+
+
+@pytest.mark.parametrize("origin", [
+    "backup_records_budget", "catalogue_rows_budget",
+    "active_entitlements_budget", "record_budget",
+])
+def test_2498_broker_allows_only_canonical_persisted_row_origin_codes(
+    monkeypatch, origin,
+):
+    service, broker, source, _ = _broker()
+    report = _report()
+    report.update(
+        truncated=True,
+        files_hashed_limit=2048, directory_entries_limit=4096,
+        total_hash_bytes_limit=64 * 1024 ** 3, total_hash_bytes_read=0,
+        truncation_reasons=[origin],
+        hash_attempts_used=0, directory_entries_inspected=0,
+        secret="PRIVATE-ACCOUNT",
+    )
+    _stub(monkeypatch, lambda: report)
+    result = broker.audit_local_reconciliation(source.source_id)
+    assert result.ok
+    assert result.facts["truncation_reasons"] == [origin]
+    assert "PRIVATE" not in repr(result)
