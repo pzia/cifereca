@@ -62,3 +62,32 @@ def test_task_broker_close_rejects_new_work():
     broker.close()
     with pytest.raises(RuntimeError, match="closed"):
         scoped.submit(lambda _control: None)
+
+
+def test_optional_broker_pending_cap_rejects_without_leaking_reservation():
+    broker = TaskBrokerImpl(_Service(), max_workers=1, max_pending=1)
+    entered, release = threading.Event(), threading.Event()
+    executed = []
+
+    def blocking(_control):
+        entered.set()
+        assert release.wait(3)
+        return "first"
+
+    try:
+        source = broker.for_plugin("private-origin")
+        running = source.submit(blocking, label="PRIVATE_SIGNED_URL")
+        assert entered.wait(2)
+        pending = source.submit(lambda _: executed.append("pending") or "second")
+        with pytest.raises(RuntimeError, match="executor pending queue full"):
+            source.submit(lambda _: executed.append("rejected"), label="PRIVATE_TOKEN")
+        # Broker reservations are cleaned even when admission rejects.
+        assert len(broker._controls) == 2
+        assert broker._executor.admission_snapshot()["rejected"] == 1
+        release.set()
+        assert running.result(timeout=3) == "first"
+        assert pending.result(timeout=3) == "second"
+        assert executed == ["pending"]
+    finally:
+        release.set()
+        broker.close()
