@@ -67,6 +67,9 @@ def test_530_distinct_persisted_placements_are_verified_and_not_truncated(
             service, credential_id="vault-1",
         )
         assert report["truncated"] is False
+        assert report["truncation_reasons"] == []
+        assert report["hash_attempts_used"] == 530
+        assert 530 <= report["directory_entries_inspected"] <= 4096
         assert report["counts"]["backup_rows"] == 530
         assert report["counts"]["linked_files_verified"] == 530
         assert report["counts"]["unverified_placements"] == 0
@@ -102,6 +105,8 @@ def test_cumulative_bytes_exhaustion_is_explicit_and_cannot_authorize_repair(
     try:
         report = audit.kobo_local_reconciliation_audit(service)
         assert report["truncated"] is True
+        assert report["truncation_reasons"] == ["hash_byte_budget"]
+        assert report["hash_attempts_used"] == 3
         assert report["counts"]["backup_rows"] == 3
         assert report["counts"]["linked_files_verified"] == 1
         assert report["counts"]["unverified_placements"] == 2
@@ -124,6 +129,8 @@ def test_remaining_hard_file_ceiling_cannot_silently_declare_complete(
     try:
         report = audit.kobo_local_reconciliation_audit(service)
         assert report["truncated"] is True
+        assert report["truncation_reasons"] == ["hash_attempt_budget"]
+        assert report["hash_attempts_used"] == 2
         assert report["counts"]["linked_files_verified"] == 2
         assert report["counts"]["unverified_placements"] == 2
         assert report["files_hashed_limit"] == 2
@@ -142,6 +149,8 @@ def test_directory_scan_remains_bounded_independently_from_sha_budget(
     try:
         report = audit.kobo_local_reconciliation_audit(service)
         assert report["truncated"] is True
+        assert report["truncation_reasons"] == ["directory_entry_budget"]
+        assert report["directory_entries_inspected"] == 2
         assert report["counts"]["unindexed_regular_file_candidates"] <= 2
         assert report["counts"]["linked_files_verified"] == 0
         assert report["directory_entries_limit"] == 2
@@ -180,5 +189,81 @@ def test_no_follow_missing_preserves_partial_evidence_and_no_download(
         assert report["downloads_authorized"] is False
         assert report["mutations_authorized"] is False
         assert report["read_only"] and report["offline"]
+    finally:
+        service.close()
+
+
+def test_large_persisted_snapshot_marks_record_budget_not_missing_files(
+    tmp_path, monkeypatch,
+):
+    service, _ = _service(tmp_path, [])
+    # The 4097th row is intentionally not examined, with no file reads.
+    # No path, title or source ID may escape the report.
+    rows = [
+        {"credential_id": "vault-1", "identity_id": "default",
+         "item_id": f"PRIVATE_PRODUCT_{index}", "local_path": None}
+        for index in range(4097)
+    ]
+    _audit_fixture(service, monkeypatch, rows)
+    try:
+        report = audit.kobo_local_reconciliation_audit(
+            service, credential_id="vault-1",
+        )
+        assert report["truncated"] is True
+        assert report["truncation_reasons"] == ["record_budget"]
+        assert report["counts"]["backup_rows"] == 4096
+        assert report["hash_attempts_used"] == 0
+        assert report["downloads_authorized"] is False
+        assert "PRIVATE_PRODUCT_" not in json.dumps(report)
+    finally:
+        service.close()
+
+
+def test_directory_scan_unavailable_is_not_reported_as_budget_exhaustion(
+    tmp_path, monkeypatch,
+):
+    service, _ = _service(tmp_path, [])
+    directory = service._kobo_backup_target_dir("default")
+    directory.mkdir(parents=True, exist_ok=True)
+
+    def inaccessible(_fd):
+        raise PermissionError("PRIVATE_LIBRARY_PATH")
+
+    monkeypatch.setattr(audit.os, "scandir", inaccessible)
+    try:
+        report = audit.kobo_local_reconciliation_audit(service)
+        assert report["truncated"] is True
+        assert report["truncation_reasons"] == ["directory_scan_unavailable"]
+        assert report["directory_entries_inspected"] == 0
+        assert report["hash_attempts_used"] == 0
+        assert report["downloads_authorized"] is False
+        assert "PRIVATE_LIBRARY_PATH" not in json.dumps(report)
+    finally:
+        service.close()
+
+
+def test_more_than_eight_local_product_paths_has_specific_bounded_reason(
+    tmp_path,
+):
+    service, _ = _service(tmp_path, [])
+    try:
+        from tests.test_core_1345_kobo_local_audit import _backup
+        _backup(service, "PRIVATE-product-path-limit")
+        for index in range(9):
+            service.storage.catalog_entry_put({
+                "catalog_entry_id": f"fixture-placement-{index}",
+                "title": "PRIVATE_LOCAL",
+                "provider_id": "kobo", "identity_id": "default",
+                "item_id": "PRIVATE-product-path-limit",
+                "local_state": "local",
+                "metadata": {"path": str(tmp_path / f"PRIVATE_{index}.epub")},
+            })
+        report = audit.kobo_local_reconciliation_audit(service)
+        assert report["truncated"] is True
+        assert "product_path_budget" in report["truncation_reasons"]
+        assert report["hash_attempts_used"] <= report["files_hashed_limit"]
+        assert report["downloads_authorized"] is False
+        assert "PRIVATE-product-path-limit" not in json.dumps(report)
+        assert str(tmp_path) not in json.dumps(report)
     finally:
         service.close()
