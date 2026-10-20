@@ -171,7 +171,11 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
         assert any(e.status == 429 and e.mime == "application/json"
                    for e in trace.exchanges)
         assert any(e.mime == "application/xml" for e in trace.exchanges)
-        assert any(e.response_body_state == "binary_skipped"
+        # The binary fetch can still be in-flight when the page's final
+        # /complete endpoint signals Stop. In either terminal or pending
+        # state its opaque bytes must never be observed.
+        assert any("/binary.png" in e.url and e.response_body is None
+                   and e.response_body_state in {"binary_skipped", "body_omitted"}
                    for e in trace.exchanges)
         assert any(e.mime == "application/json" and e.response_body
                    and "ProductId" in e.response_body for e in trace.exchanges)
