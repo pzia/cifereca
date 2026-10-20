@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.1.0)
+# Browser Recorder — outil technique opt-in (0.1.1, revue HTTP expérimentale)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -60,4 +60,39 @@ abandonnée. Aucune écriture disque n'est autorisée par cette API.
 Aucun export ni upload de contenu HTTP brut n'est disponible. L'ancienne
 interface et son export restent inchangés jusqu'à l'intégration du
 consentement et de la revue, pour éviter toute fuite involontaire.
+
+
+
+## Travail P1 #2529 — revue individuelle des identifiants en mémoire
+
+Le module sans interface `browser_recorder_review.py` propose localement,
+pour chaque **valeur** rencontrée dans une trace privée `PrivateHttpTrace`,
+une catégorie et ses contextes (route, paramètres, JSON/XML/texte, en-têtes
+techniques). Les valeurs détectées ont des identifiants de revue stables
+(`I0001`, `I0002`…), distincts des identifiants de fournisseur.
+
+Chaque valeur reconnue exige une décision individuelle explicite avant de
+préparer une **prévisualisation locale seulement** : `anonymize` (même
+pseudonyme dans plusieurs échanges), `keep` (conserver la valeur avec risque
+résiduel) ou `exclude` (retirer l'échange qui contient la valeur).
+Les décisions peuvent être révisées. Les mots de passe, cookies, tokens,
+licences et autres secrets détectés ne sont jamais des candidats conservables
+et leurs valeurs sont masquées dans la prévisualisation. L'absence de
+détection n'est **pas une garantie d'anonymat**.
+
+Une section GTK distincte **« Parcours HTTP privé »** est disponible
+en bas de la page Browser Recorder : démarrage volontaire, arrêt/revue,
+liste déroulante par identifiant, aperçu local et effacement. Chaque valeur
+doit recevoir une décision avant l'aperçu ; aucune décision de conservation
+n'est précochée. Quitter la page détruit les références privées contrôlées.
+Le HAR v0.1 reste une action distincte ; aucune trace HTTP privée n'y est
+ajoutée.
+
+Cette fonctionnalité ne fait **aucun export** et n'écrit aucun fichier
+contenant les nouveaux corps HTTP. Même après toutes les décisions, son
+champ `approved_for_export` reste `false`. L'aperçu GTK est limité à
+80 000 caractères et ne prétend pas être l'aperçu exhaustif du futur ZIP.
+La recette GTK/Chromium réelle, le rescannage final des secrets et la
+confirmation explicite du ZIP restent nécessaires dans #2529/#2530/#2531.
+Ne jamais partager la trace brute ni les valeurs de revue locale.
 
