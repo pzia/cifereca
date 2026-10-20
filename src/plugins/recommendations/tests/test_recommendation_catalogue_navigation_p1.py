@@ -191,3 +191,50 @@ def test_same_key_callback_replaced_even_without_llm_selection_reset():
     assert view._llm_selection_key == row.key
     assert previous() is False
     assert calls == []
+
+
+
+def test_without_attested_isbn_only_explicit_local_approximate_title_search_is_offered():
+    view, identity, calls, detail, row = _view((_variant(isbn=""),))
+    actions = [a for a in detail.actions if a.id.startswith("recommendation.search.")]
+    assert [a.id for a in actions] == ["recommendation.search.title.local"]
+    assert not calls  # Rendering has no side effects.
+    assert "approché" in actions[0].title
+    assert actions[0].uri == ""
+    assert actions[0].callback() is True
+    assert calls == [(("Une édition",), {
+        "field": "title", "online": False, "identity_id": "reader-1",
+    })]
+    identity[0] = "reader-2"
+    assert actions[0].callback() is False
+    assert len(calls) == 1
+
+
+def test_approximate_title_search_rechecks_selection_and_ranking_without_network():
+    view, identity, calls, detail, row = _view((_variant(isbn=""),))
+    callback = next(a.callback for a in detail.actions
+                    if a.id == "recommendation.search.title.local")
+    view._selected_row(None)
+    assert callback() is False
+    view._selected_row(row)
+    view._generation += 1
+    assert callback() is False
+    assert not calls
+    view._generation -= 1
+    view._selected_row(row)
+    fresh = []
+    view._master.show_detail = fresh.append
+    view._selected_row(row)
+    current = next(a.callback for a in fresh[0].actions
+                   if a.id == "recommendation.search.title.local")
+    view.host = NS()
+    assert current() is False
+    assert calls == []
+
+
+def test_attested_isbn_never_becomes_fuzzy_title_query_or_auto_remote_search():
+    view, identity, calls, detail, row = _view((_variant(),))
+    assert len([a for a in detail.actions if a.id.startswith(
+        "recommendation.search.title.")]) == 0
+    assert all(a.uri == "" for a in detail.actions)
+    assert calls == []

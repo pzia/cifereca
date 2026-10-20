@@ -1669,7 +1669,8 @@ class UxRecommendationsView:
         key_at_selection = row.key
         ranked_at_selection = ranked
         if identity_at_selection:
-            for isbn in _attested_catalogue_isbns(variants):
+            verified_isbns = _attested_catalogue_isbns(variants)
+            for isbn in verified_isbns:
                 def open_isbn(isbn=isbn):
                     if (
                         self._generation != generation_at_selection
@@ -1690,6 +1691,36 @@ class UxRecommendationsView:
                     f"recommendation.search.isbn.{isbn}",
                     f"Chercher l’édition ISBN {isbn} dans Recherche",
                     "system-search-symbolic", callback=open_isbn,
+                ))
+            # A source may publish no validated ISBN or direct HTML page.
+            # Preserve a *local, approximate* exploration action rather
+            # than inventing a provider-specific detail/loan/download.
+            # Never invoke the network or query another identity.
+            if (not verified_isbns and exact_variants
+                    and 2 <= len(title) <= 160 and title != "Sans titre"):
+                title_query = title
+
+                def search_title():
+                    if (
+                        self._generation != generation_at_selection
+                        or self._detail_selection_generation != detail_generation_at_selection
+                        or self._llm_selection_key != key_at_selection
+                        or self._ranked_by_key.get(key_at_selection) is not ranked_at_selection
+                        or self.selected_identity_id() != identity_at_selection
+                    ):
+                        return False
+                    search = getattr(self.host, "search_books", None)
+                    if not callable(search):
+                        return False
+                    return bool(search(
+                        title_query, field="title", online=False,
+                        identity_id=identity_at_selection,
+                    ))
+
+                actions.append(UiBookDetailAction(
+                    "recommendation.search.title.local",
+                    "Chercher ce titre dans mes notices (approché)",
+                    "system-search-symbolic", callback=search_title,
                 ))
         # An unsafe/missing friendly link must not mask an independently
         # attested public notice. Both candidates pass the same strict

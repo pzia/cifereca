@@ -59,7 +59,7 @@
       "name": "Bibliothèques de Paris"
     },
     "org.cifereca.recommendations": {
-      "version": "0.2.28",
+      "version": "0.2.29",
       "name": "Recommandations CIFERECA"
     },
     "org.cifereca.runtime.kobo-adept": {
