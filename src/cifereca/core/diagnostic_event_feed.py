@@ -30,6 +30,10 @@ from .diagnostic_source_sync import (
     public_log_fields as public_source_sync_log,
     public_message as public_source_sync_message,
 )
+from .diagnostic_adept import (
+    public_fields as public_adept_fields, public_log_fields as public_adept_log,
+    public_message as public_adept_message,
+)
 from ..diagnostics import Diagnostics
 
 _LOG_LINE = re.compile(
@@ -189,7 +193,12 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_source_sync_log(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
-            if source_sync_detail:
+            adept_detail = (
+                public_adept_log(match["body"]) if match["logger"] == "cifereca" else {}
+            )
+            if adept_detail:
+                message = public_adept_message(adept_detail)
+            elif source_sync_detail:
                 message = public_source_sync_message(source_sync_detail)
             elif numilog_detail:
                 message = public_numilog_message("startup_materialization", numilog_detail)
@@ -232,11 +241,12 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "source": "app_log",
                 "module": ".".join(safe_parts)[:90],
                 "severity": match["level"].lower(),
-                "message": message[:500] if numilog_detail or source_sync_detail else message[:240],
+                "message": message[:500] if numilog_detail or source_sync_detail or adept_detail else message[:240],
                 **({"detail": kobo_detail} if kobo_detail else {}),
                 **({"detail": numilog_detail} if numilog_detail else {}),
                 **({"detail": source_sync_detail, "status": source_sync_detail["status"]}
                    if source_sync_detail else {}),
+                **({"detail": adept_detail, "status": adept_detail["status"]} if adept_detail else {}),
                 **({"task_ref": task_correlation[1]} if task_correlation else {}),
                 # Neither the rotation suffix nor a moving tail line index
                 # participates in the ID. Distinct lines remain distinct.
@@ -341,6 +351,14 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             public_detail = public_kobo_backup_decision(row.get("detail"))
             message = public_kobo_backup_message(public_detail) or "[opération masquée]"
         source_sync_detail = {}
+        adept_detail = {}
+        if (category == "ADEPT" and operation == "kobo adept"
+                and type(diagnostics) is Diagnostics and row.get("verified_kobo_adept") is True):
+            adept_detail = public_adept_fields(row.get("detail"))
+            if adept_detail:
+                public_detail = adept_detail
+                message = public_adept_message(adept_detail)
+                severity = "error" if adept_detail["status"] == "failed" else "info"
         if (category == "SYNC" and operation == "source sync"
                 and type(diagnostics) is Diagnostics
                 and row.get("verified_source_sync") is True):
@@ -380,7 +398,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "severity": severity,
             "message": message,
             **({"detail": public_detail} if public_detail else {}),
-            "status": source_sync_detail["status"] if source_sync_detail else (
+            "status": adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
                 status if status in {"ok", "error", "failed", "warning",
                                          "attention_required", "partial", "success"}
                 else "unknown"),

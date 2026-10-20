@@ -80,6 +80,7 @@ class DiagnosticEntry:
     # Arbitrary plugin detail={"provider_id": ...} is NOT an attestation.
     verified_public_provider_id: str | None = None
     verified_source_sync: bool = False
+    verified_kobo_adept: bool = False
 
 
 class Diagnostics:
@@ -193,6 +194,39 @@ class Diagnostics:
         except Exception:
             pass
 
+    def add_core_kobo_adept(self, detail: object, status: str, *, level: str = "normal") -> None:
+        """Internal terminal producer; the manager attests installed identity."""
+        from .core.diagnostic_adept import from_runtime, public_fields, log_message
+        from .diagnostic_task_context import diagnostic_task_reference
+        fields = from_runtime(detail, status)
+        if not fields:
+            return
+        logger = logging.getLogger("cifereca")
+        severity = logging.ERROR if fields["status"] == "failed" else logging.INFO
+        record = (self.enabled and self.LEVELS.get(level, 1) <= self.LEVELS[self.level]
+                  and (self.level != "errors" or status == "error"))
+        if not record and not logger.isEnabledFor(severity):
+            return
+        reference = diagnostic_task_reference()
+        if reference is not None:
+            fields["task_ref"] = reference
+        fields = public_fields(fields)
+        if not fields:
+            return
+        if record:
+            entry = DiagnosticEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                category="ADEPT", operation="kobo adept", status=fields["status"],
+                duration_ms=fields.get("duration_ms"), detail=fields,
+                task_ref=fields.get("task_ref"), verified_kobo_adept=True,
+            )
+            with self._lock:
+                self._items.append(entry)
+        try:
+            logger.log(severity, "%s", log_message(fields))
+        except Exception:
+            pass
+
     def snapshot(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = [asdict(x) for x in self._items]
@@ -203,6 +237,8 @@ class Diagnostics:
                     row.pop("verified_public_provider_id", None)
                 if row.get("verified_source_sync") is False:
                     row.pop("verified_source_sync", None)
+                if row.get("verified_kobo_adept") is False:
+                    row.pop("verified_kobo_adept", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
