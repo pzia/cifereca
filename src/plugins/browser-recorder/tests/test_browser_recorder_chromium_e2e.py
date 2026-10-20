@@ -160,6 +160,18 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
     import browser_recorder_zip as zip_module
     monkeypatch.setattr(http_recorder, "site_origin", local_test_origin)
     monkeypatch.setattr(zip_module, "site_origin", local_test_origin)
+    # Numeric-only synthetic diagnostics; never print request URLs/bodies.
+    observed_sizes = []
+    original_sizes = http_recorder._sizes
+
+    def inspect_sizes(req):
+        actual = original_sizes(req)
+        observed_sizes.append((
+            actual.get("requestBodySize"), actual.get("responseBodySize"),
+        ))
+        return actual
+
+    monkeypatch.setattr(http_recorder, "_sizes", inspect_sizes)
     trace = http_recorder.record_http(
         origin + "/catalog", stop, origins=(origin,), max_seconds=25,
     )
@@ -178,7 +190,12 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
                    and e.response_body_state in {"binary_skipped", "body_omitted"}
                    for e in trace.exchanges)
         assert any(e.mime == "application/json" and e.response_body
-                   and "ProductId" in e.response_body for e in trace.exchanges)
+                   and "ProductId" in e.response_body for e in trace.exchanges), (
+            [(e.status, e.mime, e.response_body_state,
+              e.response_headers.get("content-length"),
+              e.response_headers.get("content-encoding")) for e in trace.exchanges],
+            observed_sizes[:30],
+        )
         assert any(e.redirect_to and "session=" in e.redirect_to
                    for e in trace.exchanges)
         assert all(0 <= e.duration_ms <= 30000 for e in trace.exchanges)
