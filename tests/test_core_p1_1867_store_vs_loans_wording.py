@@ -80,3 +80,37 @@ def test_unknown_loan_count_is_not_confused_with_zero_store_purchases():
     assert "Prêts de bibliothèque connus : non actualisés" in lines
     assert statistics_button_label(stats) == "1 livres · — prêts de bibliothèque"
     assert "Droits d’achat distants actifs : 5" in lines
+
+
+
+def test_numilog_notice_schedule_dialog_never_describes_a_public_catalogue_as_owned(monkeypatch):
+    from tests.test_core_p0_1905_numilog_inventory_gui import (
+        fixture, _sources, _control, Dialog,
+    )
+    window, _broker, calls, modes, downloads = fixture(
+        monkeypatch, sources=_sources(),
+    )
+    button, _row = _control(window, 0)
+    button.click()
+    text = Dialog.shown[-1].body
+    assert "notices des livres possédés" in text
+    assert "droits du compte" in text
+    assert "catalogue commercial public est une recherche distincte" in text
+    assert "sans téléchargement EPUB/ACSM" in text
+    assert "sans ADEPT ni acquisition" in text
+    assert modes == downloads == {} and window.runner.tasks == []
+    assert not any(x[0] == "sync-source" for x in calls)
+
+
+def test_kobo_schedule_dialog_distinguishes_owned_inventory_from_public_catalogue(monkeypatch):
+    from tests.test_core_p0_1346_inventory_schedule_ui import (
+        fixture, controls, Dialog,
+    )
+    window, _broker, calls, modes, downloads = fixture(monkeypatch)
+    controls(window)[0].click()
+    text = Dialog.shown[-1].body
+    assert "notices des livres possédés" in text
+    assert "catalogue commercial public est une recherche distincte" in text
+    assert "sans téléchargement EPUB/ACSM" in text
+    assert modes == downloads == {} and window.runner.tasks == []
+    assert not any(x[0] == "sync-source" for x in calls)
