@@ -303,7 +303,7 @@ def test_zip_technical_headers_never_publish_unreviewed_string_values():
         "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT",
         "x-ratelimit-limit": "1000",
     }) == {
-        "content-type": "application/vnd.fictional+json",
+        "content-type": "application/*+json",
         "accept": "application/xml, text/html",
         "x-ratelimit-limit": "1000",
     }
@@ -384,6 +384,44 @@ def test_invalid_capture_omission_counter_fails_closed(bad):
         trace.omitted["paused"] = bad
         with pytest.raises(RecorderError, match="bundle_invalid_omissions"):
             prepare_reviewed_zip(review)
+    finally:
+        review.destroy()
+        trace.destroy()
+
+
+
+def test_vendor_json_mime_is_coarsened_not_published_in_reviewed_zip():
+    """A MIME subtype from an untrusted provider is not public by default."""
+    from browser_recorder_zip import _safe_headers
+
+    private = "private-account-123456789"
+    headers = {
+        "content-type": f"application/vnd.{private}+json; profile=SECRET_PROFILE",
+        "accept": f"application/vnd.{private}+xml, application/json",
+    }
+    assert _safe_headers(headers) == {
+        "content-type": "application/*+json",
+        "accept": "application/*+xml, application/json",
+    }
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/api/books", status=200,
+        response_headers=headers,
+        mime=f"application/vnd.{private}+json",
+        response_body='{"result":"fictional"}',
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        plan = prepare_reviewed_zip(review)
+        preview = plan.preview()
+        descriptor = json.loads(next(row["text"] for row in preview["members"]
+                                     if row["name"] == "exchanges/0001.json"))
+        assert descriptor["response_headers"]["content-type"] == "application/*+json"
+        assert descriptor["mime"] == "application/*+json"
+        assert private not in json.dumps(preview)
+        assert "SECRET_PROFILE" not in json.dumps(preview)
     finally:
         review.destroy()
         trace.destroy()

@@ -239,27 +239,37 @@ def _safe_headers(headers):
 
     def structural_type(value):
         if not mime.fullmatch(value):
-            return False
-        return (value in known_types
-                or value.startswith("application/")
-                and value.endswith(("+json", "+xml")))
+            return None
+        if value in known_types:
+            return value
+        # RFC 6839 suffixes convey a safe syntax family, but arbitrary
+        # vendor subtype bytes could themselves contain private account
+        # identifiers. Never serialize those unreviewed raw subtype values.
+        if value.startswith("application/") and value.endswith("+json"):
+            return "application/*+json"
+        if value.startswith("application/") and value.endswith("+xml"):
+            return "application/*+xml"
+        return None
 
     for key, value in headers.items():
         if type(key) is not str or type(value) is not str or len(value) > 256:
             continue
         if key == "content-type":
             base = value.split(";", 1)[0].strip().lower()
-            if structural_type(base):
-                result[key] = base
+            projected = structural_type(base)
+            if projected is not None:
+                result[key] = projected
         elif key == "accept":
-            # The list of media types is useful to a downstream scraper, not
-            # vendor-specific parameters or arbitrary quality extensions.
+            # Explicitly project only syntax families, not a provider-chosen
+            # subtype, profile, boundary or other unreviewed identifier.
             parts = [v.split(";", 1)[0].strip().lower()
                      for v in value.split(",")]
-            if 1 <= len(parts) <= 12 and all(
-                structural_type(part) or part == "*/*" for part in parts
-            ):
-                result[key] = ", ".join(parts)
+            projected = [
+                "*/*" if part == "*/*" else structural_type(part)
+                for part in parts
+            ]
+            if 1 <= len(projected) <= 12 and all(x is not None for x in projected):
+                result[key] = ", ".join(projected)
         elif key in {"retry-after", "x-ratelimit-limit", "x-ratelimit-remaining"}:
             if re.fullmatch(r"[0-9]{1,9}", value):
                 result[key] = value
@@ -395,7 +405,8 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
             "url": _safe_url(entry["url"], approved, allowed_origins),
             "redirect_to": (_safe_url(entry["redirect_to"], approved, allowed_origins)
                             if entry["redirect_to"] else None),
-            "mime": entry["mime"], "network_error": entry["network_error"],
+            "mime": _safe_headers({"content-type": entry["mime"]}).get("content-type", ""),
+            "network_error": entry["network_error"],
             "metadata_only": entry.get("metadata_only", False),
             "request_headers": _safe_headers(entry["request_headers"]),
             "response_headers": _safe_headers(entry["response_headers"]),
