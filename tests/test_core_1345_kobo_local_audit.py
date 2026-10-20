@@ -216,9 +216,9 @@ def test_missing_path_referenced_twice_is_checked_only_once(tmp_path, monkeypatc
     calls = []
     original = audit_module._read_hash_within
 
-    def count_probes(path, roots):
+    def count_probes(path, roots, *, budget=None):
         calls.append(path)
-        return original(path, roots)
+        return original(path, roots, budget=budget)
 
     monkeypatch.setattr(audit_module, "_read_hash_within", count_probes)
     try:
