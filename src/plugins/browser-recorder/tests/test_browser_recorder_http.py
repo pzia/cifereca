@@ -266,3 +266,30 @@ def test_origin_mismatch_is_rejected_before_browser_opening():
     with pytest.raises(RecorderError, match="invalid_origin"):
         record_http(ORIGIN + "/catalog", stop, origins=(FOREIGN,),
                     factory=lambda: pytest.fail("Browser must not start"))
+
+
+def test_pause_resume_and_multiple_tabs_keep_private_correlations():
+    trace = PrivateHttpTrace((ORIGIN,))
+    page1, page2 = object(), object()
+    first = Request(ORIGIN + "/catalog")
+    first.frame = type("Frame", (), {"page": page1})()
+    second = Request(ORIGIN + "/search")
+    second.frame = type("Frame", (), {"page": page2})()
+    ignored = Request(ORIGIN + "/private?password=NEVER_LOG")
+    trace.request(first)
+    trace.pause()
+    trace.request(ignored)
+    trace.resume()
+    trace.request(second)
+    emit_response = Response(first, data=b'{"ok":1}')
+    trace.response(emit_response)
+    trace.finished(first)
+    emit_response2 = Response(second, data=b'{"ok":2}')
+    trace.response(emit_response2)
+    trace.finished(second)
+    assert len(trace.exchanges) == 2
+    assert [x.page_id for x in trace.exchanges] == [1, 2]
+    assert all(isinstance(x.duration_ms, int) and x.duration_ms >= 0
+               for x in trace.exchanges)
+    assert "NEVER_LOG" not in repr(trace)
+    trace.destroy()
