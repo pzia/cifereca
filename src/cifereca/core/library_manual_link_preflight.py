@@ -42,7 +42,7 @@ class ManualLinkPreflight:
 
 
 def _strict_signature(value: object) -> tuple[str, int] | None:
-    if not isinstance(value, tuple) or len(value) != 2:
+    if type(value) is not tuple or len(value) != 2:
         return None
     digest, size = value
     if (type(digest) is not str or len(digest) != 64
