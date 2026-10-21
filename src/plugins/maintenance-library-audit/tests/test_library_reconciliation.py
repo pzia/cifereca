@@ -233,3 +233,93 @@ def test_old_core_without_presentation_capability_keeps_existing_result(tool, mo
     assert result.facts['hashed_files'] == 517
     assert '253' in result.summary
     assert not hasattr(result, 'details')
+
+
+@pytest.mark.parametrize("reason,expected", [
+    ("metadata_candidate_time_budget",
+     "Durée maximale de recherche bibliographique atteinte"),
+    ("metadata_candidate_cancelled", "Recherche bibliographique interrompue"),
+    ("metadata_candidate_row_budget", "Plafond de notices du catalogue"),
+    ("metadata_candidate_reference_budget", "Plafond de références"),
+    ("metadata_candidate_keys_budget", "plafond d’identifiants bibliographiques"),
+    ("metadata_candidate_count_budget", "Plafond de candidats bibliographiques"),
+])
+def test_precision_of_candidate_limits_preserves_closed_public_words(tool, reason, expected):
+    instance, broker = tool
+    broker.result["status"] = "incomplete_scan"
+    broker.result["reasons"] = [reason]
+    result = instance.run(prepare(instance), Control())
+    assert not result.ok
+    assert expected in " ".join(result.warnings)
+    assert "PRIVATE" not in repr(result)
+    assert result.changed == 0
+
+
+def test_fixed_inventory_phase_and_bibliography_metrics_add_no_private_values(tool, monkeypatch):
+    import cifereca_library_reconciliation as module
+    captured = []
+    class PresentableResult:
+        details = ()
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+    monkeypatch.setattr(module, "MaintenanceResult", PresentableResult)
+    instance, broker = tool
+    broker.result["inventory"].update({
+        "files_started": 525,
+        "phase_ms": {
+            "sha256": 100,
+            "epub_opf": 10000,
+            "structure": 32000,
+            "pdf_signature": 5,
+            "secret": "PRIVATE_SHA",
+        },
+        "phase_calls": {
+            "sha256": 524, "epub_opf": 500,
+            "structure": 490, "pdf_signature": 24,
+            "PRIVATE": 123,
+        },
+    })
+    broker.result["metadata_candidates"].update({
+        "catalog_rows_examined": 900,
+        "references_examined": 2000,
+        "files_examined": 520,
+        "index_ms": 150,
+        "match_ms": 33,
+        "raw_private_url": "https://PRIVATE_EXAMPLE/?token=SECRETX",
+    })
+    instance.run(prepare(instance), Control())
+    details = captured[0]["details"]
+    assert details[0].startswith("Durées cumulées locales")
+    assert "SHA : 100 ms / 524 fichier(s)" in details[0]
+    assert "structure et CRC : 32000 ms" in details[0]
+    assert "temps WAL" in details[0]
+    assert details[1] == "Fichiers commencés : 525 ; observés : 524."
+    assert "900 notices" in details[2] and "2000 identifiants" in details[2]
+    assert "index : 150 ms, rapprochement : 33 ms" in details[2]
+    assert "PRIVATE" not in repr(details)
+    assert "SECRETX" not in repr(details)
+    assert captured[0]["facts"]["observed_files"] == 524
+
+
+@pytest.mark.parametrize("invalid", [
+    {"sha256": "PRIVATE", "epub_opf": 1, "structure": 2, "pdf_signature": 0},
+    {"sha256": -1, "epub_opf": 1, "structure": 2, "pdf_signature": 0},
+    {"sha256": True, "epub_opf": 1, "structure": 2, "pdf_signature": 0},
+])
+def test_invalid_timing_payload_is_never_rendered(tool, monkeypatch, invalid):
+    import cifereca_library_reconciliation as module
+    captured = []
+    class PresentableResult:
+        details = ()
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+    monkeypatch.setattr(module, "MaintenanceResult", PresentableResult)
+    instance, broker = tool
+    broker.result["inventory"].update({
+        "phase_ms": invalid,
+        "phase_calls": {"sha256": 1, "epub_opf": 1,
+                        "structure": 1, "pdf_signature": 0},
+    })
+    instance.run(prepare(instance), Control())
+    assert not any("Durées cumulées" in value for value in captured[0]["details"])
+    assert "PRIVATE" not in repr(captured)
