@@ -162,6 +162,9 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     ):
         return
     self._search_generation += 1
+    # A previous Search result must not remain navigable from a plugin while
+    # the next request is pending, even if both use the same query text.
+    self._loaded_search_context = None
     generation = self._search_generation
     identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
     # Never reuse source verdicts across requests, accounts or generations.
