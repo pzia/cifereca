@@ -737,3 +737,70 @@ def test_urlencoded_form_dynamic_private_field_names_never_reach_zip(
     finally:
         review.destroy()
         trace.destroy()
+
+
+
+@pytest.mark.parametrize("mime", ("text/html", "application/xml"))
+@pytest.mark.parametrize(("dynamic_tag", "private_fragment"), [
+    ("session-privateaccount", "privateaccount"),
+    ("token-abcdef", "abcdef"),
+    ("account123456789", "123456789"),
+    ("fingerprint:aabbccddeeff001122", "aabbccddeeff001122"),
+])
+def test_html_xml_custom_tag_names_cannot_publish_unreviewed_secrets(
+    mime, dynamic_tag, private_fragment,
+):
+    """Custom markup element names must obey the JSON/URL form-key policy.
+
+    A provider may encode an account/token in the name of an HTML or XML
+    tag, not in its attributes or inner text. Preserve technical book/title
+    markup but never publish this opaque dynamic name in the exact ZIP.
+    """
+    from browser_recorder_zip import _body
+
+    raw = (
+        f"<root><{dynamic_tag}>FICTIONAL_PRIVATE_PAYLOAD</{dynamic_tag}>"
+        "<book><title>FICTIONAL_PRIVATE_TITLE</title></book></root>"
+    )
+    shaped, state = _body(raw, mime, frozenset())
+    assert state == "captured_markup_structure"
+    assert dynamic_tag not in shaped
+    assert private_fragment not in shaped
+    assert "FICTIONAL_PRIVATE_PAYLOAD" not in shaped
+    assert "FICTIONAL_PRIVATE_TITLE" not in shaped
+    assert "<root>" in shaped
+    assert "<book>" in shaped
+    assert "<title>" in shaped
+    assert "[TEXT]" in shaped
+
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST", url=ORIGIN + "/api/books?BookId=214",
+        request_headers={"content-type": mime},
+        request_body=raw, status=200,
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(
+                candidate.key,
+                "keep" if candidate.value == "214" else "anonymize",
+            )
+        preview = prepare_reviewed_zip(review).preview()
+        serialized = json.dumps(preview)
+        assert dynamic_tag not in serialized
+        assert private_fragment not in serialized
+        assert "FICTIONAL_PRIVATE_PAYLOAD" not in serialized
+        assert "FICTIONAL_PRIVATE_TITLE" not in serialized
+        text = next(
+            row["text"] for row in preview["members"]
+            if row["name"] == "bodies/0001-request.txt"
+        )
+        assert dynamic_tag not in text
+        assert "<book>" in text
+        assert "<title>" in text
+        assert "[TEXT]" in text
+        assert "BookId=214" in serialized
+    finally:
+        review.destroy()
+        trace.destroy()
