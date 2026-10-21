@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.1.2, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.1.3, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -15,14 +15,13 @@ impérative avant partage. Le HAR ci-dessous reste une fonction secondaire.
 
 ## Pré-requis
 
-Le plugin ne télécharge **pas** automatiquement un navigateur ni des dépendances. Sur la machine Linux qui exécute Cifereca (avec une session graphique), installez volontairement :
+**Aucun prérequis ne s'installe silencieusement au démarrage ou à la découverte du plugin.**
 
-```bash
-python -m pip install 'playwright>=1.50,<2'
-python -m playwright install chromium
-```
+1. Dans **Plugins**, activez Browser Recorder. Si Playwright Python manque, le Core le signale comme **bloqué** et propose **« Installer les dépendances Python… »**. Cette opération attend une confirmation, exécute le gestionnaire de dépendances du **venv Cifereca** en arrière-plan (jamais `pip` dans le plugin), puis réactive les plugins sur le thread GTK. En dehors du venv Cifereca, le Core refuse la mutation ; les erreurs présentées sont expurgées.
+2. **Chromium reste un prérequis distinct** : le bouton Python ne le télécharge pas et ne répare pas les bibliothèques système Linux. Le provisionnement guidé Chromium est **encore à livrer** dans [#2628](https://github.com/pzia/cifereca/issues/2628). En attendant, une installation volontaire distincte du navigateur correspondant au Playwright du venv est nécessaire, par exemple `python -m playwright install chromium` **depuis ce même venv**, après évaluation du volume réseau et disque.
+3. Aucune commande `sudo` ou `apt` n'est exécutée automatiquement. Les tests hors ligne ne requièrent aucun navigateur réel.
 
-Attention : Playwright peut nécessiter des bibliothèques système Chromium supplémentaires. Le paquet n'impose pas Playwright au Core et les tests hors ligne ne requièrent aucun navigateur réel.
+**Limite de cette livraison 0.1.3 :** la réparation Python est guidée, pas encore l'installation/validation automatique de Chromium. Une installation réussie du paquet Python ne prouve pas que Chromium est disponible.
 
 ## Capture
 
