@@ -129,7 +129,7 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
         window.set_child(root)
         window.present()
         _flush()
-        description, site, consent, workflow, private, advanced = _children(root)
+        description, site, consent, workflow, private, advanced = _children(root.get_child().get_child())
         assert isinstance(site, Gtk.Entry)
         assert isinstance(consent, Gtk.CheckButton)
         assert isinstance(advanced, Gtk.Expander)
@@ -262,8 +262,8 @@ def test_installed_zip_full_review_and_independent_archive_oracle(
         window.set_child(root)
         window.present()
         _flush()
-        site = _children(root)[1]
-        consent = _children(root)[2]
+        site = _children(root.get_child().get_child())[1]
+        consent = _children(root.get_child().get_child())[2]
         site.set_text(origin + "/catalog")
         consent.set_active(True)
         # Use only exposed native GTK controls to complete the flow.
@@ -446,8 +446,8 @@ def test_installed_zip_browser_failure_reaches_core_diagnostics_without_private_
             x for x in collector.snapshot()
             if x.get("verified_browser_recorder")
         ]
-        site = _children(root)[1]
-        consent = _children(root)[2]
+        site = _children(root.get_child().get_child())[1]
+        consent = _children(root.get_child().get_child())[2]
         site.set_text("https://books.example.org/catalog")
         # No browser or diagnostic merely because a disabled/optional plugin
         # was installed or the page was opened.

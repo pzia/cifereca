@@ -86,7 +86,15 @@ class BrowserRecorderPage:
         if self.private_panel is not None:
             self.private_panel.destroy()
             self.private_panel = None
+        # Plugin pages are inserted directly in Core's ViewStack: there is
+        # no guaranteed Core-level scroll container. Keep the entire review,
+        # including the exact ZIP and its confirmation, keyboard/mouse reachable.
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_hexpand(True)
+        scroller.set_vexpand(True)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_hexpand(True)
         for side in ("top", "bottom", "start", "end"):
             getattr(box, "set_margin_" + side)(16)
 
@@ -313,7 +321,8 @@ class BrowserRecorderPage:
         stop.connect("clicked", stop_clicked)
         next_button.connect("clicked", lambda *_: self.advance.release() if self.advance else None)
 
-        return box
+        scroller.set_child(box)
+        return scroller
 
     def deactivate(self):
         if self.private_panel is not None:

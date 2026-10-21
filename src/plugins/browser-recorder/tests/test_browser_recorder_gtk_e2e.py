@@ -307,7 +307,7 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
     try:
         assert tasks.handle is None  # building the page never starts Chromium
         children = []
-        item = root.get_first_child()
+        item = root.get_child().get_child().get_first_child()
         while item is not None:
             children.append(item)
             item = item.get_next_sibling()
@@ -447,7 +447,7 @@ def test_gtk_capture_failure_is_attested_and_privacy_safe(
     flush_glib()
     try:
         assert diagnostics.snapshot() == []
-        site = root.get_first_child().get_next_sibling()
+        site = root.get_child().get_child().get_first_child().get_next_sibling()
         consent = site.get_next_sibling()
         site.set_text(ORIGIN + "/catalog")
         assert not consent.get_active()
@@ -602,7 +602,7 @@ def test_native_gtk_legacy_har_errors_reach_safe_core_diagnostics(
     try:
         # The HAR controls are secondary, and page rendering is silent.
         assert diagnostics.snapshot() == []
-        advanced = root.get_last_child()
+        advanced = root.get_child().get_child().get_last_child()
         assert isinstance(advanced, Gtk.Expander)
         assert not advanced.get_expanded()
         advanced.set_expanded(True)
@@ -614,7 +614,7 @@ def test_native_gtk_legacy_har_errors_reach_safe_core_diagnostics(
         har_name = controls.get_next_sibling()
         status = har_name.get_next_sibling()
         assert isinstance(status, Gtk.Label)
-        entry = root.get_first_child().get_next_sibling()
+        entry = root.get_child().get_child().get_first_child().get_next_sibling()
         consent = entry.get_next_sibling()
         entry.set_text(ORIGIN + "/catalog")
         har_name.set_text("20261021T190000Z-12345678.har")
