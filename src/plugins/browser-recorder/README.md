@@ -13,6 +13,20 @@ LLM n'est réalisé. Les valeurs non approuvées et les noms de champs suspects
 une clé de schéma n'est pas automatiquement publique. Relecture humaine
 impérative avant partage. Le HAR ci-dessous reste une fonction secondaire.
 
+## Accès à la fonction principale
+
+Depuis **Configuration → Browser Recorder**, le premier parcours visible
+est désormais : **Préparer le site et consentir → Démarrer HTTP privé →
+Mettre en pause/Reprendre → Arrêter et revoir → Décider chaque identifiant →
+Préparer et lire les membres exacts du ZIP → Confirmer et exporter localement**.
+Aucun consentement de conservation par lot. Le téléchargement de Chromium
+se fait séparément dans **Plugins** et exige une confirmation dédiée.
+
+Le **HAR expurgé et son rejeu GET** restent disponibles dans le panneau
+**« Fonctions avancées / héritées »**, **replié par défaut**. Ces fonctions
+ne préparent pas l'archive HTTP privée pour analyse LLM et ne doivent
+pas être confondues avec la capture textuelle principale.
+
 ## Pré-requis
 
 **Aucun prérequis ne s'installe silencieusement au démarrage ou à la découverte du plugin.**
