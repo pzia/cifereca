@@ -61,7 +61,7 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, h
     scroller = plugin.build(None)
     assert isinstance(scroller, Gtk.ScrolledWindow)
     assert scroller.get_policy()[1] == Gtk.PolicyType.AUTOMATIC
-    box = scroller.get_child()
+    box = scroller.get_child().get_child()
     window.set_child(scroller)
     window.present()
     _flush()
