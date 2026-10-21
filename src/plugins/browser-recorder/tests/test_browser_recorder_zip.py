@@ -551,19 +551,22 @@ def test_zip_numeric_header_values_are_structural_only(header, value):
 
 
 
-@pytest.mark.parametrize(("field", "number"), [
-    ("mystery", 7),
-    ("customProperty", 42),
-    ("opaque", 1234),
-    ("sessionFragment", 9999),
-    ("unfamiliarOtpNumber", 3210),
+@pytest.mark.parametrize(("field", "number", "expected"), [
+    ("mystery", 7, "[NUMBER]"),
+    ("customProperty", 42, "[NUMBER]"),
+    ("opaque", 1234, "[NUMBER]"),
+    # Mandatory secret names already receive an even stronger mask.
+    ("sessionFragment", 9999, "[SECRET]"),
+    ("unfamiliarOtpNumber", 3210, "[SECRET]"),
 ])
-def test_unknown_short_json_numbers_are_masked_even_if_approved_elsewhere(field, number):
+def test_unknown_short_json_numbers_are_masked_even_if_approved_elsewhere(
+    field, number, expected,
+):
     from browser_recorder_zip import _json_shape
 
-    assert _json_shape(number, name=field) == "[NUMBER]"
+    assert _json_shape(number, name=field) == expected
     assert _json_shape(number, name=field,
-                       approved=frozenset({str(number)})) == "[NUMBER]"
+                       approved=frozenset({str(number)})) == expected
 
 
 def test_approved_identifiers_and_bounded_public_counters_survive():
