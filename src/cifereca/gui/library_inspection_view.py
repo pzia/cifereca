@@ -366,9 +366,9 @@ class LocalInspectionController:
             if not valid():
                 return
             if manual_mode[0]:
-                # The same private, revocable identity-specific projection as
-                # the main list. Query only case labels, never hidden proofs,
-                # and retrieve a SINGLE file without materializing every file.
+                # The same private, revocable identity-specific file projection.
+                # Query only case labels, never hidden proofs, and retrieve
+                # ONE file including unhashed/unverified observations.
                 page = session.unconfirmed_files(
                     offset=manual_index[0], limit=1,
                     query=manual_search.get_text()[:160],
