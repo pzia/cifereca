@@ -249,3 +249,59 @@ def test_repeated_worker_shutdown_after_nonblocking_close_does_not_self_join():
     finally:
         resume.set()
         pool.shutdown(wait=True)
+
+
+def test_bounded_numeric_timing_snapshot_after_320_tasks():
+    pool = PriorityExecutor(max_workers=1, thread_name_prefix="PRIVATE_ACCOUNT_TIMING")
+    try:
+        assert pool.timing_snapshot() == {
+            "queue_wait": {"samples": 0, "p50_ms": 0.0, "p95_ms": 0.0},
+            "worker": {"samples": 0, "p50_ms": 0.0, "p95_ms": 0.0},
+        }
+        futures = [pool.submit(TaskPriority.NORMAL, lambda: None)
+                   for _ in range(320)]
+        for future in futures:
+            assert future.result(timeout=3) is None
+        # Future.set_result() precedes the worker's finally block that
+        # records its duration; join workers before inspecting final samples.
+        pool.shutdown(wait=True)
+        data = pool.timing_snapshot()
+        for phase in ("queue_wait", "worker"):
+            assert data[phase]["samples"] == 256
+            assert 0.0 <= data[phase]["p50_ms"] <= data[phase]["p95_ms"]
+        assert "PRIVATE_ACCOUNT_TIMING" not in repr(data)
+        assert not pool._queued_at
+        assert pool.admission_snapshot()["admitted"] == 320
+    finally:
+        pool.shutdown(wait=True)
+
+
+def test_timing_excludes_cancelled_pending_and_includes_worker_failure():
+    pool = PriorityExecutor(max_workers=1, max_pending=1,
+                            thread_name_prefix="test-timing-cancel")
+    entered, release = threading.Event(), threading.Event()
+
+    def worker():
+        entered.set()
+        assert release.wait(3)
+        raise ValueError("PRIVATE_FAILURE_DETAILS")
+
+    try:
+        running = pool.submit(TaskPriority.NORMAL, worker)
+        assert entered.wait(2)
+        pending = pool.submit(TaskPriority.MAINTENANCE, lambda: None)
+        pool.shutdown(wait=False, cancel_futures=True)
+        assert pending.cancelled()
+        assert len(pool._queued_at) == 0
+        release.set()
+        with pytest.raises(ValueError, match="PRIVATE_FAILURE_DETAILS"):
+            running.result(timeout=3)
+        pool.shutdown(wait=True)
+        metrics = pool.timing_snapshot()
+        assert metrics["queue_wait"]["samples"] == 1
+        assert metrics["worker"]["samples"] == 1
+        assert "PRIVATE_FAILURE_DETAILS" not in repr(metrics)
+        assert pool.admission_snapshot()["pending"] == 0
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
