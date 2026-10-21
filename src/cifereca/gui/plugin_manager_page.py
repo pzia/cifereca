@@ -1055,6 +1055,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             "disk_space_insufficient": "Espace disque insuffisant (768 Mio libres requis au minimum).",
             "venv_required": "Le Core refuse l'installation hors de son environnement virtuel.",
             "download_failed": "Le téléchargement Chromium a échoué ; vérifiez réseau/proxy/espace disque.",
+            "browser_download_source_unapproved": "Source Chromium personnalisée : installation automatique refusée. Procédure administrateur séparée requise.",
             "download_timeout": "Le téléchargement Chromium a dépassé la durée maximale.",
             "download_incomplete": "L'installation Chromium a terminé sans produire la révision attendue.",
             "cancelled": "Installation Chromium annulée ; aucun autre navigateur n’a été supprimé.",
