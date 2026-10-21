@@ -180,11 +180,16 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
         summary = (f"{counts['observed_files']} fichier(s) observé(s), "
                    f"{counts['confirmed_link']} lien(s) confirmé(s), "
                    f"{counts['metadata_candidates']} correspondance(s) bibliographique(s).")
-        warnings = ['Un SHA ou un ISBN ne prouve pas un droit. Aucun rattachement ni téléchargement.']
+        # The concrete closed causes must precede generic SHA/ISBN caveats,
+        # especially while the local inventory is incomplete (#2565).
+        warnings = []
         if not complete:
             summary = 'Analyse incomplète. '+summary
+            warnings.extend(limits or (
+                'La cause de certaines limites n’est pas disponible.',
+            ))
             warnings.append('Certaines preuves restent non vérifiées ; un droit non vérifié ne signifie pas un livre absent.')
-            warnings.extend(limits)
+        warnings.append('Un SHA ou un ISBN ne prouve pas un droit. Aucun rattachement ni téléchargement.')
         control.report(message='Réconciliation locale terminée' if complete else 'Réconciliation locale incomplète')
         control.check_cancelled()
         # Additive public presentation capability. Older compatible Core
