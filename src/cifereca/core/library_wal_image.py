@@ -267,7 +267,13 @@ def read_wal_image(path, *, max_bytes, seconds, cancelled=lambda: False):
             return bytes(payload[1:]), None
         reason = bytes(payload[1:]).decode('ascii', errors='replace') if payload[:1] == b'E' else ''
         return None, reason if reason in _ERRORS else 'snapshot_unavailable'
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        # The child can close stdout but remain alive beyond our deadline.
+        # This is still a bounded snapshot timeout, not an unknown source
+        # failure. Keep the reason actionable without exposing subprocess
+        # output, paths or any source bytes.
+        return None, 'snapshot_cancelled' if cancelled() else 'snapshot_time_budget'
+    except OSError:
         return None, 'snapshot_unavailable'
     finally:
         if child.poll() is None:
