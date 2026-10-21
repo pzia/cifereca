@@ -83,8 +83,10 @@ def test_invalid_or_symlinked_sqlite_cannot_be_presented_as_ready(scoped, tmp_pa
     assert report.reason == "storage_invalid"
 
 
-def mount_ready_gate(scoped):
+def mount_ready_gate(scoped, storage_path=None):
     service, _, _ = scoped
+    if storage_path is not None:
+        service.storage.path = storage_path
     m = mounted("library.reconciliation.audit")
     m.host.service = service
     m.refresh()
@@ -118,8 +120,9 @@ def test_reconciliation_gate_checks_on_worker_and_enables_without_sync(scoped):
 
 
 def test_unready_gate_is_visible_and_does_not_plan_or_poll_on_gtk(scoped, tmp_path):
-    m, service, row, run = mount_ready_gate(scoped)
-    service.storage.path = tmp_path / "not-yet-ready.sqlite"
+    m, service, row, run = mount_ready_gate(
+        scoped, storage_path=tmp_path / "not-yet-ready.sqlite",
+    )
     args, _kwargs = m.jobs[-1]
     args[2](args[1]())
     assert not run.sensitive
