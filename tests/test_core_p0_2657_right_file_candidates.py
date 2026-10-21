@@ -90,25 +90,28 @@ def test_foreign_or_non_metadata_only_candidates_never_enter_right_comparison(
     root, database = make_candidates(six_numilog, tmp_path)
     audit = audit_library(database, {'alice': (root,)})
     catalog = audit.snapshot.tables['catalog_entries']
-    foreign = next(i for i, row in enumerate(catalog)
-                   if row['identity_id'] == 'bob') if any(
-                       row['identity_id'] == 'bob' for row in catalog
-                   ) else None
     # scope_evidence normally removes foreign rows, but a buggy caller
     # may supply one; the inspection boundary must independently refuse it.
     catalog.append({'identity_id': 'bob',
                     'provider_id': 'numilog', 'item_id': 'item-3',
                     'display_title': 'FOREIGN_LEAK'})
     foreign = len(catalog)-1
+    audit.metadata_candidates.candidates = [
+        c for c in audit.metadata_candidates.candidates
+        if not (c.file_index == 5 and c.catalog_row_index == 5)
+    ]
     audit.metadata_candidates.candidates.extend([
         MetadataCandidate(3, foreign),
         MetadataCandidate(4, foreign),
+        # Even an attacker-supplied "attested" row may not become a lead:
+        # the comparison accepts ONLY the shared metadata_only candidates.
         MetadataCandidate(5, 5, certainty='attested'),
     ])
     session = LocalInspection(audit, lambda: True, 'alice')
     assert {case.key for case in session.candidate_files('right:3')} == {
         'file:3', 'file:4',
     }
+    assert session.candidate_files('right:5') == ()
     assert 'FOREIGN_LEAK' not in session.detail('right:3').details
     assert 'FOREIGN_LEAK' not in '\n'.join(
         c.details for c in session.page().cases)
