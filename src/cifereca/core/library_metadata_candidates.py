@@ -61,6 +61,13 @@ class MetadataCandidateReport:
     candidates: list[MetadataCandidate] = field(default_factory=list)
     ambiguous_files: list[int] = field(default_factory=list)
     reasons: set[str] = field(default_factory=set)
+    # Aggregate progress from the bounded current attempt; no ISBN, row,
+    # identity, title, fingerprint, SHA or per-record timings exposed.
+    catalog_rows_examined: int = 0
+    references_examined: int = 0
+    files_examined: int = 0
+    index_ms: int = 0
+    match_ms: int = 0
 
     def redacted(self):
         return {'schema': 1, 'read_only': True, 'acquisition_authorized': False,
@@ -68,6 +75,10 @@ class MetadataCandidateReport:
                 'reasons': sorted(self.reasons),
                 'metadata_candidates': len(self.candidates),
                 'ambiguous_files': len(self.ambiguous_files),
+                'catalog_rows_examined': self.catalog_rows_examined,
+                'references_examined': self.references_examined,
+                'files_examined': self.files_examined,
+                'index_ms': self.index_ms, 'match_ms': self.match_ms,
                 'certainty': 'metadata_only'}
 
 
@@ -76,8 +87,9 @@ def metadata_candidates(inventory: Inventory, snapshot: EvidenceSnapshot, *,
                         seconds: float = 10) -> MetadataCandidateReport:
     """Same-identity catalog metadata only. No relation is a repair suggestion.
 
-    Scheme/value equality can locate an edition to inspect; it never attributes
-    a provider, account, entitlement, acquisition, or permission to a file.
+    Limits have distinct *closed* codes (#2565): timeout, cancellation,
+    catalogue rows, identifiers, output candidates or per-row key ceiling.
+    No code implies ownership, missing acquisition or exhaustiveness.
     """
     if (type(max_candidates) is not int or not 1 <= max_candidates <= 10_000
             or type(seconds) not in (int, float) or not 0 < seconds <= 30):
@@ -87,39 +99,57 @@ def metadata_candidates(inventory: Inventory, snapshot: EvidenceSnapshot, *,
     index = defaultdict(set)
     rows = snapshot.tables.get('catalog_entries', [])
     if len(rows) > 100_000:
-        result.reasons.add('metadata_candidate_budget_or_cancelled')
-    references = 0
-    for ci, row in enumerate(rows[:100_000]):
-        if cancelled() or time.monotonic() >= deadline:
-            result.reasons.add('metadata_candidate_budget_or_cancelled')
-            return result
-        keys = row.get('bibliographic_identifiers', ())
-        if not isinstance(keys, (list, tuple)):
-            result.reasons.add('metadata_unavailable')
-            continue
-        if len(keys) > 64:
-            result.reasons.add('metadata_candidate_budget_or_cancelled')
-        for key in keys[:64]:
-            references += 1
-            if references > 100_000:
-                result.reasons.add('metadata_candidate_budget_or_cancelled')
+        result.reasons.add('metadata_candidate_row_budget')
+
+    def stopped():
+        if cancelled():
+            result.reasons.add('metadata_candidate_cancelled')
+            return True
+        if time.monotonic() >= deadline:
+            result.reasons.add('metadata_candidate_time_budget')
+            return True
+        return False
+
+    started = time.perf_counter()
+    try:
+        for ci, row in enumerate(rows[:100_000]):
+            if stopped():
                 return result
-            if isinstance(key, (list, tuple)) and len(key) == 2 and all(type(v) is str for v in key):
-                index[(row.get('identity_id'), tuple(key))].add(ci)
-    for fi, observation in enumerate(inventory.files):
-        if cancelled() or time.monotonic() >= deadline:
-            result.reasons.add('metadata_candidate_budget_or_cancelled')
-            break
-        if observation.validation != 'ok' or observation.sha256 is None:
-            continue
-        matches = set()
-        for key in identifiers(observation.metadata):
-            matches.update(index.get((observation.identity_id, key), ()))
-            if len(matches) > max_candidates-len(result.candidates):
-                result.reasons.add('metadata_candidate_budget_or_cancelled')
-                return result
-        for ci in sorted(matches):
-            result.candidates.append(MetadataCandidate(fi, ci))
-        if len(matches) > 1:
-            result.ambiguous_files.append(fi)
+            result.catalog_rows_examined += 1
+            keys = row.get('bibliographic_identifiers', ())
+            if not isinstance(keys, (list, tuple)):
+                result.reasons.add('metadata_unavailable')
+                continue
+            if len(keys) > 64:
+                result.reasons.add('metadata_candidate_keys_budget')
+            for key in keys[:64]:
+                result.references_examined += 1
+                if result.references_examined > 100_000:
+                    result.reasons.add('metadata_candidate_reference_budget')
+                    return result
+                if isinstance(key, (list, tuple)) and len(key) == 2 and all(type(v) is str for v in key):
+                    index[(row.get('identity_id'), tuple(key))].add(ci)
+    finally:
+        result.index_ms = max(0, min(600_000, int((time.perf_counter() - started) * 1000)))
+
+    started = time.perf_counter()
+    try:
+        for fi, observation in enumerate(inventory.files):
+            if stopped():
+                break
+            result.files_examined += 1
+            if observation.validation != 'ok' or observation.sha256 is None:
+                continue
+            matches = set()
+            for key in identifiers(observation.metadata):
+                matches.update(index.get((observation.identity_id, key), ()))
+                if len(matches) > max_candidates-len(result.candidates):
+                    result.reasons.add('metadata_candidate_count_budget')
+                    return result
+            for ci in sorted(matches):
+                result.candidates.append(MetadataCandidate(fi, ci))
+            if len(matches) > 1:
+                result.ambiguous_files.append(fi)
+    finally:
+        result.match_ms = max(0, min(600_000, int((time.perf_counter() - started) * 1000)))
     return result
