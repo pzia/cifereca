@@ -7,6 +7,7 @@ This is NOT a test of a distributed package or a human usability review.
 from __future__ import annotations
 
 from pathlib import Path
+from time import sleep
 import shutil
 import subprocess
 from types import SimpleNamespace
@@ -117,11 +118,16 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, h
         adj = scroller.get_vadjustment()
         assert adj.get_upper() > adj.get_page_size()
         adj.set_value(adj.get_upper() - adj.get_page_size())
+        sleep(.15)
         _flush()
         export = plugin.private_panel.export_button
         ok, bounds = export.compute_bounds(scroller)
         assert ok and bounds.get_y() >= -2
-        assert bounds.get_y() + bounds.get_height() <= height + 2
+        assert bounds.get_y() + bounds.get_height() <= scroller.get_height() + 2, (
+            'GTK scroll geometry', height, scroller.get_height(),
+            adj.get_upper(), adj.get_page_size(), adj.get_value(),
+            bounds.get_y(), bounds.get_height(),
+        )
         assert not export.get_sensitive()
         assert not submissions
     finally:
