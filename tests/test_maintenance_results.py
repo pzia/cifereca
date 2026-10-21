@@ -107,3 +107,38 @@ def test_inspection_action_is_explicit_and_ignored_after_scope_change(monkeypatc
     m.host._identity_context_generation += 1
     dialog.handlers['response'](dialog,'inspect')
     assert calls == ['fresh read']
+
+
+def test_incomplete_reconciliation_limits_are_visible_before_long_counters():
+    # #2565 real audit: user initially saw 320/120/408 but had to scroll to
+    # discover 120s inventory and 10s metadata-candidate limitations.
+    result = MaintenanceResult(
+        False,
+        summary="Analyse incomplète. 320 fichier(s) observé(s), 120 lien(s) confirmé(s).",
+        details=tuple(f"Compteur {i} : {i}" for i in range(60)),
+        warnings=(
+            "Durée maximale de l’inventaire atteinte.",
+            "La recherche de correspondances bibliographiques reste incomplète.",
+            "Un SHA ou un ISBN ne prouve pas un droit.",
+        ),
+        facts={"private_path": "/HOME_PRIVATE_2565",
+               "private_sha": "PRIVATE_HASH_2565"},
+    )
+    rendered = result_text(result)
+    assert rendered.startswith("Analyse incomplète.")
+    assert rendered.index("Avertissements et limites") < rendered.index("Résultats")
+    assert rendered.index("Durée maximale de l’inventaire atteinte") < rendered.index("Compteur 0")
+    assert "Compteur 59 : 59" in rendered
+    assert "PRIVATE" not in rendered
+    assert len(rendered) < 12000
+
+
+def test_other_maintenance_result_order_is_unchanged_and_malformed_status_is_safe():
+    complete = MaintenanceResult(True, summary="Analyse terminée",
+                                 details=("Fichiers observés : 1",),
+                                 warnings=("Le droit reste indéterminé.",))
+    text = result_text(complete)
+    assert text.index("Résultats") < text.index("Avertissements et limites")
+    unrelated = NS(summary="Outil interrompu", details=("Résultat",),
+                   warnings=("Attention",), facts={"secret": object()})
+    assert result_text(unrelated).index("Résultats") < result_text(unrelated).index("Avertissements")
