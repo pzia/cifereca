@@ -51,3 +51,24 @@ ni remplacer l'état courant d'une autre génération de recherche.
 Reste hors de ce lot : choix d'une route globale réellement distincte en ligne,
 cache d'index complet d'un fournisseur, contrôle GTK, preuve terrain et mesure
 de latence #1741. Le ticket #1916 demeure **ouvert**.
+
+## Repli intégré aux deux recherches — diagnostic non trompeur
+
+La recherche synchrone et la recherche progressive utilisent maintenant
+**la page bornée complète** (`known_public_fallback_page`) afin de distinguer
+les trois états suivants, sans nouvelle requête au fournisseur :
+
+- `known_catalog_stale` : notices publiques locales anciennes présentes ;
+  elles restent identifiées comme **connues / hors ligne**, jamais live.
+- `no_known_results` : aucune correspondance publique admissible dans le
+  stock local consultable, **sans** présumer l'absence dans le catalogue amont.
+- `scope_budget_exceeded` ou `unavailable` : catalogue local trop volumineux
+  ou lecture impossible ; résultat de secours **non vérifiable / indisponible**,
+  **jamais** la mention « aucun résultat connu ».
+
+L'erreur de recherche amont, la séparation des autres sources réussies et
+les contraintes de confidentialité et d'identité sont inchangées. Le simple
+statut ne déclenche ni nouveau fetch, ni enrichissement, ni téléchargement,
+ni mise en cache comme résultat frais. Les tests couvrent les deux API,
+les trois états, les données sensibles d'erreur et la continuité d'un fournisseur
+sain pendant la panne d'un autre.
