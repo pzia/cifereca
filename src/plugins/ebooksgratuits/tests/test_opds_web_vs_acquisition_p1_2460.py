@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from cifereca.plugin_api import ProviderCapabilityError, ProviderError
-from cifereca_ebooksgratuits import EbooksSession, _opds_items, _xml_root
+from cifereca_ebooksgratuits import DESCRIPTOR, EbooksSession, _opds_items, _xml_root
 
 HOST = "https://opds2.ebooksgratuits.org"
 FEED = HOST + "/index.php/feed/search?q=book"
@@ -57,6 +57,20 @@ def book(s, *links):
     rows = _opds_items(s, _xml_root(entry(ACQUISITION, *links).encode()), FEED)
     assert len(rows) == 1
     return rows[0]
+
+
+
+def test_human_web_homepage_does_not_point_at_blank_cops_root():
+    # A user clicking the supplier's Web page must not land at the COPS
+    # host root; the feed and per-book acquisition URLs stay independent.
+    assert DESCRIPTOR.homepage == "https://www.ebooksgratuits.com/"
+    s = session()
+    try:
+        assert s.opds_feed_url == "https://opds2.ebooksgratuits.org/index.php/feed"
+        assert DESCRIPTOR.homepage != s.opds_feed_url
+        assert s.transport.calls == []
+    finally:
+        s.close()
 
 
 def test_atom_only_alternate_is_not_web_page_and_download_is_separate():
