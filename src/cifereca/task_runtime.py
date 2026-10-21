@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from cifereca.plugin_api import Cancelled, TaskControl, TaskHandle
 from .task_queue import PriorityExecutor
+from .task_admission import SharedTaskAdmission
 
 
 _TRACE_LOG = logging.getLogger("cifereca")
@@ -105,12 +106,19 @@ class _ScopedTaskBroker:
 class TaskBrokerImpl:
     """Bounded Core-owned executor exposed to plugins through a narrow broker."""
 
-    def __init__(self, service: Any, *, max_workers: int = 3, max_pending: int | None = None) -> None:
+    def __init__(
+        self, service: Any, *, max_workers: int = 3,
+        max_pending: int | None = None,
+        shared_admission: SharedTaskAdmission | None = None,
+        admission_scope: str | None = None,
+    ) -> None:
         if max_pending is not None and (type(max_pending) is not int or max_pending < 1):
             raise ValueError("max_pending must be a positive integer")
         self.service = service
         self.max_workers = max(1, int(max_workers))
         self.max_pending = max_pending
+        self.shared_admission = shared_admission
+        self.admission_scope = admission_scope
         self._executor: PriorityExecutor | None = None
         self._lock = threading.RLock()
         self._closed = False
@@ -199,6 +207,8 @@ class TaskBrokerImpl:
                     max_workers=self.max_workers,
                     thread_name_prefix="cifereca-plugin-task",
                     max_pending=self.max_pending,
+                    shared_admission=self.shared_admission,
+                    admission_scope=self.admission_scope,
                 )
             executor = self._executor
             self._controls[task_id] = control
