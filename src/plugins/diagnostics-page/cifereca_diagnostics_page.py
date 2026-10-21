@@ -647,6 +647,24 @@ class DiagnosticsPagePlugin:
         filters_bottom.append(sort_latest)
         journals_tab.append(filters_bottom)
 
+        # This is a SERVER-side exact Core reason-code filter, unlike the
+        # search field above which only scans the 50 loaded observations.
+        # A separate row keeps controls usable on 760/1024px desktops.
+        reason_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        reason_caption = Gtk.Label(label="Limite de réconciliation :", xalign=0)
+        reason_code_filter = Gtk.Entry()
+        reason_code_filter.set_placeholder_text(
+            "Code exact · toutes les pages (Entrée pour appliquer)"
+        )
+        reason_code_filter.set_tooltip_text(
+            "Filtre Core sur les causes de réconciliation, avant pagination. "
+            "Un Core ancien peut ne pas prendre en charge ce filtre."
+        )
+        reason_code_filter.set_hexpand(True)
+        reason_row.append(reason_caption)
+        reason_row.append(reason_code_filter)
+        journals_tab.append(reason_row)
+
         operation_grouping = Gtk.CheckButton(label="Regrouper par tâche liée (cette page)")
         operation_grouping.set_tooltip_text(
             "Uniquement les références Core publiées ; étapes parfois absentes "
@@ -1307,6 +1325,7 @@ class DiagnosticsPagePlugin:
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
                 "offset": page_offset,
+                "reason_code": reason_code_filter.get_text().strip(),
             }
 
             def read_snapshot(_control):
@@ -1440,6 +1459,7 @@ class DiagnosticsPagePlugin:
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
                 "search": search_filter.get_text().strip(),
+                "reason_code": reason_code_filter.get_text().strip(),
                 "mode": mode,
             }
             selection_busy = True
@@ -1528,6 +1548,8 @@ class DiagnosticsPagePlugin:
         severity_selector.connect("notify::selected", reset_events)
         period_selector.connect("notify::selected", reset_events)
         module_filter.connect("activate", reset_events)
+        reason_code_filter.connect("activate", reset_events)
+        reason_code_filter.connect("changed", lambda *_: invalidate_selection())
         search_filter.connect("changed", lambda *_: (invalidate_selection(), display_events()))
         sort_latest.connect("toggled", lambda *_: display_events())
         operation_grouping.connect("toggled", lambda *_: display_events())
