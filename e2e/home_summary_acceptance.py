@@ -27,6 +27,8 @@ def check_home_summary(window, *, later, capture, report, done):
 
     cases = (
         ("store", ("numilog", "kobo"), 0, 0, 5),
+        ("store-public", ("numilog",), 0, None, 5),
+        ("public-only", (), 0, None, 0),
         ("loans", ("paris",), 0, 2, 0),
         ("mixed", ("paris", "numilog", "kobo"), 2, 1, 3),
         ("unknown", ("numilog",), 0, None, None),
@@ -62,7 +64,13 @@ def check_home_summary(window, *, later, capture, report, done):
         snapshot[:] = [{
             "identity_id": "synthetic-" + name, "label": "Profil témoin " + name,
             "selected": True, "providers": list(providers),
-            "sources": [{"provider_id": pid, "connected": True} for pid in providers],
+            "sources": (
+                [{"provider_id": pid, "connected": True} for pid in providers]
+                + ([{"provider_id": "numilog-catalog",
+                     "label": "Numilog — Catalogue public",
+                     "connected": True}]
+                   if name in {"store-public", "public-only"} else [])
+            ),
             "statistics": {"local_books": local, "known_loans": loans,
                            "remote_owned_rights": owned},
             "sync": {},
@@ -76,7 +84,9 @@ def check_home_summary(window, *, later, capture, report, done):
         widgets = list(walk(page))
         labels = [node for node in widgets if isinstance(node, Gtk.Label)]
         text = [node.get_text() for node in labels]
-        no_lending_source = name in {"store", "unknown"}
+        no_lending_source = name in {
+            "store", "store-public", "public-only", "unknown",
+        }
         loan_label = (
             "aucune source de prêt configurée" if no_lending_source
             else f"prêts de bibliothèque connus : {loans if loans is not None else '—'}"
@@ -108,6 +118,18 @@ def check_home_summary(window, *, later, capture, report, done):
             report["checks"]["P1_1867_no_false_loan_alert_" + name] = True
         if "numilog" in providers:
             assert any(value.startswith("Numilog ·") for value in text), text
+        if name in {"store-public", "public-only"}:
+            public = [
+                value for value in text
+                if value.startswith("Numilog — Catalogue public ·")
+            ]
+            assert len(public) == 1, (name, text)
+            assert "catalogue public" in public[0]
+            assert not any("connexion requise" in value
+                           and "Numilog — Catalogue public" in value
+                           for value in text)
+            report["checks"]["P1_2385_numilog_public_no_fictitious_account_"
+                             + name] = True
         report.setdefault("home_summary_allocations", {})[name] = allocations
         report["checks"]["P1_1867_home_real_gtk_" + name] = True
         capture("00-home-summary-" + name)
