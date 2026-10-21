@@ -251,3 +251,22 @@ def test_summaries_keep_paragraphs_complete_copy_and_source_differences():
     assert ('EPUB · Résumé', 'Version EPUB attestée.', 'copy') in rows
     assert 'PRIVATE' not in repr(rows) and '<p>' not in repr(rows)
     assert detail_metadata_items({'summary': 'https://example.test/?token=PRIVATE'}) == ()
+
+
+def test_declared_identifiers_do_not_extract_isbn_from_unrelated_references():
+    from cifereca.book_detail_metadata import canonical_book_isbn
+    for value in ('SKU9780306406157', '9780306406157suffix',
+                  '9780306406157 / 9780306406157', '<b>9780306406157</b>'):
+        assert canonical_book_isbn(value) == ''
+        rows = detail_metadata_items({'isbn': value})
+        assert rows and all(kind != 'isbn' for _, _, kind in rows)
+    assert canonical_book_isbn('978 0 306 40615 7') == '9780306406157'
+
+
+def test_sensitive_assignments_and_addresses_never_reach_detail_actions():
+    from cifereca.book_detail_metadata import safe_detail_value
+    for value in ('token = PRIVATE', 'cookie : PRIVATE', 'password = PRIVATE',
+                  'Basic cHJpdmF0ZQ==', 'Compte <private@example.test>'):
+        assert safe_detail_value(value) == ''
+        assert detail_metadata_items({'keywords': [value], 'awards': [value]}) == ()
+    assert safe_detail_value('Le Secret de la maison') == 'Le Secret de la maison'

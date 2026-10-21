@@ -84,7 +84,12 @@ _COPY_ONLY = {"pages", "page_count", "number_of_pages", "publication_year",
 
 def canonical_book_isbn(value: object) -> str:
     """Canonical Bookland ISBN only (not arbitrary EAN or invalid checksum)."""
-    raw = re.sub(r"[^0-9X]", "", str(value).upper())
+    text = str(value).strip().upper()
+    # Formatting separators are allowed; never extract a coincidental ISBN
+    # from an arbitrary supplier reference or a longer prose value.
+    if not re.fullmatch(r"[0-9X\s-]+", text):
+        return ""
+    raw = re.sub(r"[\s-]", "", text)
     if len(raw) == 10 and re.fullmatch(r"[0-9]{9}[0-9X]", raw):
         check = sum((10 - i) * int(ch) for i, ch in enumerate(raw[:9]))
         check += 10 if raw[-1] == "X" else int(raw[-1])
@@ -130,6 +135,12 @@ def _safe_text(value: object) -> str:
         "://", "bearer ", "authorization:", "cookie:", "token=",
         "password=", "secret=", "/home/", "/users/", "\\x00",
     )):
+        return ""
+    if re.search(
+        r"(?i)(?:\b(?:access_token|refresh_token|token|auth|authorization|cookie|"
+        r"password|secret|signature)\s*[:=]|\bbasic\s+\S+|"
+        r"[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+)", result,
+    ):
         return ""
     if any(ord(char) < 32 and char not in "\n\t" for char in result):
         return ""
