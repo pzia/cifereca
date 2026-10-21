@@ -21,8 +21,19 @@ def scope_evidence(snapshot: EvidenceSnapshot, identity_ids: tuple[str, ...]) ->
     selected = set(identity_ids)
     tables = snapshot.tables
     rights = [r for r in tables.get('entitlements', []) if r.get('identity_id') in selected]
-    right_ids = {r.get('entitlement_id') for r in rights if r.get('entitlement_id')}
-    sources = {(r.get('provider_id'), r.get('credential_id'), r.get('item_id')) for r in rights}
+    # A cross-identity acquisition only proves a conflict against a fully
+    # identified selected right. NULL/empty legacy source coordinates must
+    # not join arbitrary foreign borrowers into this identity's private view.
+    right_ids = set()
+    sources = set()
+    for right in rights:
+        entitlement_id = right.get('entitlement_id')
+        if type(entitlement_id) is str and entitlement_id.strip():
+            right_ids.add(entitlement_id)
+        key = (right.get('provider_id'), right.get('credential_id'),
+               right.get('item_id'))
+        if all(type(value) is str and value.strip() for value in key):
+            sources.add(key)
     result = {}
     for table, rows in tables.items():
         if table == 'artifacts':
