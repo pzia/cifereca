@@ -73,7 +73,7 @@ class Inventory:
     # or path/SHA labels. A started file may not produce a FileObservation if
     # cancelled halfway through SHA/OPF/CRC.
     files_started: int = 0
-    phase_ms: dict[str, int] = field(default_factory=lambda: {
+    phase_ns: dict[str, int] = field(default_factory=lambda: {
         'sha256': 0, 'epub_opf': 0, 'structure': 0, 'pdf_signature': 0,
     })
     phase_calls: dict[str, int] = field(default_factory=lambda: {
@@ -90,7 +90,10 @@ class Inventory:
             'skipped_special': self.skipped_special,
             'unavailable_directories': len(self.unavailable_directories),
             'files_started': self.files_started,
-            'phase_ms': dict(self.phase_ms),
+            # Accumulate nanoseconds internally before rounding: 500 tiny
+            # OPF inspections must not all be reported as 0 ms.
+            'phase_ms': {key: max(0, min(600_000_000, ns // 1_000_000))
+                         for key, ns in self.phase_ns.items()},
             'phase_calls': dict(self.phase_calls),
             'validation': dict(sorted(Counter(f.validation for f in self.files).items())),
             'structure_validation': dict(sorted(Counter(f.structure_validation for f in self.files).items())),
@@ -165,13 +168,13 @@ def scan_identity_roots(
     def measured(phase):
         # A single monotonic observation per phase, including failed/aborted
         # phases, not a timing span keyed by a private file or identity.
-        started = time.perf_counter()
+        started = time.perf_counter_ns()
         result.phase_calls[phase] += 1
         try:
             yield
         finally:
-            ms = max(0, int((time.perf_counter() - started) * 1000))
-            result.phase_ms[phase] += min(ms, 600_000)
+            ns = max(0, time.perf_counter_ns() - started)
+            result.phase_ns[phase] += min(ns, 600_000_000_000)
 
     def observe(fd, name, identity, path):
         before = os.fstat(fd)
