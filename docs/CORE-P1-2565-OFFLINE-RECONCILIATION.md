@@ -288,3 +288,28 @@ Si le timeout se répète : consulter localement les traces fermées
 `TRACE reconciliation_snapshot` et `TRACE reconciliation_wal` pour
 identifier la dernière phase atteinte. Aucun relèvement du budget de 10 s,
 ni accès réseau/écriture source, ne résulte de cette amélioration d'UX.
+
+
+## Projection SQLite bornée par lots — P0 #2565
+
+Après capture cohérente et privée, le traitement des tables SQL se fait
+désormais par `fetchmany(256)`, plutôt que par `fetchall()` pouvant
+matérialiser jusqu'à 100 000 tuples bruts *en plus* des dictionnaires
+d'évidence et métadonnées analysées.
+
+La vérification de contexte/annulation est effectuée à chaque lot et au plus
+toutes les 64 lignes projetées, ainsi que par le `sqlite3` progress handler
+pendant les requêtes. Cela évite de reconstruire le contexte identité,
+configuration et racines **pour chaque notice bibliographique** sur une grande
+bibliothèque. Le délai global (10 secondes par défaut), la limite de 100 000
+lignes sur l'ensemble des tables, les 128 Mio d'image privée, les causes
+fermées `snapshot_cancelled`/`snapshot_time_budget`/
+`snapshot_row_budget`, et le principe **zéro écriture** restent inchangés.
+
+Une interruption en cours de projection abandonne **toutes les preuves
+partielles** et ne valide aucun lien. Les EPUB, les droits et les libellés
+privés ne sont jamais copiés vers les journaux. La recette synthétique en CI
+utilise 4 096 notices commises dans une DB en WAL actif. Ceci limite
+l'empreinte mémoire additionnelle et le coût des callbacks, **sans attester
+que le timeout de la base utilisateur est résolu** : les traces de phase et
+la recette réelle demeurent nécessaires.
