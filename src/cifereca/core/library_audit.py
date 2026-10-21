@@ -60,6 +60,7 @@ def audit_library(
     limits: InventoryLimits | None = None, seconds: float = 180,
     cancelled: Callable[[], bool] = lambda: False,
     progress: Callable[[dict], None] | None = None,
+    _snapshot: EvidenceSnapshot | None = None,
 ) -> LibraryAudit:
     """Run all existing local phases with a shared deadline/cancel signal.
 
@@ -114,6 +115,11 @@ def audit_library(
     emit('snapshot')
     if stopped():
         snapshot = EvidenceSnapshot(reasons=set(reasons))
+    elif _snapshot is not None:
+        # Internal callers may capture before inventory to reject pending
+        # identity migrations BEFORE opening library files. It is evidence of
+        # that instant only and still undergoes identity scoping below.
+        snapshot = _snapshot
     else:
         snapshot = read_library_snapshot(
             database, seconds=min(10, max(0.001, deadline-monotonic())),

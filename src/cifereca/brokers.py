@@ -1653,6 +1653,7 @@ class LibraryNamingBrokerImpl:
 
 def build_public_brokers(service: Any) -> dict[str, object]:
     from .core.release_update_read import ReleaseUpdateReadBrokerImpl
+    from .core.library_audit_broker import LibraryReconciliationReadBrokerImpl
     artifact_execution = ArtifactExecutionBrokerImpl(service)
     return {
         # Deliberately read-only: the trusted updater transaction has no
@@ -1671,6 +1672,7 @@ def build_public_brokers(service: Any) -> dict[str, object]:
         "library.naming": LibraryNamingBrokerImpl(service),
         "artifact.execution": artifact_execution,
         "library.read": LibraryReadBrokerImpl(service),
+        "library.reconciliation.read": LibraryReconciliationReadBrokerImpl(service),
         "library.maintenance": LibraryMaintenanceBrokerImpl(service),
         "artifact.routing": ArtifactRoutingBrokerImpl(service, artifact_execution),
         "cache": CacheBrokerImpl(service),

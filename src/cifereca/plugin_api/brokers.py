@@ -168,6 +168,12 @@ class ArtifactExecutionBroker(Protocol):
     def variants(self, source: ArtifactRef) -> tuple[ArtifactVariant, ...]: ...
 
 @runtime_checkable
+class LibraryReconciliationReadBroker(Protocol):
+    """Optional offline counts/progress only; no private cases or repair API."""
+    def audit(self, *, identity_id: str, control: TaskControl | None = None) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
 class LibraryReadBroker(Protocol):
     """Read logical books globally (legacy) or with an explicit identity scope."""
     def book(self, book_id: str, *, identity_id: str | None = None) -> LogicalBookArtifacts | None: ...
@@ -188,4 +194,4 @@ class ArtifactRoutingBroker(Protocol):
     def transfer(self, plan: ArtifactRoutePlan, control: TaskControl | None = None) -> ArtifactTransferResult: ...
 
 __all__ = ["ReleaseUpdateReadBroker", "CatalogBroker", "CatalogueSourceInventoryBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
-    "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker"]
+    "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryReconciliationReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker"]

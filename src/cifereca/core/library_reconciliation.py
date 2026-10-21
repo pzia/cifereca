@@ -133,6 +133,11 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
             db.set_progress_handler(lambda: int(cancelled() or time.monotonic() >= deadline), 1000)
             db.execute('BEGIN')
             names = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if 'metadata' in names and db.execute(
+                    "SELECT 1 FROM metadata WHERE key=? AND value IS NOT NULL AND value<>'' LIMIT 1",
+                    ('identity-directory-migration-v1',)).fetchone():
+                result.reasons.add('snapshot_identity_migration')
+                return result
             remaining_rows = max_rows
             for name, columns in _COLUMNS.items():
                 if cancelled() or time.monotonic() >= deadline:

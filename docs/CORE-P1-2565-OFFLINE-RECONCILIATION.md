@@ -141,3 +141,30 @@ Références techniques : [format et verrous WAL SQLite](https://sqlite.org/walf
 [WAL sans SHM externe en mode exclusif](https://www.sqlite.org/wal.html),
 [VFS APSW](https://rogerbinns.github.io/apsw/vfs.html).
 Le mode exclusif concerne exclusivement les copies privées en mémoire.
+
+## Facette publique de lecture pour Maintenance
+
+Le broker optionnel `library.reconciliation.read` expose seulement
+`audit(identity_id=..., control=...)` via `LibraryReconciliationReadBroker`.
+Il conserve le broker historique `library.read`. Le consommateur détecte sa
+présence ; l'absence sur un ancien Core signifie fonctionnalité indisponible.
+
+L'identité demandée doit être l'identité active. Les racines sont calculées
+sans I/O à partir de `Config.identities()` et de ses `directory_name` normalisés,
+avec le sous-arbre identité/Kobo d'un éventuel répertoire de sauvegarde distinct.
+Les chevauchements inter-identités sont refusés globalement et les racines de la
+même identité dédupliquées. Aucun dossier global/historique ni chemin SQLite ne
+permet d'étendre ce périmètre ; les méthodes service qui font mkdir sont exclues.
+
+Le snapshot précède le scan pour refuser un journal de migration de répertoire
+encore présent. La configuration, la projection des identités, l'identité active
+et son epoch sont revérifiés pendant l'audit et avant la réponse ; un changement
+rejette même les compteurs déjà calculés. Ce snapshot reste une observation à
+l'instant de capture, jamais une autorisation d'action ultérieure.
+
+Seuls les compteurs/causes fermées et la progression statique `TaskControl`
+sont publics. Aucun titre, chemin, SHA, compte, ligne SQLite, graphe privé ou
+jeton d'action n'est fourni. Les exceptions sont fermées à cette frontière.
+Le broker n'accepte ni chemin, export privé, interrogation distante ni commande
+de réparation. L'inspection locale des cas et la page Maintenance restent des
+livraisons séparées ; un plugin ne doit pas importer les primitives privées Core.
