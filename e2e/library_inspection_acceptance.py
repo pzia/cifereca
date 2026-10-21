@@ -152,19 +152,38 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                           if isinstance(w,Gtk.Label))
         assert 'Fichiers candidats' in labels
         assert 'non probant' in labels
+        report['checks']['candidate_heading_verified']=True
         right = controller.session.page(
             provider='numilog', state='rights_without_verified_file',
         ).cases[0]
         candidate_cases = controller.session.candidate_files(right.key)
         assert len(candidate_cases) == 20
+        report['checks']['candidate_count_verified']=True
         assert candidate_cases[0].label in labels
         assert 'Droit sans fichier vérifié' in labels
+        report['checks']['candidate_label_verified']=True
         following_candidate=next(w for w in walk(controller.dialog)
                                  if isinstance(w,Gtk.Button)
                                  and w.get_label()=='Candidat ▶')
-        device.click_widget(following_candidate)
-        until(lambda:any(isinstance(w,Gtk.Label) and '2 / 20' in w.get_text()
-                         for w in walk(controller.dialog)), compare_next)
+        report['checks']['candidate_button_found']=True
+
+        def candidate_allocated():
+            if not following_candidate.get_mapped() or not following_candidate.get_sensitive():
+                return False
+            try:
+                x, y = device.widget_point(following_candidate)
+                return x >= 0 and y >= 0
+            except RuntimeError:
+                return False
+
+        def candidate_click():
+            report['checks']['candidate_button_click_ready']=True
+            device.click_widget(following_candidate)
+            report['checks']['candidate_button_clicked']=True
+            until(lambda:any(isinstance(w,Gtk.Label) and '2 / 20' in w.get_text()
+                             for w in walk(controller.dialog)), compare_next)
+
+        until(candidate_allocated, candidate_click)
 
     def compare_next():
         report['checks']['inspection_candidate_navigation_reached']=True
