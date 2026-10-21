@@ -1523,6 +1523,7 @@ class UxRecommendationsView:
         )
         self._reset_llm_selection(row.key if row is not None else None)
         if row is None:
+            self._exact_notice_state = None
             self._master.empty_detail(
                 "Aucune recommandation sélectionnée",
                 "Sélectionnez un livre dans la liste pour afficher ses détails.",
@@ -1530,6 +1531,7 @@ class UxRecommendationsView:
             return
         ranked = self._ranked_by_key.get(row.key)
         if ranked is None:
+            self._exact_notice_state = None
             # A fast filter refresh can invalidate the selected row before
             # GTK delivers its selection callback. Never leave the previous
             # book's detail and actions attached to a stale list identity.
@@ -1539,6 +1541,24 @@ class UxRecommendationsView:
                 "Cette recommandation n’est plus dans les résultats du profil.",
             )
             return
+        # Page state is scoped to the current recommendation, identity and
+        # ranking generation. Returning A→B→A or switching profiles must
+        # never reopen an old page or resurrect a clickable stale action.
+        exact_identity = self.selected_identity_id()
+        state = getattr(self, "_exact_notice_state", None)
+        if not (
+            type(state) is dict
+            and state.get("key") == row.key
+            and state.get("ranked") is ranked
+            and state.get("identity") == exact_identity
+            and state.get("generation") == self._generation
+        ):
+            state = {
+                "key": row.key, "ranked": ranked,
+                "identity": exact_identity, "generation": self._generation,
+                "page": 0,
+            }
+            self._exact_notice_state = state
         self._llm_selected_row = row
         if self._llm_button is not None:
             self._llm_button.set_sensitive(not self._busy and self._llm_handle is None)
@@ -1650,17 +1670,25 @@ class UxRecommendationsView:
                     or coordinates in seen_coordinates):
                 continue
             seen_coordinates.add(coordinates)
-            # Inspect all 256 bounded candidates even after 16 displayable
-            # rows: only a *verified overflow* may claim partial display.
-            if len(exact_variants) < 16:
-                exact_variants.append(variant)
+            # At most 256 original variants were inspected. Retain all
+            # validated distinct coordinates for explicit 16-item pages;
+            # do not load more data or inspect further variants on click.
+            exact_variants.append(variant)
+        page_size = 16
+        page_count = max(1, (len(exact_variants) + page_size - 1) // page_size)
+        page_index = state["page"]
+        if type(page_index) is not int or not 0 <= page_index < page_count:
+            page_index = 0
+            state["page"] = 0
+        page_start = page_index * page_size
+        visible_exact = exact_variants[page_start:page_start + page_size]
         hidden_variants = (
             type(raw_variants) in (tuple, list)
             and len(raw_variants) > 256
         )
         if exact_variants or hidden_variants:
             edition_fields = []
-            for index, variant in enumerate(exact_variants, 1):
+            for index, variant in enumerate(visible_exact, page_start + 1):
                 name = self._display_source(variant.source_provider)
                 valid_isbns = _attested_catalogue_isbns((variant,))
                 isbn = valid_isbns[0] if valid_isbns else ""
@@ -1669,18 +1697,24 @@ class UxRecommendationsView:
                     f"{name} · ISBN {isbn}" if isbn else
                     f"{name} · édition non attestée",
                 ))
-            if exact_variants:
+            if visible_exact:
                 edition_fields.append(DetailField(
                     "source-edition-warning", "Actions disponibles",
                     "Choisir une notice dans Recherche pour consulter les "
                     "disponibilités et les actions réellement autorisées.",
                 ))
-            if len(seen_coordinates) > 16 or hidden_variants:
+            if len(exact_variants) > page_size:
                 edition_fields.append(DetailField(
-                    "source-edition-limit", "Limite d'affichage",
-                    "Au plus 16 notices exactes affichées ; seules les "
-                    "256 premières variantes peuvent être examinées. "
-                    "La liste n'est pas exhaustive.",
+                    "source-edition-page", "Notices affichées",
+                    f"{page_start + 1}–{page_start + len(visible_exact)} "
+                    f"sur {len(exact_variants)} notices distinctes, "
+                    f"page {page_index + 1}/{page_count}.",
+                ))
+            if hidden_variants:
+                edition_fields.append(DetailField(
+                    "source-edition-limit", "Portée non exhaustive",
+                    "Seules les 256 premières variantes ont été examinées. "
+                    "D'autres éditions peuvent exister.",
                 ))
             sections.append(DetailSection(
                 "source-editions", "Éditions et sources distinctes",
@@ -1719,7 +1753,7 @@ class UxRecommendationsView:
             can_open = getattr(self.host, "can_open_loaded_search_notice", None)
             open_loaded = getattr(self.host, "open_loaded_search_notice", None)
             if callable(can_open) and callable(open_loaded):
-                for index, variant in enumerate(exact_variants, 1):
+                for index, variant in enumerate(visible_exact, page_start + 1):
                     coordinates = {
                         "provider": variant.source_provider,
                         "credential": variant.source_credential,
@@ -1756,6 +1790,42 @@ class UxRecommendationsView:
                         f" · {self._display_source(variant.source_provider)}",
                         "document-open-symbolic", callback=open_exact,
                     ))
+            # Pure-local pagination of exact source choices. A callback from
+            # the previous page, a replaced ranking or another profile cannot
+            # change the active detail. Core remains the sole action resolver.
+            if page_count > 1:
+                def change_notice_page(next_page):
+                    if (
+                        getattr(self, "_disposed", False)
+                        or self._generation != generation_at_selection
+                        or self._detail_selection_generation != detail_generation_at_selection
+                        or self._llm_selection_key != key_at_selection
+                        or self._ranked_by_key.get(key_at_selection) is not ranked_at_selection
+                        or self.selected_identity_id() != identity_at_selection
+                        or self._exact_notice_state is not state
+                        or state["page"] != page_index
+                        or type(next_page) is not int
+                        or not 0 <= next_page < page_count
+                    ):
+                        return False
+                    state["page"] = next_page
+                    self._selected_row(row)
+                    return True
+
+                if page_index > 0:
+                    actions.append(UiBookDetailAction(
+                        "recommendation.exact-notice.previous",
+                        f"Notices précédentes · page {page_index}/{page_count}",
+                        "go-previous-symbolic",
+                        callback=lambda: change_notice_page(page_index - 1),
+                    ))
+                if page_index + 1 < page_count:
+                    actions.append(UiBookDetailAction(
+                        "recommendation.exact-notice.next",
+                        f"Notices suivantes · page {page_index + 2}/{page_count}",
+                        "go-next-symbolic",
+                        callback=lambda: change_notice_page(page_index + 1),
+                    ))
             verified_isbns = _attested_catalogue_isbns(variants)
             for isbn in verified_isbns:
                 def open_isbn(isbn=isbn):
@@ -1785,7 +1855,7 @@ class UxRecommendationsView:
             # the standard details/actions after the user selects a result.
             verified_sources = tuple(dict.fromkeys(
                 (variant.source_provider, _attested_catalogue_isbns((variant,))[0])
-                for variant in exact_variants
+                for variant in visible_exact
                 if (_attested_catalogue_isbns((variant,))
                     and type(variant.source_provider) is str
                     and re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}",
@@ -1819,7 +1889,7 @@ class UxRecommendationsView:
             # Preserve a *local, approximate* exploration action rather
             # than inventing a provider-specific detail/loan/download.
             # Never invoke the network or query another identity.
-            if (not verified_isbns and exact_variants
+            if (not verified_isbns and visible_exact
                     and 2 <= len(title) <= 160 and title != "Sans titre"):
                 title_query = title
 
