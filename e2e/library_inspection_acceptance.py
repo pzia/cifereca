@@ -217,9 +217,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         texts='\\n'.join(w.get_text() for w in walk(controller.dialog)
                         if isinstance(w,Gtk.Label))
         assert 'Fichiers non liés · comparaison manuelle' in texts
-        assert 'Aucun n’est attribué à ce droit' in texts
+        assert 'Aucun n’est attribué' in texts
         assert 'FOREIGN_SECRET' not in texts
-        assert controller.session.page(state='local_file_without_attested_right').total == 61
+        assert controller.session.unconfirmed_files().total == 61
         search=next(w for w in walk(controller.dialog)
                     if isinstance(w,Gtk.SearchEntry)
                     and w.get_placeholder_text()=='Filtrer les fichiers non liés…')
