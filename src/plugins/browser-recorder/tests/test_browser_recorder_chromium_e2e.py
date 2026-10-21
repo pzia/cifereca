@@ -298,6 +298,7 @@ import hashlib
 import json
 import sys
 from zipfile import ZipFile
+from xml.etree import ElementTree
 
 def validate():
     oracle = json.load(sys.stdin)
@@ -316,6 +317,21 @@ def validate():
                 return False
             if any(secret.encode("utf-8") in data for secret in oracle["denied"]):
                 return False
+        xml_seen = False
+        for filename in archive.namelist():
+            if not filename.startswith("exchanges/"):
+                continue
+            exchange = json.loads(archive.read(filename))
+            if exchange["mime"] == "application/xml":
+                response = exchange["bodies"]["response"]
+                if response["state"] != "captured_xml_structure" or not response["file"]:
+                    return False
+                xml = ElementTree.fromstring(archive.read(response["file"]))
+                if xml.findtext("BookId") != "214":
+                    return False
+                xml_seen = True
+        if not xml_seen:
+            return False
     return True
 
 try:

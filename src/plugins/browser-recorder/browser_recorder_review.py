@@ -290,7 +290,7 @@ class IdentifierReview:
                                                 match.group("plain") or "")),
                           where + ":" + match.group("key")[:40])
         for match in _XML.finditer(text):
-            self._observe(match.group(1), match.group(2).strip(), where + ":xml")
+            self._observe(match.group(1), html.unescape(match.group(2).strip()), where + ":xml")
         # Form inputs are structured by name/type, not a standalone "value"
         # attribute. An input type=password or name=token is unexportable
         # even if the surrounding markup is otherwise useful for a parser.

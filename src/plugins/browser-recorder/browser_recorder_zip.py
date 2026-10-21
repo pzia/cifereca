@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
+from xml.etree import ElementTree as ET
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
@@ -318,6 +319,91 @@ def _json_shape(node, *, name="", approved=frozenset(), depth=0, counter=None):
     return "[OMITTED]"
 
 
+def _xml_structure(raw: str, approved: frozenset[str]) -> str:
+    """Project bounded XML, preserving case and reviewed scalar relations.
+
+    No DTD, entity declarations, external resolution, comments or processing
+    instructions. Unknown namespace URIs are labels, never original URLs.
+    """
+    if len(raw) > 32768 or re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", raw, re.I):
+        raise RecorderError("bundle_xml_unsupported")
+    root = ET.fromstring(raw)
+    namespaces = {}
+    original_namespaces = {
+        key[1:].split("}", 1)[0]
+        for node in root.iter() for key in (node.tag, *node.attrib)
+        if isinstance(key, str) and key.startswith("{")
+    }
+    public_namespaces = {
+        "http://www.w3.org/XML/1998/namespace",
+        "http://www.w3.org/2005/Atom",
+        "http://purl.org/dc/elements/1.1/",
+        "http://purl.org/dc/terms/",
+        "http://opds-spec.org/2010/catalog",
+    }
+    count = [0]
+
+    def name(original):
+        if not isinstance(original, str):
+            return None, ""
+        namespace, local = "", original
+        if original.startswith("{"):
+            namespace, local = original[1:].split("}", 1)
+        if not _safe_field_key(local):
+            return None, local
+        if namespace and namespace not in public_namespaces:
+            if namespace not in namespaces:
+                number = len(namespaces) + 1
+                label = f"urn:cifereca:xml-namespace-{number:04d}"
+                while label in original_namespaces or label in namespaces.values():
+                    number += 1
+                    label = f"urn:cifereca:xml-namespace-{number:04d}"
+                namespaces[namespace] = label
+            namespace = namespaces[namespace]
+        return ("{" + namespace + "}" + local if namespace else local), local
+
+    def scalar(text, local, secret):
+        if text is None or not text.strip():
+            return None
+        value = text.strip()
+        if secret or _SECRETS.search(local):
+            return "[SECRET]"
+        if value in approved or value in {"[SECRET]", "[UNREVIEWED]"} or _public_enum(local, value):
+            return value
+        return "[UNREVIEWED_ID]" if _IDS.search(local) else "[TEXT]"
+
+    def project(node, depth=0, secret=False):
+        count[0] += 1
+        if depth > 16 or count[0] > 1600 or len(node.attrib) > 32:
+            raise RecorderError("bundle_structure_limit")
+        tag, local = name(node.tag)
+        if tag is None:
+            return None
+        secret = secret or bool(_SECRETS.search(local))
+        output = ET.Element(tag)
+        for key, value in node.attrib.items():
+            attribute, label = name(key)
+            if attribute is not None:
+                output.set(attribute, scalar(value, label, secret) or "")
+        output.text = scalar(node.text, local, secret)
+        for child in node:
+            projected = project(child, depth+1, secret)
+            if projected is not None:
+                # Mixed free prose is not approved merely because one of
+                # its child elements carries a reviewed identifier.
+                projected.tail = scalar(child.tail, local, secret)
+                output.append(projected)
+        return output
+
+    output = project(root)
+    if output is None:
+        raise RecorderError("bundle_xml_unsupported")
+    serialized = ET.tostring(output, encoding="unicode")
+    if len(serialized.encode("utf-8")) > MAX_BODY_OUT:
+        raise RecorderError("bundle_markup_limit")
+    return serialized
+
+
 def _body(raw, mime, approved):
     if type(raw) is not str:
         return None, "body_omitted"
@@ -331,8 +417,13 @@ def _body(raw, mime, approved):
             return serialized, "captured_json_structure"
         except (ValueError, TypeError, RecursionError, RecorderError):
             return None, "body_omitted"
-    if mime in {"text/html", "application/xhtml+xml", "text/xml",
-                "application/xml"} or mime.endswith("+xml"):
+    if mime in {"text/xml", "application/xml"} or (
+            mime.endswith("+xml") and mime != "application/xhtml+xml"):
+        try:
+            return _xml_structure(raw, approved), "captured_xml_structure"
+        except (ET.ParseError, ValueError, TypeError, RecursionError, RecorderError):
+            return None, "body_omitted"
+    if mime in {"text/html", "application/xhtml+xml"}:
         try:
             parser = _MarkupSkeleton()
             parser.feed(raw)
@@ -591,7 +682,8 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         "excluded_exchanges": preview["dropped_exchanges"],
         "capture_omissions": capture_omissions,
         "secret_values_suppressed": preview["secrets_replaced"],
-        "coverage": "JSON shapes and selected HTML/XML selectors; free text omitted",
+        "coverage": "JSON/XML structures with reviewed scalars and selected HTML selectors; free text omitted",
+        "xml_namespaces": "Unknown namespace URIs are opaque labels local to each body; original URIs omitted",
         "route_templates": "Opaque ~route-NNNN~ segments are stable within this archive only; originals omitted",
         "max_uncompressed": MAX_UNCOMPRESSED,
     })
