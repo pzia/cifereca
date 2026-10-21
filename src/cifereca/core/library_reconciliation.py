@@ -341,9 +341,15 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
                         and candidates[0]['artifact_id'] == 'sha256:' + observation.sha256):
                     confirmed.append(ri)
                     result.edges.append(EvidenceEdge(fi, 'entitlements', ri, 'explicit_right_ledger_placement_sha_size', 'attested'))
-        # Multiple distinct accounts for a single placement remain ambiguous.
-        scopes = {(rights[i]['provider_id'], rights[i]['credential_id'], rights[i]['account_id'], rights[i]['item_id']) for i in confirmed}
-        if len(scopes) == 1 and len(links) == 1 and not snapshot.reasons:
+        # A single borrower/account scope is not necessarily a single right:
+        # two distinct entitlement rows for the same purchase can both have
+        # valid-looking ledger chains pointing at the *same* file. Do not
+        # coalesce these into one confirmed entitlement by account identity.
+        # Likewise, never confirm when the per-file comparison stopped early:
+        # later uninspected rows could invalidate uniqueness.
+        if (len(confirmed) == 1 and len(links) == 1
+                and not snapshot.reasons
+                and 'comparison_budget' not in result.reasons):
             categories.discard('present_unlinked')
             categories.add('confirmed_link')
             verified.update(confirmed)
