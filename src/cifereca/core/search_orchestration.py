@@ -398,21 +398,22 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 if code is not None:
                     break
         if public_outage and not provider_rows and self.current_identity is identity:
-            from .known_catalog_fallback import known_public_fallback
-            previous = known_public_fallback(
+            from .known_catalog_fallback import known_public_fallback_page
+            offline = known_public_fallback_page(
                 self.storage, provider_id=session.provider_id,
                 identity_id=identity.identity_id if identity is not None else None,
                 query=query, scope=scope, field=field,
                 content_types=tuple(content_types or ()),
             )
-            if previous:
-                provider_rows = list(previous)
+            if offline.results:
+                provider_rows = list(offline.results)
                 warnings.append(
                     f"{session.descriptor.display_name}: résultats connus, recherche en ligne indisponible"
                 )
             else:
                 warnings.append(
-                    f"{session.descriptor.display_name}: recherche en ligne indisponible (aucun résultat connu)"
+                    f"{session.descriptor.display_name}: "
+                    + _stale_public_fallback_warning(offline.status)
                 )
         if field in {"title", "author"}:
             provider_rows = [row for row in provider_rows if self._field_match(field, query, row)]
@@ -493,6 +494,18 @@ def _provider_search_row(row: SearchResult) -> SearchResult:
             if key != "search_provenance"
         })
     return row
+
+
+
+def _stale_public_fallback_warning(status: str) -> str:
+    """Closed, public diagnostic: no match is not a read-budget failure."""
+    if status == "scope_budget_exceeded":
+        return ("recherche en ligne indisponible "
+                "(catalogue connu trop volumineux : secours local non vérifiable)")
+    if status in {"unavailable", "invalid_page", "page_out_of_range"}:
+        return ("recherche en ligne indisponible "
+                "(inventaire local de secours indisponible)")
+    return "recherche en ligne indisponible (aucun résultat connu)"
 
 
 def _search_batch_status(
@@ -885,22 +898,23 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     error_code == "SearchTemporarilyUnavailable"
                     and not live_rows and not request_cancelled()
                 ):
-                    from .known_catalog_fallback import known_public_fallback
-                    previous = known_public_fallback(
+                    from .known_catalog_fallback import known_public_fallback_page
+                    offline = known_public_fallback_page(
                         self.storage, provider_id=session.provider_id,
                         identity_id=identity.identity_id if identity is not None else None,
                         query=query, scope=scope, field=field,
                         content_types=types,
                     )
-                    if previous:
-                        provider_rows = list(previous)
+                    if offline.results:
+                        provider_rows = list(offline.results)
                         stale_attested = True
                         provider_warnings = [
                             f"{session.descriptor.display_name}: résultats connus, recherche en ligne indisponible"
                         ]
                     else:
                         provider_warnings = [
-                            f"{session.descriptor.display_name}: recherche en ligne indisponible (aucun résultat connu)"
+                            f"{session.descriptor.display_name}: "
+                            + _stale_public_fallback_warning(offline.status)
                         ]
                 aggregate.extend(provider_rows)
                 warnings.extend(provider_warnings)

@@ -1392,7 +1392,8 @@ def main() -> int:
         f["rows"] = loans
         f["keys"] = [loan_source_key(loan) for loan in loans]
         assert f["keys"][0] != f["keys"][1]
-        assert w.loan_filter == "digital" and not w.loan_languages.values()
+        assert w.loan_filter == "all" and w.loan_filter_buttons["all"].get_active()
+        assert not w.loan_languages.values()
         w.loan_page.clear_rows()
         w._populate_loans(loans)
         w.navigate("loans")

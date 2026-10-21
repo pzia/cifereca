@@ -61,6 +61,14 @@ class SharedTaskAdmission:
         self._background = 0
         self._admitted = 0
         self._rejected = 0
+        # Pure aggregate counters: no labels, account IDs, tokens or scopes
+        # are retained in diagnostics. Exactly one rejection reason is counted
+        # per refusal, in deterministic global > reserved > scope order.
+        self._rejected_global = 0
+        self._rejected_reserved = 0
+        self._rejected_scope = 0
+        self._rejected_user = 0
+        self._rejected_background = 0
         self._scope_inflight: dict[str, int] = {}
 
     def acquire(self, *, priority: int, scope: str | None = None) -> AdmissionLease | None:
@@ -73,15 +81,30 @@ class SharedTaskAdmission:
         private_scope = scope if scope is not None else ""
         background = priority >= 30
         with self._lock:
-            full = (
-                self._inflight >= self.max_inflight
-                or (background and self._background >=
-                    self.max_inflight - self.reserve_user_slots)
-                or (self.max_per_scope is not None and
-                    self._scope_inflight.get(private_scope, 0) >= self.max_per_scope)
+            # Preserve the pre-existing boolean admission policy verbatim;
+            # attribute a refused request to ONE cause for reproducible,
+            # privacy-preserving contention diagnostics (#2431/#1741).
+            global_full = self._inflight >= self.max_inflight
+            reserved_full = (
+                background and self._background >=
+                self.max_inflight - self.reserve_user_slots
             )
-            if full:
+            scope_full = (
+                self.max_per_scope is not None
+                and self._scope_inflight.get(private_scope, 0) >= self.max_per_scope
+            )
+            if global_full or reserved_full or scope_full:
                 self._rejected += 1
+                if global_full:
+                    self._rejected_global += 1
+                elif reserved_full:
+                    self._rejected_reserved += 1
+                else:
+                    self._rejected_scope += 1
+                if background:
+                    self._rejected_background += 1
+                else:
+                    self._rejected_user += 1
                 return None
             self._inflight += 1
             self._background += int(background)
@@ -99,6 +122,11 @@ class SharedTaskAdmission:
                 "background": self._background,
                 "admitted": self._admitted,
                 "rejected": self._rejected,
+                "rejected_global": self._rejected_global,
+                "rejected_reserved": self._rejected_reserved,
+                "rejected_scope": self._rejected_scope,
+                "rejected_user": self._rejected_user,
+                "rejected_background": self._rejected_background,
                 "max_inflight": self.max_inflight,
                 "max_background": self.max_inflight - self.reserve_user_slots,
                 "max_per_scope": self.max_per_scope,
