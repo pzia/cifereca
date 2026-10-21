@@ -194,6 +194,10 @@ def test_cache_unwritable_parent_fails_before_download(monkeypatch, tmp_path):
     assert browser.inspect_chromium().code == "chromium_missing", (
         "read-only browser cache must remain inspectable"
     )
+    # A real installation is only supported in a managed virtualenv.
+    # Reach the cache preflight instead of failing at that earlier guard.
+    monkeypatch.setattr(browser.sys, "prefix", str(tmp_path / "managed-venv"))
+    monkeypatch.setattr(browser.sys, "base_prefix", "/usr")
     monkeypatch.setattr(browser.subprocess, "Popen", lambda *_a, **_kw: (
         (_ for _ in ()).throw(AssertionError("unexpected download"))
     ))
