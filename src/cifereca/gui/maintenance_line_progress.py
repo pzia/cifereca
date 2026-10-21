@@ -138,7 +138,7 @@ class MaintenanceLineProgress:
             if type(message) is not str or message not in _RECONCILIATION_PHASES:
                 return
             if (message == "Inventaire local" and type(current) is int
-                    and 0 <= current <= 1_000_000):
+                    and 0 <= current <= 1_000_000 and total is None):
                 label = f"Réconciliation · Inventaire local · {current} fichier(s)"
             else:
                 label = f"Réconciliation · {message}…"
