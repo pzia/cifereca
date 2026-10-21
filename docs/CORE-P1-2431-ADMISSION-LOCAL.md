@@ -22,7 +22,7 @@ Les tests Core vérifient saturation réelle d'un worker bloqué, priorité de l
 ## Sous-lot observabilité des refus (#2431 / #1741)
 
 `SharedTaskAdmission.snapshot()` complète le compteur historique `rejected`
-par **six compteurs entiers agrégés**, cumulatifs pour la durée de vie du
+par **cinq compteurs entiers agrégés**, cumulatifs pour la durée de vie du
 budget local :
 
 - `rejected_global` : tous les emplacements en vol occupés ;
