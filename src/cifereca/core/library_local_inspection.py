@@ -146,6 +146,9 @@ class LocalInspection:
     def __init__(self, audit, valid, identity_id, roots=()):
         self._valid = valid
         self._cases = {}
+        # These references exist solely inside this revocable Core UI session.
+        # They never enter an audit payload or a future repair capability.
+        self._candidate_file_keys = {}
         self._summary = audit.redacted()
         self._roots = tuple(str(path) for path in roots)[:128]
         self._limited = False
@@ -154,6 +157,25 @@ class LocalInspection:
         edges, candidates, ledgers = defaultdict(list), defaultdict(list), defaultdict(list)
         rights = audit.snapshot.tables.get('entitlements', [])
         catalog = audit.snapshot.tables.get('catalog_entries', [])
+        # Invert the already bounded, exact, same-identity, metadata_only
+        # candidates from the shared auditor. There is deliberately NO
+        # title/author/path/provider inference at the file level.
+        candidate_files_by_notice = defaultdict(set)
+        for candidate in audit.metadata_candidates.candidates[:10000]:
+            if (candidate.certainty != 'metadata_only'
+                    or not 0 <= candidate.file_index < len(audit.inventory.files)
+                    or not 0 <= candidate.catalog_row_index < len(catalog)):
+                continue
+            observed = audit.inventory.files[candidate.file_index]
+            notice = catalog[candidate.catalog_row_index]
+            states = audit.reconciliation.files.get(candidate.file_index, set())
+            if (observed.identity_id == identity_id
+                    and notice.get('identity_id') == identity_id
+                    and 'local_file_without_attested_right' in states
+                    and 'confirmed_link' not in states):
+                candidate_files_by_notice[candidate.catalog_row_index].add(
+                    candidate.file_index
+                )
         for index, row in enumerate(audit.snapshot.tables.get("acquisition_ledger", [])):
             ledgers[row.get("entitlement_id")].append(index)
         for edge in audit.reconciliation.edges:
@@ -253,15 +275,22 @@ class LocalInspection:
                             placement.get('source_item_id'))].append(placement)
         incomplete = audit.redacted().get('status') != 'complete'
         notices = defaultdict(list)
-        for row in catalog:
-            if row.get('identity_id') == identity_id:
-                notices[(row.get('provider_id'), row.get('item_id'))].append(row)
+        for notice_index, row in enumerate(catalog):
+            if (row.get('identity_id') == identity_id
+                    and type(row.get('provider_id')) is str
+                    and type(row.get('item_id')) is str and row['item_id']):
+                notices[(row['provider_id'], row['item_id'])].append(
+                    (notice_index, row)
+                )
         for index in audit.reconciliation.unverified_rights:
             if not 0 <= index < len(rights) or rights[index].get('identity_id') != identity_id:
                 continue
             right = rights[index]
-            matches = notices.get((right.get('provider_id'), right.get('item_id')), [])
-            notice = matches[0] if len(matches) == 1 else {}
+            right_provider, right_item = right.get('provider_id'), right.get('item_id')
+            matches = (notices.get((right_provider, right_item), [])
+                       if type(right_provider) is str and type(right_item) is str
+                       and right_item else [])
+            notice = matches[0][1] if len(matches) == 1 else {}
             right_label = _display_book(notice.get('display_title'),
                                         notice.get('display_authors'),
                                         right.get('item_id') or 'Édition non identifiée')
@@ -269,13 +298,48 @@ class LocalInspection:
             own_ledger = [acquisition_rows[i] for i in ledgers[right.get('entitlement_id')][:20]
                           if 0 <= i < len(acquisition_rows)]
             why = _right_explanation(
-                right, own_ledger, by_edition.get((right.get('provider_id'),
-                                                  right.get('item_id')), ()),
+                right, own_ledger, by_edition.get((right_provider, right_item), ()),
                 by_artifact, by_path, incomplete,
             )
+            # A catalogue notice belongs to this explicit identity/provider/
+            # item scope, but an ISBN match between it and an EPUB is only a
+            # bibliographic inspection lead, never evidence of ownership.
+            candidate_indices = sorted({
+                fi for notice_index, _ in matches
+                for fi in candidate_files_by_notice.get(notice_index, ())
+                if f'file:{fi}' in self._cases
+            })
+            file_keys = tuple(f'file:{fi}' for fi in candidate_indices[:20])
+            self._candidate_file_keys[f'right:{index}'] = file_keys
+            suggestions = [
+                'Fichiers à comparer (même identifiant bibliographique explicite '
+                'qu’une notice de cette édition ; candidat non probant, sans '
+                'attribution Numilog ni lien de propriété) :',
+            ]
+            if not candidate_indices:
+                suggestions.append(
+                    'Aucun candidat bibliographique précis dans les fichiers '
+                    'inspectés. Cela ne prouve pas que le livre soit absent.'
+                )
+            else:
+                suggestions.extend(
+                    '• ' + self._cases[key].label
+                    for key in file_keys
+                )
+                if len(candidate_indices) > len(file_keys):
+                    suggestions.append(
+                        f'• {len(candidate_indices)-len(file_keys)} autre(s) '
+                        'candidat(s) non affiché(s) (limite 20).'
+                    )
+                if len(candidate_indices) > 1 or len(matches) > 1:
+                    suggestions.append(
+                        'Candidats multiples ou notices ambiguës : aucun '
+                        'appariement individuel ne peut être conclu.'
+                    )
             detail = ('Droit sans fichier vérifié · ' + right_label + '\n\n'
                       + evidence('entitlements', index)
                       + '\n\nPourquoi ce droit n’est-il pas confirmé ?\n' + why
+                      + '\n\n' + '\n'.join(suggestions)
                       + '\n\n' + '\n\n'.join(
                           'Acquisition enregistrée :\n' + evidence('acquisition_ledger', li)
                           for li in ledgers[right.get('entitlement_id')][:20])
@@ -308,6 +372,7 @@ class LocalInspection:
 
     def close(self):
         self._cases.clear()
+        self._candidate_file_keys.clear()
         self._summary = {}
         self._roots = ()
         self._valid = lambda: False
@@ -353,6 +418,21 @@ class LocalInspection:
                 and (not terms or all(word in _searchable(case.label)
                                       for word in terms))]
         return LocalPage(tuple(rows[offset:offset+limit]), len(rows), offset, self._limited)
+
+    def candidate_files(self, right_key):
+        """Only local, metadata_only cross-reference hints; never an action plan.
+
+        The selected right and candidate files must still be live in this
+        private, same-identity session. The caller must not persist results.
+        """
+        if not self.valid() or type(right_key) is not str:
+            return ()
+        case = self._cases.get(right_key)
+        if case is None or not right_key.startswith('right:'):
+            return ()
+        return tuple(self._cases[key]
+                     for key in self._candidate_file_keys.get(right_key, ())
+                     if key in self._cases)
 
     def detail(self, key):
         if not self.valid() or type(key) is not str:
