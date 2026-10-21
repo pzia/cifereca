@@ -388,7 +388,7 @@ class LocalInspectionController:
             'Tous les formats', 'EPUB', 'PDF',
         ])
         sha_filter = Gtk.DropDown.new_from_strings([
-            'SHA : tous', 'SHA vérifié', 'SHA non calculé',
+            'SHA : tous', 'SHA calculé', 'SHA non calculé',
         ])
         crc_filter = Gtk.DropDown.new_from_strings([
             'Structure : toutes', 'EPUB avec CRC validé', 'Autres / non validées',
@@ -477,7 +477,7 @@ class LocalInspectionController:
                 # projection; never query a provider or infer a Numilog right.
                 options = {
                     'media_format': ('all', 'epub', 'pdf')[format_filter.get_selected()],
-                    'sha_state': ('all', 'verified', 'unverified')[sha_filter.get_selected()],
+                    'sha_state': ('all', 'calculated', 'not_calculated')[sha_filter.get_selected()],
                     'epub_crc': ('all', 'confirmed', 'other')[crc_filter.get_selected()],
                     'sort': ('title', 'filename', 'scan')[file_sort.get_selected()],
                 }
