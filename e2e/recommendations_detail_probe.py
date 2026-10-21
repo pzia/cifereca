@@ -88,6 +88,7 @@ def main():
         "real_plugin": "src/plugins/recommendations/recommendations.py",
         "real_host": "cifereca.gui.plugin_ui_host._UiHost",
         "source_data": "synthetic ranked candidates; ranking task disabled",
+        "p1_1354_phase": "probe_start",
     }
     app = Adw.Application(
         application_id="org.cifereca.E2ERecommendations",
@@ -169,6 +170,7 @@ def main():
         device.key("Return", False)
 
     def initial():
+        report["p1_1354_phase"] = "initial"
         view = state["view"]
         assert view.selected_identity_id() == "alice"
         assert isinstance(view._master, PublicBookMasterDetailView)
@@ -291,6 +293,7 @@ def main():
         later(250, after_reactivation_detail)
 
     def after_reactivation_detail():
+        report["p1_1354_phase"] = "long_detail"
         view = state["view"]
         assert view._master._page.selection.get_selected() == 0
         assert any(
@@ -323,6 +326,7 @@ def main():
         assert adjustment.get_value() > 0
         report["checks"]["detail_scroll_functional"] = True
         capture("05-reopened-scrolled")
+        report["p1_1354_phase"] = "scrolled"
         # This test uses the REAL Core exact-notice resolver and REAL
         # Recommandations GTK action. The Search target is a synthetic,
         # previously loaded Core-owned row; its select_key is a pure recorder,
@@ -330,6 +334,7 @@ def main():
         later(100, exact_loaded_bridge)
 
     def exact_loaded_bridge():
+        report["p1_1354_phase"] = "exact_setup"
         view = state["view"]
         window = state["window"]
         notice = NS(
@@ -373,6 +378,7 @@ def main():
                 "recommendation.loaded-notice."
             )
         ]
+        report["p1_1354_phase"] = "exact_button"
         assert len(buttons) == 1, "Loaded exact Search route is missing"
         button = buttons[0]
         assert button.get_mapped()
@@ -383,10 +389,12 @@ def main():
         assert not state["searches"][1:], "Rendering must not search"
         state["exact_button"] = button
         capture("05b-loaded-exact-route")
+        report["p1_1354_phase"] = "exact_key"
         activate_key(button)
         later(180, after_exact_loaded_bridge)
 
     def after_exact_loaded_bridge():
+        report["p1_1354_phase"] = "exact_verdict"
         view = state["view"]
         assert state["exact_navigations"] == ["search"]
         assert state["exact_selected"] == ["fixture:core-loaded-1"]
@@ -400,6 +408,7 @@ def main():
         later(200, after_return_to_list)
 
     def after_return_to_list():
+        report["p1_1354_phase"] = "return_list"
         view = state["view"]
         assert view._master._page.store.get_n_items() == 1
         assert view._master._page.selection.get_selected_item() is None
