@@ -27,7 +27,7 @@ def test_outage_warning_distinguishes_absence_from_unverifiable_offline_cache(
         if mode in {"over_budget", "read_error"}:
             for index in range(3):
                 _known(service, provider="bad", key=f"known-{index}",
-                       title="Roman maritime")
+                       title="Progressive Book")
         if mode == "over_budget":
             monkeypatch.setattr(known_catalog_fallback, "_MAX_CATALOG_ROWS", 2)
         elif mode == "read_error":
@@ -47,7 +47,7 @@ def test_outage_warning_distinguishes_absence_from_unverifiable_offline_cache(
         if api == "progressive":
             batches = []
             summary = service.search_progressive(
-                "Roman maritime", field="title", force=True,
+                "Progressive Book", field="title", force=True,
                 on_batch=batches.append,
             )
             affected = next(row for row in batches if row.provider_id == "bad")
@@ -57,7 +57,7 @@ def test_outage_warning_distinguishes_absence_from_unverifiable_offline_cache(
             assert summary.providers_failed == 1
             assert summary.result_count == 1  # good source remains visible
         else:
-            results = service.search("Roman maritime", field="title", force=True)
+            results = service.search("Progressive Book", field="title", force=True)
             assert len(results) == 1
             assert all(row.source_provider != "bad" for row in results)
             warnings = service.last_search_warnings
