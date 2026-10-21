@@ -127,7 +127,11 @@ class _MarkupSkeleton(HTMLParser):
         self.parts.append(text)
 
     def handle_starttag(self, tag, attrs):
-        if not re.fullmatch(r"[a-z][a-z0-9:-]{0,40}", tag):
+        if (not re.fullmatch(r"[a-z][a-z0-9:-]{0,40}", tag)
+                or not _safe_field_key(tag)):
+            # Tag names are provider-controlled too; a custom element may
+            # embed a private ID/token even when its text and attributes
+            # are safely reduced to a structure-only markup skeleton.
             return
         projected = []
         for key, value in attrs[:32]:
@@ -148,7 +152,8 @@ class _MarkupSkeleton(HTMLParser):
         self._emit("<" + tag + (" " + " ".join(projected) if projected else "") + ">")
 
     def handle_endtag(self, tag):
-        if re.fullmatch(r"[a-z][a-z0-9:-]{0,40}", tag):
+        if (re.fullmatch(r"[a-z][a-z0-9:-]{0,40}", tag)
+                and _safe_field_key(tag)):
             self._emit("</" + tag + ">")
 
     def handle_data(self, data):
