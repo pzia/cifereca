@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.epub-optimizer",
-    "version": "0.3.6",
+    "version": "0.3.7",
     "name": "Cifereca EPUB/PDF Optimizer",
     "publisher": "Cifereca",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "document.transformer.epub-optimizer",
       "type": "document.transformer",
-      "version": "0.3.6",
+      "version": "0.3.7",
       "entrypoint": "cifereca_epub_optimizer_transformer:PLUGIN",
       "display_name": "Optimiseur EPUB e-ink",
       "description": "Transforme un EPUB sans DRM en variante e-ink en optimisant prudemment les images raster et en préservant les contenus à sémantique sensible.",
@@ -85,7 +85,7 @@
     {
       "id": "document.transformer.pdf-eink-optimizer",
       "type": "document.transformer",
-      "version": "0.3.6",
+      "version": "0.3.7",
       "entrypoint": "cifereca_pdf_optimizer_transformer:PLUGIN",
       "display_name": "Optimiseur PDF e-ink",
       "description": "Crée une variante PDF e-ink en conservant texte/vectoriel et en optimisant seulement les images raster compatibles.",
@@ -165,7 +165,7 @@
     {
       "id": "device.profile.xteink-x3",
       "type": "device.profile",
-      "version": "0.3.6",
+      "version": "0.3.7",
       "entrypoint": "cifereca_epub_optimizer_profiles:XTEINK_X3_PLUGIN",
       "display_name": "Xteink X3 / CrossPoint",
       "description": "Profil 528×792, 4 niveaux de gris.",
@@ -184,7 +184,7 @@
     {
       "id": "device.profile.xteink-x4",
       "type": "device.profile",
-      "version": "0.3.6",
+      "version": "0.3.7",
       "entrypoint": "cifereca_epub_optimizer_profiles:XTEINK_X4_PLUGIN",
       "display_name": "Xteink X4 / CrossPoint",
       "description": "Profil 480×800, 4 niveaux de gris.",
@@ -203,7 +203,7 @@
     {
       "id": "device.profile.kobo-clara-bw",
       "type": "device.profile",
-      "version": "0.3.6",
+      "version": "0.3.7",
       "entrypoint": "cifereca_epub_optimizer_profiles:KOBO_CLARA_BW_PLUGIN",
       "display_name": "Kobo Clara BW",
       "description": "Profil 1072×1448, 300 ppp, niveaux de gris 8 bits.",
@@ -222,7 +222,7 @@
     {
       "id": "device.profile.generic-eink",
       "type": "device.profile",
-      "version": "0.3.6",
+      "version": "0.3.7",
       "entrypoint": "cifereca_epub_optimizer_profiles:GENERIC_EINK_PLUGIN",
       "display_name": "E-ink générique",
       "description": "Profil prudent 1200×1600 en niveaux de gris.",
@@ -241,7 +241,7 @@
     {
       "id": "ui.page.epub-optimizer",
       "type": "ui.page",
-      "version": "0.3.6",
+      "version": "0.3.7",
       "entrypoint": "cifereca_epub_optimizer_plugin:PLUGIN",
       "display_name": "Optimiseur EPUB / PDF e-ink",
       "description": "Page de recette et action book.detail pour créer une variante e-ink EPUB ou PDF.",
@@ -314,6 +314,13 @@
             "default": false,
             "title": "Laboratoire IA : prévisualisation sémantique",
             "description": "Affiche une prévisualisation facultative à partir d'un extrait collé volontairement. Le service LLM peut être distant. Ne lit aucun fichier et ne produit aucune variante EPUB."
+          },
+          "cpu_workers": {
+            "type": "integer",
+            "enum": [1, 2, 4],
+            "default": 1,
+            "title": "Processus d’optimisation locale",
+            "description": "Pour un fichier choisi dans cette page. Les variantes de bibliothèque utilisent la configuration de leur transformer."
           }
         }
       },

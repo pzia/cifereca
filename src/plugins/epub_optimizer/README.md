@@ -11,8 +11,12 @@ Le coordinateur conserve l'ordre des entrées, l'écriture exclusive
 du ZIP, la vérification DRM/OCF avant traitement, les vérifications
 de sortie et la publication atomique. Un lot traite au plus 16 Mio
 d'images source et au plus N images en vol ; les images trop grandes
-restent traitées par la voie séquentielle. Attente bornée à 120 s
-par image avec annulation vérifiée régulièrement ; une interruption
+restent traitées par la voie séquentielle. Depuis 0.3.7, aucun pool
+n'est ouvert pour une image seule ; les images séparées par XHTML/CSS
+peuvent partager un lot sans changer l'ordre d'écriture. L'admission
+est aussi plafonnée à 128 Mio de travail décodé estimé (16 × pixels +
+2 × octets source) par lot. Un mono-cœur reste séquentiel avec avertissement.
+Attente bornée à 120 s depuis la soumission de chaque image avec annulation vérifiée régulièrement ; une interruption
 du pool retire la sortie temporaire et ne modifie pas l'original.
 
 ## P1 #2432 — PDF : lots Pillow isolés (0.3.6)
@@ -68,14 +72,17 @@ CPU coordinateur + enfants, tailles et égalité de contenu 1/2/4.
 RSS : pics `getrusage` du coordinateur et du plus gros enfant terminé,
 en KiB sous Linux ; **ce n'est pas la somme des RSS simultanées**.
 Aucune latence GTK ni installation utilisateur n'est mesurée. La campagne
-ne compare pas automatiquement l'ancien moteur à `cpu_workers=1` et
-ne suffit pas à qualifier une absence de régression ou un gain universel.
+ne suffit pas à qualifier un gain universel. Pour comparer le mode 1
+au même code de référence, ajouter `--baseline-root /chemin/package-reference`
+et `--baseline-ref SHA` : le répertoire doit contenir le package
+`cifereca_epub_optimizer` extrait de ce SHA. Le banc alterne alors aussi
+un mode `baseline` séquentiel et vérifie son égalité de contenu avec 1/2/4.
 Les modes 2/4 restent opt-in ; les mesures et limites sont consignées dans
 #2432, le suivi transversal reste #1741.
 
 ---
 
-# Cifereca EPUB/PDF Optimizer 0.3.6
+# Cifereca EPUB/PDF Optimizer 0.3.7
 
 Compatible avec **Plugin API >=1.4,<2** (source de vérité : `cifereca-plugin.json`). Le moteur est publié comme `document.transformer` et les profils comme services publics `device.profile`.
 
@@ -184,3 +191,39 @@ préservation de l'original, traçabilité par passage, contrat
 Ce lot reste dépendant du vrai service LLM Core #778.
 
 Tests hors réseau : `tests/test_semantic_preview_p2.py`.
+
+
+## Finalisation CPU 0.3.7 (#2432)
+
+Le réglage `cpu_workers` de la page s'applique aux fichiers choisis localement ;
+les actions de bibliothèque utilisent le réglage de leur transformer.
+Défaut 1 partout : les mesures synthétiques montrent un coût de démarrage
+qui peut dépasser tout bénéfice du parallélisme. 2/4 sont des options
+explicites, pas une accélération annoncée. Le pool EPUB est créé au premier
+lot d'au moins deux images admissibles ; XHTML/CSS restent lus au fil de
+l'écriture. Les deux moteurs gardent source/cible précédente et suppriment
+les temporaires sur crash, annulation ou erreur. Les limites de lot sont
+une admission mémoire estimée, pas une garantie RSS du système ;
+PyMuPDF et l'interpréteur conservent leurs propres allocations.
+
+Recette GTK reproductible (widget réel `OptimizerPage`, vrai broker Core,
+transformations réelles et processus `spawn` 1/2/4 ; données synthétiques,
+pas une recette de l'application entière sur un poste utilisateur) :
+
+```bash
+# Après préparation de la recette environnements/chatgpt-work/README.md
+PYTHONPATH="$PWD/src:$PWD/src/plugins/epub_optimizer" \
+  environnements/chatgpt-work/work headless -- \
+  environnements/chatgpt-work/.venv/bin/python \
+  src/plugins/epub_optimizer/tests/gtk_cpu_responsiveness.py
+```
+
+La recette mesure les intervalles d'un heartbeat GLib de 10 ms pendant le
+travail, vérifie progression, retour à l'état disponible, intégrité source
+et égalité de contenu 1/2/4. Le contexte de profils est synthétique ; le
+widget, GTK, les tâches et la transformation ne sont pas substitués.
+Pour comparer le seul mode 1 à une version de référence du package,
+utiliser `CIFERECA_GTK_BASELINE=1` et
+`CIFERECA_GTK_PACKAGE_ROOT=/chemin/package-reference`.
+Les résultats chiffrés, échantillons et verdicts sont consignés dans #2432 ;
+le suivi performance transversal reste #1741. Aucun tag ni release implicite.
