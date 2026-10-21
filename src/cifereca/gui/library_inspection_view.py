@@ -456,6 +456,8 @@ class LocalInspectionController:
         candidate_index = [0]
         manual_mode = [False]
         manual_index = [0]
+        manual_rebuilding = [False]
+        manual_page_size = 25
 
         def valid():
             if self.session is session and self.alive() and session.valid():
@@ -467,35 +469,73 @@ class LocalInspectionController:
             if not valid():
                 return
             if manual_mode[0]:
-                # The same private, revocable identity-specific file projection.
-                # Query only case labels, never hidden proofs, and retrieve
-                # ONE file including unhashed/unverified observations.
+                # Closed filters only, selected through a *private* in-memory
+                # projection; never query a provider or infer a Numilog right.
+                options = {
+                    'media_format': ('all', 'epub', 'pdf')[format_filter.get_selected()],
+                    'sha_state': ('all', 'verified', 'unverified')[sha_filter.get_selected()],
+                    'epub_crc': ('all', 'confirmed', 'other')[crc_filter.get_selected()],
+                    'sort': ('title', 'filename', 'scan')[file_sort.get_selected()],
+                }
+                page_start = manual_index[0] // manual_page_size * manual_page_size
                 page = session.unconfirmed_files(
-                    offset=manual_index[0], limit=1,
-                    query=manual_search.get_text()[:160],
+                    offset=page_start, limit=manual_page_size,
+                    query=manual_search.get_text()[:160], **options,
                 )
                 manual_toggle.set_label('Voir les candidats exacts')
                 candidate_title.set_text('Fichiers non liés · comparaison manuelle')
                 candidate_note.set_text(
-                    'Fichiers de cette identité sans lien de droit confirmé '
-                    '(y compris SHA non vérifié). Aucun n’est attribué '
-                    'à ce droit ni à son fournisseur.'
+                    'Aucune suggestion fiable n’est nécessaire pour explorer '
+                    'les fichiers locaux. Aucun fichier sélectionné n’est '
+                    'attribué à ce droit ni à son fournisseur.'
                 )
                 candidate_prev.set_label('◀ Fichier')
                 candidate_next.set_label('Fichier ▶')
                 candidate_number.set_text(
                     f'{manual_index[0]+1 if page.cases else 0} / {page.total}'
                     ' · exploration non probante'
+                    + (' · scan incomplet'
+                       if session.summary().get('status') != 'complete' else '')
+                )
+                # Rebuild only one bounded page. The guard prevents
+                # programmatic selection from triggering a recursive redraw.
+                manual_rebuilding[0] = True
+                try:
+                    child = manual_list.get_first_child()
+                    while child is not None:
+                        manual_list.remove(child)
+                        child = manual_list.get_first_child()
+                    chosen_row = None
+                    for position, case in enumerate(page.cases):
+                        row = Gtk.ListBoxRow()
+                        row._manual_offset = page.offset + position
+                        row._manual_file_key = case.key
+                        label = Gtk.Label(label=case.label, xalign=0)
+                        label.set_wrap(True)
+                        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                        label.set_max_width_chars(32)
+                        row.set_child(label)
+                        manual_list.append(row)
+                        if row._manual_offset == manual_index[0]:
+                            chosen_row = row
+                    if chosen_row is not None:
+                        manual_list.select_row(chosen_row)
+                finally:
+                    manual_rebuilding[0] = False
+                current = manual_index[0] - page.offset
+                selected = (
+                    page.cases[current]
+                    if 0 <= current < len(page.cases) else None
                 )
                 candidate_detail.set_text(
-                    page.cases[0].label + '\n\n' + page.cases[0].details
-                    if page.cases else
+                    selected.label + '\n\n' + selected.details
+                    if selected else
                     'Aucun fichier non lié visible avec ce filtre. Cela ne '
                     'prouve pas que le livre soit absent.'
                 )
                 candidate_prev.set_sensitive(manual_index[0] > 0)
                 candidate_next.set_sensitive(
-                    manual_index[0]+len(page.cases) < page.total
+                    manual_index[0] + 1 < page.total
                 )
                 return
             manual_toggle.set_label('Comparer tous les fichiers non liés')
