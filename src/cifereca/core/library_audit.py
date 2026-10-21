@@ -131,7 +131,11 @@ def audit_library(
     emit('metadata_candidates')
     candidates = metadata_candidates(inventory, snapshot, cancelled=stopped)
     emit('stored_paths')
+    stored_started = monotonic()
     paths = inspect_stored_paths(snapshot, selected, cancelled=stopped)
+    # Only the elapsed aggregate crosses the Core redaction boundary.
+    # Standalone StoredPathReport uses no invented measurement.
+    paths.duration_ms = max(0, min(30_000, int((monotonic() - stored_started) * 1000)))
     stopped()
     groups = group_evidence(inventory, snapshot, report, tuple(selected))
     result = LibraryAudit(inventory, snapshot, report, candidates, paths, groups, reasons)

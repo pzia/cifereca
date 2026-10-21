@@ -140,3 +140,32 @@ def test_invalid_roots_and_database_never_create_paths(tmp_path):
         audit_library(Path('relative.sqlite'), {'i': (absent,)})
     assert not database.exists()
     assert not absent.exists()
+
+
+def test_stored_path_phase_elapsed_is_bounded_and_never_exposes_paths(library, tmp_path):
+    from cifereca.core.library_stored_paths import StoredPathReport
+    from cifereca.core.diagnostic_reconciliation import from_audit_result, public_fields
+
+    database, roots, book = library
+    assert "duration_ms" not in StoredPathReport().redacted()  # no invented zero
+    before = filesystem(tmp_path)
+    audit = audit_library(database, roots)
+    public = audit.redacted()
+    measured = public["stored_paths"].get("duration_ms")
+    assert type(measured) is int and 0 <= measured <= 30_000
+    fields = from_audit_result(public)
+    assert fields["phase_ms"]["stored_paths"] == measured
+    assert fields == public_fields(fields)
+    assert str(book) not in json.dumps(fields)
+    assert "PRIVATE" not in json.dumps(fields)
+    assert filesystem(tmp_path) == before
+
+
+def test_stored_path_duration_malformed_value_is_not_published(library):
+    from cifereca.core.diagnostic_reconciliation import from_audit_result
+
+    database, roots, _book = library
+    redacted = audit_library(database, roots).redacted()
+    for hostile in (True, -1, "PRIVATE_PATH", {"path": "/secret"}, 1.5):
+        redacted["stored_paths"]["duration_ms"] = hostile
+        assert "stored_paths" not in from_audit_result(redacted)["phase_ms"]
