@@ -120,7 +120,7 @@ et collecte dans `PrivateHttpTrace` une chronologie de requêtes-réponses
 pour les origines explicitement autorisées (par défaut, seule l'origine de
 départ). Les échanges sont identifiés, les redirections et les erreurs
 réseau sont distinguées, et les corps textuels JSON/HTML/XML/plain peuvent
-être conservés **uniquement en mémoire privée**. Aucun replay HTTP n'est
+être conservés en mémoire privée et, après consentement dédié et déverrouillage, dans le coffre chiffré. Aucun replay HTTP n'est
 déclenché par le collecteur.
 
 Limites fermées par session : 240 échanges, 32 Kio par corps, 768 Kio de corps
@@ -131,9 +131,11 @@ sous les plafonds. Les réponses sans longueur sûre sont omises plutôt que
 copiées par une API qui chargerait une quantité imprévisible en mémoire.
 Les cookies/Authorization/en-têtes secrets ne sont jamais conservés.
 L'objet privé contient néanmoins des URL et textes **potentiellement
-sensibles** : ne jamais le journaliser, sérialiser ou transmettre.
-`trace.destroy()` efface les références contrôlées quand la revue est
-abandonnée. Aucune écriture disque n'est autorisée par cette API.
+sensibles** : ne jamais le journaliser ni le transmettre.
+`trace.destroy()` efface les références RAM contrôlées quand la revue est
+abandonnée. Sans `vault_writer`, `record_http()` n'écrit toujours rien ;
+avec `vault_writer` préalablement consenti, seules des projections chiffrées
+authentifiées sont persistées, jamais des octets privés en clair.
 
 **Livré séparément** : revue individuelle (#2529) et archive filtrée
 explicitement exportable localement (#2530). Des tests Chromium et GTK4
@@ -248,3 +250,54 @@ en boîte noire de la page distribuée (#2531) reste à effectuer ;
 un export contenant des données privées doit être relu soigneusement
 avant toute transmission volontaire. Ne jamais déduire un droit
 d'acquisition d'un JSON partiellement préservé.
+
+
+## Coffre privé chiffré — sessions différées (#2725)
+
+La page Browser Recorder présente un consentement supplémentaire au
+**stockage local chiffré**, puis une entrée de phrase secrète (12 caractères
+minimum ; préférer une phrase longue, unique et non partagée). La saisie est
+**obligatoire avant de démarrer Chromium** ; en l'absence de coffre sûr ou de
+`cryptography` disponible, la capture ne doit pas démarrer. Le Core propose
+l'installation/réparation explicite des dépendances Python du plugin.
+La simple ouverture de la page n'initialise ni coffre ni collecte.
+
+Chaque parcours autorisé crée un ID aléatoire ; ses observations retenues
+(URL/query, redirections, en-têtes techniques, corps textuels limités) sont
+sauvegardées dans `private-sessions/<id>.cbrv`, un fichier **AES-256-GCM**
+avec clé dérivée de la phrase secrète par **scrypt**, sel/nonce aléatoires
+propres à la session et authentification du nom de fichier. Le répertoire
+privé doit appartenir à l'utilisateur et être en mode 0700 ; fichiers
+0600, sans symlink/hardlink, snapshots atomiques/fdatasync/fsync et bornes
+128 sessions / 128 Mio / 3 Mio par session. Le nouveau ZIP pour LLM est
+toujours distinct, expurgé et soumis aux décisions unitaires + confirmation.
+
+Pendant la capture, le collecteur écrit au plus une projection chiffrée
+par seconde ; il finalise un état `completed` lors du Stop ou de la fermeture
+normale de la dernière fenêtre Chromium. Après une interruption brutale,
+**seule la dernière projection déjà durable** est récupérable :
+`recording` ne signifie pas complété. Les erreurs récupérables peuvent
+produire `interrupted`. Ce mécanisme ne garantit pas les dernières requêtes,
+les corps jamais retenus ni les écritures après une panne totale du disque.
+
+« Lister les sessions archivées » affiche seulement des ID opaques ;
+l'origine et les corps ne sont pas dans les noms ni les diagnostics. Pour
+reprendre une session, sélectionner son ID, saisir la même phrase secrète,
+puis « Ouvrir une session — nouvelle revue ». **Aucun navigateur ni
+requête fournisseur** n'est lancé par cette action. Une nouvelle revue
+n'altère pas la capture source et peut déboucher sur un ZIP anonymisé
+différent, toujours avec aperçu et consentement. « Démarrer HTTP privé »
+permet des captures en série après sauvegarde de la précédente. La suppression
+exige de sélectionner la session, cocher sa confirmation et ressaisir la clé.
+
+**Confidentialité et limites** : perdre la phrase secrète rend le fichier
+irrécupérable ; la passphrase n'est jamais enregistrée. Les métadonnées privées
+n'apparaissent pas dans le journal applicatif, mais les données restent
+sensibles après déchiffrement en RAM. L'archive locale **ne contient pas**
+les cookies/Authorization/Set-Cookie exclus en amont, les fichiers binaires,
+les échanges hors périmètre, les corps refusés ni un profil navigateur.
+La suppression du fichier ne garantit pas un effacement forensique des
+snapshots SSD/sauvegardes. Ne pas synchroniser `private-sessions/` vers
+un cloud par défaut. Le ZIP **non anonymisé de diagnostic** est une action
+distincte à ajouter sous #2698 ; ne jamais partager un fichier `.cbrv`
+comme s'il était un ZIP sans donnée privée.
