@@ -1236,6 +1236,8 @@ class PrivateReviewPanel:
         # list of opaque session IDs alone is also discarded on deactivation.
         if self.session_list is not None:
             self.session_list.remove_all()
+        if self.session_name is not None:
+            self.session_name.set_text("")
         # Never leave typed vault/export secrets in a detached GTK page.
         if self.vault_passphrase is not None:
             self.vault_passphrase.set_text("")
