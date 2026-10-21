@@ -53,7 +53,7 @@ def test_zip_only_reference_project_packages_and_passes_public_contract(tmp_path
         "catalog.search", "catalog.detail",
     ]
     from cifereca.plugins.manifest import load_manifest
-    descriptor = load_manifest(destination)
+    descriptor = load_manifest(destination / "cifereca-plugin.json")
     assert descriptor.plugins[0].id == "catalog.fixture-example"
     # Plugin tests are intentionally run with plugin root as cwd; the
     # repository's *official* packager is located via the known test path.
