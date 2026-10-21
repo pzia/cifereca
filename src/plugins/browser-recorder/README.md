@@ -52,10 +52,18 @@ La CI vérifie désormais deux niveaux distincts :
   déclenche ni navigation, capture ni export. Les modules ne sont pas
   chargés à partir du chemin source du plugin.
 
-**Limites :** l'ouverture du ZIP installé ne prouve pas encore la capture
-de navigateur depuis la distribution, ni le parcours interactif complet
-jusqu'au ZIP sur une VM vierge. La recette humaine d'accessibilité et
-l'oracle indépendant de l'archive restent à réaliser avant clôture #2531.
+Dans une seconde recette, le **collecteur réseau seul** reçoit une
+trace HTTP entièrement fictive : le package installé et sa vraie page GTK
+traitent **81 identifiants individuellement**, préparent le ZIP exact,
+nécessitent une seconde confirmation, puis enregistrent l'archive 0600.
+Un oracle **indépendant** (bibliothèque Python `zipfile` et SHA-256) ouvre
+le fichier exporté et vérifie ses membres, leurs contenus exacts et
+l'absence d'une clé fictive obligatoirement masquée.
+
+**Limites :** cette injection synthétique ne prouve **pas** une vraie
+capture Chromium à travers le package distribué, la recette complète
+sur VM vierge, ni une revue humaine de l'accessibilité et de l'utilité
+de l'archive pour écrire un provider. Ces preuves restent ouvertes #2531.
 
 ## Capture
 
