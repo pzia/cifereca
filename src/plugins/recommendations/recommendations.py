@@ -317,8 +317,19 @@ def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
     # The engine produces only immutable CatalogNoticeVariant records.
     if type(notices) not in (tuple, list):
         return ()
-    for notice in notices[:64]:
-        if type(notice) is not CatalogNoticeVariant or not notice.has_source_coordinates:
+    for notice in notices[:256]:
+        if type(notice) is not CatalogNoticeVariant:
+            continue
+        # An ISBN selector must be backed by the SAME validated, bounded
+        # original provider coordinates as an exact Search detail action.
+        # The source dataclass can contain malformed cached field values.
+        coordinates = (
+            notice.source_provider, notice.source_credential,
+            notice.record_id, notice.docbase, notice.source_collection,
+        )
+        if (any(type(value) is not str or len(value) > 512
+                for value in coordinates)
+                or not all(coordinates[:3])):
             continue
         isbn = notice.isbn
         if type(isbn) is not str or not re.fullmatch(r"97[89][0-9]{10}", isbn):
@@ -1614,18 +1625,40 @@ class UxRecommendationsView:
         # Show only accountable, originally observed variants. Never display
         # credential IDs, private record IDs or infer borrowing availability.
         raw_variants = getattr(ranked, "notices", ())
+        # This is a bounded LOCAL inspection of public catalogue coordinates,
+        # never a network search. The historical first-64 slice could hide
+        # every valid edition behind 64 incomplete catalogue variants.
         variants = (
-            tuple(raw_variants[:64])
+            tuple(raw_variants[:256])
             if type(raw_variants) in (tuple, list) else ()
         )
-        # Unresolved rows must not consume the visible exact-notice budget:
-        # an attested edition may follow many incomplete search hits.
-        exact_variants = [
-            variant for variant in variants
-            if (type(variant) is CatalogNoticeVariant
-                and variant.has_source_coordinates)
-        ][:16]
-        if exact_variants:
+        # ISBN is not a provider-record identifier: one exact notice may be
+        # present with several ISBNs. Deduplicate on the 5 coordinates that
+        # Core's real Search detail uses, keeping credentials distinct.
+        exact_variants = []
+        seen_coordinates = set()
+        for variant in variants:
+            if type(variant) is not CatalogNoticeVariant:
+                continue
+            coordinates = (
+                variant.source_provider, variant.source_credential,
+                variant.record_id, variant.docbase, variant.source_collection,
+            )
+            if (any(type(value) is not str or len(value) > 512
+                    for value in coordinates)
+                    or not all(coordinates[:3])
+                    or coordinates in seen_coordinates):
+                continue
+            seen_coordinates.add(coordinates)
+            # Inspect all 256 bounded candidates even after 16 displayable
+            # rows: only a *verified overflow* may claim partial display.
+            if len(exact_variants) < 16:
+                exact_variants.append(variant)
+        hidden_variants = (
+            type(raw_variants) in (tuple, list)
+            and len(raw_variants) > 256
+        )
+        if exact_variants or hidden_variants:
             edition_fields = []
             for index, variant in enumerate(exact_variants, 1):
                 name = self._display_source(variant.source_provider)
@@ -1636,11 +1669,19 @@ class UxRecommendationsView:
                     f"{name} · ISBN {isbn}" if isbn else
                     f"{name} · édition non attestée",
                 ))
-            edition_fields.append(DetailField(
-                "source-edition-warning", "Actions disponibles",
-                "Choisir une notice dans Recherche pour consulter les "
-                "disponibilités et les actions réellement autorisées.",
-            ))
+            if exact_variants:
+                edition_fields.append(DetailField(
+                    "source-edition-warning", "Actions disponibles",
+                    "Choisir une notice dans Recherche pour consulter les "
+                    "disponibilités et les actions réellement autorisées.",
+                ))
+            if len(seen_coordinates) > 16 or hidden_variants:
+                edition_fields.append(DetailField(
+                    "source-edition-limit", "Limite d'affichage",
+                    "Au plus 16 notices exactes affichées ; seules les "
+                    "256 premières variantes peuvent être examinées. "
+                    "La liste n'est pas exhaustive.",
+                ))
             sections.append(DetailSection(
                 "source-editions", "Éditions et sources distinctes",
                 tuple(edition_fields), 35,

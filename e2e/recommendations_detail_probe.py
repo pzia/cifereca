@@ -31,6 +31,10 @@ from PIL import ImageGrab
 
 from cifereca.gui.plugin_ui_host import _UiHost
 from cifereca.gui.public_book_view import PublicBookMasterDetailView
+from cifereca.gui.exact_search_notice_navigation import (
+    can_open_loaded_search_notice as core_can_open_exact,
+    open_loaded_search_notice as core_open_exact,
+)
 from recommendation_engine import CatalogNoticeVariant, RankedCandidate
 from recommendations import RecommendationsPlugin
 from x11_input import X11Input
@@ -48,7 +52,7 @@ def ranked(book_id, title, isbn, *, score):
     variant = CatalogNoticeVariant(
         item=item, source_provider="fixture",
         source_credential="fixture-public", record_id=book_id,
-        docbase="", source_collection="catalog", isbn=isbn,
+        docbase="BOOKS", source_collection="catalog", isbn=isbn,
     )
     return RankedCandidate(
         item=item, score=score, reasons=("Auteur : Autrice Attestée",),
@@ -84,6 +88,7 @@ def main():
         "real_plugin": "src/plugins/recommendations/recommendations.py",
         "real_host": "cifereca.gui.plugin_ui_host._UiHost",
         "source_data": "synthetic ranked candidates; ranking task disabled",
+        "p1_1354_phase": "probe_start",
     }
     app = Adw.Application(
         application_id="org.cifereca.E2ERecommendations",
@@ -91,7 +96,8 @@ def main():
     )
     state = {"view": None, "plugin": None, "window": None,
              "device": None, "searches": [], "toasts": [],
-             "old_action": None}
+             "old_action": None, "exact_navigations": [],
+             "exact_selected": [], "exact_button": None, "exact_clicked": 0}
 
     def save():
         report["duration_seconds"] = round(monotonic() - start, 2)
@@ -122,6 +128,17 @@ def main():
     def fail(exc):
         if report["status"] != "RUNNING":
             return
+        # Stable closed error phase for CI. Never print exception contents,
+        # user-entered text, source coordinates, GTK labels or traceback.
+        allowed = {
+            "probe_start", "initial", "long_detail", "scrolled",
+            "exact_setup", "exact_button", "exact_focus", "exact_key",
+            "exact_verdict", "exact_key_dispatch", "exact_navigation",
+            "exact_selection", "exact_no_search", "return_list",
+        }
+        phase = report.get("p1_1354_phase")
+        if type(phase) is str and phase in allowed:
+            print("P1_1354_CLOSED_FAILURE_STAGE=" + phase, flush=True)
         report["status"] = "FAIL"
         report["error"] = str(exc)
         report["traceback"] = traceback.format_exc(limit=6)
@@ -164,6 +181,7 @@ def main():
         device.key("Return", False)
 
     def initial():
+        report["p1_1354_phase"] = "initial"
         view = state["view"]
         assert view.selected_identity_id() == "alice"
         assert isinstance(view._master, PublicBookMasterDetailView)
@@ -286,6 +304,7 @@ def main():
         later(250, after_reactivation_detail)
 
     def after_reactivation_detail():
+        report["p1_1354_phase"] = "long_detail"
         view = state["view"]
         assert view._master._page.selection.get_selected() == 0
         assert any(
@@ -318,18 +337,118 @@ def main():
         assert adjustment.get_value() > 0
         report["checks"]["detail_scroll_functional"] = True
         capture("05-reopened-scrolled")
-        # Returning to the list removes the active detail and must not
-        # turn a still-stored old action into a usable callback.
+        report["p1_1354_phase"] = "scrolled"
+        # This test uses the REAL Core exact-notice resolver and REAL
+        # Recommandations GTK action. The Search target is a synthetic,
+        # previously loaded Core-owned row; its select_key is a pure recorder,
+        # never an acquisition or provider call.
+        later(100, exact_loaded_bridge)
+
+    def exact_loaded_bridge():
+        report["p1_1354_phase"] = "exact_setup"
+        view = state["view"]
+        window = state["window"]
+        notice = NS(
+            source_provider="fixture", source_credential="fixture-public",
+            record_id="edition-reopened", docbase="BOOKS",
+            source_collection="catalog", id="core-loaded-1",
+            metadata={"search_provenance": "remote"},
+        )
+        key = "fixture:core-loaded-1"
+        window._search_mode = "global"
+        window._loaded_search_context = ("édition", "title", "all", "alice")
+        window.search_controls = NS(
+            state=lambda: NS(text="édition", field="title", scope="all"),
+        )
+        window.service.searchable_providers = lambda: [("fixture", "Fixture")]
+        window._remote_search_results = [notice]
+        window.search_objects = {key: notice}
+        window.search_page = NS(
+            store=NS(
+                get_n_items=lambda: 1,
+                get_item=lambda _index: NS(key=key),
+            ),
+            select_key=lambda target: (
+                state["exact_selected"].append(target) or target == key
+            ),
+        )
+        window.navigate = lambda route: state["exact_navigations"].append(route)
+        window.can_open_loaded_search_notice = lambda **coordinates: (
+            core_can_open_exact(window, **coordinates)
+        )
+        window.open_loaded_search_notice = lambda **coordinates: (
+            core_open_exact(window, **coordinates)
+        )
+        row = view._master._page.selection.get_selected_item()
+        assert row is not None
+        view._selected_row(row)
+        buttons = [
+            widget for widget in walk(view.widget)
+            if isinstance(widget, Gtk.Button)
+            and str(getattr(widget, "_cifereca_action_id", "")).startswith(
+                "recommendation.loaded-notice."
+            )
+        ]
+        report["p1_1354_phase"] = "exact_button"
+        assert len(buttons) == 1, "Loaded exact Search route is missing"
+        button = buttons[0]
+        assert button.get_mapped()
+        assert "vault" not in str(
+            getattr(button, "_cifereca_action_label", "") or ""
+        ).casefold()
+        assert not state["exact_navigations"] and not state["exact_selected"]
+        assert not state["searches"][1:], "Rendering must not search"
+        state["exact_button"] = button
+        button.connect("clicked", lambda _button: state.__setitem__(
+            "exact_clicked", state["exact_clicked"] + 1
+        ))
+        capture("05b-loaded-exact-route")
+        report["p1_1354_phase"] = "exact_focus"
+        # This action lives below a long detail's scrolled content.
+        # Separate GTK focus/scroll from XTEST Return: activation in the
+        # same GTK main-loop turn is not guaranteed to reach the button.
+        assert button.grab_focus() is not False
+        later(170, lambda: exact_press(button))
+
+    def exact_press(button):
+        report["p1_1354_phase"] = "exact_key"
+        assert button.get_mapped() and button.get_sensitive()
+        assert button.has_focus(), "Exact action did not receive GTK focus"
+        state["device"].key("Return", True)
+        state["device"].key("Return", False)
+        later(300, after_exact_loaded_bridge)
+
+    def after_exact_loaded_bridge():
+        report["p1_1354_phase"] = "exact_verdict"
+        view = state["view"]
+        report["p1_1354_phase"] = "exact_key_dispatch"
+        assert state["exact_clicked"] == 1, "Exact action did not receive keyboard activation"
+        report["p1_1354_phase"] = "exact_navigation"
+        assert state["exact_navigations"] == ["search"]
+        report["p1_1354_phase"] = "exact_selection"
+        assert state["exact_selected"] == ["fixture:core-loaded-1"]
+        report["p1_1354_phase"] = "exact_no_search"
+        assert len(state["searches"]) == 1  # Only the earlier explicit ISBN
+        assert view.selected_identity_id() == "alice"
+        assert view._master._page.store.get_n_items() == 1
+        report["checks"]["P1_1354_real_gtk_exact_notice_core_navigation_no_network"] = True
+        # Returning to recommendations preserves identity and the selection
+        # without resurrecting an earlier Core/GTK callback.
         view._master._page.selection.set_selected(Gtk.INVALID_LIST_POSITION)
         later(200, after_return_to_list)
 
     def after_return_to_list():
+        report["p1_1354_phase"] = "return_list"
         view = state["view"]
         assert view._master._page.store.get_n_items() == 1
         assert view._master._page.selection.get_selected_item() is None
         state["old_action"].emit("clicked")
         assert len(state["searches"]) == 1
+        state["exact_button"].emit("clicked")
+        assert state["exact_navigations"] == ["search"]
+        assert state["exact_selected"] == ["fixture:core-loaded-1"]
         report["checks"]["return_to_list_keeps_old_action_inert"] = True
+        report["checks"]["P1_1354_detached_exact_action_is_inert"] = True
         report["checks"]["no_network_or_acquisition"] = True
         capture("06-return-to-list")
         state["plugin"].deactivate()
