@@ -1035,6 +1035,10 @@ class PluginManagerPage(Gtk.ScrolledWindow):
 
     def _finish_python_dependencies(self, success: bool) -> bool:
         self._python_deps_install_running = False
+        # The Core pip worker may outlive a closing GTK window. Do not
+        # reactivate contributions or render dialogs against disposed widgets.
+        if getattr(self.window, "_closed", False):
+            return False
         if success:
             try:
                 self.manager.activate()

@@ -63,10 +63,15 @@ jobs:
             python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-venv xvfb xauth
           /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/gtk-ui-venv"
           "$RUNNER_TEMP/gtk-ui-venv/bin/python" -m pip install --disable-pip-version-check \
-            -e . 'playwright>=1.50,<2' 'pytest>=8,<9'
+            -e . 'pytest>=8,<9'
+          # The real Plugins GUI must install Playwright itself after consent.
+          if "$RUNNER_TEMP/gtk-ui-venv/bin/python" -m pip show playwright >/dev/null 2>&1; then
+            echo 'Unexpected Playwright Python already in the fresh GUI venv' >&2
+            exit 1
+          fi
           mkdir -p "$RUNNER_TEMP/empty-ui-home"
           test ! -e "$RUNNER_TEMP/empty-ui-home/.cache/ms-playwright"
-      - name: Real Plugins GTK dialog consent and Core Chromium first-install
+      - name: Real Plugins GUI: consented Python repair then Chromium install from zero
         env:
           GDK_BACKEND: x11
         run: |
