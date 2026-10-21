@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 
 from .library_audit import audit_library
 from .library_audit_roots import configured_identity_roots
@@ -54,6 +55,28 @@ class LibraryReconciliationReadBrokerImpl:
 
 
 def _run_scoped_audit(service, identity_id, control, finish):
+    """One terminal, aggregate-only event per broker attempt.
+
+    The event collector is optional; it can neither block the offline audit
+    nor receive the private Inventory/Snapshot or untrusted exception text.
+    """
+    from ..diagnostics import Diagnostics
+
+    started = monotonic()
+    result = _execute_scoped_audit(service, identity_id, control, finish)
+    try:
+        diagnostics = getattr(service, 'diagnostics', None)
+        if type(diagnostics) is Diagnostics:
+            diagnostics.add_core_reconciliation_result(
+                result, duration_ms=max(0, int((monotonic() - started) * 1000)),
+            )
+    except Exception:
+        # Diagnostics are optional and cannot change the audit result.
+        pass
+    return result
+
+
+def _execute_scoped_audit(service, identity_id, control, finish):
     """Core-only completion hook; the public broker always returns redacted data."""
     try:
         config = service.config
