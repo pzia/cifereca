@@ -18,3 +18,32 @@ Il reste à #2431 : gouvernance partagée entre pools, anti-famine, budgets par 
 ## Vérifications
 
 Les tests Core vérifient saturation réelle d'un worker bloqué, priorité de lecture de la file, absence d'exécution après annulation, refus sans fuite dans le broker, callbacks de shutdown réentrants et comportement non borné par défaut. Un passage CI Core est requis avant fusion.
+
+## Sous-lot observabilité des refus (#2431 / #1741)
+
+`SharedTaskAdmission.snapshot()` complète le compteur historique `rejected`
+par **cinq compteurs entiers agrégés**, cumulatifs pour la durée de vie du
+budget local :
+
+- `rejected_global` : tous les emplacements en vol occupés ;
+- `rejected_reserved` : refus d'une tâche de fond sur la réserve dédiée à
+  une action utilisateur, avant saturation complète ;
+- `rejected_scope` : quota d'une portée privée saturé ;
+- `rejected_user` / `rejected_background` : classe du demandeur refusé.
+
+Pour toute demande refusée, une seule des trois causes
+`global` / `reserved` / `scope` est incrémentée, de même qu'une seule
+classe `user` / `background`. On a donc toujours
+`rejected = rejected_global + rejected_reserved + rejected_scope`
+et
+`rejected = rejected_user + rejected_background`.
+La priorité des causes en cas de saturation simultanée est
+**global > réserve > portée**. Les compteurs ne révèlent pas quel compte,
+quel fournisseur ou quel plugin a consommé les emplacements.
+
+**Aucun changement** de budget, d'ordonnancement, d'autorisation, de rejet,
+de stockage ou d'API externe. Les compteurs sont process-local, monotones,
+sans traces de la requête et ne forment pas un quota réseau inter-processus.
+Leur observation n'attribue pas à elle seule une attente ou un gain de
+performance ; le diagnostic p50/p95, CPU/RSS et l'activation globale restent
+à étudier dans #1741.
