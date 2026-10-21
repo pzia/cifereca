@@ -22,10 +22,18 @@ def result_text(result) -> str:
     sections = [text(getattr(result, "summary", "")) or "Outil terminé."]
     details = lines(getattr(result, "details", ()))
     warnings = lines(getattr(result, "warnings", ()))
+    # Reconciliation can report hundreds of counters on an incomplete scan.
+    # At 1280/1366 px the result scroll is capped at 340 px: limitations
+    # must not be hidden below those numbers (#2565). Only the fixed public
+    # status marker controls order; never inspect execution facts or repr().
+    if warnings and sections[0].startswith("Analyse incomplète."):
+        sections.append("Avertissements et limites :\n" +
+                        "\n".join("• " + line for line in warnings))
     if details:
         sections.append("Résultats :\n" + "\n".join("• " + line for line in details))
-    if warnings:
-        sections.append("Avertissements et limites :\n" + "\n".join("• " + line for line in warnings))
+    if warnings and not sections[0].startswith("Analyse incomplète."):
+        sections.append("Avertissements et limites :\n" +
+                        "\n".join("• " + line for line in warnings))
     return "\n\n".join(sections)
 
 
