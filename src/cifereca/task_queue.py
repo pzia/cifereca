@@ -199,7 +199,10 @@ class PriorityExecutor:
                             cancelled.append(future)
                         self._queue.task_done()
                 for _ in self._threads:
-                    self._queue.put((10_000, next(self._sequence), None, None))
+                    # Valid public priorities are unbounded integers. A finite
+                    # stop marker could overtake pending user work and strand
+                    # Future results and SharedTaskAdmission leases.
+                    self._queue.put((float("inf"), next(self._sequence), None, None))
         # A later shutdown(wait=True) must still join a pool that was
         # previously closed with wait=False. Closing is idempotent; waiting
         # for shutdown completion is an independent caller request.
