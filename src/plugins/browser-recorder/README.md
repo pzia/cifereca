@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.2, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.3, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -276,7 +276,13 @@ Pendant la capture, le collecteur écrit au plus une projection chiffrée
 par seconde ; il finalise un état `completed` lors du Stop ou de la fermeture
 normale de la dernière fenêtre Chromium. Après une interruption brutale,
 **seule la dernière projection déjà durable** est récupérable :
-`recording` ne signifie pas complété. Les erreurs récupérables peuvent
+`recording` ne signifie pas complété. À la réouverture, toute session dont
+le dernier snapshot porte encore l'état `recording` est affichée
+**« partielle (dernière sauvegarde seulement) »**, jamais en cours ni
+terminée ; `interrupted` indique une fin anormale détectée. La date
+affichée est celle du dernier snapshot durable, **pas celle du début**.
+L'origine/les compteurs restent invisibles tant que la session n'est
+pas déverrouillée et ne sont pas publiés dans Diagnostics. Les erreurs récupérables peuvent
 produire `interrupted`. Ce mécanisme ne garantit pas les dernières requêtes,
 les corps jamais retenus ni les écritures après une panne totale du disque.
 
@@ -357,7 +363,7 @@ Le ZIP interne n'est jamais écrit en clair par Cifereca. Le fichier
 le déchiffrement en mémoire est une étape volontaire distincte.
 
 
-## Choix de la destination ZIP (0.2.2)
+## Choix de la destination ZIP (0.2.3)
 
 Après l'examen **exact** de chaque membre et la confirmation explicite,
 **« Enregistrer sous… le ZIP anonymisé »** ouvre le dialogue natif GTK4
@@ -374,7 +380,7 @@ préexistant : le dossier doit appartenir à l'utilisateur avec permissions
 obligatoires. Le contenu privé n'est jamais enregistré en ZIP non chiffré.
 
 
-## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.2, #2740)
+## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.3, #2740)
 
 Chaque archive **revue** contient maintenant le répertoire
 `plugin-dev-kit/` avec ses guides indépendants, le

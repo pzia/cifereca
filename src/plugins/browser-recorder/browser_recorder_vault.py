@@ -168,8 +168,33 @@ class StoredSession:
     saved_at: str
     session_id: str
 
+    @property
+    def recovery_status(self) -> str:
+        """Status after opening from disk; never claim a live recorder.
+
+        Legacy 'recording' snapshots mean the app never wrote a final
+        completion marker. The ciphertext is preserved as-is for forensics.
+        """
+        return "partial" if self.state == "recording" else self.state
+
+    def private_summary(self) -> dict[str, object]:
+        """Visible *only after explicit user unlock*; never for Diagnostics.
+
+        saved_at is the timestamp of the LAST durable snapshot, not the
+        beginning of the browsing session.
+        """
+        return {
+            "id": self.session_id,
+            "saved_at": self.saved_at,
+            "status": self.recovery_status,
+            "origin": self.trace.origins[0] if self.trace.origins else "",
+            "exchanges": len(self.trace.exchanges),
+            "omissions": dict(self.trace.omitted),
+        }
+
     def __repr__(self):
-        return f"StoredSession(state={self.state!r}, exchanges={len(self.trace.exchanges)})"
+        return (f"StoredSession(state={self.recovery_status!r}, "
+                f"exchanges={len(self.trace.exchanges)})")
 
 
 class PrivateSessionVault:

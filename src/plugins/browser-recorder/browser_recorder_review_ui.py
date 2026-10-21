@@ -628,10 +628,24 @@ class PrivateReviewPanel:
             )
             return
         self._show_candidates(update_status=False)
+        private = stored.private_summary()
+        # This is the user's private, unlocked GTK panel: origin and time
+        # never travel through diagnostics, public broker, or ZIP manifest.
+        labels = {
+            "completed": "terminée",
+            "interrupted": "interrompue",
+            "partial": "partielle (dernière sauvegarde seulement)",
+        }
+        suffix = (" La fin du parcours n'est PAS attestée."
+                  if stored.recovery_status != "completed" else "")
         self.status.set_label(
-            f"Session {stored.state} rechargée : "
-            f"{len(stored.trace.exchanges)} échanges ; "
-            f"{self._review.pending()} décisions individuelles à reprendre."
+            f"Session {labels[stored.recovery_status]} ; "
+            f"dernière sauvegarde {private['saved_at']} ; "
+            f"origine {private['origin']} ; "
+            f"{private['exchanges']} échanges, "
+            f"{sum(private['omissions'].values())} omissions ; "
+            f"{self._review.pending()} décisions à reprendre."
+            + suffix
         )
         self._refresh()
 
