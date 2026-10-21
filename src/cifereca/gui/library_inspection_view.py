@@ -486,8 +486,8 @@ class LocalInspectionController:
                 candidate_title.set_text('Fichiers non liés · comparaison manuelle')
                 candidate_note.set_text(
                     'Aucune suggestion fiable n’est nécessaire pour explorer '
-                    'les fichiers locaux. Aucun fichier sélectionné n’est '
-                    'attribué à ce droit ni à son fournisseur.'
+                    'les fichiers locaux. Aucun n’est attribué à ce droit '
+                    'ni à son fournisseur, même après sélection.'
                 )
                 candidate_prev.set_label('◀ Fichier')
                 candidate_next.set_label('Fichier ▶')
