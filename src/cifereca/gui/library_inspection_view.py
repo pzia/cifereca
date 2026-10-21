@@ -169,12 +169,52 @@ class LocalInspectionController:
             warning = Gtk.Label(label='Analyse ou affichage incomplet : certaines preuves restent non vérifiées. Un livre non vérifié n’est pas réputé absent.', xalign=0)
             warning.set_wrap(True)
             box.append(warning)
+        # These are counts of different evidence objects, not a 1:1 matching
+        # between owned rights and local files. States can overlap.
+        overview = session.overview()
+        synopsis = Gtk.Label(xalign=0, label=(
+            f"Fichiers inspectés : {overview.get('files', 0)} · "
+            f"Liens confirmés : {overview.get('confirmed_files', 0)} · "
+            f"Sans droit attesté : {overview.get('local_without_right', 0)}\n"
+            f"Droits sans fichier vérifié : {overview.get('unverified_rights', 0)} · "
+            f"Fichiers sans provenance attestée : {overview.get('unattributed_files', 0)} · "
+            f"Chemins en anomalie : {overview.get('paths', 0)}"
+        ))
+        synopsis.set_wrap(True)
+        box.append(synopsis)
+        roots = overview.get('roots', ())
+        if roots:
+            root_label = Gtk.Label(xalign=0, label='Racines inspectées (privé) : '
+                                   + ' · '.join(roots[:3])
+                                   + (' · …' if len(roots) > 3 else ''))
+            root_label.set_wrap(True)
+            root_label.set_selectable(True)
+            box.append(root_label)
+        legend = Gtk.Label(xalign=0, label=(
+            'Droits et fichiers ne se correspondent pas nécessairement un à un. '
+            'Un état peut en recouvrir un autre ; aucun total ne prouve la présence '
+            'ou l’absence d’un livre.'
+        ))
+        legend.set_wrap(True)
+        box.append(legend)
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         provider = Gtk.DropDown.new_from_strings(list(PROVIDERS.values()))
         provider.set_tooltip_text('Filtrer par fournisseur attesté pour les fichiers ; source déclarée pour les droits')
         state = Gtk.DropDown.new_from_strings(list(STATES.values()))
         state.set_tooltip_text('Filtrer par état de preuve')
-        toolbar.append(provider); toolbar.append(state); box.append(toolbar)
+        search = Gtk.SearchEntry()
+        search.set_placeholder_text('Filtrer par titre, auteur, nom ou identifiant…')
+        search.set_hexpand(True)
+        toolbar.append(provider)
+        toolbar.append(state)
+        box.append(toolbar)
+        box.append(search)
+        shortcuts = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        show_files = Gtk.Button(label='Fichiers sans provenance attestée')
+        show_rights = Gtk.Button(label='Droits non vérifiés')
+        shortcuts.append(show_files)
+        shortcuts.append(show_rights)
+        box.append(shortcuts)
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         paned.set_vexpand(True)
         listing = Gtk.ListBox()
@@ -225,7 +265,8 @@ class LocalInspectionController:
                 return
             if reset: offset[0] = 0
             page = session.page(provider=list(PROVIDERS)[provider.get_selected()],
-                                state=list(STATES)[state.get_selected()], offset=offset[0])
+                                state=list(STATES)[state.get_selected()], offset=offset[0],
+                                query=search.get_text()[:160])
             current_total[0] = page.total
             child = listing.get_first_child()
             while child is not None:
@@ -252,6 +293,21 @@ class LocalInspectionController:
         listing.connect('row-selected', select)
         provider.connect('notify::selected', lambda *_: render(reset=True))
         state.connect('notify::selected', lambda *_: render(reset=True))
+        search.connect('search-changed', lambda *_: render(reset=True))
+
+        def choose(prov, status):
+            if not valid():
+                return
+            # GTK dropdown callbacks will redraw, always clear the textual
+            # query only if explicitly requested by the user.
+            provider.set_selected(list(PROVIDERS).index(prov))
+            state.set_selected(list(STATES).index(status))
+            render(reset=True)
+
+        show_files.connect('clicked', lambda *_: choose(
+            'unattributed', 'local_file_without_attested_right'))
+        show_rights.connect('clicked', lambda *_: choose(
+            'all', 'rights_without_verified_file'))
         previous.connect('clicked', lambda *_: move(-50))
         following.connect('clicked', lambda *_: move(50))
         close.connect('clicked', lambda *_: self.clear())
