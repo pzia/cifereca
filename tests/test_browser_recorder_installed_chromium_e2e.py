@@ -27,7 +27,7 @@ from gi.repository import GLib, Gtk  # noqa: E402
 
 from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
 from cifereca.plugins.configuration import PluginConfigStore
-from test_browser_recorder_installed_gtk_blackbox import (
+from tests.test_browser_recorder_installed_gtk_blackbox import (
     _real_package_zip, _children, _flush, PACKAGE_ID, PLUGIN_ID, SOURCE,
 )
 
