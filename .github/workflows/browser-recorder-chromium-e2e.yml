@@ -88,7 +88,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             python3-gi gir1.2-gtk-4.0 python3-pytest python3-venv python3-cryptography
           /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/installed-browser-venv"
-          "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pip install --disable-pip-version-check 'playwright>=1.50,<2'
+          "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pip install --disable-pip-version-check 'playwright>=1.50,<2' 'cryptography>=42,<48'
           "$RUNNER_TEMP/installed-browser-venv/bin/python" -m playwright install chromium
           xvfb-run -a "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pytest -q -rs \
             tests/test_browser_recorder_installed_chromium_e2e.py
@@ -128,7 +128,7 @@ jobs:
         run: |
           set -euo pipefail
           /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/recorder-gtk-venv"
-          "$RUNNER_TEMP/recorder-gtk-venv/bin/python" -m pip install --disable-pip-version-check 'playwright>=1.50,<2'
+          "$RUNNER_TEMP/recorder-gtk-venv/bin/python" -m pip install --disable-pip-version-check 'playwright>=1.50,<2' 'cryptography>=42,<48'
           xvfb-run -a "$RUNNER_TEMP/recorder-gtk-venv/bin/python" -m pytest -q -rs \
             tests/test_browser_recorder_installed_gtk_blackbox.py
           # Cancellation uses the real GTK/XTEST UI with a controllable,
