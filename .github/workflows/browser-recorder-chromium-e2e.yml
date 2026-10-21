@@ -9,6 +9,7 @@ on:
       - 'src/plugins/browser-recorder/**'
       - 'tests/test_browser_recorder_installed_gtk_blackbox.py'
       - 'tests/test_browser_recorder_installed_chromium_e2e.py'
+      - 'tests/test_browser_recorder_chromium_sigkill_e2e.py'
       - 'tests/test_core_p0_2628_real_gtk_optin_chromium_e2e.py'
       # Every real Chromium provisioning recipe must run in the dedicated
       # browser runtime, not only the generic PR CI (which cannot prove CDN).
@@ -91,7 +92,8 @@ jobs:
           "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pip install --disable-pip-version-check 'playwright>=1.50,<2' 'cryptography>=42,<48'
           "$RUNNER_TEMP/installed-browser-venv/bin/python" -m playwright install chromium
           xvfb-run -a "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pytest -q -rs \
-            tests/test_browser_recorder_installed_chromium_e2e.py
+            tests/test_browser_recorder_installed_chromium_e2e.py \
+            tests/test_browser_recorder_chromium_sigkill_e2e.py
       - name: Publish no private artifacts
         if: always()
         run: |
