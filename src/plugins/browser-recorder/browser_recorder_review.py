@@ -19,7 +19,11 @@ _CHOICES = frozenset(("anonymize", "keep", "exclude"))
 _SECRETS = re.compile(
     r"password|passwd|secret|session|cookie|authorization|bearer|csrf|xsrf|"
     r"(?:access|refresh|api|private)[_-]?key|token|signature|signed|hash|"
-    r"licen[cs]e|acsm|drm|payment|card[_-]?number|cvv|otp|mfa",
+    r"licen[cs]e|acsm|drm|payment|card[_-]?number|cvv|otp|totp|mfa|"
+    # Short numeric PINs/passcodes are credentials, not catalogue counters.
+    # Anchor short words at the end to avoid 'pin' in unrelated field names.
+    r"(?:pin(?:[_-]?code)?|pass[_-]?code|verification[_-]?code|"
+    r"security[_-]?code|access[_-]?code)$",
     re.IGNORECASE,
 )
 _IDS = re.compile(
