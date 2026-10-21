@@ -265,3 +265,26 @@ pas dans la ligne de progression. Le broker continue de révoquer le
 travail en cas de changement d'identité ou d'annulation. Cette
 amélioration d'UX **ne relève pas le délai SQLite/WAL ni les budgets SHA**,
 et ne transforme pas un candidat bibliographique en droit attesté.
+ 
+
+## Échec d’inspection : conserver la cause fermée, sans fausse révocation (P0 #2565)
+
+Lorsque **« Examiner les cas… »** lance une nouvelle lecture hors réseau, le
+broker Core peut renvoyer une enveloppe d'échec expurgée (sans session privée)
+plutôt qu'une `LocalInspection`. L'interface distingue maintenant les codes
+validés de **timeout SQLite `snapshot_time_budget`**, d'indisponibilité du
+lecteur WAL, de lecture sécurisée impossible, de base modifiée, de migration et
+de **révocation réelle de l'identité**. Un budget atteint **n'indique pas**
+que l'identité a changé, ni qu'un livre est absent.
+
+Une enveloppe malformée, inconnue ou présentant plusieurs causes ne devient
+pas un diagnostic privilégié : seul un message générique fixe est affiché ;
+aucun texte de retour brut, chemin, compte, ISBN ou détail SQLite n'est repris.
+Le résultat de l'Inspection n'est jamais réutilisé comme jeton de réparation.
+L'inspection effectue toujours une nouvelle lecture pour établir la validité
+des preuves à l'instant de l'ouverture, sous contrôle de l'identité active.
+
+Si le timeout se répète : consulter localement les traces fermées
+`TRACE reconciliation_snapshot` et `TRACE reconciliation_wal` pour
+identifier la dernière phase atteinte. Aucun relèvement du budget de 10 s,
+ni accès réseau/écriture source, ne résulte de cette amélioration d'UX.
