@@ -101,8 +101,9 @@ class BrowserRecorderPage:
         description = Gtk.Label(
             label="Capture HTTP privée → revue individuelle → ZIP pour analyse "
                   "technique. Navigation manuelle dans Chromium visible. "
-                  "Les données privées restent en mémoire jusqu'à effacement ; "
-                  "aucun ZIP ni envoi externe automatique.",
+                  "Les captures consenties sont archivées dans un coffre local "
+                  "chiffré pour une revue ultérieure ; aucun ZIP ni envoi "
+                  "externe automatique.",
             xalign=0, wrap=True,
         )
         box.append(description)
@@ -128,6 +129,7 @@ class BrowserRecorderPage:
             Gtk, GLib, self.tasks, site, consent,
             legacy_running=lambda: self.handle is not None and not self.handle.done(),
             export_directory=self.context.data_directory / "exports",
+            vault_directory=self.context.data_directory / "private-sessions",
             # The Core binds this callback to the installed plugin identity.
             # Never forward a provider value, URL, exception or trace body.
             diagnostic=lambda operation, code: self.context.report_diagnostic(
