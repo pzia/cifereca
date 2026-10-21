@@ -31,8 +31,11 @@ class Widget:
     def set_subtitle_lines(self, _value):
         pass
 
-    def set_tooltip_text(self, _value):
-        pass
+    def set_tooltip_text(self, value):
+        self.tooltip = value
+
+    def update_property(self, keys, values):
+        self.accessible_label = values[0]
 
     def set_expanded(self, value):
         self.expanded = value
@@ -76,7 +79,7 @@ def _render_detail(pairs, kinds):
     display = NS(get_clipboard=lambda: clipboard)
     env = {
         "Adw": NS(PreferencesGroup=Widget, ExpanderRow=Widget, ActionRow=Widget),
-        "Gtk": NS(Button=Button),
+        "Gtk": NS(Button=Button, AccessibleProperty=NS(LABEL="label")),
         "Gdk": NS(Display=NS(get_default=lambda: display),
                   ContentProvider=NS(new_for_value=lambda text: text)),
         "safe_detail_value": safe_detail_value,

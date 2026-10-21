@@ -171,7 +171,14 @@ class DetailPanel(Gtk.Box):
 
                 copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
                 copy.add_css_class("flat")
-                copy.set_tooltip_text("Copier " + label)
+                # Name the individual value, including for repeated labels.
+                # Keep spoken text bounded; the clipboard retains all of it.
+                action_value = " ".join(safe_value.split())
+                if len(action_value) > 180:
+                    action_value = action_value[:140] + "…" + action_value[-39:]
+                copy_label = f"Copier {label} : {action_value}"
+                copy.set_tooltip_text(copy_label)
+                copy.update_property([Gtk.AccessibleProperty.LABEL], [copy_label])
                 def copy_one(_button, value=safe_value):
                     display = Gdk.Display.get_default()
                     if display is None:
@@ -203,7 +210,9 @@ class DetailPanel(Gtk.Box):
                     tooltip = ("Rechercher en ligne dans tous les attributs disponibles"
                                if query_field == "all" else
                                "Rechercher en ligne : " + label)
+                    tooltip += " : " + action_value
                     lookup.set_tooltip_text(tooltip)
+                    lookup.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
                     lookup.connect(
                         "clicked",
                         lambda _button, value=query_value, field=query_field,
