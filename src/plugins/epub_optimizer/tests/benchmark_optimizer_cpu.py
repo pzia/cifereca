@@ -26,7 +26,7 @@ import time
 import zipfile
 
 # Permit direct invocation from a source checkout and spawn imports.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, os.environ.get("CIFERECA_BENCH_PACKAGE_ROOT", str(Path(__file__).resolve().parents[1])))
 from PIL import Image
 import PIL
 import pymupdf
@@ -87,7 +87,8 @@ def sample(source, workers):
     before = resource.getrusage(resource.RUSAGE_SELF)
     start = time.perf_counter()
     function = optimize_pdf if source.suffix == ".pdf" else optimize_epub
-    report = function(source, target, profile=builtin_profile("xteink-x3"), cpu_workers=workers)
+    options = {"cpu_workers": workers} if workers != 1 else {}
+    report = function(source, target, profile=builtin_profile("xteink-x3"), **options)
     elapsed_ms = (time.perf_counter() - start) * 1000
     after = resource.getrusage(resource.RUSAGE_SELF)
     children = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -117,6 +118,8 @@ def main():
     parser.add_argument("--heavy-images", type=int, default=12)
     parser.add_argument("--width", type=int, default=1000)
     parser.add_argument("--height", type=int, default=1500)
+    parser.add_argument("--baseline-root", type=Path)
+    parser.add_argument("--baseline-ref", default="unspecified")
     parser.add_argument("--sample", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--workers", type=int, choices=(1, 2, 4), default=1, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -127,18 +130,23 @@ def main():
             and 64 <= args.width <= 2000 and 64 <= args.height <= 3000):
         parser.error("synthetic sample budget exceeded")
     cases = [f"{case}.{suffix}" for case in ("small", "heavy") for suffix in ("epub", "pdf")]
-    observations = {case: {workers: [] for workers in (1, 2, 4)} for case in cases}
+    modes = ("baseline", 1, 2, 4) if args.baseline_root else (1, 2, 4)
+    observations = {case: {workers: [] for workers in modes} for case in cases}
     with tempfile.TemporaryDirectory(prefix="cifereca-cpu-benchmark-") as td:
         root = Path(td)
         fixtures(root, heavy_images=args.heavy_images, width=args.width, height=args.height)
         for block in range(args.repetitions + 1):
             # Warmup excluded; rotate modes and case order to reduce ordering bias.
-            order = (1, 2, 4)
-            offset = block % 3
+            order = modes
+            offset = block % len(modes)
             for case in cases if block % 2 == 0 else reversed(cases):
                 for workers in order[offset:] + order[:offset]:
+                    sample_env = dict(os.environ)
+                    if workers == "baseline":
+                        sample_env["CIFERECA_BENCH_PACKAGE_ROOT"] = str(args.baseline_root.resolve())
                     process = subprocess.run(
-                        [sys.executable, __file__, "--sample", str(root / case), "--workers", str(workers)],
+                        [sys.executable, __file__, "--sample", str(root / case), "--workers", str(1 if workers == "baseline" else workers)],
+                        env=sample_env,
                         capture_output=True, text=True, timeout=240, check=True,
                     )
                     observed = json.loads(process.stdout)
@@ -165,7 +173,8 @@ def main():
         "protocol": {"repetitions": args.repetitions, "warmup_blocks_excluded": 1,
                      "order": "rotating", "percentile_method": "nearest_rank",
                      "fresh_coordinator_per_sample": True, "spawn_included": True,
-                     "heavy_images": args.heavy_images, "heavy_dimensions": [args.width, args.height]},
+                     "heavy_images": args.heavy_images, "heavy_dimensions": [args.width, args.height],
+                     "baseline_ref": args.baseline_ref if args.baseline_root else None},
         "limits": {"aggregate_rss_measured": False, "gtk_latency_measured": False,
                    "coordinator_import_cpu_excluded": True, "child_startup_cpu_included": True,
                    "rss_unit": "KiB (Linux getrusage)", "rss_is_peak_not_p95_time_series": True,

@@ -43,6 +43,9 @@ class OptimizerPage:
         self.max_pdf_pages = int(config.get("max_pdf_pages", 5000) or 5000)
         self.max_image_pixels = int(config.get("max_image_pixels", 64_000_000) or 64_000_000)
         self.max_image_mb = int(config.get("max_image_mb", 64) or 64)
+        self.cpu_workers = config.get("cpu_workers", 1)
+        if type(self.cpu_workers) is not int or self.cpu_workers not in (1, 2, 4):
+            raise ValueError("cpu_workers doit valoir 1, 2 ou 4")
         # Separate opt-in from the deterministic EPUB/PDF transformation.
         self._semantic_enabled = config.get("llm_semantic_preview") is True
         self.profiles = discover_profiles(context)
@@ -447,6 +450,7 @@ class OptimizerPage:
             def operation(control):
                 common = {
                     "profile": profile,
+                    "cpu_workers": self.cpu_workers,
                     "max_image_pixels": self.max_image_pixels,
                     "max_image_mb": self.max_image_mb,
                     "progress": lambda pct, msg: control.report(current=pct, total=100, message=msg),
@@ -561,6 +565,7 @@ class OptimizerPage:
             f"{before} → {after} ({report.reduction_percent:.1f}% de réduction).\n"
             f"Sortie : {report.output_path}"
             + (f"\n{len(report.image_errors)} image(s) conservée(s) après erreur de décodage." if report.image_errors else "")
+            + "".join(f"\n{note}" for note in report.image_notes if note.startswith("Processus CPU"))
         )
         self.host.toast("Variante optimisée créée")
         return False

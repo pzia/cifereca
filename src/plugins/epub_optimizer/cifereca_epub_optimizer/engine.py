@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import ExitStack
 import io
 import multiprocessing as mp
 import os
@@ -490,6 +491,7 @@ def _optimize_image(
 # per-image allowance. A process receives only a bounded image blob, the
 # immutable profile and the effective image hints, never ZIP/SQLite/GTK/DRM.
 _CPU_BATCH_BYTES = 16 * 1024 * 1024
+_CPU_BATCH_WORKING_BYTES = 128 * 1024 * 1024
 _CPU_WAIT_SECONDS = 120
 
 
@@ -512,89 +514,118 @@ def _epub_payloads(
     forked from a GTK process, and are terminated by the Pool context
     manager on cancellation, timeout, crash or archive-write failure.
     """
-    if cpu_workers == 1:
+    available_cpus = os.cpu_count() or 1
+    effective_workers = min(cpu_workers, available_cpus)
+    if cpu_workers > effective_workers and fallback_notes is not None:
+        fallback_notes.append(
+            f"Processus CPU limités à {effective_workers} (CPU disponibles)."
+        )
+    eligible = [info for info in infos if info.filename in image_names
+                and info.file_size <= min(max_image_mb * 1024 * 1024, _CPU_BATCH_BYTES)]
+    # A single image cannot run concurrently with another image. In particular,
+    # avoid spawning interpreters for covers and other small EPUBs.
+    if effective_workers == 1 or len(eligible) < 2:
         for info in infos:
             _check_cancel(cancel_event)
             yield info, archive.read(info), None
         return
 
-    # Only pool CREATION failures can safely fall back. A worker crash,
-    # deadline failure or cancellation after launch remains a hard failure;
-    # silently retrying its work could obscure a partial or unsafe result.
-    try:
-        context = mp.get_context("spawn")
-        pool = context.Pool(processes=cpu_workers, maxtasksperchild=64)
-    except (OSError, RuntimeError):
-        _check_cancel(cancel_event)
-        if fallback_notes is not None:
-            fallback_notes.append(
-                "Processus CPU indisponibles : repli séquentiel sécurisé."
-            )
-        for info in infos:
-            _check_cancel(cancel_event)
-            yield info, archive.read(info), None
-        return
-    with pool as workers:
+    with ExitStack() as stack:
+        pool = None
+        unavailable = False
         index = 0
         while index < len(infos):
             _check_cancel(cancel_event)
-            info = infos[index]
-            # Never marshal oversized image bytes or any non-image payload
-            # into workers; large entries still use bounded sequential code.
-            if (info.filename not in image_names
-                    or info.file_size > min(
-                        max_image_mb * 1024 * 1024, _CPU_BATCH_BYTES
-                    )):
-                yield info, archive.read(info), None
-                index += 1
-                continue
-            pending = []
-            byte_count = 0
-            while len(pending) < cpu_workers and index < len(infos):
+            start = index
+            jobs = {}
+            byte_count = working_bytes = 0
+            # Read ahead only images. Interleaved XHTML/CSS entries are kept as
+            # descriptors and read lazily at their original ZIP position.
+            while index < len(infos) and len(jobs) < effective_workers:
                 candidate = infos[index]
-                if (candidate.filename not in image_names
-                        or candidate.file_size > max_image_mb * 1024 * 1024
-                        or byte_count + candidate.file_size > _CPU_BATCH_BYTES):
+                if candidate.filename not in image_names:
+                    index += 1
+                    continue
+                if candidate.file_size > min(max_image_mb * 1024 * 1024, _CPU_BATCH_BYTES):
+                    if jobs:
+                        break
+                    index += 1
                     break
-                _check_cancel(cancel_event)
                 data = archive.read(candidate)
-                if len(data) > _CPU_BATCH_BYTES - byte_count:
-                    # Malformed ZIP declared size cannot enlarge the batch.
-                    raise EpubOptimizationError("cpu_image_batch_limit")
+                try:
+                    with Image.open(io.BytesIO(data)) as image:
+                        cost = image.width * image.height * 16 + len(data) * 2
+                except MemoryError:
+                    raise EpubOptimizationError("cpu_image_memory_exhausted") from None
+                except Exception:
+                    # Preserve historical image-decoding policy in the normal
+                    # sequential path, without admitting unknown decoded costs.
+                    cost = _CPU_BATCH_WORKING_BYTES + 1
+                if len(data) > _CPU_BATCH_BYTES or cost > _CPU_BATCH_WORKING_BYTES:
+                    if jobs:
+                        break
+                    index += 1
+                    break
+                if (byte_count + len(data) > _CPU_BATCH_BYTES
+                        or working_bytes + cost > _CPU_BATCH_WORKING_BYTES):
+                    break
+                jobs[index] = (data, candidate)
                 byte_count += len(data)
-                result = workers.apply_async(
-                    _optimize_image,
-                    args=(data, candidate.filename, profile),
-                    kwds={
-                        "layout_hint": layout_hints.get(candidate.filename),
-                        "max_image_pixels": max_image_pixels,
-                    },
-                )
-                pending.append((candidate, data, result))
+                working_bytes += cost
                 index += 1
-            for item, data, result in pending:
-                deadline = time.monotonic() + _CPU_WAIT_SECONDS
-                while True:
+            # Singleton batches cannot benefit from a CPU pool.
+            parallel = len(jobs) > 1 and not unavailable
+            if parallel and pool is None:
+                try:
+                    pool = stack.enter_context(mp.get_context("spawn").Pool(
+                        processes=effective_workers, maxtasksperchild=64,
+                    ))
+                except (OSError, RuntimeError):
                     _check_cancel(cancel_event)
-                    left = deadline - time.monotonic()
-                    if left <= 0:
-                        raise EpubOptimizationError("cpu_image_worker_timeout")
-                    try:
-                        transformed = result.get(timeout=min(0.2, left))
-                        break
-                    except mp.TimeoutError:
-                        continue
-                    except Exception as exc:
-                        # Per-image decode errors preserve the old behaviour
-                        # (keep bytes, report error), without aborting a book.
-                        # Pool failures/timeouts are NOT silently downgraded.
-                        if isinstance(exc, (EOFError, BrokenPipeError,
-                                            ConnectionError)):
-                            raise EpubOptimizationError(
-                                "cpu_image_worker_failed"
-                            ) from None
-                        transformed = exc
-                        break
+                    unavailable = True
+                    parallel = False
+                    if fallback_notes is not None:
+                        fallback_notes.append(
+                            "Processus CPU indisponibles : repli séquentiel sécurisé."
+                        )
+            pending = {}
+            if parallel:
+                children = tuple(getattr(pool, "_pool", ()))
+                try:
+                    for position, (data, candidate) in jobs.items():
+                        _check_cancel(cancel_event)
+                        result = pool.apply_async(
+                            _optimize_image, args=(data, candidate.filename, profile),
+                            kwds={"layout_hint": layout_hints.get(candidate.filename),
+                                  "max_image_pixels": max_image_pixels},
+                        )
+                        pending[position] = (result, time.monotonic() + _CPU_WAIT_SECONDS)
+                except (CancelledError, KeyboardInterrupt):
+                    raise
+                except Exception:
+                    raise EpubOptimizationError("cpu_image_worker_failed") from None
+            for position in range(start, index):
+                _check_cancel(cancel_event)
+                item = infos[position]
+                data = jobs[position][0] if position in jobs else archive.read(item)
+                transformed = None
+                if position in pending:
+                    result, deadline = pending[position]
+                    while transformed is None:
+                        _check_cancel(cancel_event)
+                        if any(child.exitcode not in (None, 0) for child in children):
+                            raise EpubOptimizationError("cpu_image_worker_failed")
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            raise EpubOptimizationError("cpu_image_worker_timeout")
+                        try:
+                            transformed = result.get(timeout=min(0.2, left))
+                        except mp.TimeoutError:
+                            continue
+                        except (EOFError, ConnectionError, MemoryError):
+                            raise EpubOptimizationError("cpu_image_worker_failed") from None
+                        except Exception as exc:
+                            transformed = exc
                 yield item, data, transformed
 
 
@@ -806,53 +837,56 @@ def optimize_epub(
                     cpu_workers=cpu_workers, cancel_event=cancel_event,
                     fallback_notes=report.image_notes,
                 )
-                for info, data, precomputed in contents:
-                    _check_cancel(cancel_event)
-                    if info.filename in image_names:
-                        processed_index += 1
-                        try:
-                            if info.file_size > max_image_mb * 1024 * 1024:
-                                report.images_kept += 1
-                                report.image_notes.append(
-                                    f"{info.filename}: conservée (image > {max_image_mb} Mio)"
-                                )
-                            else:
-                                if isinstance(precomputed, Exception):
-                                    raise precomputed
-                                if precomputed is not None:
-                                    optimized, change = precomputed
-                                else:
-                                    optimized, change = _optimize_image(
-                                        data,
-                                        info.filename,
-                                        profile,
-                                        layout_hint=layout_hints.get(info.filename),
-                                        max_image_pixels=max_image_pixels,
-                                    )
-                                report.changes.append(change)
-                                if optimized != data:
-                                    report.images_optimized += 1
-                                    data = optimized
-                                else:
+                with ExitStack() as image_stack:
+                    image_stack.callback(contents.close)
+                    for info, data, precomputed in contents:
+                        _check_cancel(cancel_event)
+                        if info.filename in image_names:
+                            processed_index += 1
+                            try:
+                                if info.file_size > max_image_mb * 1024 * 1024:
                                     report.images_kept += 1
-                                    if "conservée (" in change.action:
-                                        report.image_notes.append(f"{info.filename}: {change.action}")
-                        except Exception as exc:
-                            report.images_kept += 1
-                            report.image_errors.append(f"{info.filename}: {exc}")
-                        finally:
-                            processed_weight += max(1, info.file_size)
-                            pct = 5 + int(88 * processed_weight / total_image_weight)
-                            _emit(
-                                progress,
-                                pct,
-                                f"Image {processed_index}/{len(image_infos)} : {Path(info.filename).name}",
-                            )
+                                    report.image_notes.append(
+                                        f"{info.filename}: conservée (image > {max_image_mb} Mio)"
+                                    )
+                                else:
+                                    if isinstance(precomputed, Exception):
+                                        raise precomputed
+                                    if precomputed is not None:
+                                        optimized, change = precomputed
+                                    else:
+                                        optimized, change = _optimize_image(
+                                            data,
+                                            info.filename,
+                                            profile,
+                                            layout_hint=layout_hints.get(info.filename),
+                                            max_image_pixels=max_image_pixels,
+                                        )
+                                    report.changes.append(change)
+                                    if optimized != data:
+                                        report.images_optimized += 1
+                                        data = optimized
+                                    else:
+                                        report.images_kept += 1
+                                        if "conservée (" in change.action:
+                                            report.image_notes.append(f"{info.filename}: {change.action}")
+                            except MemoryError:
+                                raise EpubOptimizationError("cpu_image_memory_exhausted") from None
+                            except Exception as exc:
+                                report.images_kept += 1
+                                report.image_errors.append(f"{info.filename}: {exc}")
+                            finally:
+                                processed_weight += max(1, info.file_size)
+                                pct = 5 + int(88 * processed_weight / total_image_weight)
+                                _emit(
+                                    progress,
+                                    pct,
+                                    f"Image {processed_index}/{len(image_infos)} : {Path(info.filename).name}",
+                                )
 
-                    compression = zipfile.ZIP_DEFLATED
-                    clone = _clone_info(info, compress_type=compression)
-                    zout.writestr(clone, data, compress_type=compression, compresslevel=9)
-
+                        compression = zipfile.ZIP_DEFLATED
+                        clone = _clone_info(info, compress_type=compression)
+                        zout.writestr(clone, data, compress_type=compression, compresslevel=9)
             _check_cancel(cancel_event)
             _emit(progress, 95, "Validation de la sortie…")
             with zipfile.ZipFile(temp_path, "r") as check:
@@ -862,6 +896,7 @@ def optimize_epub(
                 if check.read("mimetype") != b"application/epub+zip":
                     raise EpubOptimizationError("EPUB produit invalide : mimetype content")
 
+            _check_cancel(cancel_event)
             os.replace(temp_path, target)
             temp_name = None
 
