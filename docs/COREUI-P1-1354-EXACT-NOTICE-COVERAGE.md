@@ -55,3 +55,30 @@ holdings demeure une **décision du Core** sous ses garde-fous habituels.
   **même notice exacte** depuis Recherche et Recommandations, pour les cas
   disponible, indisponible, téléchargeable, droits incertains et
   multi-comptes, puis la recette sur installation.
+
+
+## Pagination explicite des éditions attestées — deuxième tranche
+
+Le détail Recommandations propose maintenant les commandes **« Notices
+suivantes » / « Notices précédentes »** lorsque plus de 16 variantes
+distinctes validées sont présentes parmi les **256 premières** inspectées.
+
+- **16 notices par page**, pagination strictement locale, sans nouvelle
+  recherche, appel fournisseur, LLM ou acquisition.
+- Les notices répétées avec plusieurs ISBN comptent une seule fois ;
+  deux comptes ou éditions originelles distinctes restent distincts.
+- Les labels indiquent le rang réel de la notice et
+  `page courante / nombre de pages`. Si la liste source comporte plus de
+  256 éléments, l'avertissement de couverture partielle reste affiché.
+- Toute nouvelle sélection/identité/génération de classement réinitialise la
+  page et révoque les callbacks précédents. Les boutons « Voir les actions »
+  continuent d'appeler uniquement le détail **Core Recherche** d'une notice
+  exacte **déjà chargée**, lorsque ce contrat confirme sa présence.
+- Aucune action emprunt/téléchargement n'est directement fabriquée par le
+  plugin. Le numéro de page n'ouvre aucun droit ni disponibilité.
+
+Recette simulée : notice n°17 puis n°33 accessibles sans masquer les
+16 premières, retour arrière, disparition des boutons antérieurs et
+revocation après changement de profil ou classement. La recette métier
+réelle du ticket #1354 reste à effectuer pour les notices non chargées,
+les droits et les confirmations de prêt.

@@ -97,7 +97,8 @@ def main():
     state = {"view": None, "plugin": None, "window": None,
              "device": None, "searches": [], "toasts": [],
              "old_action": None, "exact_navigations": [],
-             "exact_selected": [], "exact_button": None, "exact_clicked": 0}
+             "exact_selected": [], "exact_button": None, "exact_clicked": 0,
+             "stale_page_button": None}
 
     def save():
         report["duration_seconds"] = round(monotonic() - start, 2)
@@ -133,6 +134,7 @@ def main():
         allowed = {
             "probe_start", "initial", "long_detail", "scrolled",
             "exact_setup", "exact_button", "exact_focus", "exact_key",
+            "exact_page_focus", "exact_page_key", "exact_page_verdict",
             "exact_verdict", "exact_key_dispatch", "exact_navigation",
             "exact_selection", "exact_no_search", "return_list",
         }
@@ -381,7 +383,55 @@ def main():
         )
         row = view._master._page.selection.get_selected_item()
         assert row is not None
+        original = view._ranked_by_key[row.key]
+        # Preserve identity and public recommendation data. Sixteen distinct
+        # editions are NOT present in Core Search; edition #17 is the only
+        # exact, already-loaded Search notice. No provider or HTTP is called.
+        missing = tuple(CatalogNoticeVariant(
+            item=original.item, source_provider="fixture",
+            source_credential="fixture-public", record_id=f"unloaded-{i:02}",
+            docbase="BOOKS", source_collection="catalog",
+            isbn="9780306406157",
+        ) for i in range(1, 17))
+        view._ranked_by_key[row.key] = RankedCandidate(
+            item=original.item, score=original.score,
+            reasons=original.reasons, sources=original.sources,
+            notices=missing + original.notices,
+        )
         view._selected_row(row)
+        assert not any(
+            str(getattr(widget, "_cifereca_action_id", "")).startswith(
+                "recommendation.loaded-notice."
+            ) for widget in walk(view.widget)
+        )
+        next_buttons = [
+            widget for widget in walk(view.widget)
+            if isinstance(widget, Gtk.Button)
+            and getattr(widget, "_cifereca_action_id", "") ==
+                "recommendation.exact-notice.next"
+        ]
+        assert len(next_buttons) == 1 and next_buttons[0].get_mapped()
+        next_button = next_buttons[0]
+        state["stale_page_button"] = next_button
+        report["p1_1354_phase"] = "exact_page_focus"
+        assert next_button.grab_focus() is not False
+        later(170, lambda: press_exact_page(next_button))
+
+    def press_exact_page(button):
+        report["p1_1354_phase"] = "exact_page_key"
+        assert button.has_focus() and button.get_sensitive()
+        state["device"].key("Return", True)
+        state["device"].key("Return", False)
+        later(240, after_exact_page)
+
+    def after_exact_page():
+        report["p1_1354_phase"] = "exact_page_verdict"
+        view = state["view"]
+        assert view._exact_notice_state["page"] == 1
+        assert len(state["searches"]) == 1
+        assert not state["exact_navigations"] and not state["exact_selected"]
+        assert view._master._page.selection.get_selected() == 0
+        report["checks"]["P1_1354_gtk_page17_keyboard_local_only"] = True
         buttons = [
             widget for widget in walk(view.widget)
             if isinstance(widget, Gtk.Button)
@@ -445,10 +495,12 @@ def main():
         state["old_action"].emit("clicked")
         assert len(state["searches"]) == 1
         state["exact_button"].emit("clicked")
+        state["stale_page_button"].emit("clicked")
         assert state["exact_navigations"] == ["search"]
         assert state["exact_selected"] == ["fixture:core-loaded-1"]
         report["checks"]["return_to_list_keeps_old_action_inert"] = True
         report["checks"]["P1_1354_detached_exact_action_is_inert"] = True
+        report["checks"]["P1_1354_detached_pagination_is_inert"] = True
         report["checks"]["no_network_or_acquisition"] = True
         capture("06-return-to-list")
         state["plugin"].deactivate()

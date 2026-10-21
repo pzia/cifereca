@@ -416,7 +416,7 @@ def test_attested_notice_is_capped_after_filter_not_before():
     view, _identity, _calls, detail, _row = _view((*unresolved, *verified))
     section = next(x for x in detail.sections if x.id == "source-editions")
     editions = [f for f in section.fields if f.id.startswith("source-edition-")
-                and f.id not in {"source-edition-warning", "source-edition-limit"}]
+                and f.id not in {"source-edition-warning", "source-edition-page", "source-edition-limit"}]
     assert len(editions) == 16
     assert all("Kobo" in f.value for f in editions)
 
@@ -549,5 +549,133 @@ def test_exactly_sixteen_distinct_verified_notices_are_not_called_incomplete():
     section = next(s for s in detail.sections if s.id == "source-editions")
     assert len([field for field in section.fields
                 if field.id.startswith("source-edition-")
-                and field.id not in {"source-edition-warning", "source-edition-limit"}]) == 16
+                and field.id not in {"source-edition-warning", "source-edition-page", "source-edition-limit"}]) == 16
     assert not any(field.id == "source-edition-limit" for field in section.fields)
+
+
+def _page_actions(detail, prefix):
+    return [action for action in detail.actions if action.id.startswith(prefix)]
+
+
+def test_explicit_exact_notice_pagination_reaches_17th_and_33rd_records():
+    variants = tuple(_variant(record=f"edition-{number:02}") for number in range(1, 34))
+    view, identity, searches, first, row = _view(variants)
+    presentations, available, selected = [], [], []
+    view.host = NS(
+        can_open_loaded_search_notice=lambda **kw: available.append(kw) or True,
+        open_loaded_search_notice=lambda **kw: selected.append(kw) or True,
+        search_books=lambda *_a, **_kw: searches.append("unexpected") or True,
+    )
+    view._master.show_detail = presentations.append
+    view._selected_row(row)
+    first_page = presentations[-1]
+    first_actions = _page_actions(first_page, "recommendation.loaded-notice.")
+    assert len(first_actions) == 16
+    assert first_actions[0].id == "recommendation.loaded-notice.1"
+    assert first_actions[-1].id == "recommendation.loaded-notice.16"
+    assert [a["record_id"] for a in available] == [
+        f"edition-{index:02}" for index in range(1, 17)
+    ]
+    assert not selected and not searches
+    next_page = next(a for a in first_page.actions
+                     if a.id == "recommendation.exact-notice.next")
+    assert "page 2/3" in next_page.title
+
+    assert next_page.callback() is True
+    second_page = presentations[-1]
+    assert next_page.callback() is False  # Old page button revoked.
+    assert first_actions[0].callback() is False  # No stale source selection.
+    second_actions = _page_actions(second_page, "recommendation.loaded-notice.")
+    assert len(second_actions) == 16
+    assert second_actions[0].id == "recommendation.loaded-notice.17"
+    assert second_actions[-1].id == "recommendation.loaded-notice.32"
+    assert second_actions[0].callback() is True
+    assert selected[-1]["record_id"] == "edition-17"
+    assert selected[-1]["credential"] == "vault-1"
+    fields = next(s.fields for s in second_page.sections
+                  if s.id == "source-editions")
+    assert any(f.id == "source-edition-page"
+               and "17–32 sur 33" in f.value for f in fields)
+
+    forward = next(a for a in second_page.actions
+                   if a.id == "recommendation.exact-notice.next")
+    assert forward.callback() is True
+    last_page = presentations[-1]
+    last_actions = _page_actions(last_page, "recommendation.loaded-notice.")
+    assert [a.id for a in last_actions] == ["recommendation.loaded-notice.33"]
+    assert not _page_actions(last_page, "recommendation.exact-notice.next")
+    back = next(a for a in last_page.actions
+                if a.id == "recommendation.exact-notice.previous")
+    assert back.callback() is True
+    assert _page_actions(presentations[-1], "recommendation.loaded-notice.")[0].id == (
+        "recommendation.loaded-notice.17"
+    )
+    assert not searches  # Only the user-clicked Core exact path was called.
+    assert identity == ["reader-1"]
+
+
+def test_page_changes_are_revoked_by_identity_switch_selection_and_ranking():
+    variants = tuple(_variant(record=f"edition-{index}") for index in range(19))
+    view, identity, searches, _first, row = _view(variants)
+    presentations = []
+    view._master.show_detail = presentations.append
+    view._selected_row(row)
+    next_page = next(a for a in presentations[-1].actions
+                     if a.id == "recommendation.exact-notice.next")
+    identity[0] = "reader-2"
+    assert next_page.callback() is False
+    identity[0] = "reader-1"
+
+    view._selected_row(None)
+    assert next_page.callback() is False
+    view._selected_row(row)
+    new_page = next(a for a in presentations[-1].actions
+                    if a.id == "recommendation.exact-notice.next")
+    assert new_page.callback() is True
+    fields = next(s.fields for s in presentations[-1].sections
+                  if s.id == "source-editions")
+    assert any(f.id == "source-edition-page"
+               and "page 2/2" in f.value for f in fields)
+    old_ranked = view._ranked_by_key[row.key]
+    view._ranked_by_key[row.key] = RankedCandidate(
+        item=old_ranked.item, score=old_ranked.score,
+        reasons=old_ranked.reasons, sources=old_ranked.sources,
+        notices=(_variant(record="replacement"),),
+    )
+    assert new_page.callback() is False
+    view._selected_row(row)
+    assert not _page_actions(presentations[-1], "recommendation.exact-notice.next")
+    assert len(_page_actions(presentations[-1], "recommendation.loaded-notice.")) == 0
+    assert not searches
+
+
+def test_same_coordinates_with_multiple_isbns_do_not_consume_two_page_slots():
+    variants = [
+        _variant(isbn=(ISBN_1 if index % 2 else ISBN_2),
+                 credential="vault-1", record="same")
+        for index in range(17)
+    ]
+    variants.extend(_variant(record=f"other-{i}") for i in range(15))
+    view, _, searches, detail, _row = _view(tuple(variants))
+    assert len(_page_actions(detail, "recommendation.loaded-notice.")) == 0
+    section = next(s for s in detail.sections if s.id == "source-editions")
+    assert len([f for f in section.fields if f.id.startswith("source-edition-")
+                and f.id not in {"source-edition-warning",
+                                  "source-edition-page",
+                                  "source-edition-limit"}]) == 16
+    assert not any(a.id == "recommendation.exact-notice.next"
+                   for a in detail.actions)
+    assert not searches
+
+
+def test_pagination_never_looks_beyond_256_variants_or_invents_actions():
+    invalid = tuple(_variant(credential="", record=f"missing-{i}")
+                    for i in range(256))
+    hidden = _variant(record="outside-cap")
+    view, _, searches, detail, _row = _view((*invalid, hidden))
+    section = next(s for s in detail.sections if s.id == "source-editions")
+    assert any(f.id == "source-edition-limit"
+               and "256 premières" in f.value for f in section.fields)
+    assert not any(a.id.startswith("recommendation.exact-notice.")
+                   for a in detail.actions)
+    assert not searches
