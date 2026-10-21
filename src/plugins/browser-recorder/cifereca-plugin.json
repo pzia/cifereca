@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.technical.browser-recorder",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "name": "Browser Recorder (technique)",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -11,11 +11,11 @@
     {
       "id": "ui.page.browser-recorder",
       "type": "ui.page",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "entrypoint": "browser_recorder_page:PLUGIN",
       "display_name": "Browser Recorder",
       "description": "HAR expurgé et parcours HTTP privé avec revue individuelle et export ZIP volontaire.",
-      "help_text": "Désactivé par défaut. Chromium Playwright visible après consentement. HAR classique : métadonnées expurgées et rejeu GET supervisé uniquement. Parcours HTTP privé : corps textuels bornés en mémoire, choix par identifiant, aperçu local, préparation d'un ZIP structurel filtré, consultation de chaque membre et confirmation séparée avant l'enregistrement 0600 local. Aucun téléversement vers un LLM. Le dépistage des secrets est heuristique : relire toute archive avant partage. Pas de session persistante ni capture à l'activation.",
+      "help_text": "Désactivé par défaut. Chromium Playwright visible après consentement. HAR classique : métadonnées expurgées et rejeu GET supervisé uniquement. Parcours HTTP privé : corps textuels bornés en mémoire, choix par identifiant, aperçu local, préparation d'un ZIP structurel filtré, consultation de chaque membre et confirmation séparée avant l'enregistrement 0600 local. Aucun téléversement vers un LLM. Le dépistage des secrets est heuristique : relire toute archive avant partage. Pas de session persistante ni capture à l'activation. Playwright Python est une dépendance déclarée gérée exclusivement par le Core ; sa réparation nécessite une action explicite depuis Plugins. Le navigateur Chromium est un téléchargement distinct et reste soumis à consentement.",
       "enabled_by_default": false,
       "priority": 35,
       "instantiation": "singleton_public",
@@ -28,7 +28,14 @@
       ],
       "requires": [],
       "recommends": [],
-      "system_requires": [],
+      "system_requires": [
+        {
+          "type": "python-package",
+          "name": "playwright",
+          "version": ">=1.50,<2",
+          "import": "playwright"
+        }
+      ],
       "requires_brokers": [
         "tasks"
       ],
