@@ -433,6 +433,25 @@ class LocalInspectionController:
         for widget in (candidate_prev, candidate_next):
             candidate_nav.append(widget)
         candidate_box.append(candidate_nav)
+        # A right and file can be explicitly compared without permitting an
+        # attachment. The separate Core preflight returns *closed reasons*
+        # only and never a transaction token or write capability.
+        pair_prepare = Gtk.Button(label='Préparer le rattachement')
+        pair_prepare.set_tooltip_text(
+            'Évaluer en lecture seule les preuves de la paire choisie. '
+            'Aucun rattachement ni changement SQLite ne sera effectué.'
+        )
+        pair_prepare.set_sensitive(False)
+        candidate_box.append(pair_prepare)
+        pair_explanation = Gtk.Label(label='', xalign=0)
+        pair_explanation.set_wrap(True)
+        pair_explanation.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        pair_explanation.set_selectable(True)
+        pair_explanation.set_max_width_chars(45)
+        pair_report = Gtk.Expander(label='Préflight local · aucune écriture autorisée')
+        pair_report.set_child(pair_explanation)
+        pair_report.set_visible(False)
+        candidate_box.append(pair_report)
         candidate_detail = Gtk.Label(xalign=0, yalign=0)
         candidate_detail.set_wrap(True)
         candidate_detail.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -466,6 +485,19 @@ class LocalInspectionController:
         manual_total = [0]
         manual_rebuilding = [False]
         manual_page_size = 25
+        selected_right = [None]
+        selected_file = [None]
+
+        def reset_pair(file_key=None):
+            # Invalidate any previous review whenever right, file or mode
+            # changes. A previous receipt is NOT authority for a new pair.
+            selected_file[0] = file_key
+            pair_prepare.set_sensitive(
+                selected_right[0] is not None and file_key is not None
+            )
+            pair_report.set_expanded(False)
+            pair_report.set_visible(False)
+            pair_explanation.set_text('')
 
         def valid():
             if self.session is session and self.alive() and session.valid():
@@ -546,6 +578,7 @@ class LocalInspectionController:
                 candidate_next.set_sensitive(
                     manual_index[0] + 1 < page.total
                 )
+                reset_pair(selected.key if selected is not None else None)
                 return
             manual_toggle.set_label('Comparer tous les fichiers non liés')
             candidate_title.set_text(
@@ -574,6 +607,9 @@ class LocalInspectionController:
             candidate_prev.set_sensitive(bool(files) and candidate_index[0] > 0)
             candidate_next.set_sensitive(
                 bool(files) and candidate_index[0]+1 < len(files)
+            )
+            reset_pair(
+                files[candidate_index[0]].key if files else None
             )
 
         def move_candidate(delta):
@@ -641,6 +677,42 @@ class LocalInspectionController:
             )
             candidate_prev.set_sensitive(manual_index[0] > 0)
             candidate_next.set_sensitive(manual_index[0] + 1 < manual_total[0])
+            reset_pair(case.key)
+
+        def prepare_pair(*_args):
+            if (not valid() or selected_right[0] is None
+                    or selected_file[0] is None):
+                return
+            try:
+                result = session.preflight_manual_link(
+                    selected_right[0], selected_file[0],
+                )
+                labels = {
+                    'blocked': 'Bloqué : preuves contradictoires ou contrôle incomplet.',
+                    'insufficient_evidence': 'Preuves insuffisantes pour un rattachement.',
+                    'eligible_for_fresh_validation': (
+                        'Examen envisageable après revalidation transactionnelle complète.'
+                    ),
+                    'unavailable': 'Paire ou session indisponible.',
+                }
+                heading = labels.get(result.status, 'Préflight indisponible.')
+                if (result.read_only is not True
+                        or result.attachment_authorized is not False):
+                    heading = 'Préflight indisponible.'
+                    explanation = 'Aucune modification autorisée.'
+                else:
+                    explanation = result.explanation
+                pair_explanation.set_text(
+                    heading + '\n' + explanation
+                    + '\nAucun fichier n’a été rattaché.'
+                )
+            except Exception:
+                # No raw exception, user metadata or path may cross GTK.
+                pair_explanation.set_text(
+                    'Préflight local indisponible. Aucune modification autorisée.'
+                )
+            pair_report.set_visible(True)
+            pair_report.set_expanded(True)
 
         def select(_listing, row):
             if row is None or not valid():
@@ -649,6 +721,11 @@ class LocalInspectionController:
             if case is not None:
                 states = ', '.join(STATES[name] for name in case.states)
                 detail.set_text(PROVIDERS[case.provider]+' · '+states+'\n\n'+case.details)
+                selected_right[0] = (
+                    case.key if 'rights_without_verified_file' in case.states
+                    else None
+                )
+                reset_pair()
                 if case.key.startswith('right:'):
                     candidate_items[0] = session.candidate_files(case.key)
                     candidate_index[0] = 0
@@ -686,6 +763,8 @@ class LocalInspectionController:
                 child = listing.get_first_child()
             detail.set_text('Sélectionnez un cas pour consulter ses preuves.' if page.total else 'Aucun cas dans ces filtres. Ce résultat ne prouve pas l’absence d’un livre.')
             candidate_items[0] = ()
+            selected_right[0] = None
+            reset_pair()
             candidate_box.set_visible(False)
             for case in page.cases:
                 row = Gtk.ListBoxRow()
@@ -710,6 +789,7 @@ class LocalInspectionController:
         manual_toggle.connect('clicked', lambda *_: toggle_manual())
         manual_search.connect('search-changed', lambda *_: filter_manual())
         manual_list.connect('row-selected', select_manual_file)
+        pair_prepare.connect('clicked', prepare_pair)
         for widget in (format_filter, sha_filter, crc_filter, file_sort):
             widget.connect('notify::selected', lambda *_: filter_manual())
         provider.connect('notify::selected', lambda *_: render(reset=True))
