@@ -425,3 +425,38 @@ def test_vendor_json_mime_is_coarsened_not_published_in_reviewed_zip():
     finally:
         review.destroy()
         trace.destroy()
+
+
+
+@pytest.mark.parametrize(("key", "value"), [
+    ("page", "1"), ("count", "12"), ("hint", "123"), ("pin", "007"),
+    ("opaque", "99"), ("limit", "42"),
+])
+def test_short_numeric_query_values_need_explicit_review(key, value):
+    """A short decimal may be a private code; size cannot grant consent."""
+    from browser_recorder_zip import _safe_url
+    url = ORIGIN + "/api/books?" + key + "=" + value
+    assert value not in _safe_url(url, frozenset(), frozenset((ORIGIN,)))
+    assert "[UNREVIEWED]" in _safe_url(url, frozenset(), frozenset((ORIGIN,)))
+    assert value in _safe_url(url, frozenset((value,)), frozenset((ORIGIN,)))
+
+
+def test_short_numeric_query_in_actual_approved_zip_is_not_auto_public():
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/api/books?page=7&opaque=42",
+        status=200,
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        plan = prepare_reviewed_zip(review)
+        descriptor = next(x["text"] for x in plan.preview()["members"]
+                          if x["name"] == "exchanges/0001.json")
+        assert "page=7" not in descriptor
+        assert "opaque=42" not in descriptor
+        assert "[UNREVIEWED]" in descriptor or "%5BUNREVIEWED%5D" in descriptor
+    finally:
+        review.destroy()
+        trace.destroy()
