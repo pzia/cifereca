@@ -60,10 +60,25 @@ Un oracle **indépendant** (bibliothèque Python `zipfile` et SHA-256) ouvre
 le fichier exporté et vérifie ses membres, leurs contenus exacts et
 l'absence d'une clé fictive obligatoirement masquée.
 
-**Limites :** cette injection synthétique ne prouve **pas** une vraie
-capture Chromium à travers le package distribué, la recette complète
-sur VM vierge, ni une revue humaine de l'accessibilité et de l'utilité
-de l'archive pour écrire un provider. Ces preuves restent ouvertes #2531.
+Une **troisième recette E2E** exécute enfin le **vrai Chromium visible
+avec la capture HTTP réelle depuis le ZIP installé** : le navigateur
+parcourt uniquement un faux fournisseur localhost déterministe (POST
+fictif, 302, JSON, XML, 401/403/429, image binaire exclue). Le Core
+active la contribution GTK du plugin packagé ; le bouton de capture
+démarre réellement `record_http` dans un worker et l'utilisateur du
+test arrête la capture, révise les identifiants individuellement, puis
+confirme et exporte le ZIP. Un second processus indépendant contrôle
+le contenu, les empreintes SHA-256 et la suppression des secrets
+synthétiques. **Aucune collecte réseau n'est simulée** dans cette
+troisième recette : seule la politique HTTPS/localhost reçoit une
+exception strictement bornée au serveur et au port du test. Aucune
+politique du produit n'est modifiée.
+
+**Limites :** ces tests ne remplacent **pas** la recette utilisateur
+sur VM Linux vierge avec installation Chromium depuis l'UI, la navigation
+physique XTEST de la revue/export ou une revue humaine de l'accessibilité
+et de l'utilité de l'archive pour écrire un provider. Elles restent
+ouvertes dans #2531.
 
 ## Capture
 
