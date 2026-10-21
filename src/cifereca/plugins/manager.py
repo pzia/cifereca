@@ -679,6 +679,24 @@ class PluginManager:
                 self.diagnostics.add("PLUGIN", "runtime diagnostic", "error",
                                      detail={"code": "unverified_runtime_producer"}, level=level)
                 return
+            from ..core.browser_recorder_diagnostics import (
+                PLUGIN_ID as RECORDER_ID, RUNTIME_OPERATIONS, RUNTIME_CODES,
+            )
+            if plugin_id == RECORDER_ID:
+                # The Core-bound context, not a plugin-supplied identity field,
+                # attests the producer. Refuse unverified packages and never
+                # fall through to generic diagnostics containing private traces.
+                if (record is not None and record.descriptor.id == RECORDER_ID
+                        and record.package.manifest.package.id ==
+                        "org.cifereca.technical.browser-recorder"
+                        and type(detail) is dict):
+                    operation = detail.get("operation")
+                    if type(operation) is str and operation in RUNTIME_OPERATIONS:
+                        code = detail.get("code")
+                        safe_code = (code if type(code) is str and code in RUNTIME_CODES
+                                     else "browser_operation_failed")
+                        self.diagnostics.add_core_browser_recorder_result(operation, safe_code)
+                return
             payload = dict(detail or {}) if isinstance(detail, dict) else {"detail": detail}
             payload["plugin"] = plugin_id
             self.diagnostics.add("PLUGIN", message, status, detail=payload, level=level)
