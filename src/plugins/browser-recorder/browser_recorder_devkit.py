@@ -13,6 +13,7 @@ from importlib import metadata, resources
 import json
 
 from browser_recorder import RecorderError
+from browser_recorder_devkit_templates import reference_plugin_files
 
 _KIT_SCHEMA = "cifereca.browser-recorder.plugin-dev-kit/1"
 _CORE_API_PACKAGE = "cifereca.plugin_api"
@@ -90,6 +91,19 @@ preuve de la source, implémentation et tests. Pour un catalogue purement public
 séparé du compte, étudier plutôt `catalog.service`. Pour un prêt numérique
 ou ACSM, l'autorisation et la capacité effective doivent être établies
 séparément ; aucun `POST` de création de prêt par défaut.
+
+## Exemple de plugin réellement testable
+
+Le dossier `examples/provider-fixture-example/` du même ZIP contient un
+**projet complet et autonome côté plugin** :
+`cifereca-plugin.json`, `fixture_catalog.py`, `tests/` et README.
+Il fournit la catégorie publique `catalog.service/1`, trois notices
+entièrement inventées, recherche/pagination, détail, erreurs typées,
+cache limité, et **aucune acquisition, propriété ni emprunt présumés**.
+Copier le dossier dans le dépôt cible puis lancer les tests et l'outil
+de packaging officiel de cette version de Core. Il ne contacte aucun site.
+L'exemple n'est pas la reconstitution d'un fournisseur réel, mais un
+référentiel de conformité auquel confronter les choix d'un LLM.
 
 ## Adapter la trace anonymisée
 
@@ -212,6 +226,21 @@ def core_contract_kit() -> dict[str, bytes]:
     provenance["plugin-dev-kit/contract-registry.json"] = (
         "cifereca.plugin_api.CONTRACT_REGISTRY"
     )
+    # Reference package is fixture-only. Include its tests and manifest
+    # inside the exact reviewed ZIP, not as code run during capture/export.
+    examples = reference_plugin_files()
+    if not examples or any(
+        not name.startswith("plugin-dev-kit/examples/provider-fixture-example/")
+        or name in contents or not isinstance(data, bytes)
+        for name, data in examples.items()
+    ):
+        raise RecorderError("core_kit_invalid")
+    contents.update(examples)
+    for name in examples:
+        provenance[name] = (
+            "src/plugins/browser-recorder/"
+            "browser_recorder_devkit_templates.py:reference_plugin_files"
+        )
     provenance["plugin-dev-kit/README.md"] = (
         "src/plugins/browser-recorder/browser_recorder_devkit.py:_GUIDE"
     )
@@ -231,6 +260,7 @@ def core_contract_kit() -> dict[str, bytes]:
         "documentation_is_complete_for": [
             "plugin_api public source boundary",
             "contract registry and manifest version",
+            "catalog.service/1 offline reference example and tests",
         ],
         "not_claimed": [
             "private Core implementation",
