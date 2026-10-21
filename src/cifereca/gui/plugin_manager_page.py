@@ -650,10 +650,29 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         if status.state in {"blocked", "error", "incompatible", "degraded"}:
             warning = Gtk.Label(label=self._friendly_problem(status), xalign=0)
             warning.set_wrap(True); warning.add_css_class("warning"); box.append(warning)
-        if any(
+        # A disabled-by-default plugin has no runtime requirement probe in
+        # PluginManager.status(): we must still render its prerequisite actions
+        # so that Browser Recorder can be set up before first activation.
+        # _version() reads Python distribution metadata only (offline/no pip,
+        # Chromium subprocess or launch), even for a disabled plugin.
+        recorder_requires_playwright = (
+            d.id == "ui.page.browser-recorder"
+            and any(
+                req.type == "python-package" and req.name == "playwright"
+                for req in d.system_requires
+            )
+        )
+        recorder_python_ready = False
+        if recorder_requires_playwright:
+            try:
+                from cifereca.plugins.playwright_browser import _version
+                recorder_python_ready = _version() is not None
+            except Exception:
+                recorder_python_ready = False
+        if (any(
             not row.ok and row.requirement.type == "python-package"
             for row in getattr(status, "requirements", ())
-        ):
+        ) or (recorder_requires_playwright and not recorder_python_ready)):
             repair = action_button(
                 "Installer les dépendances Python…", "system-software-install-symbolic",
                 tooltip="Installation Core dans le venv Cifereca, avec confirmation ; ne télécharge pas Chromium",
@@ -666,14 +685,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
 
         # Browser provisioning is a separate opt-in Core action. Neither
         # rendering this row nor activating the plugin starts a subprocess.
-        if (
-            d.id == "ui.page.browser-recorder"
-            and any(
-                row.requirement.type == "python-package"
-                and row.requirement.name == "playwright" and row.ok
-                for row in getattr(status, "requirements", ())
-            )
-        ):
+        if recorder_requires_playwright and recorder_python_ready:
             browser_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             verify = action_button("Vérifier Chromium…", "dialog-information-symbolic")
             verify.set_sensitive(not self._chromium_operation_running)
