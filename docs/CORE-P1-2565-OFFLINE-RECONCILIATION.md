@@ -512,3 +512,32 @@ que les trois fichiers restants demeurent consultables **sans ISBN commun**
 ou notice complète, et que le droit sélectionné conserve son statut
 « sans fichier vérifié ». Vérifier recherche, navigation, changement
 d'identité et absence d'accès aux fichiers d'une autre identité.
+
+
+## Fenêtre d'inspection redimensionnable / agrandissable — #2657
+
+La consultation des cas locaux (fournisseur, état de preuve, recherche,
+droits non vérifiés et fichiers sans provenance attestée, inspection
+**côte à côte** de candidats `metadata_only`) s'ouvre désormais dans
+une `Adw.Window` explicitement décorée et redimensionnable avec
+`Adw.ToolbarView` + `Adw.HeaderBar`.
+
+- Taille initiale préservée : **920 × 620** ; le bureau reste maître
+  de la taille effective pour ne pas dépasser les petits écrans.
+- Commandes de titre affichées par libadwaita et bouton explicite
+  **« Agrandir / Restaurer »** utilisable sans raccourci clavier, sans
+  création d'une autre fenêtre et sans nouvelle analyse.
+- Bouton « Fermer » existant conservé. Changement d'identité,
+  fermeture et invalidation de la session révoquent toujours les
+  informations locales privées ; le bouton n'altère que l'état
+  d'affichage du même objet `Gtk.Window`.
+- Validation Core par double bascule maximiser/restaurer, E2E
+  GTK/XTEST de la barre, du bouton et de la persistance de la session
+  juste avant sa révocation ; en Xvfb **sans gestionnaire de fenêtres**,
+  la demande d'agrandissement peut ne pas modifier la géométrie.
+  La dimension réellement obtenue reste à recetter avec le WM du poste
+  utilisateur à 1280 et 1366 px.
+
+Aucun changement des preuves, filtres, nombres, classification
+Numilog/Kobo, recherche bibliographique, export public, téléchargement
+ou autorisation de réparation.
