@@ -548,3 +548,74 @@ def test_zip_numeric_header_values_are_structural_only(header, value):
     finally:
         review.destroy()
         trace.destroy()
+
+
+
+@pytest.mark.parametrize(("field", "number"), [
+    ("mystery", 7),
+    ("customProperty", 42),
+    ("opaque", 1234),
+    ("sessionFragment", 9999),
+    ("unfamiliarOtpNumber", 3210),
+])
+def test_unknown_short_json_numbers_are_masked_even_if_approved_elsewhere(field, number):
+    from browser_recorder_zip import _json_shape
+
+    assert _json_shape(number, name=field) == "[NUMBER]"
+    assert _json_shape(number, name=field,
+                       approved=frozenset({str(number)})) == "[NUMBER]"
+
+
+def test_approved_identifiers_and_bounded_public_counters_survive():
+    from browser_recorder_zip import _json_shape
+
+    projected = _json_shape(
+        {"bookId": 214, "count": 2, "year": 2026, "price": 9.5,
+         "page": 3, "total": 12, "unfamiliar": 214, "unknownCode": 1234},
+        approved=frozenset({"214"}),
+    )
+    assert projected == {
+        "bookId": 214, "count": 2, "year": 2026, "price": 9.5,
+        "page": 3, "total": 12, "unfamiliar": "[NUMBER]",
+        "unknownCode": "[NUMBER]",
+    }
+
+
+def test_frozen_zip_short_numeric_private_fields_remain_structural():
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST", url=ORIGIN + "/api/books?BookId=214",
+        request_headers={"content-type": "application/json"},
+        request_body=json.dumps({
+            "bookId": 214, "customInternalNumber": 2718,
+            "opaque": 987, "year": 2026, "count": 2,
+        }),
+        response_headers={"content-type": "application/json"},
+        response_body='{"customPrivate":1234,"total":12}',
+        status=200,
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key,
+                          "keep" if candidate.value == "214" else "anonymize")
+        plan = prepare_reviewed_zip(review)
+        members = plan.preview()["members"]
+        request = json.loads(next(row["text"] for row in members
+                                  if row["name"] == "bodies/0001-request.txt"))
+        response = json.loads(next(row["text"] for row in members
+                                   if row["name"] == "bodies/0001-response.txt"))
+        assert request["bookId"] == 214
+        assert request["customInternalNumber"] == "[NUMBER]"
+        assert request["opaque"] == "[NUMBER]"
+        assert request["year"] == 2026
+        assert request["count"] == 2
+        assert response["customPrivate"] == "[NUMBER]"
+        assert response["total"] == 12
+        serial = json.dumps(plan.preview(), sort_keys=True)
+        assert '"customInternalNumber": 2718' not in serial
+        assert '"opaque": 987' not in serial
+        assert '"customPrivate": 1234' not in serial
+    finally:
+        review.destroy()
+        trace.destroy()
