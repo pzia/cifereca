@@ -817,17 +817,21 @@ class PluginManager:
             roots.append(package.root)
         return manifests, roots
 
-    def ensure_python_dependencies(self) -> list[dict[str, object]]:
-        """Repair Python distribution requirements of all active plugin packages.
+    def ensure_python_dependencies(
+        self, *, activate: bool = True,
+    ) -> list[dict[str, object]]:
+        """Explicitly repair plugin Python dependencies in the Core-owned venv.
 
-        This is the only supported runtime path that mutates the Cifereca venv
-        for plugin dependencies. Plugin code must never invoke pip itself.
+        An asynchronous CoreUI caller uses activate=False in a worker and
+        reactivates plugins on the GTK main thread after the install finishes.
+        Plugin code never invokes pip. CLI callers retain the default.
         """
         packages = self.packages.active_packages()
         manifests = [item.manifest for item in packages]
         transaction = self.python_dependencies.ensure(manifests, package_roots=[item.root for item in packages])
         transaction.commit()
-        self.activate()
+        if activate:
+            self.activate()
         return self.python_dependencies.diagnostic(manifests)
 
     def install(self, archive: Path, *, activate: bool = True, replace: bool = False) -> InstalledPackage:
