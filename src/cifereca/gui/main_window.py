@@ -770,7 +770,14 @@ class MainWindow(Adw.ApplicationWindow):
                                                    GLib=GLib, alive=result_alive)
                          if getattr(info, "id", None) == "library.reconciliation.audit" else None)
             inspection_row = None
+            last_report_row = None
             if inspector is not None:
+                # A previous partial audit is not the current inspection:
+                # give each its own status line and independent controls.
+                last_report_row = Adw.ActionRow()
+                last_report_row.set_title("Dernière analyse : aucune")
+                last_report_row.set_subtitle("Aucun rapport local consultable.")
+                group.add(last_report_row)
                 # The previous audit may be incomplete while a *new* private
                 # case inspection is running. These are different operations:
                 # never put their competing status/cancel widgets on one row.
@@ -781,7 +788,8 @@ class MainWindow(Adw.ApplicationWindow):
                 )
                 group.add(inspection_row)
             result_view = MaintenanceResultView(
-                Gtk=Gtk, Adw=Adw, Pango=Pango, parent=self, row=row,
+                Gtk=Gtk, Adw=Adw, Pango=Pango, parent=self,
+                row=last_report_row if last_report_row is not None else row,
                 title=info.title, alive=result_alive, inspector=inspector,
                 inspection_row=inspection_row,
             )
@@ -795,7 +803,9 @@ class MainWindow(Adw.ApplicationWindow):
                         active=True, identity=current_scope[1],
                         generation=current_scope[2],
                     )
-                    result_view.restore_text(saved["text"])
+                    result_view.restore_text(
+                        saved["text"], state=saved.get("state"),
+                    )
                 else:
                     # No fallback to a report from another identity/context.
                     self._maintenance_reconciliation_report = None
@@ -1148,6 +1158,7 @@ class MainWindow(Adw.ApplicationWindow):
                                 self._maintenance_reconciliation_report = {
                                     "scope": reconciliation_scope(),
                                     "text": result_view.text,
+                                    "state": result_view.state,
                                 }
                             # For reconciliation the user has already completed
                             # the explicit plan + run flow: surface its outcome
