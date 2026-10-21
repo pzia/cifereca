@@ -513,7 +513,8 @@ def main() -> int:
                     allowed = {
                         "probe_start", "initial", "long_detail", "scrolled",
                         "exact_setup", "exact_button", "exact_key",
-                        "exact_verdict", "return_list",
+                        "exact_verdict", "exact_navigation", "exact_selection",
+                        "exact_no_search", "return_list",
                     }
                     stage = report_data.get("p1_1354_phase")
                     if type(stage) is str and stage in allowed:
