@@ -192,6 +192,12 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
         milestones = (
             ("real_tools_route_and_action", "maintenance_route"),
             ("P1_1498-duplicates_cancelled_terminal_on_own_line", "maintenance_p1_done"),
+            ("inspection_setup_entered", "inspection_setup"),
+            ("inspection_fixture_created", "inspection_fixture"),
+            ("inspection_host_mapped", "inspection_host"),
+            ("inspection_result_button_ready", "inspection_result_button"),
+            ("inspection_result_dialog_mapped", "inspection_result_dialog"),
+            ("inspection_click_dispatched", "inspection_clicked"),
             ("inspection_window_mapped", "inspection_open"),
             ("local_inspection_provider_filter_does_not_attribute_isbn_files", "numilog_filtered"),
             ("inspection_candidates_initially_visible", "candidate_first"),
