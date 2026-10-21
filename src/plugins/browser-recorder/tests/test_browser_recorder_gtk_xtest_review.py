@@ -235,6 +235,10 @@ def test_xtest_81_choices_exact_zip_and_confirmed_export(
         press(panel.export_confirm, "space")
         assert panel.export_confirm.get_active()
         assert panel.export_button.get_sensitive()
+        def choose(done):
+            exports.mkdir(mode=0o700, exist_ok=True)
+            done(exports / "xtest-reviewed.zip")
+        panel._prompt_export_file = choose
         press(panel.export_button, "space")
         paths = list(exports.glob("*.zip"))
         assert len(paths) == 1

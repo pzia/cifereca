@@ -140,6 +140,10 @@ def test_real_gtk4_private_review_zip_export_keyboard_controls(
         panel.export_confirm.set_active(True)
         flush_glib()
         assert panel.export_button.get_sensitive()
+        def choose(done):
+            (tmp_path / "exports").mkdir(mode=0o700, exist_ok=True)
+            done(tmp_path / "exports" / "fictional-reviewed.zip")
+        panel._prompt_export_file = choose
         panel.export_button.emit("clicked")
         flush_glib()
         outputs = list((tmp_path / "exports").glob("*.zip"))
