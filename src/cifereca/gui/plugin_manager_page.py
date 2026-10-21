@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from threading import Thread
 from typing import Any, Callable
 
 import gi
@@ -54,6 +55,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self._family_expansion: dict[str, bool] = {}
         self._plugin_widgets: dict[str, Gtk.Widget] = {}
         self._plugin_switches: dict[str, Gtk.Switch] = {}
+        self._python_repair_running = False
         self._refresh_anchor_id: str | None = None
         self._viewport_token = None
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -681,6 +683,20 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         secondary_box.append(diag)
         secondary_popover.set_child(secondary_box); secondary.set_popover(secondary_popover)
         primary_actions.append(secondary)
+        if d.id == "ui.page.browser-recorder" and any(
+            req.type == "python-package" and req.name.casefold() == "playwright"
+            for req in d.system_requires
+        ):
+            repair = action_button(
+                "Installer/réparer Playwright (Python)…", "software-update-available-symbolic",
+            )
+            repair.set_sensitive(not self._python_repair_running)
+            repair.set_tooltip_text(
+                "Installation explicite par le Core dans son environnement Python "
+                "(sans Chromium). Aucun pip automatique au démarrage."
+            )
+            repair.connect("clicked", lambda _b: self._confirm_playwright_python_repair())
+            primary_actions.append(repair)
         box.append(primary_actions)
 
         settings = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -735,6 +751,69 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         except Exception as exc:
             self.window.show_error(plugin_error_message(exc), "Activation impossible"); return
         self.on_changed()
+
+    def _confirm_playwright_python_repair(self) -> None:
+        """User opt-in before Core downloads a Python package into its venv."""
+        if self._python_repair_running:
+            return
+        dialog = Adw.MessageDialog.new(
+            self.window, "Installer Playwright pour Browser Recorder ?",
+            "Cette action peut télécharger Playwright Python et ses dépendances "
+            "depuis l'index configuré, uniquement dans le venv cifereca. "
+            "Le navigateur Chromium (plusieurs centaines de Mo) n'est PAS "
+            "installé à cette étape. Aucun téléchargement au démarrage.",
+        )
+        dialog.add_response("cancel", "Annuler")
+        dialog.add_response("install", "Installer dans le venv")
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect(
+            "response", lambda _dialog, response:
+                self._repair_playwright_python() if response == "install" else None,
+        )
+        dialog.present()
+
+    def _repair_playwright_python(self) -> None:
+        """Delegate pip exclusively to Core; never run a resolver on GTK."""
+        if self._python_repair_running:
+            return
+        self._python_repair_running = True
+        self._toast("Installation Python demandée ; capture indisponible pendant la réparation.")
+        self.refresh()
+
+        def worker():
+            ok = False
+            try:
+                # Do not import/activate any plugin from a background thread.
+                self.manager.ensure_python_dependencies(activate=False)
+                ok = True
+            except Exception:
+                # pip output may contain proxy credentials or private paths.
+                # Neither the message nor traceback belongs in GTK/logs.
+                pass
+
+            def complete():
+                self._python_repair_running = False
+                if getattr(self.window, "_closed", False):
+                    return False
+                success = ok
+                if success:
+                    try:
+                        self.manager.activate()
+                    except Exception:
+                        success = False
+                self._toast(
+                    "Playwright Python installé. Chromium doit être installé séparément."
+                    if success else
+                    "Réparation Python impossible. Vérifier le venv, l'accès réseau et le stockage."
+                )
+                self.refresh()
+                self.on_changed()
+                return False
+
+            GLib.idle_add(complete)
+
+        Thread(target=worker, name="cifereca-plugin-python-repair", daemon=True).start()
 
     def _reload(self) -> None:
         self.manager.activate(); self.refresh(); self.on_changed()
