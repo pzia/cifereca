@@ -127,3 +127,108 @@ def test_optional_collector_and_errors_only_level_are_fail_closed(tmp_path):
         diagnostics, log_path=tmp_path / "none",
         source="core_events", module="PLUGIN", severity="error",
     )["total"] == 1
+
+
+@pytest.mark.parametrize(("operation", "code"), [
+    ("http_capture", "capture_failed"),
+    ("http_capture", "capture_interrupted"),
+    ("http_capture", "capture_limit"),
+    ("http_review", "review_failed"),
+    ("zip_prepare", "zip_prepare_failed"),
+    ("zip_export", "zip_export_failed"),
+])
+def test_scoped_browser_recorder_runtime_failures_use_attested_public_feed(
+    tmp_path, operation, code,
+):
+    from cifereca.plugins.manager import PluginManager
+
+    installed = SimpleNamespace(
+        descriptor=SimpleNamespace(id=PLUGIN_ID),
+        package=SimpleNamespace(
+            manifest=SimpleNamespace(
+                package=SimpleNamespace(
+                    id="org.cifereca.technical.browser-recorder",
+                ),
+            ),
+        ),
+    )
+    collector = Diagnostics()
+    manager = SimpleNamespace(
+        diagnostics=collector, _records={PLUGIN_ID: installed},
+    )
+    fake_secret = "https://proxy.invalid/?token=FAKE_PRIVATE_ZIP_PASSWORD"
+    PluginManager._plugin_diag(
+        manager, PLUGIN_ID, fake_secret, "error",
+        {"operation": operation, "code": code, "raw_capture": fake_secret},
+        "normal",
+    )
+    result = query_diagnostic_events(
+        collector, log_path=tmp_path / "absent",
+        source="core_events", module="PLUGIN", severity="error",
+    )
+    assert result["total"] == 1
+    row = result["events"][0]
+    assert row["detail"] == {
+        "plugin_id": PLUGIN_ID, "operation": operation, "code": code,
+    }
+    assert collector.snapshot()[0]["verified_browser_recorder"] is True
+    for rendered in (repr(result), repr(collector.snapshot()), collector.text("test")):
+        assert "FAKE_PRIVATE_ZIP_PASSWORD" not in rendered
+        assert "proxy.invalid" not in rendered
+
+
+def test_runtime_cannot_forge_core_chromium_status_or_unverified_package(tmp_path):
+    from cifereca.plugins.manager import PluginManager
+
+    secret = "PRIVATE_TOKEN_NEVER_EXPORT"
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("unexpected coercion of private value")
+        def __repr__(self):
+            raise AssertionError("unexpected representation")
+
+    def runtime(package_id):
+        return SimpleNamespace(
+            descriptor=SimpleNamespace(id=PLUGIN_ID),
+            package=SimpleNamespace(
+                manifest=SimpleNamespace(
+                    package=SimpleNamespace(id=package_id),
+                ),
+            ),
+        )
+
+    collector = Diagnostics()
+    manager = SimpleNamespace(
+        diagnostics=collector,
+        _records={
+            PLUGIN_ID: runtime("org.cifereca.technical.browser-recorder"),
+        },
+    )
+    # Scoped plugin cannot claim success of Core-owned installation/probe.
+    PluginManager._plugin_diag(
+        manager, PLUGIN_ID, secret, "ok",
+        {"operation": "chromium_install", "code": "ready", "url": secret},
+        "normal",
+    )
+    assert collector.snapshot() == []
+    # A hostile or unsupported code becomes a fixed, non-leaking error.
+    PluginManager._plugin_diag(
+        manager, PLUGIN_ID, secret, "error",
+        {"operation": "http_capture", "code": Hostile(), "url": secret},
+        "normal",
+    )
+    assert collector.snapshot()[0]["detail"]["code"] == "browser_operation_failed"
+
+    # A package with a forged plugin identity is not an attested producer.
+    manager._records[PLUGIN_ID] = runtime("org.example.unverified")
+    PluginManager._plugin_diag(
+        manager, PLUGIN_ID, secret, "error",
+        {"operation": "zip_export", "code": "zip_export_failed", "url": secret},
+        "normal",
+    )
+    result = query_diagnostic_events(
+        collector, log_path=tmp_path / "absent",
+        source="core_events", module="PLUGIN",
+    )
+    assert result["total"] == 1
+    assert secret not in repr(result)

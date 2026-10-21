@@ -93,6 +93,12 @@ class BrowserRecorderPage:
             Gtk, GLib, self.tasks, site, consent,
             legacy_running=lambda: self.handle is not None and not self.handle.done(),
             export_directory=self.context.data_directory / "exports",
+            # The Core binds this callback to the installed plugin identity.
+            # Never forward a provider value, URL, exception or trace body.
+            diagnostic=lambda operation, code: self.context.report_diagnostic(
+                "browser recorder user action", "error",
+                detail={"operation": operation, "code": code}, level="normal",
+            ),
         )
         box.append(self.private_panel.widget)
 

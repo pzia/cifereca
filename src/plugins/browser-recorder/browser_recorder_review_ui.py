@@ -47,6 +47,15 @@ def _capture_failure_message(code: object) -> str:
             if type(code) is str else _CAPTURE_FAILURE_DEFAULT)
 
 
+def _capture_diagnostic_code(code: object) -> str:
+    """Map RecorderError arguments to a literal code, never calling hooks."""
+    if type(code) is not str:
+        return "capture_failed"
+    if code == "playwright_unavailable":
+        return "playwright_missing"
+    return code if code in {"capture_interrupted", "capture_limit"} else "capture_failed"
+
+
 def _metadata_only_origins(raw: str, primary: str) -> tuple[str, ...]:
     """Validate opt-in third-party origins; never echo private input in errors."""
     if type(raw) is not str or len(raw) > 512:
@@ -69,8 +78,9 @@ def _metadata_only_origins(raw: str, primary: str) -> tuple[str, ...]:
 
 class PrivateReviewPanel:
     def __init__(self, Gtk, GLib, tasks, site, consent, legacy_running,
-                 export_directory=None):
+                 export_directory=None, diagnostic=None):
         self.Gtk, self.GLib, self.tasks = Gtk, GLib, tasks
+        self._diagnostic = diagnostic
         self.site, self.consent = site, consent
         self.legacy_running = legacy_running
         self.export_directory = (Path(export_directory)
@@ -291,6 +301,16 @@ class PrivateReviewPanel:
             self._trace.destroy()
             self._trace = None
 
+    def _emit_failure(self, operation: str, code: str) -> None:
+        """Only fixed, Core-validated action outcomes; no private payload."""
+        try:
+            if callable(self._diagnostic):
+                self._diagnostic(operation, code)
+        except Exception:
+            # Optional Diagnostics must not interrupt private review or reveal
+            # exceptions from a provider, exporter, or installed plugin.
+            pass
+
     def begin(self):
         if self._closed or self.is_recording() or self.legacy_running():
             return
@@ -332,6 +352,7 @@ class PrivateReviewPanel:
             self._stop = None
             self._pause_control = None
             self.status.set_label(_capture_failure_message(None))
+            self._emit_failure("http_capture", "capture_failed")
             self._refresh()
             return
         self._handle = handle
@@ -339,14 +360,15 @@ class PrivateReviewPanel:
 
         def finished(done):
             try:
-                result, message = done.result(), None
+                result, message, failure_code = done.result(), None, None
             except RecorderError as exc:
                 # Only a literal known RecorderError code may affect UI text;
                 # never call str(exc) or inspect Playwright's raw exception.
                 code = exc.args[0] if len(exc.args) == 1 else None
                 result, message = None, _capture_failure_message(code)
+                failure_code = _capture_diagnostic_code(code)
             except Exception:
-                result, message = None, _capture_failure_message(None)
+                result, message, failure_code = None, _capture_failure_message(None), "capture_failed"
 
             def deliver():
                 if self._closed or self._generation != generation:
@@ -359,6 +381,7 @@ class PrivateReviewPanel:
                 self._pause_control = None
                 if message:
                     self.status.set_label(message)
+                    self._emit_failure("http_capture", failure_code)
                 else:
                     self._trace = result
                     try:
@@ -371,6 +394,7 @@ class PrivateReviewPanel:
                         self.status.set_label(
                             "Limite de revue atteinte : capture effacée, aucun export.",
                         )
+                        self._emit_failure("http_review", "review_failed")
                     else:
                         self._show_candidates()
                 self._refresh()
@@ -541,6 +565,7 @@ class PrivateReviewPanel:
             # Provider observations and rejection details are not diagnostic
             # material for the GTK status or application logs.
             self.status.set_label("Archive refusée : risque ou limite de contenu.")
+            self._emit_failure("zip_prepare", "zip_prepare_failed")
             return
         self._bundle_plan = plan
         self._bundle_preview = preview
@@ -582,6 +607,7 @@ class PrivateReviewPanel:
             )
         except Exception:
             self.status.set_label("Enregistrement local du ZIP impossible.")
+            self._emit_failure("zip_export", "zip_export_failed")
             return
         # Do not allow repeated saves without another exact preview and
         # confirmation. Keep the trace in RAM only for further local review.
