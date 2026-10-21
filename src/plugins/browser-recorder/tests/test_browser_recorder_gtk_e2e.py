@@ -1,4 +1,4 @@
-"""P1 #2531: REAL GTK4 widgets on Xvfb, with fake private HTTP bytes.
+"""P0 #2531: REAL GTK4 widgets on Xvfb, with fake private HTTP bytes.
 
 No browser navigation, account, capture, screenshots or real HTTP traffic.
 Complements real Chromium test_browser_recorder_chromium_e2e.py.
@@ -167,7 +167,7 @@ def test_real_gtk4_private_review_zip_export_keyboard_controls(
 def test_real_gtk4_large_identifier_list_requires_each_decision_and_scrolls(
     monkeypatch, tmp_path, width,
 ):
-    """80 real GTK selectors, scroll, and no ZIP without individual choices.
+    """80 real GTK identifier choices across pages; no unreviewed ZIP.
 
     Native widgets and allocations, synthetic traffic only; no XTEST input,
     network, real account, or user secrets. Interactive UX remains separate.
@@ -215,32 +215,41 @@ def test_real_gtk4_large_identifier_list_requires_each_decision_and_scrolls(
         assert isinstance(scroller, Gtk.ScrolledWindow)
         assert scroller.get_child() is viewport
         assert viewport.get_child() is panel.candidates_box
-        assert scroller.get_vadjustment().get_upper() > scroller.get_vadjustment().get_page_size()
-
-        choices = []
-        child = panel.candidates_box.get_first_child()
-        while child is not None:
-            chooser = child.get_last_child()
-            assert isinstance(chooser, Gtk.ComboBoxText)
-            choices.append(chooser)
-            child = child.get_next_sibling()
-        assert len(choices) == 80
+        # Only 24 real GTK ComboBox widgets are instantiated at once;
+        # page navigation rather than unbounded scrolling reaches all IDs.
+        assert not panel.candidate_previous.get_sensitive()
+        assert panel.candidate_next.get_sensitive()
         assert not panel.plan_button.get_sensitive()
         assert not panel.export_button.get_sensitive()
         assert not list(tmp_path.iterdir())
 
-        # A last-row edit should stay reachable after native scrolling.
-        scroller.get_vadjustment().set_value(
-            scroller.get_vadjustment().get_upper()
-            - scroller.get_vadjustment().get_page_size()
-        )
-        flush_glib()
-        assert scroller.get_vadjustment().get_value() > 0
-        choices[-1].set_active_id("keep")
-        assert panel._review.pending() == 79
-        for chooser in choices[:-1]:
-            chooser.set_active_id("anonymize")
-        flush_glib()
+        total_reviewed = 0
+        last_chooser = None
+        for page in range(4):
+            choices = []
+            child = panel.candidates_box.get_first_child()
+            while child is not None:
+                chooser = child.get_last_child()
+                assert isinstance(chooser, Gtk.ComboBoxText)
+                choices.append(chooser)
+                child = child.get_next_sibling()
+            assert len(choices) == (24 if page < 3 else 8)
+            assert panel.candidate_previous.get_sensitive() == (page > 0)
+            assert panel.candidate_next.get_sensitive() == (page < 3)
+            assert panel.candidate_page_status.get_label() == (
+                f"Identifiants {page * 24 + 1}–"
+                f"{min(80, (page + 1) * 24)} sur 80"
+            )
+            for chooser in choices:
+                chooser.set_active_id("anonymize")
+            total_reviewed += len(choices)
+            assert panel._review.pending() == 80 - total_reviewed
+            flush_glib()
+            last_chooser = choices[-1]
+            if page < 3:
+                panel.candidate_next.emit("clicked")
+                flush_glib()
+        assert total_reviewed == 80
         assert panel._review.pending() == 0
         assert panel.plan_button.get_sensitive()
         panel.plan_button.emit("clicked")
@@ -249,12 +258,18 @@ def test_real_gtk4_large_identifier_list_requires_each_decision_and_scrolls(
         assert not panel.export_button.get_sensitive()
         assert not list(tmp_path.iterdir())
 
-        # Reversing a decision revokes the frozen preview and consent.
-        choices[0].set_active_id("exclude")
+        # A changed decision on a later page revokes ZIP preview and consent;
+        # navigation never implicitly resets or accepts other decisions.
+        last_chooser.set_active_id("exclude")
         assert panel._bundle_plan is None
         assert not panel.export_confirm.get_active()
         assert not panel.export_button.get_sensitive()
         assert list(tmp_path.iterdir()) == []
+        panel.candidate_previous.emit("clicked")
+        flush_glib()
+        assert panel._review.pending() == 0
+        child = panel.candidates_box.get_first_child()
+        assert child.get_last_child().get_active_id() == "anonymize"
         panel.clear.emit("clicked")
         flush_glib()
         assert trace.exchanges == []
