@@ -110,6 +110,7 @@ class PrivateReviewPanel:
         self._candidate_page = 0
         self._closed = False
         self._generation = 0
+        self._index_handle = None
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.widget = box
@@ -156,18 +157,24 @@ class PrivateReviewPanel:
             )
             box.append(self.vault_passphrase)
             self.sessions_refresh = Gtk.Button(label="Lister les sessions archivées")
+            self.sessions_unlock = Gtk.Button(
+                label="Déverrouiller les métadonnées des sessions…"
+            )
             self.session_list = Gtk.ComboBoxText()
             self.sessions_open = Gtk.Button(label="Ouvrir une session — nouvelle revue")
             self.delete_confirm = Gtk.CheckButton(
                 label="Je confirme la suppression locale de la session choisie."
             )
             self.sessions_delete = Gtk.Button(label="Supprimer cette session")
-            for widget in (self.sessions_refresh, self.session_list,
-                           self.sessions_open, self.delete_confirm,
+            for widget in (self.sessions_refresh, self.sessions_unlock,
+                           self.session_list, self.sessions_open, self.delete_confirm,
                            self.sessions_delete):
                 box.append(widget)
             self.sessions_refresh.connect(
                 "clicked", lambda *_: self.refresh_sessions(),
+            )
+            self.sessions_unlock.connect(
+                "clicked", lambda *_: self.unlock_sessions(),
             )
             self.sessions_open.connect("clicked", lambda *_: self.open_session())
             self.sessions_delete.connect(
@@ -337,20 +344,30 @@ class PrivateReviewPanel:
 
     def _refresh(self):
         busy = self.is_recording()
+        scanning = self.is_scanning()
         replaceable = self._trace is None or (
             self.vault_directory is not None
             and bool(getattr(self._trace, "vault_session_id", None))
         )
         self.start.set_sensitive(
-            not self._closed and not busy and replaceable
+            not self._closed and not busy and not scanning and replaceable
             and not self.legacy_running()
         )
         if self.vault_directory is not None:
-            self.sessions_refresh.set_sensitive(not self._closed and not busy)
-            self.sessions_open.set_sensitive(not self._closed and not busy)
-            self.sessions_delete.set_sensitive(not self._closed and not busy)
+            self.sessions_refresh.set_sensitive(
+                not self._closed and not busy and not scanning
+            )
+            self.sessions_unlock.set_sensitive(
+                not self._closed and not busy and not scanning
+            )
+            self.sessions_open.set_sensitive(
+                not self._closed and not busy and not scanning
+            )
+            self.sessions_delete.set_sensitive(
+                not self._closed and not busy and not scanning
+            )
             self.private_export_button.set_sensitive(
-                not self._closed and not busy
+                not self._closed and not busy and not scanning
                 and self.private_export_confirm.get_active()
                 and bool(self.session_list.get_active_id())
             )
@@ -430,8 +447,12 @@ class PrivateReviewPanel:
             # exceptions from a provider, exporter, or installed plugin.
             pass
 
+    def is_scanning(self):
+        return self._index_handle is not None and not self._index_handle.done()
+
     def begin(self):
-        if self._closed or self.is_recording() or self.legacy_running():
+        if (self._closed or self.is_recording() or self.is_scanning()
+                or self.legacy_running()):
             return
         if (self.vault_directory is not None and self._trace is not None
                 and not getattr(self._trace, "vault_session_id", None)):
@@ -582,7 +603,8 @@ class PrivateReviewPanel:
         handle.add_done_callback(finished)
 
     def refresh_sessions(self):
-        if self.vault_directory is None or self._closed or self.is_recording():
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()):
             return
         try:
             ids = PrivateSessionVault(self.vault_directory).list_ids()
@@ -598,8 +620,98 @@ class PrivateReviewPanel:
             f"{len(ids)} sessions chiffrées trouvées ; aucun site contacté."
         )
 
+    def unlock_sessions(self):
+        """Build the sensitive catalogue only on explicit local unlock.
+
+        Scrypt scans happen on a Core task worker, never on the GTK thread.
+        Session summaries are neither persisted nor sent to diagnostics.
+        """
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()):
+            return
+        passphrase = self.vault_passphrase.get_text()
+        self.vault_passphrase.set_text("")
+        if len(passphrase) < 12:
+            self.status.set_label(
+                "Phrase secrète de 12 caractères minimum requise."
+            )
+            return
+        generation = self._generation
+        vault_path = self.vault_directory
+        self.status.set_label(
+            "Déchiffrement local des métadonnées en cours, sans accès réseau…"
+        )
+
+        def work(_control):
+            return PrivateSessionVault(vault_path).unlocked_index(passphrase)
+
+        try:
+            handle = self.tasks.submit(
+                work, kind="browser-recorder", label="Indexer le coffre privé",
+            )
+        except Exception:
+            self.status.set_label("Index privé indisponible.")
+            return
+        self._index_handle = handle
+        self._refresh()
+
+        def finished(done):
+            try:
+                result = done.result()
+            except Exception:
+                result = None
+
+            def deliver():
+                if self._closed or generation != self._generation:
+                    return False
+                if self._index_handle is done:
+                    self._index_handle = None
+                if result is None:
+                    self.status.set_label(
+                        "Déverrouillage impossible : clé, quota ou coffre invalide."
+                    )
+                else:
+                    entries, inaccessible = result
+                    try:
+                        ids = PrivateSessionVault(vault_path).list_ids()
+                    except VaultError:
+                        self.status.set_label("Index local inaccessible.")
+                        self._refresh()
+                        return False
+                    known = {entry["id"]: entry for entry in entries}
+                    old_selected = self.session_list.get_active_id()
+                    self.session_list.remove_all()
+                    ordered = [item["id"] for item in entries]
+                    ordered.extend(sid for sid in ids if sid not in known)
+                    for number, sid in enumerate(ordered, 1):
+                        info = known.get(sid)
+                        if info is None:
+                            label = f"Session {number} · {sid[:8]} — verrouillée/illisible"
+                        else:
+                            label = (
+                                f"{info['saved_at'][:16]} · {info['status']} · "
+                                f"{info['origin'][:90]} · {info['exchanges']} échanges "
+                                f"· {sum(info['omissions'].values())} omissions"
+                            )
+                        self.session_list.append(sid, label)
+                    if ordered:
+                        self.session_list.set_active_id(
+                            old_selected if old_selected in ordered else ordered[0]
+                        )
+                    self.status.set_label(
+                        f"{len(entries)} sessions déverrouillées et "
+                        f"{inaccessible} indisponibles ; aucun contact fournisseur."
+                    )
+                self._refresh()
+                return False
+
+            self.GLib.idle_add(deliver)
+
+        handle.add_done_callback(finished)
+
     def open_session(self):
-        if self.vault_directory is None or self._closed or self.is_recording():
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()):
             return
         session_id = self.session_list.get_active_id()
         if not session_id:
@@ -650,7 +762,8 @@ class PrivateReviewPanel:
         self._refresh()
 
     def delete_session(self):
-        if self.vault_directory is None or self._closed or self.is_recording():
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()):
             return
         if not self.delete_confirm.get_active():
             self.status.set_label("Suppression interdite sans confirmation.")
@@ -1038,6 +1151,10 @@ class PrivateReviewPanel:
         self._generation += 1
         if self._stop is not None:
             self._stop.set()
+        # Clear decrypted origin/date/count labels in the detached GTK page:
+        # list of opaque session IDs alone is also discarded on deactivation.
+        if self.session_list is not None:
+            self.session_list.remove_all()
         # Never leave typed vault/export secrets in a detached GTK page.
         if self.vault_passphrase is not None:
             self.vault_passphrase.set_text("")
@@ -1046,3 +1163,4 @@ class PrivateReviewPanel:
         self._discard_private()
         self._stop = None
         self._handle = None
+        self._index_handle = None

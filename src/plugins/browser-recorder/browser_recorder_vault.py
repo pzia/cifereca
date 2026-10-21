@@ -254,6 +254,37 @@ class PrivateSessionVault:
         finally:
             os.close(fd)
 
+    def unlocked_index(self, passphrase: str) -> tuple[tuple[dict, ...], int]:
+        """Read an opt-in private session index, never persist an index file.
+
+        No filename or ordinary list view exposes an origin, book, date or
+        status. Each summary comes from a fully AEAD-authenticated session,
+        after verifying the supplied passphrase; locked/tampered sessions do
+        not block other, independently decryptable sessions. Call this API
+        in a worker, as scrypt may take seconds across many sessions.
+        """
+        if not isinstance(passphrase, str) or not 12 <= len(passphrase) <= 1024:
+            raise VaultError("vault_passphrase_required")
+        ids = self.list_ids()
+        if len(ids) > MAX_SESSIONS:
+            raise VaultError("vault_limit")
+        summaries = []
+        unavailable = 0
+        for identity in ids:
+            try:
+                item = self.open(identity, passphrase)
+            except VaultError:
+                unavailable += 1
+                continue
+            try:
+                summaries.append(item.private_summary())
+            finally:
+                item.trace.destroy()
+        summaries.sort(key=lambda entry: (
+            entry["saved_at"], entry["id"]
+        ), reverse=True)
+        return tuple(summaries), unavailable
+
     def begin(self, passphrase: str):
         """Explicit action *before* capture; fail closed before Chromium runs."""
         salt = secrets.token_bytes(16)
