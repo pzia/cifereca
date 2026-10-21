@@ -89,10 +89,8 @@ def _right_explanation(right, ledger, placements, artifacts, files, incomplete):
     elif (ledger[0].get('status') != 'complete'
           or not ledger[0].get('artifact_id')):
         why.append('Acquisition enregistrée sans preuve complète de publication d’artefact.')
-    matched = [p for p in placements if
-               p.get('identity_id') == right.get('identity_id') and
-               p.get('provider_id') == right.get('provider_id') and
-               p.get('source_item_id') == right.get('item_id')]
+    # These are already indexed within the active identity by the caller.
+    matched = placements
     if not matched:
         why.append('Aucun placement explicite retrouvé pour cette édition dans les preuves consultées.')
     elif len(matched) != 1:
@@ -100,12 +98,11 @@ def _right_explanation(right, ledger, placements, artifacts, files, incomplete):
     else:
         placement = matched[0]
         path = placement.get('path')
-        observed = [f for f in files if f.path == path]
+        observed = files.get(path, ())
         if not observed:
             why.append('Chemin enregistré sans fichier correspondant vérifié dans le périmètre inspecté.')
         else:
-            linked_artifacts = [a for a in artifacts
-                                if a.get('artifact_id') == placement.get('artifact_id')]
+            linked_artifacts = artifacts.get(placement.get('artifact_id'), ())
             if len(linked_artifacts) != 1:
                 why.append('Artefact associé au placement absent ou ambigu dans SQLite.')
             else:
@@ -245,6 +242,15 @@ class LocalInspection:
         placements = audit.snapshot.tables.get('placements', [])
         artifacts = audit.snapshot.tables.get('artifacts', [])
         own_files = [f for f in audit.inventory.files if f.identity_id == identity_id]
+        by_path, by_artifact, by_edition = defaultdict(list), defaultdict(list), defaultdict(list)
+        for f in own_files:
+            by_path[f.path].append(f)
+        for artifact in artifacts:
+            by_artifact[artifact.get('artifact_id')].append(artifact)
+        for placement in placements:
+            if placement.get('identity_id') == identity_id:
+                by_edition[(placement.get('provider_id'),
+                            placement.get('source_item_id'))].append(placement)
         incomplete = audit.redacted().get('status') != 'complete'
         notices = defaultdict(list)
         for row in catalog:
@@ -262,8 +268,11 @@ class LocalInspection:
             acquisition_rows = audit.snapshot.tables.get('acquisition_ledger', [])
             own_ledger = [acquisition_rows[i] for i in ledgers[right.get('entitlement_id')][:20]
                           if 0 <= i < len(acquisition_rows)]
-            why = _right_explanation(right, own_ledger, placements, artifacts,
-                                     own_files, incomplete)
+            why = _right_explanation(
+                right, own_ledger, by_edition.get((right.get('provider_id'),
+                                                  right.get('item_id')), ()),
+                by_artifact, by_path, incomplete,
+            )
             detail = ('Droit sans fichier vérifié · ' + right_label + '\n\n'
                       + evidence('entitlements', index)
                       + '\n\nPourquoi ce droit n’est-il pas confirmé ?\n' + why
