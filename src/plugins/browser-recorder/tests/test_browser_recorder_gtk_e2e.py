@@ -343,3 +343,143 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
         plugin.deactivate()
         window.close()
         flush_glib()
+
+
+@pytest.mark.parametrize(("failure", "expected", "fragment"), [
+    ("python_missing", "playwright_missing", "Installer les dépendances Python"),
+    ("interrupted", "capture_interrupted", "Navigateur fermé"),
+    ("unexpected", "capture_failed", "Vérifier Chromium"),
+])
+def test_gtk_capture_failure_is_attested_and_privacy_safe(
+    monkeypatch, tmp_path, failure, expected, fragment,
+):
+    """Explicit UI action -> scoped Core callback -> public Diagnostics.
+
+    Runs with native GTK widgets and a synthetic task, not a browser/provider.
+    Secrets in exceptions must never enter the public feed or GTK labels.
+    """
+    from browser_recorder import RecorderError
+    import browser_recorder_review_ui as view
+    from browser_recorder_page import BrowserRecorderPage
+    from cifereca.core.browser_recorder_diagnostics import PLUGIN_ID
+    from cifereca.core.diagnostic_event_feed import query_diagnostic_events
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.plugins.manager import PluginManager
+
+    secret = "FAKE_SECRET_NEVER_EXPORT"
+    if failure == "python_missing":
+        error = RecorderError("playwright_unavailable")
+    elif failure == "interrupted":
+        error = RecorderError("capture_interrupted")
+    else:
+        error = RuntimeError("https://example.invalid/?token=" + secret)
+
+    def synthetic_failure(url, stop, **_kwargs):
+        assert url == ORIGIN + "/catalog"
+        raise error
+
+    monkeypatch.setattr(view, "record_http", synthetic_failure)
+
+    class FailureHandle:
+        def __init__(self, work):
+            self.work, self.callback = work, None
+            self.completed, self.error = False, None
+
+        def done(self):
+            return self.completed
+
+        def add_done_callback(self, callback):
+            self.callback = callback
+
+        def result(self):
+            assert self.completed and self.error is not None
+            raise self.error
+
+        def finish(self):
+            assert self.callback is not None
+            try:
+                self.work(None)
+            except Exception as exc:
+                self.error = exc
+            self.completed = True
+            self.callback(self)
+
+    class Tasks:
+        def __init__(self):
+            self.handle = None
+            self.submissions = 0
+
+        def submit(self, work, **_kwargs):
+            self.submissions += 1
+            self.handle = FailureHandle(work)
+            return self.handle
+
+    Gtk.init()
+    tasks = Tasks()
+    diagnostics = Diagnostics()
+    manager = NS(
+        diagnostics=diagnostics,
+        _records={
+            PLUGIN_ID: NS(
+                descriptor=NS(id=PLUGIN_ID),
+                package=NS(manifest=NS(
+                    package=NS(id="org.cifereca.technical.browser-recorder"),
+                )),
+            ),
+        },
+    )
+    def report(message, status, detail=None, level="normal"):
+        PluginManager._plugin_diag(
+            manager, PLUGIN_ID, message, status, detail, level,
+        )
+
+    page = BrowserRecorderPage()
+    page.activate(NS(
+        data_directory=tmp_path,
+        broker=lambda name: tasks if name == "tasks" else None,
+        report_diagnostic=report,
+    ))
+    window = Gtk.Window()
+    window.set_default_size(1280, 850)
+    root = page.build(None)
+    window.set_child(root)
+    window.present()
+    flush_glib()
+    try:
+        assert diagnostics.snapshot() == []
+        site = root.get_first_child().get_next_sibling()
+        consent = site.get_next_sibling()
+        site.set_text(ORIGIN + "/catalog")
+        assert not consent.get_active()
+        page.private_panel.start.emit("clicked")
+        flush_glib()
+        assert tasks.submissions == 0
+        assert diagnostics.snapshot() == []
+        assert not list(tmp_path.iterdir())
+
+        consent.set_active(True)
+        page.private_panel.start.emit("clicked")
+        assert tasks.submissions == 1
+        assert diagnostics.snapshot() == []
+        tasks.handle.finish()
+        flush_glib()
+        assert fragment in page.private_panel.status.get_label()
+        assert secret not in page.private_panel.status.get_label()
+
+        feed = query_diagnostic_events(
+            diagnostics, log_path=tmp_path / "absent",
+            source="core_events", module="PLUGIN",
+        )
+        assert feed["total"] == 1
+        assert feed["events"][0]["detail"] == {
+            "plugin_id": PLUGIN_ID, "operation": "http_capture",
+            "code": expected,
+        }
+        assert secret not in repr(feed)
+        assert "example.invalid" not in repr(feed)
+        assert not list(tmp_path.iterdir())
+        assert not page.private_panel.has_private_data()
+    finally:
+        page.deactivate()
+        window.close()
+        flush_glib()
