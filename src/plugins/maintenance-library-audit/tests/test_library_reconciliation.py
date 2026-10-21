@@ -17,7 +17,7 @@ def report():
                                          'rights_without_verified_file': 5}},
             'metadata_candidates': {'metadata_candidates': 7},
             'stored_paths': {'counts': {'stored_path_missing': 1}},
-            'private_title': 'PRIVATE', 'reasons': ['PRIVATE'], 'warnings': ['PRIVATE']}
+            'private_title': 'PRIVATE', 'reasons': [], 'warnings': ['PRIVATE']}
 
 
 class Control:
@@ -85,6 +85,35 @@ def test_incomplete_scan_retains_uncertainty_and_never_calls_rights_missing(tool
     assert result.facts['incomplete_scan'] == 1
     assert 'ne signifie pas un livre absent' in ' '.join(result.warnings)
     assert 'PRIVATE' not in repr(result)
+
+
+def test_closed_limit_causes_are_explained_without_rendering_unknown_prose(tool):
+    instance, broker = tool
+    broker.result['status'] = 'incomplete_scan'
+    broker.result['reasons'] = ['hash_byte_budget', 'snapshot_time_budget', 'PRIVATE', 'hash_byte_budget']
+    result = instance.run(prepare(instance), Control())
+    assert not result.ok
+    assert result.warnings.count('Budget de lecture SHA atteint.') == 1
+    assert 'Durée maximale de lecture de la base atteinte.' in result.warnings
+    assert 'PRIVATE' not in repr(result)
+
+
+def test_unavailable_migration_has_a_closed_explanation_and_no_zero_files(tool):
+    instance, broker = tool
+    broker.result = {'schema': 1, 'read_only': True, 'repair_authorized': False,
+                     'acquisition_authorized': False, 'status': 'incomplete_scan',
+                     'reasons': ['snapshot_identity_migration']}
+    result = instance.run(prepare(instance), Control())
+    assert not result.ok
+    assert 'Une migration de bibliothèque doit être terminée avant l’analyse.' in result.warnings
+    assert 'observed_files' not in result.facts
+
+
+@pytest.mark.parametrize('reasons', [['hash_byte_budget'], {}, True])
+def test_inconsistent_complete_with_limits_is_never_success(tool, reasons):
+    instance, broker = tool
+    broker.result['reasons'] = reasons
+    assert not instance.run(prepare(instance), Control()).ok
 
 
 @pytest.mark.parametrize('change', ['copy', 'cross-tool', 'mutated-facts', 'stale', 'deactivated'])
