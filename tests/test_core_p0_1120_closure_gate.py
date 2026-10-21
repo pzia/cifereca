@@ -79,8 +79,22 @@ def test_acsm_stages_preserve_admission_provider_adept_index_receipt_order():
     commits = [i for i, call in enumerate(calls)
                if call == "self.storage.acquisition_put"]
     assert commits[0] < calls.index("loan_provider_delivery.acquire_provider_loan")
-    assert commits[1] > calls.index("loan_completion_receipt.completed_receipt")
+    # The completed receipt is an *argument* of acquisition_put: AST
+    # parent location precedes its child, but evaluation is child first.
+    assert commits[1] < calls.index("loan_completion_receipt.completed_receipt")
     assert commits[1] < calls.index("self._cleanup_acsm_after_success")
+    write_nodes = sorted(
+        (node for node in ast.walk(_method("_acquire_active_loan_automatically_guarded"))
+         if isinstance(node, ast.Call)
+         and ast.unparse(node.func) == "self.storage.acquisition_put"),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    assert ast.unparse(write_nodes[0].args[0].func) == (
+        "loan_initial_receipt.acquiring_receipt"
+    )
+    assert ast.unparse(write_nodes[1].args[0].func) == (
+        "loan_completion_receipt.completed_receipt"
+    )
 
 
 def test_return_facades_keep_lock_and_distinct_mutation_seams():
@@ -88,10 +102,22 @@ def test_return_facades_keep_lock_and_distinct_mutation_seams():
         ("return_loan_prefer_adept", "self._return_loan_prefer_adept_guarded"),
         ("return_digital", "self._return_digital_guarded"),
     ):
-        calls = _calls(_method(name))
+        facade = _method(name)
+        calls = _calls(facade)
         assert "InterProcessLock" in calls
         assert delegated in calls
-        assert calls.index("InterProcessLock") < calls.index(delegated)
+        # The non-Paris return path intentionally bypasses the Paris lock.
+        # Verify that the *Paris* delegated call remains inside its lock.
+        guarded = [
+            node for node in ast.walk(facade)
+            if isinstance(node, ast.With) and any(
+                isinstance(item.context_expr, ast.Call)
+                and ast.unparse(item.context_expr.func) == "InterProcessLock"
+                for item in node.items
+            )
+        ]
+        assert len(guarded) == 1
+        assert delegated in _calls(guarded[0])
     assert "return_adept_orchestrator.return_loan_prefer_adept" in _calls(
         _method("_return_loan_prefer_adept_guarded")
     )
@@ -142,7 +168,11 @@ def test_adept_first_repeated_reads_and_nonboolean_retry_never_repost(tmp_path):
             "still_active"
         )
         assert counts["mutations"] == 1 and paris.posts == 1
-        assert service.return_digital(loan)["status"] == "still_active"
+        # A non-explicit second request prioritizes the Adobe checkpoint,
+        # not the local PNB still-active status; no second POST is possible.
+        repeat = service.return_digital(loan)
+        assert repeat["status"] == "partial"
+        assert repeat["reason"] == "adobe_return_takes_precedence"
         assert paris.posts == 1
     finally:
         service.close()
