@@ -416,12 +416,13 @@ def record_http(start_url: str, stop: Event, *,
                 status=None, factory=None, max_seconds: int = MAX_CAPTURE_SECONDS,
                 pause_control: CapturePause | None = None,
                 metadata_only_origins: tuple[str, ...] = (),
+                vault_writer=None,
                 ) -> PrivateHttpTrace:
     """Observe a manually controlled Chromium session; return RAM-only trace.
 
-    No HAR, ZIP, storage state or body is ever written. No extra network
-    requests or transaction replay. The caller must destroy the trace if
-    review is abandoned; export requires a separate explicit confirmation.
+    No HAR, ZIP or browser profile is written. Only an explicitly enabled
+    private vault writer may persist AES-GCM-encrypted snapshots, never
+    plaintext. No extra requests or replay; LLM ZIP still requires review.
     """
     origin = site_origin(start_url)
     trace = PrivateHttpTrace(
@@ -431,6 +432,8 @@ def record_http(start_url: str, stop: Event, *,
     if origin not in trace.origins:
         raise RecorderError("invalid_origin")
     try:
+        if vault_writer is not None:
+            vault_writer.save(trace, "recording", force=True)
         reason = None
         with _playwright(factory) as pw:
             browser = pw.chromium.launch(headless=False)
@@ -507,6 +510,8 @@ def record_http(start_url: str, stop: Event, *,
                             raise RecorderError("capture_interrupted")
                         try:
                             live_pages[0].wait_for_timeout(200)
+                            if vault_writer is not None:
+                                vault_writer.save(trace)
                         except Exception:
                             if crashed.is_set():
                                 raise RecorderError("capture_interrupted") from None
@@ -537,7 +542,15 @@ def record_http(start_url: str, stop: Event, *,
                     pass
         trace.finish_open_requests()
         trace.end_reason = reason
+        if vault_writer is not None:
+            vault_writer.save(trace, "completed", force=True)
         return trace
     except Exception:
+        if vault_writer is not None:
+            try:
+                vault_writer.save(trace, "interrupted", force=True)
+            except Exception:
+                # The last 'recording' encrypted snapshot remains recoverable.
+                pass
         trace.destroy()
         raise
