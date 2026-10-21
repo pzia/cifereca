@@ -335,61 +335,65 @@ def optimize_pdf(
             report.pages = doc.page_count
             inventory = _image_inventory(doc, cancel_event=cancel_event)
             report.images_seen = len(inventory)
-            extracted_items: list[tuple[int, dict, dict, bytes, str]] = []
-            for xref, item in inventory.items():
+            # Keep no list of extracted image byte blobs. Large PDFs can
+            # contain hundreds of individually legal images; retaining all
+            # at once bypassed per-image memory limits.
+            total_images = max(1, len(inventory))
+            _emit(progress, 5, f"{len(inventory)} image(s) PDF détectée(s)")
+
+            for index, (xref, item) in enumerate(inventory.items(), start=1):
+                _check_cancel(cancel_event)
                 try:
                     extracted = doc.extract_image(xref)
                     data = extracted.get("image", b"")
                     suffix = _suffix_for_extracted(extracted.get("ext", "")) or ""
-                    extracted_items.append((xref, item, extracted, data, suffix))
                 except Exception as exc:
                     report.images_kept += 1
-                    report.image_errors.append(f"xref {xref}: extraction impossible ({exc})")
-
-            total_work = max(1, sum(max(1, len(data)) for _x, _i, _e, data, _s in extracted_items))
-            done_work = 0
-            _emit(progress, 5, f"{len(inventory)} image(s) PDF détectée(s)")
-
-            for index, (xref, item, extracted, data, suffix) in enumerate(extracted_items, start=1):
-                _check_cancel(cancel_event)
-                if item["smask"]:
-                    report.images_kept += 1
-                    report.image_notes.append(f"xref {xref}: transparence/masque préservé")
-                elif int(item.get("bpc", 0) or 0) <= 1:
-                    report.images_kept += 1
-                    report.image_notes.append(f"xref {xref}: masque/stencil 1-bit préservé")
-                elif not suffix:
-                    report.images_kept += 1
-                    report.image_notes.append(f"xref {xref}: format {extracted.get('ext', '?')} conservé")
-                elif len(data) > max_image_mb * 1024 * 1024:
-                    report.images_kept += 1
-                    report.image_notes.append(f"xref {xref}: image > {max_image_mb} Mio")
+                    report.image_errors.append(
+                        f"xref {xref}: extraction impossible ({exc})"
+                    )
                 else:
-                    try:
-                        box = _target_box(profile, item)
-                        optimized, change = _optimize_image(
-                            data,
-                            f"xref-{xref}{suffix}",
-                            profile,
-                            target_box=box,
-                            max_image_pixels=max_image_pixels,
-                        )
-                        report.changes.append(change)
-                        if optimized == data:
-                            report.images_kept += 1
-                            if "conservée (" in change.action:
-                                report.image_notes.append(f"xref {xref}: {change.action}")
-                        else:
-                            page_index = int(item["pages"][0])
-                            doc[page_index].replace_image(xref, stream=optimized)
-                            report.images_optimized += 1
-                    except Exception as exc:
+                    if item["smask"]:
                         report.images_kept += 1
-                        report.image_errors.append(f"xref {xref}: {exc}")
+                        report.image_notes.append(f"xref {xref}: transparence/masque préservé")
+                    elif int(item.get("bpc", 0) or 0) <= 1:
+                        report.images_kept += 1
+                        report.image_notes.append(f"xref {xref}: masque/stencil 1-bit préservé")
+                    elif not suffix:
+                        report.images_kept += 1
+                        report.image_notes.append(
+                            f"xref {xref}: format {extracted.get('ext', '?')} conservé"
+                        )
+                    elif len(data) > max_image_mb * 1024 * 1024:
+                        report.images_kept += 1
+                        report.image_notes.append(f"xref {xref}: image > {max_image_mb} Mio")
+                    else:
+                        try:
+                            box = _target_box(profile, item)
+                            optimized, change = _optimize_image(
+                                data,
+                                f"xref-{xref}{suffix}",
+                                profile,
+                                target_box=box,
+                                max_image_pixels=max_image_pixels,
+                            )
+                            report.changes.append(change)
+                            if optimized == data:
+                                report.images_kept += 1
+                                if "conservée (" in change.action:
+                                    report.image_notes.append(f"xref {xref}: {change.action}")
+                            else:
+                                page_index = int(item["pages"][0])
+                                doc[page_index].replace_image(xref, stream=optimized)
+                                report.images_optimized += 1
+                        except Exception as exc:
+                            report.images_kept += 1
+                            report.image_errors.append(f"xref {xref}: {exc}")
 
-                done_work += max(1, len(data))
-                pct = 5 + int(86 * done_work / total_work)
-                _emit(progress, pct, f"Image PDF {index}/{len(extracted_items)}")
+                # Counts replace byte-weighted progress: no second extraction
+                # pass or in-memory byte inventory required for a percentage.
+                pct = 5 + int(86 * index / total_images)
+                _emit(progress, pct, f"Image PDF {index}/{len(inventory)}")
 
             _check_cancel(cancel_event)
             _emit(progress, 93, "Réécriture conservatrice du PDF…")
