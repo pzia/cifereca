@@ -244,7 +244,10 @@ def _body(raw, mime, approved):
             {"field": k, "value": ("[SECRET]" if _SECRETS.search(k)
                                   else v if v in approved
                                   else "[UNREVIEWED]")}
-            for k, v in pairs if _FIELD.fullmatch(k)
+            # The field NAME can contain private account IDs, signed tokens
+            # or unreviewed dynamic fragments. JSON bodies and query strings
+            # already apply this same structural whitelist.
+            for k, v in pairs if _safe_field_key(k)
         ], ensure_ascii=True), "captured_form_structure"
     # Unknown plain text may contain licenses, auth material or private prose.
     return None, "body_omitted"
