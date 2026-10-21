@@ -76,7 +76,7 @@ def test_shared_deadline_is_not_reset_at_snapshot(library, tmp_path):
     assert filesystem(tmp_path) == before
 
 
-def test_live_wal_is_incomplete_and_never_hidden_by_successful_inventory(library, tmp_path):
+def test_live_wal_audit_includes_committed_image_without_source_writes(library, tmp_path):
     database, roots, _ = library
     db = sqlite3.connect(database)
     try:
@@ -86,8 +86,8 @@ def test_live_wal_is_incomplete_and_never_hidden_by_successful_inventory(library
         before = filesystem(tmp_path)
         result = audit_library(database, roots)
         assert result.redacted()['inventory']['status'] == 'complete'
-        assert result.redacted()['status'] == 'incomplete_scan'
-        assert 'snapshot_live_journal' in result.redacted()['reasons']
+        assert result.redacted()['status'] == 'complete'
+        assert result.snapshot.tables['artifacts'][0]['artifact_id'] == 'a'
         assert filesystem(tmp_path) == before
     finally:
         db.close()

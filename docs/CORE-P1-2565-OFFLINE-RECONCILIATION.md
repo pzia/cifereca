@@ -7,8 +7,7 @@ ne lance aucune acquisition et ne démarre ni `LibraryService` ni `Storage`.
 
 ## Utilisation autonome
 
-Fermer Cifereca normalement, puis fournir les chemins et identifiants exacts
-locaux ; les valeurs ci-dessous sont des exemples synthétiques. Ne pas copier
+Fournir les chemins et identifiants exacts locaux ; les valeurs ci-dessous sont des exemples synthétiques. Ne pas copier
 les commandes réelles ou le rapport privé vers les journaux, LLM ou CI.
 
 ```bash
@@ -55,13 +54,34 @@ permettant une réparation ultérieure.
 - PDF `pdf_structure_minimal` exige signature `%PDF-` et marqueur `%%EOF`,
   **pas** conformité PDF ni preuve DRM. Le graphe ne confirme pas un PDF sur
   cette seule base. Les résultats structurels incomplets/invalides restent visibles.
-- `read_quiescent_snapshot()` copie au plus 128 Mio d'une base stable sans
-  journal actif puis interroge **en mémoire** les six tables de bibliothèque et les deux tables de
-  rattachements ADEPT locaux. Il ne crée
-  pas de SHM/WAL, ne fait aucune migration, récupération ou checkpoint. Une base
-  avec `-wal` ou `-journal` est refusée (`snapshot_live_journal`) plutôt que lue
-  sans ses transactions. Une fermeture normale suffit généralement ; **ne pas
-  supprimer manuellement les journaux**. Aucun contournement automatique.
+- `read_library_snapshot()` lit les six tables de bibliothèque et les deux tables
+  de rattachements ADEPT locaux en mémoire, sans démarrer `Storage`. Il utilise
+  une copie stable de la base sans journal, ou une capture WAL isolée sous Linux
+  avec un interpréteur Python normal et APSW (dépendance Core).
+- La capture WAL s'exécute dans un processus Python distinct : ouvrir/fermer SHM
+  dans l'application pourrait libérer ses propres verrous POSIX. Le processus
+  enfant ouvre seulement les fichiers DB/WAL/SHM existants, via descripteurs
+  no-follow, et prend des verrous partagés DMS/read0/read1 non bloquants. Il ne
+  crée, n'écrit, ne récupère et ne checkpoint aucun fichier source. Des writers
+  peuvent continuer ; un changement pendant la capture produit une indisponibilité.
+- Le header SHM publié doit être dupliqué, valide et inchangé. Seul son préfixe
+  WAL commis est retenu ; les frames ultérieures non publiées sont exclues. Les
+  checksums WAL et SHM sont vérifiés pour ne jamais accepter le repli silencieux
+  de SQLite sur un état antérieur après une corruption. SQLite natif effectue
+  ensuite le rejeu dans un VFS privé uniquement en mémoire, sans fallback disque.
+  Les verrous source sont relâchés avant ce rejeu. Les projections finales sont
+  query-only/trusted-schema-off. Images source et résultat sont bornés à 128 Mio,
+  ainsi que lignes, durée et protocole enfant ; annuler tue et récupère l'enfant.
+- Journaux rollback, SHM manquant/occupé, plateforme non Linux, exécutable gelé
+  ou APSW absent restent explicitement indisponibles. Il n'y a ni lecture
+  immutable ignorant le WAL ni création de SHM pour contourner ces limites.
+  Une fermeture normale de Cifereca permet généralement la voie sans journal ;
+  **ne pas supprimer manuellement les journaux**.
+- `library_audit.audit_library()` orchestre les phases sous un signal d'annulation
+  et une échéance partagés. La progression est expurgée ; le statut global inclut
+  les limites des candidats et des chemins, même si le graphe a réussi. Les
+  racines autorisées sont copiées avant les callbacks. Il s'agit d'une primitive
+  privée Core, pas encore du broker public Maintenance.
 - `confirmed_link` exige un droit actif d'achat attesté par le manifeste personnel
   Kobo ou la bibliothèque authentifiée Numilog, le même compte/credential/identité/
   achat, un unique ledger `complete`, un placement explicite et un artefact
@@ -104,8 +124,7 @@ permettant une réparation ultérieure.
 
 ## Suite de #2565 (non livrée par cette tranche)
 
-Snapshot sûr pendant une session avec WAL actif, rapprochements par édition au-delà
-des identifiants explicitement attestés,
+Rapprochements par édition au-delà des identifiants explicitement attestés,
 liens catalog_entries/backup plus riches,
 inventaire ADEPT distant consenti, API de service et
 entrée Maintenance asynchrone avec filtres/inspection. L'absence de chemin dans
@@ -117,3 +136,8 @@ transactions et annulation. Ne jamais convertir ce rapport en autorisation de
 rattachement ; le protocole Kobo existant reste la seule voie autorisée pour les
 cas qu'il sait attester. Les lots UI et réparation n'ont pas de recette attestée
 par cette tranche. L'issue #2565 reste ouverte.
+
+Références techniques : [format et verrous WAL SQLite](https://sqlite.org/walformat.html),
+[WAL sans SHM externe en mode exclusif](https://www.sqlite.org/wal.html),
+[VFS APSW](https://rogerbinns.github.io/apsw/vfs.html).
+Le mode exclusif concerne exclusivement les copies privées en mémoire.
