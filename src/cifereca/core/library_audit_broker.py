@@ -105,7 +105,7 @@ def _run_scoped_audit(service, identity_id, control, finish):
         progress({'phase': 'snapshot'})
         if cancelled():
             return _unavailable({'reconciliation_scope_changed' if changed else 'audit_cancelled'})
-        snapshot = read_library_snapshot(database, cancelled=cancelled)
+        snapshot = read_library_snapshot(database, cancelled=cancelled, identity_id=identity_id)
         if snapshot.reasons:
             if changed:
                 return _unavailable({'reconciliation_scope_changed'})
