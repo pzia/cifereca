@@ -1642,7 +1642,11 @@ class UxRecommendationsView:
             exact_variants.append(variant)
             if len(exact_variants) >= 16:
                 break
-        if exact_variants:
+        hidden_variants = (
+            type(raw_variants) in (tuple, list)
+            and len(raw_variants) > 256
+        )
+        if exact_variants or hidden_variants:
             edition_fields = []
             for index, variant in enumerate(exact_variants, 1):
                 name = self._display_source(variant.source_provider)
@@ -1653,14 +1657,13 @@ class UxRecommendationsView:
                     f"{name} · ISBN {isbn}" if isbn else
                     f"{name} · édition non attestée",
                 ))
-            edition_fields.append(DetailField(
-                "source-edition-warning", "Actions disponibles",
-                "Choisir une notice dans Recherche pour consulter les "
-                "disponibilités et les actions réellement autorisées.",
-            ))
-            if (len(exact_variants) == 16
-                    or (type(raw_variants) in (tuple, list)
-                        and len(raw_variants) > 256)):
+            if exact_variants:
+                edition_fields.append(DetailField(
+                    "source-edition-warning", "Actions disponibles",
+                    "Choisir une notice dans Recherche pour consulter les "
+                    "disponibilités et les actions réellement autorisées.",
+                ))
+            if len(exact_variants) == 16 or hidden_variants:
                 edition_fields.append(DetailField(
                     "source-edition-limit", "Limite d'affichage",
                     "Au plus 16 notices exactes affichées ; seules les "
