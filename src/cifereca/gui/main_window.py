@@ -763,6 +763,10 @@ class MainWindow(Adw.ApplicationWindow):
                 current = self.service.current_identity
                 expected_identity = current.identity_id if current is not None else None
                 generation = getattr(self, "_identity_context_generation", None)
+                captured_service = self.service
+                captured_storage = self.service.storage
+                captured_config = self.service.config
+                captured_database_path = str(captured_storage.path)
                 token = object()
                 scope["token"] = token
                 scope["status"] = "initializing"
@@ -779,6 +783,10 @@ class MainWindow(Adw.ApplicationWindow):
                     now = self.service.current_identity
                     return (scope["active"] and scope["token"] is token
                             and not self._closed
+                            and self.service is captured_service
+                            and self.service.storage is captured_storage
+                            and self.service.config is captured_config
+                            and str(captured_storage.path) == captured_database_path
                             and (now.identity_id if now is not None else None) == expected_identity
                             and getattr(self, "_identity_context_generation", None) == generation)
 
