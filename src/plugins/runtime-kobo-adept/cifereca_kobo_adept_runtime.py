@@ -776,6 +776,11 @@ class KoboAdeptRuntime:
         """Read expired, not-returned loans. Never return one automatically."""
         return self._loan_inventory(profile, expired=True)
 
+    def loan_inventory_readonly(self, profile_reference, *, consented=False, control=None):
+        """Optional isolated inventory capability; Core owns binding/consent."""
+        from cifereca_adept_readonly_inventory import read_inventory
+        return read_inventory(self, profile_reference, consented=consented, control=control)
+
     def loan_inventories(self, profiles, *, expired=False):
         """Read only caller-designated candidates, retaining profile namespaces.
 
