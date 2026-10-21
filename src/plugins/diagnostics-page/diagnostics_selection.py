@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import re
 
 from cifereca.plugin_api import ProviderError
 from diagnostics_explorer import (
@@ -75,7 +76,7 @@ def _redacted_page_fingerprint(rows):
 
 
 def _check_selected_scope(rows, *, source: str, module: str, severity: str,
-                          since: datetime | None):
+                          since: datetime | None, reason_code: str = ""):
     """Reject all events contradicting a requested Core broker filter.
 
     A malformed/old timestamp must not count as "all errors this hour".
@@ -92,6 +93,14 @@ def _check_selected_scope(rows, *, source: str, module: str, severity: str,
                     and not row["module"].casefold().startswith(module_prefix)
                     and not row.get("business_module", "").casefold().startswith(module_prefix))):
             raise ValueError("diagnostic selection contains out-of-scope events")
+        if reason_code:
+            detail = row.get("detail")
+            if (row["source"] != "core_events" or row["module"] != "LIBRARY"
+                    or not isinstance(detail, Mapping)
+                    or detail.get("operation") != "library_reconciliation_audit"
+                    or type(detail.get("reasons")) is not list
+                    or reason_code not in detail["reasons"]):
+                raise ValueError("diagnostic selection contains out-of-scope events")
         if since is not None:
             try:
                 timestamp = datetime.fromisoformat(
@@ -105,7 +114,8 @@ def _check_selected_scope(rows, *, source: str, module: str, severity: str,
                 raise ValueError("diagnostic selection contains out-of-period events") from None
 
 
-def _checked_page(payload: Mapping, offset: int, expected_total: int | None):
+def _checked_page(payload: Mapping, offset: int, expected_total: int | None,
+                  *, reason_code: str = ""):
     if not isinstance(payload, Mapping):
         raise ValueError("diagnostic selection unavailable")
     total = payload.get("total")
@@ -116,7 +126,7 @@ def _checked_page(payload: Mapping, offset: int, expected_total: int | None):
             or not isinstance(items, (list, tuple)) or len(items) > PAGE_SIZE
             or (expected_total is not None and total != expected_total)):
         raise ValueError("diagnostic selection changed during pagination")
-    rows = sanitized_rows(payload)
+    rows = sanitized_rows(payload, include_detail=bool(reason_code))
     if len(rows) != len(items) or len(selectable_event_ids(rows)) != len(rows):
         raise ValueError("diagnostic selection contains ambiguous event IDs")
     # Since Core #2569, its module filter may match an attested business_module
@@ -148,7 +158,7 @@ def _checked_page(payload: Mapping, offset: int, expected_total: int | None):
 
 def collect_filtered_selection(
     broker, *, source="all", module="", severity="", period="day", search="",
-    mode="errors", cancelled: Callable[[], bool] | None = None,
+    reason_code="", mode="errors", cancelled: Callable[[], bool] | None = None,
     max_pages=MAX_SCAN_PAGES,
 ) -> FilteredSelection:
     """Scan available filtered Core events in background, or refuse atomically.
@@ -164,8 +174,10 @@ def collect_filtered_selection(
     if (source not in SOURCES or severity not in SEVERITIES
             or period not in PERIODS or type(module) is not str
             or len(module) > 90 or type(search) is not str
-            or len(search) > 500 or type(max_pages) is not int
-            or not 1 <= max_pages <= MAX_SCAN_PAGES):
+            or len(search) > 500
+            or type(reason_code) is not str
+            or (reason_code and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", reason_code) is None)
+            or type(max_pages) is not int or not 1 <= max_pages <= MAX_SCAN_PAGES):
         raise ValueError("invalid diagnostic selection filters")
     levels = ("error", "critical") if mode == "errors" else (severity,)
     # Capture the relative-period boundary for ALL requests in this scan.
@@ -189,10 +201,14 @@ def collect_filtered_selection(
             page = fetch_explorer_page(
                 broker, source=source, module=module, severity=level,
                 period=period, offset=offset, reference_time=reference_time,
+                reason_code=reason_code,
             )
-            rows, total, following = _checked_page(page, offset, total_expected)
+            rows, total, following = _checked_page(
+                page, offset, total_expected, reason_code=reason_code,
+            )
             _check_selected_scope(rows, source=source, module=module,
-                                  severity=level, since=period_start)
+                                  severity=level, since=period_start,
+                                  reason_code=reason_code)
             total_expected = total
             if first_page_fingerprint is None:
                 first_page_fingerprint = _redacted_page_fingerprint(rows)
@@ -225,10 +241,14 @@ def collect_filtered_selection(
         current = fetch_explorer_page(
             broker, source=source, module=module, severity=level,
             period=period, offset=0, reference_time=reference_time,
+            reason_code=reason_code,
         )
-        reread, _total, _next = _checked_page(current, 0, total_expected)
+        reread, _total, _next = _checked_page(
+            current, 0, total_expected, reason_code=reason_code,
+        )
         _check_selected_scope(reread, source=source, module=module,
-                              severity=level, since=period_start)
+                              severity=level, since=period_start,
+                              reason_code=reason_code)
         if _redacted_page_fingerprint(reread) != first_page_fingerprint:
             raise ValueError("diagnostic selection changed during pagination")
 
@@ -252,6 +272,7 @@ def collect_filtered_selection(
         "source_filter": source,
         "severity_filter": "error_and_critical" if mode == "errors" else (severity or "all"),
         "period": period,
+        "reconciliation_reason_code": reason_code or None,
         "local_text_search_applied": bool(search),
         "pagination_consistency": "first_page_rechecked_non_atomic",
         "sources_partial_or_unavailable": partial,
