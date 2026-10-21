@@ -129,6 +129,16 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         report['checks']['inspection_window_mapped']=True
         window=controller.dialog
         assert window.get_width()<=parent.get_width()
+        assert window.get_decorated() and window.get_resizable()
+        header = next(w for w in walk(window) if isinstance(w, Adw.HeaderBar))
+        assert header.get_mapped()
+        grow = next(w for w in walk(window)
+                    if isinstance(w,Gtk.Button)
+                    and w.get_label()=="Agrandir / Restaurer")
+        assert grow.get_mapped() and grow.get_sensitive()
+        assert 'Agrandir' in (grow.get_tooltip_text() or '')
+        widgets['grow'] = grow
+        report['checks']['inspection_window_has_maximize_controls']=True
         dropdowns=[w for w in walk(window) if isinstance(w,Gtk.DropDown)]
         widgets['provider'],widgets['state']=dropdowns
         widgets['list']=next(w for w in walk(window) if isinstance(w,Gtk.ListBox))
@@ -277,6 +287,14 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert 'FOREIGN_SECRET' not in texts
         report['checks']['local_inspection_state_pagination_and_private_proof']=True
         session=controller.session
+        grow=widgets['grow']
+        assert grow.get_mapped() and grow.get_sensitive()
+        # Xvfb has no window manager: confirm the actual GTK button is
+        # operable and the private read session survives the maximize request,
+        # but don't assert an EWMH maximize state without a WM.
+        device.click_widget(grow)
+        assert controller.session is session and session.valid()
+        report['checks']['inspection_maximize_request_keeps_session_private']=True
         service._account_context_epoch+=1
         until(lambda:controller.dialog is None,lambda:revoked(session))
 

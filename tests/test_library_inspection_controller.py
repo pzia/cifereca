@@ -172,3 +172,35 @@ def test_invalidated_real_private_session_reports_context_and_is_destroyed(mount
     assert len(m.errors) == 1
     assert 'configuration a changé' in m.errors[0][0]
     assert not m.presented
+
+
+def test_reconciliation_window_maximize_toggle_never_reloads_private_evidence():
+    class Window:
+        def __init__(self):
+            self.state = False
+            self.operations = []
+        def is_maximized(self):
+            return self.state
+        def maximize(self):
+            self.operations.append("maximize")
+            self.state = True
+        def unmaximize(self):
+            self.operations.append("unmaximize")
+            self.state = False
+
+    window = Window()
+    view._toggle_inspection_maximize(window)
+    assert window.state and window.operations == ["maximize"]
+    view._toggle_inspection_maximize(window)
+    assert not window.state
+    assert window.operations == ["maximize", "unmaximize"]
+    # No source, rights, file descriptor, identity or capability was required.
+
+
+def test_reconciliation_titlebar_and_maximize_are_part_of_real_gtk_acceptance():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] /
+              "e2e/library_inspection_acceptance.py").read_text(encoding="utf8")
+    assert "Adw.HeaderBar" in source
+    assert 'get_label()=="Agrandir / Restaurer"' in source
+    assert "inspection_window_has_maximize_controls" in source
