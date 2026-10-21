@@ -174,6 +174,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._search_detail_request_generation = 0
         self._last_search_query = ""
         self._search_mode = "local"
+        self._loaded_search_context = None
         self._search_local_objects: dict[str, dict[str, Any]] = {}
         self._kobo_backup_timer_id: int | None = None
         self.main_shell: Gtk.Widget | None = None
