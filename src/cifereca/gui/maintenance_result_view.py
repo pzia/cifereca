@@ -45,6 +45,7 @@ class MaintenanceResultView:
         self.parent, self.row, self.title, self.alive = parent, row, title, alive
         self.button = self.dialog = None
         self.text = ""
+        self.state = None
         self.inspector = inspector
         if inspector is not None:
             inspector.attach_activity_row(inspection_row if inspection_row is not None else row)
@@ -53,17 +54,32 @@ class MaintenanceResultView:
         if self.inspector is not None:
             self.inspector.clear()
         self.text = ""
+        self.state = None
+        if self.inspector is not None:
+            self.row.set_title("Dernière analyse : aucune")
+            self.row.set_subtitle("Aucun rapport local consultable.")
         if self.dialog is not None:
             self.dialog.destroy()
             self.dialog = None
         if self.button is not None:
             self.button.set_visible(False)
 
-    def restore_text(self, text: str) -> None:
-        """Reattach a private report to rebuilt widgets; never restart audit."""
+    def restore_text(self, text: str, *, state: str | None = None) -> None:
+        """Reattach the last report and its closed state; never restart audit."""
         if type(text) is not str or not text or not self.alive():
             return
         self.text = text
+        if self.inspector is not None:
+            # State never comes from arbitrary plugin free-form prose. Only
+            # these fixed labels may be restored across widget rebuilds.
+            if state not in ("terminée", "incomplète", "indisponible"):
+                state = ("incomplète" if text.startswith("Analyse incomplète.")
+                         else "consultable")
+            self.state = state
+            self.row.set_title("Dernière analyse : " + state)
+            self.row.set_subtitle(
+                "Rapport conservé · disponible sans nouvelle inspection."
+            )
         if self.button is None:
             self.button = self.Gtk.Button(label="Résultats…")
             self.button.connect("clicked", self.open)
@@ -72,7 +88,14 @@ class MaintenanceResultView:
 
     def publish(self, result):
         self.clear()
-        self.restore_text(result_text(result))
+        text = result_text(result)
+        if self.inspector is not None:
+            state = ("incomplète" if text.startswith("Analyse incomplète.")
+                     else "terminée" if getattr(result, "ok", None) is True
+                     else "indisponible")
+            self.restore_text(text, state=state)
+        else:
+            self.restore_text(text)
 
     def _open_large_results(self):
         """Local reconciliation results are an exploration window, not consent.
