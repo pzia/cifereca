@@ -625,7 +625,7 @@ class LocalInspection:
                 type(limit) is not int or not 1 <= limit <= 50 or
                 type(query) is not str or len(query) > 160 or
                 media_format not in ('all', 'epub', 'pdf') or
-                sha_state not in ('all', 'verified', 'unverified') or
+                sha_state not in ('all', 'calculated', 'not_calculated') or
                 epub_crc not in ('all', 'confirmed', 'other') or
                 sort not in ('scan', 'title', 'filename')):
             raise ValueError('invalid_inspection_page')
@@ -641,9 +641,9 @@ class LocalInspection:
                 continue
             if media_format != 'all' and facets['format'] != media_format:
                 continue
-            if sha_state == 'verified' and not facets['sha']:
+            if sha_state == 'calculated' and not facets['sha']:
                 continue
-            if sha_state == 'unverified' and facets['sha']:
+            if sha_state == 'not_calculated' and facets['sha']:
                 continue
             if epub_crc == 'confirmed' and not facets['crc']:
                 continue
