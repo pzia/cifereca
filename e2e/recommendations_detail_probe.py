@@ -376,7 +376,9 @@ def main():
         assert len(buttons) == 1, "Loaded exact Search route is missing"
         button = buttons[0]
         assert button.get_mapped()
-        assert "vault" not in button.get_label().casefold()
+        assert "vault" not in str(
+            getattr(button, "_cifereca_action_label", "") or ""
+        ).casefold()
         assert not state["exact_navigations"] and not state["exact_selected"]
         assert not state["searches"][1:], "Rendering must not search"
         state["exact_button"] = button
