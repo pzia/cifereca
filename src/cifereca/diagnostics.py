@@ -194,13 +194,19 @@ class Diagnostics:
         from .core.browser_recorder_diagnostics import (
             OPERATIONS, public_fields, public_status,
         )
-        if not self.enabled or self.LEVELS["normal"] > self.LEVELS[self.level]:
+        if not self.enabled:
             return
         fields = public_fields(operation, code)
         if fields is None:
             return
         status = public_status(fields)
-        if self.level == "errors" and status == "ok":
+        # Errors-only is an output severity filter, NOT a blanket refusal
+        # of normal-level producers: an explicit failed browser operation
+        # must remain discoverable even with noise minimized.
+        if self.level == "errors":
+            if status == "ok":
+                return
+        elif self.LEVELS["normal"] > self.LEVELS[self.level]:
             return
         entry = DiagnosticEntry(
             timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
