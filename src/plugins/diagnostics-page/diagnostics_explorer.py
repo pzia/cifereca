@@ -11,7 +11,10 @@ from typing import Any
 import json
 import re
 
-from diagnostics_reconciliation import reconciliation_event_summary
+from diagnostics_reconciliation import (
+    reconciliation_event_summary,
+    exportable_reconciliation_aggregates, sanitized_reconciliation_export,
+)
 
 def local_timestamp_label(value: object) -> str:
     """Present a broker UTC instant in the machine's local offset, GUI only.
@@ -161,6 +164,9 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         if reconciliation is not None:
             safe["reconciliation"] = reconciliation
             safe["reconciliation_code"] = reconciliation["code"]
+            # Typed counters only; never retain the original Core detail
+            # in a clipboard/selection row. Export rechecks every field.
+            safe["reconciliation_export"] = exportable_reconciliation_aggregates(raw)
         # Only explicitly published Core references may link observations.
         # Never extract one from a timestamp, event ID or message text.
         reference = published_task_reference(raw)
@@ -502,6 +508,9 @@ def export_selected_events(
         })
         if reference is not None:
             item["task_ref"] = reference
+        aggregate = sanitized_reconciliation_export(row)
+        if aggregate is not None:
+            item["reconciliation"] = aggregate
         selected.append(item)
     if len(selected) > max_events:
         raise ValueError("too many selected events for one export")
