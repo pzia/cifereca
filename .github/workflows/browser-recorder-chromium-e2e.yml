@@ -56,7 +56,7 @@ jobs:
               CIFERECA_REAL_CHROMIUM_PROVISION_E2E=1 \
               "$RUNNER_TEMP/proxy-core-venv/bin/python" -m pytest -q -rs \
               tests/test_core_p0_2628_real_proxy_failure_e2e.py
-      - name: Real Playwright CLI: cancelled cold-cache CDN attempt then successful retry
+      - name: 'Real Playwright CLI — cancelled cold-cache CDN attempt then successful retry'
         env:
           PYTHONPATH: ${{ github.workspace }}/src
         run: |
