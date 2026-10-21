@@ -54,7 +54,7 @@ _COUNTS = {
     "metadata_candidates": ("metadata_candidates", "metadata_candidates"),
 }
 _PHASES = frozenset({
-    "sha256", "epub_opf", "structure", "pdf_signature",
+    "snapshot", "sha256", "epub_opf", "structure", "pdf_signature",
     "candidate_index", "candidate_match",
 })
 _INVENTORY_PHASES = frozenset({"sha256", "epub_opf", "structure", "pdf_signature"})
@@ -134,6 +134,11 @@ def from_audit_result(report: object, duration_ms: object = None) -> dict:
             measured = _number(raw_calls.get(phase))
             if measured is not None:
                 calls[phase] = measured
+    # Snapshot is measured by the Core broker before the filesystem audit,
+    # including the failure path where no inventory result exists.
+    measured_snapshot = _number(value.get("snapshot_ms"))
+    if measured_snapshot is not None:
+        times["snapshot"] = measured_snapshot
     candidates = _section(value, "metadata_candidates")
     for source, target in (("index_ms", "candidate_index"),
                            ("match_ms", "candidate_match")):

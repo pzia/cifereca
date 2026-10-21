@@ -137,11 +137,19 @@ def _execute_scoped_audit(service, identity_id, control, finish):
         progress({'phase': 'snapshot'})
         if cancelled():
             return _unavailable({'reconciliation_scope_changed' if changed else 'audit_cancelled'})
+        snapshot_started = monotonic()
         snapshot = read_library_snapshot(database, cancelled=cancelled, identity_id=identity_id)
+        snapshot_ms = max(0, min(30000, int((monotonic() - snapshot_started) * 1000)))
+
+        def aggregate_snapshot_timing(value):
+            # Only the public already-redacted dictionary can carry an
+            # elapsed counter. Private LocalInspection remains opaque.
+            return {**value, 'snapshot_ms': snapshot_ms} if type(value) is dict else value
+
         if snapshot.reasons:
             if changed:
-                return _unavailable({'reconciliation_scope_changed'})
-            return _unavailable(snapshot.reasons)
+                return aggregate_snapshot_timing(_unavailable({'reconciliation_scope_changed'}))
+            return aggregate_snapshot_timing(_unavailable(snapshot.reasons))
         result = audit_library(
             database, roots, limits=InventoryLimits(seconds=_SCOPED_AUDIT_SECONDS),
             seconds=_SCOPED_AUDIT_SECONDS,
@@ -149,10 +157,10 @@ def _execute_scoped_audit(service, identity_id, control, finish):
         )
         stopped = cancelled()
         if changed:
-            return _unavailable({'reconciliation_scope_changed'})
+            return aggregate_snapshot_timing(_unavailable({'reconciliation_scope_changed'}))
         if stopped:
-            return _unavailable({'audit_cancelled'})
-        return finish(result, same_scope)
+            return aggregate_snapshot_timing(_unavailable({'audit_cancelled'}))
+        return aggregate_snapshot_timing(finish(result, same_scope))
     except ValueError as exc:
         reason = str(exc)
         return _unavailable({reason if reason in _ROOT_ERRORS else 'reconciliation_unavailable'})

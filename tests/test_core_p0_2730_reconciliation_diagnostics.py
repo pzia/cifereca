@@ -270,3 +270,28 @@ def test_public_diagnostics_broker_forwards_reason_code_exactly(tmp_path):
         )
     assert result["total"] == 1
     assert result["events"][0]["detail"]["reasons"] == ["hash_byte_budget"]
+
+
+def test_snapshot_timing_is_present_even_when_read_failed_before_inventory():
+    payload = {
+        "status": "incomplete_scan",
+        "reasons": ["snapshot_time_budget"],
+        "snapshot_ms": 10027,
+        "private_path": SECRET,
+    }
+    fields = from_audit_result(payload, 10030)
+    assert fields["status"] == "partial"
+    assert fields["phase_ms"] == {"snapshot": 10027}
+    assert fields["counts"] == {}
+    assert fields["duration_ms"] == 10030
+    assert public_fields(fields) == fields
+    assert SECRET not in json.dumps(fields)
+
+
+def test_untrusted_snapshot_timing_is_ignored():
+    for bad in (True, -1, SECRET, 1000.3, 1_000_000_000_001, {"private": SECRET}):
+        report = _audit("incomplete_scan", ["snapshot_time_budget"])
+        report["snapshot_ms"] = bad
+        fields = from_audit_result(report)
+        assert "snapshot" not in fields["phase_ms"]
+        assert SECRET not in json.dumps(fields)
