@@ -683,7 +683,9 @@ class MainWindow(Adw.ApplicationWindow):
                 box.append(Gtk.Label(label=f"{resolved.plugin_id}: description indisponible ({exc})", xalign=0)); continue
             group = Adw.PreferencesGroup(); box.append(group)
             row = Adw.ActionRow(); row.set_title(info.title); row.set_subtitle(info.description or resolved.plugin_id)
-            run = self.action_button("Prévisualiser…" if info.supports_dry_run else "Exécuter…", info.icon_name)
+            label = ("Préparer l’analyse…" if getattr(info, "id", None) == "library.reconciliation.audit"
+                     else "Prévisualiser…" if info.supports_dry_run else "Exécuter…")
+            run = self.action_button(label, info.icon_name)
             row.add_suffix(run)
             cancel = Gtk.Button(label="Annuler")
             cancel.set_visible(False)
@@ -867,6 +869,11 @@ class MainWindow(Adw.ApplicationWindow):
                     if meta.scope == "identity" and identity is not None:
                         scope += f" · {identity.label}"
                     sections = [
+                        *(
+                            ["L’analyse n’a pas encore commencé. Cliquez sur « Exécuter » pour "
+                             "lire les preuves SQLite et vérifier les fichiers locaux en lecture seule."]
+                            if getattr(meta, "id", None) == "library.reconciliation.audit" else []
+                        ),
                         "Résumé :\n" + (str(plan.summary or "").strip() or "Aucun résumé fourni."),
                         "Changements prévus :\n" + (
                             "\n".join("• " + str(value) for value in plan.changes[:20])
@@ -968,6 +975,13 @@ class MainWindow(Adw.ApplicationWindow):
                             if feedback is not None:
                                 feedback.finish(ticket, "success" if result.ok else "error")
                             result_view.publish(result)
+                            # For reconciliation the user has already completed
+                            # the explicit plan + run flow: surface its outcome
+                            # immediately, including ok=False (WAL timeout,
+                            # unavailable snapshot). The button remains available
+                            # for reopening. Other maintenance tools are unchanged.
+                            if getattr(meta, "id", None) == "library.reconciliation.audit":
+                                result_view.open(None)
                             self._activity_result(
                                 result.summary or ("Outil terminé" if result.ok else "Outil terminé avec erreurs"),
                                 success=bool(result.ok),
