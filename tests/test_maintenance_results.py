@@ -41,9 +41,12 @@ def test_completed_result_is_consultable_and_reopenable(ok, monkeypatch):
     flush(m)
     view = m.host._maintenance_result_views[0]
     assert view.button.visible
-    assert view.dialog is None  # no modal interrupts completion or the next task
-    view.button.click()
+    # Reconciliation must show completion without a second unexplained click,
+    # including ok=False when an offline SQLite/WAL snapshot is unavailable.
+    assert view.dialog is not None
     dialog = view.dialog
+    view.button.click()  # Reopening the already-visible dialog is idempotent.
+    assert view.dialog is dialog
     label = dialog.extra_child.children[0]
     assert 'Liens confirmés : 517' in label.text
     assert 'Durée maximale atteinte.' in label.text
