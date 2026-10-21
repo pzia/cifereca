@@ -437,8 +437,13 @@ def test_short_numeric_query_values_need_explicit_review(key, value):
     from browser_recorder_zip import _safe_url
     url = ORIGIN + "/api/books?" + key + "=" + value
     assert value not in _safe_url(url, frozenset(), frozenset((ORIGIN,)))
-    assert "%5BUNREVIEWED%5D" in _safe_url(url, frozenset(), frozenset((ORIGIN,)))
-    assert value in _safe_url(url, frozenset((value,)), frozenset((ORIGIN,)))
+    if key == "pin":
+        # Mandatory secrets override even an explicit attempt to keep them.
+        assert "%5BSECRET%5D" in _safe_url(url, frozenset(), frozenset((ORIGIN,)))
+        assert value not in _safe_url(url, frozenset((value,)), frozenset((ORIGIN,)))
+    else:
+        assert "%5BUNREVIEWED%5D" in _safe_url(url, frozenset(), frozenset((ORIGIN,)))
+        assert value in _safe_url(url, frozenset((value,)), frozenset((ORIGIN,)))
 
 
 def test_short_numeric_query_in_actual_approved_zip_is_not_auto_public():
