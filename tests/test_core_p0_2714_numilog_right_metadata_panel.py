@@ -71,7 +71,7 @@ def test_entitlement_fallback_when_catalogue_missing_keeps_title_author_and_form
     assert "PRIVATE" not in json.dumps(session.summary())
 
 
-def test_one_exact_catalogue_notice_remains_preferred_over_entitlement_description(
+def test_authenticated_purchase_description_is_preferred_over_public_catalogue_label(
     six_numilog,
 ):
     _root, database = six_numilog
@@ -83,13 +83,16 @@ def test_one_exact_catalogue_notice_remains_preferred_over_entitlement_descripti
     })
     _audit, session = _session(six_numilog)
     case = _right(session)
-    assert "Titre notice 5" in case.label
-    assert "Autrice Exemple 5" in case.label
-    assert "Titre de bibliothèque contradictoire" not in case.details
+    # One exact *public* catalogue notice is still described as a hint,
+    # but the already identity-scoped authenticated purchase wins for display.
+    assert "Titre de bibliothèque contradictoire" in case.label
+    assert "Autre autrice" in case.label
+    assert "Titre notice 5" not in case.details
     assert "• Format déclaré : pdf" in case.details
-    assert "Origine du titre : notice de catalogue locale" in case.details
+    assert "Origine du titre : bibliothèque authentifiée" in case.details
+    assert "Une notice locale de même identité" in case.details
     assert "ne prouve pas le compte ni un fichier" in case.details
-    assert session.page(query="titre de bibliothèque contradictoire").total == 0
+    assert session.page(query="titre de bibliothèque contradictoire").total == 1
 
 
 def test_ambiguous_catalogue_does_not_choose_arbitrary_notice_for_purchase(
