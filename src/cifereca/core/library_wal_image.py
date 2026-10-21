@@ -308,7 +308,7 @@ def read_wal_image(path, *, max_bytes, seconds, cancelled=lambda: False):
                         line, _, tail = stage_fragment.partition(b'\n')
                         stage_fragment = bytearray(tail)
                         if line.startswith(_STAGE_PREFIX):
-                            _trace_stage(line[len(_STAGE_PREFIX):], deadline-seconds)
+                            _trace_stage(bytes(line[len(_STAGE_PREFIX):]), deadline-seconds)
         child.wait(timeout=max(0.001, deadline-time.monotonic()))
         if child.returncode == 0 and payload[:1] == b'O' and 101 <= len(payload) <= max_bytes+1:
             return bytes(payload[1:]), None
