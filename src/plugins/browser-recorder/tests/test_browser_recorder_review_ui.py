@@ -464,3 +464,47 @@ def test_paginated_choices_all_require_explicit_review_before_zip(monkeypatch):
     assert not panel.export_button.sensitive
     panel.destroy()
     assert trace.exchanges == []
+
+
+def test_actionable_private_capture_failure_labels_never_echo_secrets(monkeypatch):
+    from browser_recorder import RecorderError
+
+    secret = "https://books.example.org/private?token=FAKE_SECRET_NEVER_EXPORT"
+    cases = (
+        (RecorderError("playwright_unavailable"), "Installer les dépendances Python"),
+        (RuntimeError(secret), "Vérifier Chromium"),
+        (RecorderError(secret), "Vérifier Chromium"),
+        (RecorderError("capture_interrupted"), "Navigateur fermé"),
+    )
+    for error, expected in cases:
+        panel, tasks, trace = make_panel(monkeypatch)
+        try:
+            panel.begin()
+            assert len(tasks.handles) == 1
+            handle = tasks.handles[0]
+            handle._done = True
+
+            def raise_error(exc=error):
+                raise exc
+
+            handle.result = raise_error
+            handle.callback(handle)
+            assert expected in panel.status.label
+            assert "FAKE_SECRET_NEVER_EXPORT" not in panel.status.label
+            assert "books.example.org" not in panel.status.label
+            assert panel._trace is None
+            assert panel._handle is None
+            assert not panel.is_recording()
+        finally:
+            panel.destroy()
+            trace.destroy()
+
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("private exception code stringified")
+        def __repr__(self):
+            raise AssertionError("private exception code repr rendered")
+
+    assert review_ui._capture_failure_message(Hostile()).startswith(
+        "Capture privée indisponible."
+    )
