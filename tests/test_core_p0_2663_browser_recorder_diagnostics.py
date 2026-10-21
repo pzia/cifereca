@@ -284,3 +284,63 @@ def test_plugin_runtime_cannot_attest_a_code_for_the_wrong_action(
     assert public["events"][0]["detail"] == rows[0]["detail"]
     assert secret not in repr(public)
     assert secret not in collector.text("unit")
+
+
+@pytest.mark.parametrize(("operation", "code", "expected"), [
+    ("har_record", "har_record_failed", "har_record_failed"),
+    ("har_record", "capture_interrupted", "capture_interrupted"),
+    ("har_record", "playwright_missing", "playwright_missing"),
+    ("har_replay", "har_replay_failed", "har_replay_failed"),
+    ("har_replay", "playwright_missing", "playwright_missing"),
+    ("har_record", "har_replay_failed", "browser_operation_failed"),
+    ("har_replay", "capture_interrupted", "browser_operation_failed"),
+    ("har_replay", "zip_export_failed", "browser_operation_failed"),
+])
+def test_legacy_har_runtime_diagnostics_attested_per_operation(
+    tmp_path, operation, code, expected,
+):
+    """HAR user actions publish only package-bound closed Core vocabulary."""
+    from cifereca.plugins.manager import PluginManager
+
+    collector = Diagnostics()
+    manager = SimpleNamespace(
+        diagnostics=collector,
+        _records={
+            PLUGIN_ID: SimpleNamespace(
+                descriptor=SimpleNamespace(id=PLUGIN_ID),
+                package=SimpleNamespace(
+                    manifest=SimpleNamespace(
+                        package=SimpleNamespace(
+                            id="org.cifereca.technical.browser-recorder",
+                        ),
+                    ),
+                ),
+            ),
+        },
+    )
+    secret = "FAKE_HAR_AUTH_PASSWORD_NEVER_PUBLISH"
+    PluginManager._plugin_diag(
+        manager, PLUGIN_ID, "https://example.invalid/?password=" + secret,
+        "error",
+        {
+            "operation": operation,
+            "code": code,
+            "request_body": secret,
+            "signed_url": "https://example.invalid/?token=" + secret,
+        },
+        "normal",
+    )
+    rows = collector.snapshot()
+    assert len(rows) == 1
+    assert rows[0]["verified_browser_recorder"] is True
+    assert rows[0]["detail"] == {
+        "plugin_id": PLUGIN_ID, "operation": operation, "code": expected,
+    }
+    projected = query_diagnostic_events(
+        collector, log_path=tmp_path / "absent",
+        source="core_events", module="PLUGIN", severity="error",
+    )
+    assert projected["total"] == 1
+    assert projected["events"][0]["detail"] == rows[0]["detail"]
+    assert secret not in repr(projected)
+    assert secret not in collector.text("unit")
