@@ -63,9 +63,15 @@ def descendants(root):
         child = child.get_next_sibling()
 
 
+def label_of_button(widget):
+    # Core action_button embeds Adw.ButtonContent, so Gtk.Button.get_label()
+    # is intentionally empty. Its retained accessible label is authoritative.
+    return getattr(widget, "_cifereca_action_label", None) or widget.get_label()
+
+
 def button_named(root, label):
     buttons = [widget for widget in descendants(root)
-               if isinstance(widget, Gtk.Button) and widget.get_label() == label]
+               if isinstance(widget, Gtk.Button) and label_of_button(widget) == label]
     assert len(buttons) == 1, f"expected exactly one button: {label}"
     return buttons[0]
 
@@ -145,7 +151,7 @@ def test_real_plugin_page_dialog_consent_then_core_download(
             row = page._plugin_widgets[PLUGIN_ID]
             assert button_named(row, "Installer les dépendances Python…").get_sensitive()
             assert not any(
-                isinstance(widget, Gtk.Button) and widget.get_label() == "Installer Chromium…"
+                isinstance(widget, Gtk.Button) and label_of_button(widget) == "Installer Chromium…"
                 for widget in descendants(row)
             )
             assert not cache.exists()
@@ -173,7 +179,7 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         visible_dialog().response("install")
         assert eventually(lambda: page._chromium_operation_running)
         assert eventually(lambda: "Annuler Chromium" in [
-            b.get_label() for b in descendants(page._plugin_widgets[PLUGIN_ID])
+            label_of_button(b) for b in descendants(page._plugin_widgets[PLUGIN_ID])
             if isinstance(b, Gtk.Button)
         ])
         assert button_named(page._plugin_widgets[PLUGIN_ID], "Vérifier Chromium…").get_sensitive() is False
