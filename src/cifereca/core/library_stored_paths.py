@@ -23,12 +23,17 @@ class StoredPathReport:
     # Private ephemeral SQLite row indices; never expose path/identity values.
     states: dict[int, str] = field(default_factory=dict)
     reasons: set[str] = field(default_factory=set)
+    # Filled by the Core audit orchestrator, absent for standalone checks.
+    duration_ms: int | None = None
 
     def redacted(self):
-        return {'schema': 1, 'read_only': True,
-                'status': 'incomplete_scan' if self.reasons else 'complete',
-                'reasons': sorted(self.reasons),
-                'counts': dict(sorted(Counter(self.states.values()).items()))}
+        result = {'schema': 1, 'read_only': True,
+                  'status': 'incomplete_scan' if self.reasons else 'complete',
+                  'reasons': sorted(self.reasons),
+                  'counts': dict(sorted(Counter(self.states.values()).items()))}
+        if type(self.duration_ms) is int and 0 <= self.duration_ms <= 30_000:
+            result['duration_ms'] = self.duration_ms
+        return result
 
 
 def inspect_stored_paths(snapshot: EvidenceSnapshot, roots: dict[str, tuple[Path, ...]], *,
