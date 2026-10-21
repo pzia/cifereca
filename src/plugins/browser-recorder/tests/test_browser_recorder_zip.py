@@ -884,7 +884,7 @@ def test_html_stable_selectors_survive_without_private_attributes():
         assert secret not in projected
 
 
-def test_zip_only_fixture_preserves_workflow_and_masks_session():
+def test_zip_only_fixture_preserves_workflow_and_masks_session(tmp_path):
     from urllib.parse import parse_qs, urlsplit
 
     account = "acct-SYNTHETIC45"
@@ -910,8 +910,12 @@ def test_zip_only_fixture_preserves_workflow_and_masks_session():
             review.decide(candidate.key,
                           "keep" if candidate.value == "214" else "anonymize")
         plan = prepare_reviewed_zip(review)
-        members = {item["name"]: item["text"]
-                   for item in plan.preview()["members"]}
+        plan.preview()  # Explicit review before writing.
+        name = plan.save(tmp_path, user_confirmed=True)
+        # A second ZIP reader sees only the exported bytes, not the private trace.
+        with ZipFile(tmp_path / name) as archive:
+            members = {member: archive.read(member).decode("utf-8")
+                       for member in archive.namelist()}
         exchange = json.loads(members["exchanges/0001.json"])
         assert exchange["method"] == "GET"
         assert exchange["status"] == 200
