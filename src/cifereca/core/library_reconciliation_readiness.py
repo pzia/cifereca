@@ -9,7 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import sqlite3
 import stat
+from urllib.parse import quote
 
 from .library_audit_roots import configured_identity_roots
 
@@ -66,14 +68,35 @@ def local_reconciliation_readiness(service, identity_id) -> ReconciliationReadin
     if not stat.S_ISREG(source.st_mode):
         return ReconciliationReadiness('blocked', 'storage_invalid')
 
-    # The Core's own storage getter uses a scoped SQLite read. Never perform
-    # it on the GTK thread. Missing metadata APIs or a busy reader leave
-    # readiness unknown, rather than falsely requiring a remote sync.
-    metadata_get = getattr(storage, 'metadata_get', None)
-    if callable(metadata_get):
-        try:
-            if metadata_get('identity-directory-migration-v1'):
-                return ReconciliationReadiness('temporarily_busy', 'migration_pending')
-        except Exception:
-            return ReconciliationReadiness('indeterminate', 'migration_unchecked')
+    # IMPORTANT: storage.metadata_get() opens a writable Core connection and
+    # can create SQLite sidecars. A readiness check must never do this.
+    # Immutable SQLite reads *only* the base image: no WAL/SHM, network, lock
+    # contention, migration, cache, schema change or source-side write.
+    # A live WAL might contain a newer journal: in that case the gate is
+    # unknown/allowed and the real no-write audit must revalidate it.
+    try:
+        wal = os.lstat(str(path) + '-wal')
+    except FileNotFoundError:
+        wal = None
+    except OSError:
+        return ReconciliationReadiness('indeterminate', 'migration_unchecked')
+    if wal is not None:
+        return ReconciliationReadiness('indeterminate', 'migration_unchecked')
+    uri = 'file:' + quote(str(path), safe='/') + '?mode=ro&immutable=1'
+    try:
+        with sqlite3.connect(uri, uri=True, timeout=0.15) as reader:
+            reader.execute('PRAGMA query_only=ON')
+            exists = reader.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='metadata' LIMIT 1"
+            ).fetchone()
+            pending = (reader.execute(
+                "SELECT 1 FROM metadata WHERE key=? "
+                "AND value IS NOT NULL AND value<>'' LIMIT 1",
+                ('identity-directory-migration-v1',),
+            ).fetchone() if exists else None)
+    except sqlite3.Error:
+        return ReconciliationReadiness('indeterminate', 'migration_unchecked')
+    if pending:
+        return ReconciliationReadiness('temporarily_busy', 'migration_pending')
     return ReconciliationReadiness('ready_offline', 'local_ready')
