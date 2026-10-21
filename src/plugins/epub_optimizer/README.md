@@ -15,13 +15,67 @@ restent traitées par la voie séquentielle. Attente bornée à 120 s
 par image avec annulation vérifiée régulièrement ; une interruption
 du pool retire la sortie temporaire et ne modifie pas l'original.
 
-Le pilotage PDF/PyMuPDF reste **séquentiel** à ce stade, en attendant
-des benchmarks CPU/RSS et une validation du traitement des masques.
-Cette tranche ne démontre pas de gain de performance universel.
+## P1 #2432 — PDF : lots Pillow isolés (0.3.6)
+
+Le transformer `document.transformer.pdf-eink-optimizer` accepte également
+`cpu_workers=1|2|4` dans sa configuration ou les options de la requête.
+Le plan et le résultat indiquent la valeur demandée. **1 reste la valeur par
+défaut**, sans processus supplémentaire. Le coordinateur garde seul le PDF,
+les extractions PyMuPDF, `replace_image`, la validation et la publication.
+Aucun objet PyMuPDF n'est sérialisé vers les travailleurs.
+
+Les lots contiennent au plus N images, **16 Mio d'octets source** et
+**128 Mio de mémoire de travail estimée** (16 × largeur × hauteur + 2 ×
+octets source par image). Ce dernier plafond est une règle d'admission,
+**pas une limite RSS imposée par le système** : interpréteur, PyMuPDF,
+IPC, caches et sorties peuvent ajouter de la mémoire. Le coordinateur peut
+retenir une extraction supplémentaire pour déterminer le prochain lot.
+Les images dépassant ces budgets et les lots d'une seule image restent
+séquentiels ; un document à une image n'ouvre donc aucun pool. Le nombre de
+processus est plafonné au nombre de CPU annoncé par l'OS ; les quotas CPU de
+conteneur ne sont pas détectés. Sur mono-cœur, un avertissement indique le
+repli séquentiel.
+
+Le pool `spawn` est créé au premier lot parallèle, avec renouvellement après
+64 images par travailleur. Une erreur de **création avant soumission**
+(`OSError`/`RuntimeError`) autorise le repli séquentiel avec avertissement.
+Une rupture IPC, un travailleur tué, un `MemoryError` ou un délai dépassé
+interrompt l'opération ; aucun retry silencieux. Délai absolu de 120 s par
+image depuis sa soumission, avec vérification d'annulation toutes les 200 ms.
+Les processus sont terminés à la sortie du contexte. Le PDF temporaire est
+supprimé sur échec ; une cible déjà présente est conservée. Une annulation
+est aussi vérifiée après validation, immédiatement avant publication.
+Les refus des PDF protégés/signés et la conservation des masques/stencils,
+des textes et du vectoriel restent applicables.
+
+### Mesures reproductibles (#1741)
+
+Banc explicite hors réseau, sur **documents synthétiques**, sans nouveau
+collecteur de diagnostics dans le produit :
+
+```bash
+cd src/plugins/epub_optimizer
+python tests/benchmark_optimizer_cpu.py --repetitions 20 > /tmp/optimizer-cpu.json
+```
+
+Même fixture EPUB/PDF légère (une image 160×220) ou lourde (12 images
+1000×1500), modes 1/2/4 alternés, une passe de chauffe exclue, 20 mesures
+retenues par mode et scénario. Chaque mesure lance un coordinateur neuf ;
+création du pool, transformation, validation, hash et publication sont
+inclus dans le temps, création des fixtures et export exclus. Le JSON
+conserve les échantillons, p50/p95 (rang le plus proche), dispersion,
+CPU coordinateur + enfants, tailles et égalité de contenu 1/2/4.
+RSS : pics `getrusage` du coordinateur et du plus gros enfant terminé,
+en KiB sous Linux ; **ce n'est pas la somme des RSS simultanées**.
+Aucune latence GTK ni installation utilisateur n'est mesurée. La campagne
+ne compare pas automatiquement l'ancien moteur à `cpu_workers=1` et
+ne suffit pas à qualifier une absence de régression ou un gain universel.
+Les modes 2/4 restent opt-in ; les mesures et limites sont consignées dans
+#2432, le suivi transversal reste #1741.
 
 ---
 
-# Cifereca EPUB/PDF Optimizer 0.3.4
+# Cifereca EPUB/PDF Optimizer 0.3.6
 
 Compatible avec **Plugin API >=1.4,<2** (source de vérité : `cifereca-plugin.json`). Le moteur est publié comme `document.transformer` et les profils comme services publics `device.profile`.
 

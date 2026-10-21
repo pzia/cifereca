@@ -3,9 +3,12 @@ from __future__ import annotations
 import hashlib
 import io
 import math
+import multiprocessing as mp
 import os
 import tempfile
 import threading
+import time
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -299,6 +302,190 @@ def _validate_output(
         after.close()
 
 
+# Source bytes and estimated Pillow working set are separate admission budgets.
+# The latter is deliberately conservative (several decoded/intermediate copies),
+# not an OS-enforced RSS limit. Oversized images keep the sequential path.
+_CPU_BATCH_BYTES = 16 * 1024 * 1024
+_CPU_BATCH_WORKING_BYTES = 128 * 1024 * 1024
+_CPU_WAIT_SECONDS = 120
+
+
+@dataclass(frozen=True, slots=True)
+class _PdfImageJob:
+    index: int
+    xref: int
+    page_index: int
+    data: bytes
+    name: str
+    box: tuple[int, int] | None
+    note: str
+    error: str
+
+
+def _pdf_batches(doc, inventory, *, profile, max_image_mb,
+                 cpu_workers, cancel_event):
+    """Extract only in the coordinator; retain at most N jobs plus one lookahead.
+
+    A job contains only indices, page number, bytes, suffix and a target box.
+    No PyMuPDF object is retained in a batch or passed to a child process.
+    """
+    batch = []
+    source_bytes = working_bytes = 0
+    for index, (xref, item) in enumerate(inventory.items(), start=1):
+        _check_cancel(cancel_event)
+        data, name, box, note, error = b"", "", None, "", ""
+        if item["smask"]:
+            note = "transparence/masque préservé"
+        elif int(item.get("bpc", 0) or 0) <= 1:
+            note = "masque/stencil 1-bit préservé"
+        else:
+            try:
+                extracted = doc.extract_image(xref)
+                data = extracted.get("image", b"")
+                suffix = _suffix_for_extracted(extracted.get("ext", ""))
+                if not suffix:
+                    note = f"format {extracted.get('ext', '?')} conservé"
+                elif len(data) > max_image_mb * 1024 * 1024:
+                    note = f"image > {max_image_mb} Mio"
+                else:
+                    name = f"xref-{xref}{suffix}"
+                    box = _target_box(profile, item)
+                del extracted
+            except MemoryError:
+                raise PdfOptimizationError("cpu_image_memory_exhausted") from None
+            except Exception as exc:
+                error = f"extraction impossible ({exc})"
+        # Inventory dimensions come from the PDF, before Pillow decoding.
+        cost = max(1, item["width"]) * max(1, item["height"]) * 16 + len(data) * 2
+        eligible = bool(name and not error and len(data) <= _CPU_BATCH_BYTES
+                        and cost <= _CPU_BATCH_WORKING_BYTES)
+        if batch and (not eligible or len(batch) >= cpu_workers
+                      or source_bytes + len(data) > _CPU_BATCH_BYTES
+                      or working_bytes + cost > _CPU_BATCH_WORKING_BYTES):
+            yield batch
+            batch = []
+            source_bytes = working_bytes = 0
+        job = _PdfImageJob(index, xref, int(item["pages"][0]), data, name, box, note, error)
+        if not eligible:
+            yield [job]
+            continue
+        batch.append(job)
+        source_bytes += len(data)
+        working_bytes += cost
+    if batch:
+        yield batch
+
+
+def _run_pdf_batches(doc, inventory, report, *, profile, max_image_mb,
+                     max_image_pixels, cpu_workers, progress, cancel_event):
+    with ExitStack() as stack:
+        pool = None
+        unavailable = False
+        batches = _pdf_batches(
+            doc, inventory, profile=profile, max_image_mb=max_image_mb,
+            cpu_workers=cpu_workers, cancel_event=cancel_event,
+        )
+        # Closing the generator promptly releases lookahead and pending bytes
+        # even if a callback or PDF mutation raises in the coordinator.
+        stack.callback(batches.close)
+        for batch in batches:
+            _check_cancel(cancel_event)
+            # Do not pay spawn costs for single-image/small documents or for
+            # images that exceed the aggregate decoded working-set allowance.
+            parallel = cpu_workers > 1 and len(batch) > 1 and not unavailable
+            if parallel and pool is None:
+                try:
+                    pool = stack.enter_context(mp.get_context("spawn").Pool(
+                        processes=cpu_workers, maxtasksperchild=64,
+                    ))
+                except (OSError, RuntimeError):
+                    _check_cancel(cancel_event)
+                    unavailable = True
+                    parallel = False
+                    report.image_notes.append(
+                        "Processus CPU indisponibles : repli séquentiel sécurisé."
+                    )
+            pending = []
+            if parallel:
+                # Keep this generation before submission: Pool can replace a
+                # child as soon as a submitted task kills it.
+                children = tuple(pool._pool)
+                try:
+                    for job in batch:
+                        _check_cancel(cancel_event)
+                        result = pool.apply_async(
+                            _optimize_image, args=(job.data, job.name, profile),
+                            kwds={"target_box": job.box,
+                                  "max_image_pixels": max_image_pixels},
+                        )
+                        pending.append((result, time.monotonic() + _CPU_WAIT_SECONDS))
+                except (CancelledError, KeyboardInterrupt):
+                    raise
+                except Exception:
+                    raise PdfOptimizationError("cpu_image_worker_failed") from None
+            for offset, job in enumerate(batch):
+                index, xref = job.index, job.xref
+                page_index, data, name = job.page_index, job.data, job.name
+                box, note, error = job.box, job.note, job.error
+                _check_cancel(cancel_event)
+                if note or error:
+                    report.images_kept += 1
+                    if note:
+                        report.image_notes.append(f"xref {xref}: {note}")
+                    else:
+                        report.image_errors.append(f"xref {xref}: {error}")
+                else:
+                    transformed = None
+                    if parallel:
+                        result, deadline = pending[offset]
+                        while transformed is None:
+                            _check_cancel(cancel_event)
+                            if any(child.exitcode not in (None, 0) for child in children):
+                                raise PdfOptimizationError("cpu_image_worker_failed")
+                            left = deadline - time.monotonic()
+                            if left <= 0:
+                                raise PdfOptimizationError("cpu_image_worker_timeout")
+                            try:
+                                transformed = result.get(timeout=min(0.2, left))
+                            except mp.TimeoutError:
+                                continue
+                            except (EOFError, ConnectionError, MemoryError):
+                                raise PdfOptimizationError("cpu_image_worker_failed") from None
+                            except Exception as exc:
+                                transformed = exc
+                    else:
+                        try:
+                            transformed = _optimize_image(
+                                data, name, profile, target_box=box,
+                                max_image_pixels=max_image_pixels,
+                            )
+                        except MemoryError:
+                            raise PdfOptimizationError("cpu_image_memory_exhausted") from None
+                        except Exception as exc:
+                            transformed = exc
+                    if isinstance(transformed, Exception):
+                        report.images_kept += 1
+                        report.image_errors.append(f"xref {xref}: {transformed}")
+                    else:
+                        optimized, change = transformed
+                        report.changes.append(change)
+                        if optimized == data:
+                            report.images_kept += 1
+                            if "conservée (" in change.action:
+                                report.image_notes.append(f"xref {xref}: {change.action}")
+                        else:
+                            try:
+                                doc[page_index].replace_image(xref, stream=optimized)
+                                report.images_optimized += 1
+                            except MemoryError:
+                                raise PdfOptimizationError("cpu_image_memory_exhausted") from None
+                            except Exception as exc:
+                                report.images_kept += 1
+                                report.image_errors.append(f"xref {xref}: {exc}")
+                pct = 5 + int(86 * index / max(1, len(inventory)))
+                _emit(progress, pct, f"Image PDF {index}/{len(inventory)}")
+
+
 def optimize_pdf(
     input_path: str | os.PathLike[str],
     output_path: str | os.PathLike[str],
@@ -309,7 +496,10 @@ def optimize_pdf(
     max_image_mb: int = 64,
     progress: ProgressCallback | None = None,
     cancel_event: threading.Event | None = None,
+    cpu_workers: int = 1,
 ) -> PdfOptimizationReport:
+    if type(cpu_workers) is not int or cpu_workers not in (1, 2, 4):
+        raise PdfOptimizationError("cpu_workers doit valoir 1, 2 ou 4")
     source = Path(input_path).expanduser().resolve()
     target = Path(output_path).expanduser().resolve()
     if source == target:
@@ -335,65 +525,18 @@ def optimize_pdf(
             report.pages = doc.page_count
             inventory = _image_inventory(doc, cancel_event=cancel_event)
             report.images_seen = len(inventory)
-            # Keep no list of extracted image byte blobs. Large PDFs can
-            # contain hundreds of individually legal images; retaining all
-            # at once bypassed per-image memory limits.
-            total_images = max(1, len(inventory))
             _emit(progress, 5, f"{len(inventory)} image(s) PDF détectée(s)")
-
-            for index, (xref, item) in enumerate(inventory.items(), start=1):
-                _check_cancel(cancel_event)
-                try:
-                    extracted = doc.extract_image(xref)
-                    data = extracted.get("image", b"")
-                    suffix = _suffix_for_extracted(extracted.get("ext", "")) or ""
-                except Exception as exc:
-                    report.images_kept += 1
-                    report.image_errors.append(
-                        f"xref {xref}: extraction impossible ({exc})"
-                    )
-                else:
-                    if item["smask"]:
-                        report.images_kept += 1
-                        report.image_notes.append(f"xref {xref}: transparence/masque préservé")
-                    elif int(item.get("bpc", 0) or 0) <= 1:
-                        report.images_kept += 1
-                        report.image_notes.append(f"xref {xref}: masque/stencil 1-bit préservé")
-                    elif not suffix:
-                        report.images_kept += 1
-                        report.image_notes.append(
-                            f"xref {xref}: format {extracted.get('ext', '?')} conservé"
-                        )
-                    elif len(data) > max_image_mb * 1024 * 1024:
-                        report.images_kept += 1
-                        report.image_notes.append(f"xref {xref}: image > {max_image_mb} Mio")
-                    else:
-                        try:
-                            box = _target_box(profile, item)
-                            optimized, change = _optimize_image(
-                                data,
-                                f"xref-{xref}{suffix}",
-                                profile,
-                                target_box=box,
-                                max_image_pixels=max_image_pixels,
-                            )
-                            report.changes.append(change)
-                            if optimized == data:
-                                report.images_kept += 1
-                                if "conservée (" in change.action:
-                                    report.image_notes.append(f"xref {xref}: {change.action}")
-                            else:
-                                page_index = int(item["pages"][0])
-                                doc[page_index].replace_image(xref, stream=optimized)
-                                report.images_optimized += 1
-                        except Exception as exc:
-                            report.images_kept += 1
-                            report.image_errors.append(f"xref {xref}: {exc}")
-
-                # Counts replace byte-weighted progress: no second extraction
-                # pass or in-memory byte inventory required for a percentage.
-                pct = 5 + int(86 * index / total_images)
-                _emit(progress, pct, f"Image PDF {index}/{len(inventory)}")
+            available_cpus = os.cpu_count() or 1
+            effective_workers = min(cpu_workers, available_cpus)
+            if effective_workers != cpu_workers:
+                report.image_notes.append(
+                    f"Processus CPU limités à {effective_workers} (CPU disponibles)."
+                )
+            _run_pdf_batches(
+                doc, inventory, report, profile=profile,
+                max_image_mb=max_image_mb, max_image_pixels=max_image_pixels,
+                cpu_workers=effective_workers, progress=progress, cancel_event=cancel_event,
+            )
 
             _check_cancel(cancel_event)
             _emit(progress, 93, "Réécriture conservatrice du PDF…")
@@ -418,6 +561,7 @@ def optimize_pdf(
             max_pages=max_pages,
             cancel_event=cancel_event,
         )
+        _check_cancel(cancel_event)
         os.replace(temp_path, target)
         temp_name = None
         report.output_bytes = target.stat().st_size

@@ -46,7 +46,7 @@ def test_discovery_filters_by_core041_contract_and_capability():
 def test_manifest_requires_plugin_api_14_for_artifact_contracts():
     manifest = json.loads((Path(__file__).resolve().parents[1] / "cifereca-plugin.json").read_text(encoding="utf-8"))
     assert manifest["package"]["plugin_api"] == ">=1.4,<2"
-    assert manifest["package"]["version"] == "0.3.5"
-    assert {row["version"] for row in manifest["plugins"]} == {"0.3.5"}
+    assert manifest["package"]["version"] == "0.3.6"
+    assert {row["version"] for row in manifest["plugins"]} == {"0.3.6"}
     ui = next(row for row in manifest["plugins"] if row["id"] == "ui.page.epub-optimizer")
     assert {dep["version"] for dep in ui["requires"]} == {">=0.3.1,<1"}
