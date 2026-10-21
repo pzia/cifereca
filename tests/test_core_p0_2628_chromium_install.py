@@ -101,6 +101,21 @@ def test_opt_in_installer_is_exact_playwright_chromium_without_shell_or_os_packa
     assert "chromium" not in result.redacted()["playwright_version"]
 
 
+def test_custom_browser_mirror_requires_separate_administrative_consent(monkeypatch, tmp_path):
+    monkeypatch.setenv("PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST", "https://mirror.invalid")
+    monkeypatch.setattr(browser, "inspect_chromium",
+                        lambda **_: browser.BrowserState("chromium_missing", "1.55"))
+    monkeypatch.setattr(browser, "_cache_path", lambda: tmp_path)
+    monkeypatch.setattr(browser.sys, "prefix", str(tmp_path / "venv"))
+    monkeypatch.setattr(browser.sys, "base_prefix", "/usr")
+    monkeypatch.setattr(browser.shutil, "disk_usage",
+                        lambda _: SimpleNamespace(free=4*1024**3))
+    monkeypatch.setattr(browser.subprocess, "Popen",
+                        lambda *_a, **_kw: (_ for _ in ()).throw(
+                            AssertionError("unreviewed archive source used")))
+    assert browser.install_chromium(consent=True).code == "browser_download_source_unapproved"
+
+
 def test_install_is_cancelled_without_a_single_subprocess(monkeypatch):
     cancelled = Event()
     cancelled.set()
@@ -150,3 +165,7 @@ def test_gtk_install_has_separate_consent_async_progress_and_cancel():
     assert "GLib.idle_add(self._finish_chromium_operation" in methods["_install_chromium"]
     assert "self._chromium_cancel.set()" in methods["_plugin_row"]
     assert "install_chromium" not in methods["refresh"]
+    assert "_chromium_operation_running" in methods["_install_python_dependencies"]
+    assert "getattr(self.window, '_closed', False)" in (
+        methods["_finish_chromium_operation"].replace('"', "'")
+    )
