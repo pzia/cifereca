@@ -1266,11 +1266,14 @@ class MainWindow(Adw.ApplicationWindow):
                                 if self._maintenance_reconciliation_run is not run_state:
                                     return
                                 self._maintenance_reconciliation_run = None
-                                # Reset current buttons after an explicit
-                                # cancel too; scope changes never reenable
-                                # controls for an invalidated identity.
                                 if reconciliation_scope() != run_state["scope"]:
                                     return
+                                controls = run_state.get("controls")
+                                if controls is not None:
+                                    controls[0]["control"] = None
+                                    if not self._closed and controls[2].get_root() is not None:
+                                        controls[1].set_visible(False)
+                                        controls[2].set_sensitive(True)
                                 if worker_control.cancelled():
                                     return
                                 target = run_state.get("progress_target")
@@ -1280,12 +1283,6 @@ class MainWindow(Adw.ApplicationWindow):
                                             exc, MaintenanceCancelledError
                                         ) else "error",
                                     )
-                                controls = run_state.get("controls")
-                                if controls is not None:
-                                    controls[0]["control"] = None
-                                    if not self._closed and controls[2].get_root() is not None:
-                                        controls[1].set_visible(False)
-                                        controls[2].set_sensitive(True)
                                 # Keep the previous valid result, never expose
                                 # an arbitrary plugin/runtime exception.
                                 self.show_error(
