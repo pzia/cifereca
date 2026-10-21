@@ -28,6 +28,7 @@ class SystemPages:
 
         from cifereca.gui.action_widgets import AdaptiveActionBar, action_button, mirror_sensitivity
         from cifereca.gui.diagnostic_presentation import diagnostic_plugin_rows
+        from cifereca.core.version_inventory import version_inventory
         from cifereca.gui.main_window import clear_box, fr_date
 
         scroll = Gtk.ScrolledWindow()
@@ -45,6 +46,8 @@ class SystemPages:
         filter_drop = Gtk.DropDown.new_from_strings(["À examiner", "Tous"])
         filter_drop.set_tooltip_text("Afficher uniquement les anomalies ou l’inventaire complet")
         actions.append(filter_drop)
+        copy_versions = action_button("Copier les versions", "edit-copy-symbolic", tooltip="Copier uniquement les versions Core et plugins affichées")
+        actions.append(copy_versions)
         copy = action_button("Copier", "edit-copy-symbolic", tooltip="Copier le rapport de support")
         export = action_button("Exporter", "document-save-symbolic", tooltip="Enregistrer le rapport de support dans un fichier texte")
         actions.append(copy)
@@ -125,12 +128,54 @@ class SystemPages:
             chooser.connect("response", chosen)
             chooser.show()
 
+        versions_snapshot = [None]
+
+        def copy_version_snapshot(*_args):
+            snapshot = versions_snapshot[0]
+            if snapshot is None:
+                host.toast("Versions indisponibles : actualiser l’inventaire")
+                return
+            display = Gdk.Display.get_default()
+            if display is None:
+                host.toast("Presse-papiers indisponible")
+                return
+            try:
+                provider = Gdk.ContentProvider.new_for_value(snapshot.text)
+                self._versions_clipboard_provider = provider
+                if display.get_clipboard().set_content(provider):
+                    host.toast("Versions copiées")
+                else:
+                    host.toast("Copie des versions impossible")
+            except Exception:
+                host.toast("Copie des versions impossible")
+
         def render(*_):
+            versions_snapshot[0] = None
+            copy_versions.set_sensitive(False)
             clear_box(content)
             broker = self.diagnostics
             if broker is None:
                 raise RuntimeError("broker diagnostics indisponible")
             data = broker.system_status()
+            versions = version_inventory(data, broker.inventory())
+            versions_snapshot[0] = versions
+            copy_versions.set_sensitive(True)
+            version_group = Adw.PreferencesGroup()
+            version_group.set_title("Versions installées / chargées")
+            content.append(version_group)
+            core_row = Adw.ActionRow()
+            core_row.set_title(f"Core Cifereca · v{versions.core_version}")
+            core_row.set_subtitle(
+                f"{len(versions.plugins)} plugins dans l’inventaire public"
+                + (" · inventaire limité à 300" if versions.limited else "")
+            )
+            version_group.add(core_row)
+            for component in versions.plugins:
+                item_row = Adw.ActionRow()
+                item_row.set_title(f"{component.name} [{component.plugin_id}]")
+                item_row.set_subtitle(component.details)
+                item_row.set_subtitle_lines(0)
+                version_group.add(item_row)
             attention = int(data.get("attention") or 0)
             summary = Gtk.Label(
                 label=f"● {data['ready']} prêts · {attention} à examiner",
@@ -170,20 +215,8 @@ class SystemPages:
                 item.add_row(detail)
                 group.add(item)
 
-            if not attention_only:
-                install = Adw.PreferencesGroup()
-                install.set_title("Installation Core")
-                content.append(install)
-                row = Adw.ActionRow()
-                row.set_title("Core · " + data["version"])
-                row.set_subtitle(
-                    "Installé le " + fr_date(data["installed_at"], True)
-                    if data["installed_at"]
-                    else "Date d’installation inconnue"
-                )
-                install.add(row)
-
         filter_drop.connect("notify::selected", render)
+        copy_versions.connect("clicked", copy_version_snapshot)
         copy.connect("clicked", copy_report)
         copy_bottom.connect("clicked", copy_report)
         export.connect("clicked", export_report)
