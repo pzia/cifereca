@@ -38,16 +38,16 @@ def result_text(result) -> str:
 
 
 class MaintenanceResultView:
-    """GTK-thread-owned result, revoked on refresh, retry or identity changes."""
+    """GTK-thread-owned view, revocable independently from session report text."""
 
-    def __init__(self, *, Gtk, Adw, Pango, parent, row, title, alive, inspector=None):
+    def __init__(self, *, Gtk, Adw, Pango, parent, row, title, alive, inspector=None, inspection_row=None):
         self.Gtk, self.Adw, self.Pango = Gtk, Adw, Pango
         self.parent, self.row, self.title, self.alive = parent, row, title, alive
         self.button = self.dialog = None
         self.text = ""
         self.inspector = inspector
         if inspector is not None:
-            inspector.attach_activity_row(row)
+            inspector.attach_activity_row(inspection_row if inspection_row is not None else row)
 
     def clear(self):
         if self.inspector is not None:
@@ -59,16 +59,20 @@ class MaintenanceResultView:
         if self.button is not None:
             self.button.set_visible(False)
 
-    def publish(self, result):
-        self.clear()
-        if not self.alive():
+    def restore_text(self, text: str) -> None:
+        """Reattach a private report to rebuilt widgets; never restart audit."""
+        if type(text) is not str or not text or not self.alive():
             return
-        self.text = result_text(result)
+        self.text = text
         if self.button is None:
             self.button = self.Gtk.Button(label="Résultats…")
             self.button.connect("clicked", self.open)
             self.row.add_suffix(self.button)
         self.button.set_visible(True)
+
+    def publish(self, result):
+        self.clear()
+        self.restore_text(result_text(result))
 
     def _open_large_results(self):
         """Local reconciliation results are an exploration window, not consent.

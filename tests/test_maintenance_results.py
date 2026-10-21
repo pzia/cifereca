@@ -57,8 +57,9 @@ def test_completed_result_is_consultable_and_reopenable(ok, monkeypatch):
     view.button.click()
     assert view.dialog is not dialog
     m.preview.click()
-    assert not view.button.visible and view.text == ''
-    assert destroyed
+    # Starting a retry must not revoke the last valid reconciliation report.
+    assert view.button.visible and 'Liens confirmés : 517' in view.text
+    assert destroyed == []
 
 
 @pytest.mark.parametrize('invalidated', ['identity', 'generation', 'detached', 'closed', 'refresh'])
@@ -168,3 +169,87 @@ def test_other_maintenance_tools_retain_bounded_message_dialog_contract():
     assert "self.inspector is not None" in source
     assert "getattr(self.Adw, 'ToolbarView', None)" in source
     assert 'dialog = self.Adw.MessageDialog.new(self.parent, self.title, "")' in source
+
+
+def test_reconciliation_result_survives_ui_refresh_without_new_audit(monkeypatch):
+    monkeypatch.setattr(harness.Dialog, 'destroy', lambda self: None, raising=False)
+    m = mounted('library.reconciliation.audit')
+    args = execute(m)
+    args[2](MaintenanceResult(
+        False, summary='Analyse incomplète. 290 fichiers.',
+        details=('Liens confirmés : 102',), warnings=('Durée maximale atteinte.',),
+    ))
+    prior = m.host._maintenance_result_views[0]
+    prior.dialog.handlers['response'](prior.dialog, 'close')
+    count_before = len(m.jobs)
+    m.refresh()
+    assert len(m.jobs) == count_before
+    new = m.host._maintenance_result_views[0]
+    assert new is not prior and new.button.visible
+    assert 'Liens confirmés : 102' in new.text
+    assert 'Durée maximale atteinte.' in new.text
+    new.button.click()
+    assert 'Liens confirmés : 102' in new.dialog.extra_child.children[0].text
+
+
+def test_reconciliation_retry_and_cancellation_retain_last_report(monkeypatch):
+    monkeypatch.setattr(harness.Dialog, 'destroy', lambda self: None, raising=False)
+    m = mounted('library.reconciliation.audit')
+    args = execute(m)
+    args[2](MaintenanceResult(False, summary='Analyse incomplète.',
+                              details=('Ancien résultat : 321 fichiers',)))
+    view = m.host._maintenance_result_views[0]
+    view.dialog.handlers['response'](view.dialog, 'close')
+    m.preview.click()
+    assert view.button.visible and 'Ancien résultat : 321 fichiers' in view.text
+    m.cancel.click()
+    assert view.button.visible and 'Ancien résultat : 321 fichiers' in view.text
+    # The in-memory session model is not discarded by a new preview.
+    assert 'Ancien résultat : 321 fichiers' in m.host._maintenance_reconciliation_report['text']
+
+
+@pytest.mark.parametrize('changed', ['identity', 'generation', 'epoch', 'storage'])
+def test_reconciliation_cache_revoked_on_changed_scope(changed, monkeypatch):
+    monkeypatch.setattr(harness.Dialog, 'destroy', lambda self: None, raising=False)
+    m = mounted('library.reconciliation.audit')
+    args = execute(m)
+    args[2](MaintenanceResult(True, summary='PRIVATE_2732 result'))
+    previous = m.host._maintenance_result_views[0]
+    previous.dialog.handlers['response'](previous.dialog, 'close')
+    if changed == 'identity':
+        m.host.service.current_identity = NS(identity_id='bob')
+    elif changed == 'generation':
+        m.host._identity_context_generation += 1
+    elif changed == 'epoch':
+        m.host.service._account_context_epoch = 3
+    else:
+        m.host.service.storage = NS(path='/synthetic/other.sqlite')
+    m.refresh()
+    current = m.host._maintenance_result_views[0]
+    assert current.text == ''
+    assert current.button is None
+    assert m.host._maintenance_reconciliation_report is None
+
+
+def test_other_maintenance_results_still_clear_on_retry():
+    m = mounted('covers.audit')
+    args = execute(m)
+    args[2](MaintenanceResult(True, summary='Ancien audit des couvertures'))
+    view = m.host._maintenance_result_views[0]
+    assert view.text
+    m.preview.click()
+    assert not view.text and not view.button.visible
+
+
+def test_reconciliation_audit_and_inspection_have_distinct_action_rows():
+    m = mounted('library.reconciliation.audit')
+    rows = m.host._tools_box.children[0].children
+    assert len(rows) == 2
+    audit_row, inspection_row = rows
+    assert audit_row is not inspection_row
+    assert inspection_row.title == 'Inspection détaillée des cas'
+    assert m.host._maintenance_result_views[0].inspector._activity_row is inspection_row
+    assert m.feedback is m.host._maintenance_line_rows[0][0]
+    # Other tools still use exactly one ActionRow.
+    other = mounted('covers.audit')
+    assert len(other.host._tools_box.children[0].children) == 1
