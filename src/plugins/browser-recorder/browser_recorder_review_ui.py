@@ -29,8 +29,10 @@ _CAPTURE_FAILURE_LABELS = {
         "→ Installer les dépendances Python…, puis Installer Chromium…."
     ),
     "capture_interrupted": (
-        "Session Chromium interrompue ou limite dépassée : la capture privée "
-        "a été effacée. Ouvrez Plugins → Browser Recorder → Vérifier Chromium… avant de relancer."
+        "Session Chromium interrompue ou limite dépassée : mémoire temporaire "
+        "effacée. Une projection partielle peut rester dans Sessions archivées "
+        "si le coffre était activé. Ouvrez Plugins → Browser Recorder → "
+        "Vérifier Chromium… avant de relancer."
     ),
     "capture_limit": (
         "Limite de capture atteinte : réduisez le parcours ou arrêtez la capture."
