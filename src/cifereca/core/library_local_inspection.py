@@ -86,6 +86,69 @@ def _searchable(text):
                    if not unicodedata.combining(ch))
 
 
+
+def _right_bibliography(right, matches):
+    """Private, descriptive only. Identity/provider/edition was matched above.
+
+    A catalogue row is not account-owned evidence; right metadata is held
+    inside the already scoped entitlement. Never infer from ISBN, title, SHA
+    or a foreign or ambiguous catalogue row.
+    """
+    notice = matches[0][1] if len(matches) == 1 else {}
+    if not matches:
+        catalogue_status = 'Aucune notice locale de cette édition exacte.'
+    elif len(matches) > 1:
+        catalogue_status = (
+            'Plusieurs notices locales pour la même édition : '
+            'leurs métadonnées ne sont pas attribuées à ce droit.'
+        )
+    else:
+        catalogue_status = (
+            'Une notice locale de même identité, fournisseur et édition ; '
+            'elle ne prouve pas le compte ni un fichier.'
+        )
+
+    def field(name, label):
+        candidate = notice.get(name)
+        if type(candidate) is str and candidate.strip():
+            return _text(candidate).strip()[:256], (
+                'notice de catalogue locale de cette édition (non probante)'
+            )
+        candidate = right.get(name)
+        if type(candidate) is str and candidate.strip():
+            status = (
+                'bibliothèque authentifiée (description du droit enregistré)'
+                if right.get('attested_source') in {
+                    'kobo.personal_manifest', 'numilog.authenticated_library',
+                }
+                else 'droit enregistré (source descriptive non attestée)'
+            )
+            return _text(candidate).strip()[:256], status
+        return 'Non renseigné', 'Indisponible dans les données locales'
+
+    title, title_source = field('display_title', 'Titre')
+    authors, authors_source = field('display_authors', 'Auteur(s)')
+    media = right.get('display_media_format')
+    media = media if media in {'epub', 'kepub', 'pdf', 'acsm'} else 'Non renseigné'
+    lines = (
+        'Bibliographie de l’achat / droit (description, pas preuve de fichier) :',
+        '• Titre : ' + title,
+        '• Auteur(s) : ' + authors,
+        '• Format déclaré : ' + media,
+        '• Fournisseur déclaré : ' + _text(right.get('provider_id')),
+        '• Édition fournisseur : ' + (_text(right.get('item_id')) or 'Non renseignée'),
+        '• Statut de droit : ' + (_text(right.get('state')) or 'Indéterminé'),
+        '• Origine du titre : ' + title_source,
+        '• Origine des auteurs : ' + authors_source,
+        '• Catalogue : ' + catalogue_status,
+        'Ce bloc ne rattache aucun EPUB ; acquisition, placement, SHA et '
+        'structure doivent être contrôlés indépendamment.',
+    )
+    return (title if title != 'Non renseigné' else None,
+            authors if authors != 'Non renseigné' else None,
+            '\n'.join(lines))
+
+
 def _right_explanation(right, ledger, placements, artifacts, files, incomplete,
                        *, conflicting_ledger=False, path_states=None):
     """Explain missing *confirmation*, not physical absence or download status.
@@ -371,9 +434,8 @@ class LocalInspection:
             matches = (notices.get((right_provider, right_item), [])
                        if type(right_provider) is str and type(right_item) is str
                        and right_item else [])
-            notice = matches[0][1] if len(matches) == 1 else {}
-            right_label = _display_book(notice.get('display_title'),
-                                        notice.get('display_authors'),
+            title, authors, bibliography = _right_bibliography(right, matches)
+            right_label = _display_book(title, authors,
                                         right.get('item_id') or 'Édition non identifiée')
             acquisition_rows = audit.snapshot.tables.get('acquisition_ledger', [])
             # The ledger is intentionally global to detect conflicting rights
@@ -427,6 +489,7 @@ class LocalInspection:
                         'appariement individuel ne peut être conclu.'
                     )
             detail = ('Droit sans fichier vérifié · ' + right_label + '\n\n'
+                      + bibliography + '\n\n'
                       + evidence('entitlements', index)
                       + '\n\nPourquoi ce droit n’est-il pas confirmé ?\n' + why
                       + '\n\n' + '\n'.join(suggestions)
