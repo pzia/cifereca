@@ -66,6 +66,7 @@ _COUNTS = (
     ("metadata_candidates", "candidats bibliographiques"),
 )
 _TIMINGS = (
+    ("snapshot", "Lecture SQLite/WAL"),
     ("sha256", "SHA"),
     ("epub_opf", "EPUB/OPF"),
     ("structure", "structure/CRC"),
