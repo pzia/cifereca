@@ -48,7 +48,11 @@ def source_groups(row, public_providers=PUBLIC_PROVIDERS, local_providers=LOCAL_
     observed={
         source['provider_id']: {
             'provider_id': source['provider_id'],
-            'label': source.get('label') if type(source.get('label')) is str else '',
+            'label': (
+                source['label']
+                if type(source.get('label')) is str and source['label'].strip()
+                else SOURCE_NAMES.get(source['provider_id'], source['provider_id'])
+            ),
             'connected': source.get('connected') is True,
         }
         for source in (row.get('sources') or ())
