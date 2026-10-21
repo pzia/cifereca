@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.5, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.6, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -363,7 +363,7 @@ Le ZIP interne n'est jamais écrit en clair par Cifereca. Le fichier
 le déchiffrement en mémoire est une étape volontaire distincte.
 
 
-## Choix de la destination ZIP (0.2.5)
+## Choix de la destination ZIP (0.2.6)
 
 Après l'examen **exact** de chaque membre et la confirmation explicite,
 **« Enregistrer sous… le ZIP anonymisé »** ouvre le dialogue natif GTK4
@@ -380,7 +380,7 @@ préexistant : le dossier doit appartenir à l'utilisateur avec permissions
 obligatoires. Le contenu privé n'est jamais enregistré en ZIP non chiffré.
 
 
-## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.5, #2740)
+## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.6, #2740)
 
 Chaque archive **revue** contient maintenant le répertoire
 `plugin-dev-kit/` avec ses guides indépendants, le
@@ -401,7 +401,7 @@ développement, pas une preuve de droits/licences, et ne contient ni tokens
 ni profil Chromium ni source private Core.
 
 
-## Plugin de référence hors ligne (0.2.5, #2740)
+## Plugin de référence hors ligne (0.2.6, #2740)
 
 Le kit documentaire du ZIP anonymisé inclut désormais un **exemple complet**
 dans `plugin-dev-kit/examples/provider-fixture-example/` : un manifeste
@@ -420,7 +420,7 @@ avec succès une API réelle sans hypothèse. L'exemple doit être adapté aux
 endpoints effectivement observés et aux permissions autorisées.
 
 
-## Bibliothèque de sessions déverrouillable (0.2.5, #2725)
+## Bibliothèque de sessions déverrouillable (0.2.6, #2725)
 
 « Lister les sessions archivées » ne montre que des **ID opaques**.
 Saisir la phrase secrète puis « Déverrouiller les métadonnées des sessions… »
@@ -437,3 +437,25 @@ supprimer, exporter sont désactivées pendant l'indexation asynchrone.
 Un résultat d'indexation tardif après changement de capture ou fermeture
 est ignoré. L'utilisateur peut avoir des **phrases secrètes différentes**
 pour ses sessions ; les autres ne sont ni perdues ni révélées.
+
+
+## Nom de session chiffré (0.2.6, #2725)
+
+Depuis la bibliothèque privée, choisir une session, saisir un nom de **1 à
+80 caractères** et la phrase secrète du coffre, puis cliquer
+« Renommer cette session chiffrée ». Le travail de chiffrement AES-256-GCM
+et de vérification scrypt passe par le broker de tâches, hors du thread GTK.
+
+Le nom est sauvegardé indépendamment de la capture d'origine dans
+`private-sessions/<id>.cbrn` (fichier propriétaire 0600, écriture atomique,
+ID aléatoire opaque et authentification cryptographique associée à l'ID).
+Le nom n'apparaît jamais dans les chemins, les diagnostics, les ZIP
+anonymisés ou les ZIP privés. Il n'est affiché qu'après un nouveau
+déverrouillage explicite de la bibliothèque ; le bouton « Lister »
+remasque les métadonnées. La suppression volontaire d'une session purge
+aussi son nom chiffré, sans promettre d'effacement forensique SSD.
+
+Les noms contenant des caractères de contrôle, échappements ou caractères
+de direction Unicode sont refusés, tout comme une étiquette altérée ou un
+lien symbolique. Les sessions existantes n'ont aucun nom par défaut et
+restent compatibles sans migration destructrice.
