@@ -76,8 +76,14 @@ def test_search_finds_code_on_loaded_page_but_does_not_export_nested_details():
     public_export = export_selected_events(selected, {"reconcile-synthetic"})
     assert "private" not in public_export.lower()
     assert "PRIVATE" not in public_export
-    assert "reconciliation" not in public_export
     assert "9780306406157" not in public_export
+    exported = json.loads(public_export)["events"][0]["reconciliation"]
+    assert exported["status"] == "partial"
+    assert exported["counts"]["files_started"] == 321
+    assert exported["counts"]["metadata_candidates"] == 0
+    assert exported["phase_ms"]["sha256"] == 8100
+    assert exported["duration_ms"] == 134325
+    assert "private_title" not in json.dumps(exported)
 
 
 @pytest.mark.parametrize("mutation", [
@@ -155,3 +161,53 @@ def test_snapshot_timing_untrusted_values_are_never_echoed(invalid):
     assert result is not None
     assert "Lecture SQLite/WAL" not in result["timing"]
     assert PRIVATE not in json.dumps(result, ensure_ascii=False)
+
+
+def test_export_sanitizes_malicious_aggregate_payload_even_after_ui_projection():
+    from diagnostics_reconciliation import sanitized_reconciliation_export
+
+    normal, = sanitized_rows({"events": [event()]})
+    forged = dict(normal)
+    forged["reconciliation_export"] = {
+        "schema_version": 1, "status": "partial", "code": "time_budget",
+        "reasons": ["time_budget"], "private_account": PRIVATE,
+        "counts": {
+            "files_started": 321, "private_file": PRIVATE,
+            "files_hashed": True, "metadata_candidates": 0,
+        },
+        "phase_ms": {
+            "snapshot": 10027, "sha256": -1,
+            "private_path": PRIVATE, "candidate_match": 91,
+        },
+        "duration_ms": PRIVATE,
+    }
+    result = sanitized_reconciliation_export(forged)
+    assert result is not None
+    assert result["counts"] == {"files_started": 321, "metadata_candidates": 0}
+    assert result["phase_ms"] == {"snapshot": 10027, "candidate_match": 91}
+    assert "duration_ms" not in result
+    public = export_selected_events([forged], {forged["event_id"]})
+    exported = json.loads(public)["events"][0]["reconciliation"]
+    assert exported == result
+    assert PRIVATE not in public
+    assert "private_" not in public.lower()
+
+
+def test_unverified_or_nonlibrary_rows_never_export_claimed_reconciliation():
+    base, = sanitized_rows({"events": [event()]})
+    from diagnostics_reconciliation import sanitized_reconciliation_export
+
+    for mutation in (
+        {"source": "app_log"},
+        {"module": "PLUGIN"},
+        {"reconciliation_export": {
+            "schema_version": 1, "status": "complete",
+            "code": "none", "reasons": ["time_budget"],
+        }},
+        {"reconciliation_export": {"private": PRIVATE}},
+    ):
+        row = {**base, **mutation}
+        assert sanitized_reconciliation_export(row) is None
+        copied = export_selected_events([row], {row["event_id"]})
+        assert "reconciliation" not in json.loads(copied)["events"][0]
+        assert PRIVATE not in copied
