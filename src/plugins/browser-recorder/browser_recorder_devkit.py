@@ -7,6 +7,7 @@ Zero network I/O, zero user-controlled filenames and no Git introspection.
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 from hashlib import sha256
 from importlib import metadata, resources
 import json
@@ -191,7 +192,7 @@ def core_contract_kit() -> dict[str, bytes]:
         except Exception as exc:
             raise RecorderError("core_kit_unavailable") from exc
         if (not data or len(data) > _MAX_SOURCE_BYTES
-                or b"\\x00" in data):
+                or bytes((0,)) in data):
             raise RecorderError("core_kit_invalid")
         total += len(data)
         if total > _MAX_KIT_BYTES:
@@ -224,6 +225,9 @@ def core_contract_kit() -> dict[str, bytes]:
         "manifest_version": MANIFEST_VERSION,
         "git_revision": "unknown",
         "generation": "offline, running Core public API",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        ),
         "documentation_is_complete_for": [
             "plugin_api public source boundary",
             "contract registry and manifest version",
@@ -247,7 +251,7 @@ def core_contract_kit() -> dict[str, bytes]:
     manifest_bytes = json.dumps(
         manifest, ensure_ascii=False, sort_keys=True, indent=2,
     ).encode("utf-8")
-    if total + sum(len(value) for value in contents.values()) + len(manifest_bytes) > 2 * _MAX_KIT_BYTES:
+    if sum(len(value) for value in contents.values()) + len(manifest_bytes) > _MAX_KIT_BYTES:
         raise RecorderError("core_kit_limit")
     contents["plugin-dev-kit/manifest.json"] = manifest_bytes
     return contents
