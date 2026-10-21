@@ -239,3 +239,29 @@ pas un profil CPU détaillé. Les contraintes restent 10 s par défaut, 128 Mio
 maximum, zéro modification du stockage et résultat `incomplete_scan`
 en cas de dépassement. Les tests CI utilisent des WAL synthétiques et ne
 constituent pas une recette de la bibliothèque utilisateur.
+
+
+## Progression lisible dans Maintenance — P0 #2565
+
+Pendant **« Préparer l’analyse… → Exécuter »**, le Core affiche maintenant les phases
+publiques produites par le broker de réconciliation, au lieu d'une activité
+indifférenciée : **Inventaire local**, **Lecture des preuves locales**,
+**Comparaison des preuves locales**, **Comparaison des identifiants
+bibliographiques**, **Vérification des chemins enregistrés**, puis **Audit
+local terminé**.
+
+Le nombre de fichiers déjà observés peut être affiché en phase
+**Inventaire local** (ex. « 517 fichier(s) »). Il n'existe **pas** de
+dénominateur fiable pour le scan récursif et le calcul SHA : l'interface
+ne fabrique donc aucun pourcentage et conserve une activité indéterminée.
+**100 % reste réservé exclusivement à l'achèvement réussi**. Un audit
+incomplet affiche son résultat et ses limites sans devenir « terminé »
+dans la progression.
+
+La présentation accepte uniquement six textes littéraux fermés issus
+du Core, et un compteur entier borné. Les noms de fichier, chemins,
+ISBN, identifiants, textes de plugin et messages d'exception ne passent
+pas dans la ligne de progression. Le broker continue de révoquer le
+travail en cas de changement d'identité ou d'annulation. Cette
+amélioration d'UX **ne relève pas le délai SQLite/WAL ni les budgets SHA**,
+et ne transforme pas un candidat bibliographique en droit attesté.
