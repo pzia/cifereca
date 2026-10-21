@@ -254,3 +254,19 @@ def test_empty_reason_filter_is_backward_compatible(tmp_path):
         diag, log_path=tmp_path / "none.log", source="core_events", reason_code=""
     )
     assert without == explicit
+
+
+def test_public_diagnostics_broker_forwards_reason_code_exactly(tmp_path):
+    from cifereca.brokers import DiagnosticsBrokerImpl
+    from unittest.mock import patch
+
+    diag = Diagnostics()
+    diag.add_core_reconciliation_result(_audit("incomplete_scan", ["hash_byte_budget"]))
+    diag.add_core_reconciliation_result(_audit("incomplete_scan", ["time_budget"]))
+    service = SimpleNamespace(diagnostics=diag)
+    with patch("cifereca.paths.log_file", return_value=tmp_path / "missing.log"):
+        result = DiagnosticsBrokerImpl(service).events(
+            source="core_events", reason_code="hash_byte_budget", limit=1
+        )
+    assert result["total"] == 1
+    assert result["events"][0]["detail"]["reasons"] == ["hash_byte_budget"]
