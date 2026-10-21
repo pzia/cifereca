@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.ui.page.home",
-    "version": "1.0.16",
+    "version": "1.0.17",
     "name": "Accueil",
     "publisher": "cifereca",
     "plugin_api": ">=1.3,<2"
@@ -10,13 +10,13 @@
   "plugins": [
     {
       "id": "ui.page.home",
-      "version": "1.0.16",
+      "version": "1.0.17",
       "type": "ui.page",
       "entrypoint": "cifereca_home:PLUGIN",
       "priority": 100,
       "display_name": "Accueil",
       "description": "Sources liées, compte ADE, synchronisation, actions à traiter et accès direct à la bibliothèque.",
-      "help_text": "Synthèse compacte par identité : À traiter en premier (actions immédiates, autres incidents dépliables), livres locaux, droits d’achat distants et prêts de bibliothèque affichés séparément sans cumul artificiel, origines locales/publiques/authentifiées distinctes, synchronisation sur une ligne et détails d’appareils repliés. Les compteurs absents restent inconnus (—), sans inventer zéro ni une connexion. Navigation, filtres fournisseurs, réglages et relance restent explicites ; aucune collecte à l’ouverture. Un profil exclusivement Kobo/Numilog/catalogue public sans source de prêts n'affiche pas de fausse alerte sur des emprunts à actualiser.",
+      "help_text": "Synthèse compacte par identité : À traiter en premier (actions immédiates, autres incidents dépliables), livres locaux, droits d’achat distants et prêts de bibliothèque affichés séparément sans cumul artificiel, origines locales/publiques/authentifiées distinctes, synchronisation sur une ligne et détails d’appareils repliés. Les compteurs absents restent inconnus (—), sans inventer zéro ni une connexion. Navigation, filtres fournisseurs, réglages et relance restent explicites ; aucune collecte à l’ouverture. Un profil exclusivement Kobo/Numilog/catalogue public sans source de prêts n'affiche pas de fausse alerte sur des emprunts à actualiser. Le catalogue public Numilog, s'il est activé, est affiché comme source publique distincte du compte « Mes achats » sans connexion fictive.",
       "capabilities": [
         "ui.dashboard",
         "identity.list",
