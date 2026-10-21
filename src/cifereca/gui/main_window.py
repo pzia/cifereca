@@ -1198,8 +1198,51 @@ class MainWindow(Adw.ApplicationWindow):
                             return feedback is None or feedback.valid(ticket)
 
                         def completed(result) -> None:
-                            # Cancellation may arrive after the worker returns
-                            # but before its queued GTK completion callback.
+                            if run_state is not None:
+                                # One terminal receipt, owned by the session
+                                # rather than the possibly detached GTK row.
+                                if self._maintenance_reconciliation_run is not run_state:
+                                    return
+                                self._maintenance_reconciliation_run = None
+                                if (worker_control.cancelled()
+                                        or reconciliation_scope() != run_state["scope"]):
+                                    return
+                                target = run_state.get("progress_target")
+                                if target is not None and target[0] is not None:
+                                    target[0].finish(
+                                        target[1], "success" if result.ok else "error",
+                                    )
+                                controls = run_state.get("controls")
+                                if controls is not None:
+                                    controls[0]["control"] = None
+                                    if not self._closed and controls[2].get_root() is not None:
+                                        controls[1].set_visible(False)
+                                        controls[2].set_sensitive(True)
+                                from .maintenance_result_view import result_text
+                                safe_text = result_text(result)
+                                state = (
+                                    "incomplète" if safe_text.startswith("Analyse incomplète.")
+                                    else "terminée" if getattr(result, "ok", None) is True
+                                    else "indisponible"
+                                )
+                                self._maintenance_reconciliation_report = {
+                                    "scope": run_state["scope"], "text": safe_text,
+                                    "state": state,
+                                }
+                                view = run_state.get("view")
+                                if view is not None and view.alive():
+                                    view.publish(result)
+                                    # A refresh must not force an unexpected
+                                    # dialog over a newly navigated page.
+                                    if view is result_view:
+                                        view.open(None)
+                                self._activity_result(
+                                    result.summary or ("Analyse terminée" if result.ok else "Analyse incomplète"),
+                                    success=bool(result.ok),
+                                    persistent=not bool(result.ok),
+                                )
+                                return
+                            # Other Maintenance tools remain widget-scoped.
                             if feedback is not None and worker_control.cancelled():
                                 failed(MaintenanceCancelledError("Opération de maintenance annulée"))
                                 return
@@ -1208,20 +1251,6 @@ class MainWindow(Adw.ApplicationWindow):
                             if feedback is not None:
                                 feedback.finish(ticket, "success" if result.ok else "error")
                             result_view.publish(result)
-                            if (getattr(meta, "id", None) == "library.reconciliation.audit"
-                                    and result_view.text):
-                                self._maintenance_reconciliation_report = {
-                                    "scope": reconciliation_scope(),
-                                    "text": result_view.text,
-                                    "state": result_view.state,
-                                }
-                            # For reconciliation the user has already completed
-                            # the explicit plan + run flow: surface its outcome
-                            # immediately, including ok=False (WAL timeout,
-                            # unavailable snapshot). The button remains available
-                            # for reopening. Other maintenance tools are unchanged.
-                            if getattr(meta, "id", None) == "library.reconciliation.audit":
-                                result_view.open(None)
                             self._activity_result(
                                 result.summary or ("Outil terminé" if result.ok else "Outil terminé avec erreurs"),
                                 success=bool(result.ok),
@@ -1229,6 +1258,35 @@ class MainWindow(Adw.ApplicationWindow):
                             )
 
                         def failed(exc) -> None:
+                            if run_state is not None:
+                                if self._maintenance_reconciliation_run is not run_state:
+                                    return
+                                self._maintenance_reconciliation_run = None
+                                if (worker_control.cancelled()
+                                        or reconciliation_scope() != run_state["scope"]):
+                                    return
+                                target = run_state.get("progress_target")
+                                if target is not None and target[0] is not None:
+                                    target[0].finish(
+                                        target[1], "cancelled" if isinstance(
+                                            exc, MaintenanceCancelledError
+                                        ) else "error",
+                                    )
+                                controls = run_state.get("controls")
+                                if controls is not None:
+                                    controls[0]["control"] = None
+                                    if not self._closed and controls[2].get_root() is not None:
+                                        controls[1].set_visible(False)
+                                        controls[2].set_sensitive(True)
+                                # Keep the previous valid result, never expose
+                                # an arbitrary plugin/runtime exception.
+                                self.show_error(
+                                    "Analyse interrompue." if isinstance(
+                                        exc, MaintenanceCancelledError
+                                    ) else execution_error,
+                                    meta.title,
+                                )
+                                return
                             if not finish_maintenance():
                                 return
                             if feedback is not None:
