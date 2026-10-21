@@ -19,7 +19,9 @@ from tests.test_library_reconciliation import epub, filesystem
 def _epub_inventory(tmp_path):
     root = tmp_path / "PRIVATE_LIBRARY_2565"
     root.mkdir()
-    epub(root / "PRIVATE_BOOK_2565.epub", identifier="9780306406157")
+    # The synthetic OPF must declare an ISBN scheme explicitly: digits alone
+    # cannot become identity/edition evidence or even a metadata candidate.
+    epub(root / "PRIVATE_BOOK_2565.epub", identifier="urn:isbn:9780306406157")
     before = filesystem(tmp_path)
     report = scan_identity_roots({"PRIVATE_IDENTITY_2565": (root,)})
     assert filesystem(tmp_path) == before
