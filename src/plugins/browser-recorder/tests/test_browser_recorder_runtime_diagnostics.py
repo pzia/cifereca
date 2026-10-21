@@ -20,6 +20,8 @@ def panel_fixture():
     messages = []
     panel = object.__new__(PrivateReviewPanel)
     panel._closed = False
+    panel._export_dialog = None
+    panel._generation = 0
     panel._diagnostic = lambda op, code: seen.append((op, code))
     panel.is_recording = lambda: False
     panel.status = SimpleNamespace(set_label=messages.append)
@@ -44,13 +46,16 @@ def test_prepare_zip_exception_emits_only_fixed_failure(monkeypatch):
 def test_export_zip_exception_emits_only_fixed_failure():
     panel, seen, messages = panel_fixture()
     panel._bundle_plan = SimpleNamespace(
-        save=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError(PRIVATE)),
+        save_as=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError(PRIVATE)),
     )
     panel.export_directory = Path("/nonexistent-fake-zip-dir")
     panel.export_confirm = SimpleNamespace(get_active=lambda: True)
+    panel._prompt_export_file = lambda chosen: chosen(
+        Path("/nonexistent-fake-zip-dir/chosen.zip")
+    )
     panel.export_zip()
     assert seen == [("zip_export", "zip_export_failed")]
-    assert messages == ["Enregistrement local du ZIP impossible."]
+    assert "Enregistrement refusé" in messages[-1]
     assert "FAKE_SECRET_HTTP_ZIP" not in repr((seen, messages))
 
 

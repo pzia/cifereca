@@ -603,6 +603,57 @@ class ReviewedBundlePlan:
         return name
 
 
+
+    def save_as(self, path: Path, *, user_confirmed: bool = False):
+        """Save to a GTK-chosen absolute filename; never overwrite or follow links.
+
+        The reviewed plan's exact in-memory bytes are unchanged. A failed or
+        cancelled chooser cannot write anything. Unlike save(), the directory
+        must already exist, since the user chose it explicitly in the dialog.
+        """
+        if not self._viewed or user_confirmed is not True:
+            raise RecorderError("export_unconfirmed")
+        path = Path(path)
+        name = path.name
+        if (not path.is_absolute()
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,98}\.zip", name)
+                   is None
+                or path.parent.is_symlink()):
+            raise RecorderError("bundle_invalid_filename")
+        folder_flags = (
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        flags = (
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        try:
+            folder = os.open(path.parent, folder_flags)
+            try:
+                info = os.fstat(folder)
+                if (not stat.S_ISDIR(info.st_mode)
+                        or info.st_uid != os.getuid()):
+                    raise RecorderError("unsafe_directory")
+                output = os.open(name, flags, 0o600, dir_fd=folder)
+                try:
+                    with os.fdopen(output, "wb") as stream:
+                        stream.write(self._blob)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.fsync(folder)
+                except BaseException:
+                    try:
+                        os.unlink(name, dir_fd=folder)
+                    except OSError:
+                        pass
+                    raise
+            finally:
+                os.close(folder)
+        except OSError:
+            raise RecorderError("save_failed") from None
+        return name
+
 def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
     """Read ONLY decisions already taken; unknown material is structurally omitted.
 

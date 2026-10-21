@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.0, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.1, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -355,3 +355,20 @@ with ZipFile(BytesIO(raw)) as archive:
 Le ZIP interne n'est jamais écrit en clair par Cifereca. Le fichier
 `.brzip` n'est donc **pas** directement ouvert par l'explorateur ZIP :
 le déchiffrement en mémoire est une étape volontaire distincte.
+
+
+## Choix de la destination ZIP (0.2.1)
+
+Après l'examen **exact** de chaque membre et la confirmation explicite,
+**« Enregistrer sous… le ZIP anonymisé »** ouvre le dialogue natif GTK4
+avec choix du **répertoire et du nom** `.zip` par l'utilisateur.
+Avant acceptation, aucune écriture n'a lieu. L'annulation, une destination
+relative/symbolique, un nom hors format, un dossier inexistant ou un fichier
+déjà présent n'écrivent rien et ne remplacent aucun ZIP. L'archive est créée
+en mode 0600, et les permissions du dossier sont vérifiées.
+
+La destination privée `.brzip` est choisie indépendamment à l'aide du bouton
+**« Choisir un dossier privé… »** (sélection native) ou d'un chemin absolu
+préexistant : le dossier doit appartenir à l'utilisateur avec permissions
+0700. Le chiffrement, la phrase d'export distincte et la confirmation restent
+obligatoires. Le contenu privé n'est jamais enregistré en ZIP non chiffré.

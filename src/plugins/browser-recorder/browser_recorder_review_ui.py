@@ -97,9 +97,11 @@ class PrivateReviewPanel:
         self.private_export_confirm = None
         self.private_export_button = None
         self.private_export_directory = None
+        self._private_destination_dialog = None
         self.private_export_passphrase = None
         self._bundle_plan = None
         self._bundle_preview = None
+        self._export_dialog = None
         self._handle = None
         self._stop = None
         self._pause_control = None
@@ -184,6 +186,13 @@ class PrivateReviewPanel:
                 "Dossier privé préexistant (absolu, permissions 0700)"
             )
             box.append(self.private_export_directory)
+            self.private_export_choose = Gtk.Button(
+                label="Choisir un dossier privé…"
+            )
+            box.append(self.private_export_choose)
+            self.private_export_choose.connect(
+                "clicked", lambda *_: self._prompt_private_folder(),
+            )
             self.private_export_passphrase = Gtk.Entry()
             self.private_export_passphrase.set_visibility(False)
             self.private_export_passphrase.set_placeholder_text(
@@ -305,7 +314,7 @@ class PrivateReviewPanel:
             xalign=0, wrap=True,
         ))
         box.append(self.export_confirm)
-        self.export_button = Gtk.Button(label="Exporter ce ZIP localement")
+        self.export_button = Gtk.Button(label="Enregistrer sous… le ZIP anonymisé")
         box.append(self.export_button)
         self.plan_button.connect("clicked", lambda *_: self.prepare_zip())
         self.bundle_member.connect("changed", lambda *_: self._show_zip_member())
@@ -650,6 +659,40 @@ class PrivateReviewPanel:
         self.status.set_label("Session locale supprimée du coffre.")
         self._refresh()
 
+    def _prompt_private_folder(self):
+        """Native opt-in directory picker; only private 0700 is accepted on save."""
+        if (self._closed or self._private_destination_dialog is not None
+                or self.is_recording()):
+            return
+        Gtk = self.Gtk
+        if not hasattr(Gtk, "FileChooserNative"):
+            self.status.set_label("Sélection de dossier indisponible.")
+            return
+        root = self.widget.get_root()
+        parent = root if isinstance(root, Gtk.Window) else None
+        chooser = Gtk.FileChooserNative.new(
+            "Choisir un dossier privé pour le ZIP chiffré", parent,
+            Gtk.FileChooserAction.SELECT_FOLDER, "Choisir", "Annuler",
+        )
+        self._private_destination_dialog = chooser
+
+        def responded(dialog, response):
+            if dialog is not self._private_destination_dialog:
+                dialog.destroy()
+                return
+            self._private_destination_dialog = None
+            try:
+                if response == Gtk.ResponseType.ACCEPT and not self._closed:
+                    selected = dialog.get_file()
+                    path = selected.get_path() if selected else None
+                    if path:
+                        self.private_export_directory.set_text(path)
+            finally:
+                dialog.destroy()
+
+        chooser.connect("response", responded)
+        chooser.show()
+
     def export_private_zip(self):
         if self.vault_directory is None or self._closed or self.is_recording():
             return
@@ -891,27 +934,75 @@ class PrivateReviewPanel:
             # decoded strictly, with no truncation or stale request body.
             self.bundle_text.get_buffer().set_text(match["text"])
 
+    def _prompt_export_file(self, finished):
+        """Native GTK4 Save-As; only an accepted filename reaches the writer."""
+        Gtk = self.Gtk
+        if not hasattr(Gtk, "FileChooserNative"):
+            self.status.set_label("Dialogue d'enregistrement indisponible.")
+            return
+        root = self.widget.get_root()
+        parent = root if isinstance(root, Gtk.Window) else None
+        chooser = Gtk.FileChooserNative.new(
+            "Enregistrer le ZIP anonymisé", parent,
+            Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
+        )
+        chooser.set_current_name("cifereca-revue.zip")
+        self._export_dialog = chooser
+
+        def responded(dialog, response):
+            if self._export_dialog is not dialog:
+                dialog.destroy()
+                return
+            self._export_dialog = None
+            try:
+                if (response == Gtk.ResponseType.ACCEPT
+                        and not self._closed):
+                    selected = dialog.get_file()
+                    native_path = selected.get_path() if selected else None
+                    if native_path:
+                        finished(Path(native_path))
+                    else:
+                        self.status.set_label(
+                            "Destination locale inaccessible : aucun ZIP créé."
+                        )
+            finally:
+                dialog.destroy()
+
+        chooser.connect("response", responded)
+        chooser.show()
+
     def export_zip(self):
         if (self._closed or self._bundle_plan is None
-                or self.export_directory is None
+                or self._export_dialog is not None
                 or not self.export_confirm.get_active()):
             self.status.set_label("Export interdit : confirmation manquante.")
             return
-        try:
-            filename = self._bundle_plan.save(
-                self.export_directory, user_confirmed=True,
+        plan = self._bundle_plan
+        generation = self._generation
+
+        def selected(path):
+            if (self._closed or generation != self._generation
+                    or self._bundle_plan is not plan
+                    or not self.export_confirm.get_active()):
+                return  # plan or user consent changed while chooser was open
+            try:
+                plan.save_as(path, user_confirmed=True)
+            except Exception:
+                # Never report paths or private values in diagnostics.
+                self.status.set_label(
+                    "Enregistrement refusé : vérifiez le dossier, le nom .zip "
+                    "et l'absence de fichier existant. Aucun ZIP écrasé."
+                )
+                self._emit_failure("zip_export", "zip_export_failed")
+                return
+            self._invalidate_bundle()
+            self.status.set_label(
+                "ZIP anonymisé enregistré à l'emplacement choisi "
+                "(mode privé 0600) — aucun téléversement."
             )
-        except Exception:
-            self.status.set_label("Enregistrement local du ZIP impossible.")
-            self._emit_failure("zip_export", "zip_export_failed")
-            return
-        # Do not allow repeated saves without another exact preview and
-        # confirmation. Keep the trace in RAM only for further local review.
-        self._invalidate_bundle()
-        self.status.set_label(
-            "ZIP revu et enregistré localement : " + filename
-            + " — aucun envoi vers un service externe."
-        )
+            self._refresh()
+
+        self._prompt_export_file(selected)
 
     def discard(self):
         if self.is_recording():
@@ -921,6 +1012,14 @@ class PrivateReviewPanel:
         self._refresh()
 
     def destroy(self):
+        if self._private_destination_dialog is not None:
+            chooser, self._private_destination_dialog = (
+                self._private_destination_dialog, None
+            )
+            chooser.destroy()
+        if self._export_dialog is not None:
+            chooser, self._export_dialog = self._export_dialog, None
+            chooser.destroy()
         self._closed = True
         self._generation += 1
         if self._stop is not None:

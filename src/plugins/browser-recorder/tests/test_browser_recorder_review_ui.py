@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace as NS
 
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
@@ -297,6 +298,10 @@ def test_exact_zip_preview_is_separate_from_explicit_export(tmp_path, monkeypatc
     assert not list(tmp_path.iterdir())  # no explicit confirmation
     panel.export_confirm.set_active(True)
     assert panel.export_button.sensitive
+    def choose(done):
+        (tmp_path / "exports").mkdir(mode=0o700)
+        done(tmp_path / "exports" / "fictional-reviewed.zip")
+    panel._prompt_export_file = choose
     panel.export_zip()
     outputs = list((tmp_path / "exports").glob("*.zip"))
     assert len(outputs) == 1
