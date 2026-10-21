@@ -3,11 +3,22 @@ from __future__ import annotations
 import itertools
 import queue
 import threading
+from collections import deque
+from time import monotonic_ns
 from concurrent.futures import Future
 from enum import IntEnum
 from typing import Any, Callable
 
 from .diagnostic_task_context import diagnostic_task_scope
+
+
+def _bounded_percentile_ms(samples: tuple[int, ...], percentile: int) -> float:
+    """Nearest-rank p50/p95 of monotonic nanoseconds, no task data."""
+    if not samples:
+        return 0.0
+    ordered = sorted(samples)
+    index = max(0, (len(ordered) * percentile + 99) // 100 - 1)
+    return round(ordered[index] / 1_000_000, 3)
 
 
 class TaskPriority(IntEnum):
@@ -39,6 +50,10 @@ class PriorityExecutor:
         self._active = 0
         self._admitted = 0
         self._rejected = 0
+        # Bounded numeric timings; only pending futures have timestamps.
+        self._queued_at: dict[Future[Any], int] = {}
+        self._queue_wait_ns: deque[int] = deque(maxlen=256)
+        self._worker_ns: deque[int] = deque(maxlen=256)
         self._queue: queue.PriorityQueue[tuple[int, int, Future[Any] | None, Callable[[], Any] | None]] = queue.PriorityQueue()
         self._sequence = itertools.count()
         self._closed = False
@@ -57,6 +72,7 @@ class PriorityExecutor:
                 self._rejected += 1
                 raise RuntimeError("executor pending queue full")
             future: Future[Any] = Future()
+            self._queued_at[future] = monotonic_ns()
             self._queue.put((int(priority), next(self._sequence), future, fn))
             self._pending += 1
             self._admitted += 1
@@ -74,6 +90,27 @@ class PriorityExecutor:
                 "closed": self._closed,
             }
 
+    def timing_snapshot(self) -> dict[str, dict[str, float | int]]:
+        """Local p50/p95 on up to 256 started/completed task durations.
+
+        This does not measure GTK delivery or claim a global task budget.
+        """
+        with self._lock:
+            waits = tuple(self._queue_wait_ns)
+            workers = tuple(self._worker_ns)
+        return {
+            "queue_wait": {
+                "samples": len(waits),
+                "p50_ms": _bounded_percentile_ms(waits, 50),
+                "p95_ms": _bounded_percentile_ms(waits, 95),
+            },
+            "worker": {
+                "samples": len(workers),
+                "p50_ms": _bounded_percentile_ms(workers, 50),
+                "p95_ms": _bounded_percentile_ms(workers, 95),
+            },
+        }
+
     def _worker(self) -> None:
         while True:
             _priority, _seq, future, fn = self._queue.get()
@@ -82,10 +119,14 @@ class PriorityExecutor:
                     return
                 with self._lock:
                     self._pending -= 1
+                    queued_at = self._queued_at.pop(future, None)
                 if not future.set_running_or_notify_cancel():
                     continue
+                started_at = monotonic_ns()
                 with self._lock:
                     self._active += 1
+                    if queued_at is not None:
+                        self._queue_wait_ns.append(max(0, started_at - queued_at))
                 try:
                     try:
                         with diagnostic_task_scope():
@@ -95,8 +136,10 @@ class PriorityExecutor:
                     else:
                         future.set_result(result)
                 finally:
+                    elapsed_ns = max(0, monotonic_ns() - started_at)
                     with self._lock:
                         self._active -= 1
+                        self._worker_ns.append(elapsed_ns)
             finally:
                 self._queue.task_done()
 
@@ -113,6 +156,7 @@ class PriorityExecutor:
                             break
                         if future is not None:
                             self._pending -= 1
+                            self._queued_at.pop(future, None)
                             cancelled.append(future)
                         self._queue.task_done()
                 for _ in self._threads:
