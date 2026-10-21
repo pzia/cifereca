@@ -59,6 +59,23 @@ def _limit_warnings(result):
     return tuple(labels)
 
 
+_COUNTER_LABELS = {
+    'observed_files': 'Fichiers observés',
+    'hashed_files': 'Fichiers avec SHA vérifié',
+    'confirmed_link': 'Liens confirmés par les preuves locales',
+    'present_unlinked': 'Fichiers présents sans lien confirmé',
+    'metadata_candidates': 'Candidats bibliographiques sans preuve de droit',
+    'ambiguous': 'Correspondances ambiguës',
+    'hash_mismatch': 'Empreintes différentes des preuves enregistrées',
+    'rights_without_verified_file': 'Droits sans fichier local vérifié',
+    'local_file_without_attested_right': 'Fichiers sans droit local attesté',
+    'unverified_file': 'Fichiers restant non vérifiés',
+    'stored_path_missing': 'Chemins enregistrés absents au contrôle',
+    'stored_path_unavailable': 'Chemins enregistrés non inspectables',
+    'stored_path_out_of_scope': 'Chemins enregistrés hors périmètre autorisé',
+}
+
+
 class LibraryReconciliationAuditTool(_ReadOnlyTool):
     info = MaintenanceToolInfo(
         id='library.reconciliation.audit', title='Réconciliation de bibliothèque',
@@ -164,8 +181,15 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
             warnings.extend(limits)
         control.report(message='Réconciliation locale terminée' if complete else 'Réconciliation locale incomplète')
         control.check_cancelled()
+        # Additive public presentation capability. Older compatible Core
+        # versions still receive the existing summary/warnings/facts result.
+        presentation = {}
+        if hasattr(MaintenanceResult, 'details'):
+            presentation['details'] = tuple(
+                f'{label} : {counts[name]}' for name, label in _COUNTER_LABELS.items()
+            ) + ('Les catégories peuvent se recouper ; ne pas additionner ces compteurs.',)
         return MaintenanceResult(ok=complete, changed=0, summary=summary,
-                                 warnings=tuple(warnings), facts=counts)
+                                 warnings=tuple(warnings), facts=counts, **presentation)
 
 
 RECONCILIATION_AUDIT = LibraryReconciliationAuditTool()

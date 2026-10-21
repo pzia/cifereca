@@ -1,6 +1,11 @@
 # Audits de bibliothèque
 
-Le package 0.2.5 ajoute **Maintenance → Réconciliation de bibliothèque** pour
+Le package 0.2.6 détaille les compteurs dans « Résultats… » avec un Core proposant
+`MaintenanceResult.details`. Les anciennes versions compatibles conservent le
+résumé et les avertissements. Les catégories peuvent se recouper ; leurs nombres
+ne prouvent jamais une association ou une absence de livre.
+
+Le package ajoute **Maintenance → Réconciliation de bibliothèque** pour
 l'identité active. Il requiert le broker public optionnel
 `library.reconciliation.read` livré par le Core dans #2607 ; sur un ancien Core,
 ce seul outil reste indisponible, sans importer de code privé ni appeler un scan
