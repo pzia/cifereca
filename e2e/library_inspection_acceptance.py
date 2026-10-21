@@ -37,6 +37,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         db.execute("INSERT INTO entitlements(entitlement_id,identity_id,provider_id,item_id,state) VALUES('right-a','a','numilog','edition-a','active')")
         db.execute("INSERT INTO entitlements(entitlement_id,identity_id,provider_id,account_id,state) VALUES('right-b','b','kobo','FOREIGN_SECRET','active')")
         db.execute("INSERT INTO catalog_entries(catalog_entry_id,identity_id,provider_id,metadata_json) VALUES(?,?,?,?)",('notice-a','a','kobo',json.dumps({'identifiers':[{'scheme':'ISBN','value':'9780306406157'}]})))
+        db.execute("INSERT INTO catalog_entries(catalog_entry_id,identity_id,provider_id,item_id,metadata_json) VALUES(?,?,?,?,?)",
+                   ('notice-numilog-a','a','numilog','edition-a',
+                    json.dumps({'title':'Synthetic edition','identifiers':[{'scheme':'ISBN','value':'9780306406157'}]})))
         db.execute("INSERT INTO placements(placement_id,identity_id,path,provider_id) VALUES(?,?,?,?)",('missing-a','a',str(library/'a'/'missing.epub'),'kobo'))
     cfg=Config.__new__(Config)
     cfg.data={'library':{'directory':str(library)},'identities':[{'id':name,'directory_name':name,'label':name} for name in ('a','b')]}
@@ -129,6 +132,33 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         labels='\n'.join(w.get_text() for w in rows if isinstance(w,Gtk.Label))
         assert 'Droit sans fichier vérifié' in labels and 'synthetic-' not in labels
         report['checks']['local_inspection_provider_filter_does_not_attribute_isbn_files']=True
+        # The Numilog right must show unlinked EPUB candidates *only* after
+        # user selection; no ownership is inferred from a shared valid ISBN.
+        row = widgets['list'].get_first_child()
+        device.click_widget(row)
+        until(lambda:any(isinstance(w,Gtk.Label) and '1 / 20' in w.get_text()
+                         for w in walk(controller.dialog)), compare_right)
+
+    def compare_right():
+        labels='\n'.join(w.get_text() for w in walk(controller.dialog)
+                          if isinstance(w,Gtk.Label))
+        assert 'Fichiers candidats' in labels
+        assert 'non probant' in labels
+        assert 'synthetic-00.epub' in labels
+        assert 'Droit sans fichier vérifié' in labels
+        following_candidate=next(w for w in walk(controller.dialog)
+                                 if isinstance(w,Gtk.Button)
+                                 and w.get_label()=='Candidat ▶')
+        device.click_widget(following_candidate)
+        until(lambda:any(isinstance(w,Gtk.Label) and '2 / 20' in w.get_text()
+                         for w in walk(controller.dialog)), compare_next)
+
+    def compare_next():
+        labels='\n'.join(w.get_text() for w in walk(controller.dialog)
+                          if isinstance(w,Gtk.Label))
+        assert 'synthetic-01.epub' in labels
+        assert 'FOREIGN_SECRET' not in labels
+        report['checks']['local_inspection_right_candidate_side_by_side_no_attestation']=True
         choose(widgets['provider'],0,lambda:choose(widgets['state'],3,candidates))
 
     def candidates():
