@@ -166,6 +166,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._account_changing = False
         self._identity_changing = False
         self._identity_context_generation = 0
+        # Session memory only: never serialize private reconciliation reports.
+        self._maintenance_reconciliation_report = None
         self._account_context_generation = 0
         self._cached_book_request_generation = 0
         self._cached_book_context = None
@@ -368,6 +370,7 @@ class MainWindow(Adw.ApplicationWindow):
         return False
 
     def _on_close_request(self, *_args) -> bool:
+        self._maintenance_reconciliation_report = None
         self._dispose_maintenance_lines()
         return close_window_resources(self, source_remove=GLib.source_remove)
 
@@ -678,6 +681,22 @@ class MainWindow(Adw.ApplicationWindow):
         if box is None: return
         self._dispose_maintenance_lines()
         clear_box(box)
+
+        def reconciliation_scope():
+            """Immutable session comparison keys; never persist paths or books."""
+            service = self.service
+            config = getattr(service, "config", None)
+            storage = getattr(service, "storage", None)
+            identity = getattr(service, "current_identity", None)
+            return (
+                id(service),
+                getattr(identity, "identity_id", None),
+                getattr(self, "_identity_context_generation", None),
+                getattr(service, "_account_context_epoch", None),
+                id(config), id(getattr(config, "data", None)),
+                id(storage), getattr(storage, "path", None),
+            )
+
         services = self.plugin_manager.services("maintenance.tool") if self.plugin_manager else ()
         if not services:
             label = Gtk.Label(label="Aucun outil de maintenance additionnel n’est installé.", xalign=0)
@@ -755,6 +774,19 @@ class MainWindow(Adw.ApplicationWindow):
                 title=info.title, alive=result_alive, inspector=inspector,
             )
             self._maintenance_result_views.append(result_view)
+            if is_reconciliation:
+                saved = getattr(self, "_maintenance_reconciliation_report", None)
+                current_scope = reconciliation_scope()
+                if (type(saved) is dict and saved.get("scope") == current_scope
+                        and type(saved.get("text")) is str):
+                    line_scope.update(
+                        active=True, identity=current_scope[1],
+                        generation=current_scope[2],
+                    )
+                    result_view.restore_text(saved["text"])
+                else:
+                    # No fallback to a report from another identity/context.
+                    self._maintenance_reconciliation_report = None
 
             def update_readiness(*, button=run, action=row, info=info,
                                  scope=readiness, local_gate=can_check_readiness):
@@ -868,7 +900,10 @@ class MainWindow(Adw.ApplicationWindow):
                                        "initializing", "temporarily_busy", "blocked"
                                    )):
                     return
-                result_view.clear()
+                # Keep the previous, already published reconciliation report
+                # visible while a new attempt is planned/runs/cancels.
+                if getattr(meta, "id", None) != "library.reconciliation.audit":
+                    result_view.clear()
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
                 destructive = meta.danger_level == "destructive"
@@ -1096,6 +1131,12 @@ class MainWindow(Adw.ApplicationWindow):
                             if feedback is not None:
                                 feedback.finish(ticket, "success" if result.ok else "error")
                             result_view.publish(result)
+                            if (getattr(meta, "id", None) == "library.reconciliation.audit"
+                                    and result_view.text):
+                                self._maintenance_reconciliation_report = {
+                                    "scope": reconciliation_scope(),
+                                    "text": result_view.text,
+                                }
                             # For reconciliation the user has already completed
                             # the explicit plan + run flow: surface its outcome
                             # immediately, including ok=False (WAL timeout,
