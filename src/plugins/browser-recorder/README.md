@@ -82,6 +82,12 @@ une catégorie et ses contextes (route, paramètres, JSON/XML/texte, en-têtes
 techniques). Les valeurs détectées ont des identifiants de revue stables
 (`I0001`, `I0002`…), distincts des identifiants de fournisseur.
 
+Les listes jusqu'à **256 identifiants** sont présentées en **pages de 24**
+avec navigation Précédents/Suivants. Les choix restent associés à chaque
+valeur lorsque vous changez de page ; aucune page ni groupe d'identifiants
+n'est approuvé automatiquement. Vous devez terminer toutes les pages avant
+de préparer le ZIP.
+
 Chaque valeur reconnue exige une décision individuelle explicite avant de
 préparer une **prévisualisation locale seulement** : `anonymize` (même
 pseudonyme dans plusieurs échanges), `keep` (conserver la valeur avec risque
