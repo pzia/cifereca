@@ -71,7 +71,7 @@ def test_opt_in_installer_is_exact_playwright_chromium_without_shell_or_os_packa
     home = tmp_path / "home"
     cache = home / ".cache" / "ms-playwright"
     cache.mkdir(parents=True)
-    monkeypatch.setattr(browser, "_cache_path", lambda: cache)
+    monkeypatch.setattr(browser, "_cache_path", lambda **_kwargs: cache)
     monkeypatch.setattr(browser, "inspect_chromium", lambda *, test_launch=False: (
         browser.BrowserState("ready", "1.55.0") if test_launch
         else browser.BrowserState("chromium_missing", "1.55.0")
@@ -109,7 +109,7 @@ def test_custom_browser_mirror_requires_separate_administrative_consent(monkeypa
     monkeypatch.setenv("PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST", "https://mirror.invalid")
     monkeypatch.setattr(browser, "inspect_chromium",
                         lambda **_: browser.BrowserState("chromium_missing", "1.55"))
-    monkeypatch.setattr(browser, "_cache_path", lambda: tmp_path)
+    monkeypatch.setattr(browser, "_cache_path", lambda **_kwargs: tmp_path)
     monkeypatch.setattr(browser.sys, "prefix", str(tmp_path / "venv"))
     monkeypatch.setattr(browser.sys, "base_prefix", "/usr")
     monkeypatch.setattr(browser.shutil, "disk_usage",
@@ -129,7 +129,7 @@ def test_install_is_cancelled_without_a_single_subprocess(monkeypatch):
 
 def test_low_disk_and_unmanaged_interpreter_fail_closed_before_download(monkeypatch, tmp_path):
     monkeypatch.setattr(browser, "inspect_chromium", lambda **_: browser.BrowserState("chromium_missing", "1.55"))
-    monkeypatch.setattr(browser, "_cache_path", lambda: tmp_path)
+    monkeypatch.setattr(browser, "_cache_path", lambda **_kwargs: tmp_path)
     monkeypatch.setattr(browser.shutil, "disk_usage", lambda _: SimpleNamespace(free=42))
     monkeypatch.setattr(browser.subprocess, "Popen", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("download attempted")))
     monkeypatch.setattr(browser.sys, "prefix", "/usr")
@@ -142,7 +142,7 @@ def test_low_disk_and_unmanaged_interpreter_fail_closed_before_download(monkeypa
 def test_cancel_after_start_terminates_installer_group(monkeypatch, tmp_path):
     cancelled = Event()
     monkeypatch.setattr(browser, "inspect_chromium", lambda **_: browser.BrowserState("chromium_missing", "1.55"))
-    monkeypatch.setattr(browser, "_cache_path", lambda: tmp_path)
+    monkeypatch.setattr(browser, "_cache_path", lambda **_kwargs: tmp_path)
     monkeypatch.setattr(browser.sys, "prefix", str(tmp_path / "venv"))
     monkeypatch.setattr(browser.sys, "base_prefix", "/usr")
     monkeypatch.setattr(browser.shutil, "disk_usage", lambda _: SimpleNamespace(free=4*1024**3))
@@ -294,7 +294,7 @@ def test_failed_playwright_cli_also_stops_descendants_and_redacts_proxy(
         browser, "inspect_chromium",
         lambda **_: browser.BrowserState("chromium_missing", "1.55.0"),
     )
-    monkeypatch.setattr(browser, "_cache_path", lambda: tmp_path)
+    monkeypatch.setattr(browser, "_cache_path", lambda **_kwargs: tmp_path)
     monkeypatch.setattr(browser.sys, "prefix", str(tmp_path / "venv"))
     monkeypatch.setattr(browser.sys, "base_prefix", "/usr")
     monkeypatch.setattr(
