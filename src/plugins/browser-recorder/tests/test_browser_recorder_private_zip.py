@@ -85,6 +85,7 @@ def test_explicit_private_export_and_external_read(tmp_path):
         assert zip_file.testzip() is None
         assert set(zip_file.namelist()) == {"README.txt", "trace.json"}
         detail = json.loads(zip_file.read("trace.json"))
+        assert detail["saved_at"] == session.saved_at
         rows = detail["exchanges"]
         assert rows[0]["url"].endswith("AccountId=" + ACCOUNT)
         assert json.loads(rows[0]["request_body"])["access_token"] == TOKEN
