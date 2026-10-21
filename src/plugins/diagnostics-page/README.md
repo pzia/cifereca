@@ -1,3 +1,14 @@
+## 0.1.19 — Durée du contrôle des chemins enregistrés (#2730)
+
+Lorsque le Core #2759 émet la mesure fermée `phase_ms.stored_paths`, les
+Journaux de Diagnostics affichent « chemins enregistrés : N ms » dans la
+carte de réconciliation et l'export d'agrégats. Ce nombre exprime le temps
+du contrôle local de placements, **pas** le nombre de livres réellement
+absents. Une valeur non mesurée reste absente, jamais `0` inventé.
+
+Ni les chemins contrôlés ni les comptes, titres, ISBN ou SHA ne sont
+recopiés. Le diagnostic reste expurgé, borné et en lecture seule.
+
 ## 0.1.18 — Export expurgé des agrégats de réconciliation (#2730)
 
 L'export d'événements sélectionnés comporte un objet `reconciliation`
