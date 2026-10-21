@@ -62,7 +62,7 @@ class PrivateReviewPanel:
         self.widget = box
         box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         box.append(Gtk.Label(
-            label="Parcours HTTP privé (P1) — revue et ZIP volontaire",
+            label="Parcours HTTP privé (P0) — revue et ZIP volontaire",
             xalign=0, wrap=True,
         ))
         box.append(Gtk.Label(
