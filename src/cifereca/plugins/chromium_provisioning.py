@@ -135,6 +135,13 @@ def install_chromium(*, consented: bool = False,
         return "storage_unavailable"
     if type(timeout) is not int or not 1 <= timeout <= INSTALL_TIMEOUT:
         return "invalid_timeout"
+    # The managed installer advertises the official Playwright distribution,
+    # so do not silently honor an alternate browser-archive download host.
+    # Proxy settings are still supported (without ever rendering their values).
+    if any(os.environ.get(key) for key in (
+        "PLAYWRIGHT_DOWNLOAD_HOST", "PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST",
+    )):
+        return "custom_download_source"
     env = os.environ.copy()
     env["PLAYWRIGHT_SKIP_BROWSER_GC"] = "1"
     command = [sys.executable, "-m", "playwright", "install",
