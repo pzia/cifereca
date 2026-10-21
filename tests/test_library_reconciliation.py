@@ -365,6 +365,30 @@ class GraphTests(unittest.TestCase):
                 self.assertNotIn('confirmed_link', reconcile(self.inventory, self.snapshot).files[0])
                 self.right[key] = old
 
+    def test_two_attested_rights_same_account_are_not_one_confirmed_link(self):
+        # Two purchases/entitlements may share account, item and bytes.
+        # The graph cannot silently merge two distinct rights into one
+        # unambiguous rights-to-file link merely because account IDs match.
+        second = dict(self.right, entitlement_id='r2')
+        second_ledger = dict(self.ledger, acquisition_id='l2', entitlement_id='r2')
+        self.snapshot.tables['entitlements'].append(second)
+        self.snapshot.tables['acquisition_ledger'].append(second_ledger)
+        report = reconcile(self.inventory, self.snapshot)
+        self.assertIn('ambiguous', report.files[0])
+        self.assertNotIn('confirmed_link', report.files[0])
+        self.assertEqual(report.unverified_rights, [0, 1])
+        self.assertFalse(report.redacted()['acquisition_authorized'])
+        self.assertNotIn('PRIVATE', json.dumps(report.redacted()))
+
+    def test_duplicate_attested_entitlement_id_is_not_a_unique_right(self):
+        # A malformed/duplicated snapshot must not be promoted to proof
+        # even when both rows have identical account, entitlement and ledger.
+        self.snapshot.tables['entitlements'].append(dict(self.right))
+        report = reconcile(self.inventory, self.snapshot)
+        self.assertIn('ambiguous', report.files[0])
+        self.assertNotIn('confirmed_link', report.files[0])
+        self.assertEqual(report.unverified_rights, [0, 1])
+
     def test_duplicate_accounts_for_same_placement_remain_ambiguous(self):
         self.snapshot.tables['entitlements'].append(dict(self.right, entitlement_id='r2', account_id='a2', credential_id='c2'))
         self.snapshot.tables['acquisition_ledger'].append(dict(self.ledger, entitlement_id='r2', account_id='a2', credential_id='c2'))
