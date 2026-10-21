@@ -84,7 +84,9 @@ DESCRIPTOR=ProviderDescriptor(
         notes=('Recherche amont OPDS/OpenSearch générale ; champs spécialisés filtrés localement sur la page chargée, couverture non exhaustive.',
                'Pages OPDS parcourues exclusivement via les liens rel=next du serveur ; pas de crawl implicite.',
                'Le genre Jeunesse ou une catégorie ne constituent pas une indication d’âge.')),
-    homepage='https://opds2.ebooksgratuits.org/',
+    # Human-readable publisher website. The COPS origin root is not an HTML
+    # book page; OPDS retrieval remains on opds_feed_url (/index.php/feed).
+    homepage='https://www.ebooksgratuits.com/',
     notes=('Source publique sans authentification ; OPDS Atom 1.x/COPS (pas OPDS2 JSON).',
            'Le catalogue Calibre inclut aussi des livres partenaires.'))
 class Parser(HTMLParser):
