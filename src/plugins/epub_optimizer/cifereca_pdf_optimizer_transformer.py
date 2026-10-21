@@ -96,6 +96,13 @@ class PdfOptimizerTransformer:
             int(request.options.get("max_image_mb") or config.get("max_image_mb") or 64),
         )
 
+    def _cpu_workers(self, request) -> int:
+        config = getattr(self._require_context(), "config", {})
+        value = request.options.get("cpu_workers", config.get("cpu_workers", 1))
+        if type(value) is not int or value not in (1, 2, 4):
+            raise ValueError("cpu_workers doit valoir 1, 2 ou 4")
+        return value
+
     @staticmethod
     def _output_name(source_path: str | Path, profile: DeviceProfile) -> str:
         source = Path(source_path)
@@ -107,6 +114,7 @@ class PdfOptimizerTransformer:
             control.check_cancelled()
         profile_plugin_id, profile = self._profile(request)
         max_pages, max_image_pixels, max_image_mb = self._limits(request)
+        cpu_workers = self._cpu_workers(request)
         from cifereca_epub_optimizer.pdf_engine import inspect_pdf
 
         inspection = inspect_pdf(
@@ -138,6 +146,7 @@ class PdfOptimizerTransformer:
                 "raster_bytes": inspection.raster_bytes,
                 "estimated_reduction_percent": round(inspection.estimated_reduction_percent, 1),
                 "preserves_text_vector": True,
+                "cpu_workers": cpu_workers,
             },
             estimated_size_bytes=inspection.estimated_size_bytes,
         )
@@ -148,6 +157,7 @@ class PdfOptimizerTransformer:
         context = self._require_context()
         profile_plugin_id, profile = self._profile(request)
         max_pages, max_image_pixels, max_image_mb = self._limits(request)
+        cpu_workers = self._cpu_workers(request)
 
         def progress(percent: int, message: str) -> None:
             control.check_cancelled()
@@ -166,6 +176,7 @@ class PdfOptimizerTransformer:
                 max_image_mb=max_image_mb,
                 progress=progress,
                 cancel_event=_ControlEvent(control),
+                cpu_workers=cpu_workers,
             )
         except CancelledError:
             control.check_cancelled()
@@ -192,6 +203,7 @@ class PdfOptimizerTransformer:
             "images_optimized": report.images_optimized,
             "images_kept": report.images_kept,
             "preserves_text_vector": True,
+            "cpu_workers": cpu_workers,
         }
         context.report_diagnostic(
             "PDF optimization completed",
