@@ -294,8 +294,8 @@ def test_persisted_row_limit_identifies_exact_scoped_source_without_secrets(
         service.storage, "catalog_entries",
         lambda: [
             {"provider_id": "kobo", "identity_id": "default",
-             "item_id": f"PRIVATE_ITEM_{index}", "local_state": "remote",
-             "metadata": {"private": "PRIVATE_KEY"}}
+             "item_id": f"PRIVATE_ITEM_{index}", "local_state": "local",
+             "metadata": {"path": "PRIVATE_KEY"}}
             for index in range(3)
         ] if origin == "catalogue" else [],
     )
@@ -364,5 +364,102 @@ def test_foreign_persisted_rows_do_not_consume_selected_record_budget(
         assert report["truncation_reasons"] == []
         assert report["counts"]["backup_rows"] == 0
         assert "OTHER_PRIVATE" not in json.dumps(report)
+    finally:
+        service.close()
+
+
+def test_more_than_4096_remote_notices_cannot_hide_530_local_evidence_rows(
+    tmp_path, monkeypatch,
+):
+    """The real #2498 failure: catalogue history, not local placements, hit 4096."""
+    service, session = _service(tmp_path, [])
+    root = service._kobo_backup_target_dir("default")
+    rows = _fake_rows(root, 530, size=24)
+    _audit_fixture(service, monkeypatch, rows)
+    remote_extra = root / "PRIVATE_REMOTE_INDEXED.epub"
+    remote_extra.write_bytes(b"private remote-indexed local placeholder")
+    nonlocal_rows = [
+        {
+            "provider_id": "kobo", "identity_id": "default",
+            "item_id": f"PRIVATE_REMOTE_{i}", "local_state": "remote",
+            "metadata": {"path": str(remote_extra)} if i == 0 else {},
+        }
+        for i in range(4200)
+    ]
+    local_rows = [
+        {
+            "provider_id": "kobo", "identity_id": "default",
+            "item_id": row["item_id"], "local_state": "local",
+            "metadata": {"path": row["local_path"]},
+        }
+        for row in rows
+    ]
+    # Place the remote notices FIRST. An order-dependent [:4096] slice
+    # previously excluded every local record and made the whole audit partial.
+    monkeypatch.setattr(
+        service.storage, "catalog_entries",
+        lambda: [*nonlocal_rows, *local_rows],
+    )
+    monkeypatch.setattr(
+        session, "backup_manifest",
+        lambda: pytest.fail("a local SHA audit must never call Kobo"),
+    )
+    _no_mutation(service, monkeypatch)
+    try:
+        result = audit.kobo_local_reconciliation_audit(
+            service, credential_id="vault-1",
+        )
+        assert result["truncated"] is False
+        assert result["truncation_reasons"] == []
+        assert result["counts"]["backup_rows"] == 530
+        assert result["counts"]["linked_files_verified"] == 530
+        assert result["counts"]["unverified_placements"] == 0
+        assert result["counts"]["active_entitlements_unmaterialized"] == 0
+        assert result["counts"]["unindexed_regular_file_candidates"] == 0
+        assert result["hash_attempts_used"] == 530
+        assert result["directory_entries_inspected"] == 531
+        assert result["read_only"] and result["offline"] and result["dry_run"]
+        assert result["downloads_authorized"] is False
+        assert result["mutations_authorized"] is False
+        public = json.dumps(result)
+        assert "PRIVATE_" not in public
+        assert "vault-1" not in public
+        assert str(root) not in public
+        assert remote_extra.read_bytes() == b"private remote-indexed local placeholder"
+    finally:
+        service.close()
+
+
+def test_real_local_placements_still_exhaust_bounded_catalogue_row_budget(
+    tmp_path, monkeypatch,
+):
+    service, _ = _service(tmp_path, [])
+    monkeypatch.setattr(audit, "_MAX_RECORDS", 2)
+    monkeypatch.setattr(
+        service.storage, "catalog_entries",
+        lambda: [
+            {
+                "provider_id": "kobo", "identity_id": "default",
+                "item_id": f"PRIVATE_REMOTE_{i}", "local_state": "remote",
+                "metadata": {"path": "/private/remote.epub"},
+            }
+            for i in range(8)
+        ] + [
+            {
+                "provider_id": "kobo", "identity_id": "default",
+                "item_id": f"PRIVATE_LOCAL_{i}", "local_state": "local",
+                "metadata": {"path": "/private/local.epub"},
+            }
+            for i in range(3)
+        ],
+    )
+    try:
+        result = audit.kobo_local_reconciliation_audit(service)
+        assert result["truncated"] is True
+        assert result["truncation_reasons"] == ["catalogue_rows_budget"]
+        assert result["hash_attempts_used"] == 0
+        assert result["downloads_authorized"] is False
+        assert result["mutations_authorized"] is False
+        assert "PRIVATE_" not in json.dumps(result)
     finally:
         service.close()
