@@ -21,7 +21,7 @@ GUI = ROOT / "src/cifereca/gui/plugin_manager_page.py"
 def test_browser_recorder_manifest_declares_playwright_and_vault_crypto():
     manifest = load_manifest(PLUGIN)
     assert manifest.package.id == "org.cifereca.technical.browser-recorder"
-    assert manifest.package.version == "0.2.5"
+    assert manifest.package.version == "0.2.6"
     descriptor, = manifest.plugins
     assert descriptor.enabled_by_default is False
     requirements = {

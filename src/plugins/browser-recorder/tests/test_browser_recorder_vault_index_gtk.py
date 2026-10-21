@@ -43,7 +43,7 @@ class Tasks:
 
     def submit(self, fn, *, kind, label):
         assert kind == "browser-recorder"
-        assert label == "Indexer le coffre privé"
+        assert label in {"Indexer le coffre privé", "Nommer la session chiffrée"}
         self.handle = Handle(fn)
         return self.handle
 
@@ -130,6 +130,25 @@ def test_gtk_metadata_stays_opaque_until_unlock_then_reveals_private_labels(tmp_
         assert "completed" in panel.session_list.get_active_text()
         assert vault.list_ids() and len(vault.list_ids()) == 3
         assert not list(tmp_path.rglob("*.zip"))
+        panel.session_list.set_active_id(ids[0])
+        panel.session_name.set_text("Mon parcours fictif privé")
+        panel.vault_passphrase.set_text(KEY)
+        panel.sessions_rename.emit("clicked")
+        assert panel.is_scanning()
+        assert panel.session_name.get_text() == ""
+        assert panel.vault_passphrase.get_text() == ""
+        tasks.handle.finish()
+        flush()
+        assert not panel.is_scanning()
+        assert vault.get_label(ids[0], KEY) == "Mon parcours fictif privé"
+        # Opaque after rename; explicit unlock is needed again.
+        assert ORIGIN not in panel.session_list.get_active_text()
+        panel.vault_passphrase.set_text(KEY)
+        panel.sessions_unlock.emit("clicked")
+        tasks.handle.finish()
+        flush()
+        panel.session_list.set_active_id(ids[0])
+        assert "Mon parcours fictif privé" in panel.session_list.get_active_text()
     finally:
         panel.destroy()
         window.close()
