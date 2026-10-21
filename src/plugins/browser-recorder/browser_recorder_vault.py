@@ -385,11 +385,6 @@ class SessionWriter:
         dest = self.session_id + ".cbrv"
         try:
             count, total = self.vault._entries(fd)
-            if total + len(data) > MAX_VAULT_BYTES or (
-                count >= MAX_SESSIONS and not self.session_id in
-                [name[:-5] for name in os.listdir(fd) if name.endswith(".cbrv")]
-            ):
-                raise VaultError("vault_limit")
             try:
                 old = os.stat(dest, dir_fd=fd, follow_symlinks=False)
             except FileNotFoundError:
@@ -400,6 +395,14 @@ class SessionWriter:
                 or stat.S_IMODE(old.st_mode) != 0o600
             ):
                 raise VaultError("vault_unsafe_file")
+            # Replacing an existing snapshot does not allocate a *second*
+            # permanent session. Account for its previously persisted size
+            # before checking the final cap (temporary fsync space is managed
+            # by the filesystem; never loosen the total retention quota).
+            previous_size = old.st_size if old is not None else 0
+            if (total - previous_size + len(data) > MAX_VAULT_BYTES
+                    or (count >= MAX_SESSIONS and old is None)):
+                raise VaultError("vault_limit")
             handle = os.open(
                 tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                 | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=fd,
