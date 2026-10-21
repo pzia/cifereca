@@ -25,7 +25,6 @@ from cifereca.plugin_api import (
     CatalogServiceFactory, ItemDetail, NotFound, PLUGIN_API_VERSION,
     SearchResult, UnsupportedOperation, check_service_contract,
 )
-from scripts.plugin_packaging import build_plugin_zip, validate_plugin_zip
 
 PREFIX = "plugin-dev-kit/examples/provider-fixture-example/"
 
@@ -56,6 +55,11 @@ def test_zip_only_reference_project_packages_and_passes_public_contract(tmp_path
     from cifereca.plugins.manifest import load_manifest
     descriptor = load_manifest(destination)
     assert descriptor.plugins[0].id == "catalog.fixture-example"
+    # Plugin tests are intentionally run with plugin root as cwd; the
+    # repository's *official* packager is located via the known test path.
+    # This does not supply any missing source file to the extracted example.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+    from scripts.plugin_packaging import build_plugin_zip, validate_plugin_zip
     bundle = build_plugin_zip(destination, tmp_path / "output")
     validated = validate_plugin_zip(bundle)
     assert validated["package"]["id"] == parsed["package"]["id"]
