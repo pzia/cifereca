@@ -306,8 +306,11 @@ comme s'il était un ZIP sans donnée privée.
 ## Export de diagnostic privé chiffré (#2698) — action séparée
 
 Depuis **Lister les sessions archivées**, sélectionnez un ID, saisissez votre
-phrase secrète et choisissez un **dossier existant que vous possédez, en mode
-0700**, avec chemin absolu explicite. La case « Je confirme cet export privé »
+phrase secrète du coffre pour déverrouiller la session, puis choisissez une
+**NOUVELLE phrase secrète dédiée au ZIP privé, différente de celle du coffre**.
+Choisissez un **dossier existant que vous possédez, en mode 0700**, avec
+chemin absolu explicite. Ne communiquez jamais la phrase secrète du coffre
+à un destinataire de l'archive. La case « Je confirme cet export privé »
 est **distincte** du consentement de capture et du ZIP anonymisé pour LLM.
 L'export n'est jamais automatique ni téléversé. Le nom aléatoire finit par
 `.brzip` et le fichier est créé en mode 0600 sans écraser de fichier.
