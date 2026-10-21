@@ -103,6 +103,9 @@ def test_bulk_selection_propagates_reason_code_to_every_page_and_recheck():
     assert len(exported["events"]) == 53
     assert PRIVATE not in selected.export_json
     assert all("detail" not in row for row in exported["events"])
+    assert all(row["reconciliation"]["status"] == "partial"
+               and row["reconciliation"]["counts"] == {"files_started": 321}
+               for row in exported["events"])
 
 
 def test_bulk_refuses_server_ignoring_requested_reason_filter():
