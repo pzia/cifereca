@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.1, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.2, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -357,7 +357,7 @@ Le ZIP interne n'est jamais écrit en clair par Cifereca. Le fichier
 le déchiffrement en mémoire est une étape volontaire distincte.
 
 
-## Choix de la destination ZIP (0.2.1)
+## Choix de la destination ZIP (0.2.2)
 
 Après l'examen **exact** de chaque membre et la confirmation explicite,
 **« Enregistrer sous… le ZIP anonymisé »** ouvre le dialogue natif GTK4
@@ -372,3 +372,24 @@ La destination privée `.brzip` est choisie indépendamment à l'aide du bouton
 préexistant : le dossier doit appartenir à l'utilisateur avec permissions
 0700. Le chiffrement, la phrase d'export distincte et la confirmation restent
 obligatoires. Le contenu privé n'est jamais enregistré en ZIP non chiffré.
+
+
+## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.2, #2740)
+
+Chaque archive **revue** contient maintenant le répertoire
+`plugin-dev-kit/` avec ses guides indépendants, le
+`contract-registry.json`, l'API publique **exacte** du Core qui a préparé
+le ZIP (`contracts/*.py`) et un `manifest.json` documentaire de
+provenance, versions, SHA-256 et limites. Les informations viennent
+**uniquement du paquet Python public installé** : aucun réseau à l'export,
+aucune requête au fournisseur, aucune copie des modules privés du Core.
+Les fichiers de documentation sont visibles individuellement dans la revue
+**exacte** du ZIP et soumis aux limites de taille et au même consentement.
+
+`core_version` et `plugin_api_version` indiquent la version observée.
+Si la révision Git n'est pas attestée, elle reste explicitement
+`unknown`. Si un contrat requis est introuvable ou si le kit dépasse le
+budget, **la préparation du ZIP refuse** plutôt que de produire des
+spécifications faussement compatibles. L'archive est un guide de
+développement, pas une preuve de droits/licences, et ne contient ni tokens
+ni profil Chromium ni source private Core.

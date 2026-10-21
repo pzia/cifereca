@@ -23,6 +23,7 @@ from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
 from browser_recorder import RecorderError, SAFE_SEGMENTS, site_origin
 from browser_recorder_review import _SECRETS, _IDS, _JWT, _variants
+from browser_recorder_devkit import core_contract_kit
 
 ZIP_SCHEMA = "cifereca.browser-recorder.approved-zip/1"
 MAX_EXCHANGES = 240
@@ -747,10 +748,19 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         b"Never replay captured requests or infer legal rights/DRM from a trace.\n"
     )
     files["LLM_INSTRUCTIONS.md"] = (
-        b"Reconstruct likely endpoint and response schemas from this limited trace.\n"
-        b"Clearly mark conjectures. Suggest synthetic fixtures and provider tests.\n"
+        b"Read plugin-dev-kit/manifest.json and plugin-dev-kit/README.md FIRST.\n"
+        b"Use plugin-dev-kit/contracts/*.py (actual public Core interfaces)\n"
+        b"and plugin-dev-kit/contract-registry.json before proposing code.\n"
+        b"Produce endpoint evidence/assumption matrix, fake tests and packaging.\n"
         b"Never reconstruct credentials, tokens or attempt authenticated replay.\n"
     )
+    # Offline Core-owned PUBLIC contract sources only; no capture text is
+    # interpolated into the documentation. This is part of the exact preview,
+    # member limits, ZIP hash and explicit save consent.
+    kit = core_contract_kit()
+    if set(kit) & set(files):
+        raise RecorderError("core_kit_invalid")
+    files.update(kit)
     blob = _zip_bytes(files)
     # Final safety assertion before any archive could be offered to a user:
     # even if an upstream review missed a secret, known secret values and
