@@ -47,6 +47,7 @@ def _sync_search_detail_after_results(self) -> None:
 def _populate_local_search(self, rows: list[dict[str, Any]]) -> None:
     self._search_local_objects = {str(row.get("key") or f"local:{index}"): row for index, row in enumerate(rows)}
     self._search_mode = "local"
+    self._loaded_search_context = None
     self.search_objects = {}
     shown = self._render_search_results()
     self._sync_search_detail_after_results()
