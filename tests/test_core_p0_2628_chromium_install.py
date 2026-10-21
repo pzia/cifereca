@@ -191,7 +191,9 @@ def test_cache_unwritable_parent_fails_before_download(monkeypatch, tmp_path):
         return original_access(path, mode)
 
     monkeypatch.setattr(browser.os, "access", inaccessible)
-    assert browser.inspect_chromium().code == "browser_cache_unavailable"
+    assert browser.inspect_chromium().code == "chromium_missing", (
+        "read-only browser cache must remain inspectable"
+    )
     monkeypatch.setattr(browser.subprocess, "Popen", lambda *_a, **_kw: (
         (_ for _ in ()).throw(AssertionError("unexpected download"))
     ))
@@ -328,3 +330,33 @@ def test_failed_playwright_cli_also_stops_descendants_and_redacts_proxy(
     assert spawned[0][1]["start_new_session"] is True
     assert "FAKE_SECRET_CI" not in repr(result)
     assert "FAKE_SECRET_CI" not in str(result.redacted())
+
+
+def test_readonly_cache_reports_installed_chromium_without_download(monkeypatch, tmp_path):
+    """Read-only mounts can launch an existing browser but cannot install."""
+    home = tmp_path / "home"
+    cache = home / ".cache" / "ms-playwright"
+    binary = cache / "chromium-123" / "chrome-linux" / "chrome"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("synthetic executable")
+    binary.chmod(0o755)
+    monkeypatch.setattr(browser.Path, "home", lambda: home)
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(cache))
+    monkeypatch.setattr(browser, "_version", lambda: "1.55.0")
+    monkeypatch.setattr(browser, "_executable", lambda: binary)
+    original_access = browser.os.access
+
+    def readonly(path, mode):
+        if path == cache and mode & os.W_OK:
+            return False
+        return original_access(path, mode)
+
+    monkeypatch.setattr(browser.os, "access", readonly)
+    assert browser.inspect_chromium().code == "chromium_installed_unverified"
+    assert browser._cache_path(require_writable=False) == cache
+    try:
+        browser._cache_path(require_writable=True)
+    except ValueError as exc:
+        assert str(exc) == "browser_cache_unavailable"
+    else:
+        raise AssertionError("read-only browser cache allowed a write")
