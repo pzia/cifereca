@@ -306,8 +306,11 @@ class LocalInspectionController:
             Gtk.Button(label='Candidat ▶'),
         )
         candidate_number = Gtk.Label(xalign=0)
-        candidate_number.set_hexpand(True)
-        for widget in (candidate_prev, candidate_number, candidate_next):
+        # Keep the status outside the horizontal action row so both navigation
+        # buttons stay reachable at 920px modal width / 1280px desktop.
+        candidate_number.set_wrap(True)
+        candidate_box.append(candidate_number)
+        for widget in (candidate_prev, candidate_next):
             candidate_nav.append(widget)
         candidate_box.append(candidate_nav)
         candidate_detail = Gtk.Label(xalign=0, yalign=0)
