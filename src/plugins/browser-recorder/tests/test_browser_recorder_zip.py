@@ -622,3 +622,48 @@ def test_frozen_zip_short_numeric_private_fields_remain_structural():
     finally:
         review.destroy()
         trace.destroy()
+
+
+@pytest.mark.parametrize(("dynamic_key", "private_fragment"), [
+    ("session_PRIVATE_ACCOUNT42", "PRIVATE_ACCOUNT42"),
+    ("access_token_FICTIONAL42", "FICTIONAL42"),
+    ("customField_123456789", "123456789"),
+    ("fingerprint_aabbccddeeff001122", "aabbccddeeff001122"),
+])
+def test_private_dynamic_schema_keys_never_reach_approved_zip(
+    dynamic_key, private_fragment,
+):
+    """Unreviewed field NAMES must not launder secrets into a ZIP."""
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST",
+        url=ORIGIN + "/api/books?" + dynamic_key + "=value&BookId=214",
+        request_headers={"content-type": "application/json"},
+        request_body=json.dumps({
+            dynamic_key: "value", "BookId": 214,
+            "access_token": "FICTIONAL_SECRET", "customField": "value",
+        }),
+        status=200,
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key, "keep" if candidate.value == "214"
+                          else "anonymize")
+        preview = prepare_reviewed_zip(review).preview()
+        serialized = json.dumps(preview)
+        assert dynamic_key not in serialized
+        assert private_fragment not in serialized
+        body = json.loads(next(item["text"] for item in preview["members"]
+                               if item["name"] == "bodies/0001-request.txt"))
+        assert dynamic_key not in body
+        assert body["BookId"] == 214
+        assert body["access_token"] == "[SECRET]"
+        assert body["customField"] == "[TEXT]"
+        descriptor = json.loads(next(item["text"] for item in preview["members"]
+                                     if item["name"] == "exchanges/0001.json"))
+        assert dynamic_key not in descriptor["url"]
+        assert "BookId=214" in descriptor["url"]
+    finally:
+        review.destroy()
+        trace.destroy()
