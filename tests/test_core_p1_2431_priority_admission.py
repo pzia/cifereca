@@ -262,6 +262,9 @@ def test_bounded_numeric_timing_snapshot_after_320_tasks():
                    for _ in range(320)]
         for future in futures:
             assert future.result(timeout=3) is None
+        # Future.set_result() precedes the worker's finally block that
+        # records its duration; join workers before inspecting final samples.
+        pool.shutdown(wait=True)
         data = pool.timing_snapshot()
         for phase in ("queue_wait", "worker"):
             assert data[phase]["samples"] == 256
