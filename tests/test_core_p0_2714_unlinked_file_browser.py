@@ -149,3 +149,25 @@ def test_in_memory_filter_is_no_io_after_evidence_snapshot(
     assert selected.total == 1
     assert 'Titre caché 5' in selected.cases[0].label
     session.close()
+
+
+def test_explicit_isbn_and_opf_author_are_searchable_but_never_right_evidence(
+    six_numilog,
+):
+    root, database = six_numilog
+    # A valid, explicit OPF ISBN on a physically present but unattested EPUB
+    # is useful to SEARCH the file; it must not give the Numilog right a link.
+    epub(root / 'code-5.epub', title='Roman océanique privé',
+         identifier='urn:isbn:9780306406157')
+    audit, session = _session({"alice": (root,)}, database)
+    by_isbn = session.unconfirmed_files(query='9780306406157', limit=25)
+    by_title = session.unconfirmed_files(query='oceanique', limit=25)
+    by_author = session.unconfirmed_files(query='private_author', limit=25)
+    assert by_isbn.total == by_title.total == by_author.total == 1
+    assert by_isbn.cases[0].key == by_title.cases[0].key == by_author.cases[0].key
+    assert session.overview()['confirmed_files'] == 3
+    assert session.overview()['unverified_rights'] == 3
+    assert audit.redacted()['repair_authorized'] is False
+    assert '9780306406157' not in json.dumps(audit.redacted())
+    assert 'Roman océanique privé' not in json.dumps(audit.redacted())
+    session.close()
