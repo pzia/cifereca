@@ -416,7 +416,7 @@ def test_attested_notice_is_capped_after_filter_not_before():
     view, _identity, _calls, detail, _row = _view((*unresolved, *verified))
     section = next(x for x in detail.sections if x.id == "source-editions")
     editions = [f for f in section.fields if f.id.startswith("source-edition-")
-                and f.id not in {"source-edition-warning", "source-edition-limit"}]
+                and f.id not in {"source-edition-warning", "source-edition-page", "source-edition-limit"}]
     assert len(editions) == 16
     assert all("Kobo" in f.value for f in editions)
 
@@ -549,7 +549,7 @@ def test_exactly_sixteen_distinct_verified_notices_are_not_called_incomplete():
     section = next(s for s in detail.sections if s.id == "source-editions")
     assert len([field for field in section.fields
                 if field.id.startswith("source-edition-")
-                and field.id not in {"source-edition-warning", "source-edition-limit"}]) == 16
+                and field.id not in {"source-edition-warning", "source-edition-page", "source-edition-limit"}]) == 16
     assert not any(field.id == "source-edition-limit" for field in section.fields)
 
 
