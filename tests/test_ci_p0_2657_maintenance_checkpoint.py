@@ -40,6 +40,18 @@ def test_failed_maintenance_exposes_only_literal_checkpoint(tmp_path):
     row = exporter.safe_summary(source)["results"][0]
     assert row["maintenance_last_safe_checkpoint"] == "candidate_validated"
     assert "PRIVATE" not in repr(row)
+    report.write_text(json.dumps({"checks": {
+        "local_inspection_manual_unlinked_filter_same_identity": True,
+        "local_inspection_manual_does_not_change_candidate_set": "PRIVATE_NOT_BOOLEAN",
+    }}))
+    row = exporter.safe_summary(source)["results"][0]
+    assert row["maintenance_last_safe_checkpoint"] == "manual_filtered"
+    assert "PRIVATE" not in repr(row)
+    report.write_text(json.dumps({"checks": {
+        "local_inspection_manual_does_not_change_candidate_set": True,
+    }}))
+    row = exporter.safe_summary(source)["results"][0]
+    assert row["maintenance_last_safe_checkpoint"] == "manual_restored"
 
 
 def test_maintenance_checkpoint_missing_symlink_or_other_scenario_is_safe(tmp_path):
