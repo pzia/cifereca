@@ -61,6 +61,11 @@ _INVENTORY_PHASES = frozenset({"sha256", "epub_opf", "structure", "pdf_signature
 _STATUSES = frozenset({"complete", "partial", "failed", "cancelled"})
 
 
+def known_reason_code(value: object) -> bool:
+    """Only Core-defined reconciliation causes are valid public filters."""
+    return type(value) is str and value in _REASONS
+
+
 def _number(value: object) -> int | None:
     return value if type(value) is int and 0 <= value <= 1_000_000_000_000 else None
 

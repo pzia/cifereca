@@ -1426,7 +1426,7 @@ class DiagnosticsBrokerImpl:
     def events(
         self, *, source: str = "all", module: str = "", severity: str = "",
         since: str | None = None, until: str | None = None,
-        limit: int = 50, offset: int = 0,
+        limit: int = 50, offset: int = 0, reason_code: str = "",
     ) -> dict[str, Any]:
         """Read-only, bounded public feed; filesystem paths are Core-owned."""
         from .core.diagnostic_event_feed import query_diagnostic_events
@@ -1435,6 +1435,7 @@ class DiagnosticsBrokerImpl:
             self.service.diagnostics, log_path=log_file(),
             source=source, module=module, severity=severity,
             since=since, until=until, limit=limit, offset=offset,
+            reason_code=reason_code,
         )
 
     def system_status(self):
