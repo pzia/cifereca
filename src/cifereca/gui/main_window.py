@@ -699,12 +699,28 @@ class MainWindow(Adw.ApplicationWindow):
             config = getattr(service, "config", None)
             storage = getattr(service, "storage", None)
             identity = getattr(service, "current_identity", None)
+            identity_id = getattr(identity, "identity_id", None)
+            roots_stamp = None
+            if config is not None and identity_id is not None:
+                # The config object can be modified in place without an
+                # identity-generation change. Compare only a fingerprint of
+                # Core-normalized root capabilities; keep paths private.
+                try:
+                    from hashlib import sha256
+                    from cifereca.core.library_audit_roots import configured_identity_roots
+                    selected = configured_identity_roots(config, identity_id)
+                    normalized = selected[identity_id]
+                    roots_stamp = sha256(
+                        "\0".join(str(path) for path in normalized).encode("utf-8")
+                    ).hexdigest()[:24]
+                except Exception:
+                    roots_stamp = "scope_unavailable"
             return (
                 id(service),
                 getattr(identity, "identity_id", None),
                 getattr(self, "_identity_context_generation", None),
                 getattr(service, "_account_context_epoch", None),
-                id(config), id(getattr(config, "data", None)),
+                id(config), id(getattr(config, "data", None)), roots_stamp,
                 id(storage), getattr(storage, "path", None),
             )
 
@@ -1169,10 +1185,12 @@ class MainWindow(Adw.ApplicationWindow):
                                 )
 
                         worker_control = MaintenanceCancelControl(
-                            owner_closed=lambda: (
-                                self._closed or (run_state is not None
-                                    and reconciliation_scope() != run_state["scope"])
-                            ),
+                            # Core's broker already checks the private
+                            # full scope cooperatively inside the worker. Do
+                            # not rehash all configured roots for every EPUB
+                            # chunk on that worker thread; GTK revalidates at
+                            # refresh and terminal publication.
+                            owner_closed=lambda: self._closed,
                             on_progress=report_progress if feedback is not None else None,
                         )
                         cancellation_state["control"] = worker_control
