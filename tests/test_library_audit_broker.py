@@ -208,3 +208,38 @@ def test_scoped_audit_600s_budget_still_observes_explicit_cancellation(scoped):
     assert result['status'] == 'incomplete_scan'
     assert result['reasons'] == ['audit_cancelled']
     assert 'inventory' not in result
+
+
+def test_snapshot_elapsed_published_to_public_broker_without_paths_or_rows(scoped, tmp_path):
+    service, _, _ = scoped
+    before = filesystem(tmp_path)
+    result = LibraryReconciliationReadBrokerImpl(service).audit(identity_id='alice')
+    assert result["status"] == "complete"
+    assert type(result.get("snapshot_ms")) is int
+    assert 0 <= result["snapshot_ms"] <= 30000
+    assert "tables" not in json.dumps(result)
+    assert "PRIVATE" not in json.dumps(result)
+    assert filesystem(tmp_path) == before
+
+
+def test_snapshot_failure_still_reports_bounded_time_to_core_diagnostics(scoped, tmp_path):
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.core.diagnostic_event_feed import query_diagnostic_events
+    from cifereca.core.library_reconciliation import EvidenceSnapshot
+
+    service, _, _ = scoped
+    service.diagnostics = Diagnostics()
+    with patch("cifereca.core.library_audit_broker.read_library_snapshot",
+               return_value=EvidenceSnapshot(reasons={"snapshot_time_budget"})):
+        result = LibraryReconciliationReadBrokerImpl(service).audit(identity_id='alice')
+    assert result["reasons"] == ["snapshot_time_budget"]
+    assert type(result.get("snapshot_ms")) is int
+    events = query_diagnostic_events(
+        service.diagnostics, source="core_events", module="LIBRARY",
+        log_path=tmp_path / "missing.log",
+    )["events"]
+    assert len(events) == 1
+    assert events[0]["status"] == "partial"
+    assert events[0]["detail"]["phase_ms"]["snapshot"] == result["snapshot_ms"]
+    assert events[0]["detail"]["counts"] == {}
+    assert "PRIVATE" not in json.dumps(events)
