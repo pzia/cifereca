@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.2, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.3, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -363,7 +363,7 @@ Le ZIP interne n'est jamais écrit en clair par Cifereca. Le fichier
 le déchiffrement en mémoire est une étape volontaire distincte.
 
 
-## Choix de la destination ZIP (0.2.2)
+## Choix de la destination ZIP (0.2.3)
 
 Après l'examen **exact** de chaque membre et la confirmation explicite,
 **« Enregistrer sous… le ZIP anonymisé »** ouvre le dialogue natif GTK4
@@ -380,7 +380,7 @@ préexistant : le dossier doit appartenir à l'utilisateur avec permissions
 obligatoires. Le contenu privé n'est jamais enregistré en ZIP non chiffré.
 
 
-## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.2, #2740)
+## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.3, #2740)
 
 Chaque archive **revue** contient maintenant le répertoire
 `plugin-dev-kit/` avec ses guides indépendants, le
