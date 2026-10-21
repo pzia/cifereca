@@ -63,6 +63,14 @@ _INSPECTION_PHASES = frozenset({
 })
 
 
+def _toggle_inspection_maximize(window) -> None:
+    """Only GTK window state changes, never a new read or a private export."""
+    if window.is_maximized():
+        window.unmaximize()
+    else:
+        window.maximize()
+
+
 def _inspection_failure_message(result: object) -> str:
     """Project one validated Core reason, never untrusted diagnostic prose.
 
@@ -219,9 +227,7 @@ class LocalInspectionController:
         grow.set_tooltip_text(
             'Agrandir la comparaison au maximum de l’écran ou revenir à la taille normale'
         )
-        grow.connect('clicked', lambda *_: (
-            window.unmaximize() if window.is_maximized() else window.maximize()
-        ))
+        grow.connect('clicked', lambda *_: _toggle_inspection_maximize(window))
         heading.pack_end(grow)
         toolbar_view.add_top_bar(heading)
         self.dialog = window
