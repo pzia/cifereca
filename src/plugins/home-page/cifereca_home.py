@@ -42,7 +42,19 @@ SOURCE_NAMES = {
 
 def source_groups(row, public_providers=PUBLIC_PROVIDERS, local_providers=LOCAL_PROVIDERS):
     linked=set(row.get('providers') or ())
-    observed={s.get('provider_id'):dict(s) for s in row.get('sources',[]) if isinstance(s,dict) and s.get('provider_id')}
+    # Only the three public fields of the dashboard projection are used.
+    # Future broker metadata (URLs, tokens, raw failures) must never hitchhike
+    # through an Accueil source card or be exposed by a diagnostic repr.
+    observed={
+        source['provider_id']: {
+            'provider_id': source['provider_id'],
+            'label': source.get('label') if type(source.get('label')) is str else '',
+            'connected': source.get('connected') is True,
+        }
+        for source in (row.get('sources') or ())
+        if isinstance(source, dict)
+        and type(source.get('provider_id')) is str and source['provider_id']
+    }
     stats=row.get('statistics') if isinstance(row.get('statistics'),dict) else {}
     counts=stats.get('sources') if isinstance(stats.get('sources'),dict) else {}
     candidates=set(linked)|set(observed)|set(counts)
