@@ -382,7 +382,10 @@ class LocalInspectionController:
         # A real selectable, paginated list replaces the one-file-at-a-time
         # browsing of unattested EPUBs (#2714). A collapsed filter section
         # keeps controls reachable at 920px and can expand in full-screen.
-        manual_filters = Gtk.Expander(label='Filtres fichiers · format, SHA, CRC, tri')
+        manual_filters = Gtk.Expander(label='Filtres des fichiers')
+        manual_filters.set_tooltip_text(
+            'Format EPUB/PDF, SHA calculé, structure/CRC EPUB et ordre de tri'
+        )
         filter_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         format_filter = Gtk.DropDown.new_from_strings([
             'Tous les formats', 'EPUB', 'PDF',
