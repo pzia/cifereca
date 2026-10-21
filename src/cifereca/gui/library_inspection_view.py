@@ -584,12 +584,23 @@ class LocalInspectionController:
             manual_mode[0] = not manual_mode[0]
             manual_index[0] = 0
             manual_search.set_visible(manual_mode[0])
+            manual_filters.set_visible(manual_mode[0])
+            manual_list_scroll.set_visible(manual_mode[0])
             show_candidate()
 
         def filter_manual():
             if not valid() or not manual_mode[0]:
                 return
             manual_index[0] = 0
+            show_candidate()
+
+        def select_manual_file(_listing, row):
+            if (manual_rebuilding[0] or not manual_mode[0]
+                    or row is None or not valid()):
+                return
+            # A keyboard/click selection is a local page index, not an
+            # acquisition request and never a proof or right/file link.
+            manual_index[0] = row._manual_offset
             show_candidate()
 
         def select(_listing, row):
@@ -605,8 +616,17 @@ class LocalInspectionController:
                     manual_mode[0] = False
                     manual_index[0] = 0
                     manual_search.set_visible(False)
+                    manual_filters.set_visible(False)
+                    manual_list_scroll.set_visible(False)
                     if manual_search.get_text():
                         manual_search.set_text('')
+                    # An incomplete scan with no metadata_only suggestion
+                    # should still offer an immediately searchable local
+                    # file list, never imply that the EPUB is absent.
+                    manual_mode[0] = not candidate_items[0]
+                    manual_search.set_visible(manual_mode[0])
+                    manual_filters.set_visible(manual_mode[0])
+                    manual_list_scroll.set_visible(manual_mode[0])
                     candidate_box.set_visible(True)
                     show_candidate()
                 else:
@@ -650,6 +670,9 @@ class LocalInspectionController:
         candidate_next.connect('clicked', lambda *_: move_candidate(1))
         manual_toggle.connect('clicked', lambda *_: toggle_manual())
         manual_search.connect('search-changed', lambda *_: filter_manual())
+        manual_list.connect('row-selected', select_manual_file)
+        for widget in (format_filter, sha_filter, crc_filter, file_sort):
+            widget.connect('notify::selected', lambda *_: filter_manual())
         provider.connect('notify::selected', lambda *_: render(reset=True))
         state.connect('notify::selected', lambda *_: render(reset=True))
         search.connect('search-changed', lambda *_: render(reset=True))
