@@ -1978,6 +1978,21 @@ class LibraryService:
                     return False
                 state = self.kobo_adept_state()
                 return bool(state.get("available") and state.get("compatible") and state.get("operational"))
+            if item.source_provider == "ebooksgratuits":
+                # Public COPS catalogue rows can precede OPDS enrichment:
+                # a generic remote/distant notice is not an EPUB offer.
+                # The provider exposes the exact acquisition link and an
+                # explicit downloadable flag only for qualifying Atom books.
+                # Never enable a misleading action merely because the
+                # provider *supports* direct downloads in general.
+                link = item.download_url
+                return bool(
+                    session.capabilities.direct_download
+                    and item.downloadable is True
+                    and type(link) is str
+                    and bool(link)
+                    and link == link.strip()
+                )
             if session.capabilities.direct_download:
                 return True
             return bool(self.acquisition.override_command(item.source_provider) and self.acquisition.acquisition_url(item))
