@@ -5,6 +5,7 @@ from hashlib import sha256
 import json
 import os
 import stat
+from urllib.parse import urlencode
 from zipfile import ZipFile
 
 import pytest
@@ -664,6 +665,75 @@ def test_private_dynamic_schema_keys_never_reach_approved_zip(
                                      if item["name"] == "exchanges/0001.json"))
         assert dynamic_key not in descriptor["url"]
         assert "BookId=214" in descriptor["url"]
+    finally:
+        review.destroy()
+        trace.destroy()
+
+
+
+@pytest.mark.parametrize(("dynamic_key", "private_fragment"), [
+    ("session_PRIVATE_ACCOUNT42", "PRIVATE_ACCOUNT42"),
+    ("access_token_FICTIONAL42", "FICTIONAL42"),
+    ("customField_123456789", "123456789"),
+    ("fingerprint_aabbccddeeff001122", "aabbccddeeff001122"),
+])
+def test_urlencoded_form_dynamic_private_field_names_never_reach_zip(
+    dynamic_key, private_fragment,
+):
+    """The name of a form field requires the same privacy gate as JSON/URL.
+
+    No network, provider or account is contacted. The malicious provider
+    embeds unreviewed private material into an ordinary form field NAME,
+    including with an innocuous VALUE and an explicitly kept BookId.
+    """
+    from browser_recorder_zip import _body
+
+    raw = urlencode([
+        ("BookId", "214"),
+        (dynamic_key, "FICTIONAL_RAW_PRIVATE42"),
+        ("password", "FICTIONAL_PASSWORD"),
+        ("customField", "free text"),
+    ])
+    direct, state = _body(
+        raw, "application/x-www-form-urlencoded",
+        frozenset({"214"}),
+    )
+    assert state == "captured_form_structure"
+    direct_fields = {item["field"]: item["value"] for item in json.loads(direct)}
+    assert dynamic_key not in direct_fields
+    assert direct_fields["BookId"] == "214"
+    assert direct_fields["password"] == "[SECRET]"
+    assert direct_fields["customField"] == "[UNREVIEWED]"
+
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST", url=ORIGIN + "/api/books?BookId=214",
+        request_headers={"content-type": "application/x-www-form-urlencoded"},
+        request_body=raw, status=200,
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(
+                candidate.key,
+                "keep" if candidate.value == "214" else "anonymize",
+            )
+        snapshot = prepare_reviewed_zip(review).preview()
+        serialized = json.dumps(snapshot)
+        assert dynamic_key not in serialized
+        assert private_fragment not in serialized
+        assert "FICTIONAL_RAW_PRIVATE42" not in serialized
+        assert "FICTIONAL_PASSWORD" not in serialized
+
+        form_text = next(
+            row["text"] for row in snapshot["members"]
+            if row["name"] == "bodies/0001-request.txt"
+        )
+        names = {item["field"]: item["value"] for item in json.loads(form_text)}
+        assert dynamic_key not in names
+        assert names["BookId"] == "214"
+        assert names["password"] == "[SECRET]"
+        assert names["customField"] == "[UNREVIEWED]"
     finally:
         review.destroy()
         trace.destroy()
