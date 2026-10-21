@@ -111,6 +111,22 @@ def test_six_files_three_confirmed_and_three_rights_unverified_not_a_bijection(
     assert 'Titre notice' not in json.dumps(audit.redacted())
     assert str(root) not in json.dumps(audit.redacted())
     assert filesystem(tmp_path) == before
+    # Notice-to-OPF equality alone is a hint; never an attested edge.
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "UPDATE catalog_entries SET metadata_json=? WHERE catalog_entry_id=?",
+            (json.dumps({'title': 'Notice correspondante',
+                         'identifiers': [{'scheme': 'isbn', 'value': 'ISBN-TEST-4'}]}),
+             'catalog-4'),
+        )
+    refreshed = LocalInspection(audit_library(database, {'alice': (root,)}),
+                                lambda: True, 'alice')
+    matching = [c for c in refreshed.page(
+        provider='numilog', state='rights_without_verified_file').cases
+        if 'item-4' in c.label]
+    assert len(matching) == 1
+    assert 'non probants' in matching[0].details
+    assert 'ne confirme ni fournisseur' in matching[0].details
     session.close()
     assert session.overview() == {}
 
