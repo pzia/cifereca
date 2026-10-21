@@ -263,7 +263,7 @@ def test_wal_child_stdout_closed_but_process_still_alive_is_time_budget(
             [sys.executable, '-B', '-c',
              'import os,time; os.close(1); time.sleep(3)'],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, close_fds=True,
+            stderr=subprocess.PIPE, close_fds=True,
         )
         children.append(child)
         return child
@@ -355,3 +355,50 @@ def test_snapshot_trace_never_logs_untrusted_failure_details(
     assert any('code=incomplete' in line for line in lines)
     assert 'PRIVATE' not in '\n'.join(lines)
     assert 'secret' not in '\n'.join(lines)
+
+
+def test_wal_child_reports_only_closed_stages_without_source_paths(
+    wal, caplog,
+):
+    """Real child stages identify capture/verify/replay/emit without DB data."""
+    import logging
+    caplog.set_level(logging.INFO, logger='cifereca')
+    outcome = read_library_snapshot(wal[0])
+    assert not outcome.reasons
+    entries = [line for line in caplog.messages if
+               'TRACE reconciliation_wal phase=stage' in line]
+    expected = ('capture', 'validate', 'replay', 'serialize', 'emit')
+    assert [entry.split('step=')[1].split()[0] for entry in entries] == list(expected)
+    assert all('elapsed_ms=' in line for line in entries)
+    assert 'PRIVATE' not in '\n'.join(entries)
+    assert str(wal[0]) not in '\n'.join(entries)
+
+
+def test_wal_child_timeout_stage_is_visible_without_external_error_text(
+    wal, monkeypatch, caplog,
+):
+    """The timeout identifies the last child phase, never untrusted stderr."""
+    import logging
+    from cifereca.core import library_wal_image as capture
+    caplog.set_level(logging.INFO, logger='cifereca')
+    real_popen = subprocess.Popen
+    def stalled_child(*_args, **_kwargs):
+        return real_popen(
+            [sys.executable, '-B', '-c',
+             'import os,sys,time; '
+             'sys.stderr.write("PRIVATE_TOKEN\\nCIFERECA_WAL_PHASE:capture\\n'
+             'CIFERECA_WAL_PHASE:unknown\\n"); sys.stderr.flush(); '
+             'os.close(1); time.sleep(3)'],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, close_fds=True,
+        )
+    monkeypatch.setattr(capture.subprocess, 'Popen', stalled_child)
+    image, reason = capture.read_wal_image(wal[0], max_bytes=1024*1024,
+                                           seconds=0.35)
+    assert image is None and reason == 'snapshot_time_budget'
+    entries = [line for line in caplog.messages if
+               'TRACE reconciliation_wal phase=stage' in line]
+    assert len(entries) == 1
+    assert 'step=capture' in entries[0]
+    assert 'PRIVATE_TOKEN' not in '\n'.join(caplog.messages)
+    assert 'step=unknown' not in '\n'.join(caplog.messages)
