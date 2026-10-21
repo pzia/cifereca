@@ -326,7 +326,9 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
         # Verify real GTK accepts focus on the consent and HTTP start
         # while the folded HAR controls are not user-visible.
         assert site.grab_focus()
-        assert window.get_focus() is site
+        # Gtk.Entry delegates keyboard focus to its internal Gtk.Text child.
+        focus = window.get_focus()
+        assert focus is site or focus.is_ancestor(site)
         assert plugin.private_panel.start.grab_focus()
         assert window.get_focus() is plugin.private_panel.start
         legacy = advanced.get_child()
