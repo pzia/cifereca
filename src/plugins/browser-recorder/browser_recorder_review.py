@@ -52,6 +52,7 @@ _HTML_ATTR = re.compile(r"""([a-zA-Z][\w-]*)\s*=\s*["']([^"'<>]{0,512})["']""")
 _AUTH_BEARER = re.compile(
     r"\b(?:Bearer|Basic)\s+([A-Za-z0-9_+./=~-]{6,512})", re.IGNORECASE,
 )
+_PSEUDONYM = re.compile(r"PSEUDO_I[0-9]{4,}")
 
 
 def _is_secret(name: str, value: str) -> bool:
@@ -181,10 +182,25 @@ class IdentifierReview:
         self._by_value: dict[str, Identifier] = {}
         self._by_key: dict[str, Identifier] = {}
         self._secret_values: set[str] = set()
+        self._reserved_pseudonyms: set[str] = set()
         self._closed = False
         self._next = 0
         for entry in trace.exchanges:
             self._scan_exchange(entry)
+        # Keys have not reached the UI yet. Skip keys whose derived marker
+        # already occurs in the trace: a real kept ID PSEUDO_I0001 must not
+        # impersonate the generated pseudonym of a different account.
+        for candidate in self._by_value.values():
+            while "PSEUDO_" + candidate.key in self._reserved_pseudonyms:
+                self._next += 1
+                candidate.key = "I" + str(self._next).zfill(4)
+        self._by_key = {c.key: c for c in self._by_value.values()}
+
+    def _reserve_pseudonyms(self, text: str):
+        for match in _PSEUDONYM.finditer(text):
+            self._reserved_pseudonyms.add(match.group())
+            if len(self._reserved_pseudonyms) > MAX_CANDIDATES * 4:
+                raise RecorderError("review_limit")
 
     def __repr__(self):
         return (f"IdentifierReview(candidates={len(self._by_key)}, "
@@ -194,6 +210,7 @@ class IdentifierReview:
         if not isinstance(value, (str, int)) or isinstance(value, bool):
             return
         value = str(value).strip()
+        self._reserve_pseudonyms(value)
         if (not value or len(value) > 512 or value.lower() in
                 {"null", "none", "true", "false", "undefined"}
                 or any(ord(c) < 32 for c in value)):
@@ -237,12 +254,15 @@ class IdentifierReview:
         budget[0] += 1
         if depth > 16 or budget[0] > 1024:
             raise RecorderError("review_limit")
+        if type(node) is str:
+            self._reserve_pseudonyms(node)
         if type(node) is dict:
             if len(node) > 256:
                 raise RecorderError("review_limit")
             for key, value in node.items():
                 if type(key) is not str or len(key) > 128:
                     continue
+                self._reserve_pseudonyms(key)
                 if type(value) in (str, int):
                     self._observe(key, value, where + ":" + key[:40])
                 else:
@@ -254,6 +274,7 @@ class IdentifierReview:
     def _text(self, text: str, where: str, mime: str = ""):
         if type(text) is not str or len(text) > MAX_TEXT:
             raise RecorderError("review_limit")
+        self._reserve_pseudonyms(html.unescape(unquote(text)))
         if "json" in mime:
             try:
                 data = json.loads(text)
@@ -299,6 +320,7 @@ class IdentifierReview:
         for part in parsed.path.split("/"):
             if part:
                 raw = unquote(part)
+                self._reserve_pseudonyms(raw)
                 if _UUID.fullmatch(raw) or raw.isdecimal():
                     self._observe("id", raw, where + ":path")
         # Query values were already URL-decoded above. Scanning the raw URL
@@ -423,4 +445,5 @@ class IdentifierReview:
         self._by_value.clear()
         self._by_key.clear()
         self._secret_values.clear()
+        self._reserved_pseudonyms.clear()
         self._closed = True
