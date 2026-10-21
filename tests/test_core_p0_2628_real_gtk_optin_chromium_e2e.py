@@ -222,6 +222,7 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         result.close()
         assert eventually(lambda: visible_dialog() is None)
         assert inspect_chromium(test_launch=True).code == "ready"
+        assert not manager.status(PLUGIN_ID).enabled  # no implicit activation
 
         # A fresh render must not trigger another download or leave busy state.
         page.refresh()
