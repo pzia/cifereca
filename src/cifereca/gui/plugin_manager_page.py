@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from typing import Any, Callable
 
 import gi
@@ -58,6 +58,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self._refresh_anchor_id: str | None = None
         self._viewport_token = None
         self._python_deps_install_running = False
+        self._chromium_operation_running = False
+        self._chromium_cancel = Event()
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.outer.set_margin_top(24); self.outer.set_margin_bottom(24)
@@ -660,6 +662,31 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             repair.connect("clicked", lambda _b: self._confirm_python_dependencies())
             box.append(repair)
 
+        # Browser provisioning is a separate opt-in Core action. Neither
+        # rendering this row nor activating the plugin starts a subprocess.
+        if (
+            d.id == "ui.page.browser-recorder"
+            and any(
+                row.requirement.type == "python-package"
+                and row.requirement.name == "playwright" and row.ok
+                for row in getattr(status, "requirements", ())
+            )
+        ):
+            browser_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            verify = action_button("Vérifier Chromium…", "dialog-information-symbolic")
+            verify.set_sensitive(not self._chromium_operation_running)
+            verify.connect("clicked", lambda _b: self._probe_chromium())
+            browser_controls.append(verify)
+            if self._chromium_operation_running:
+                abort = action_button("Annuler Chromium", "process-stop-symbolic")
+                abort.connect("clicked", lambda _b: self._chromium_cancel.set())
+                browser_controls.append(abort)
+            else:
+                installer = action_button("Installer Chromium…", "system-software-install-symbolic")
+                installer.connect("clicked", lambda _b: self._confirm_chromium_install())
+                browser_controls.append(installer)
+            box.append(browser_controls)
+
         primary_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         if d.config_schema:
             cfg = action_button("Configurer…", "preferences-system-symbolic")
@@ -1010,6 +1037,106 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 "Aucun téléchargement Chromium n’a été demandé.",
                 "Dépendances Python indisponibles",
             )
+        return False
+
+    @staticmethod
+    def _chromium_label(code: str) -> str:
+        return {
+            "ready": "Chromium prêt : lancement local vérifié.",
+            "chromium_installed_unverified": "Chromium présent ; lancement et bibliothèques système non vérifiés.",
+            "chromium_missing": "Chromium absent pour cette version de Playwright.",
+            "chromium_revision_incompatible": "Une ancienne révision de Chromium est présente, mais pas la révision requise.",
+            "playwright_missing": "Playwright Python manque. Utilisez d’abord la réparation Python.",
+            "linux_libraries_missing": "Chromium nécessite des bibliothèques Linux. Installation système manuelle requise.",
+            "browser_launch_failed": "Chromium est présent mais son lancement local a échoué.",
+            "browser_cache_unavailable": "Le cache Chromium est indisponible ou hors du périmètre autorisé.",
+            "disk_space_insufficient": "Espace disque insuffisant (768 Mio libres requis au minimum).",
+            "venv_required": "Le Core refuse l'installation hors de son environnement virtuel.",
+            "download_failed": "Le téléchargement Chromium a échoué ; vérifiez réseau/proxy/espace disque.",
+            "download_timeout": "Le téléchargement Chromium a dépassé la durée maximale.",
+            "download_incomplete": "L'installation Chromium a terminé sans produire la révision attendue.",
+            "cancelled": "Installation Chromium annulée ; aucun autre navigateur n’a été supprimé.",
+            "installation_already_running": "Une installation Chromium est déjà en cours.",
+            "unsupported_platform": "Installation guidée Chromium disponible uniquement sur Linux.",
+            "browser_probe_failed": "Diagnostic Chromium indisponible.",
+            "installer_unavailable": "Impossible de lancer l'installateur Playwright.",
+        }.get(code, "Chromium indisponible ; consultez les prérequis.")
+
+    def _probe_chromium(self) -> None:
+        if self._chromium_operation_running or self._python_deps_install_running:
+            return
+        self._chromium_operation_running = True
+        self.refresh()
+        def work():
+            try:
+                from cifereca.plugins.playwright_browser import inspect_chromium
+                code = inspect_chromium(test_launch=True).code
+            except Exception:
+                # Driver errors, cache paths and proxy text stay off stderr/UI.
+                code = "browser_probe_failed"
+            GLib.idle_add(self._finish_chromium_operation, code)
+        Thread(target=work, name="cifereca-chromium-probe", daemon=True).start()
+
+    def _confirm_chromium_install(self) -> None:
+        if self._chromium_operation_running or self._python_deps_install_running:
+            return
+        dialog = Adw.MessageDialog.new(
+            self.window, "Installer Chromium avec Playwright ?",
+            "Téléchargement volontaire de plusieurs centaines de Mo (au moins 768 Mio "
+            "d’espace disque libre requis), depuis la distribution officielle de "
+            "Playwright, dans le cache navigateur de votre compte. Le navigateur "
+            "sera choisi selon la version Playwright installée. Aucun sudo, apt, "
+            "Firefox, WebKit, replay ou capture ne sera lancé. Les révisions déjà "
+            "installées sont conservées. Annulation possible, durée maximale 15 min. "
+            "Continuer ?",
+        )
+        dialog.add_response("cancel", "Annuler")
+        dialog.add_response("install", "Installer")
+        dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
+        dialog.connect(
+            "response", lambda _dialog, response:
+                self._install_chromium() if response == "install" else None,
+        )
+        dialog.present()
+
+    def _install_chromium(self) -> None:
+        if self._chromium_operation_running or self._python_deps_install_running:
+            return
+        self._chromium_operation_running = True
+        self._chromium_cancel = Event()
+        self._toast("Installation Chromium en cours ; annulation depuis la fiche du plugin.", 6)
+        self.refresh()
+        def work():
+            try:
+                from cifereca.plugins.playwright_browser import install_chromium
+                code = install_chromium(
+                    consent=True, cancelled=self._chromium_cancel,
+                    progress=lambda phase: GLib.idle_add(
+                        self._chromium_progress, phase
+                    ),
+                ).code
+            except Exception:
+                # Never let a worker traceback disclose subprocess or proxy data.
+                code = "installer_unavailable"
+            GLib.idle_add(self._finish_chromium_operation, code)
+        Thread(target=work, name="cifereca-chromium-install", daemon=True).start()
+
+    def _chromium_progress(self, phase: str) -> bool:
+        if self._chromium_operation_running:
+            if phase == "verifying":
+                self._toast("Téléchargement terminé ; vérification Chromium…", 5)
+            elif phase == "starting":
+                self._toast("Téléchargement Chromium en cours…", 5)
+        return False
+
+    def _finish_chromium_operation(self, code: str) -> bool:
+        self._chromium_operation_running = False
+        self._chromium_cancel.set()
+        self.refresh()
+        message = self._chromium_label(code)
+        dialog = Adw.MessageDialog.new(self.window, "État Chromium", message)
+        dialog.add_response("close", "Fermer")
+        dialog.present()
         return False
 
     def _diagnostic(self, plugin_id: str) -> None:
