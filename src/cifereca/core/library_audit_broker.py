@@ -38,66 +38,76 @@ class LibraryReconciliationReadBrokerImpl:
         Revalidate the selected identity, epoch and complete configured roots
         throughout the operation and before releasing even redacted counts.
         """
-        try:
-            service = self.service
-            config = service.config
-            config_data = config.data
-            identities = service.identities
-            current = service.current_identity
-            epoch = service._account_context_epoch
-            if current is None or current.identity_id != identity_id:
-                return _unavailable({'reconciliation_identity_not_active'})
-            roots = configured_identity_roots(config, identity_id)
-            projected = tuple((row.identity_id, row.directory_name or row.identity_id) for row in identities)
-            configured = tuple((row['id'], row['directory_name']) for row in config.identities())
-            if projected != configured:
-                return _unavailable({'reconciliation_scope_changed'})
-            if not any(row.identity_id == identity_id for row in identities):
-                return _unavailable({'unknown_reconciliation_identity'})
-            database = Path(service.storage.path)
-            if not database.is_absolute() or '..' in database.parts:
-                return _unavailable({'snapshot_unavailable'})
-            changed = False
+        return _run_scoped_audit(self.service, identity_id, control,
+                                 lambda result, _valid: result.redacted())
 
-            def cancelled():
-                nonlocal changed
-                try:
-                    same = (service.config is config and config.data is config_data
-                            and service.identities is identities
-                            and service.current_identity is current
-                            and service._account_context_epoch == epoch
-                            and configured_identity_roots(config, identity_id) == roots)
-                except Exception:
-                    same = False
-                changed = changed or not same
-                return changed or (control is not None and control.cancelled())
 
-            def progress(event):
-                if control is not None:
-                    counters = event.get('inventory', {})
-                    control.report(current=counters.get('files'), total=None,
-                                   message=_MESSAGES.get(event.get('phase'), 'Audit local'))
+def _run_scoped_audit(service, identity_id, control, finish):
+    """Core-only completion hook; the public broker always returns redacted data."""
+    try:
+        config = service.config
+        config_data = config.data
+        identities = service.identities
+        current = service.current_identity
+        epoch = service._account_context_epoch
+        if current is None or current.identity_id != identity_id:
+            return _unavailable({'reconciliation_identity_not_active'})
+        roots = configured_identity_roots(config, identity_id)
+        projected = tuple((row.identity_id, row.directory_name or row.identity_id) for row in identities)
+        configured = tuple((row['id'], row['directory_name']) for row in config.identities())
+        if projected != configured:
+            return _unavailable({'reconciliation_scope_changed'})
+        if not any(row.identity_id == identity_id for row in identities):
+            return _unavailable({'unknown_reconciliation_identity'})
+        storage = service.storage
+        database = Path(storage.path)
+        if not database.is_absolute() or '..' in database.parts:
+            return _unavailable({'snapshot_unavailable'})
+        changed = False
 
-            progress({'phase': 'snapshot'})
-            if cancelled():
-                return _unavailable({'reconciliation_scope_changed' if changed else 'audit_cancelled'})
-            snapshot = read_library_snapshot(database, cancelled=cancelled)
-            if snapshot.reasons:
-                if changed:
-                    return _unavailable({'reconciliation_scope_changed'})
-                return _unavailable(snapshot.reasons)
-            result = audit_library(database, roots, cancelled=cancelled,
-                                   progress=progress, _snapshot=snapshot)
-            stopped = cancelled()
+        def cancelled():
+            nonlocal changed
+            try:
+                same = (service.config is config and config.data is config_data
+                        and service.identities is identities
+                        and service.current_identity is current
+                        and service._account_context_epoch == epoch
+                        and current.identity_id == identity_id
+                        and service.storage is storage and Path(storage.path) == database
+                        and tuple((row.identity_id, row.directory_name or row.identity_id) for row in identities) == projected
+                        and tuple((row["id"], row["directory_name"]) for row in config.identities()) == configured
+                        and configured_identity_roots(config, identity_id) == roots)
+            except Exception:
+                same = False
+            changed = changed or not same
+            return changed or (control is not None and control.cancelled())
+
+        def progress(event):
+            if control is not None:
+                counters = event.get('inventory', {})
+                control.report(current=counters.get('files'), total=None,
+                               message=_MESSAGES.get(event.get('phase'), 'Audit local'))
+
+        progress({'phase': 'snapshot'})
+        if cancelled():
+            return _unavailable({'reconciliation_scope_changed' if changed else 'audit_cancelled'})
+        snapshot = read_library_snapshot(database, cancelled=cancelled)
+        if snapshot.reasons:
             if changed:
                 return _unavailable({'reconciliation_scope_changed'})
-            if stopped:
-                return _unavailable({'audit_cancelled'})
-            return result.redacted()
-        except ValueError as exc:
-            reason = str(exc)
-            return _unavailable({reason if reason in _ROOT_ERRORS else 'reconciliation_unavailable'})
-        except Exception:
-            # A TaskControl, parser or source exception must never expose paths,
-            # identifiers, provider prose or traceback through the plugin API.
-            return _unavailable({'reconciliation_unavailable'})
+            return _unavailable(snapshot.reasons)
+        result = audit_library(database, roots, cancelled=cancelled,
+                               progress=progress, _snapshot=snapshot)
+        stopped = cancelled()
+        if changed:
+            return _unavailable({'reconciliation_scope_changed'})
+        if stopped:
+            return _unavailable({'audit_cancelled'})
+        return finish(result, lambda: not cancelled())
+    except ValueError as exc:
+        reason = str(exc)
+        return _unavailable({reason if reason in _ROOT_ERRORS else 'reconciliation_unavailable'})
+    except Exception:
+        # A TaskControl, parser or source exception must never expose paths,
+        # identifiers, provider prose or traceback through the plugin API.
+        return _unavailable({'reconciliation_unavailable'})

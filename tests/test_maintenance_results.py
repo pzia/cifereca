@@ -48,7 +48,7 @@ def test_completed_result_is_consultable_and_reopenable(ok, monkeypatch):
     assert 'Liens confirmés : 517' in label.text
     assert 'Durée maximale atteinte.' in label.text
     assert '/private' not in label.text
-    assert dialog.responses == {'close': 'Fermer'}
+    assert dialog.responses == {'close': 'Fermer', 'inspect': 'Examiner les cas…'}
     assert label.wrap and label.selectable
     dialog.handlers['response'](dialog, 'close')
     view.button.click()
@@ -86,3 +86,21 @@ def test_cancelled_completion_never_publishes_result():
     args[2](MaintenanceResult(True, details=('Résultat périmé',)))
     view = m.host._maintenance_result_views[0]
     assert view.text == '' and view.button is None
+
+
+def test_inspection_action_is_explicit_and_ignored_after_scope_change(monkeypatch):
+    m = mounted('library.reconciliation.audit')
+    args = execute(m)
+    args[2](MaintenanceResult(True,summary='Bilan local'))
+    view = m.host._maintenance_result_views[0]
+    calls = []
+    monkeypatch.setattr(view.inspector,'start',lambda:calls.append('fresh read'))
+    view.button.click()
+    dialog = view.dialog
+    dialog.handlers['response'](dialog,'inspect')
+    assert calls == ['fresh read']
+    view.button.click()
+    dialog = view.dialog
+    m.host._identity_context_generation += 1
+    dialog.handlers['response'](dialog,'inspect')
+    assert calls == ['fresh read']

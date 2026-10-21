@@ -32,13 +32,16 @@ def result_text(result) -> str:
 class MaintenanceResultView:
     """GTK-thread-owned result, revoked on refresh, retry or identity changes."""
 
-    def __init__(self, *, Gtk, Adw, Pango, parent, row, title, alive):
+    def __init__(self, *, Gtk, Adw, Pango, parent, row, title, alive, inspector=None):
         self.Gtk, self.Adw, self.Pango = Gtk, Adw, Pango
         self.parent, self.row, self.title, self.alive = parent, row, title, alive
         self.button = self.dialog = None
         self.text = ""
+        self.inspector = inspector
 
     def clear(self):
+        if self.inspector is not None:
+            self.inspector.clear()
         self.text = ""
         if self.dialog is not None:
             self.dialog.destroy()
@@ -80,10 +83,14 @@ class MaintenanceResultView:
         scroll.set_child(label)
         dialog.set_extra_child(scroll)
         dialog.add_response("close", "Fermer")
-        dialog.connect("response", lambda *_args: self._closed(dialog))
+        if self.inspector is not None:
+            dialog.add_response("inspect", "Examiner les cas…")
+        dialog.connect("response", lambda _dialog, response: self._closed(dialog, response))
         self.dialog = dialog
         dialog.present()
 
-    def _closed(self, dialog):
+    def _closed(self, dialog, response):
         if self.dialog is dialog:
             self.dialog = None
+            if response == "inspect" and self.inspector is not None and self.alive():
+                self.inspector.start()

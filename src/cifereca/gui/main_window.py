@@ -85,6 +85,7 @@ from .library_rows import project_library_rows
 from .recent_rows import project_recent_rows
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
+from .library_inspection_view import LocalInspectionController
 from .maintenance_result_view import MaintenanceResultView
 from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool, MaintenanceCancelControl, MaintenanceCancelledError, MaintenanceBusyError, MaintenancePlanChangedError, BUSY_MESSAGE, CHANGED_MESSAGE
 from .maintenance_line_widgets import build_maintenance_line
@@ -728,9 +729,12 @@ class MainWindow(Adw.ApplicationWindow):
                     and getattr(self, "_identity_context_generation", None) == scope["generation"]
                 )
 
+            inspector = (LocalInspectionController(parent=self, Gtk=Gtk, Adw=Adw, Pango=Pango,
+                                                   GLib=GLib, alive=result_alive)
+                         if getattr(info, "id", None) == "library.reconciliation.audit" else None)
             result_view = MaintenanceResultView(
                 Gtk=Gtk, Adw=Adw, Pango=Pango, parent=self, row=row,
-                title=info.title, alive=result_alive,
+                title=info.title, alive=result_alive, inspector=inspector,
             )
             self._maintenance_result_views.append(result_view)
 

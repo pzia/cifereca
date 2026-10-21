@@ -12,6 +12,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.gui import maintenance_tools as guard
+from cifereca.gui.library_inspection_view import LocalInspectionController
 from cifereca.gui.maintenance_result_view import MaintenanceResultView
 
 
@@ -144,6 +145,7 @@ def _method():
     ], type_ignores=[]))
     namespace = {
         "MaintenanceResultView": MaintenanceResultView,
+        "LocalInspectionController": LocalInspectionController,
         "clear_box": lambda box: box.children.clear(),
         "Gtk": NS(Button=Button, Label=lambda **_kw: Container(),
                   ScrolledWindow=Container,
