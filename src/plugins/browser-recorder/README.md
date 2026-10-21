@@ -190,7 +190,8 @@ Le module `browser_recorder_zip.py` prépare une **archive ZIP versionnée**
 réseau ni écriture spontanée. Les valeurs inconnues de query/path et les
 textes libres non approuvés deviennent des marqueurs ; JSON conserve sa
 structure et les identifiants explicitement gardés ou pseudonymisés ;
-HTML/XML est réduit à un squelette de balises/sélecteurs génériques.
+HTML/XHTML est réduit à un squelette de balises/sélecteurs génériques.
+XML conserve la casse des balises et les valeurs explicitement revues.
 Les corps binaires et les licences/DRM restent exclus.
 
 **Fidélité métier bornée (premier lot #2530) :** le ZIP conserve désormais
@@ -217,6 +218,16 @@ Les identifiants déjà revus gardent leur valeur approuvée ou pseudonyme,
 encodé comme un seul segment URL. Les secrets restent masqués ; aucun
 gabarit n'autorise un rejeu authentifié. Maximum : 4 096 segments inconnus
 distincts par archive, puis refus sans écriture.
+
+**XML revu (#2530) :** les noms de balises/attributs sûrs conservent leur
+casse ; les identifiants approuvés ou pseudonymisés et les énumérations
+publiques restent lisibles. Autres textes/attributs masqués, secrets masqués
+y compris dans leurs sous-éléments. Les namespaces Atom/DC/OPDS connus
+restent identiques ; les URI inconnues deviennent des labels opaques propres
+au corps (préfixes XML réécrits), sans table de correspondance. XML invalide,
+DTD/entités déclarées ou dépassement de budget : corps omis explicitement.
+Limites : 32 768 caractères en entrée, 1 600 éléments, profondeur 16,
+32 attributs par élément, 16 000 octets projetés. Aucun accès externe.
 
 Le plan fige **les octets exacts** et permet une prévisualisation locale
 de chaque membre avec son empreinte SHA-256. Après avoir décidé **chaque**

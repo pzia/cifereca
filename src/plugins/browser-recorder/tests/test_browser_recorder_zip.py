@@ -760,12 +760,15 @@ def test_html_xml_custom_tag_names_cannot_publish_unreviewed_secrets(
     """
     from browser_recorder_zip import _body
 
+    root = ('<root xmlns:fingerprint="urn:synthetic">'
+            if mime == "application/xml" and ":" in dynamic_tag else "<root>")
     raw = (
-        f"<root><{dynamic_tag}>FICTIONAL_PRIVATE_PAYLOAD</{dynamic_tag}>"
+        root + f"<{dynamic_tag}>FICTIONAL_PRIVATE_PAYLOAD</{dynamic_tag}>"
         "<book><title>FICTIONAL_PRIVATE_TITLE</title></book></root>"
     )
     shaped, state = _body(raw, mime, frozenset())
-    assert state == "captured_markup_structure"
+    assert state == ("captured_xml_structure" if mime == "application/xml"
+                     else "captured_markup_structure")
     assert dynamic_tag not in shaped
     assert private_fragment not in shaped
     assert "FICTIONAL_PRIVATE_PAYLOAD" not in shaped
