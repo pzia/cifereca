@@ -206,7 +206,7 @@ def test_all_counter_labels_are_explicit_safe_and_preserve_uncertainty(tool, mon
     instance.run(prepare(instance), Control())
     details = captured[0]['details']
     assert 'Fichiers observés : 524' in details
-    assert 'Fichiers avec SHA vérifié : 517' in details
+    assert 'Fichiers dont le SHA a été calculé : 517' in details
     assert 'Liens confirmés par les preuves locales : 253' in details
     assert 'Droits sans fichier local vérifié : 5' in details
     assert 'Chemins enregistrés absents au contrôle : 1' in details

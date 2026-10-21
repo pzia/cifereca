@@ -61,7 +61,7 @@ def _limit_warnings(result):
 
 _COUNTER_LABELS = {
     'observed_files': 'Fichiers observés',
-    'hashed_files': 'Fichiers avec SHA vérifié',
+    'hashed_files': 'Fichiers dont le SHA a été calculé',
     'confirmed_link': 'Liens confirmés par les preuves locales',
     'present_unlinked': 'Fichiers présents sans lien confirmé',
     'metadata_candidates': 'Candidats bibliographiques sans preuve de droit',
