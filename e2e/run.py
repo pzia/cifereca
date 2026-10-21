@@ -512,8 +512,9 @@ def main() -> int:
                     # fields into CI logs (same policy as UX611).
                     allowed = {
                         "probe_start", "initial", "long_detail", "scrolled",
-                        "exact_setup", "exact_button", "exact_key",
-                        "exact_verdict", "exact_navigation", "exact_selection",
+                        "exact_setup", "exact_button", "exact_focus",
+                        "exact_key", "exact_verdict", "exact_key_dispatch",
+                        "exact_navigation", "exact_selection",
                         "exact_no_search", "return_list",
                     }
                     stage = report_data.get("p1_1354_phase")
