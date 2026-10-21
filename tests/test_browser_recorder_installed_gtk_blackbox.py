@@ -157,3 +157,185 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
         _flush()
         # Cached plugin modules may be detached at teardown; this test runs
         # alone, without the source-tree Browser Recorder test suite.
+
+
+
+def test_installed_zip_full_review_and_independent_archive_oracle(
+    monkeypatch, tmp_path,
+):
+    """Installed plugin GTK → 81 choices → ZIP; synthetic HTTP injected at seam.
+
+    This executes the packaged, installed implementation and independently
+    reads exported ZIP files with Python stdlib. The HTTP capture boundary
+    is explicitly substituted; this is NOT a real browser-capture recipe.
+    """
+    from hashlib import sha256
+
+    Gtk.init()
+    assert "browser_recorder_page" not in sys.modules
+    monkeypatch.setattr("cifereca.plugins.manager.data_dir", lambda: tmp_path / "core-data")
+    monkeypatch.setattr("cifereca.plugins.manager.cache_dir", lambda: tmp_path / "core-cache")
+
+    class Handle:
+        def __init__(self, task):
+            self.task = task
+            self._complete = False
+            self._callback = None
+            self._result = None
+
+        def done(self):
+            return self._complete
+
+        def result(self):
+            assert self._complete
+            return self._result
+
+        def add_done_callback(self, callback):
+            self._callback = callback
+
+        def finish(self):
+            self._result = self.task(None)
+            self._complete = True
+            self._callback(self)
+
+    class Tasks:
+        def __init__(self):
+            self.handle = None
+
+        def submit(self, work, **options):
+            assert options["kind"] == "browser-recorder"
+            self.handle = Handle(work)
+            return self.handle
+
+    tasks = Tasks()
+    store = PackageStore(tmp_path / "packages")
+    manager = PluginManager(
+        package_store=store,
+        state_store=PluginStateStore(tmp_path / "state.json"),
+        config_store=PluginConfigStore(tmp_path / "config.json"),
+        brokers={"tasks": tasks},
+    )
+    window = Gtk.Window()
+    window.set_default_size(1366, 850)
+    trace = None
+    try:
+        manager.installer.install(
+            _real_package_zip(tmp_path / "browser-recorder.zip"), activate=True,
+        )
+        manager.activate()
+        assert manager.service(PLUGIN_ID) is None  # disabled by default
+        manager.set_enabled(PLUGIN_ID, True)
+        assert manager.status(PLUGIN_ID).state == "ready"
+        plugin = manager.service(PLUGIN_ID)
+        assert plugin is not None
+        page = plugin.pages()[0]
+        root = page.factory(None)
+
+        # Synthetic-only boundary, installed *module*, never the source tree:
+        # production origin guards, Playwright and capture limits are NOT
+        # weakened globally to admit localhost test HTTP.
+        review_module = importlib.import_module("browser_recorder_review_ui")
+        http_module = importlib.import_module("browser_recorder_http")
+        for module in (review_module, http_module):
+            assert Path(module.__file__).resolve().is_relative_to(
+                store.version_root(PACKAGE_ID, "0.1.3").resolve()
+            )
+        origin = "https://books.example.org"
+        ids = tuple(str(2000 + n) for n in range(81))
+        trace = http_module.PrivateHttpTrace((origin,))
+        trace.exchanges.append(http_module.PrivateExchange(
+            1, "GET", url=origin + "/api/books?" +
+            "&".join("BookId=" + n for n in ids),
+            status=200, mime="application/json",
+            response_headers={"content-type": "application/json"},
+            response_body='{"access_token":"FICTIONAL_NONEXPORTABLE_KEY",'
+                          '"books":[{"BookId":2000,"title":"STRUCTURE_FAKE"}]}',
+            response_body_state="captured",
+        ))
+
+        def synthetic_only(start, stop, **kwargs):
+            assert start == origin + "/catalog"
+            assert stop.is_set()
+            assert kwargs["pause_control"] is not None
+            return trace
+
+        monkeypatch.setattr(review_module, "record_http", synthetic_only)
+        window.set_child(root)
+        window.present()
+        _flush()
+        site = _children(root)[1]
+        consent = _children(root)[2]
+        site.set_text(origin + "/catalog")
+        consent.set_active(True)
+        # Use only exposed native GTK controls to complete the flow.
+        assert tasks.handle is None
+        assert not plugin.private_panel.export_button.get_sensitive()
+        plugin.private_panel.start.emit("clicked")
+        assert tasks.handle is not None
+        plugin.private_panel.stop.emit("clicked")
+        tasks.handle.finish()
+        _flush()
+        panel = plugin.private_panel
+        assert panel._review is not None
+        assert len(panel._review.local_rows()) == 81
+        assert not panel.plan_button.get_sensitive()
+        assert not panel.export_button.get_sensitive()
+
+        for page_index in range(4):
+            rows = _children(panel.candidates_box)
+            assert len(rows) == (24 if page_index < 3 else 9)
+            for index, line in enumerate(rows):
+                choice = "keep" if (page_index == 0 and index == 0) else "anonymize"
+                line.get_last_child().set_active_id(choice)
+            assert panel._review.pending() == max(0, 81 - min((page_index + 1) * 24, 81))
+            if page_index < 3:
+                panel.candidate_next.emit("clicked")
+                _flush()
+
+        assert panel.plan_button.get_sensitive()
+        exports = tmp_path / "core-data" / "plugins" / "data" / PLUGIN_ID / "exports"
+        assert not exports.exists()
+        panel.plan_button.emit("clicked")
+        _flush()
+        exact = panel._bundle_preview
+        assert exact is not None
+        assert not panel.export_button.get_sensitive()
+        assert not exports.exists()
+        for member in exact["members"]:
+            panel.bundle_member.set_active_id(member["name"])
+            buffer = panel.bundle_text.get_buffer()
+            text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True)
+            assert text == member["text"]
+            assert sha256(text.encode("utf-8")).hexdigest() == member["sha256"]
+
+        panel.export_button.emit("clicked")  # Cannot export without consent
+        assert not exports.exists()
+        panel.export_confirm.set_active(True)
+        assert panel.export_button.get_sensitive()
+        panel.export_button.emit("clicked")
+        outputs = sorted(exports.glob("*.zip"))
+        assert len(outputs) == 1
+        assert outputs[0].stat().st_mode & 0o777 == 0o600
+        with zipfile.ZipFile(outputs[0]) as archive:
+            assert archive.testzip() is None
+            members = archive.namelist()
+            assert "manifest.json" in members
+            assert "timeline.json" in members
+            assert sorted(members) == sorted(x["name"] for x in exact["members"])
+            for item in exact["members"]:
+                raw = archive.read(item["name"])
+                assert raw == item["text"].encode("utf-8")
+                assert sha256(raw).hexdigest() == item["sha256"]
+            plaintext = "\n".join(archive.read(n).decode("utf-8") for n in members)
+            assert "FICTIONAL_NONEXPORTABLE_KEY" not in plaintext
+            assert ids[0] in plaintext  # explicitly approved business ID
+            assert ids[-1] not in plaintext  # individually anonymized
+            assert "PSEUDO_" in plaintext
+        panel.clear.emit("clicked")
+        _flush()
+        assert not trace.exchanges
+        assert not panel.has_private_data()
+    finally:
+        window.close()
+        manager.close()
+        _flush()
