@@ -347,7 +347,7 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
 
 @pytest.mark.parametrize(("failure", "expected", "fragment"), [
     ("python_missing", "playwright_missing", "Installer les dépendances Python"),
-    ("interrupted", "capture_interrupted", "Navigateur fermé"),
+    ("interrupted", "capture_interrupted", "Session Chromium interrompue"),
     ("unexpected", "capture_failed", "Vérifier Chromium"),
 ])
 def test_gtk_capture_failure_is_attested_and_privacy_safe(
