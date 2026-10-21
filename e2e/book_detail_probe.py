@@ -41,6 +41,11 @@ METADATA = {
     "isbn": "9780306406157",
     "ean": "4006381333931",
     "publisher": "Éditions UX",
+    "awards": ["Prix des lecteurs", "Prix du Quai"],
+    "keywords": ["enquête", "roman"],
+    "collections": ["Collection enquête"],
+    "series_index": 2,
+    "synopsis": "<p>Une enquête de test.</p><p>Résumé disponible sans réseau.</p>",
     "catalogue_metadata": {"publishers": ["Maison A", "Maison B"]},
     "access_token": "SECRET_NE_JAMAIS_AFFICHER",
     "public_product_metadata": {
@@ -237,7 +242,9 @@ def main():
                                  "EAN déclaré", "Identifiant déclaré", "Éditeur",
                                  "Catalogue · Éditeur", "Fiche publique · Marque",
                                  "Fiche publique · Pagination déclarée (support non précisé)",
-                                 "Fiche publique · Format commercial sélectionné"}
+                                 "Fiche publique · Format commercial sélectionné",
+                                 "Prix littéraire", "Mot-clé", "Collection",
+                                 "Numéro dans la série", "Résumé"}
         ]
         return expanded[0], rows
 
@@ -332,12 +339,19 @@ def main():
             ("Sujet", "écologie"), ("Sujet", "nature"),
             ("ISBN déclaré", "9780306406157"),
             ("EAN déclaré", "4006381333931"),
+            ("Éditeur", "Éditions UX"),
+            ("Prix littéraire", "Prix du Quai"),
+            ("Mot-clé", "enquête"),
+            ("Collection", "Collection enquête"),
+            ("Numéro dans la série", "2"),
+            ("Résumé", "Une enquête de test.\n\nRésumé disponible sans réseau."),
             ("Catalogue · Éditeur", "Maison B"),
             ("Fiche publique · Marque", "Marque commerciale"),
             ("Fiche publique · Pagination déclarée (support non précisé)", "228 pages"),
             ("Fiche publique · Format commercial sélectionné", "PDF sans DRM"),
         ):
             assert expected in shown, f"Champ {expected!r} absent du véritable panneau GTK déplié : {shown!r}"
+        assert expander.get_subtitle() == f"{len(rows)} champ(s) bibliographiques"
         assert not any("SECRET_NE_JAMAIS_AFFICHER" in v for _, v in shown)
         assert report["online_calls"] == [], "Recherche déclenchée par ouverture du détail"
         report["checks"]["search_metadata"] = True
@@ -432,6 +446,8 @@ def main():
         for expected in (
             ("Auteur", "Alice Exemple"), ("Auteur", "Bob Exemple"),
             ("Sujet", "nature"), ("ISBN déclaré", "9780306406157"),
+            ("Prix littéraire", "Prix du Quai"), ("Mot-clé", "enquête"),
+            ("Collection", "Collection enquête"),
             ("Fiche publique · Format commercial sélectionné", "PDF sans DRM"),
         ):
             assert expected in shown, f"Bibliothèque n'utilise pas le détail partagé : {shown!r}"

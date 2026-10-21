@@ -127,8 +127,12 @@ def book_detail_presentation(
             if single_author:
                 details.append(("Auteur", single_author, "author"))
     if details:
+        # A summary row has no per-value copy/search controls. Keep the
+        # complete actionable value in the collapsed detail even if its
+        # concise counterpart appears in Essentiel or Bibliothèque.
         already_shown = {(field.label, str(field.value))
-                         for section in sections_list for field in section.fields}
+                         for section in sections_list if section.title == "Détail"
+                         for field in section.fields}
         extra = tuple(
             DetailField(id=f"detail-{index}", label=label, value=value, kind=kind)
             for index, (label, value, kind) in enumerate(details)

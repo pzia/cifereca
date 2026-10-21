@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from itertools import chain
 import re
+from .descriptions import description_text
 
 # These are *public bibliographic facts*, not provider-internal identities.
 _FIELDS = (
@@ -24,16 +25,29 @@ _FIELDS = (
     ("publication_year", "Année de publication"),
     ("dates", "Date"),
     ("edition", "Édition"),
+    ("edition_statement", "Édition"),
     ("series", "Série"),
+    ("series_index", "Numéro dans la série"),
     ("collection", "Collection"),
+    ("collections", "Collection"),
+    ("collection_index", "Numéro dans la collection"),
     ("volume", "Tome"),
     # Keep short editorial themes visible even when a provider supplies
     # hundreds of subject headings; the overall projection remains bounded.
     ("themes", "Thème"),
+    ("keywords", "Mot-clé"),
+    ("tags", "Mot-clé"),
+    ("awards", "Prix littéraire"),
+    ("prizes", "Prix littéraire"),
+    ("literary_prizes", "Prix littéraire"),
     ("subjects", "Sujet"),
+    ("subject", "Sujet"),
     ("genres", "Genre"),
+    ("genre", "Genre"),
+    ("categories", "Catégorie"),
     ("languages", "Langue"),
     ("language", "Langue"),
+    ("original_language", "Langue originale"),
     ("formats", "Format"),
     ("format", "Format"),
     ("book_type", "Type"),
@@ -49,17 +63,23 @@ _FIELDS = (
     ("doi", "DOI déclaré"),
     ("ean", "EAN déclaré"),
     ("price", "Prix éditeur"),
+    ("description", "Résumé"),
+    ("summary", "Résumé"),
+    ("synopsis", "Résumé"),
 )
 _FIELD_KIND = {
     "subtitle": "title", "alternate_titles": "title",
     "authors": "author", "author": "author", "contributors": "author",
-    "subjects": "subject", "themes": "subject", "genres": "subject",
-    "series": "series", "collection": "collection",
+    "subjects": "subject", "subject": "subject", "themes": "subject", "genres": "subject",
+    "genre": "subject", "keywords": "subject", "tags": "subject",
+    "series": "series", "collection": "collection", "collections": "collection",
     "languages": "language", "language": "language",
+    "original_language": "language",
     "isbn": "isbn", "isbns": "isbn", "isbn13": "isbn", "isbn10": "isbn",
 }
 _COPY_ONLY = {"pages", "page_count", "number_of_pages", "publication_year",
-              "dates", "published_at", "publication_date", "price"}
+              "dates", "published_at", "publication_date", "price",
+              "series_index", "collection_index", "description", "summary", "synopsis"}
 
 
 def canonical_book_isbn(value: object) -> str:
@@ -138,6 +158,9 @@ def _values(raw: object, key: str):
             yield from _values(value, key)
     else:
         value = _safe_text(raw)
+        if value and key in {"description", "summary", "synopsis"}:
+            # Reuse the plain-text contract; never render provider markup.
+            value = _safe_text(description_text(value))
         if value:
             yield value
 

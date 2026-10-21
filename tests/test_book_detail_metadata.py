@@ -200,3 +200,54 @@ def test_commercial_namespace_preserves_existing_limits_and_duplicate_semantics(
     }})
     assert len(rows) == 201 and "30 valeur(s)" in rows[-1][1]
     assert detail_metadata_items({"brand":"No new root key"}) == ()
+
+
+def test_indexed_editorial_facts_are_also_visible_and_individually_actionable():
+    rows = detail_metadata_items({
+        'awards': ['Prix du Quai', 'Prix public'], 'prizes': ['Prix du Quai'],
+        'literary_prizes': ['Prix des lecteurs'],
+        'keywords': ['enquête', 'roman'], 'tags': ['roman'],
+        'collections': ['Policier', 'Poche'], 'series_index': 2,
+        'collection_index': 12, 'edition_statement': 'Édition revue',
+        'original_language': 'en', 'genre': 'policier', 'categories': ['Romans'],
+        'catalogue_metadata': {'awards': ['Prix catalogue']},
+        'epub_metadata': {'keywords': ['enquête locale']},
+        'public_product_metadata': {'awards': ['Non attesté pour cette édition']},
+    })
+    assert rows.count(('Prix littéraire', 'Prix du Quai', 'all')) == 1
+    assert ('Prix littéraire', 'Prix des lecteurs', 'all') in rows
+    assert rows.count(('Mot-clé', 'roman', 'subject')) == 1
+    assert ('Collection', 'Poche', 'collection') in rows
+    assert ('Numéro dans la série', '2', 'copy') in rows
+    assert ('Numéro dans la collection', '12', 'copy') in rows
+    assert ('Édition', 'Édition revue', 'all') in rows
+    assert ('Langue originale', 'en', 'language') in rows
+    assert ('Catalogue · Prix littéraire', 'Prix catalogue', 'all') in rows
+    assert ('EPUB · Mot-clé', 'enquête locale', 'subject') in rows
+    assert 'Non attesté' not in repr(rows)
+
+
+def test_editorial_extensions_keep_the_existing_public_text_boundary():
+    rows = detail_metadata_items({
+        'awards': [{'secret': 'PRIVATE'}, 'https://example.test/?token=PRIVATE'],
+        'keywords': ['Enquête', 'Authorization: Bearer PRIVATE'],
+        'collections': [{'name': 'Unknown structure', 'account': 'PRIVATE'}],
+        'tags': ['\x00PRIVATE'], 'literary_prizes': ['Prix public'],
+    })
+    assert rows == (('Mot-clé', 'Enquête', 'subject'),
+                    ('Prix littéraire', 'Prix public', 'all'))
+
+
+def test_summaries_keep_paragraphs_complete_copy_and_source_differences():
+    text = "Premier paragraphe.\n\nSecond paragraphe."
+    rows = detail_metadata_items({
+        'description': '<p>Premier paragraphe.</p><p>Second paragraphe.</p>',
+        'summary': text,
+        'synopsis': '<script>PRIVATE</script><p>Résumé différent.</p>',
+        'epub_metadata': {'description': 'Version EPUB attestée.'},
+    })
+    assert rows.count(('Résumé', text, 'copy')) == 1
+    assert ('Résumé', 'Résumé différent.', 'copy') in rows
+    assert ('EPUB · Résumé', 'Version EPUB attestée.', 'copy') in rows
+    assert 'PRIVATE' not in repr(rows) and '<p>' not in repr(rows)
+    assert detail_metadata_items({'summary': 'https://example.test/?token=PRIVATE'}) == ()
