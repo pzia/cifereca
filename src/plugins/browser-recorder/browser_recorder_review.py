@@ -103,13 +103,22 @@ def _replace(
                 previous = forms.get(variant)
                 if previous is None or (mandatory_secret and not previous[1]):
                     forms[variant] = (subst, mandatory_secret)
-    for form in sorted(forms, key=len, reverse=True):
+    patterns = []
+    substitutions = []
+    for form in sorted(forms, key=lambda value: (-len(value), value)):
         subst, mandatory_secret = forms[form]
         pattern = re.escape(form)
         if not mandatory_secret:
             pattern = r"(?<![A-Za-z0-9])" + pattern + r"(?![A-Za-z0-9])"
-        text = re.sub(pattern, lambda _m, value=subst: value, text)
-    return text
+        patterns.append("(" + pattern + ")")
+        substitutions.append(subst)
+    if not patterns:
+        return text
+    # Match only ORIGINAL input. Sequential substitutions can recognize an
+    # identifier inside a freshly emitted PSEUDO_I0001 (or [SECRET]) marker
+    # and corrupt it a second time, breaking cross-exchange relationships.
+    return re.sub("|".join(patterns),
+                  lambda match: substitutions[match.lastindex - 1], text)
 
 
 def _replace_json_body(text: str, replacements: dict[str, str],

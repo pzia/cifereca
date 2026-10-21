@@ -325,3 +325,82 @@ def test_contact_field_spellings_are_reviewable(field):
     from browser_recorder_review import _category
     assert _category(field, "13000") == "identifier"
     assert _category("year", "2026") is None
+
+
+@pytest.mark.parametrize("pairs", [
+    [("alpha", "PSEUDO_I0001"), ("I0001", "PSEUDO_I0002")],
+    [("I0001", "PSEUDO_I0002"), ("alpha", "PSEUDO_I0001")],
+])
+def test_replacements_never_rescan_generated_pseudonyms(pairs):
+    from browser_recorder_review import _replace
+
+    assert _replace("alpha I0001 alpha", dict(pairs)) == (
+        "PSEUDO_I0001 PSEUDO_I0002 PSEUDO_I0001"
+    )
+
+
+def test_secret_markers_are_not_reinterpreted_as_ordinary_identifiers():
+    from browser_recorder_review import _replace
+
+    assert _replace(
+        "fictional-password SECRET xxfictional-passwordyy",
+        {"fictional-password": "[SECRET]", "SECRET": "PSEUDO_I0002"},
+        secret_values=frozenset(("fictional-password",)),
+    ) == "[SECRET] PSEUDO_I0002 xx[SECRET]yy"
+    # Mandatory substring scrubbing still beats identifier boundaries.
+    assert _replace("1214 214", {"214": "[SECRET]"},
+                    secret_values=frozenset(("214",))) == "1[SECRET] [SECRET]"
+
+
+def test_overlapping_encoded_identifiers_choose_longest_original_occurrence():
+    from browser_recorder_review import _replace
+
+    mapping = {"reader+alpha@example.org": "PSEUDO_I0001",
+               "alpha": "PSEUDO_I0002", "I0001": "PSEUDO_I0003"}
+    source = quote("reader+alpha@example.org", safe="") + " alpha I0001"
+    assert _replace(source, mapping) == "PSEUDO_I0001 PSEUDO_I0002 PSEUDO_I0003"
+
+
+def test_preview_and_saved_zip_preserve_non_cascading_correlations(tmp_path):
+    from urllib.parse import parse_qs, urlsplit
+    from zipfile import ZipFile
+    from browser_recorder_zip import prepare_reviewed_zip
+
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges = [PrivateExchange(
+        1, "POST", url=ORIGIN + "/books?accountId=alpha&bookId=I0001",
+        request_body=json.dumps({"accountId": "alpha", "bookId": "I0001"}),
+        request_headers={"content-type": "application/json"},
+        response_body=json.dumps({"accountId": "alpha", "bookId": "I0001"}),
+        response_headers={"content-type": "application/json"}, status=200,
+    )]
+    review = IdentifierReview(trace)
+    expected = {}
+    for candidate in review.candidates():
+        review.decide(candidate.key, "anonymize")
+        expected[candidate.value] = "PSEUDO_" + candidate.key
+    assert set(expected) == {"alpha", "I0001"}
+    preview = review.preview()["exchanges"][0]
+    projected = json.loads(preview["request_body"])
+    assert projected == {"accountId": expected["alpha"], "bookId": expected["I0001"]}
+    plan = prepare_reviewed_zip(review)
+    assert not list(tmp_path.iterdir())
+    plan.preview()
+    archive_path = tmp_path / plan.save(tmp_path, user_confirmed=True)
+    with ZipFile(archive_path) as archive:
+        row = json.loads(archive.read("exchanges/0001.json"))
+        query = parse_qs(urlsplit(row["url"]).query)
+        for direction in ("request", "response"):
+            body = json.loads(archive.read(row["bodies"][direction]["file"]))
+            assert body == projected
+            assert query == {key: [value] for key, value in body.items()}
+        assert b"PSEUDO_PSEUDO_" not in b"\n".join(
+            archive.read(name) for name in archive.namelist()
+        )
+    # Reversing one decision recomputes from the original trace only.
+    candidate = next(c for c in review.candidates() if c.value == "alpha")
+    review.decide(candidate.key, "keep")
+    restored = json.loads(review.preview()["exchanges"][0]["request_body"])
+    assert restored == {"accountId": "alpha", "bookId": expected["I0001"]}
+    review.destroy()
+    trace.destroy()
