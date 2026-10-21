@@ -10,6 +10,20 @@ from threading import Lock
 from typing import Callable
 
 
+# The Core reconciliation broker emits these exact literals. Arbitrary plugin
+# progress prose can include account names, source URLs or local paths and
+# must never appear in the GTK status line (#2565). This is a presentation
+# allowlist, not a claim that a plugin's phase is authoritative.
+_RECONCILIATION_PHASES = frozenset({
+    "Inventaire local",
+    "Lecture des preuves locales",
+    "Comparaison des preuves locales",
+    "Comparaison des identifiants bibliographiques",
+    "Vérification des chemins enregistrés",
+    "Audit local terminé",
+})
+
+
 @dataclass(frozen=True)
 class MaintenanceLineState:
     phase: str = "idle"
@@ -121,6 +135,20 @@ class MaintenanceLineProgress:
             percent = min(99, (current * 100) // total)
             label = f"{self._activity_label} en cours · {percent} %"
             fraction = percent / 100.0
+        elif (self._activity_label == "Réconciliation" and type(message) is str
+              and message in _RECONCILIATION_PHASES):
+            # The broker can report the number of scanned files but has no
+            # reliable total. Show a bounded count, never a made-up percent.
+            if (message == "Inventaire local" and type(current) is int
+                    and 0 <= current <= 1_000_000 and total is None):
+                label = f"Réconciliation · Inventaire local · {current} fichier(s)"
+            else:
+                label = f"Réconciliation · {message}…"
+            fraction = None
+        elif self._activity_label == "Réconciliation":
+            # Unknown progress prose is ignored instead of overwriting the
+            # last known phase or displaying potentially private strings.
+            return
         else:
             label = f"{self._activity_label} en cours…"
             fraction = None
