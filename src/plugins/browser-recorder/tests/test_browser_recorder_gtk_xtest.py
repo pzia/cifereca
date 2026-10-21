@@ -38,8 +38,8 @@ def _xtest(*args):
     return result.stdout.strip()
 
 
-@pytest.mark.parametrize("width", (1280, 1366))
-def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width):
+@pytest.mark.parametrize("width,height", ((1024, 768), (1280, 720), (1366, 768)))
+def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, height):
     """Native keyboard follows the primary flow, never folded legacy HAR."""
     assert shutil.which("xdotool"), "GTK CI must install XTEST/xdotool"
     Gtk.init()
@@ -57,9 +57,12 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width):
     ))
     window = Gtk.Window()
     window.set_title(f"Cifereca XTEST synthetic {width}")
-    window.set_default_size(width, 850)
-    box = plugin.build(None)
-    window.set_child(box)
+    window.set_default_size(width, height)
+    scroller = plugin.build(None)
+    assert isinstance(scroller, Gtk.ScrolledWindow)
+    assert scroller.get_vscrollbar_policy() == Gtk.PolicyType.AUTOMATIC
+    box = scroller.get_child()
+    window.set_child(scroller)
     window.present()
     _flush()
     try:
@@ -108,6 +111,18 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width):
             pytest.fail("private HTTP start not reachable by real keyboard")
         assert private_start.get_sensitive()
         assert not plugin.private_panel.export_button.get_sensitive()
+        # At reduced heights the ZIP controls are physically outside the
+        # first viewport. Scrolling must make the *real* bottom button visible,
+        # without clicking it, confirming it or creating an archive.
+        adj = scroller.get_vadjustment()
+        assert adj.get_upper() > adj.get_page_size()
+        adj.set_value(adj.get_upper() - adj.get_page_size())
+        _flush()
+        export = plugin.private_panel.export_button
+        ok, bounds = export.compute_bounds(scroller)
+        assert ok and bounds.get_y() >= -2
+        assert bounds.get_y() + bounds.get_height() <= height + 2
+        assert not export.get_sensitive()
         assert not submissions
     finally:
         plugin.deactivate()

@@ -94,8 +94,10 @@ class Check(Widget):
 
 class Gtk:
     Orientation = NS(VERTICAL=1, HORIZONTAL=2)
+    SelectionMode = NS(NONE=0)
     WrapMode = NS(CHAR=1)
     Box = Widget
+    FlowBox = Widget
     Label = Widget
     Button = Widget
     Separator = Widget

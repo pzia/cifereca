@@ -121,7 +121,14 @@ class PrivateReviewPanel:
             "https://identite.exemple.org, https://auth.exemple.org"
         )
         box.append(self.third_party_origins)
-        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # FlowBox wraps the five capture/review buttons at sidebar/mobile
+        # widths; a single horizontal Box could push Stop/Clear off-screen.
+        controls = Gtk.FlowBox()
+        controls.set_selection_mode(Gtk.SelectionMode.NONE)
+        controls.set_min_children_per_line(1)
+        controls.set_max_children_per_line(3)
+        controls.set_row_spacing(6)
+        controls.set_column_spacing(8)
         self.start = Gtk.Button(label="Démarrer HTTP privé")
         self.stop = Gtk.Button(label="Arrêter / revoir")
         self.pause_button = Gtk.Button(label="Mettre en pause")
@@ -151,7 +158,12 @@ class PrivateReviewPanel:
         )
         scroll.set_child(self.candidates_box)
         box.append(scroll)
-        pagination = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        pagination = Gtk.FlowBox()
+        pagination.set_selection_mode(Gtk.SelectionMode.NONE)
+        pagination.set_min_children_per_line(1)
+        pagination.set_max_children_per_line(3)
+        pagination.set_row_spacing(6)
+        pagination.set_column_spacing(8)
         self.candidate_previous = Gtk.Button(label="Identifiants précédents")
         self.candidate_next = Gtk.Button(label="Identifiants suivants")
         self.candidate_page_status = Gtk.Label(
@@ -203,10 +215,12 @@ class PrivateReviewPanel:
         self.bundle_text.set_wrap_mode(Gtk.WrapMode.CHAR)
         member_scroll.set_child(self.bundle_text)
         box.append(member_scroll)
-        self.export_confirm = Gtk.CheckButton(
+        self.export_confirm = Gtk.CheckButton()
+        self.export_confirm.set_child(Gtk.Label(
             label="J'ai revu les membres accessibles ci-dessus et j'accepte "
-                  "de créer localement cette archive pour un partage volontaire."
-        )
+                  "de créer localement cette archive pour un partage volontaire.",
+            xalign=0, wrap=True,
+        ))
         box.append(self.export_confirm)
         self.export_button = Gtk.Button(label="Exporter ce ZIP localement")
         box.append(self.export_button)
