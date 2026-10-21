@@ -9,7 +9,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from .library_audit_broker import _run_scoped_audit
+from .library_audit_broker import _run_scoped_audit, _unavailable
+from .library_inspection_cache import take_inspection_cache
 
 PROVIDERS = {'all': 'Tous les fournisseurs', 'kobo': 'Kobo', 'numilog': 'Numilog',
              'paris': 'Paris', 'local': 'Local', 'unattributed': 'Non attribué', 'other': 'Autre'}
@@ -215,10 +216,16 @@ class LocalInspection:
 
 
 def open_local_inspection(service, *, identity_id, control=None):
-    """Core UI only. Private result or the same closed unavailable envelope.
+    """Core UI only: consume a fresh scoped projection, otherwise audit again.
 
-    This explicitly starts a fresh offline audit. No reuse of a public result,
-    file path, arbitrary identity or historic observation grants authority.
+    The private projection is never obtained from plugin/public payloads. It
+    expires, is single-use, and rechecks live scope and SQLite file stamps on
+    every read. It conveys no authorization for a repair or acquisition.
     """
+    if control is not None and control.cancelled():
+        return _unavailable({'audit_cancelled'})
+    cached = take_inspection_cache(service, identity_id)
+    if cached is not None:
+        return cached
     return _run_scoped_audit(service, identity_id, control,
                              lambda audit, valid: LocalInspection(audit, valid, identity_id))

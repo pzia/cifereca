@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .library_audit import audit_library
 from .library_audit_roots import configured_identity_roots
+from .library_inspection_cache import begin_inspection_cache, remember_inspection_cache
 from .library_reconciliation import read_library_snapshot
 
 _ROOT_ERRORS = frozenset({
@@ -38,8 +39,18 @@ class LibraryReconciliationReadBrokerImpl:
         Revalidate the selected identity, epoch and complete configured roots
         throughout the operation and before releasing even redacted counts.
         """
-        return _run_scoped_audit(self.service, identity_id, control,
-                                 lambda result, _valid: result.redacted())
+        generation, stamp = begin_inspection_cache(self.service)
+
+        def finish(result, scope_valid):
+            # The plugin sees redacted counters only. A private, bounded
+            # inspection can be picked up once by CoreUI without a second scan.
+            public = result.redacted()
+            remember_inspection_cache(
+                self.service, identity_id, result, scope_valid, generation, stamp,
+            )
+            return public
+
+        return _run_scoped_audit(self.service, identity_id, control, finish)
 
 
 def _run_scoped_audit(service, identity_id, control, finish):
@@ -65,7 +76,7 @@ def _run_scoped_audit(service, identity_id, control, finish):
             return _unavailable({'snapshot_unavailable'})
         changed = False
 
-        def cancelled():
+        def same_scope():
             nonlocal changed
             try:
                 same = (service.config is config and config.data is config_data
@@ -80,7 +91,10 @@ def _run_scoped_audit(service, identity_id, control, finish):
             except Exception:
                 same = False
             changed = changed or not same
-            return changed or (control is not None and control.cancelled())
+            return not changed
+
+        def cancelled():
+            return not same_scope() or (control is not None and control.cancelled())
 
         def progress(event):
             if control is not None:
@@ -103,7 +117,7 @@ def _run_scoped_audit(service, identity_id, control, finish):
             return _unavailable({'reconciliation_scope_changed'})
         if stopped:
             return _unavailable({'audit_cancelled'})
-        return finish(result, lambda: not cancelled())
+        return finish(result, same_scope)
     except ValueError as exc:
         reason = str(exc)
         return _unavailable({reason if reason in _ROOT_ERRORS else 'reconciliation_unavailable'})

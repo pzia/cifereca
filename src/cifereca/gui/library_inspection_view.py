@@ -109,7 +109,7 @@ class LocalInspectionController:
         generation = self._generation
         control = self.control = MaintenanceCancelControl()
         dialog = self.Adw.MessageDialog.new(self.parent, 'Inspection locale',
-            'Nouvelle lecture hors réseau des fichiers et preuves de l’identité active. Aucun changement.')
+            'Inspection privée de la dernière réconciliation si encore valide ; sinon nouvelle lecture hors réseau. Aucun changement.')
         dialog.add_response('cancel', 'Annuler')
         dialog.connect('response', lambda *_: self.clear() if self.dialog is dialog else None)
         self.dialog = dialog
