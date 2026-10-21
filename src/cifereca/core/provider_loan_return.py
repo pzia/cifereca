@@ -42,14 +42,19 @@ def return_digital(self, loan: Loan, *, explicit_retry: bool = False, _TRACE_LOG
             "code": "loan_return_identity_conflict",
             "retry": "resolve_identity",
         }
-    from .return_adept_orchestrator import adept_return_key, public_state
+    from .return_adept_orchestrator import (
+        adept_return_key, adobe_return_attested, public_state,
+    )
     adobe_key = adept_return_key(
         loan.source_provider, loan.source_credential,
         str(account.unique_id or "primary"), str(loan.id),
     )
     adobe = self.storage.loan_return_state(adobe_key)
     if adobe is not None:
-        if not explicit_retry or adobe.get("adobe_verified") is not True:
+        # A lone adobe_verified=True on request_sent, failed or pending
+        # cannot authorize a PNB mutation. Require the exact same attested
+        # Adobe phase that the public return state already trusts.
+        if not explicit_retry or not adobe_return_attested(adobe):
             return {
                 **public_state(adobe), "reason": "adobe_return_takes_precedence",
             }
