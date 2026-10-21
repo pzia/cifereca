@@ -151,7 +151,21 @@ def test_identity_change_during_navigation_revokes_selection():
 
 
 def test_search_scope_stamp_binds_identity_query_and_local_only():
-    from cifereca.gui import search_results
+    # Compile the GTK-free adapter function in isolation: Core CI runs
+    # without PyGObject, while the real GTK checks run separately.
+    import ast
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] /
+              "src/cifereca/gui/search_results.py")
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    fn = next(node for node in tree.body
+              if isinstance(node, ast.FunctionDef)
+              and node.name == "_populate_search")
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(
+        ast.Module(body=[fn], type_ignores=[])), str(source), "exec"),
+         namespace)
+    populate = namespace["_populate_search"]
 
     window, _, _, state, identity = _window(_row())
     def populate_remote():
@@ -163,8 +177,8 @@ def test_search_scope_stamp_binds_identity_query_and_local_only():
         window._online_source_context = (
             state.text, state.field, state.scope, identity.identity_id
         )
-        search_results._populate_search(window, list(window._remote_search_results),
-                                        announce=False)
+        populate(window, list(window._remote_search_results),
+                 announce=False)
     window._loaded_search_context = None
     populate_remote()
     assert can_open_loaded_search_notice(window, **_coords())
