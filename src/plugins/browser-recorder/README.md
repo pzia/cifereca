@@ -207,6 +207,17 @@ exact avant tout partage et ne garantit pas la reproduction complète d'un
 site. Les endpoints propres à un fournisseur, les corps omis et les contenus
 HTML riches restent à traiter dans des lots ultérieurs de #2530/#2528.
 
+**Gabarits de routes (#2530) :** deux segments inconnus différents reçoivent
+des marqueurs opaques différents (`~route-0001~`, `~route-0002~`, etc.). Un
+même segment, y compris encodé en pourcentage, garde le même marqueur dans
+les requêtes et redirections du ZIP. La correspondance reste en mémoire
+pendant la préparation et n'est jamais jointe ; ces marqueurs ne désignent
+pas le nom réel de l'endpoint et ne sont pas comparables entre archives.
+Les identifiants déjà revus gardent leur valeur approuvée ou pseudonyme,
+encodé comme un seul segment URL. Les secrets restent masqués ; aucun
+gabarit n'autorise un rejeu authentifié. Maximum : 4 096 segments inconnus
+distincts par archive, puis refus sans écriture.
+
 Le plan fige **les octets exacts** et permet une prévisualisation locale
 de chaque membre avec son empreinte SHA-256. Après avoir décidé **chaque**
 identifiant, cliquer « Préparer l'aperçu exact du ZIP ». La liste présente

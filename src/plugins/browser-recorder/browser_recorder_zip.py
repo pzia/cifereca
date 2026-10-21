@@ -17,7 +17,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
 from browser_recorder import RecorderError, SAFE_SEGMENTS, site_origin
@@ -29,6 +29,7 @@ MAX_MEMBERS = 600
 MAX_UNCOMPRESSED = 4 * 1024 * 1024
 MAX_ZIP_BYTES = 2 * 1024 * 1024
 MAX_BODY_OUT = 16000
+MAX_ROUTE_LABELS = 4096
 _FILENAME = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}[.]zip$")
 _FIELD = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,80}$")
 _SAFE_PATH = SAFE_SEGMENTS | frozenset((
@@ -136,7 +137,8 @@ def _safe_field_key(key: str) -> bool:
 
 
 def _safe_url(url: str, approved: frozenset[str],
-              allowed_origins: frozenset[str]) -> str:
+              allowed_origins: frozenset[str],
+              route_labels: dict[str, str] | None = None) -> str:
     if type(url) is not str or len(url) > 4096:
         raise RecorderError("bundle_invalid_url")
     try:
@@ -152,13 +154,36 @@ def _safe_url(url: str, approved: frozenset[str],
                 # A browser may visit a third-party identity provider as part
                 # of the user's journey; its unapproved URL is not shareable.
                 return "[OUT_OF_SCOPE]"
-        # Publication of a path is not proof of an authentication grant.
-        path = "/".join(
-            part if part.casefold() in _SAFE_PATH or part in approved
-            or part == ""
-            else "~redacted~"
-            for part in p.path.split("/")
-        )
+        # Unknown segments must stay private, but collapsing every one to
+        # the same marker makes distinct endpoints indistinguishable. This
+        # mapping exists only while preparing ONE bundle, never in its plan
+        # or members; it is not a hash/dictionary oracle for original values.
+        if route_labels is None:
+            route_labels = {}
+
+        def segment(part):
+            decoded = unquote(part, errors="strict")
+            if not part or decoded.casefold() in _SAFE_PATH:
+                return part
+            if decoded in {"[SECRET]", "[UNREVIEWED]"}:
+                return "~redacted~"
+            if decoded in approved:
+                # A reviewed value may include '/', '?', '#' or '%'. Keep
+                # it in a SINGLE segment, including when URL-encoded input
+                # and JSON bodies use different representations.
+                return quote(decoded, safe="")
+            if decoded not in route_labels:
+                if len(route_labels) >= MAX_ROUTE_LABELS:
+                    raise RecorderError("bundle_route_limit")
+                number = len(route_labels) + 1
+                label = f"~route-{number:04d}~"
+                while label in approved or label in route_labels.values():
+                    number += 1
+                    label = f"~route-{number:04d}~"
+                route_labels[decoded] = label
+            return route_labels[decoded]
+
+        path = "/".join(segment(part) for part in p.path.split("/"))
         pairs = parse_qsl(p.query, keep_blank_values=True, max_num_fields=120)
         pagination = _paired_pagination(pairs)
         query = []
@@ -506,6 +531,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
            if c.decision == "anonymize"]
     )
     allowed_origins = frozenset(review.trace.origins)
+    route_labels: dict[str, str] = {}
     files = {}
     timeline = []
     for entry in preview["exchanges"]:
@@ -519,8 +545,8 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
             "exchange_id": eid, "method": entry["method"],
             "page_id": entry["page_id"], "started_ms": entry["started_ms"],
             "duration_ms": entry["duration_ms"], "status": entry["status"],
-            "url": _safe_url(entry["url"], approved, allowed_origins),
-            "redirect_to": (_safe_url(entry["redirect_to"], approved, allowed_origins)
+            "url": _safe_url(entry["url"], approved, allowed_origins, route_labels),
+            "redirect_to": (_safe_url(entry["redirect_to"], approved, allowed_origins, route_labels)
                             if entry["redirect_to"] else None),
             "mime": _safe_headers({"content-type": entry["mime"]}).get("content-type", ""),
             "network_error": entry["network_error"],
@@ -566,12 +592,15 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         "capture_omissions": capture_omissions,
         "secret_values_suppressed": preview["secrets_replaced"],
         "coverage": "JSON shapes and selected HTML/XML selectors; free text omitted",
+        "route_templates": "Opaque ~route-NNNN~ segments are stable within this archive only; originals omitted",
         "max_uncompressed": MAX_UNCOMPRESSED,
     })
     files["README.md"] = (
         b"# Cifereca Browser Recorder\n"
         b"Synthetic or explicitly reviewed metadata and structural body excerpts.\n"
         b"All nonapproved values may be omitted; absent fields are not evidence.\n"
+        b"Opaque ~route-NNNN~ path segments preserve equality, not original route names.\n"
+        b"Route labels are local to this archive; no reverse mapping is included.\n"
         b"Never replay captured requests or infer legal rights/DRM from a trace.\n"
     )
     files["LLM_INSTRUCTIONS.md"] = (

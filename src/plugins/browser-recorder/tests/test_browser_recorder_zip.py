@@ -212,7 +212,9 @@ def test_unapproved_fake_pseudonyms_never_pass_only_by_prefix():
     plan = prepare_reviewed_zip(review)
     text = json.dumps(plan.preview())
     assert "PSEUDO_INOT_APPROVED" not in text
-    assert "[UNREVIEWED]" in text or "~redacted~" in text
+    members = {row["name"]: row["text"] for row in plan.preview()["members"]}
+    exchange = json.loads(members["exchanges/0001.json"])
+    assert exchange["url"] == ORIGIN + "/~route-0001~?opaque=%5BUNREVIEWED%5D"
     review.destroy()
     trace.destroy()
 
@@ -941,3 +943,108 @@ def test_zip_only_fixture_preserves_workflow_and_masks_session(tmp_path):
     finally:
         review.destroy()
         trace.destroy()
+
+
+
+def test_saved_zip_distinguishes_unknown_routes_and_correlates_redirects(tmp_path):
+    """ZIP-only oracle: recover equality of routes, never original names."""
+    from urllib.parse import urlsplit
+
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges = [
+        PrivateExchange(1, "POST", url=ORIGIN + "/PRIVATE_LOOKUP/PRIVATE_ACCOUNT",
+                        status=302, redirect_to="/PRIVATE_DETAIL/PRIVATE_ACCOUNT"),
+        PrivateExchange(2, "GET", url=ORIGIN + "/PRIVATE_DETAIL/PRIVATE_ACCOUNT",
+                        status=200),
+        # Percent-encoding of the same observed segment must not invent a
+        # different route. These are PRIVATE arbitrary provider segments.
+        PrivateExchange(3, "GET", url=ORIGIN + "/%50RIVATE_DETAIL/PRIVATE_OTHER",
+                        status=403),
+    ]
+    review = IdentifierReview(trace)
+    assert not review.candidates()
+    plan = prepare_reviewed_zip(review)
+    plan.preview()
+    path = tmp_path / plan.save(tmp_path, user_confirmed=True)
+    with ZipFile(path) as archive:
+        rows = [json.loads(archive.read(f"exchanges/{n:04d}.json"))
+                for n in (1, 2, 3)]
+        routes = [urlsplit(row["url"]).path.split("/")[1:] for row in rows]
+        assert rows[0]["redirect_to"] == urlsplit(rows[1]["url"]).path
+        assert routes[0][0] != routes[1][0]
+        assert routes[1][0] == routes[2][0]
+        assert routes[0][1] == routes[1][1]
+        assert routes[1][1] != routes[2][1]
+        assert all(segment.startswith("~route-") for row in routes for segment in row)
+        payload = b"\n".join(archive.read(name) for name in archive.namelist())
+        for original in (b"PRIVATE_LOOKUP", b"PRIVATE_DETAIL", b"PRIVATE_ACCOUNT",
+                         b"PRIVATE_OTHER", b"%50RIVATE_DETAIL"):
+            assert original not in payload
+        manifest = json.loads(archive.read("manifest.json"))
+        assert "stable within this archive only" in manifest["route_templates"]
+    assert len(list(tmp_path.iterdir())) == 1
+    review.destroy()
+    trace.destroy()
+
+
+@pytest.mark.parametrize("decision", ("keep", "anonymize"))
+def test_reviewed_encoded_path_identifier_matches_json_without_url_injection(decision):
+    from urllib.parse import quote, unquote, urlsplit
+
+    identifier = "catalog/214?field=value#fragment"
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges = [PrivateExchange(
+        1, "GET", url=ORIGIN + "/books/" + quote(identifier, safe=""),
+        response_body=json.dumps({"bookId": identifier}),
+        response_headers={"content-type": "application/json"}, status=200,
+    )]
+    review = IdentifierReview(trace)
+    candidate = next(c for c in review.candidates() if c.value == identifier)
+    for row in review.candidates():
+        review.decide(row.key, decision)
+    members = {row["name"]: row["text"]
+               for row in prepare_reviewed_zip(review).preview()["members"]}
+    exchange = json.loads(members["exchanges/0001.json"])
+    parsed = urlsplit(exchange["url"])
+    parts = parsed.path.split("/")
+    body = json.loads(members["bodies/0001-response.txt"])
+    expected = identifier if decision == "keep" else "PSEUDO_" + candidate.key
+    assert len(parts) == 3
+    assert unquote(parts[-1]) == body["bookId"] == expected
+    assert not parsed.query and not parsed.fragment
+    if decision == "anonymize":
+        assert identifier not in json.dumps(members)
+        assert quote(identifier, safe="") not in json.dumps(members)
+    review.destroy()
+    trace.destroy()
+
+
+def test_route_labels_cannot_impersonate_kept_ids_or_another_unknown_segment():
+    from browser_recorder_zip import _safe_url
+
+    labels = {}
+    approved = frozenset(("~route-0001~",))
+    allowed = frozenset((ORIGIN,))
+    first = _safe_url(ORIGIN + "/PRIVATE_ROUTE", approved, allowed, labels)
+    kept = _safe_url(ORIGIN + "/~route-0001~", approved, allowed, labels)
+    spoof = _safe_url(ORIGIN + "/~route-0002~", approved, allowed, labels)
+    assert len({first, kept, spoof}) == 3
+    assert kept.endswith("/~route-0001~")
+    assert _safe_url(ORIGIN + "/PRIVATE_ROUTE", approved, allowed, labels) == first
+    # The marker's syntax alone is never approval to publish it unchanged.
+    assert not spoof.endswith("/~route-0002~")
+
+
+def test_route_label_limit_and_unapproved_origins_fail_before_mapping(monkeypatch):
+    import browser_recorder_zip as module
+
+    monkeypatch.setattr(module, "MAX_ROUTE_LABELS", 1)
+    labels = {}
+    allowed = frozenset((ORIGIN,))
+    assert module._safe_url("https://thirdparty.example.org/PRIVATE", frozenset(),
+                            allowed, labels) == "[OUT_OF_SCOPE]"
+    assert labels == {}
+    module._safe_url(ORIGIN + "/PRIVATE_FIRST", frozenset(), allowed, labels)
+    with pytest.raises(RecorderError, match="bundle_route_limit"):
+        module._safe_url(ORIGIN + "/PRIVATE_SECOND", frozenset(), allowed, labels)
+    assert len(labels) == 1
