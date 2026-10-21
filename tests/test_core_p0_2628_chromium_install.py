@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import ast
 import os
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -193,3 +197,84 @@ def test_cache_unwritable_parent_fails_before_download(monkeypatch, tmp_path):
     ))
     assert browser.install_chromium(consent=True).code == "browser_cache_unavailable"
     assert not cache.exists()
+
+
+
+def test_cancel_reaps_real_installer_process_group_when_parent_exits_first(tmp_path):
+    """Exercise Linux signals: Node-like child ignores TERM, launcher exits.
+
+    The child is an inert Python sleeper in a fresh process group; no shell,
+    browser, network call, credentials or provider are used. The test fails
+    with the old _stop implementation which returned when only the parent
+    had exited, leaving its independent downloader child alive.
+    """
+    import pytest
+
+    if not sys.platform.startswith("linux") or not Path("/proc/self/stat").is_file():
+        pytest.skip("requires Linux /proc and POSIX process groups")
+
+    marker = tmp_path / "synthetic-child.pid"
+    child_script = (
+        "import os,signal,sys,time\n"
+        "from pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+        "while True: time.sleep(.1)\n"
+    )
+    parent_script = (
+        "import subprocess,sys,time\n"
+        "from pathlib import Path\n"
+        "marker = Path(sys.argv[1])\n"
+        "subprocess.Popen([sys.executable, '-c', sys.argv[2], str(marker)], "
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,"
+        "stderr=subprocess.DEVNULL,close_fds=True)\n"
+        "until = time.monotonic() + 5\n"
+        "while not marker.is_file() and time.monotonic() < until: time.sleep(.02)\n"
+        "if not marker.is_file(): sys.exit(3)\n"
+        "while True: time.sleep(.1)\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", parent_script, str(marker), child_script],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True,
+    )
+
+    def child_is_live(pid):
+        stat_file = Path(f"/proc/{pid}/stat")
+        try:
+            state = stat_file.read_text().split(") ", 1)[1][0]
+        except FileNotFoundError:
+            return False
+        # The child is orphaned when the parent exits. A zombie is inert,
+        # awaiting reaping by PID 1; os.kill(pid, 0) would return success.
+        return state not in ("Z", "X", "x")
+
+    try:
+        deadline = time.monotonic() + 8
+        while not marker.is_file() and time.monotonic() < deadline:
+            time.sleep(.03)
+        assert marker.is_file(), "synthetic downloader child never started"
+        child_pid = int(marker.read_text())
+        assert child_pid != proc.pid
+        assert child_is_live(child_pid)
+        assert os.getpgid(child_pid) == proc.pid
+
+        browser._stop(proc)
+        assert proc.poll() is not None
+        deadline = time.monotonic() + 3
+        while child_is_live(child_pid) and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert not child_is_live(child_pid), (
+            "installer download child survived even though the parent exited"
+        )
+    finally:
+        # Ensure a failing test does not leave a synthetic subprocess behind.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
