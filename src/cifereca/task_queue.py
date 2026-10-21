@@ -70,7 +70,7 @@ class PriorityExecutor:
         self._queued_at: dict[Future[Any], int] = {}
         self._queue_wait_ns: deque[int] = deque(maxlen=256)
         self._worker_ns: deque[int] = deque(maxlen=256)
-        self._queue: queue.PriorityQueue[tuple[int, int, Future[Any] | None, Callable[[], Any] | None]] = queue.PriorityQueue()
+        self._queue: queue.PriorityQueue[tuple[int | float, int, Future[Any] | None, Callable[[], Any] | None]] = queue.PriorityQueue()
         self._sequence = itertools.count()
         self._closed = False
         self._lock = threading.Lock()
@@ -199,7 +199,12 @@ class PriorityExecutor:
                             cancelled.append(future)
                         self._queue.task_done()
                 for _ in self._threads:
-                    self._queue.put((10_000, next(self._sequence), None, None))
+                    # submit accepts any integer priority, including values
+                    # greater than 10_000. An integer stop priority could
+                    # overtake real queued work when cancel_futures=False,
+                    # stranding Futures and shared admission reservations.
+                    # +inf sorts after every permitted finite integer.
+                    self._queue.put((float("inf"), next(self._sequence), None, None))
         # A later shutdown(wait=True) must still join a pool that was
         # previously closed with wait=False. Closing is idempotent; waiting
         # for shutdown completion is an independent caller request.
