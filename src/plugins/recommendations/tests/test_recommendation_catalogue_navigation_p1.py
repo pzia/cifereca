@@ -541,3 +541,13 @@ def test_malformed_coordinates_do_not_create_executable_action():
     assert available[0]["credential"] == "vault-1"
     assert "SECRET" not in repr(presented[-1])
     assert not searches
+
+
+def test_exactly_sixteen_distinct_verified_notices_are_not_called_incomplete():
+    variants = tuple(_variant(record=f"exact-{index}") for index in range(16))
+    _view_instance, _, _calls, detail, _row = _view(variants)
+    section = next(s for s in detail.sections if s.id == "source-editions")
+    assert len([field for field in section.fields
+                if field.id.startswith("source-edition-")
+                and field.id not in {"source-edition-warning", "source-edition-limit"}]) == 16
+    assert not any(field.id == "source-edition-limit" for field in section.fields)
