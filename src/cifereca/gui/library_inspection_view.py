@@ -207,6 +207,23 @@ class LocalInspectionController:
         session = self.session
         window = Adw.Window(transient_for=self.parent, modal=True, title='Réconciliation · cas locaux')
         window.set_default_size(920, 620)
+        # Adw.Window does not add an application header by itself: without
+        # one, a private comparison window has no discoverable maximize/close
+        # controls on client-side decorated desktops. Always keep it resizable.
+        window.set_resizable(True)
+        window.set_decorated(True)
+        toolbar_view = Adw.ToolbarView()
+        heading = Adw.HeaderBar()
+        heading.set_title_widget(Gtk.Label(label='Réconciliation · cas locaux'))
+        grow = Gtk.Button(label='Agrandir / Restaurer')
+        grow.set_tooltip_text(
+            'Agrandir la comparaison au maximum de l’écran ou revenir à la taille normale'
+        )
+        grow.connect('clicked', lambda *_: (
+            window.unmaximize() if window.is_maximized() else window.maximize()
+        ))
+        heading.pack_end(grow)
+        toolbar_view.add_top_bar(heading)
         self.dialog = window
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         for edge in ('top', 'bottom', 'start', 'end'):
@@ -391,7 +408,8 @@ class LocalInspectionController:
         close = Gtk.Button(label='Fermer')
         for widget in (previous, count, following, close): footer.append(widget)
         box.append(footer)
-        window.set_content(box)
+        toolbar_view.set_content(box)
+        window.set_content(toolbar_view)
         offset = [0]
         current_total = [0]
         candidate_items = [()]
