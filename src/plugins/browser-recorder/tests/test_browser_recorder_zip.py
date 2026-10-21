@@ -637,10 +637,10 @@ def test_private_dynamic_schema_keys_never_reach_approved_zip(
     trace = PrivateHttpTrace((ORIGIN,))
     trace.exchanges.append(PrivateExchange(
         1, "POST",
-        url=ORIGIN + "/api/books?" + dynamic_key + "=value&BookId=214",
+        url=ORIGIN + "/api/books?" + dynamic_key + "=FICTIONAL_RAW_PRIVATE42&BookId=214",
         request_headers={"content-type": "application/json"},
         request_body=json.dumps({
-            dynamic_key: "value", "BookId": 214,
+            dynamic_key: "FICTIONAL_RAW_PRIVATE42", "BookId": 214,
             "access_token": "FICTIONAL_SECRET", "customField": "value",
         }),
         status=200,
