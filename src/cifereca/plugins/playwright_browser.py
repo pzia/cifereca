@@ -160,16 +160,37 @@ def _stop(proc: subprocess.Popen) -> None:
             pass
     try:
         proc.wait(timeout=3)
-        return
     except subprocess.TimeoutExpired:
         pass
+
+    # Reaping the Playwright CLI parent does NOT prove its downloader
+    # subprocesses have exited. A child can ignore SIGTERM while the Node
+    # launcher exits promptly. Check the original dedicated process group
+    # even when proc.wait() already returned, and force-stop remaining members.
+    # Every installer is launched with start_new_session=True above.
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
+        os.killpg(proc.pid, 0)
+    except ProcessLookupError:
+        # Entire process group is gone; do not signal a reused process ID.
+        pass
     except (OSError, AttributeError):
+        # Unsupported group signalling: at least ensure the direct child is
+        # stopped. Never target the process group of our own application.
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+    else:
         try:
-            proc.kill()
-        except OSError:
-            pass
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (OSError, AttributeError):
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+
     try:
         proc.wait(timeout=3)
     except (OSError, subprocess.TimeoutExpired):
