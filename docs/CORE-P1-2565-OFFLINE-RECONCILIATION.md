@@ -382,9 +382,13 @@ fichiers » serait erroné. Le filtre texte se combine au fournisseur
 et à l'état pour rechercher instantanément titre, auteur, nom de fichier
 et identifiant d’édition visibles dans les libellés, sans requête réseau.
 Les SHA et le texte technique des preuves restent consultables dans les
-détails mais ne participent pas à la recherche libre. Les racines effectivement
-inspectées sont lisibles **uniquement dans la fenêtre privée**, jamais
-dans le broker expurgé, les diagnostics ou un export.
+détails mais ne participent pas à la recherche libre. Les racines **configurées
+pour inspection** sont lisibles **uniquement dans la fenêtre privée** :
+leur présence n'atteste pas qu'elles aient été parcourues complètement.
+Le panneau « Voir les racines et exclusions » détaille les répertoires
+inaccessibles, liens symboliques/fichiers spéciaux ignorés et les causes
+fermées des limites de scan. Aucun chemin local n'est ajouté au broker
+expurgé, aux diagnostics ou à un export.
 
 
 ## Inspection sans modale d'attente — P0 #2656
@@ -443,6 +447,38 @@ Recette synthétique : 6 EPUB Numilog, 3 chaînes de droits complètes,
 3 droits sans lien confirmé, 2 fichiers partageant le même ISBN et
 deux droits associés chacun à une notice de ce même ISBN. Les candidats
 restent affichés pour **chacun** sans prouver aucun rattachement.
+
+
+## Causes précises sans fausse provenance — P0 #2657
+
+La fiche privée de chaque **droit sans fichier vérifié** distingue :
+
+- une acquisition complète **du même compte, connexion, identité,
+  fournisseur et édition** d'une ligne du ledger portant la même
+  référence de droit mais issue d'un autre périmètre ; cette dernière
+  est signalée comme **preuve contradictoire** sans divulguer ses champs
+  privés et ne compte jamais comme une acquisition probante ;
+- l'artefact de l'acquisition et l'artefact d'un placement explicite :
+  une divergence est nommée au lieu d'un message générique ;
+- un chemin SQLite **absent** au contrôle sécurisé, **inaccessible**,
+  **hors racines autorisées**, ou **présent à un contrôle ponctuel**
+  mais non inventorié avec SHA. Un chemin présent ne certifie ni
+  son contenu EPUB ni un droit. Un chemin absent ne certifie pas
+  l'absence du livre à un autre emplacement ;
+- un inventaire **incomplet** avec ses causes de budget/accès/parser,
+  qui ne doit jamais être interprété comme un achat non téléchargé.
+
+Dans Maintenance, le périmètre est désormais décrit comme **racines
+configurées**, et non comme « racines inspectées » sans preuve. Le
+nombre d'exclusions est visible en permanence ; la liste des chemins
+reste dans un panneau privé de la fenêtre de consultation, révoqué
+avec la session. Ces éléments ne sont pas exposés au cache disque,
+au broker, aux logs, aux plugins ou aux diagnostics.
+
+Les fixtures de non-régression couvrent chemin hors périmètre,
+ENOENT sécurisé, lien symbolique, fichier physiquement présent mais
+hors formats scannés, collision d'identifiant de droit entre comptes,
+et acquisition/placement divergents, sans lecture réseau ni mutation.
 
 
 ## Explorer manuellement les fichiers sans lien — P0 #2657

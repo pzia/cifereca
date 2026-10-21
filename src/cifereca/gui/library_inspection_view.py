@@ -233,13 +233,56 @@ class LocalInspectionController:
         synopsis.set_wrap(True)
         box.append(synopsis)
         roots = overview.get('roots', ())
-        if roots:
-            root_label = Gtk.Label(xalign=0, label='Racines inspectées (privé) : '
-                                   + ' · '.join(roots[:3])
-                                   + (' · …' if len(roots) > 3 else ''))
-            root_label.set_wrap(True)
-            root_label.set_selectable(True)
-            box.append(root_label)
+        unavailable = overview.get('unavailable_directories', ())
+        unavailable_total = overview.get('unavailable_directories_total', len(unavailable))
+        notes = overview.get('inventory_limit_notes', ())
+        scope_summary = Gtk.Label(xalign=0, label=(
+            f"Périmètre local · {len(roots)} racine(s) configurée(s) "
+            f"(pas nécessairement parcourues) · "
+            f"{unavailable_total} dossier(s) inaccessible(s) · "
+            f"{len(notes)} cause(s) de limite d’inventaire"
+        ))
+        scope_summary.set_wrap(True)
+        box.append(scope_summary)
+        # This disclosure contains private local filesystem paths. It is
+        # attached only to the revocable inspection dialog, not exported to
+        # logs, broker, plugins, or the system status page.
+        scope = Gtk.Expander(label='Voir les racines et exclusions (privé)')
+        coverage = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        lines = ['Racines configurées pour inspection (pas une preuve de parcours complet) :']
+        lines.extend('• ' + root for root in roots)
+        if not roots:
+            lines.append('• Aucune racine configurée dans cette vue.')
+        if notes:
+            lines.append('Limites constatées :')
+            lines.extend('• ' + reason for reason in notes)
+        if unavailable:
+            lines.append('Répertoires inaccessibles ou non vérifiés :')
+            lines.extend('• ' + path for path in unavailable)
+            if unavailable_total > len(unavailable):
+                lines.append(
+                    f"• {unavailable_total-len(unavailable)} autre(s) "
+                    "répertoire(s) non affiché(s) (limite de 128)."
+                )
+        if overview.get('skipped_symlinks') or overview.get('skipped_special'):
+            lines.append(
+                f"Entrées ignorées · liens symboliques : "
+                f"{overview.get('skipped_symlinks', 0)} · "
+                f"fichiers spéciaux : {overview.get('skipped_special', 0)}"
+            )
+        lines.append('Aucune absence de livre ne peut être déduite des exclusions.')
+        coverage_label = Gtk.Label(label='\n'.join(lines), xalign=0)
+        coverage_label.set_wrap(True)
+        coverage_label.set_selectable(True)
+        coverage.append(coverage_label)
+        coverage_scroll = Gtk.ScrolledWindow()
+        coverage_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        coverage_scroll.set_min_content_height(96)
+        coverage_scroll.set_max_content_height(124)
+        coverage_scroll.set_child(coverage)
+        scope.set_child(coverage_scroll)
+        scope.set_expanded(bool(notes or unavailable))
+        box.append(scope)
         legend = Gtk.Label(xalign=0, label=(
             'Droits et fichiers ne se correspondent pas nécessairement un à un. '
             'Un état peut en recouvrir un autre ; aucun total ne prouve la présence '

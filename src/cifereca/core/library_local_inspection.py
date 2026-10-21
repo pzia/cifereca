@@ -31,6 +31,24 @@ _REASONS = {
     'explicit_placement_sha_size': 'Placement explicite avec SHA et taille concordants.',
     'explicit_right_ledger_placement_sha_size': 'Droit, acquisition complète et placement concordants.',
 }
+_INVENTORY_LIMIT_LABELS = {
+    'entry_budget': 'Nombre maximal d’entrées de répertoires atteint.',
+    'file_budget': 'Nombre maximal de fichiers observables atteint.',
+    'hash_byte_budget': 'Budget global des octets SHA épuisé.',
+    'file_byte_budget': 'Au moins un fichier dépasse le plafond unitaire de lecture.',
+    'metadata_byte_budget': 'Budget de métadonnées EPUB épuisé.',
+    'time_budget': 'Durée limite de l’inventaire atteinte.',
+    'depth_budget': 'Profondeur maximale de sous-dossiers atteinte.',
+    'entry_unavailable': 'Au moins une entrée de répertoire inaccessible.',
+    'directory_unavailable': 'Au moins un dossier ou une racine inaccessible.',
+    'directory_changed': 'Un dossier a changé pendant l’inspection.',
+    'root_changed': 'Une racine a changé pendant l’inspection.',
+    'file_changed': 'Un fichier a changé pendant son inspection.',
+    'epub_parser_limit_or_invalid': 'Au moins un EPUB illisible ou hors limites du parseur.',
+    'structure_limit_or_invalid': 'Contrôle de structure non concluant pour au moins un fichier.',
+    'nofollow_unavailable': 'Contrôles de liens symboliques indisponibles.',
+    'cancelled': 'Inventaire interrompu avant la fin.',
+}
 _FIELDS = {'entitlement_id': 'Droit', 'provider_id': 'Source déclarée', 'account_id': 'Compte',
            'credential_id': 'Connexion', 'item_id': 'Édition fournisseur', 'state': 'État enregistré',
            'entitlement_type': 'Type de droit', 'attested_source': 'Provenance attestée',
@@ -68,7 +86,8 @@ def _searchable(text):
                    if not unicodedata.combining(ch))
 
 
-def _right_explanation(right, ledger, placements, artifacts, files, incomplete):
+def _right_explanation(right, ledger, placements, artifacts, files, incomplete,
+                       *, conflicting_ledger=False, path_states=None):
     """Explain missing *confirmation*, not physical absence or download status.
 
     All rows are already restricted to the active identity except shared
@@ -76,16 +95,23 @@ def _right_explanation(right, ledger, placements, artifacts, files, incomplete):
     No metadata, ISBN, filename or SHA alone yields account attribution.
     """
     why = []
+    path_states = path_states or {}
     expected = {'kobo': 'kobo.personal_manifest',
                 'numilog': 'numilog.authenticated_library'}.get(right.get('provider_id'))
     if not expected or right.get('attested_source') != expected:
         why.append('Provenance du droit insuffisamment attestée dans les données locales.')
     if right.get('entitlement_type') != 'owned' or right.get('state') != 'active':
         why.append('Type ou état du droit ne permet pas de confirmer une acquisition possédée.')
+    if conflicting_ledger:
+        why.append('Acquisition avec référence de droit identique mais identité, compte, '
+                   'connexion ou édition discordants : preuve contradictoire, '
+                   'sans divulgation des autres comptes.')
     if not ledger:
-        why.append('Aucune acquisition liée à ce droit dans les preuves SQLite consultées.')
+        why.append('Aucune acquisition liée à ce droit pour l’identité, le compte, '
+                   'la connexion et l’édition exacts dans les preuves SQLite consultées.')
     elif len(ledger) != 1:
-        why.append('Plusieurs acquisitions liées au droit : association ambiguë.')
+        why.append('Plusieurs acquisitions liées au droit dans le même périmètre : '
+                   'association ambiguë.')
     elif (ledger[0].get('status') != 'complete'
           or not ledger[0].get('artifact_id')):
         why.append('Acquisition enregistrée sans preuve complète de publication d’artefact.')
@@ -99,9 +125,30 @@ def _right_explanation(right, ledger, placements, artifacts, files, incomplete):
         placement = matched[0]
         path = placement.get('path')
         observed = files.get(path, ())
+        path_status = path_states.get(id(placement))
+        if path_status == 'stored_path_out_of_scope':
+            why.append('Chemin enregistré hors des racines autorisées : '
+                       'le fichier ne peut pas être vérifié dans cette inspection.')
+        elif path_status == 'stored_path_unavailable':
+            why.append('Chemin enregistré non inspectable (accès, lien symbolique '
+                       'ou vérification interrompue) : présence indéterminée.')
+        elif path_status == 'stored_path_missing':
+            why.append('Chemin enregistré absent lors du contrôle sécurisé dans '
+                       'la racine autorisée ; cela ne prouve pas l’absence d’une autre copie.')
+        elif path_status == 'stored_path_present' and not observed:
+            why.append('Chemin enregistré présent au contrôle ponctuel, mais fichier '
+                       'non observé avec SHA dans l’inventaire borné.')
         if not observed:
-            why.append('Chemin enregistré sans fichier correspondant vérifié dans le périmètre inspecté.')
+            why.append('Aucun fichier correspondant vérifié par SHA à ce chemin '
+                       'dans le périmètre inspecté.')
         else:
+            if path_status == 'stored_path_missing':
+                why.append('Constats temporels contradictoires : le scan a observé '
+                           'un fichier mais le contrôle du chemin l’a trouvé absent.')
+            if len(ledger) == 1 and ledger[0].get('artifact_id') and (
+                    ledger[0].get('artifact_id') != placement.get('artifact_id')):
+                why.append('Artefact de l’acquisition différent de celui du placement '
+                           ': la chaîne de preuve n’est pas cohérente.')
             linked_artifacts = artifacts.get(placement.get('artifact_id'), ())
             if len(linked_artifacts) != 1:
                 why.append('Artefact associé au placement absent ou ambigu dans SQLite.')
@@ -150,7 +197,28 @@ class LocalInspection:
         # They never enter an audit payload or a future repair capability.
         self._candidate_file_keys = {}
         self._summary = audit.redacted()
+        # Private-only coverage: configured roots are not proof that they were
+        # traversed successfully. Never mix these paths into audit.redacted().
         self._roots = tuple(str(path) for path in roots)[:128]
+        self._unavailable_directories = tuple(
+            _text(path) for owner, path in audit.inventory.unavailable_directories
+            if owner == identity_id
+        )[:128]
+        self._unavailable_count = sum(
+            owner == identity_id
+            for owner, _path in audit.inventory.unavailable_directories
+        )
+        self._skipped_symlinks = audit.inventory.skipped_symlinks
+        self._skipped_special = audit.inventory.skipped_special
+        self._inventory_notes = tuple(
+            _INVENTORY_LIMIT_LABELS[code]
+            for code in sorted(audit.inventory.reasons)
+            if code in _INVENTORY_LIMIT_LABELS
+        )
+        if audit.inventory.reasons - _INVENTORY_LIMIT_LABELS.keys():
+            self._inventory_notes += (
+                'Autre limite d’inventaire non détaillée : analyse potentiellement incomplète.',
+            )
         self._limited = False
         self._bytes = 0
         ambiguous = set(audit.metadata_candidates.ambiguous_files)
@@ -269,10 +337,12 @@ class LocalInspection:
             by_path[f.path].append(f)
         for artifact in artifacts:
             by_artifact[artifact.get('artifact_id')].append(artifact)
-        for placement in placements:
+        path_states = {}
+        for pi, placement in enumerate(placements):
             if placement.get('identity_id') == identity_id:
                 by_edition[(placement.get('provider_id'),
                             placement.get('source_item_id'))].append(placement)
+                path_states[id(placement)] = audit.stored_paths.states.get(pi)
         incomplete = audit.redacted().get('status') != 'complete'
         notices = defaultdict(list)
         for notice_index, row in enumerate(catalog):
@@ -306,11 +376,22 @@ class LocalInspection:
                                         notice.get('display_authors'),
                                         right.get('item_id') or 'Édition non identifiée')
             acquisition_rows = audit.snapshot.tables.get('acquisition_ledger', [])
-            own_ledger = [acquisition_rows[i] for i in ledgers[right.get('entitlement_id')][:20]
-                          if 0 <= i < len(acquisition_rows)]
+            # The ledger is intentionally global to detect conflicting rights
+            # across accounts. It must NOT, however, become a positive proof
+            # for another identity or be displayed in the private right pane.
+            ledger_indices = [i for i in ledgers[right.get('entitlement_id')]
+                              if 0 <= i < len(acquisition_rows)]
+            scope_keys = ('identity_id', 'provider_id', 'credential_id',
+                          'account_id', 'item_id')
+            own_ledger_indices = [i for i in ledger_indices
+                                  if all(acquisition_rows[i].get(key) == right.get(key)
+                                         for key in scope_keys)]
+            own_ledger = [acquisition_rows[i] for i in own_ledger_indices]
             why = _right_explanation(
                 right, own_ledger, by_edition.get((right_provider, right_item), ()),
                 by_artifact, by_path, incomplete,
+                conflicting_ledger=len(own_ledger_indices) != len(ledger_indices),
+                path_states=path_states,
             )
             # A catalogue notice belongs to this explicit identity/provider/
             # item scope, but an ISBN match between it and an EPUB is only a
@@ -351,7 +432,7 @@ class LocalInspection:
                       + '\n\n' + '\n'.join(suggestions)
                       + '\n\n' + '\n\n'.join(
                           'Acquisition enregistrée :\n' + evidence('acquisition_ledger', li)
-                          for li in ledgers[right.get('entitlement_id')][:20])
+                          for li in own_ledger_indices[:20])
                       + '\n\nAbsence de preuve de fichier, pas preuve de livre absent. Aucun téléchargement ni rattachement autorisé.')
             if not add('right', index, 'Droit sans fichier vérifié · ' + right_label,
                        _provider(right.get('provider_id')),
@@ -384,6 +465,10 @@ class LocalInspection:
         self._candidate_file_keys.clear()
         self._summary = {}
         self._roots = ()
+        self._unavailable_directories = ()
+        self._unavailable_count = 0
+        self._inventory_notes = ()
+        self._skipped_symlinks = self._skipped_special = 0
         self._valid = lambda: False
 
     def summary(self):
@@ -411,7 +496,12 @@ class LocalInspection:
                 'local_without_right': by_state['local_file_without_attested_right'],
                 'unverified_files': by_state['unverified_file'],
                 'inspection_limited': self._limited,
-                'roots': self._roots}
+                'roots': self._roots,
+                'inventory_limit_notes': self._inventory_notes,
+                'unavailable_directories': self._unavailable_directories,
+                'unavailable_directories_total': self._unavailable_count,
+                'skipped_symlinks': self._skipped_symlinks,
+                'skipped_special': self._skipped_special}
 
     def page(self, *, provider='all', state='all', offset=0, limit=50, query=''):
         if (provider not in PROVIDERS or state not in STATES or
