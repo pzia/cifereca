@@ -165,6 +165,62 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
         return {}
 
 
+def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
+    """Share *only* a constant reached step from the synthetic GTK recipe.
+
+    Raw screenshots, widget text, exception messages and private credentials
+    remain in the private CI workspace and are never published.
+    """
+    if scenario not in {
+        "maintenance-tools-1280", "maintenance-tools-1366",
+        "maintenance-tools-1600",
+    }:
+        return {}
+    root = source.resolve().parent / scenario
+    nested = root / scenario
+    report = nested / "screen.json"
+    try:
+        if any(path.is_symlink() for path in (root, nested, report)):
+            return {}
+        if not report.is_file() or report.stat().st_size > MAX_BYTES:
+            return {}
+        data = json.loads(report.read_text(encoding="utf-8"))
+        if type(data) is not dict or type(data.get("checks")) is not dict:
+            return {}
+        checks = data["checks"]
+        # No dynamic or unreviewed values: output is one literal enum.
+        milestones = (
+            ("real_tools_route_and_action", "maintenance_route"),
+            ("P1_1498-duplicates_cancelled_terminal_on_own_line", "maintenance_p1_done"),
+            ("inspection_setup_entered", "inspection_setup"),
+            ("inspection_fixture_created", "inspection_fixture"),
+            ("inspection_host_mapped", "inspection_host"),
+            ("inspection_result_button_ready", "inspection_result_button"),
+            ("inspection_result_dialog_mapped", "inspection_result_dialog"),
+            ("inspection_click_dispatched", "inspection_clicked"),
+            ("inspection_window_mapped", "inspection_open"),
+            ("local_inspection_provider_filter_does_not_attribute_isbn_files", "numilog_filtered"),
+            ("inspection_candidates_initially_visible", "candidate_first"),
+            ("candidate_heading_verified", "candidate_heading"),
+            ("candidate_count_verified", "candidate_count"),
+            ("candidate_label_verified", "candidate_label"),
+            ("candidate_button_found", "candidate_button"),
+            ("candidate_button_click_ready", "candidate_button_ready"),
+            ("candidate_button_clicked", "candidate_button_clicked"),
+            ("inspection_candidate_navigation_reached", "candidate_next"),
+            ("local_inspection_right_candidate_side_by_side_no_attestation", "candidate_validated"),
+            ("local_inspection_state_pagination_and_private_proof", "inspection_paginated"),
+            ("local_inspection_epoch_revokes_window_and_sources_unchanged", "inspection_complete"),
+        )
+        reached = "before_maintenance_route"
+        for field, label in milestones:
+            if checks.get(field) is True:
+                reached = label
+        return {"maintenance_last_safe_checkpoint": reached}
+    except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
+        return {}
+
+
 def _native_abort_diagnosis(source: Path, scenario: str, code: int) -> dict:
     """Classify a native abort using fixed markers, never disclose log text.
 
@@ -271,6 +327,7 @@ def safe_summary(source: Path) -> dict:
         # messages, personal paths, URLs, JSON/JSONL, logs, pixels and images.
         if code != 0:
             row.update(_failed_diagnostic(source, scenario))
+            row.update(_failed_maintenance_checkpoint(source, scenario))
             row.update(_native_abort_diagnosis(source, scenario, code))
         rows.append(row)
     return {"schema": "cifereca-e2e-public-verdict/v1", "results": rows}

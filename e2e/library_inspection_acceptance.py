@@ -21,6 +21,7 @@ from cifereca.plugin_api import MaintenanceResult
 
 
 def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done):
+    report['checks']['inspection_setup_entered']=True
     tmp = tempfile.TemporaryDirectory()
     root = Path(tmp.name)
     library = root/'library'
@@ -37,6 +38,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         db.execute("INSERT INTO entitlements(entitlement_id,identity_id,provider_id,item_id,state) VALUES('right-a','a','numilog','edition-a','active')")
         db.execute("INSERT INTO entitlements(entitlement_id,identity_id,provider_id,account_id,state) VALUES('right-b','b','kobo','FOREIGN_SECRET','active')")
         db.execute("INSERT INTO catalog_entries(catalog_entry_id,identity_id,provider_id,metadata_json) VALUES(?,?,?,?)",('notice-a','a','kobo',json.dumps({'identifiers':[{'scheme':'ISBN','value':'9780306406157'}]})))
+        db.execute("INSERT INTO catalog_entries(catalog_entry_id,identity_id,provider_id,item_id,metadata_json) VALUES(?,?,?,?,?)",
+                   ('notice-numilog-a','a','numilog','edition-a',
+                    json.dumps({'title':'Synthetic edition','identifiers':[{'scheme':'ISBN','value':'9780306406157'}]})))
         db.execute("INSERT INTO placements(placement_id,identity_id,path,provider_id) VALUES(?,?,?,?)",('missing-a','a',str(library/'a'/'missing.epub'),'kobo'))
     cfg=Config.__new__(Config)
     cfg.data={'library':{'directory':str(library)},'identities':[{'id':name,'directory_name':name,'label':name} for name in ('a','b')]}
@@ -48,6 +52,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
     # A real GTK host with the synthetic Core scope lets the production result
     # action and controller execute unchanged; plugin discovery is not stubbed
     # into a claimed full entry E2E.
+    report['checks']['inspection_fixture_created']=True
     host=Adw.Window(transient_for=parent,modal=True,title='Inspection locale synthétique')
     host.set_default_size(920,620)
     host.service=service
@@ -95,14 +100,17 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(allocated,open_popup)
 
     def result_ready():
+        report['checks']['inspection_host_mapped']=True
         result_view.publish(MaintenanceResult(True,summary='Lecture seule ; détails privés accessibles localement.'))
         until(lambda:result_view.button.get_mapped(),open_result)
 
     def open_result():
+        report['checks']['inspection_result_button_ready']=True
         device.click_widget(result_view.button)
         until(lambda:result_view.dialog is not None and result_view.dialog.get_mapped(),inspect_action)
 
     def inspect_action():
+        report['checks']['inspection_result_dialog_mapped']=True
         response=next(w for w in walk(result_view.dialog) if isinstance(w,Gtk.Button) and 'Examiner les cas' in str(w.get_label()))
         def allocated():
             if not response.get_mapped():return False
@@ -112,11 +120,13 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             except RuntimeError:
                 return False
         def click():
+            report['checks']['inspection_click_dispatched']=True
             device.click_widget(response)
             until(lambda:controller.session is not None and controller.dialog is not None and controller.dialog.get_mapped(),initial)
         until(allocated,click)
 
     def initial():
+        report['checks']['inspection_window_mapped']=True
         window=controller.dialog
         assert window.get_width()<=parent.get_width()
         dropdowns=[w for w in walk(window) if isinstance(w,Gtk.DropDown)]
@@ -129,6 +139,63 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         labels='\n'.join(w.get_text() for w in rows if isinstance(w,Gtk.Label))
         assert 'Droit sans fichier vérifié' in labels and 'synthetic-' not in labels
         report['checks']['local_inspection_provider_filter_does_not_attribute_isbn_files']=True
+        # The Numilog right must show unlinked EPUB candidates *only* after
+        # user selection; no ownership is inferred from a shared valid ISBN.
+        row = widgets['list'].get_first_child()
+        device.click_widget(row)
+        until(lambda:any(isinstance(w,Gtk.Label) and '1 / 20' in w.get_text()
+                         for w in walk(controller.dialog)), compare_right)
+
+    def compare_right():
+        report['checks']['inspection_candidates_initially_visible']=True
+        labels='\n'.join(w.get_text() for w in walk(controller.dialog)
+                          if isinstance(w,Gtk.Label))
+        assert 'Fichiers candidats' in labels
+        assert 'non probant' in labels
+        report['checks']['candidate_heading_verified']=True
+        right = controller.session.page(
+            provider='numilog', state='rights_without_verified_file',
+        ).cases[0]
+        candidate_cases = controller.session.candidate_files(right.key)
+        assert len(candidate_cases) == 20
+        report['checks']['candidate_count_verified']=True
+        assert candidate_cases[0].label in labels
+        assert 'Droit sans fichier vérifié' in labels
+        report['checks']['candidate_label_verified']=True
+        following_candidate=next(w for w in walk(controller.dialog)
+                                 if isinstance(w,Gtk.Button)
+                                 and w.get_label()=='Candidat ▶')
+        report['checks']['candidate_button_found']=True
+
+        def candidate_allocated():
+            if not following_candidate.get_mapped() or not following_candidate.get_sensitive():
+                return False
+            try:
+                x, y = device.widget_point(following_candidate)
+                return x >= 0 and y >= 0
+            except RuntimeError:
+                return False
+
+        def candidate_click():
+            report['checks']['candidate_button_click_ready']=True
+            device.click_widget(following_candidate)
+            report['checks']['candidate_button_clicked']=True
+            until(lambda:any(isinstance(w,Gtk.Label) and '2 / 20' in w.get_text()
+                             for w in walk(controller.dialog)), compare_next)
+
+        until(candidate_allocated, candidate_click)
+
+    def compare_next():
+        report['checks']['inspection_candidate_navigation_reached']=True
+        labels='\n'.join(w.get_text() for w in walk(controller.dialog)
+                          if isinstance(w,Gtk.Label))
+        right = controller.session.page(
+            provider='numilog', state='rights_without_verified_file',
+        ).cases[0]
+        candidate_cases = controller.session.candidate_files(right.key)
+        assert candidate_cases[1].label in labels
+        assert 'FOREIGN_SECRET' not in labels
+        report['checks']['local_inspection_right_candidate_side_by_side_no_attestation']=True
         choose(widgets['provider'],0,lambda:choose(widgets['state'],3,candidates))
 
     def candidates():

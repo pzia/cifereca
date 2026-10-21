@@ -408,3 +408,38 @@ tardifs. Les enveloppes d'échec conservent leurs causes fermées sans
 confondre timeout SQLite et livre absent. Aucun scan supplémentaire n'est
 déclenché pour animer l'interface ; audit et inspection restent hors réseau,
 lecture seule et sans droit de réparation/acquisition.
+
+
+## Comparer un droit non vérifié à ses candidats EPUB privés — P0 #2657
+
+Depuis **Réconciliation → Examiner les cas → Droit sans fichier vérifié**,
+une colonne de comparaison s'affiche à côté du détail du droit. Elle montre
+**jusqu'à 20 fichiers candidats non probants** et permet de parcourir
+leurs métadonnées OPF, leurs chemins et leurs contrôles SHA/structure sans
+changer de droit sélectionné.
+
+Les candidats sont uniquement les fichiers **de l'identité active**,
+effectivement inventoriés, **sans lien de droit confirmé**, dont un
+identifiant bibliographique **explicite et exact** correspond à une notice
+du **même triplet (identité, fournisseur de la notice, édition du droit)**.
+Le moteur utilise les candidats `metadata_only` calculés pendant l'audit
+existant, jamais une proximité de titre, auteur, répertoire, nom de
+fichier, SHA ou ISBN approximatif. La comparaison ne confirme **aucun**
+fournisseur, compte, achat ou attribution au fichier ; un ISBN désigne
+potentiellement plusieurs publications ou achats.
+
+Si plusieurs droits ou fichiers partagent l'identifiant, ils restent
+**tous candidats** : pas d'appariement 1:1 implicite, de score propriétaire
+ou de rapprochement forcé. Si aucune notice explicite ou aucun candidat
+validé n'est disponible, le panneau l'annonce comme **indéterminé**,
+jamais comme preuve de fichier ou de téléchargement manquant.
+La liste est bornée (20 comparaisons par droit, avec mention des autres)
+et hérite des limites de l'inventaire, du budget de métadonnées et de la
+révocation de la session. Elle reste privée, en mémoire et en lecture
+seule, sans publication vers plugins/diagnostics ni autorisation
+d'acquisition/réparation.
+
+Recette synthétique : 6 EPUB Numilog, 3 chaînes de droits complètes,
+3 droits sans lien confirmé, 2 fichiers partageant le même ISBN et
+deux droits associés chacun à une notice de ce même ISBN. Les candidats
+restent affichés pour **chacun** sans prouver aucun rattachement.
