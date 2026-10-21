@@ -373,3 +373,49 @@ def test_no_exact_route_when_host_missing_unresolved_or_fails_closed():
     assert not [action for action in presentations[-1].actions
                 if action.id.startswith("recommendation.loaded-notice.")]
     assert "PRIVATE_ACCOUNT" not in repr(presentations[-1])
+
+
+def test_unresolved_first_sixteen_never_hide_attested_loaded_notice():
+    """An exact identity/account-bound row can follow unresolved variants."""
+    incomplete = tuple(_variant(credential="", record=f"unknown-{i}") for i in range(16))
+    exact = _variant(provider="kobo", credential="vault-1", record="exact-17")
+    view, identity, search_calls, _detail, row = _view((*incomplete, exact))
+    availability_calls, opened, rendered = [], [], []
+    coordinates = {
+        "provider": "kobo", "credential": "vault-1",
+        "record_id": "exact-17", "docbase": "BOOKS",
+        "source_collection": "catalogue", "identity_id": "reader-1",
+    }
+    view.host = NS(
+        search_books=lambda *a, **kw: search_calls.append((a, kw)) or True,
+        can_open_loaded_search_notice=lambda **kw: (
+            availability_calls.append(kw) or kw == coordinates
+        ),
+        open_loaded_search_notice=lambda **kw: opened.append(kw) or True,
+    )
+    view._master.show_detail = rendered.append
+    view._selected_row(row)
+    assert availability_calls == [coordinates]  # local only; no remote search
+    assert not opened and not search_calls
+    detail = rendered[0]
+    actions = [a for a in detail.actions if a.id.startswith(
+        "recommendation.loaded-notice."
+    )]
+    assert len(actions) == 1
+    assert actions[0].callback() is True
+    assert opened == [coordinates]
+    identity[0] = "reader-2"
+    assert actions[0].callback() is False
+    assert opened == [coordinates]
+    assert not search_calls
+
+
+def test_attested_notice_is_capped_after_filter_not_before():
+    unresolved = tuple(_variant(credential="", record=f"unknown-{i}") for i in range(32))
+    verified = tuple(_variant(record=f"verified-{i}") for i in range(25))
+    view, _identity, _calls, detail, _row = _view((*unresolved, *verified))
+    section = next(x for x in detail.sections if x.id == "source-editions")
+    editions = [f for f in section.fields if f.id.startswith("source-edition-")
+                and f.id != "source-edition-warning"]
+    assert len(editions) == 16
+    assert all("Kobo" in f.value for f in editions)

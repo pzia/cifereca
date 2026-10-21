@@ -1618,11 +1618,13 @@ class UxRecommendationsView:
             tuple(raw_variants[:64])
             if type(raw_variants) in (tuple, list) else ()
         )
+        # Unresolved rows must not consume the visible exact-notice budget:
+        # an attested edition may follow many incomplete search hits.
         exact_variants = [
-            variant for variant in variants[:16]
+            variant for variant in variants
             if (type(variant) is CatalogNoticeVariant
                 and variant.has_source_coordinates)
-        ]
+        ][:16]
         if exact_variants:
             edition_fields = []
             for index, variant in enumerate(exact_variants, 1):
