@@ -168,3 +168,16 @@ jeton d'action n'est fourni. Les exceptions sont fermées à cette frontière.
 Le broker n'accepte ni chemin, export privé, interrogation distante ni commande
 de réparation. L'inspection locale des cas et la page Maintenance restent des
 livraisons séparées ; un plugin ne doit pas importer les primitives privées Core.
+
+## Présentation locale des résultats Maintenance
+
+Le framework Maintenance propose « Résultats… » après une exécution terminée,
+y compris incomplète. Il affiche le résumé, les avertissements/limites et le
+champ public optionnel `MaintenanceResult.details` (tuple de chaînes destinées
+à l’utilisateur, vide pour les anciens plugins). Les `facts` opaques ne sont
+jamais affichés, sérialisés ou exportés par cette fenêtre. Le texte est littéral,
+sélectionnable, défilant et borné (64 lignes par section, 2048 caractères par
+ligne, avec indication des coupures). Le plugin choisit ses libellés métier.
+Le résultat est oublié au prochain essai, à l’actualisation ou au changement
+de contexte ; les callbacks périmés/annulés ne peuvent pas le publier.
+Ce contrat ne fournit encore ni filtre ni inspection privée des cas individuels.

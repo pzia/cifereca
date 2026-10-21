@@ -85,6 +85,7 @@ from .library_rows import project_library_rows
 from .recent_rows import project_recent_rows
 from .sync_view import sync_identity_action_label, sync_source_presentation
 from .task_runner import TaskPriority, TaskRunner
+from .maintenance_result_view import MaintenanceResultView
 from .maintenance_tools import preview_maintenance_tool, execute_maintenance_tool, MaintenanceCancelControl, MaintenanceCancelledError, MaintenanceBusyError, MaintenancePlanChangedError, BUSY_MESSAGE, CHANGED_MESSAGE
 from .maintenance_line_widgets import build_maintenance_line
 from .return_feedback import loan_return_feedback
@@ -660,6 +661,9 @@ class MainWindow(Adw.ApplicationWindow):
             if old_state["control"] is not None:
                 old_state["control"].cancel()
         self._maintenance_line_rows = []
+        for view in getattr(self, "_maintenance_result_views", ()):
+            view.clear()
+        self._maintenance_result_views = []
 
     def _refresh_tools_page(self) -> None:
         box = getattr(self, "_tools_box", None)
@@ -687,6 +691,7 @@ class MainWindow(Adw.ApplicationWindow):
             line_feedback = None
             line_scope = {"active": False, "identity": None, "generation": None}
             activity_labels = {
+                "library.reconciliation.audit": "Réconciliation",
                 "core.cache.cleanup": "Purge",
                 "covers.audit": "Vérification des couvertures",
                 "languages.audit": "Vérification des langues",
@@ -713,6 +718,21 @@ class MainWindow(Adw.ApplicationWindow):
                 row.add_suffix(status_widget)
                 self._maintenance_line_rows.append((line_feedback, active_cancel))
 
+            def result_alive(button=run, scope=line_scope):
+                current = self.service.current_identity
+                return (
+                    not self._closed and button.get_root() is not None
+                    and scope["active"]
+                    and (current.identity_id if current else None) == scope["identity"]
+                    and getattr(self, "_identity_context_generation", None) == scope["generation"]
+                )
+
+            result_view = MaintenanceResultView(
+                Gtk=Gtk, Adw=Adw, Pango=Pango, parent=self, row=row,
+                title=info.title, alive=result_alive,
+            )
+            self._maintenance_result_views.append(result_view)
+
             def request_cancel(_cancel_button, cancellation_state=active_cancel,
                                feedback=line_feedback):
                 active = cancellation_state["control"]
@@ -727,16 +747,18 @@ class MainWindow(Adw.ApplicationWindow):
             def prepare(
                 _button, service=tool, meta=info,
                 cancel_button=cancel, cancellation_state=active_cancel,
-                feedback=line_feedback, progress_scope=line_scope,
+                feedback=line_feedback, progress_scope=line_scope, result_view=result_view,
             ):
                 if self._closed or _button.get_root() is None:
                     return
+                result_view.clear()
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
                 destructive = meta.danger_level == "destructive"
                 # Each enabled line owns safe, literal error wording. Never
                 # display provider exceptions, which may contain private paths.
                 preview_error = {
+                    "library.reconciliation.audit": "Préparation de la réconciliation impossible.",
                     "covers.audit": "Analyse des couvertures impossible.",
                     "languages.audit": "Analyse des langues impossible.",
                     "library.naming.audit": "Analyse des noms impossible.",
@@ -744,6 +766,7 @@ class MainWindow(Adw.ApplicationWindow):
                     "library.duplicates.cleanup": "Analyse des doublons impossible.",
                 }.get(getattr(meta, "id", None), "Analyse des caches impossible.")
                 execution_error = {
+                    "library.reconciliation.audit": "Réconciliation locale impossible.",
                     "covers.audit": "Vérification des couvertures impossible.",
                     "languages.audit": "Vérification des langues impossible.",
                     "library.naming.audit": "Audit des noms impossible.",
@@ -939,6 +962,7 @@ class MainWindow(Adw.ApplicationWindow):
                                 return
                             if feedback is not None:
                                 feedback.finish(ticket, "success" if result.ok else "error")
+                            result_view.publish(result)
                             self._activity_result(
                                 result.summary or ("Outil terminé" if result.ok else "Outil terminé avec erreurs"),
                                 success=bool(result.ok),
