@@ -7,6 +7,7 @@ on:
     paths:
       - 'src/plugins/browser-recorder/**'
       - 'tests/test_browser_recorder_installed_gtk_blackbox.py'
+      - 'tests/test_browser_recorder_installed_chromium_e2e.py'
       - '.github/workflows/browser-recorder-chromium-e2e.yml'
   workflow_dispatch:
 
@@ -41,6 +42,20 @@ jobs:
           command -v xvfb-run
           xvfb-run -a python -m pytest -q -rs \
             src/plugins/browser-recorder/tests/test_browser_recorder_chromium_e2e.py
+      - name: Native GTK4 installed plugin plus real headed Chromium on localhost fixture
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          GDK_BACKEND: x11
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi gir1.2-gtk-4.0 python3-pytest python3-venv
+          /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/installed-browser-venv"
+          "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pip install --disable-pip-version-check 'playwright>=1.50,<2'
+          "$RUNNER_TEMP/installed-browser-venv/bin/python" -m playwright install chromium
+          xvfb-run -a "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pytest -q -rs \
+            tests/test_browser_recorder_installed_chromium_e2e.py
       - name: Publish no private artifacts
         if: always()
         run: |
