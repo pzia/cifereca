@@ -304,3 +304,104 @@ def test_last_report_scope_change_restores_neither_text_nor_label(monkeypatch):
     assert m.host._maintenance_result_views[0].text == ''
     assert m.host._maintenance_reconciliation_report is None
     assert 'PRIVATE_2732' not in last.title
+
+
+def test_running_reconciliation_survives_refresh_and_publishes_partial_result(monkeypatch):
+    monkeypatch.setattr(harness.Dialog, 'destroy', lambda self: None, raising=False)
+    m = mounted('library.reconciliation.audit')
+    args = execute(m)
+    original = m.host._maintenance_line_rows[0][1]['control']
+    assert not original.cancelled()
+    m.refresh()
+    assert not original.cancelled()  # UI refresh must not cancel a safe read.
+    view = m.host._maintenance_result_views[0]
+    assert not view.text
+    assert m.host._maintenance_reconciliation_run['view'] is view
+    assert len(m.jobs) == 2  # plan + run; refresh doesn't enqueue another scan.
+    original.report(current=291, total=None, message='Inventaire local')
+    flush(m)
+    status = m.host._maintenance_line_rows[0][0].state
+    assert status.label.endswith('291 fichier(s)')
+    args[2](MaintenanceResult(
+        False, summary='Analyse incomplète. 291 fichiers observés.',
+        details=('Droits sans fichier vérifié : 408',),
+        warnings=('Durée maximale de l’inventaire atteinte.',),
+    ))
+    assert m.host._maintenance_reconciliation_run is None
+    assert view.state == 'incomplète'
+    assert view.dialog is None  # no unexpected popup after refresh
+    assert view.button.visible
+    assert '408' in view.text
+    assert m.host._maintenance_reconciliation_report['text'] == view.text
+    m.refresh()
+    restored = m.host._maintenance_result_views[0]
+    assert restored.button.visible
+    assert '408' in restored.text
+    assert len(m.jobs) == 2
+
+
+def test_refreshed_cancel_stops_old_worker_and_cannot_overwrite_report(monkeypatch):
+    monkeypatch.setattr(harness.Dialog, 'destroy', lambda self: None, raising=False)
+    m = mounted('library.reconciliation.audit')
+    initial = execute(m)
+    initial[2](MaintenanceResult(False, summary='Analyse incomplète. Ancien rapport'))
+    original_report = m.host._maintenance_reconciliation_report.copy()
+    view = m.host._maintenance_result_views[0]
+    view.dialog.handlers['response'](view.dialog, 'close')
+    pending = execute(m)
+    control = m.host._maintenance_line_rows[0][1]['control']
+    m.refresh()
+    new_cancel = m.host._tools_box.children[0].children[0].children[1]
+    assert new_cancel.visible
+    new_cancel.click()
+    assert control.cancelled()
+    pending[2](MaintenanceResult(True, summary='Nouveau rapport interdit'))
+    assert m.host._maintenance_reconciliation_report == original_report
+    assert 'Ancien rapport' in m.host._maintenance_result_views[0].text
+    assert 'Nouveau rapport' not in m.host._maintenance_result_views[0].text
+
+
+@pytest.mark.parametrize('changed', ['identity', 'generation', 'epoch', 'storage'])
+def test_scope_change_cancels_retained_reconciliation_without_cross_identity_leak(
+    changed, monkeypatch,
+):
+    monkeypatch.setattr(harness.Dialog, 'destroy', lambda self: None, raising=False)
+    m = mounted('library.reconciliation.audit')
+    pending = execute(m)
+    control = m.host._maintenance_line_rows[0][1]['control']
+    if changed == 'identity':
+        m.host.service.current_identity = NS(identity_id='bob')
+    elif changed == 'generation':
+        m.host._identity_context_generation += 1
+    elif changed == 'epoch':
+        m.host.service._account_context_epoch = 42
+    else:
+        m.host.service.storage = NS(path='/synthetic/new.sqlite')
+    m.refresh()
+    assert control.cancelled()
+    pending[2](MaintenanceResult(True, summary='PRIVATE_2732_FOREIGN'))
+    assert m.host._maintenance_reconciliation_run is None
+    assert m.host._maintenance_reconciliation_report is None
+    view = m.host._maintenance_result_views[0]
+    assert view.text == '' and view.button is None
+    assert all('PRIVATE_2732_FOREIGN' not in str(args)
+               for args, _kwargs in m.activity)
+
+
+def test_refresh_while_running_blocks_another_reconciliation_attempt():
+    m = mounted('library.reconciliation.audit')
+    _pending = execute(m)
+    m.refresh()
+    button = m.host._tools_box.children[0].children[0].children[0]
+    assert not button.sensitive
+    count = len(m.jobs)
+    button.click()  # even adversarial direct signal can't bypass the active guard
+    assert len(m.jobs) == count
+
+
+def test_other_maintenance_refresh_still_cancels_pending_work():
+    m = mounted('covers.audit')
+    _pending = execute(m)
+    control = m.host._maintenance_line_rows[0][1]['control']
+    m.refresh()
+    assert control.cancelled()
