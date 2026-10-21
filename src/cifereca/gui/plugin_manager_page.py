@@ -1140,6 +1140,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             "platform_unsupported": "Installation Chromium guidée disponible sur Linux uniquement.",
             "probe_failed": "Vérification Chromium indisponible.",
             "unsafe_cache_path": "Cache Chromium non sûr : chemin ou lien symbolique refusé.",
+            "custom_download_source": "Serveur de téléchargement Chromium personnalisé : utiliser une procédure administrateur distincte.",
             "insufficient_space": "Espace libre insuffisant (750 Mio minimum).",
             "storage_unavailable": "Espace disque impossible à vérifier.",
             "invalid_timeout": "Délai d'installation invalide.",
