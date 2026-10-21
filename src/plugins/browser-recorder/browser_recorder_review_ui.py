@@ -161,13 +161,20 @@ class PrivateReviewPanel:
                 label="Déverrouiller les métadonnées des sessions…"
             )
             self.session_list = Gtk.ComboBoxText()
+            self.session_name = Gtk.Entry()
+            self.session_name.set_max_length(80)
+            self.session_name.set_placeholder_text(
+                "Nom privé de la session sélectionnée (1–80 caractères)"
+            )
+            self.sessions_rename = Gtk.Button(label="Renommer cette session chiffrée")
             self.sessions_open = Gtk.Button(label="Ouvrir une session — nouvelle revue")
             self.delete_confirm = Gtk.CheckButton(
                 label="Je confirme la suppression locale de la session choisie."
             )
             self.sessions_delete = Gtk.Button(label="Supprimer cette session")
             for widget in (self.sessions_refresh, self.sessions_unlock,
-                           self.session_list, self.sessions_open, self.delete_confirm,
+                           self.session_list, self.session_name,
+                           self.sessions_rename, self.sessions_open, self.delete_confirm,
                            self.sessions_delete):
                 box.append(widget)
             self.sessions_refresh.connect(
@@ -175,6 +182,9 @@ class PrivateReviewPanel:
             )
             self.sessions_unlock.connect(
                 "clicked", lambda *_: self.unlock_sessions(),
+            )
+            self.sessions_rename.connect(
+                "clicked", lambda *_: self.rename_session(),
             )
             self.sessions_open.connect("clicked", lambda *_: self.open_session())
             self.sessions_delete.connect(
@@ -365,6 +375,10 @@ class PrivateReviewPanel:
             )
             self.sessions_delete.set_sensitive(
                 not self._closed and not busy and not scanning
+            )
+            self.sessions_rename.set_sensitive(
+                not self._closed and not busy and not scanning
+                and bool(self.session_list.get_active_id())
             )
             self.private_export_button.set_sensitive(
                 not self._closed and not busy and not scanning
@@ -688,8 +702,10 @@ class PrivateReviewPanel:
                         if info is None:
                             label = f"Session {number} · {sid[:8]} — verrouillée/illisible"
                         else:
+                            private_name = info.get("label", "")
                             label = (
-                                f"{info['saved_at'][:16]} · {info['status']} · "
+                                (f"{private_name[:80]} · " if private_name else "")
+                                + f"{info['saved_at'][:16]} · {info['status']} · "
                                 f"{info['origin'][:90]} · {info['exchanges']} échanges "
                                 f"· {sum(info['omissions'].values())} omissions"
                             )
@@ -702,6 +718,71 @@ class PrivateReviewPanel:
                         f"{len(entries)} sessions déverrouillées et "
                         f"{inaccessible} indisponibles ; aucun contact fournisseur."
                     )
+                self._refresh()
+                return False
+
+            self.GLib.idle_add(deliver)
+
+        handle.add_done_callback(finished)
+
+    def rename_session(self):
+        """Explicit rename: never persist readable titles or mutate .cbrv."""
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()):
+            return
+        sid = self.session_list.get_active_id()
+        label = self.session_name.get_text().strip()
+        secret = self.vault_passphrase.get_text()
+        self.vault_passphrase.set_text("")
+        self.session_name.set_text("")
+        if not sid or not label or len(secret) < 12:
+            self.status.set_label(
+                "Sélectionnez une session et saisissez nom + phrase secrète."
+            )
+            return
+        generation = self._generation
+        vault_path = self.vault_directory
+
+        def work(_control):
+            PrivateSessionVault(vault_path).set_label(sid, secret, label)
+            return True
+
+        try:
+            handle = self.tasks.submit(
+                work, kind="browser-recorder", label="Nommer la session chiffrée",
+            )
+        except Exception:
+            self.status.set_label("Renommage indisponible.")
+            return
+        self._index_handle = handle
+        self.status.set_label("Modification chiffrée du nom en cours…")
+        self._refresh()
+
+        def finished(done):
+            try:
+                ok = bool(done.result())
+            except Exception:
+                ok = False
+
+            def deliver():
+                if self._closed or self._generation != generation:
+                    return False
+                if self._index_handle is done:
+                    self._index_handle = None
+                self.status.set_label(
+                    "Nom privé chiffré enregistré ; déverrouillez la liste "
+                    "pour afficher le nouveau nom."
+                    if ok else
+                    "Renommage refusé : clé, fichier ou nom invalide."
+                )
+                # Avoid presenting stale private labels after rename.
+                self.refresh_sessions()
+                # refresh_sessions clears the private labels intentionally.
+                self.status.set_label(
+                    "Nom privé chiffré enregistré ; déverrouillez la liste."
+                    if ok else
+                    "Renommage refusé : clé, fichier ou nom invalide."
+                )
                 self._refresh()
                 return False
 
