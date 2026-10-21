@@ -211,3 +211,33 @@ def test_unverified_or_nonlibrary_rows_never_export_claimed_reconciliation():
         copied = export_selected_events([row], {row["event_id"]})
         assert "reconciliation" not in json.loads(copied)["events"][0]
         assert PRIVATE not in copied
+
+
+def test_stored_path_timing_is_readable_and_in_aggregate_only_export():
+    raw = event(status="partial", reasons=["stored_path_budget"],
+                counts={"files_started": 321},
+                phase_ms={"stored_paths": 8123, "private_path": PRIVATE})
+    presentation = reconciliation_event_summary(raw)
+    assert presentation["state"] == "Incomplète"
+    assert "chemins enregistrés : 8123 ms" in presentation["timing"]
+    rows = sanitized_rows({"events": [raw]})
+    assert len(rows) == 1
+    exported = export_selected_events(rows, {rows[0]["event_id"]})
+    payload = json.loads(exported)["events"][0]["reconciliation"]
+    assert payload["phase_ms"] == {"stored_paths": 8123}
+    assert payload["counts"] == {"files_started": 321}
+    assert "stored_path_budget" in payload["reasons"]
+    assert PRIVATE not in exported
+    assert "private_path" not in exported
+
+
+@pytest.mark.parametrize("invalid", [True, -1, PRIVATE, 1.5, {"path": PRIVATE}])
+def test_stored_path_timing_unmeasured_or_invalid_is_not_made_zero(invalid):
+    raw = event(status="partial", reasons=["stored_path_budget"],
+                phase_ms={"stored_paths": invalid})
+    view = reconciliation_event_summary(raw)
+    assert "chemins enregistrés" not in view["timing"]
+    public, = sanitized_rows({"events": [raw]})
+    exported = json.loads(export_selected_events([public], {public["event_id"]}))
+    assert "stored_paths" not in exported["events"][0]["reconciliation"]["phase_ms"]
+    assert PRIVATE not in json.dumps(exported)
