@@ -809,6 +809,8 @@ class MaintenanceResult:
     summary: str = ""
     warnings: tuple[str, ...] = ()
     facts: Mapping[str, object] = field(default_factory=dict)
+    # Explicit user-facing local detail; never render opaque facts/capabilities.
+    details: tuple[str, ...] = ()
 
 
 @runtime_checkable

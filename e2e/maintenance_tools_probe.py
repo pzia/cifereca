@@ -105,7 +105,12 @@ class DummyTool:
             # repaint the detached row or the replacement row.
             control.report(current=1, total=1, message="Retour tardif")
             control.check_cancelled()
-            return SimpleNamespace(ok=self.result_ok, summary="Simulation confirmée")
+            return SimpleNamespace(
+                ok=self.result_ok, summary="Simulation confirmée",
+                details=("Fichiers témoins : 524",),
+                warnings=("Durée maximale témoin atteinte.",),
+                facts={"private_capability": "NEVER_RENDER_EXECUTION_FACTS"},
+            )
         finally:
             self.run_finished.set()
 
@@ -489,6 +494,25 @@ def main():
         assert_line("Terminé · 100 %", fraction=1.0)
         report["checks"]["success_alone_renders_100_percent"] = True
         capture("03-confirmed-noop")
+        button = next(node for node in walk(window[0]._tools_box)
+                      if isinstance(node, Gtk.Button) and node.get_label() == "Résultats…")
+        physical(button)
+        until(lambda: modal() is not None, inspect_result)
+
+    def inspect_result():
+        dialog = modal()
+        text = "\n".join(node.get_text() for node in walk(dialog) if isinstance(node, Gtk.Label))
+        assert "Fichiers témoins : 524" in text
+        assert "Durée maximale témoin atteinte." in text
+        assert "NEVER_RENDER_EXECUTION_FACTS" not in text
+        close = next(node for node in walk(dialog)
+                     if isinstance(node, Gtk.Button) and "Fermer" in str(node.get_label()))
+        assert close.get_mapped() and close.get_sensitive()
+        assert dialog.get_width() <= window[0].get_width()
+        report["checks"]["local_result_details_and_limits_without_execution_facts"] = True
+        respond(dialog, "Fermer", lambda: until(lambda: modal() is None, continue_after_result))
+
+    def continue_after_result():
         tool.progress_sent.clear()
         tool.release_run.clear()
         tool.run_finished.clear()

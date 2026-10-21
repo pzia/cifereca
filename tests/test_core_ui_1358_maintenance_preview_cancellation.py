@@ -12,6 +12,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.gui import maintenance_tools as guard
+from cifereca.gui.maintenance_result_view import MaintenanceResultView
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
@@ -142,6 +143,7 @@ def _method():
                        names=[ast.alias(name="annotations")], level=0), dispose, fn,
     ], type_ignores=[]))
     namespace = {
+        "MaintenanceResultView": MaintenanceResultView,
         "clear_box": lambda box: box.children.clear(),
         "Gtk": NS(Button=Button, Label=lambda **_kw: Container(),
                   ScrolledWindow=Container,
