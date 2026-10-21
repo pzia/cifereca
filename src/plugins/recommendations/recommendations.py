@@ -317,8 +317,19 @@ def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
     # The engine produces only immutable CatalogNoticeVariant records.
     if type(notices) not in (tuple, list):
         return ()
-    for notice in notices[:64]:
-        if type(notice) is not CatalogNoticeVariant or not notice.has_source_coordinates:
+    for notice in notices[:256]:
+        if type(notice) is not CatalogNoticeVariant:
+            continue
+        # An ISBN selector must be backed by the SAME validated, bounded
+        # original provider coordinates as an exact Search detail action.
+        # The source dataclass can contain malformed cached field values.
+        coordinates = (
+            notice.source_provider, notice.source_credential,
+            notice.record_id, notice.docbase, notice.source_collection,
+        )
+        if (any(type(value) is not str or len(value) > 512
+                for value in coordinates)
+                or not all(coordinates[:3])):
             continue
         isbn = notice.isbn
         if type(isbn) is not str or not re.fullmatch(r"97[89][0-9]{10}", isbn):
