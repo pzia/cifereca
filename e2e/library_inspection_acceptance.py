@@ -111,6 +111,20 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
 
     def inspect_action():
         report['checks']['inspection_result_dialog_mapped']=True
+        # Modern GTK/libadwaita: this is now a standalone, resizable result
+        # window rather than a fixed 340px MessageDialog. Xvfb may not run a
+        # WM, so check real titlebar/button without asserting EWMH geometry.
+        results = result_view.dialog
+        assert isinstance(results, Adw.Window)
+        assert results.get_resizable() and results.get_decorated()
+        header = next(w for w in walk(results)
+                      if isinstance(w, Adw.HeaderBar))
+        assert header.get_mapped()
+        maximize = next(w for w in walk(results)
+                        if isinstance(w, Gtk.Button)
+                        and w.get_label() == "Agrandir / Restaurer")
+        assert maximize.get_mapped() and maximize.get_sensitive()
+        report['checks']['inspection_results_large_window_maximizable'] = True
         response=next(w for w in walk(result_view.dialog) if isinstance(w,Gtk.Button) and 'Examiner les cas' in str(w.get_label()))
         def allocated():
             if not response.get_mapped():return False
@@ -234,6 +248,46 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                     if isinstance(w,Gtk.SearchEntry)
                     and w.get_placeholder_text()=='Filtrer les fichiers non liés…')
         assert search.get_visible()
+        # Direct physical selection from the NEW bounded list, not merely
+        # next/previous navigation. The first page contains 25 of 61 files.
+        file_list = next(w for w in walk(controller.dialog)
+                         if isinstance(w, Gtk.ListBox)
+                         and w is not widgets['list'])
+        rows=[]
+        child=file_list.get_first_child()
+        while child is not None:
+            rows.append(child)
+            child=child.get_next_sibling()
+        assert len(rows) == 25, len(rows)
+        selected_row=rows[1]
+
+        def file_row_ready():
+            if not selected_row.get_mapped() or not selected_row.get_sensitive():
+                return False
+            try:
+                x,y=device.widget_point(selected_row)
+                return x>=0 and y>=0
+            except RuntimeError:
+                return False
+
+        def click_file():
+            device.click_widget(selected_row)
+            until(lambda:any(isinstance(w,Gtk.Label)
+                             and '2 / 61 · exploration non probante' in w.get_text()
+                             for w in walk(controller.dialog)),
+                  manual_direct_selected)
+
+        until(file_row_ready, click_file)
+
+    def manual_direct_selected():
+        report['checks']['P0_2714_click_file_from_paged_list']=True
+        text='\\n'.join(w.get_text() for w in walk(controller.dialog)
+                         if isinstance(w,Gtk.Label))
+        assert 'Fichiers non liés · comparaison manuelle' in text
+        assert 'FOREIGN_SECRET' not in text
+        search=next(w for w in walk(controller.dialog)
+                    if isinstance(w,Gtk.SearchEntry)
+                    and w.get_placeholder_text()=='Filtrer les fichiers non liés…')
         search.set_text('synthetic-59')
         until(lambda:any(isinstance(w,Gtk.Label)
                          and '1 / 1 · exploration non probante' in w.get_text()
