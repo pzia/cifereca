@@ -42,7 +42,7 @@ METADATA = {
     "ean": "4006381333931",
     "publisher": "Éditions UX",
     "awards": ["Prix des lecteurs", "Prix du Quai"],
-    "keywords": ["enquête", "roman"],
+    "keywords": ["enquête & mystère", "roman"],
     "collections": ["Collection enquête"],
     "series_index": 2,
     "synopsis": "<p>Une enquête de test.</p><p>Résumé disponible sans réseau.</p>",
@@ -341,7 +341,7 @@ def main():
             ("EAN déclaré", "4006381333931"),
             ("Éditeur", "Éditions UX"),
             ("Prix littéraire", "Prix du Quai"),
-            ("Mot-clé", "enquête"),
+            ("Mot-clé", "enquête & mystère"),
             ("Collection", "Collection enquête"),
             ("Numéro dans la série", "2"),
             ("Résumé", "Une enquête de test.\n\nRésumé disponible sans réseau."),
@@ -352,6 +352,11 @@ def main():
         ):
             assert expected in shown, f"Champ {expected!r} absent du véritable panneau GTK déplié : {shown!r}"
         assert expander.get_subtitle() == f"{len(rows)} champ(s) bibliographiques"
+        for row in rows:
+            assert not row.get_use_markup(), "Métadonnée interprétée en Pango"
+            assert any(isinstance(label, Gtk.Label) and label.get_text() == row.get_subtitle()
+                       for label in walk(row)), "Sous-titre bibliographique visuellement perdu"
+        report["checks"]["literal_metadata_labels"] = True
         assert not any("SECRET_NE_JAMAIS_AFFICHER" in v for _, v in shown)
         assert report["online_calls"] == [], "Recherche déclenchée par ouverture du détail"
         report["checks"]["search_metadata"] = True
@@ -380,7 +385,21 @@ def main():
         assert copy.get_mapped(), "Action Copier de la ligne sélectionnée non mappée"
         assert copy.grab_focus() is not False
         capture("01-search-detail-expanded")
-        later(230, lambda: click_copy(copy))
+        lookup = next(b for k, b in buttons_for(subject).items()
+                      if k.startswith("Rechercher en ligne"))
+        # Exercise the native tab order between the two per-value actions.
+        device.key("Tab", True)
+        device.key("Tab", False)
+        later(100, lambda: verify_tab_order(copy, lookup))
+
+    def verify_tab_order(copy, lookup):
+        assert lookup.has_focus(), "Tab ne rejoint pas la recherche de la même valeur"
+        device.key("Shift_L", True)
+        device.key("Tab", True)
+        device.key("Tab", False)
+        device.key("Shift_L", False)
+        report["checks"]["per_value_tab_order"] = True
+        later(100, lambda: click_copy(copy))
 
     def click_copy(button):
         assert button.has_focus(), "Focus copie perdu"
@@ -446,7 +465,7 @@ def main():
         for expected in (
             ("Auteur", "Alice Exemple"), ("Auteur", "Bob Exemple"),
             ("Sujet", "nature"), ("ISBN déclaré", "9780306406157"),
-            ("Prix littéraire", "Prix du Quai"), ("Mot-clé", "enquête"),
+            ("Prix littéraire", "Prix du Quai"), ("Mot-clé", "enquête & mystère"),
             ("Collection", "Collection enquête"),
             ("Fiche publique · Format commercial sélectionné", "PDF sans DRM"),
         ):

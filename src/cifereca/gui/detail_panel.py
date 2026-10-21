@@ -163,6 +163,9 @@ class DetailPanel(Gtk.Box):
                 field = fields[index] if index < len(fields) else None
                 kind = getattr(field, "kind", "copy")
                 row = Adw.ActionRow()
+                # Metadata is plain text, never Pango markup. In particular
+                # an ordinary ampersand must not erase the visible subtitle.
+                row.set_use_markup(False)
                 display_value, full_value = detail_display_value(label, safe_value)
                 row.set_title(label)
                 row.set_subtitle(display_value)
