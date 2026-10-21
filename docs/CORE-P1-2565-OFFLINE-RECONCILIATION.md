@@ -181,3 +181,28 @@ ligne, avec indication des coupures). Le plugin choisit ses libellés métier.
 Le résultat est oublié au prochain essai, à l’actualisation ou au changement
 de contexte ; les callbacks périmés/annulés ne peuvent pas le publier.
 Ce contrat ne fournit encore ni filtre ni inspection privée des cas individuels.
+
+## Inspection privée locale depuis Maintenance
+
+« Résultats… → Examiner les cas… » lance une **nouvelle** lecture hors réseau
+pour l’identité active. Cette inspection Core, séparée du broker public expurgé,
+reste en mémoire et n’offre ni export, ni réparation, ni acquisition. La liste
+paginée (50 cas) filtre les fichiers, droits non vérifiés et chemins enregistrés
+par fournisseur/état ; l’identité est limitée à celle explicitement active.
+Changer d’identité exige de relancer l’analyse, sans consultation inter-identités.
+
+Un fournisseur n’est attribué à un fichier que par son lien confirmé. Un candidat
+ISBN, une empreinte ou la source déclarée d’une notice ne suffisent jamais ; les
+droits sans fichier vérifié gardent séparément leur fournisseur déclaré. Le détail
+local présente chemins, métadonnées OPF, SHA calculé, preuves explicitement liées,
+identifiants bibliographiques et niveaux de certitude. Les lignes hors identité
+sont masquées, même lors d’un conflit ; licences et blobs arbitraires ne sont pas
+chargés. Les constats ne sont pas une autorisation future de réparation.
+
+La projection est bornée à 10 000 cas et 8 Mio de texte, 32 K caractères/cas,
+20 preuves de chaque type affichées, avec limites visibles. Le changement de
+configuration, de projection d’identités, de base ou d’epoch révoque la session ;
+la fermeture, navigation, nouvelle prévisualisation et annulation oublient les
+résultats. Chaque lecture locale revalide le contexte ; la fenêtre vérifie aussi
+sa révocation pendant sa consultation. Les preuves restent celles de l’analyse,
+pas une garantie que le fichier ou un droit n’a pas changé entre-temps.

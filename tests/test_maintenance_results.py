@@ -48,7 +48,7 @@ def test_completed_result_is_consultable_and_reopenable(ok, monkeypatch):
     assert 'Liens confirmés : 517' in label.text
     assert 'Durée maximale atteinte.' in label.text
     assert '/private' not in label.text
-    assert dialog.responses == {'close': 'Fermer'}
+    assert dialog.responses == {'close': 'Fermer', 'inspect': 'Examiner les cas…'}
     assert label.wrap and label.selectable
     dialog.handlers['response'](dialog, 'close')
     view.button.click()
