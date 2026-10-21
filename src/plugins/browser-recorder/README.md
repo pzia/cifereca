@@ -15,7 +15,19 @@ impérative avant partage. Le HAR ci-dessous reste une fonction secondaire.
 
 ## Pré-requis
 
-Le plugin ne télécharge **pas** automatiquement un navigateur ni des dépendances. Sur la machine Linux qui exécute Cifereca (avec une session graphique), installez volontairement :
+**Playwright Python est désormais déclaré comme dépendance de plugin** (v0.1.3).
+Le Core l'installe lors de l'installation volontaire d'un ZIP de plugin ou,
+pour un plugin déjà présent/activé, après l'action explicite **Plugins →
+Browser Recorder → Installer/réparer Playwright (Python)…** et une confirmation.
+Cette action passe par le gestionnaire de dépendances du Core, **uniquement
+dans le venv Cifereca**, en arrière-plan, avec vérification et rollback.
+Elle ne télécharge pas Chromium.
+
+**Chromium reste un artefact distinct**, potentiellement volumineux, et n'est
+pas téléchargé par la simple activation du plugin. Son provisionnement guidé
+en interface reste un chantier P0 #2628. Tant qu'il n'est pas livré, un
+administrateur peut suivre la procédure volontaire ci-dessous, sur le poste
+Linux exécutant Cifereca avec session graphique :
 
 ```bash
 python -m pip install 'playwright>=1.50,<2'
