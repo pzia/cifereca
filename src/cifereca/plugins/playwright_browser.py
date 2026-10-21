@@ -195,6 +195,26 @@ def _stop(proc: subprocess.Popen) -> None:
         pass
 
 
+def _acquire_install_process_lock() -> int:
+    """Coordinate Cifereca processes sharing the same HOME/browser cache.
+
+    Linux advisory flock on HOME's directory inode creates NO lock file and
+    NEVER mutates a browser cache. The lock releases automatically if a GUI
+    process crashes. This is complementary to the in-process _INSTALL_LOCK;
+    unrelated Playwright clients are not modified or assumed to cooperate.
+    """
+    import fcntl
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open(Path.home(), flags)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 def install_chromium(
     *, consent: bool = False, cancelled: Event | None = None,
     progress: Callable[[str], None] | None = None, timeout: int = _MAX_INSTALL_SECONDS,
@@ -214,6 +234,7 @@ def install_chromium(
         return BrowserState("cancelled")
     if not _INSTALL_LOCK.acquire(blocking=False):
         return BrowserState("installation_already_running")
+    process_lock_fd = None
     try:
         before = inspect_chromium()
         if before.code not in {
@@ -245,8 +266,32 @@ def install_chromium(
             "PLAYWRIGHT_DOWNLOAD_HOST", "PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST",
         )):
             return BrowserState("browser_download_source_unapproved", before.version)
+        # Two app instances use the same Playwright browser directory. Guard
+        # the entire CLI install/verification window across processes, even
+        # though their Python threading.Lock instances are independent.
+        try:
+            process_lock_fd = _acquire_install_process_lock()
+        except BlockingIOError:
+            return BrowserState("installation_already_running", before.version)
+        except (OSError, ImportError):
+            return BrowserState("browser_cache_unavailable", before.version)
+
+        # The other instance could have completed between our initial probe
+        # and flock acquisition. Do not download an already installed revision.
+        under_lock = inspect_chromium()
+        if under_lock.code == "chromium_installed_unverified":
+            return inspect_chromium(test_launch=True)
+        if under_lock.code not in {"chromium_missing", "chromium_revision_incompatible"}:
+            return under_lock
+        if cancelled is not None and cancelled.is_set():
+            return BrowserState("cancelled", before.version)
+
         if progress is not None:
             progress("starting")
+        # A user may cancel while the slow preflight or GUI progress callback
+        # is running. Never spawn a downloader after that cancellation.
+        if cancelled is not None and cancelled.is_set():
+            return BrowserState("cancelled", before.version)
         try:
             # No shell, sudo, install-deps or pip. No raw output in diagnostics.
             # --no-remove protects browsers used by other Playwright clients.
@@ -288,6 +333,11 @@ def install_chromium(
             return BrowserState("download_incomplete", before.version)
         return after
     finally:
+        if process_lock_fd is not None:
+            try:
+                os.close(process_lock_fd)  # releases the POSIX process lock
+            except OSError:
+                pass
         _INSTALL_LOCK.release()
 
 
