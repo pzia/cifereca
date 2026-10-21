@@ -650,7 +650,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             warning.set_wrap(True); warning.add_css_class("warning"); box.append(warning)
         if any(
             not row.ok and row.requirement.type == "python-package"
-            for row in status.requirements
+            for row in getattr(status, "requirements", ())
         ):
             repair = action_button(
                 "Installer les dépendances Python…", "system-software-install-symbolic",
