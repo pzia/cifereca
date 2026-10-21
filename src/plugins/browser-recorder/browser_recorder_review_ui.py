@@ -444,28 +444,32 @@ class PrivateReviewPanel:
             # version. Capture only unmodified keys in this candidate row
             # before the popup handles them, allowing a reliable accessible
             # choice with XTEST and keyboard alone. No bulk decision is made.
-            shortcuts = Gtk.EventControllerKey()
-            shortcuts.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            # Offline headless unit tests use a minimal fake Gtk contract;
+            # keyboard event controllers exist only in a real GTK4 runtime.
+            # Preserve non-GUI review/redaction tests without importing GI.
+            if hasattr(Gtk, "EventControllerKey"):
+                shortcuts = Gtk.EventControllerKey()
+                shortcuts.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
 
-            def candidate_key_pressed(_controller, keyval, _keycode, state,
-                                      current=chooser):
-                from gi.repository import Gdk
-                if state & (Gdk.ModifierType.CONTROL_MASK
-                            | Gdk.ModifierType.ALT_MASK
-                            | Gdk.ModifierType.SUPER_MASK):
-                    return False
-                action = {
-                    Gdk.KEY_1: "anonymize", Gdk.KEY_KP_1: "anonymize",
-                    Gdk.KEY_2: "keep", Gdk.KEY_KP_2: "keep",
-                    Gdk.KEY_3: "exclude", Gdk.KEY_KP_3: "exclude",
-                }.get(keyval)
-                if action is None:
-                    return False
-                current.set_active_id(action)
-                return True
+                def candidate_key_pressed(_controller, keyval, _keycode, state,
+                                          current=chooser):
+                    from gi.repository import Gdk
+                    if state & (Gdk.ModifierType.CONTROL_MASK
+                                | Gdk.ModifierType.ALT_MASK
+                                | Gdk.ModifierType.SUPER_MASK):
+                        return False
+                    action = {
+                        Gdk.KEY_1: "anonymize", Gdk.KEY_KP_1: "anonymize",
+                        Gdk.KEY_2: "keep", Gdk.KEY_KP_2: "keep",
+                        Gdk.KEY_3: "exclude", Gdk.KEY_KP_3: "exclude",
+                    }.get(keyval)
+                    if action is None:
+                        return False
+                    current.set_active_id(action)
+                    return True
 
-            shortcuts.connect("key-pressed", candidate_key_pressed)
-            line.add_controller(shortcuts)
+                shortcuts.connect("key-pressed", candidate_key_pressed)
+                line.add_controller(shortcuts)
             line.append(chooser)
             self.candidates_box.append(line)
         self._refresh()
