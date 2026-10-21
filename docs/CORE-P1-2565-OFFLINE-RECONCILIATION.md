@@ -443,3 +443,36 @@ Recette synthétique : 6 EPUB Numilog, 3 chaînes de droits complètes,
 3 droits sans lien confirmé, 2 fichiers partageant le même ISBN et
 deux droits associés chacun à une notice de ce même ISBN. Les candidats
 restent affichés pour **chacun** sans prouver aucun rattachement.
+
+
+## Explorer manuellement les fichiers sans lien — P0 #2657
+
+Si aucune notice ne partage l'ISBN ou un autre identifiant explicite du
+livre, la **comparaison privée à deux colonnes** ne s'arrête pas à
+« 0 candidat ». Ouvrir le droit non vérifié, puis sélectionner
+**« Comparer tous les fichiers non liés »** : la seconde colonne permet de
+parcourir, **un fichier à la fois**, les fichiers inventoriés **sans lien de droit confirmé**
+**de l'identité active seulement**, y compris ceux dont le SHA n'a pas pu
+être vérifié (état « Fichier non vérifié » conservé). Le champ de recherche filtre
+le libellé affiché (titre/auteurs OPF, nom de fichier), jamais les preuves
+cachées ; navigation et nombre total restent disponibles même au-delà de
+50 fichiers. « Voir les candidats exacts » restaure la sélection
+bibliographique initiale, sans modifier les sources ni l'audit.
+
+**Distinction impérative :** en mode exploration, tous les fichiers sont
+de simples fichiers locaux **sans lien confirmé**. Une empreinte SHA
+indisponible ne démontre ni la présence exploitable du fichier ni son
+absence : l'état reste explicitement « non vérifié ». Leur présence à côté d'un droit
+Numilog ne prouve **ni** qu'ils proviennent de Numilog, **ni** qu'ils sont
+achetés, attribuables ou manquants. Il n'existe aucune sélection
+automatique d'une « bonne contrepartie » parmi les fichiers. Le compteur
+de fichiers n'est pas soustrait du compteur de droits et les cas
+multicomptes ne sont jamais mélangés. Les recherches, détails et résultats
+n'existent que dans la session locale révocable ; aucun scan, écriture,
+téléchargement ou réparation supplémentaire n'est déclenché.
+
+Recette : vérifier sur un jeu synthétique 6 EPUB/6 droits/3 liens attestés
+que les trois fichiers restants demeurent consultables **sans ISBN commun**
+ou notice complète, et que le droit sélectionné conserve son statut
+« sans fichier vérifié ». Vérifier recherche, navigation, changement
+d'identité et absence d'accès aux fichiers d'une autre identité.

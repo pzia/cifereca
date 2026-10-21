@@ -428,6 +428,29 @@ class LocalInspection:
                                       for word in terms))]
         return LocalPage(tuple(rows[offset:offset+limit]), len(rows), offset, self._limited)
 
+    def unconfirmed_files(self, *, offset=0, limit=1, query=''):
+        """Manually browse ALL same-identity files without an attested link.
+
+        An unreadable/unhashed file is 'unverified_file', NOT the
+        'local_file_without_attested_right' state; both must be visible for
+        manual inspection. This is intentionally *not* a right-matching API.
+        Private case keys and details vanish when the session is revoked.
+        """
+        if (type(offset) is not int or offset < 0 or
+                type(limit) is not int or not 1 <= limit <= 50 or
+                type(query) is not str or len(query) > 160):
+            raise ValueError('invalid_inspection_page')
+        if not self.valid():
+            return LocalPage((), 0, 0, False)
+        terms = tuple(_searchable(term) for term in query.split() if term)
+        rows = [case for case in self._cases.values()
+                if case.key.startswith('file:')
+                and 'confirmed_link' not in case.states
+                and (not terms or all(word in _searchable(case.label)
+                                      for word in terms))]
+        return LocalPage(tuple(rows[offset:offset+limit]), len(rows),
+                         offset, self._limited)
+
     def candidate_files(self, right_key):
         """Only local, metadata_only cross-reference hints; never an action plan.
 

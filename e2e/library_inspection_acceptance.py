@@ -196,6 +196,67 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert candidate_cases[1].label in labels
         assert 'FOREIGN_SECRET' not in labels
         report['checks']['local_inspection_right_candidate_side_by_side_no_attestation']=True
+        manual=next(w for w in walk(controller.dialog)
+                    if isinstance(w,Gtk.Button)
+                    and w.get_label()=='Comparer tous les fichiers non liés')
+        def ready():
+            if not manual.get_mapped() or not manual.get_sensitive():
+                return False
+            try:
+                x,y=device.widget_point(manual)
+                return x>=0 and y>=0
+            except RuntimeError:
+                return False
+        def click():
+            device.click_widget(manual)
+            until(lambda:any(isinstance(w,Gtk.Label) and '1 / 61' in w.get_text()
+                             for w in walk(controller.dialog)),manual_first)
+        until(ready,click)
+
+    def manual_first():
+        texts='\\n'.join(w.get_text() for w in walk(controller.dialog)
+                        if isinstance(w,Gtk.Label))
+        assert 'Fichiers non liés · comparaison manuelle' in texts
+        assert 'Aucun n’est attribué' in texts
+        assert 'FOREIGN_SECRET' not in texts
+        assert controller.session.unconfirmed_files().total == 61
+        search=next(w for w in walk(controller.dialog)
+                    if isinstance(w,Gtk.SearchEntry)
+                    and w.get_placeholder_text()=='Filtrer les fichiers non liés…')
+        assert search.get_visible()
+        search.set_text('synthetic-59')
+        until(lambda:any(isinstance(w,Gtk.Label)
+                         and '1 / 1 · exploration non probante' in w.get_text()
+                         for w in walk(controller.dialog)),manual_filtered)
+
+    def manual_filtered():
+        texts='\\n'.join(w.get_text() for w in walk(controller.dialog)
+                        if isinstance(w,Gtk.Label))
+        assert 'synthetic-59.epub' in texts
+        assert 'FOREIGN_SECRET' not in texts
+        assert 'Droit sans fichier vérifié' in texts
+        report['checks']['local_inspection_manual_unlinked_filter_same_identity']=True
+        switch=next(w for w in walk(controller.dialog)
+                    if isinstance(w,Gtk.Button) and w.get_label()=='Voir les candidats exacts')
+        def ready():
+            if not switch.get_mapped():return False
+            try:
+                x,y=device.widget_point(switch)
+                return x>=0 and y>=0
+            except RuntimeError:
+                return False
+        def click():
+            device.click_widget(switch)
+            until(lambda:any(isinstance(w,Gtk.Label) and '2 / 20' in w.get_text()
+                             for w in walk(controller.dialog)),manual_restored)
+        until(ready,click)
+
+    def manual_restored():
+        texts='\\n'.join(w.get_text() for w in walk(controller.dialog)
+                        if isinstance(w,Gtk.Label))
+        assert 'Fichiers candidats' in texts
+        assert 'synthetic-59.epub' not in texts
+        report['checks']['local_inspection_manual_does_not_change_candidate_set']=True
         choose(widgets['provider'],0,lambda:choose(widgets['state'],3,candidates))
 
     def candidates():
