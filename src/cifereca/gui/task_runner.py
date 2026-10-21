@@ -91,6 +91,7 @@ class TaskRunner:
             "task", "opening-sync", "deep-sync", "source-sync", "source-materialize",
             "sync-preflight", "kobo-acquisition", "maintenance", "library",
             "recent", "search", "plugin", "other",
+            "maintenance-plan", "maintenance-tool",
         } else "other"
         # An explicit user request must always run, including callers that
         # deliberately have no GTK control (keyboard actions, headless host).
