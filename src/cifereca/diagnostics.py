@@ -146,6 +146,7 @@ class DiagnosticEntry:
     verified_numilog_startup: bool = False
     verified_kobo_backup: bool = False
     verified_browser_recorder: bool = False
+    verified_reconciliation: bool = False
 
 
 class Diagnostics:
@@ -406,6 +407,32 @@ class Diagnostics:
         except Exception:
             pass
 
+    def add_core_reconciliation_result(self, result: object, *, duration_ms: int | None = None) -> None:
+        """Core-only terminal result: never store private library evidence.
+
+        Called once per broker attempt with its already-redacted summary.
+        A generic add() row can never acquire this attestation flag.
+        """
+        from .core.diagnostic_reconciliation import from_audit_result, public_fields
+
+        if not self.enabled:
+            return
+        fields = public_fields(from_audit_result(result, duration_ms))
+        if not fields:
+            return
+        status = fields["status"]
+        if self.level == "errors" and status == "complete":
+            return
+        entry = DiagnosticEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            category="LIBRARY", operation="library_reconciliation_audit",
+            status="ok" if status == "complete" else status,
+            duration_ms=fields.get("duration_ms"), detail=fields,
+            verified_reconciliation=True,
+        )
+        with self._lock:
+            self._items.append(entry)
+
     def snapshot(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = [asdict(x) for x in self._items]
@@ -424,6 +451,8 @@ class Diagnostics:
                     row.pop("verified_kobo_backup", None)
                 if row.get("verified_browser_recorder") is False:
                     row.pop("verified_browser_recorder", None)
+                if row.get("verified_reconciliation") is False:
+                    row.pop("verified_reconciliation", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
