@@ -1,3 +1,16 @@
+## 0.1.15 — Réconciliation dans les Journaux (#2730)
+
+Les événements Core `LIBRARY / library_reconciliation_audit` (issus du broker
+`diagnostics.events`) présentent désormais les **fichiers commencés,
+observés, SHA vérifiés**, les volumes de notices/références examinées et les
+temps cumulés SHA, OPF, structure et comparaison. Les causes explicites sont
+visibles avec leur code, retrouvable dans la recherche de la **page courante
+(50 événements maximum)**, tout en conservant les filtres serveur module,
+gravité et période. Un inventaire partiel — même avec zéro candidat — ne
+prouve aucune absence de livre ou de droit. Champs hors allowlist, identités,
+titres, ISBN, fichiers, empreintes et exceptions ne sont pas rendus ni exportés.
+Le plugin n’effectue aucun réaudit, mutation, transfert ou accès réseau.
+
 
 
 ## 0.1.12 — Journaux et capture dans Diagnostics (#2139)
