@@ -757,10 +757,8 @@ class MainWindow(Adw.ApplicationWindow):
             self._maintenance_result_views.append(result_view)
 
             def update_readiness(*, button=run, action=row, info=info,
-                                 scope=readiness):
-                if not can_check_readiness or not scope["active"] or self._closed:
-                    return
-                if button.get_root() is None:
+                                 scope=readiness, local_gate=can_check_readiness):
+                if not local_gate or not scope["active"] or self._closed:
                     return
                 current = self.service.current_identity
                 expected_identity = current.identity_id if current is not None else None
@@ -780,7 +778,7 @@ class MainWindow(Adw.ApplicationWindow):
                 def current_scope():
                     now = self.service.current_identity
                     return (scope["active"] and scope["token"] is token
-                            and not self._closed and button.get_root() is not None
+                            and not self._closed
                             and (now.identity_id if now is not None else None) == expected_identity
                             and getattr(self, "_identity_context_generation", None) == generation)
 
@@ -805,7 +803,7 @@ class MainWindow(Adw.ApplicationWindow):
                     if status not in ("ready_offline", "initializing", "blocked",
                                       "temporarily_busy", "indeterminate"):
                         status, reason, enabled = "indeterminate", "storage_unchecked", True
-                    scope["status"] = status if enabled else status
+                    scope["status"] = status
                     subtitle = labels.get(reason, labels["storage_unchecked"])
                     action.set_subtitle(subtitle)
                     button.set_sensitive(enabled)
@@ -820,7 +818,8 @@ class MainWindow(Adw.ApplicationWindow):
                             scope["timer"] = None
                             if current_scope():
                                 update_readiness(button=button, action=action,
-                                                 info=info, scope=scope)
+                                                 info=info, scope=scope,
+                                                 local_gate=local_gate)
                             return False
                         scope["timer"] = GLib.timeout_add_seconds(3, retry)
 
@@ -852,14 +851,14 @@ class MainWindow(Adw.ApplicationWindow):
                 _button, service=tool, meta=info,
                 cancel_button=cancel, cancellation_state=active_cancel,
                 feedback=line_feedback, progress_scope=line_scope, result_view=result_view,
+                local_gate=can_check_readiness, readiness_scope=readiness,
             ):
                 if self._closed or _button.get_root() is None:
                     return
-                if (can_check_readiness and not readiness["active"]) or (
-                    can_check_readiness and readiness["status"] in (
-                        "initializing", "temporarily_busy", "blocked"
-                    )
-                ):
+                if local_gate and (not readiness_scope["active"] or
+                                   readiness_scope["status"] in (
+                                       "initializing", "temporarily_busy", "blocked"
+                                   )):
                     return
                 result_view.clear()
                 identity = self.service.current_identity
@@ -893,7 +892,7 @@ class MainWindow(Adw.ApplicationWindow):
                 cancellation_state["ticket"] = ticket
 
                 def check_local_gate(callback):
-                    if can_check_readiness:
+                    if local_gate:
                         from cifereca.core.library_reconciliation_readiness import (
                             local_reconciliation_readiness,
                         )
