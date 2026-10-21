@@ -80,6 +80,8 @@ def revalidate_observed_file(
             or len(observation.fingerprint) != 5
             or any(type(value) is not int for value in observation.fingerprint)):
         return unavailable("unverified_observation")
+    if type(observation.path) is not str or not 1 <= len(observation.path) <= 4096:
+        return unavailable("invalid_scope")
     path = Path(observation.path)
     if (not path.is_absolute() or ".." in path.parts
             or path.suffix.lower() != ".epub"):
