@@ -573,3 +573,25 @@ les actions et le passage vers « Examiner les cas » avec une fixture
 locale synthétique, sans compte réel. Xvfb sans gestionnaire de fenêtres
 n'atteste pas la géométrie maximisée : vérification terrain nécessaire
 à 1280/1366 px.
+
+
+## Budget temporel pour la réconciliation interactive complète (#2565, 21/10/2026)
+
+Le broker public `library.reconciliation.read.audit`, pour **l'identité active
+explicitement sélectionnée**, transmet désormais **600 secondes** à la fois
+à l'échéance globale `audit_library(..., seconds=600)` et au plafond
+`InventoryLimits(seconds=600)`. Les valeurs générales des APIs
+`audit_library` (180 secondes) et `scan_identity_roots` (120 secondes) ne
+changent **pas**. En particulier, une inspection CLI ou un autre appel Core
+ne reçoit pas implicitement ce budget.
+
+Il ne s'agit **pas** d'un délai garanti pour chaque livre, ni d'un progrès
+à 100 % : les plafonds d'octets, d'entrées, de fichiers, la validation
+individuelle (EPUB/CRC), la recherche de candidats bibliographiques
+(10 secondes par défaut) et le snapshot SQLite/WAL (10 secondes par défaut)
+restent indépendants et bornés. Le snapshot initial, effectué pour vérifier
+les migrations et droits d'identité **avant** l'audit, conserve sa propre
+échéance. L'annulation explicite, le changement de compte/identité/racines
+et les erreurs de lecture terminent l'essai sans convertir une couverture
+incomplète en preuve d'absence. Les résultats demeurent locaux, expurgés
+aux frontières publiques, sans téléchargement ni réparation.
