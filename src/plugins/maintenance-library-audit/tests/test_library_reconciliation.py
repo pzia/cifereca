@@ -191,3 +191,45 @@ def test_cancellation_after_last_core_item_remains_cancelled(tool):
     broker.audit = cancelled_result
     with pytest.raises(RuntimeError, match='cancelled'):
         instance.run(prepare(instance), Control())
+
+
+def test_all_counter_labels_are_explicit_safe_and_preserve_uncertainty(tool, monkeypatch):
+    import cifereca_library_reconciliation as module
+    captured = []
+    class PresentableResult:
+        details = ()
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+    monkeypatch.setattr(module, 'MaintenanceResult', PresentableResult)
+    instance, broker = tool
+    broker.result['reconciliation']['counts']['untrusted_private'] = 'PRIVATE'
+    instance.run(prepare(instance), Control())
+    details = captured[0]['details']
+    assert 'Fichiers observés : 524' in details
+    assert 'Fichiers dont le SHA a été calculé : 517' in details
+    assert 'Liens confirmés par les preuves locales : 253' in details
+    assert 'Droits sans fichier local vérifié : 5' in details
+    assert 'Chemins enregistrés absents au contrôle : 1' in details
+    assert 'Candidats bibliographiques sans preuve de droit : 7' in details
+    assert 'ne pas additionner' in details[-1]
+    assert len(details) == 14
+    assert 'PRIVATE' not in repr(captured)
+
+
+def test_old_core_without_presentation_capability_keeps_existing_result(tool, monkeypatch):
+    import cifereca_library_reconciliation as module
+    from dataclasses import dataclass, field
+    @dataclass
+    class OldResult:
+        ok: bool
+        changed: int
+        summary: str
+        warnings: tuple
+        facts: dict = field(default_factory=dict)
+    monkeypatch.setattr(module, 'MaintenanceResult', OldResult)
+    instance, broker = tool
+    result = instance.run(prepare(instance), Control())
+    assert result.ok and result.changed == 0
+    assert result.facts['hashed_files'] == 517
+    assert '253' in result.summary
+    assert not hasattr(result, 'details')
