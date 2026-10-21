@@ -952,8 +952,16 @@ def main():
         outer.set_value(max(0, min(float(bounds.get_y()) - 60,
                                  outer.get_upper() - outer.get_page_size())))
         def focused():
-            assert button.grab_focus() is not False
-            until(button.has_focus, activate, seconds=4)
+            # GTK may reallocate/reparent a FlowBox child while the mapped
+            # diagnostics window narrows to 760px. A one-shot grab_focus()
+            # can be discarded during that layout tick. Retry the *real*
+            # focus request; the XTEST key is sent only once focus is proven.
+            def acquired_focus():
+                if not button.get_mapped():
+                    return False
+                button.grab_focus()
+                return button.has_focus()
+            until(acquired_focus, activate, seconds=4)
         def activate():
             assert button.has_focus()
             press("space")
