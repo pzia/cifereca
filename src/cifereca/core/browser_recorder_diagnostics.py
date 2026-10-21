@@ -17,12 +17,16 @@ OPERATIONS = {
 }
 # Only explicit runtime user actions may be attested through the scoped plugin
 # context. Plugin code is never authorized to impersonate Core provisioning.
-RUNTIME_OPERATIONS = frozenset({"http_capture", "http_review", "zip_prepare", "zip_export"})
-RUNTIME_CODES = frozenset({
-    "capture_failed", "capture_interrupted", "capture_limit",
-    "review_failed", "zip_prepare_failed", "zip_export_failed",
-    "playwright_missing",
-})
+RUNTIME_CODES_BY_OPERATION = {
+    "http_capture": frozenset({
+        "capture_failed", "capture_interrupted", "capture_limit", "playwright_missing",
+    }),
+    "http_review": frozenset({"review_failed"}),
+    "zip_prepare": frozenset({"zip_prepare_failed"}),
+    "zip_export": frozenset({"zip_export_failed"}),
+}
+RUNTIME_OPERATIONS = frozenset(RUNTIME_CODES_BY_OPERATION)
+RUNTIME_CODES = frozenset().union(*RUNTIME_CODES_BY_OPERATION.values())
 CODES = frozenset({
     "ready", "python_ready", "python_install_failed",
     "chromium_installed_unverified", "chromium_missing",

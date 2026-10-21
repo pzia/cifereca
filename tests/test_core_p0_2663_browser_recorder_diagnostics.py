@@ -232,3 +232,55 @@ def test_runtime_cannot_forge_core_chromium_status_or_unverified_package(tmp_pat
     )
     assert result["total"] == 1
     assert secret not in repr(result)
+
+
+@pytest.mark.parametrize(("operation", "invalid_code"), [
+    ("http_capture", "zip_export_failed"),
+    ("http_review", "capture_failed"),
+    ("zip_prepare", "review_failed"),
+    ("zip_export", "playwright_missing"),
+])
+def test_plugin_runtime_cannot_attest_a_code_for_the_wrong_action(
+    tmp_path, operation, invalid_code,
+):
+    """A real recorder can report only fixed outcomes appropriate to its action."""
+    from cifereca.plugins.manager import PluginManager
+
+    secret = "FAKE_PRIVATE_HTTP_COOKIE_NEVER_PUBLISH"
+    collector = Diagnostics()
+    manager = SimpleNamespace(
+        diagnostics=collector,
+        _records={
+            PLUGIN_ID: SimpleNamespace(
+                descriptor=SimpleNamespace(id=PLUGIN_ID),
+                package=SimpleNamespace(
+                    manifest=SimpleNamespace(
+                        package=SimpleNamespace(
+                            id="org.cifereca.technical.browser-recorder",
+                        ),
+                    ),
+                ),
+            ),
+        },
+    )
+    PluginManager._plugin_diag(
+        manager, PLUGIN_ID, "https://example.invalid/?token=" + secret,
+        "ok", {"operation": operation, "code": invalid_code, "url": secret},
+        "normal",
+    )
+    rows = collector.snapshot()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "error"
+    assert rows[0]["detail"] == {
+        "plugin_id": PLUGIN_ID,
+        "operation": operation,
+        "code": "browser_operation_failed",
+    }
+    public = query_diagnostic_events(
+        collector, log_path=tmp_path / "absent",
+        source="core_events", module="PLUGIN", severity="error",
+    )
+    assert public["total"] == 1
+    assert public["events"][0]["detail"] == rows[0]["detail"]
+    assert secret not in repr(public)
+    assert secret not in collector.text("unit")
