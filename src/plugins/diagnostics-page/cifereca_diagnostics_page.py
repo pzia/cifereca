@@ -650,9 +650,14 @@ class DiagnosticsPagePlugin:
         # This is a SERVER-side exact Core reason-code filter, unlike the
         # search field above which only scans the 50 loaded observations.
         # A separate row keeps controls usable on 760/1024px desktops.
-        reason_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        reason_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         reason_caption = Gtk.Label(label="Limite de réconciliation :", xalign=0)
         reason_code_filter = Gtk.Entry()
+        # The GTK Entry's long placeholder must not increase the minimum
+        # top-level width. Keep a narrow natural request and expand into the
+        # available space; the layout is stacked at 760px and larger.
+        reason_code_filter.set_width_chars(18)
+        reason_code_filter.set_max_width_chars(32)
         reason_code_filter.set_placeholder_text(
             "Code exact · toutes les pages (Entrée pour appliquer)"
         )
