@@ -60,7 +60,7 @@ jobs:
             python3-gi gir1.2-gtk-4.0 python3-pytest xvfb xauth
       - name: Native GTK4 review and ZIP UI test with synthetic RAM trace
         env:
-          PYTHONPATH: ${{ github.workspace }}/src/plugins/browser-recorder
+          PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/src/plugins/browser-recorder
           GDK_BACKEND: x11
         run: |
           set -euo pipefail
