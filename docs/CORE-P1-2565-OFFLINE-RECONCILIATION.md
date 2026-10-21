@@ -206,3 +206,36 @@ la fermeture, navigation, nouvelle prévisualisation et annulation oublient les
 résultats. Chaque lecture locale revalide le contexte ; la fenêtre vérifie aussi
 sa révocation pendant sa consultation. Les preuves restent celles de l’analyse,
 pas une garantie que le fichier ou un droit n’a pas changé entre-temps.
+
+
+## Diagnostic WAL par phases fermées — P0 #2565 (21/10/2026)
+
+Le Core trace déjà le parcours `reconciliation_snapshot` (`direct` ou
+`wal`, code fermé, durée bornée). Une lecture WAL avec enfant Linux émet
+désormais, seulement après l'appel explicite à **Exécuter**, jusqu'à cinq
+messages `TRACE reconciliation_wal phase=stage step=<étape> elapsed_ms=<ms>` :
+
+- `capture` : entrée dans la capture cohérente DB/WAL/SHM avec verrous SHM
+  partagés. Aucun checkpoint, migration ni connexion SQLite sur source ;
+- `validate` : capture achevée, validation du préfixe WAL publié et checksums ;
+- `replay` : validation terminée, rejeu SQLite dans une image *privée* ;
+- `serialize` : sérialisation de l'image privée en mémoire ;
+- `emit` : retour de l'image privée sur le canal binaire déjà existant.
+
+L'enfant écrit **seulement** ces marqueurs fixes dans un canal distinct
+`stderr` ; le parent draine les deux tubes sans blocage, n'interprète au
+maximum que 1 024 octets du canal de diagnostic et ignore toute ligne inconnue.
+Seuls les noms d'étapes appartenant à l'allowlist du Core sont journalisés ;
+jamais texte SQLite, traces Python, chemins, métadonnées, SHA ou identifiants.
+Aucune donnée de diagnostic privée n'est transmise aux plugins ou publiée
+dans l'UI.
+
+Pour interpréter un délai `snapshot_time_budget`, regarder la **dernière
+étape fermée émise** avant `reconciliation_snapshot phase=finish stage=wal`.
+Cela localise approximativement capture, validation, rejeu, sérialisation
+ou transmission, **mais l'absence d'étape ne prouve pas son exécution**.
+Les mesures sont des durées cumulées de l'appel parent (horloge monotone),
+pas un profil CPU détaillé. Les contraintes restent 10 s par défaut, 128 Mio
+maximum, zéro modification du stockage et résultat `incomplete_scan`
+en cas de dépassement. Les tests CI utilisent des WAL synthétiques et ne
+constituent pas une recette de la bibliothèque utilisateur.
