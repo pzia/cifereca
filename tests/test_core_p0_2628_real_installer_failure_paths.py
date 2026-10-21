@@ -42,7 +42,7 @@ def test_real_linux_installer_group_stops_on_every_failure(
         lambda **_: browser.BrowserState("chromium_missing", "1.55.0"),
     )
     cache = tmp_path / "empty-browser-cache"
-    monkeypatch.setattr(browser, "_cache_path", lambda: cache)
+    monkeypatch.setattr(browser, "_cache_path", lambda **_kwargs: cache)
     monkeypatch.setattr(browser.sys, "prefix", str(tmp_path / "core-venv"))
     monkeypatch.setattr(browser.sys, "base_prefix", "/usr")
     monkeypatch.setattr(
