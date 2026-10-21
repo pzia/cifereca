@@ -276,7 +276,13 @@ Pendant la capture, le collecteur écrit au plus une projection chiffrée
 par seconde ; il finalise un état `completed` lors du Stop ou de la fermeture
 normale de la dernière fenêtre Chromium. Après une interruption brutale,
 **seule la dernière projection déjà durable** est récupérable :
-`recording` ne signifie pas complété. Les erreurs récupérables peuvent
+`recording` ne signifie pas complété. À la réouverture, toute session dont
+le dernier snapshot porte encore l'état `recording` est affichée
+**« partielle (dernière sauvegarde seulement) »**, jamais en cours ni
+terminée ; `interrupted` indique une fin anormale détectée. La date
+affichée est celle du dernier snapshot durable, **pas celle du début**.
+L'origine/les compteurs restent invisibles tant que la session n'est
+pas déverrouillée et ne sont pas publiés dans Diagnostics. Les erreurs récupérables peuvent
 produire `interrupted`. Ce mécanisme ne garantit pas les dernières requêtes,
 les corps jamais retenus ni les écritures après une panne totale du disque.
 
