@@ -379,6 +379,47 @@ class LocalInspectionController:
         manual_search.set_placeholder_text('Filtrer les fichiers non liés…')
         manual_search.set_visible(False)
         candidate_box.append(manual_search)
+        # A real selectable, paginated list replaces the one-file-at-a-time
+        # browsing of unattested EPUBs (#2714). A collapsed filter section
+        # keeps controls reachable at 920px and can expand in full-screen.
+        manual_filters = Gtk.Expander(label='Filtres des fichiers')
+        manual_filters.set_tooltip_text(
+            'Format EPUB/PDF, SHA calculé, structure/CRC EPUB et ordre de tri'
+        )
+        filter_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        format_filter = Gtk.DropDown.new_from_strings([
+            'Tous les formats', 'EPUB', 'PDF',
+        ])
+        sha_filter = Gtk.DropDown.new_from_strings([
+            'SHA : tous', 'SHA calculé', 'SHA non calculé',
+        ])
+        crc_filter = Gtk.DropDown.new_from_strings([
+            'Structure : toutes', 'EPUB avec CRC validé', 'Autres / non validées',
+        ])
+        file_sort = Gtk.DropDown.new_from_strings([
+            'Tri : titre / auteur', 'Tri : nom de fichier', 'Tri : ordre du scan',
+        ])
+        for widget in (format_filter, sha_filter, crc_filter, file_sort):
+            widget.set_hexpand(True)
+            filter_body.append(widget)
+        manual_filters.set_child(filter_body)
+        manual_filters.set_visible(False)
+        candidate_box.append(manual_filters)
+        manual_list = Gtk.ListBox()
+        manual_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        manual_list_scroll = Gtk.ScrolledWindow()
+        manual_list_scroll.set_policy(
+            Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
+        )
+        manual_list_scroll.set_min_content_height(90)
+        manual_list_scroll.set_max_content_height(180)
+        # The list and the comparison details share extra vertical space
+        # when the private window is maximized, rather than leaving a fixed
+        # one-row widget in the middle of an otherwise empty full-screen pane.
+        manual_list_scroll.set_vexpand(True)
+        manual_list_scroll.set_child(manual_list)
+        manual_list_scroll.set_visible(False)
+        candidate_box.append(manual_list_scroll)
         candidate_nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         candidate_prev, candidate_next = (
             Gtk.Button(label='◀ Candidat'),
@@ -422,6 +463,9 @@ class LocalInspectionController:
         candidate_index = [0]
         manual_mode = [False]
         manual_index = [0]
+        manual_total = [0]
+        manual_rebuilding = [False]
+        manual_page_size = 25
 
         def valid():
             if self.session is session and self.alive() and session.valid():
@@ -433,35 +477,74 @@ class LocalInspectionController:
             if not valid():
                 return
             if manual_mode[0]:
-                # The same private, revocable identity-specific file projection.
-                # Query only case labels, never hidden proofs, and retrieve
-                # ONE file including unhashed/unverified observations.
+                # Closed filters only, selected through a *private* in-memory
+                # projection; never query a provider or infer a Numilog right.
+                options = {
+                    'media_format': ('all', 'epub', 'pdf')[format_filter.get_selected()],
+                    'sha_state': ('all', 'calculated', 'not_calculated')[sha_filter.get_selected()],
+                    'epub_crc': ('all', 'confirmed', 'other')[crc_filter.get_selected()],
+                    'sort': ('title', 'filename', 'scan')[file_sort.get_selected()],
+                }
+                page_start = manual_index[0] // manual_page_size * manual_page_size
                 page = session.unconfirmed_files(
-                    offset=manual_index[0], limit=1,
-                    query=manual_search.get_text()[:160],
+                    offset=page_start, limit=manual_page_size,
+                    query=manual_search.get_text()[:160], **options,
                 )
+                manual_total[0] = page.total
                 manual_toggle.set_label('Voir les candidats exacts')
                 candidate_title.set_text('Fichiers non liés · comparaison manuelle')
                 candidate_note.set_text(
-                    'Fichiers de cette identité sans lien de droit confirmé '
-                    '(y compris SHA non vérifié). Aucun n’est attribué '
-                    'à ce droit ni à son fournisseur.'
+                    'Aucune suggestion fiable n’est nécessaire pour explorer '
+                    'les fichiers locaux. Aucun n’est attribué à ce droit '
+                    'ni à son fournisseur, même après sélection.'
                 )
                 candidate_prev.set_label('◀ Fichier')
                 candidate_next.set_label('Fichier ▶')
                 candidate_number.set_text(
                     f'{manual_index[0]+1 if page.cases else 0} / {page.total}'
                     ' · exploration non probante'
+                    + (' · scan incomplet'
+                       if session.summary().get('status') != 'complete' else '')
+                )
+                # Rebuild only one bounded page. The guard prevents
+                # programmatic selection from triggering a recursive redraw.
+                manual_rebuilding[0] = True
+                try:
+                    child = manual_list.get_first_child()
+                    while child is not None:
+                        manual_list.remove(child)
+                        child = manual_list.get_first_child()
+                    chosen_row = None
+                    for position, case in enumerate(page.cases):
+                        row = Gtk.ListBoxRow()
+                        row._manual_offset = page.offset + position
+                        row._manual_file_key = case.key
+                        label = Gtk.Label(label=case.label, xalign=0)
+                        label.set_wrap(True)
+                        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                        label.set_max_width_chars(32)
+                        row.set_child(label)
+                        manual_list.append(row)
+                        if row._manual_offset == manual_index[0]:
+                            chosen_row = row
+                    if chosen_row is not None:
+                        manual_list.select_row(chosen_row)
+                finally:
+                    manual_rebuilding[0] = False
+                current = manual_index[0] - page.offset
+                selected = (
+                    page.cases[current]
+                    if 0 <= current < len(page.cases) else None
                 )
                 candidate_detail.set_text(
-                    page.cases[0].label + '\n\n' + page.cases[0].details
-                    if page.cases else
+                    selected.label + '\n\n' + selected.details
+                    if selected else
                     'Aucun fichier non lié visible avec ce filtre. Cela ne '
                     'prouve pas que le livre soit absent.'
                 )
                 candidate_prev.set_sensitive(manual_index[0] > 0)
                 candidate_next.set_sensitive(
-                    manual_index[0]+len(page.cases) < page.total
+                    manual_index[0] + 1 < page.total
                 )
                 return
             manual_toggle.set_label('Comparer tous les fichiers non liés')
@@ -509,7 +592,26 @@ class LocalInspectionController:
                 return
             manual_mode[0] = not manual_mode[0]
             manual_index[0] = 0
+            if not manual_mode[0]:
+                # A hidden Gtk.ListBox still retains its labels and private
+                # filenames in the live widget tree. Leaving this mode must
+                # retire that stale page, not just conceal its scroller.
+                # Do not reset candidate_index: return to the exact
+                # bibliographic candidate previously selected.
+                manual_rebuilding[0] = True
+                try:
+                    child = manual_list.get_first_child()
+                    while child is not None:
+                        manual_list.remove(child)
+                        child = manual_list.get_first_child()
+                finally:
+                    manual_rebuilding[0] = False
+                manual_total[0] = 0
+                if manual_search.get_text():
+                    manual_search.set_text('')
             manual_search.set_visible(manual_mode[0])
+            manual_filters.set_visible(manual_mode[0])
+            manual_list_scroll.set_visible(manual_mode[0])
             show_candidate()
 
         def filter_manual():
@@ -517,6 +619,28 @@ class LocalInspectionController:
                 return
             manual_index[0] = 0
             show_candidate()
+
+        def select_manual_file(_listing, row):
+            if (manual_rebuilding[0] or not manual_mode[0]
+                    or row is None or not valid()):
+                return
+            # A keyboard/click selection is a local page index, not an
+            # acquisition request and never a proof or right/file link.
+            # Do NOT destroy Gtk.ListBoxRow widgets from their own
+            # row-selected signal: update only the already-present detail.
+            manual_index[0] = row._manual_offset
+            case = session.detail(row._manual_file_key)
+            if case is None:
+                return
+            candidate_detail.set_text(case.label + '\n\n' + case.details)
+            candidate_number.set_text(
+                f'{manual_index[0]+1} / {manual_total[0]}'
+                ' · exploration non probante'
+                + (' · scan incomplet'
+                   if session.summary().get('status') != 'complete' else '')
+            )
+            candidate_prev.set_sensitive(manual_index[0] > 0)
+            candidate_next.set_sensitive(manual_index[0] + 1 < manual_total[0])
 
         def select(_listing, row):
             if row is None or not valid():
@@ -531,8 +655,17 @@ class LocalInspectionController:
                     manual_mode[0] = False
                     manual_index[0] = 0
                     manual_search.set_visible(False)
+                    manual_filters.set_visible(False)
+                    manual_list_scroll.set_visible(False)
                     if manual_search.get_text():
                         manual_search.set_text('')
+                    # An incomplete scan with no metadata_only suggestion
+                    # should still offer an immediately searchable local
+                    # file list, never imply that the EPUB is absent.
+                    manual_mode[0] = not candidate_items[0]
+                    manual_search.set_visible(manual_mode[0])
+                    manual_filters.set_visible(manual_mode[0])
+                    manual_list_scroll.set_visible(manual_mode[0])
                     candidate_box.set_visible(True)
                     show_candidate()
                 else:
@@ -576,6 +709,9 @@ class LocalInspectionController:
         candidate_next.connect('clicked', lambda *_: move_candidate(1))
         manual_toggle.connect('clicked', lambda *_: toggle_manual())
         manual_search.connect('search-changed', lambda *_: filter_manual())
+        manual_list.connect('row-selected', select_manual_file)
+        for widget in (format_filter, sha_filter, crc_filter, file_sort):
+            widget.connect('notify::selected', lambda *_: filter_manual())
         provider.connect('notify::selected', lambda *_: render(reset=True))
         state.connect('notify::selected', lambda *_: render(reset=True))
         search.connect('search-changed', lambda *_: render(reset=True))

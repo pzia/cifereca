@@ -267,6 +267,9 @@ class LocalInspection:
         # These references exist solely inside this revocable Core UI session.
         # They never enter an audit payload or a future repair capability.
         self._candidate_file_keys = {}
+        # Private, same-identity facets for the direct-selection file browser.
+        # No file metadata or query is ever exported through summary()/logs.
+        self._file_facets = {}
         self._summary = audit.redacted()
         # Private-only coverage: configured roots are not proof that they were
         # traversed successfully. Never mix these paths into audit.redacted().
@@ -400,6 +403,32 @@ class LocalInspection:
                                   Path(observation.path).name)
             if not add('file', index, label, provider, states, '\n\n'.join(details)):
                 break
+            # Closed local facets, built only from inspected file observations.
+            # ISBN and path may help a human find the file, but neither can
+            # attach that file to a provider/right/edition.
+            authors = observation.metadata.get('authors')
+            if type(authors) is str:
+                authors = [authors]
+            elif type(authors) is not list:
+                authors = []
+            search_parts = [
+                Path(observation.path).name[:260],
+                observation.path[-300:],
+                observation.metadata.get('title'),
+                observation.media_format,
+            ] + authors[:8] + [
+                value for _scheme, value in identifiers(observation.metadata)[:16]
+            ]
+            search_text = _searchable(' '.join(
+                _text(part)[:256] for part in search_parts if type(part) is str
+            ))[:3200]
+            self._file_facets[f'file:{index}'] = {
+                'format': observation.media_format,
+                'sha': bool(observation.sha256),
+                'crc': observation.structure_validation == 'epub_structure_crc_ok',
+                'search': search_text,
+                'name': _searchable(Path(observation.path).name[:260]),
+            }
         placements = audit.snapshot.tables.get('placements', [])
         artifacts = audit.snapshot.tables.get('artifacts', [])
         own_files = [f for f in audit.inventory.files if f.identity_id == identity_id]
@@ -534,6 +563,7 @@ class LocalInspection:
     def close(self):
         self._cases.clear()
         self._candidate_file_keys.clear()
+        self._file_facets.clear()
         self._summary = {}
         self._roots = ()
         self._unavailable_directories = ()
@@ -589,26 +619,53 @@ class LocalInspection:
                                       for word in terms))]
         return LocalPage(tuple(rows[offset:offset+limit]), len(rows), offset, self._limited)
 
-    def unconfirmed_files(self, *, offset=0, limit=1, query=''):
-        """Manually browse ALL same-identity files without an attested link.
+    def unconfirmed_files(self, *, offset=0, limit=1, query='',
+                          media_format='all', sha_state='all',
+                          epub_crc='all', sort='scan'):
+        """Private, bounded, directly selectable *unlinked* file page.
 
-        An unreadable/unhashed file is 'unverified_file', NOT the
-        'local_file_without_attested_right' state; both must be visible for
-        manual inspection. This is intentionally *not* a right-matching API.
-        Private case keys and details vanish when the session is revoked.
+        A name/ISBN search or exact file selection supplies NO provenance,
+        entitlement or repair authority. A partially scanned source cannot
+        be represented as exhaustively empty. Same-identity facets vanish on
+        close or scope change. No filesystem or SQLite reads occur here.
         """
         if (type(offset) is not int or offset < 0 or
                 type(limit) is not int or not 1 <= limit <= 50 or
-                type(query) is not str or len(query) > 160):
+                type(query) is not str or len(query) > 160 or
+                media_format not in ('all', 'epub', 'pdf') or
+                sha_state not in ('all', 'calculated', 'not_calculated') or
+                epub_crc not in ('all', 'confirmed', 'other') or
+                sort not in ('scan', 'title', 'filename')):
             raise ValueError('invalid_inspection_page')
         if not self.valid():
             return LocalPage((), 0, 0, False)
         terms = tuple(_searchable(term) for term in query.split() if term)
-        rows = [case for case in self._cases.values()
-                if case.key.startswith('file:')
-                and 'confirmed_link' not in case.states
-                and (not terms or all(word in _searchable(case.label)
-                                      for word in terms))]
+        rows = []
+        for case in self._cases.values():
+            if not case.key.startswith('file:') or 'confirmed_link' in case.states:
+                continue
+            facets = self._file_facets.get(case.key)
+            if facets is None:
+                continue
+            if media_format != 'all' and facets['format'] != media_format:
+                continue
+            if sha_state == 'calculated' and not facets['sha']:
+                continue
+            if sha_state == 'not_calculated' and facets['sha']:
+                continue
+            if epub_crc == 'confirmed' and not facets['crc']:
+                continue
+            if epub_crc == 'other' and facets['crc']:
+                continue
+            if terms and not all(word in facets['search'] for word in terms):
+                continue
+            rows.append(case)
+        if sort == 'title':
+            rows.sort(key=lambda case: (_searchable(case.label), case.key))
+        elif sort == 'filename':
+            rows.sort(key=lambda case: (
+                self._file_facets[case.key]['name'], case.key,
+            ))
         return LocalPage(tuple(rows[offset:offset+limit]), len(rows),
                          offset, self._limited)
 
