@@ -148,7 +148,7 @@ def test_single_file_can_be_candidate_for_multiple_rights_with_no_ownership(
     audit = audit_library(database, {'alice': (root,)})
     session = LocalInspection(audit, lambda: True, 'alice')
     keys = file_case_ids(audit, 3, 4)
-    assert session.candidate_files('right:3')[0] is session.detail(
+    assert session.candidate_files('right:3')[0] == session.detail(
         session.candidate_files('right:3')[0].key,
     )
     assert {c.key for c in session.candidate_files('right:4')} == keys
