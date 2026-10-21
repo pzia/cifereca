@@ -57,7 +57,7 @@ def test_real_linux_installer_group_stops_on_every_failure(
         "import os,signal,sys,time\n"
         "from pathlib import Path\n"
         "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        "Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+        "Path(sys.argv[1]).write_text(f"{os.getpid()}:{os.getpgrp()}")\n"
         "while True: time.sleep(.1)\n"
     )
     parent_code = (
@@ -128,8 +128,8 @@ def test_real_linux_installer_group_stops_on_every_failure(
         )
         assert len(spawned) == 1
         assert marker.is_file(), "real worker was not spawned"
-        child_pid = int(marker.read_text())
-        assert os.getpgid(child_pid) == spawned[0].pid or not is_live(child_pid)
+        child_pid, child_group = map(int, marker.read_text().split(":"))
+        assert child_group == spawned[0].pid, "fixture lost its installer group"
         assert result.code == expected
         assert phases == ["starting"]
         assert not cache.exists()
