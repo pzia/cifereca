@@ -34,11 +34,15 @@ _FIELD = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,80}$")
 _SAFE_PATH = SAFE_SEGMENTS | frozenset((
     "api", "v3", "v4", "items", "entries", "products", "details", "authors",
     "pagination", "next", "results", "opds", "fetch", "search.php",
+    # Stable technical route terms, not arbitrary provider-controlled segments.
+    "my-books", "download-options", "download", "downloads", "editions",
+    "records", "formats", "holdings", "filters", "availability",
 ))
 _SAFE_CLASS = frozenset((
     "book", "books", "card", "item", "result", "results", "title", "author",
     "price", "container", "row", "list", "catalog", "catalogue", "metadata",
     "detail", "details", "cover", "format", "pagination",
+    "book-card", "download-button", "next-page", "search-form",
 ))
 
 
@@ -54,6 +58,67 @@ _STANDARD_SECRET_FIELDS = frozenset((
     "pin", "pincode", "passcode", "verificationcode",
     "securitycode", "accesscode",
 ))
+
+
+# These are *values* whose exact semantics are generic to HTTP/catalogue
+# protocols, not arbitrary provider data. Never apply this to free text,
+# personal identifiers or URL signatures.
+_PUBLIC_ENUMS = {
+    "format": frozenset(("epub", "kepub", "pdf", "mobi", "html", "xml",
+                         "json", "txt", "audiobook")),
+    "sort": frozenset(("title", "author", "date", "updated", "relevance",
+                       "price", "asc", "desc")),
+    "order": frozenset(("asc", "desc")),
+    "direction": frozenset(("asc", "desc")),
+    "availability": frozenset(("ready", "available", "unavailable",
+                               "borrowed", "pending", "expired")),
+    "status": frozenset(("ready", "available", "unavailable", "pending",
+                         "completed", "failed", "success", "error",
+                         "active", "inactive")),
+    "state": frozenset(("ready", "available", "unavailable", "pending",
+                        "completed", "failed", "active", "inactive")),
+    "type": frozenset(("ebook", "audiobook", "book", "loan", "purchase")),
+    "mediatype": frozenset(("application/epub+zip", "application/pdf")),
+}
+_SAFE_HTML_SELECTORS = frozenset((
+    "search-form", "download-button", "next-page", "book-card",
+    "results-list", "search-input", "book-detail",
+))
+
+
+def _public_enum(name: str, value: str) -> bool:
+    return (type(name) is str and type(value) is str
+            and value.casefold() in _PUBLIC_ENUMS.get(name.casefold(), ()))
+
+
+def _paired_pagination(pairs: list[tuple[str, str]]) -> dict[str, str]:
+    """Preserve numeric pagination only when two independent fields agree.
+
+    Isolated short numbers can be PINs under misleading keys. Canonical
+    decimal limits avoid accidentally treating 0007 as a page counter.
+    """
+    fields: dict[str, list[str]] = {}
+    for key, value in pairs:
+        if key.casefold() in {"page", "offset", "limit"}:
+            fields.setdefault(key.casefold(), []).append(value)
+    limits = fields.get("limit", [])
+    if len(limits) != 1 or not limits[0].isascii() or not limits[0].isdecimal():
+        return {}
+    limit = limits[0]
+    if not 1 <= len(limit) <= 3 or str(int(limit)) != limit or not 1 <= int(limit) <= 200:
+        return {}
+    accepted = {}
+    for key, ceiling in (("page", 10000), ("offset", 100000)):
+        values = fields.get(key, [])
+        if len(values) != 1:
+            continue
+        value = values[0]
+        if (value.isascii() and value.isdecimal() and len(value) <= 6
+                and str(int(value)) == value and 0 <= int(value) <= ceiling):
+            accepted[key] = value
+    if accepted:
+        accepted["limit"] = limit
+    return accepted
 
 
 def _safe_field_key(key: str) -> bool:
@@ -94,15 +159,20 @@ def _safe_url(url: str, approved: frozenset[str],
             else "~redacted~"
             for part in p.path.split("/")
         )
+        pairs = parse_qsl(p.query, keep_blank_values=True, max_num_fields=120)
+        pagination = _paired_pagination(pairs)
         query = []
-        for key, value in parse_qsl(p.query, keep_blank_values=True,
-                                    max_num_fields=120):
+        for key, value in pairs:
             if not _safe_field_key(key):
                 # An unreviewed field NAME must not disclose private material.
                 continue
             if _SECRETS.search(key):
                 query.append((key, "[SECRET]"))
             elif value in approved:
+                query.append((key, value))
+            elif key.casefold() in pagination and value == pagination[key.casefold()]:
+                query.append((key, value))
+            elif _public_enum(key, value):
                 query.append((key, value))
             else:
                 query.append((key, "[UNREVIEWED]"))
@@ -141,12 +211,16 @@ class _MarkupSkeleton(HTMLParser):
                            if token.casefold() in _SAFE_CLASS]
                 if allowed:
                     projected.append(key + '="' + escape(" ".join(allowed)) + '"')
+            elif key in {"id", "data-testid"} and value:
+                if value.casefold() in _SAFE_HTML_SELECTORS:
+                    projected.append(key + '="' + escape(value) + '"')
             elif key in {"type", "name", "role"} and value:
                 # All attribute values can be identifiers. Keep only
                 # generic element types; never input value, action, href,
                 # onclick, style, data-*, placeholder or autofocus.
                 generic = {"text", "password", "hidden", "button", "submit",
-                           "checkbox", "radio", "form", "book", "title"}
+                           "checkbox", "radio", "form", "book", "title",
+                           "search", "query", "page", "limit", "sort", "format"}
                 if value.lower() in generic:
                     projected.append(key + '="' + escape(value.lower()) + '"')
         self._emit("<" + tag + (" " + " ".join(projected) if projected else "") + ">")
@@ -211,7 +285,7 @@ def _json_shape(node, *, name="", approved=frozenset(), depth=0, counter=None):
     if type(node) is str:
         if node == "[SECRET]" or node == "[UNREVIEWED]":
             return node
-        if node in approved:
+        if node in approved or _public_enum(name, node):
             return node
         # Preserve JSON field names/types and relation of approved values,
         # but do not publish unreviewed free text by default.

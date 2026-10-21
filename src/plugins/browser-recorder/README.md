@@ -193,6 +193,20 @@ structure et les identifiants explicitement gardés ou pseudonymisés ;
 HTML/XML est réduit à un squelette de balises/sélecteurs génériques.
 Les corps binaires et les licences/DRM restent exclus.
 
+**Fidélité métier bornée (premier lot #2530) :** le ZIP conserve désormais
+quelques segments de routes *statiques* courants, les couples de pagination
+`page/limit` ou `offset/limit` lorsqu'ils sont canoniques et dans des
+bornes étroites, des valeurs d'énumération techniques explicitement
+répertoriées (`format=epub`, `sort=title`, `availability=ready`, etc.)
+et quelques sélecteurs HTML génériques (`data-testid`, `id`). Ces exceptions
+ne s'appliquent jamais aux champs classés comme secrets ; les valeurs
+inconnues, titres personnels, champs libres et segments arbitraires restent
+masqués. Un nombre de pagination isolé reste masqué sans preuve contextuelle.
+Ceci ne remplace **ni** la revue individuelle **ni** l'inspection du ZIP
+exact avant tout partage et ne garantit pas la reproduction complète d'un
+site. Les endpoints propres à un fournisseur, les corps omis et les contenus
+HTML riches restent à traiter dans des lots ultérieurs de #2530/#2528.
+
 Le plan fige **les octets exacts** et permet une prévisualisation locale
 de chaque membre avec son empreinte SHA-256. Après avoir décidé **chaque**
 identifiant, cliquer « Préparer l'aperçu exact du ZIP ». La liste présente

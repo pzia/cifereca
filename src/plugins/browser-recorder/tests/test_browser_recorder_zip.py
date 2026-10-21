@@ -804,3 +804,140 @@ def test_html_xml_custom_tag_names_cannot_publish_unreviewed_secrets(
     finally:
         review.destroy()
         trace.destroy()
+
+
+# #2530: Recoverable provider protocol, with mandatory secret isolation.
+def test_paired_pagination_and_known_enums_survive_but_opaque_query_does_not():
+    from urllib.parse import parse_qs, urlsplit
+    from browser_recorder_zip import _safe_url
+
+    url = (ORIGIN + "/api/v3/my-books/download-options?"
+           "page=2&limit=20&sort=title&format=epub"
+           "&search=PRIVATE_FREE_TEXT&access_token=FICTIONAL_SECRET")
+    safe = _safe_url(url, frozenset(), frozenset((ORIGIN,)))
+    assert urlsplit(safe).path == "/api/v3/my-books/download-options"
+    params = parse_qs(urlsplit(safe).query)
+    assert params["page"] == ["2"]
+    assert params["limit"] == ["20"]
+    assert params["sort"] == ["title"]
+    assert params["format"] == ["epub"]
+    assert params["search"] == ["[UNREVIEWED]"]
+    assert params["access_token"] == ["[SECRET]"]
+    assert "FICTIONAL_SECRET" not in safe
+    assert "PRIVATE_FREE_TEXT" not in safe
+
+    for query in ("page=2", "limit=20", "page=0007&limit=20",
+                  "page=2&limit=0007", "page=2&page=3&limit=20",
+                  "page=2&limit=20&limit=40"):
+        safe = _safe_url(ORIGIN + "/api/books?" + query,
+                         frozenset(), frozenset((ORIGIN,)))
+        assert "page=2&limit=20" not in safe
+        assert "page=0007" not in safe
+        assert "limit=0007" not in safe
+    unknown = _safe_url(ORIGIN + "/api/books?sort=SECRET_SORT&format=SECRET_FMT",
+                        frozenset(), frozenset((ORIGIN,)))
+    assert "SECRET_SORT" not in unknown
+    assert "SECRET_FMT" not in unknown
+
+
+def test_json_business_enums_survive_without_approving_unknown_strings():
+    from browser_recorder_zip import _json_shape
+
+    projected = _json_shape({
+        "format": "epub", "availability": "ready",
+        "status": "active", "sort": "title",
+        "downloadable": True, "title": "PRIVATE_READING_TITLE",
+        "note": "PRIVATE_ACCOUNT_NOTE", "formatUnknown": "epub",
+        "format2": "PRIVATE_FORMAT", "opaque": 2718,
+        "access_token": "FAKE_PRIVATE_TOKEN",
+    })
+    assert projected["format"] == "epub"
+    assert projected["availability"] == "ready"
+    assert projected["status"] == "active"
+    assert projected["sort"] == "title"
+    assert projected["downloadable"] is True
+    assert projected["title"] == "[TEXT]"
+    assert projected["note"] == "[TEXT]"
+    assert projected["formatUnknown"] == "[TEXT]"
+    assert projected["format2"] == "[TEXT]"
+    assert projected["opaque"] == "[NUMBER]"
+    assert projected["access_token"] == "[SECRET]"
+    assert _json_shape("PRIVATE_UNKNOWN", name="format") == "[TEXT]"
+
+
+def test_html_stable_selectors_survive_without_private_attributes():
+    from browser_recorder_zip import _body
+
+    html = ('<form id="search-form" data-testid="search-form" '
+            'action="/private?access_token=SECRET" class="book-card user-987654321">'
+            '<input type="text" name="search" value="PRIVATE_QUERY">'
+            '<button data-testid="download-button" id="user-123456789">'
+            'PRIVATE_PERSONAL_LABEL</button></form>')
+    projected, state = _body(html, "text/html", frozenset())
+    assert state == "captured_markup_structure"
+    assert 'id="search-form"' in projected
+    assert 'data-testid="search-form"' in projected
+    assert 'data-testid="download-button"' in projected
+    assert 'name="search"' in projected
+    assert 'class="book-card"' in projected
+    for secret in ("SECRET", "PRIVATE", "user-987654321", "user-123456789"):
+        assert secret not in projected
+
+
+def test_zip_only_fixture_preserves_workflow_and_masks_session(tmp_path):
+    from urllib.parse import parse_qs, urlsplit
+
+    account = "acct-SYNTHETIC45"
+    token = "TOKEN_SYNTHETIC_DO_NOT_EXPORT"
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET",
+        url=(ORIGIN + "/api/v3/my-books/download-options?"
+             "page=2&limit=20&sort=title&format=epub"
+             "&AccountId=" + account + "&access_token=" + token),
+        response_headers={"content-type": "application/json"},
+        response_body=json.dumps({
+            "bookId": 214, "AccountId": account,
+            "format": "epub", "availability": "ready",
+            "downloadable": True, "title": "PRIVATE_BOOK_TITLE",
+            "notes": "PRIVATE_ACCOUNT_NOTE",
+        }),
+        status=200,
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key,
+                          "keep" if candidate.value == "214" else "anonymize")
+        plan = prepare_reviewed_zip(review)
+        plan.preview()  # Explicit review before writing.
+        name = plan.save(tmp_path, user_confirmed=True)
+        # A second ZIP reader sees only the exported bytes, not the private trace.
+        with ZipFile(tmp_path / name) as archive:
+            members = {member: archive.read(member).decode("utf-8")
+                       for member in archive.namelist()}
+        exchange = json.loads(members["exchanges/0001.json"])
+        assert exchange["method"] == "GET"
+        assert exchange["status"] == 200
+        assert urlsplit(exchange["url"]).path == "/api/v3/my-books/download-options"
+        params = parse_qs(urlsplit(exchange["url"]).query)
+        assert params["page"] == ["2"]
+        assert params["limit"] == ["20"]
+        assert params["format"] == ["epub"]
+        assert params["sort"] == ["title"]
+        assert params["access_token"] == ["[SECRET]"]
+        assert params["AccountId"][0].startswith("PSEUDO_")
+        body = json.loads(members["bodies/0001-response.txt"])
+        assert body["bookId"] == 214
+        assert body["AccountId"] == params["AccountId"][0]
+        assert body["format"] == "epub"
+        assert body["availability"] == "ready"
+        assert body["downloadable"] is True
+        assert body["title"] == "[TEXT]"
+        assert body["notes"] == "[TEXT]"
+        full = json.dumps(members)
+        for sensitive in (account, token, "PRIVATE_BOOK_TITLE", "PRIVATE_ACCOUNT_NOTE"):
+            assert sensitive not in full
+    finally:
+        review.destroy()
+        trace.destroy()
