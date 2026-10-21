@@ -437,7 +437,7 @@ def test_short_numeric_query_values_need_explicit_review(key, value):
     from browser_recorder_zip import _safe_url
     url = ORIGIN + "/api/books?" + key + "=" + value
     assert value not in _safe_url(url, frozenset(), frozenset((ORIGIN,)))
-    assert "[UNREVIEWED]" in _safe_url(url, frozenset(), frozenset((ORIGIN,)))
+    assert "%5BUNREVIEWED%5D" in _safe_url(url, frozenset(), frozenset((ORIGIN,)))
     assert value in _safe_url(url, frozenset((value,)), frozenset((ORIGIN,)))
 
 
