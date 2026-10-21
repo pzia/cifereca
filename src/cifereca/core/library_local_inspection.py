@@ -350,7 +350,7 @@ class LocalInspection:
         rows = [case for case in self._cases.values()
                 if (provider == 'all' or case.provider == provider)
                 and (state == 'all' or state in case.states)
-                and (not terms or all(word in _searchable(case.label + '\n' + case.details)
+                and (not terms or all(word in _searchable(case.label)
                                       for word in terms))]
         return LocalPage(tuple(rows[offset:offset+limit]), len(rows), offset, self._limited)
 
