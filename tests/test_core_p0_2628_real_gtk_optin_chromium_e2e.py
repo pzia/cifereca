@@ -126,13 +126,30 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         manager.activate()
         status = manager.status(PLUGIN_ID)
         assert not status.enabled
-        assert any(req.requirement.name == "playwright" and req.ok
-                   for req in status.requirements)
+        # This is the genuine initial state: disabled plugins are intentionally
+        # not runtime-probed by PluginManager (requirements is empty).
+        assert status.requirements == ()
         page = PluginManagerPage(window, manager)
         window.set_child(page)
         window.present()
         flush()
         assert PLUGIN_ID in page._plugin_widgets
+        installer = button_named(page._plugin_widgets[PLUGIN_ID], "Installer Chromium…")
+        assert installer.get_sensitive()
+        # Simulate an absent Python wheel without a subprocess or network:
+        # the disabled plugin must offer the Core repair action first.
+        from cifereca.plugins import playwright_browser
+        with monkeypatch.context() as missing_python:
+            missing_python.setattr(playwright_browser, "_version", lambda: None)
+            page.refresh()
+            row = page._plugin_widgets[PLUGIN_ID]
+            assert button_named(row, "Installer les dépendances Python…").get_sensitive()
+            assert not any(
+                isinstance(widget, Gtk.Button) and widget.get_label() == "Installer Chromium…"
+                for widget in descendants(row)
+            )
+            assert not cache.exists()
+        page.refresh()
         installer = button_named(page._plugin_widgets[PLUGIN_ID], "Installer Chromium…")
         assert installer.get_sensitive()
         assert not cache.exists()
