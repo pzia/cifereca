@@ -278,3 +278,53 @@ def test_cancel_reaps_real_installer_process_group_when_parent_exits_first(tmp_p
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=3)
+
+
+
+def test_failed_playwright_cli_also_stops_descendants_and_redacts_proxy(
+    monkeypatch, tmp_path,
+):
+    """Nonzero launcher exit cannot leave a downloader child unsupervised."""
+    monkeypatch.delenv("PLAYWRIGHT_DOWNLOAD_HOST", raising=False)
+    monkeypatch.delenv("PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST", raising=False)
+    monkeypatch.setenv("HTTPS_PROXY", "http://FAKE_SECRET_CI@proxy.invalid:3128")
+    monkeypatch.setattr(
+        browser, "inspect_chromium",
+        lambda **_: browser.BrowserState("chromium_missing", "1.55.0"),
+    )
+    monkeypatch.setattr(browser, "_cache_path", lambda: tmp_path)
+    monkeypatch.setattr(browser.sys, "prefix", str(tmp_path / "venv"))
+    monkeypatch.setattr(browser.sys, "base_prefix", "/usr")
+    monkeypatch.setattr(
+        browser.shutil, "disk_usage",
+        lambda _: SimpleNamespace(free=4 * 1024**3),
+    )
+
+    class FailedInstaller:
+        def poll(self):
+            return 23
+
+        def wait(self, timeout=None):
+            return 23
+
+    installer = FailedInstaller()
+    spawned = []
+    stopped = []
+
+    def spawn(cmd, **kwargs):
+        spawned.append((cmd, kwargs))
+        return installer
+
+    monkeypatch.setattr(browser.subprocess, "Popen", spawn)
+    monkeypatch.setattr(browser, "_stop", lambda proc: stopped.append(proc))
+    phases = []
+    result = browser.install_chromium(consent=True, progress=phases.append)
+    assert result.code == "download_failed"
+    assert phases == ["starting"]
+    assert len(spawned) == 1
+    assert stopped == [installer], "failed Playwright subprocess group not reaped"
+    assert spawned[0][1]["stderr"] == subprocess.DEVNULL
+    assert spawned[0][1]["stdout"] == subprocess.DEVNULL
+    assert spawned[0][1]["start_new_session"] is True
+    assert "FAKE_SECRET_CI" not in repr(result)
+    assert "FAKE_SECRET_CI" not in str(result.redacted())
