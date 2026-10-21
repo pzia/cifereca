@@ -17,6 +17,11 @@ def return_digital(self, loan: Loan, *, explicit_retry: bool = False, _TRACE_LOG
     If a prior request exists, normal repeated clicks never send POST.
     An explicit retry may POST only after a fresh read proves still active.
     """
+    # This helper is also directly callable through the guarded service facade.
+    # Only the native True can authorize a second PNB POST. Truthy strings,
+    # integers or foreign objects must not bypass the durable at-most-once
+    # checkpoint after a timeout, restart or already verified Adobe return.
+    explicit_retry = explicit_retry is True
     import uuid
     from .loan_return_guard import public_return_state, return_ref
     if loan.source_provider != "paris":
