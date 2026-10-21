@@ -70,3 +70,104 @@ def test_loader_cancel_discards_result_and_failures_are_literal(mounted,monkeypa
     assert caught.value.__suppress_context__
     args[3](caught.value)
     assert 'PRIVATE' not in repr(m.errors)
+
+
+@pytest.mark.parametrize(('reason', 'expected'), [
+    ('snapshot_time_budget', 'durée maximale'),
+    ('snapshot_wal_reader_unavailable', 'WAL'),
+    ('snapshot_reader_unavailable', 'lecture sécurisée'),
+    ('snapshot_unavailable', 'preuves SQLite locales'),
+    ('snapshot_changed', 'a changé pendant la lecture'),
+    ('snapshot_identity_migration', 'migration'),
+    ('reconciliation_scope_changed', 'configuration a changé'),
+    ('reconciliation_identity_not_active', 'n’est plus active'),
+])
+def test_closed_inspection_failures_have_distinct_safe_explanations(
+    mounted, reason, expected,
+):
+    from cifereca.core.library_audit_broker import _unavailable
+    m = mounted
+    m.controller.start()
+    args, _ = m.jobs[-1]
+    result = _unavailable({reason})
+    assert not isinstance(result, LocalInspection)
+    args[2](result)
+    assert len(m.errors) == 1
+    message, title = m.errors[-1]
+    assert title == 'Inspection locale'
+    assert expected in message
+    assert 'PRIVATE' not in message
+    if reason == 'snapshot_time_budget':
+        assert 'contexte modifié' not in message
+        assert 'ne prouve pas leur absence' in message
+    assert not m.presented and m.controller.session is None
+    assert m.controller.dialog is None
+
+
+def test_actual_broker_timeout_envelope_is_not_misdiagnosed_as_context_change(
+    mounted, monkeypatch,
+):
+    from cifereca.core import library_audit_broker as broker
+    from cifereca.core.library_reconciliation import EvidenceSnapshot
+    m = mounted
+    calls = []
+    def timeout(_path, **_kwargs):
+        calls.append(1)
+        return EvidenceSnapshot(reasons={'snapshot_time_budget'})
+    monkeypatch.setattr(broker, 'read_library_snapshot', timeout)
+    m.controller.start()
+    args, _ = m.jobs[-1]
+    result = args[1]()  # Real Core broker, no DB/WAL mutation or network.
+    assert result['status'] == 'incomplete_scan'
+    assert result['reasons'] == ['snapshot_time_budget']
+    assert calls == [1]
+    args[2](result)
+    assert 'durée maximale' in m.errors[-1][0]
+    assert 'changé' not in m.errors[-1][0]
+    assert not m.presented
+
+
+@pytest.mark.parametrize('payload', [
+    None,
+    'PRIVATE_SOURCE_PATH',
+    {'schema': 1, 'status': 'incomplete_scan', 'reasons': ['snapshot_time_budget']},
+    {'schema': 1, 'status': 'complete', 'read_only': True,
+     'acquisition_authorized': False, 'repair_authorized': False,
+     'reasons': ['snapshot_time_budget']},
+    {'schema': 1, 'status': 'incomplete_scan', 'read_only': True,
+     'acquisition_authorized': False, 'repair_authorized': False,
+     'reasons': ['snapshot_time_budget', 'reconciliation_scope_changed']},
+    {'schema': 1, 'status': 'incomplete_scan', 'read_only': True,
+     'acquisition_authorized': False, 'repair_authorized': False,
+     'reasons': ['PRIVATE_SOURCE_PATH']},
+    {'schema': 1, 'status': 'incomplete_scan', 'read_only': True,
+     'acquisition_authorized': False, 'repair_authorized': False,
+     'reasons': ['snapshot_time_budget', 'PRIVATE_SOURCE_PATH']},
+])
+def test_untrusted_or_mixed_inspection_envelopes_never_publish_private_data(
+    mounted, payload,
+):
+    m = mounted
+    m.controller.start()
+    args, _ = m.jobs[-1]
+    args[2](payload)
+    assert len(m.errors) == 1
+    msg, title = m.errors[-1]
+    assert title == 'Inspection locale'
+    assert msg == view._INSPECTION_FALLBACK
+    assert 'PRIVATE' not in repr(m.errors)
+    assert not m.presented
+
+
+def test_invalidated_real_private_session_reports_context_and_is_destroyed(mounted):
+    m = mounted
+    m.controller.start()
+    args, _ = m.jobs[-1]
+    session = args[1]()
+    assert isinstance(session, LocalInspection)
+    m.controller.parent.service._account_context_epoch += 1
+    args[2](session)
+    assert not session.valid()
+    assert len(m.errors) == 1
+    assert 'configuration a changé' in m.errors[0][0]
+    assert not m.presented
