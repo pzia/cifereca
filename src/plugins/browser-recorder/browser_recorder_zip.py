@@ -75,8 +75,6 @@ def _safe_url(url: str, approved: frozenset[str],
                 query.append((key, "[SECRET]"))
             elif value in approved:
                 query.append((key, value))
-            elif value.isdecimal() and len(value) <= 3 and not _IDS.search(key):
-                query.append((key, value))
             else:
                 query.append((key, "[UNREVIEWED]"))
         return urlunsplit((p.scheme, p.netloc, path,
