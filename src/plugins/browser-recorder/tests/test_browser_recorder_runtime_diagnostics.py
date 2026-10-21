@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from browser_recorder_review_ui import PrivateReviewPanel
+from browser_recorder_review_ui import PrivateReviewPanel, _capture_diagnostic_code
 
 
 PRIVATE = "https://fiction.invalid/?token=FAKE_SECRET_HTTP_ZIP"
@@ -77,3 +77,18 @@ def test_closed_failure_callback_uses_no_private_exception(code):
     panel._emit_failure("http_capture", code)
     assert seen == [("http_capture", code)]
     assert PRIVATE not in repr((seen, messages))
+
+
+def test_hostile_recorder_exception_argument_never_invokes_magic_methods():
+    class Hostile:
+        def __eq__(self, _other):
+            raise AssertionError("comparison could leak site-controlled data")
+        def __repr__(self):
+            raise AssertionError("representation could leak session details")
+        def __str__(self):
+            raise AssertionError("coercion could leak session details")
+
+    assert _capture_diagnostic_code(Hostile()) == "capture_failed"
+    assert _capture_diagnostic_code("playwright_unavailable") == "playwright_missing"
+    assert _capture_diagnostic_code("capture_limit") == "capture_limit"
+    assert _capture_diagnostic_code(PRIVATE) == "capture_failed"
