@@ -83,7 +83,8 @@ jobs:
           /usr/bin/python3 -c 'import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk; assert Gtk is not None'
           xvfb-run -a /usr/bin/python3 -m pytest -q -rs \
             src/plugins/browser-recorder/tests/test_browser_recorder_gtk_e2e.py \
-            src/plugins/browser-recorder/tests/test_browser_recorder_gtk_xtest.py
+            src/plugins/browser-recorder/tests/test_browser_recorder_gtk_xtest.py \
+            src/plugins/browser-recorder/tests/test_browser_recorder_gtk_xtest_review.py
       - name: Install actual plugin ZIP in isolated GTK venv and open Core contribution
         env:
           PYTHONPATH: ${{ github.workspace }}/src
