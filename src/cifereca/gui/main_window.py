@@ -663,6 +663,12 @@ class MainWindow(Adw.ApplicationWindow):
             if old_state["control"] is not None:
                 old_state["control"].cancel()
         self._maintenance_line_rows = []
+        for readiness in getattr(self, "_maintenance_readiness_states", ()):
+            readiness["active"] = False
+            source = readiness.get("timer")
+            if source is not None:
+                GLib.source_remove(source)
+        self._maintenance_readiness_states = []
         for view in getattr(self, "_maintenance_result_views", ()):
             view.clear()
         self._maintenance_result_views = []
@@ -692,6 +698,16 @@ class MainWindow(Adw.ApplicationWindow):
             row.add_suffix(cancel)
             group.add(row)
             active_cancel = {"control": None, "ticket": None}
+            readiness = {"active": True, "token": None, "timer": None,
+                         "status": "indeterminate"}
+            is_reconciliation = getattr(info, "id", None) == "library.reconciliation.audit"
+            # Older/inert Core environments without a readiness-capable
+            # service retain the existing controlled-attempt behavior.
+            can_check_readiness = (is_reconciliation
+                                   and hasattr(self.service, "config")
+                                   and hasattr(self.service, "storage"))
+            if can_check_readiness:
+                self._maintenance_readiness_states.append(readiness)
             line_feedback = None
             line_scope = {"active": False, "identity": None, "generation": None}
             activity_labels = {
@@ -740,6 +756,87 @@ class MainWindow(Adw.ApplicationWindow):
             )
             self._maintenance_result_views.append(result_view)
 
+            def update_readiness(*, button=run, action=row, info=info,
+                                 scope=readiness):
+                if not can_check_readiness or not scope["active"] or self._closed:
+                    return
+                if button.get_root() is None:
+                    return
+                current = self.service.current_identity
+                expected_identity = current.identity_id if current is not None else None
+                generation = getattr(self, "_identity_context_generation", None)
+                token = object()
+                scope["token"] = token
+                scope["status"] = "initializing"
+                button.set_sensitive(False)
+                action.set_subtitle("Vérification de la disponibilité locale…")
+
+                def read():
+                    from cifereca.core.library_reconciliation_readiness import (
+                        local_reconciliation_readiness,
+                    )
+                    return local_reconciliation_readiness(self.service, expected_identity)
+
+                def current_scope():
+                    now = self.service.current_identity
+                    return (scope["active"] and scope["token"] is token
+                            and not self._closed and button.get_root() is not None
+                            and (now.identity_id if now is not None else None) == expected_identity
+                            and getattr(self, "_identity_context_generation", None) == generation)
+
+                def apply(report):
+                    if not current_scope():
+                        return
+                    labels = {
+                        "local_ready": "Prêt pour l’analyse hors réseau · synchronisation fournisseur non requise.",
+                        "identity_missing": "Choisissez une identité avant de réconcilier.",
+                        "identity_not_active": "L’identité active a changé ; actualisez les outils.",
+                        "identity_configuration": "Configuration locale des identités indisponible.",
+                        "storage_initializing": "Initialisation de la bibliothèque locale en cours…",
+                        "storage_invalid": "Fichier de base locale non utilisable.",
+                        "migration_pending": "Migration locale en cours : analyse momentanément indisponible.",
+                        "storage_unchecked": "État du stockage non vérifiable : tentative contrôlée possible.",
+                        "migration_unchecked": "Migration non vérifiable : tentative contrôlée possible.",
+                        "configuration_unchecked": "Configuration non vérifiable : tentative contrôlée possible.",
+                    }
+                    status = getattr(report, "status", "indeterminate")
+                    reason = getattr(report, "reason", "storage_unchecked")
+                    enabled = bool(getattr(report, "enabled", True))
+                    if status not in ("ready_offline", "initializing", "blocked",
+                                      "temporarily_busy", "indeterminate"):
+                        status, reason, enabled = "indeterminate", "storage_unchecked", True
+                    scope["status"] = status if enabled else status
+                    subtitle = labels.get(reason, labels["storage_unchecked"])
+                    action.set_subtitle(subtitle)
+                    button.set_sensitive(enabled)
+                    if hasattr(button, "set_tooltip_text"):
+                        button.set_tooltip_text(subtitle)
+                    # Keep this timer light: each retry dispatches a single
+                    # worker check. GTK never queries SQLite or provider APIs.
+                    if (not enabled and status in ("initializing", "temporarily_busy")
+                            and scope["timer"] is None
+                            and hasattr(GLib, "timeout_add_seconds")):
+                        def retry():
+                            scope["timer"] = None
+                            if current_scope():
+                                update_readiness(button=button, action=action,
+                                                 info=info, scope=scope)
+                            return False
+                        scope["timer"] = GLib.timeout_add_seconds(3, retry)
+
+                def failed(_error):
+                    # Unknown conditions must not strand the user indefinitely.
+                    from cifereca.core.library_reconciliation_readiness import (
+                        ReconciliationReadiness,
+                    )
+                    apply(ReconciliationReadiness("indeterminate", "storage_unchecked"))
+
+                self.runner.submit(
+                    "État local de la réconciliation", read, apply, failed,
+                    control=button, priority=TaskPriority.MAINTENANCE,
+                    kind="maintenance-plan",
+                )
+
             def request_cancel(_cancel_button, cancellation_state=active_cancel,
                                feedback=line_feedback):
                 active = cancellation_state["control"]
@@ -757,6 +854,12 @@ class MainWindow(Adw.ApplicationWindow):
                 feedback=line_feedback, progress_scope=line_scope, result_view=result_view,
             ):
                 if self._closed or _button.get_root() is None:
+                    return
+                if (can_check_readiness and not readiness["active"]) or (
+                    can_check_readiness and readiness["status"] in (
+                        "initializing", "temporarily_busy", "blocked"
+                    )
+                ):
                     return
                 result_view.clear()
                 identity = self.service.current_identity
@@ -788,6 +891,17 @@ class MainWindow(Adw.ApplicationWindow):
                 if feedback is not None and not feedback.valid(ticket):
                     return
                 cancellation_state["ticket"] = ticket
+
+                def check_local_gate(callback):
+                    if can_check_readiness:
+                        from cifereca.core.library_reconciliation_readiness import (
+                            local_reconciliation_readiness,
+                        )
+                        if not local_reconciliation_readiness(
+                            self.service, context.identity_id,
+                        ).enabled:
+                            raise RuntimeError("Réconciliation locale non prête.")
+                    return callback()
 
                 def maintenance_worker(callback, failure_message, worker_cancel_control=None):
                     # TaskRunner records errors in global activity before the
@@ -1012,9 +1126,9 @@ class MainWindow(Adw.ApplicationWindow):
                         self.runner.submit(
                             meta.title,
                             lambda: maintenance_worker(
-                                lambda: execute_maintenance_tool(
+                                lambda: check_local_gate(lambda: execute_maintenance_tool(
                                     service, context, plan, worker_control, destructive=destructive,
-                                ),
+                                )),
                                 execution_error, worker_control,
                             ),
                             completed,
@@ -1046,9 +1160,9 @@ class MainWindow(Adw.ApplicationWindow):
                 self.runner.submit(
                     f"Analyse : {meta.title}",
                     lambda: maintenance_worker(
-                        lambda: preview_maintenance_tool(
+                        lambda: check_local_gate(lambda: preview_maintenance_tool(
                             service, context, destructive=destructive, control=planning_control,
-                        ),
+                        )),
                         preview_error, planning_control,
                     ),
                     present_preview,
@@ -1058,6 +1172,8 @@ class MainWindow(Adw.ApplicationWindow):
                     kind="maintenance-plan",
                 )
             run.connect("clicked", prepare)
+            if can_check_readiness:
+                update_readiness()
 
     def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
         return sync_controller.run_opening_sync(self, control, deep=deep)
