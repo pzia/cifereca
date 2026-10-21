@@ -8,6 +8,7 @@ file write; plaintext ZIP/HAR and provider credentials are never logged.
 from __future__ import annotations
 
 from io import BytesIO
+import json
 import os
 from pathlib import Path
 import secrets
@@ -35,7 +36,15 @@ def _zip_bytes(session: StoredSession) -> bytes:
     if (getattr(session.trace, "vault_session_id", None)
             != session.session_id):
         raise VaultError("private_zip_invalid")
-    source = _record(session.trace, session.session_id, session.state)
+    snapshot = json.loads(_record(
+        session.trace, session.session_id, session.state,
+    ))
+    # Preserve the original vault snapshot timestamp; ZIP creation time is
+    # not evidence that the website was visited again.
+    snapshot["saved_at"] = session.saved_at
+    source = json.dumps(
+        snapshot, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")
     output = BytesIO()
     with ZipFile(output, "w") as archive:
         for name, body in (
