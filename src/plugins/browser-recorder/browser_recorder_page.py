@@ -163,7 +163,8 @@ class BrowserRecorderPage:
                 origin = site_origin(site.get_text().strip())
                 start_url = site.get_text().strip()
             except RecorderError as exc:
-                state.set_label(_MESSAGES.get(str(exc), "Site invalide."))
+                code = exc.args[0] if len(exc.args) == 1 and type(exc.args[0]) is str else None
+                state.set_label(_MESSAGES.get(code, "Site invalide."))
                 return
             capture_name = filename.get_text().strip()
             if mode == "replay" and not FILENAME.fullmatch(capture_name):
@@ -209,10 +210,20 @@ class BrowserRecorderPage:
                     message = None
                 except RecorderError as exc:
                     result = None
-                    message = _MESSAGES.get(str(exc), "Opération refusée (code : " + str(exc) + ").")
+                    code = (exc.args[0] if len(exc.args) == 1
+                            and type(exc.args[0]) is str else None)
+                    message = _MESSAGES.get(
+                        code,
+                        "Opération refusée : consultez Diagnostics et vérifiez "
+                        "Plugins → Browser Recorder → Vérifier Chromium…",
+                    )
                 except Exception:
                     result = None
-                    message = "Navigateur indisponible ; consulter l'installation Playwright."
+                    message = (
+                        "Navigateur indisponible : ouvrez Plugins → "
+                        "Browser Recorder → Vérifier Chromium… ; "
+                        "consultez ensuite Diagnostics."
+                    )
 
                 def display():
                     if self.context is None or self.generation != generation:
