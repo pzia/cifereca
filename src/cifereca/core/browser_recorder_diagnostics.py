@@ -14,6 +14,8 @@ OPERATIONS = {
     "http_review": "browser recorder HTTP review",
     "zip_prepare": "browser recorder ZIP preparation",
     "zip_export": "browser recorder ZIP export",
+    "har_record": "browser recorder HAR recording",
+    "har_replay": "browser recorder HAR replay",
 }
 # Only explicit runtime user actions may be attested through the scoped plugin
 # context. Plugin code is never authorized to impersonate Core provisioning.
@@ -24,6 +26,8 @@ RUNTIME_CODES_BY_OPERATION = {
     "http_review": frozenset({"review_failed"}),
     "zip_prepare": frozenset({"zip_prepare_failed"}),
     "zip_export": frozenset({"zip_export_failed"}),
+    "har_record": frozenset({"har_record_failed", "capture_interrupted", "playwright_missing"}),
+    "har_replay": frozenset({"har_replay_failed", "playwright_missing"}),
 }
 RUNTIME_OPERATIONS = frozenset(RUNTIME_CODES_BY_OPERATION)
 RUNTIME_CODES = frozenset().union(*RUNTIME_CODES_BY_OPERATION.values())
@@ -40,6 +44,7 @@ CODES = frozenset({
     "invalid_install_options", "consent_required", "browser_operation_failed",
     "capture_failed", "capture_interrupted", "capture_limit",
     "review_failed", "zip_prepare_failed", "zip_export_failed",
+    "har_record_failed", "har_replay_failed",
 })
 ATTENTION = frozenset({
     "chromium_installed_unverified", "chromium_missing",

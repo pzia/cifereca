@@ -52,6 +52,33 @@ class BrowserRecorderPage:
             group="configuration",
         )]
 
+    def _report_legacy_failure(self, mode: str, code: object) -> None:
+        """Report only fixed, Core-scoped HAR outcomes after an explicit action.
+
+        Neither exception text nor URL/filename is sent to Diagnostics.
+        Plugin activation, page rendering and a declined consent stay silent.
+        """
+        operation = "har_record" if mode == "record" else "har_replay"
+        if type(code) is not str:
+            code = None
+        if code == "playwright_unavailable":
+            safe_code = "playwright_missing"
+        elif mode == "record" and code == "capture_interrupted":
+            safe_code = "capture_interrupted"
+        else:
+            safe_code = "har_record_failed" if mode == "record" else "har_replay_failed"
+        try:
+            report = getattr(self.context, "report_diagnostic", None)
+            if callable(report):
+                report(
+                    "browser recorder user action", "error",
+                    detail={"operation": operation, "code": safe_code},
+                    level="normal",
+                )
+        except Exception:
+            # An optional diagnostics broker must not break the GTK action.
+            pass
+
     def build(self, host):
         from gi.repository import Gtk, GLib
         from browser_recorder_review_ui import PrivateReviewPanel
@@ -205,15 +232,32 @@ class BrowserRecorderPage:
                                   save_requested=save_requested, status=signal)
                 return replay(directory, capture_name, origin, stop_event, advance, status=signal)
 
-            handle = self.tasks.submit(task, kind="browser-recorder",
-                                       label="Capture Web volontaire" if mode == "record"
-                                       else "Rejeu Web supervisé")
+            try:
+                handle = self.tasks.submit(
+                    task, kind="browser-recorder",
+                    label="Capture Web volontaire" if mode == "record"
+                    else "Rejeu Web supervisé",
+                )
+            except Exception:
+                # A failed task broker must not strand the HAR controls.
+                self.stop_event = None
+                self.advance = None
+                self.save_requested = None
+                self.mode = None
+                buttons()
+                state.set_label(
+                    "Opération indisponible : consultez Diagnostics et "
+                    "Plugins → Browser Recorder → Vérifier Chromium…",
+                )
+                self._report_legacy_failure(mode, None)
+                return
             self.handle = handle
 
             def finished(done_handle):
                 try:
                     result = done_handle.result()
                     message = None
+                    failure_code = None
                 except RecorderError as exc:
                     result = None
                     code = (exc.args[0] if len(exc.args) == 1
@@ -223,8 +267,10 @@ class BrowserRecorderPage:
                         "Opération refusée : consultez Diagnostics et vérifiez "
                         "Plugins → Browser Recorder → Vérifier Chromium…",
                     )
+                    failure_code = code
                 except Exception:
                     result = None
+                    failure_code = None
                     message = (
                         "Navigateur indisponible : ouvrez Plugins → "
                         "Browser Recorder → Vérifier Chromium… ; "
@@ -243,6 +289,7 @@ class BrowserRecorderPage:
                     buttons()
                     if message:
                         state.set_label(message)
+                        self._report_legacy_failure(mode, failure_code)
                     elif mode == "record":
                         self.last_filename = str(result)
                         filename.set_text(self.last_filename)
