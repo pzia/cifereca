@@ -10,7 +10,19 @@ OPERATIONS = {
     "python_dependencies_install": "browser recorder python dependencies",
     "chromium_probe": "browser recorder chromium verification",
     "chromium_install": "browser recorder chromium installation",
+    "http_capture": "browser recorder HTTP capture",
+    "http_review": "browser recorder HTTP review",
+    "zip_prepare": "browser recorder ZIP preparation",
+    "zip_export": "browser recorder ZIP export",
 }
+# Only explicit runtime user actions may be attested through the scoped plugin
+# context. Plugin code is never authorized to impersonate Core provisioning.
+RUNTIME_OPERATIONS = frozenset({"http_capture", "http_review", "zip_prepare", "zip_export"})
+RUNTIME_CODES = frozenset({
+    "capture_failed", "capture_interrupted", "capture_limit",
+    "review_failed", "zip_prepare_failed", "zip_export_failed",
+    "playwright_missing",
+})
 CODES = frozenset({
     "ready", "python_ready", "python_install_failed",
     "chromium_installed_unverified", "chromium_missing",
@@ -22,6 +34,8 @@ CODES = frozenset({
     "cancelled", "installation_already_running", "unsupported_platform",
     "browser_probe_failed", "installer_unavailable",
     "invalid_install_options", "consent_required", "browser_operation_failed",
+    "capture_failed", "capture_interrupted", "capture_limit",
+    "review_failed", "zip_prepare_failed", "zip_export_failed",
 })
 ATTENTION = frozenset({
     "chromium_installed_unverified", "chromium_missing",
