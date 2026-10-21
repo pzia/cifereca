@@ -174,12 +174,12 @@ def test_search_scope_stamp_binds_identity_query_and_local_only():
         window._sync_search_detail_after_results = lambda: None
         window.service.last_search_warnings = []
         window.service.last_search = []
-        window._online_source_context = (
-            state.text, state.field, state.scope, identity.identity_id
-        )
         populate(window, list(window._remote_search_results),
                  announce=False)
     window._loaded_search_context = None
+    window._online_source_context = (
+        state.text, state.field, state.scope, identity.identity_id
+    )
     populate_remote()
     assert can_open_loaded_search_notice(window, **_coords())
 
