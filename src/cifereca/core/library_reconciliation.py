@@ -11,6 +11,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 import os
 import json
+import logging
 from pathlib import Path
 import sqlite3
 import time
@@ -185,27 +186,63 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
     return result
 
 
+# Only literal, Core-defined error codes reach logs. Paths, account IDs,
+# titles, hashes, source rows and parser/SQLite error prose never do.
+_SNAPSHOT_TRACE_CODES = frozenset({
+    'snapshot_cancelled', 'snapshot_time_budget',
+    'snapshot_unavailable', 'snapshot_changed',
+    'snapshot_byte_budget_or_invalid', 'snapshot_schema_incomplete',
+    'snapshot_row_budget', 'snapshot_identity_migration',
+    'snapshot_reader_unavailable', 'snapshot_wal_reader_unavailable',
+    'snapshot_live_journal',
+})
+
+
 def read_library_snapshot(path: Path, *, max_rows: int = 100_000,
                           max_bytes: int = 128*1024*1024, seconds: float = 10,
                           cancelled=lambda: False) -> EvidenceSnapshot:
-    """Stable main image, or isolated Linux WAL capture, under one deadline."""
+    """Stable main image, or isolated Linux WAL capture, under one deadline.
+
+    Emit only bounded timing + closed statuses for an operator to distinguish
+    a slow WAL reader from an unavailable DB. TRACE never carries source data.
+    """
     started = time.monotonic()
+    trace = logging.getLogger('cifereca')
+    trace.info('TRACE reconciliation_snapshot phase=start stage=direct')
+
+    def finish(result: EvidenceSnapshot, stage: str) -> EvidenceSnapshot:
+        reasons = result.reasons
+        code = ('complete' if not reasons else
+                next(iter(reasons)) if len(reasons) == 1
+                and next(iter(reasons)) in _SNAPSHOT_TRACE_CODES
+                else 'incomplete')
+        elapsed = min(30000, max(0, int((time.monotonic()-started)*1000)))
+        trace.info(
+            'TRACE reconciliation_snapshot phase=finish stage=%s code=%s duration_ms=%d',
+            stage, code, elapsed,
+        )
+        return result
+
     result = read_quiescent_snapshot(path, max_rows=max_rows, max_bytes=max_bytes,
                                      seconds=seconds, cancelled=cancelled)
     deadline = started+seconds
     if result.reasons != {'snapshot_live_journal'}:
-        return result
+        return finish(result, 'direct')
+    trace.info('TRACE reconciliation_snapshot phase=handoff stage=wal')
     if cancelled() or time.monotonic() >= deadline:
-        return EvidenceSnapshot(reasons={'snapshot_cancelled' if cancelled() else 'snapshot_time_budget'})
+        return finish(EvidenceSnapshot(reasons={
+            'snapshot_cancelled' if cancelled() else 'snapshot_time_budget'
+        }), 'wal')
     from .library_wal_image import read_wal_image
     try:
         image, reason = read_wal_image(path, max_bytes=max_bytes,
                                       seconds=deadline-time.monotonic(), cancelled=cancelled)
     except OSError:
-        return EvidenceSnapshot(reasons={'snapshot_wal_reader_unavailable'})
+        return finish(EvidenceSnapshot(reasons={'snapshot_wal_reader_unavailable'}), 'wal')
     if reason:
-        return EvidenceSnapshot(reasons={reason})
-    return _query_image(image, max_rows=max_rows, deadline=deadline, cancelled=cancelled)
+        return finish(EvidenceSnapshot(reasons={reason}), 'wal')
+    return finish(_query_image(image, max_rows=max_rows, deadline=deadline,
+                               cancelled=cancelled), 'wal')
 
 
 @dataclass(frozen=True, repr=False)
