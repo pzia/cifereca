@@ -1068,9 +1068,13 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self._chromium_operation_running = True
         self.refresh()
         def work():
-            from cifereca.plugins.playwright_browser import inspect_chromium
-            result = inspect_chromium(test_launch=True)
-            GLib.idle_add(self._finish_chromium_operation, result.code)
+            try:
+                from cifereca.plugins.playwright_browser import inspect_chromium
+                code = inspect_chromium(test_launch=True).code
+            except Exception:
+                # Driver errors, cache paths and proxy text stay off stderr/UI.
+                code = "browser_probe_failed"
+            GLib.idle_add(self._finish_chromium_operation, code)
         Thread(target=work, name="cifereca-chromium-probe", daemon=True).start()
 
     def _confirm_chromium_install(self) -> None:
@@ -1103,14 +1107,18 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self._toast("Installation Chromium en cours ; annulation depuis la fiche du plugin.", 6)
         self.refresh()
         def work():
-            from cifereca.plugins.playwright_browser import install_chromium
-            result = install_chromium(
-                consent=True, cancelled=self._chromium_cancel,
-                progress=lambda phase: GLib.idle_add(
-                    self._chromium_progress, phase
-                ),
-            )
-            GLib.idle_add(self._finish_chromium_operation, result.code)
+            try:
+                from cifereca.plugins.playwright_browser import install_chromium
+                code = install_chromium(
+                    consent=True, cancelled=self._chromium_cancel,
+                    progress=lambda phase: GLib.idle_add(
+                        self._chromium_progress, phase
+                    ),
+                ).code
+            except Exception:
+                # Never let a worker traceback disclose subprocess or proxy data.
+                code = "installer_unavailable"
+            GLib.idle_add(self._finish_chromium_operation, code)
         Thread(target=work, name="cifereca-chromium-install", daemon=True).start()
 
     def _chromium_progress(self, phase: str) -> bool:
