@@ -78,6 +78,14 @@ def _cache_path() -> Path:
             raise ValueError("browser_cache_unavailable")
         if item == cache and not stat.S_ISDIR(value.st_mode):
             raise ValueError("browser_cache_unavailable")
+    # A cache can be inside HOME yet unwritable (read-only mount, ACL or
+    # inaccessible parent). Fail before spawning the official downloader;
+    # Playwright must not fall back to a different directory silently.
+    existing = next((p for p in (cache, *cache.parents) if p.exists()), None)
+    if existing is None or not existing.is_dir():
+        raise ValueError("browser_cache_unavailable")
+    if not os.access(existing, os.W_OK | os.X_OK):
+        raise ValueError("browser_cache_unavailable")
     return cache
 
 
