@@ -142,3 +142,29 @@ def test_other_maintenance_result_order_is_unchanged_and_malformed_status_is_saf
     unrelated = NS(summary="Outil interrompu", details=("Résultat",),
                    warnings=("Attention",), facts={"secret": object()})
     assert result_text(unrelated).index("Résultats") < result_text(unrelated).index("Avertissements")
+
+
+def test_reconciliation_window_uses_real_adw_toolbar_not_message_dialog_in_gtk():
+    """A physical GTK E2E asserts the resizable result before opening inspector."""
+    from pathlib import Path
+    probe = (Path(__file__).resolve().parents[1] /
+             "e2e/library_inspection_acceptance.py").read_text(encoding="utf8")
+    for expected in (
+        "inspection_results_large_window_maximizable",
+        "assert isinstance(results, Adw.Window)",
+        "assert results.get_resizable() and results.get_decorated()",
+        "isinstance(w, Adw.HeaderBar)",
+        'w.get_label() == "Agrandir / Restaurer"',
+    ):
+        assert expected in probe
+
+
+def test_other_maintenance_tools_retain_bounded_message_dialog_contract():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] /
+              "src/cifereca/gui/maintenance_result_view.py").read_text(encoding="utf8")
+    # The compatibility branch is explicit, not a silent universal migration
+    # of confirmations, return actions or other Maintenance results.
+    assert "self.inspector is not None" in source
+    assert "getattr(self.Adw, 'ToolbarView', None)" in source
+    assert 'dialog = self.Adw.MessageDialog.new(self.parent, self.title, "")' in source

@@ -111,6 +111,20 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
 
     def inspect_action():
         report['checks']['inspection_result_dialog_mapped']=True
+        # Modern GTK/libadwaita: this is now a standalone, resizable result
+        # window rather than a fixed 340px MessageDialog. Xvfb may not run a
+        # WM, so check real titlebar/button without asserting EWMH geometry.
+        results = result_view.dialog
+        assert isinstance(results, Adw.Window)
+        assert results.get_resizable() and results.get_decorated()
+        header = next(w for w in walk(results)
+                      if isinstance(w, Adw.HeaderBar))
+        assert header.get_mapped()
+        maximize = next(w for w in walk(results)
+                        if isinstance(w, Gtk.Button)
+                        and w.get_label() == "Agrandir / Restaurer")
+        assert maximize.get_mapped() and maximize.get_sensitive()
+        report['checks']['inspection_results_large_window_maximizable'] = True
         response=next(w for w in walk(result_view.dialog) if isinstance(w,Gtk.Button) and 'Examiner les cas' in str(w.get_label()))
         def allocated():
             if not response.get_mapped():return False

@@ -70,12 +70,86 @@ class MaintenanceResultView:
             self.row.add_suffix(self.button)
         self.button.set_visible(True)
 
+    def _open_large_results(self):
+        """Local reconciliation results are an exploration window, not consent.
+
+        Keep the old MessageDialog for non-inspector Maintenance tools and
+        older libadwaita runtimes; only the reconciliation explainer gets a
+        resizable titlebar and a flexible scroll region (#2712).
+        """
+        Gtk, Adw = self.Gtk, self.Adw
+        window = Adw.Window(transient_for=self.parent, modal=False,
+                            title=self.title)
+        window.set_default_size(860, 650)
+        window.set_decorated(True)
+        window.set_resizable(True)
+
+        top = Adw.ToolbarView()
+        heading = Adw.HeaderBar()
+        heading.set_title_widget(Gtk.Label(label=self.title))
+        maximize = Gtk.Button(label="Agrandir / Restaurer")
+        maximize.set_tooltip_text(
+            "Agrandir ou restaurer la fenêtre des résultats de réconciliation"
+        )
+        maximize.connect('clicked', lambda *_: (
+            window.unmaximize() if window.is_maximized()
+            else window.maximize()
+        ))
+        heading.pack_end(maximize)
+        top.add_top_bar(heading)
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        for edge in ('top', 'bottom', 'start', 'end'):
+            getattr(body, 'set_margin_'+edge)(12)
+        label = Gtk.Label(label=self.text, xalign=0, yalign=0)
+        label.set_wrap(True)
+        label.set_wrap_mode(self.Pango.WrapMode.WORD_CHAR)
+        label.set_selectable(True)
+        label.set_max_width_chars(100)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_height(100)
+        scroll.set_vexpand(True)
+        scroll.set_child(label)
+        body.append(scroll)
+
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        examine = Gtk.Button(label="Examiner les cas…")
+        examine.set_tooltip_text(
+            "Ouvrir uniquement les preuves locales privées dans une nouvelle session"
+        )
+        close = Gtk.Button(label="Fermer")
+        controls.append(examine)
+        controls.append(close)
+        body.append(controls)
+        top.set_content(body)
+        window.set_content(top)
+
+        def open_inspector(*_args):
+            if self.dialog is not window:
+                return
+            self.dialog = None
+            window.close()
+            if self.inspector is not None and self.alive():
+                self.inspector.start()
+
+        examine.connect('clicked', open_inspector)
+        close.connect('clicked', lambda *_: window.close())
+        window.connect('close-request', lambda *_: self._closed(window, "close"))
+        self.dialog = window
+        window.present()
+
     def open(self, _button):
         if not self.text or not self.alive():
             self.clear()
             return
         if self.dialog is not None:
             self.dialog.present()
+            return
+        if (self.inspector is not None
+                and getattr(self.Adw, 'ToolbarView', None) is not None
+                and getattr(self.Adw, 'HeaderBar', None) is not None):
+            self._open_large_results()
             return
         dialog = self.Adw.MessageDialog.new(self.parent, self.title, "")
         label = self.Gtk.Label(label=self.text)

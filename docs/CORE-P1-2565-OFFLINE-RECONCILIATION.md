@@ -541,3 +541,35 @@ une `Adw.Window` explicitement décorée et redimensionnable avec
 Aucun changement des preuves, filtres, nombres, classification
 Numilog/Kobo, recherche bibliographique, export public, téléchargement
 ou autorisation de réparation.
+
+
+## Résultats de réconciliation en fenêtre agrandissable — #2712
+
+L'action « Résultats… » d'une ligne Maintenance dotée de l'inspecteur
+privé de bibliothèque ouvre une **fenêtre autonome Adw.Window**,
+décorée, redimensionnable et non modale (860 × 650 au démarrage,
+géométrie gérée par le WM), avec :
+`Adw.ToolbarView` + `Adw.HeaderBar`, bouton explicite
+« Agrandir / Restaurer », corps à scroll vertical **étirable** et
+boutons « Examiner les cas… » / « Fermer ». Les résultats incomplets
+continuent d'afficher les motifs fermés avant les compteurs (#2724).
+Le texte reste sélectionnable et aucune donnée `MaintenanceResult.facts`
+n'est rendue.
+
+Le bouton **« Examiner les cas… »** ferme cette fenêtre, puis
+lance uniquement à ce moment la session privée existante ; aucun
+nouvel audit ni fichier n'est lu en cliquant sur Agrandir/Restaurer.
+Une fermeture par le bureau ou la touche de fermeture rend possible
+une réouverture depuis le bouton « Résultats… ». Un changement
+d'identité/refresh ou la disparition du parent révoque les deux vues.
+
+Les autres outils Maintenance gardent leur `Adw.MessageDialog`
+préexistant, de même que l'ancienne version de libadwaita sans
+`Adw.ToolbarView`. Ce lot ne change aucun dialogue de confirmation,
+réparation, acquisition, téléchargement ou connexion.
+
+Le E2E GTK4/XTEST vérifie la fenêtre réellement rendue, son header,
+les actions et le passage vers « Examiner les cas » avec une fixture
+locale synthétique, sans compte réel. Xvfb sans gestionnaire de fenêtres
+n'atteste pas la géométrie maximisée : vérification terrain nécessaire
+à 1280/1366 px.
