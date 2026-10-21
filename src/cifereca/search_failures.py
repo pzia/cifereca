@@ -12,6 +12,7 @@ def search_failure_code(error: BaseException) -> str | None:
     """
     seen = set()
     unavailable = False
+    provider_refusal = None
     while error is not None and id(error) not in seen:
         seen.add(id(error))
         if isinstance(error, httpx.HTTPStatusError):
@@ -30,12 +31,19 @@ def search_failure_code(error: BaseException) -> str | None:
             provider_code = getattr(error, "code", None)
         except Exception:
             provider_code = None
-        if ((type(provider_code) is str
-             and provider_code == "search_temporarily_unavailable")
-                or isinstance(error, (httpx.TransportError, ParseError))):
+        if type(provider_code) is str:
+            if provider_code == "search_authentication_required":
+                provider_refusal = provider_refusal or "SearchAuthenticationRequired"
+            elif provider_code == "search_access_denied":
+                provider_refusal = provider_refusal or "SearchAccessDenied"
+            elif provider_code == "search_temporarily_unavailable":
+                unavailable = True
+        if isinstance(error, (httpx.TransportError, ParseError)):
             unavailable = True
         error = error.__cause__ or error.__context__
-    return "SearchTemporarilyUnavailable" if unavailable else None
+    # A closed, built-in provider refusal outranks a generic timeout marker,
+    # but a concrete underlying HTTP 401/403 outranks both.
+    return provider_refusal or ("SearchTemporarilyUnavailable" if unavailable else None)
 
 
 def is_technical_search_error(error):
