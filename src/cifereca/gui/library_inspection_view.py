@@ -53,6 +53,15 @@ _INSPECTION_FALLBACK = (
     'Les preuves non vérifiées ne signifient pas que les livres sont absents.'
 )
 
+# Only exact Core-defined phase names can be presented. Worker messages,
+# paths, account names or arbitrary plugin prose never reach GTK.
+_INSPECTION_PHASES = frozenset({
+    'Inventaire local', 'Lecture des preuves locales',
+    'Comparaison des preuves locales',
+    'Comparaison des identifiants bibliographiques',
+    'Vérification des chemins enregistrés', 'Audit local terminé',
+})
+
 
 def _inspection_failure_message(result: object) -> str:
     """Project one validated Core reason, never untrusted diagnostic prose.
@@ -83,6 +92,49 @@ class LocalInspectionController:
         self.control = self.dialog = self.session = None
         self._generation = 0
         self._watch = None
+        self._activity_row = None
+        self._activity_box = self._activity_label = None
+
+    def attach_activity_row(self, row):
+        """The Maintenance ActionRow owns the nonmodal loading indicator."""
+        self._activity_row = row
+
+    def _show_activity(self):
+        if self._activity_row is None or not hasattr(self.Gtk, 'Box'):
+            return
+        if self._activity_box is None:
+            Gtk = self.Gtk
+            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            label = Gtk.Label(label='Préparation des cas locaux…', xalign=0)
+            cancel = Gtk.Button(label='Annuler')
+            cancel.set_tooltip_text('Interrompre l’inspection locale en lecture seule')
+            cancel.connect('clicked', lambda *_: self.clear())
+            line.append(label)
+            line.append(cancel)
+            self._activity_row.add_suffix(line)
+            self._activity_box, self._activity_label = line, label
+        self._activity_label.set_label('Préparation des cas locaux…')
+        self._activity_box.set_visible(True)
+
+    def _hide_activity(self):
+        if self._activity_box is not None:
+            self._activity_box.set_visible(False)
+
+    def _progress(self, generation, phase):
+        if phase not in _INSPECTION_PHASES:
+            return
+        idle_add = getattr(self.GLib, 'idle_add', None)
+        if idle_add is None:
+            return
+
+        def publish():
+            if (generation == self._generation and self.control is not None
+                    and not self.control.cancelled() and self.alive()
+                    and self._activity_label is not None):
+                self._activity_label.set_label('Inspection · ' + phase)
+            return False
+
+        idle_add(publish)
 
     def clear(self):
         self._generation += 1
@@ -98,6 +150,7 @@ class LocalInspectionController:
         if self.dialog is not None:
             dialog, self.dialog = self.dialog, None
             dialog.destroy()
+        self._hide_activity()
 
     def start(self):
         self.clear()
@@ -107,13 +160,12 @@ class LocalInspectionController:
         if identity is None:
             return
         generation = self._generation
-        control = self.control = MaintenanceCancelControl()
-        dialog = self.Adw.MessageDialog.new(self.parent, 'Inspection locale',
-            'Inspection privée de la dernière réconciliation si encore valide ; sinon nouvelle lecture hors réseau. Aucun changement.')
-        dialog.add_response('cancel', 'Annuler')
-        dialog.connect('response', lambda *_: self.clear() if self.dialog is dialog else None)
-        self.dialog = dialog
-        dialog.present()
+        control = self.control = MaintenanceCancelControl(
+            on_progress=lambda _current, _total, message: self._progress(generation, message),
+        )
+        # A valid one-shot private session may return immediately. Show only
+        # unobtrusive inline activity, never a modal or fabricated percentage.
+        self._show_activity()
 
         def read():
             try:
@@ -127,9 +179,7 @@ class LocalInspectionController:
                     session.close()
                 return
             self.control = None
-            if self.dialog is dialog:
-                self.dialog = None
-                dialog.destroy()
+            self._hide_activity()
             if not isinstance(session, LocalInspection):
                 self.parent.show_error(_inspection_failure_message(session), 'Inspection locale')
                 return

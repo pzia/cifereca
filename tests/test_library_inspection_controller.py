@@ -34,7 +34,8 @@ def test_read_runs_only_on_worker_and_never_exposes_private_result_to_activity(m
     session=args[1]()
     assert isinstance(session,LocalInspection)
     args[2](session)
-    assert m.presented==[session] and m.destroyed and not m.errors
+    assert m.presented == [session] and not m.errors
+    assert m.controller.dialog is None  # no waiting MessageDialog
     m.controller.clear()
     assert not session.valid()
 
@@ -56,9 +57,9 @@ def test_delayed_private_session_is_revoked_instead_of_presented(mounted,mode):
 def test_loader_cancel_discards_result_and_failures_are_literal(mounted,monkeypatch):
     m=mounted
     m.controller.start()
-    dialog=m.controller.dialog
-    dialog.handlers['response'](dialog,'cancel')
+    assert m.controller.dialog is None
     args,_=m.jobs[0]
+    m.controller.clear()  # inline Annuler, not a modal response
     args[2](args[1]())
     assert not m.presented and not m.errors
     m.controller.start()

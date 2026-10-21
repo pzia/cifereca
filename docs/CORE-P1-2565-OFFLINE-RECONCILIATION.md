@@ -385,3 +385,26 @@ Les SHA et le texte technique des preuves restent consultables dans les
 détails mais ne participent pas à la recherche libre. Les racines effectivement
 inspectées sont lisibles **uniquement dans la fenêtre privée**, jamais
 dans le broker expurgé, les diagnostics ou un export.
+
+
+## Inspection sans modale d'attente — P0 #2656
+
+L'action **« Résultats… → Examiner les cas… »** n'ouvre plus la boîte de
+dialogue d'attente « Inspection locale ». La préparation asynchrone se
+signale **dans la ligne Maintenance d'origine** avec un libellé constant
+« Préparation des cas locaux… » et un bouton **Annuler**. Si une session
+privée en mémoire est encore valide (#2655), elle est affichée directement
+sans modalité d'attente, sans nouvelle analyse artificielle et sans
+pourcentage inventé. Si une nouvelle lecture est nécessaire, les six
+phases littérales du Core peuvent remplacer le libellé sur cette ligne ;
+aucun chemin, nom de livre, identifiant, message arbitraire ou SHA n'est
+accepté comme progression.
+
+L'ancienne **fenêtre finale de consultation** n'est pas supprimée : elle
+s'ouvre uniquement quand la session privée est valide et prête. La fin,
+l'annulation, la fermeture du panneau, le changement d'identité ou une
+nouvelle exécution retirent l'activité en ligne et invalident les callbacks
+tardifs. Les enveloppes d'échec conservent leurs causes fermées sans
+confondre timeout SQLite et livre absent. Aucun scan supplémentaire n'est
+déclenché pour animer l'interface ; audit et inspection restent hors réseau,
+lecture seule et sans droit de réparation/acquisition.
