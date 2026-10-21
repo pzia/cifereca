@@ -1,3 +1,16 @@
+## #2460 — site Web public distinct de la racine COPS (21/10/2026)
+
+Le lien générique « Site Web » du fournisseur mène maintenant à
+`https://www.ebooksgratuits.com/` (page HTML publique attestée), au lieu de
+`https://opds2.ebooksgratuits.org/` (racine d'hôte COPS qui s'ouvre
+vide selon la recette utilisateur). Cela **ne change pas** `opds_feed_url`,
+qui demeure `https://opds2.ebooksgratuits.org/index.php/feed`, un flux
+**Atom/XML** destiné à un client OPDS, et non une fiche Web de livre.
+La recherche par auteur, les offres EPUB et l'action `download_direct`
+restent inchangées : leurs défauts réels demeurent à qualifier séparément.
+
+---
+
 ## #1917 — rechercher une branche auteur NOM, Prénom dans OPDS/COPS (0.1.25, 20/10/2026)
 
 Certaines réponses de recherche OPDS peuvent présenter un **sous-catalogue
