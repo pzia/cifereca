@@ -66,7 +66,10 @@ def _run_scoped_audit(service, identity_id, control, finish):
     result = _execute_scoped_audit(service, identity_id, control, finish)
     try:
         diagnostics = getattr(service, 'diagnostics', None)
-        if type(diagnostics) is Diagnostics:
+        # The same scoped helper serves CoreUI's *private* LocalInspection.
+        # Only broker summaries are report-shaped; never classify a private
+        # inspection object as a failed audit or pass it to Diagnostics.
+        if type(diagnostics) is Diagnostics and type(result) is dict:
             diagnostics.add_core_reconciliation_result(
                 result, duration_ms=max(0, int((monotonic() - started) * 1000)),
             )
