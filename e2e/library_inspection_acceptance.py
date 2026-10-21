@@ -16,6 +16,8 @@ from cifereca.identities.models import Identity
 from cifereca.core.library_local_inspection import LocalInspection, open_local_inspection
 from cifereca.core.library_reconciliation import _COLUMNS
 from cifereca.gui.library_inspection_view import LocalInspectionController
+from cifereca.gui.maintenance_result_view import MaintenanceResultView
+from cifereca.plugin_api import MaintenanceResult
 
 
 def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done):
@@ -43,7 +45,22 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
     def sources():
         return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
     before=sources()
-    controller=LocalInspectionController(parent=parent,Gtk=Gtk,Adw=Adw,Pango=Pango,GLib=GLib,alive=lambda:not parent._closed)
+    # A real GTK host with the synthetic Core scope lets the production result
+    # action and controller execute unchanged; plugin discovery is not stubbed
+    # into a claimed full entry E2E.
+    host=Adw.Window(transient_for=parent,modal=True,title='Inspection locale synthétique')
+    host.set_default_size(920,620)
+    host.service=service
+    host.runner=parent.runner
+    def show_error(*_args):
+        raise AssertionError('Synthetic local inspection became unavailable')
+    host.show_error=show_error
+    group=Adw.PreferencesGroup()
+    row=Adw.ActionRow(title='Résultat synthétique')
+    group.add(row)
+    host.set_content(group)
+    controller=LocalInspectionController(parent=host,Gtk=Gtk,Adw=Adw,Pango=Pango,GLib=GLib,alive=lambda:not parent._closed and host.get_visible())
+    result_view=MaintenanceResultView(parent=host,Gtk=Gtk,Adw=Adw,Pango=Pango,row=row,title='Réconciliation synthétique',alive=lambda:host.get_visible(),inspector=controller)
     widgets={}
 
     def press(key):
@@ -58,11 +75,27 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             until(lambda:dropdown.get_selected()==index,callback)
         GLib.timeout_add(120,lambda:(keys(),False)[1])
 
-    def opened(session):
-        assert isinstance(session,LocalInspection) and session.valid()
-        controller.session=session
-        controller.present()
-        until(lambda:controller.dialog is not None and controller.dialog.get_mapped(),initial)
+    def result_ready():
+        result_view.publish(MaintenanceResult(True,summary='Lecture seule ; détails privés accessibles localement.'))
+        until(lambda:result_view.button.get_mapped(),open_result)
+
+    def open_result():
+        device.click_widget(result_view.button)
+        until(lambda:result_view.dialog is not None and result_view.dialog.get_mapped(),inspect_action)
+
+    def inspect_action():
+        response=next(w for w in walk(result_view.dialog) if isinstance(w,Gtk.Button) and 'Examiner les cas' in str(w.get_label()))
+        def allocated():
+            if not response.get_mapped():return False
+            try:
+                x,y=device.widget_point(response)
+                return x>=0 and y>=0
+            except RuntimeError:
+                return False
+        def click():
+            device.click_widget(response)
+            until(lambda:controller.session is not None and controller.dialog is not None and controller.dialog.get_mapped(),initial)
+        until(allocated,click)
 
     def initial():
         window=controller.dialog
@@ -104,10 +137,10 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert not session.valid() and not session.page().cases
         assert sources()==before
         report['checks']['local_inspection_epoch_revokes_window_and_sources_unchanged']=True
+        result_view.clear()
+        host.destroy()
         tmp.cleanup()
         done()
 
-    def failed(_exc):
-        raise AssertionError('Synthetic local inspection reader failed')
-
-    parent.runner.submit('Inspection locale synthétique',lambda:open_local_inspection(service,identity_id='a'),opened,failed,kind='maintenance-inspection')
+    host.present()
+    until(lambda:host.get_mapped(),result_ready)
