@@ -67,3 +67,32 @@ def test_invalid_session_does_not_destroy_valid_index_rows(tmp_path):
     assert len(report) == 1 and report[0]["id"] == good
     assert payload != path.read_bytes()
     assert set(vault.list_ids()) == {good, corrupt}
+
+
+
+def test_snapshot_replacement_counts_only_final_encrypted_bytes(tmp_path, monkeypatch):
+    import browser_recorder_vault as vault_api
+
+    vault = PrivateSessionVault(tmp_path / "vault")
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", ORIGIN + "/catalog", status=200,
+    ))
+    writer = vault.begin(PRIMARY)
+    writer.save(trace, "recording", force=True)
+    first = vault.path / (writer.session_id + ".cbrv")
+    previous_size = first.stat().st_size
+    monkeypatch.setattr(vault_api, "MAX_VAULT_BYTES", previous_size + 256)
+    # Every incremental/final replacement is safe: it occupies one file.
+    writer.save(trace, "recording", force=True)
+    writer.save(trace, "completed", force=True)
+    assert vault.list_ids() == (writer.session_id,)
+    assert first.stat().st_size <= previous_size + 256
+    assert vault.open(writer.session_id, PRIMARY).recovery_status == "completed"
+    # But a second distinct capture may NOT bypass the same global cap.
+    another = vault.begin(PRIMARY)
+    with pytest.raises(VaultError, match="vault_limit"):
+        another.save(trace, "completed", force=True)
+    assert vault.list_ids() == (writer.session_id,)
+    assert not list(vault.path.glob("*.part"))
+    trace.destroy()
