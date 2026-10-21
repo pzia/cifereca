@@ -174,6 +174,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._search_detail_request_generation = 0
         self._last_search_query = ""
         self._search_mode = "local"
+        self._loaded_search_context = None
         self._search_local_objects: dict[str, dict[str, Any]] = {}
         self._kobo_backup_timer_id: int | None = None
         self.main_shell: Gtk.Widget | None = None
@@ -1119,6 +1120,28 @@ class MainWindow(Adw.ApplicationWindow):
         selected identity or old filters are copied into a new search.
         """
         return search_controller.search_books(self, query, field=field, online=online, identity_id=identity_id, providers=providers)
+
+    def can_open_loaded_search_notice(
+        self, *, provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool:
+        from .exact_search_notice_navigation import can_open_loaded_search_notice
+        return can_open_loaded_search_notice(
+            self, provider=provider, credential=credential,
+            record_id=record_id, docbase=docbase,
+            source_collection=source_collection, identity_id=identity_id,
+        )
+
+    def open_loaded_search_notice(
+        self, *, provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool:
+        from .exact_search_notice_navigation import open_loaded_search_notice
+        return open_loaded_search_notice(
+            self, provider=provider, credential=credential,
+            record_id=record_id, docbase=docbase,
+            source_collection=source_collection, identity_id=identity_id,
+        )
 
     def run_search(self, force: bool = False, *, keyboard: bool = False) -> None:
         from .search_host_port import SearchRunPort

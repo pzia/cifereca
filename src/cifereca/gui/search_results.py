@@ -47,6 +47,7 @@ def _sync_search_detail_after_results(self) -> None:
 def _populate_local_search(self, rows: list[dict[str, Any]]) -> None:
     self._search_local_objects = {str(row.get("key") or f"local:{index}"): row for index, row in enumerate(rows)}
     self._search_mode = "local"
+    self._loaded_search_context = None
     self.search_objects = {}
     shown = self._render_search_results()
     self._sync_search_detail_after_results()
@@ -55,6 +56,18 @@ def _populate_local_search(self, rows: list[dict[str, Any]]) -> None:
 
 def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -> None:
     self._search_mode = "global"
+    # Only Search batches for the current request may later be opened as
+    # *exact* notices from a plugin. Cached rows from an old identity/query
+    # never acquire a fresh stamp by being re-rendered.
+    identity = getattr(getattr(self.service, "current_identity", None),
+                       "identity_id", None)
+    state = self.search_controls.state()
+    context = (state.text, state.field, state.scope, identity)
+    self._loaded_search_context = (
+        context if identity and
+        getattr(self, "_online_source_context", None) == context
+        else None
+    )
     self.service.last_search = rows
     self.search_objects = {f"{x.source_provider}:{x.id}": x for x in rows}
     shown = self._render_search_results()

@@ -1669,6 +1669,50 @@ class UxRecommendationsView:
         key_at_selection = row.key
         ranked_at_selection = ranked
         if identity_at_selection:
+            # Do not fabricate borrowing/downloading actions in this plugin.
+            # Only an EXACT notice already loaded by Core Search may be
+            # selected, on an explicit click, through the SAME DetailPanel
+            # that resolves rights and actions for a normal Search selection.
+            can_open = getattr(self.host, "can_open_loaded_search_notice", None)
+            open_loaded = getattr(self.host, "open_loaded_search_notice", None)
+            if callable(can_open) and callable(open_loaded):
+                for index, variant in enumerate(exact_variants, 1):
+                    coordinates = {
+                        "provider": variant.source_provider,
+                        "credential": variant.source_credential,
+                        "record_id": variant.record_id,
+                        "docbase": variant.docbase,
+                        "source_collection": variant.source_collection,
+                        "identity_id": identity_at_selection,
+                    }
+                    try:
+                        available = can_open(**coordinates) is True
+                    except Exception:
+                        available = False
+                    if not available:
+                        continue
+
+                    def open_exact(coordinates=coordinates):
+                        if (
+                            getattr(self, "_disposed", False)
+                            or self._generation != generation_at_selection
+                            or self._detail_selection_generation != detail_generation_at_selection
+                            or self._llm_selection_key != key_at_selection
+                            or self._ranked_by_key.get(key_at_selection) is not ranked_at_selection
+                            or self.selected_identity_id() != identity_at_selection
+                        ):
+                            return False
+                        try:
+                            return open_loaded(**coordinates) is True
+                        except Exception:
+                            return False
+
+                    actions.append(UiBookDetailAction(
+                        f"recommendation.loaded-notice.{index}",
+                        f"Voir les actions de la notice {index} dans Recherche"
+                        f" · {self._display_source(variant.source_provider)}",
+                        "document-open-symbolic", callback=open_exact,
+                    ))
             verified_isbns = _attested_catalogue_isbns(variants)
             for isbn in verified_isbns:
                 def open_isbn(isbn=isbn):

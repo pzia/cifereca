@@ -132,6 +132,30 @@ class _UiHost:
         return self.window.search_books(
             query, field=field, online=online, identity_id=identity_id,
         )
+    def can_open_loaded_search_notice(
+        self, *, provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool:
+        if not self._window_alive():
+            return False
+        return self.window.can_open_loaded_search_notice(
+            provider=provider, credential=credential, record_id=record_id,
+            docbase=docbase, source_collection=source_collection,
+            identity_id=identity_id,
+        )
+
+    def open_loaded_search_notice(
+        self, *, provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool:
+        if not self._window_alive():
+            return False
+        return self.window.open_loaded_search_notice(
+            provider=provider, credential=credential, record_id=record_id,
+            docbase=docbase, source_collection=source_collection,
+            identity_id=identity_id,
+        )
+
     def build_action_bar(self, actions):
         bar = AdaptiveActionBar()
         generation = getattr(self.window, "_shell_page_rebuild_token", None)

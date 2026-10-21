@@ -1033,6 +1033,29 @@ class UiSearchNavigationHost(UiPageHost, Protocol):
 
 
 @runtime_checkable
+class UiLoadedSearchNoticeHost(UiPageHost, Protocol):
+    """Optional exact-match navigation to a notice ALREADY loaded by Search.
+
+    Provider+credential+record+docbase+collection+active identity must
+    identify one visible Core-owned Search result. No notice, capability,
+    entitlement, borrow or download data is accepted from the plugin.
+    Never triggers a fresh Search request or changes identity. A user click
+    selecting the row uses the normal Search detail and holdings behavior.
+    Returns False on stale, missing, disabled, hidden or ambiguous notices.
+    """
+
+    def can_open_loaded_search_notice(
+        self, *, provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool: ...
+
+    def open_loaded_search_notice(
+        self, *, provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool: ...
+
+
+@runtime_checkable
 class UiBookNavigationHost(UiPageHost, Protocol):
     """Optional public navigation to a book in the active identity's Library.
 
@@ -1146,7 +1169,7 @@ __all__ = [
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult",
     "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost",
-    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiBookNavigationHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
+    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiBookNavigationHost", "UiLoadedSearchNoticeHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "PluginLifecycle", "PluginContext",
 ]
 
