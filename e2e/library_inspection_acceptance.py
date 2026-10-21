@@ -300,6 +300,35 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert 'FOREIGN_SECRET' not in texts
         assert 'Droit sans fichier vérifié' in texts
         report['checks']['local_inspection_manual_unlinked_filter_same_identity']=True
+        preflight=next(w for w in walk(controller.dialog)
+                       if isinstance(w,Gtk.Button)
+                       and w.get_label()=='Préparer le rattachement')
+        assert preflight.get_sensitive() and preflight.get_mapped()
+
+        def preflight_ready():
+            if not preflight.get_sensitive() or not preflight.get_mapped():
+                return False
+            try:
+                x,y=device.widget_point(preflight)
+                return x>=0 and y>=0
+            except RuntimeError:
+                return False
+
+        def run_preflight():
+            device.click_widget(preflight)
+            until(lambda:any(isinstance(w,Gtk.Label)
+                             and 'Aucun fichier n’a été rattaché.' in w.get_text()
+                             for w in walk(controller.dialog)), manual_preflight)
+
+        until(preflight_ready, run_preflight)
+
+    def manual_preflight():
+        text='\\n'.join(w.get_text() for w in walk(controller.dialog)
+                       if isinstance(w,Gtk.Label))
+        assert 'Aucun fichier n’a été rattaché.' in text
+        assert 'Aucune modification' in text or 'rattachement' in text
+        assert 'FOREIGN_SECRET' not in text
+        report['checks']['P0_2714_pair_preflight_no_write_click']=True
         switch=next(w for w in walk(controller.dialog)
                     if isinstance(w,Gtk.Button) and w.get_label()=='Voir les candidats exacts')
         def ready():
