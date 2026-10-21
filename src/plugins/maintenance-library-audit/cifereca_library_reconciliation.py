@@ -27,6 +27,12 @@ _LIMITS = {
     'metadata_byte_budget': 'Budget mémoire des métadonnées atteint.',
     'comparison_budget': 'Budget de comparaison des preuves atteint.',
     'metadata_candidate_budget_or_cancelled': 'La recherche de correspondances bibliographiques reste incomplète.',
+    'metadata_candidate_time_budget': 'Durée maximale de recherche bibliographique atteinte (10 s par défaut).',
+    'metadata_candidate_cancelled': 'Recherche bibliographique interrompue.',
+    'metadata_candidate_row_budget': 'Plafond de notices du catalogue pour la comparaison atteint.',
+    'metadata_candidate_reference_budget': 'Plafond de références bibliographiques examinables atteint.',
+    'metadata_candidate_keys_budget': 'Au moins une notice dépasse le plafond d’identifiants bibliographiques.',
+    'metadata_candidate_count_budget': 'Plafond de candidats bibliographiques examinables atteint.',
     'metadata_unavailable': 'Certaines métadonnées bibliographiques ne sont pas inspectables.',
     'stored_path_budget': 'Budget de vérification des chemins enregistrés atteint.',
     'stored_path_unavailable': 'Certains chemins enregistrés restent non inspectables.',
@@ -185,7 +191,59 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
         # versions still receive the existing summary/warnings/facts result.
         presentation = {}
         if hasattr(MaintenanceResult, 'details'):
-            presentation['details'] = tuple(
+            # Additive, strictly closed metrics. No arbitrary keys/labels from
+            # Core/plugin input become user-visible prose. Older Core builds
+            # without phase metrics keep their existing counters unchanged.
+            stages = ()
+            stage_ms = inventory.get('phase_ms')
+            stage_calls = inventory.get('phase_calls')
+            stage_keys = (
+                ('sha256', 'SHA'),
+                ('epub_opf', 'métadonnées EPUB'),
+                ('structure', 'structure et CRC'),
+                ('pdf_signature', 'signature PDF'),
+            )
+            if (type(stage_ms) is dict and type(stage_calls) is dict
+                    and all(type(stage_ms.get(key)) is int
+                            and 0 <= stage_ms[key] <= 600_000_000
+                            and type(stage_calls.get(key)) is int
+                            and 0 <= stage_calls[key] <= 1_000_000
+                            for key, _ in stage_keys)):
+                stages = (
+                    'Durées cumulées locales (ne représentent pas le temps WAL) : '
+                    + ' · '.join(
+                        f'{label} : {stage_ms[key]} ms / {stage_calls[key]} fichier(s)'
+                        for key, label in stage_keys
+                    ),
+                )
+            examined = inventory.get('files_started')
+            coverage = ()
+            if (type(examined) is int and 0 <= examined <= 1_000_000
+                    and examined >= counts['observed_files']):
+                coverage = (
+                    f'Fichiers commencés : {examined} ; observés : {counts["observed_files"]}.'
+                    + (' Analyse incomplète : couverture non exhaustive.'
+                       if not complete else ''),
+                )
+            candidate_metrics = ()
+            keys = (
+                ('catalog_rows_examined', 'notices'),
+                ('references_examined', 'identifiants'),
+                ('files_examined', 'fichiers'),
+                ('index_ms', 'index'),
+                ('match_ms', 'rapprochement'),
+            )
+            if all(type(candidates.get(key)) is int
+                   and 0 <= candidates[key] <= 1_000_000 for key, _ in keys):
+                candidate_metrics = (
+                    'Recherche bibliographique (non probante) : '
+                    f'{candidates["catalog_rows_examined"]} notices · '
+                    f'{candidates["references_examined"]} identifiants · '
+                    f'{candidates["files_examined"]} fichiers ; '
+                    f'index : {candidates["index_ms"]} ms, '
+                    f'rapprochement : {candidates["match_ms"]} ms.',
+                )
+            presentation['details'] = stages + coverage + candidate_metrics + tuple(
                 f'{label} : {counts[name]}' for name, label in _COUNTER_LABELS.items()
             ) + ('Les catégories peuvent se recouper ; ne pas additionner ces compteurs.',)
         return MaintenanceResult(ok=complete, changed=0, summary=summary,

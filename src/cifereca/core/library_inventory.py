@@ -8,6 +8,7 @@ metadata are PRIVATE local evidence, never proof of provider ownership.
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -68,6 +69,16 @@ class Inventory:
     metadata_bytes: int = 0
     skipped_symlinks: int = 0
     skipped_special: int = 0
+    # Closed, process-local cumulative timings only; never per-book metadata
+    # or path/SHA labels. A started file may not produce a FileObservation if
+    # cancelled halfway through SHA/OPF/CRC.
+    files_started: int = 0
+    phase_ns: dict[str, int] = field(default_factory=lambda: {
+        'sha256': 0, 'epub_opf': 0, 'structure': 0, 'pdf_signature': 0,
+    })
+    phase_calls: dict[str, int] = field(default_factory=lambda: {
+        'sha256': 0, 'epub_opf': 0, 'structure': 0, 'pdf_signature': 0,
+    })
 
     def redacted(self) -> dict:
         return {
@@ -78,6 +89,12 @@ class Inventory:
             'hash_bytes': self.hash_bytes, 'structure_bytes': self.structure_bytes, 'metadata_bytes': self.metadata_bytes, 'skipped_symlinks': self.skipped_symlinks,
             'skipped_special': self.skipped_special,
             'unavailable_directories': len(self.unavailable_directories),
+            'files_started': self.files_started,
+            # Accumulate nanoseconds internally before rounding: 500 tiny
+            # OPF inspections must not all be reported as 0 ms.
+            'phase_ms': {key: max(0, min(600_000_000, ns // 1_000_000))
+                         for key, ns in self.phase_ns.items()},
+            'phase_calls': dict(self.phase_calls),
             'validation': dict(sorted(Counter(f.validation for f in self.files).items())),
             'structure_validation': dict(sorted(Counter(f.structure_validation for f in self.files).items())),
         }
@@ -147,11 +164,24 @@ def scan_identity_roots(
             return True
         return False
 
+    @contextmanager
+    def measured(phase):
+        # A single monotonic observation per phase, including failed/aborted
+        # phases, not a timing span keyed by a private file or identity.
+        started = time.perf_counter_ns()
+        result.phase_calls[phase] += 1
+        try:
+            yield
+        finally:
+            ns = max(0, time.perf_counter_ns() - started)
+            result.phase_ns[phase] += min(ns, 600_000_000_000)
+
     def observe(fd, name, identity, path):
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode):
             result.skipped_special += 1
             return
+        result.files_started += 1
         size = before.st_size
         status = 'uninspected'
         digest = None
@@ -165,24 +195,26 @@ def scan_identity_roots(
                 result.reasons.add('hash_byte_budget')
                 status = 'hash_byte_budget'
             else:
-                hasher = hashlib.sha256()
-                consumed = 0
-                while consumed < size:
-                    if stopped():
+                with measured('sha256'):
+                    hasher = hashlib.sha256()
+                    consumed = 0
+                    while consumed < size:
+                        if stopped():
+                            return
+                        data = stream.read(min(1024*1024, size-consumed))
+                        if not data:
+                            break
+                        result.hash_bytes += len(data)
+                        consumed += len(data)
+                        hasher.update(data)
+                    if consumed != size:
+                        result.reasons.add('file_changed')
                         return
-                    data = stream.read(min(1024*1024, size-consumed))
-                    if not data:
-                        break
-                    result.hash_bytes += len(data)
-                    consumed += len(data)
-                    hasher.update(data)
-                if consumed != size:
-                    result.reasons.add('file_changed')
-                    return
-                digest = hasher.hexdigest()
+                    digest = hasher.hexdigest()
                 stream.seek(0)
                 if path.suffix.lower() == '.epub':
-                    inspection = inspect_epub(stream, metadata_only=True)
+                    with measured('epub_opf'):
+                        inspection = inspect_epub(stream, metadata_only=True)
                     status = inspection['epub_status']
                     metadata = inspection['epub_metadata']
                     metadata_size = len(json.dumps(metadata, ensure_ascii=True).encode('utf-8'))
@@ -194,18 +226,20 @@ def scan_identity_roots(
                     if status != 'ok':
                         result.reasons.add('epub_parser_limit_or_invalid')
                 else:
-                    status = 'pdf_signature_only' if stream.read(5) == b'%PDF-' else 'invalid_pdf_signature'
+                    with measured('pdf_signature'):
+                        status = 'pdf_signature_only' if stream.read(5) == b'%PDF-' else 'invalid_pdf_signature'
             if digest is not None and status in {'ok', 'pdf_signature_only'}:
                 remaining = limits.hash_bytes-result.structure_bytes
                 def count_structure(size):
                     result.structure_bytes += size
                 if remaining > 0 and not stopped():
-                    structure = inspect_stream_structure(
-                        stream, path.suffix.lower()[1:],
-                        max_bytes=min(1024*1024*1024, remaining),
-                        seconds=min(10, max(0.001, deadline-time.monotonic())),
-                        cancelled=cancelled, count_bytes=count_structure,
-                    )
+                    with measured('structure'):
+                        structure = inspect_stream_structure(
+                            stream, path.suffix.lower()[1:],
+                            max_bytes=min(1024*1024*1024, remaining),
+                            seconds=min(10, max(0.001, deadline-time.monotonic())),
+                            cancelled=cancelled, count_bytes=count_structure,
+                        )
                 else:
                     structure = 'structure_byte_or_time_budget'
                 if structure not in {'epub_structure_crc_ok', 'pdf_structure_minimal'}:
