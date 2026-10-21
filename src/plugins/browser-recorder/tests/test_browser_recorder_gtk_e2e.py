@@ -483,3 +483,180 @@ def test_gtk_capture_failure_is_attested_and_privacy_safe(
         page.deactivate()
         window.close()
         flush_glib()
+
+
+@pytest.mark.parametrize(("mode", "problem", "expected_code"), [
+    ("record", "playwright_missing", "playwright_missing"),
+    ("record", "interrupted", "capture_interrupted"),
+    ("record", "private_error", "har_record_failed"),
+    ("record", "task_unavailable", "har_record_failed"),
+    ("replay", "playwright_missing", "playwright_missing"),
+    ("replay", "private_error", "har_replay_failed"),
+    ("replay", "task_unavailable", "har_replay_failed"),
+])
+def test_native_gtk_legacy_har_errors_reach_safe_core_diagnostics(
+    monkeypatch, tmp_path, mode, problem, expected_code,
+):
+    """No error on page open or denied consent; no private exception in feed.
+
+    Runs true Gtk4 controls with a synthetic failing task. No browser,
+    provider account, real HTTP, user capture or archived HAR/ZIP.
+    """
+    from browser_recorder import RecorderError
+    import browser_recorder_page as page_module
+    from cifereca.core.browser_recorder_diagnostics import PLUGIN_ID
+    from cifereca.core.diagnostic_event_feed import query_diagnostic_events
+    from cifereca.diagnostics import Diagnostics
+    from cifereca.plugins.manager import PluginManager
+
+    secret = "FAKE_LEGACY_HAR_SECRET_NEVER_EXPORT"
+    if problem == "playwright_missing":
+        problem_exception = RecorderError("playwright_unavailable")
+    elif problem == "interrupted":
+        problem_exception = RecorderError("capture_interrupted")
+    else:
+        problem_exception = RuntimeError(
+            "https://example.invalid/path?token=" + secret,
+        )
+
+    def fail(*_args, **_kwargs):
+        raise problem_exception
+
+    monkeypatch.setattr(page_module, "record", fail)
+    monkeypatch.setattr(page_module, "replay", fail)
+
+    class FailingHandle:
+        def __init__(self, work):
+            self.work = work
+            self.callback = None
+            self.failure = None
+            self.complete = False
+
+        def done(self):
+            return self.complete
+
+        def add_done_callback(self, callback):
+            self.callback = callback
+
+        def result(self):
+            assert self.complete and self.failure is not None
+            raise self.failure
+
+        def finish(self):
+            assert self.callback is not None
+            try:
+                self.work(None)
+            except Exception as exc:
+                self.failure = exc
+            self.complete = True
+            self.callback(self)
+
+    class Tasks:
+        def __init__(self):
+            self.handle = None
+            self.submitted = 0
+
+        def submit(self, work, **_kwargs):
+            self.submitted += 1
+            if problem == "task_unavailable":
+                raise RuntimeError(
+                    "https://example.invalid/path?token=" + secret,
+                )
+            self.handle = FailingHandle(work)
+            return self.handle
+
+    Gtk.init()
+    tasks = Tasks()
+    diagnostics = Diagnostics()
+    manager = NS(
+        diagnostics=diagnostics,
+        _records={
+            PLUGIN_ID: NS(
+                descriptor=NS(id=PLUGIN_ID),
+                package=NS(
+                    manifest=NS(
+                        package=NS(id="org.cifereca.technical.browser-recorder"),
+                    ),
+                ),
+            ),
+        },
+    )
+
+    def report(message, status, detail=None, level="normal"):
+        PluginManager._plugin_diag(
+            manager, PLUGIN_ID, message, status, detail, level,
+        )
+
+    plugin = page_module.BrowserRecorderPage()
+    plugin.activate(NS(
+        data_directory=tmp_path,
+        broker=lambda name: tasks if name == "tasks" else None,
+        report_diagnostic=report,
+    ))
+    window = Gtk.Window()
+    window.set_default_size(1280, 850)
+    root = plugin.build(None)
+    window.set_child(root)
+    window.present()
+    flush_glib()
+    try:
+        # The HAR controls are secondary, and page rendering is silent.
+        assert diagnostics.snapshot() == []
+        advanced = root.get_last_child()
+        assert isinstance(advanced, Gtk.Expander)
+        assert not advanced.get_expanded()
+        advanced.set_expanded(True)
+        flush_glib()
+        contents = advanced.get_child()
+        controls = contents.get_first_child().get_next_sibling()
+        record_button = controls.get_first_child()
+        replay_button = record_button.get_next_sibling().get_next_sibling()
+        har_name = controls.get_next_sibling()
+        status = har_name.get_next_sibling()
+        assert isinstance(status, Gtk.Label)
+        entry = root.get_first_child().get_next_sibling()
+        consent = entry.get_next_sibling()
+        entry.set_text(ORIGIN + "/catalog")
+        har_name.set_text("20261021T190000Z-12345678.har")
+        chosen = record_button if mode == "record" else replay_button
+
+        assert not consent.get_active()
+        chosen.emit("clicked")
+        flush_glib()
+        assert tasks.submitted == 0
+        assert diagnostics.snapshot() == []
+        assert not list(tmp_path.iterdir())
+
+        consent.set_active(True)
+        chosen.emit("clicked")
+        assert tasks.submitted == 1
+        if problem != "task_unavailable":
+            assert diagnostics.snapshot() == []
+            tasks.handle.finish()
+            flush_glib()
+        else:
+            flush_glib()
+
+        assert plugin.mode is None and plugin.handle is None
+        assert chosen.get_sensitive()
+        assert secret not in status.get_label()
+        assert "example.invalid" not in status.get_label()
+        assert not list(tmp_path.iterdir())
+
+        feed = query_diagnostic_events(
+            diagnostics, log_path=tmp_path / "absent",
+            source="core_events", module="PLUGIN", severity="error"
+            if expected_code != "playwright_missing" else "warning",
+        )
+        assert feed["total"] == 1
+        assert feed["events"][0]["detail"] == {
+            "plugin_id": PLUGIN_ID,
+            "operation": "har_record" if mode == "record" else "har_replay",
+            "code": expected_code,
+        }
+        assert secret not in repr(feed)
+        assert "example.invalid" not in repr(feed)
+    finally:
+        plugin.deactivate()
+        window.close()
+        flush_glib()
