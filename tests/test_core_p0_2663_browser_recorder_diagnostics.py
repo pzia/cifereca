@@ -338,7 +338,8 @@ def test_legacy_har_runtime_diagnostics_attested_per_operation(
     }
     projected = query_diagnostic_events(
         collector, log_path=tmp_path / "absent",
-        source="core_events", module="PLUGIN", severity="error",
+        source="core_events", module="PLUGIN",
+        severity="warning" if expected == "playwright_missing" else "error",
     )
     assert projected["total"] == 1
     assert projected["events"][0]["detail"] == rows[0]["detail"]
