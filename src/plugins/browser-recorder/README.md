@@ -301,3 +301,54 @@ snapshots SSD/sauvegardes. Ne pas synchroniser `private-sessions/` vers
 un cloud par défaut. Le ZIP **non anonymisé de diagnostic** est une action
 distincte à ajouter sous #2698 ; ne jamais partager un fichier `.cbrv`
 comme s'il était un ZIP sans donnée privée.
+
+
+## Export de diagnostic privé chiffré (#2698) — action séparée
+
+Depuis **Lister les sessions archivées**, sélectionnez un ID, saisissez votre
+phrase secrète et choisissez un **dossier existant que vous possédez, en mode
+0700**, avec chemin absolu explicite. La case « Je confirme cet export privé »
+est **distincte** du consentement de capture et du ZIP anonymisé pour LLM.
+L'export n'est jamais automatique ni téléversé. Le nom aléatoire finit par
+`.brzip` et le fichier est créé en mode 0600 sans écraser de fichier.
+
+**ATTENTION — ce ZIP n'est PAS anonymisé** : toutes les URL/query, redirections,
+corps JSON/HTML/XML/formulaires et valeurs effectivement retenus sont dans
+`trace.json` à l'intérieur de l'enveloppe chiffrée. Ce n'est pas une capture
+« wire » complète : aucun cookie/Authorization supprimé au collecteur,
+aucun binaire, DRM, profil navigateur ni corps hors budget ne peut réapparaître.
+Ne jamais attacher une archive `.brzip` à un ticket ni la transmettre à un
+LLM sans déchiffrement et revue personnelle. Un ZIP public demeure soumis
+aux choix individuels, à l'inspection exacte et à sa confirmation dédiée.
+
+**Format ouvert documenté `CFRZIP01`** : octets [0:8] = magic ASCII
+`CFRZIP01`, [8:24] = sel scrypt aléatoire (16 octets), [24:36] = nonce
+AES-GCM (12 octets), [36:] = ciphertext authentifié et tag 16 octets.
+La clé est dérivée avec scrypt(`length=32,n=32768,r=8,p=1`) sur les octets
+UTF-8 de la phrase secrète. AAD = la concaténation des 36 octets de l'en-tête.
+Le plaintext est un ZIP ordinaire contenant `README.txt` et
+`trace.json` (schéma `cifereca.browser-recorder.private-session/1`).
+Un lecteur indépendant peut déchiffrer en mémoire avec `cryptography` :
+
+```python
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from getpass import getpass
+from io import BytesIO
+from pathlib import Path
+from zipfile import ZipFile
+
+data = Path("example.brzip").read_bytes()
+assert data[:8] == b"CFRZIP01"
+salt, nonce = data[8:24], data[24:36]
+key = Scrypt(salt=salt, length=32, n=32768, r=8, p=1).derive(
+    getpass("Phrase secrète : ").encode()
+)
+raw = AESGCM(key).decrypt(nonce, data[36:], data[:36])
+with ZipFile(BytesIO(raw)) as archive:
+    print(archive.namelist())  # ni fichier clair ni partage implicite
+```
+
+Le ZIP interne n'est jamais écrit en clair par Cifereca. Le fichier
+`.brzip` n'est donc **pas** directement ouvert par l'explorateur ZIP :
+le déchiffrement en mémoire est une étape volontaire distincte.

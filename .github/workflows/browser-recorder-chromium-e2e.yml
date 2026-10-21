@@ -120,7 +120,8 @@ jobs:
           xvfb-run -a /usr/bin/python3 -m pytest -q -rs \
             src/plugins/browser-recorder/tests/test_browser_recorder_gtk_e2e.py \
             src/plugins/browser-recorder/tests/test_browser_recorder_gtk_xtest.py \
-            src/plugins/browser-recorder/tests/test_browser_recorder_gtk_xtest_review.py
+            src/plugins/browser-recorder/tests/test_browser_recorder_gtk_xtest_review.py \
+            src/plugins/browser-recorder/tests/test_browser_recorder_private_zip_gtk.py
       - name: Install actual plugin ZIP in isolated GTK venv and open Core contribution
         env:
           PYTHONPATH: ${{ github.workspace }}/src

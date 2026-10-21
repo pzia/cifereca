@@ -15,6 +15,7 @@ from browser_recorder_http import CapturePause, record_http
 from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
 from browser_recorder_vault import PrivateSessionVault, VaultError
+from browser_recorder_private_zip import save_private_zip
 
 
 _REVIEW_PAGE_SIZE = 24  # Bound GTK widgets even for 256 distinct private IDs.
@@ -91,6 +92,9 @@ class PrivateReviewPanel:
         self.vault_passphrase = None
         self.session_list = None
         self.delete_confirm = None
+        self.private_export_confirm = None
+        self.private_export_button = None
+        self.private_export_directory = None
         self._bundle_plan = None
         self._bundle_preview = None
         self._handle = None
@@ -163,6 +167,33 @@ class PrivateReviewPanel:
             self.sessions_open.connect("clicked", lambda *_: self.open_session())
             self.sessions_delete.connect(
                 "clicked", lambda *_: self.delete_session(),
+            )
+            box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            box.append(Gtk.Label(
+                label="Export DE SECOURS non anonymisé : contient URL, "
+                      "identifiants, titres et corps privés observés. "
+                      "Ne jamais partager sans une revue spécifique. "
+                      "Le résultat est un .brzip CHIFFRÉ, pas le ZIP LLM.",
+                xalign=0, wrap=True,
+            ))
+            self.private_export_directory = Gtk.Entry()
+            self.private_export_directory.set_placeholder_text(
+                "Dossier privé préexistant (absolu, permissions 0700)"
+            )
+            box.append(self.private_export_directory)
+            self.private_export_confirm = Gtk.CheckButton(
+                label="Je confirme cet export privé distinct du ZIP anonymisé."
+            )
+            box.append(self.private_export_confirm)
+            self.private_export_button = Gtk.Button(
+                label="Exporter le ZIP privé chiffré de cette session"
+            )
+            box.append(self.private_export_button)
+            self.private_export_confirm.connect(
+                "toggled", lambda *_: self._refresh(),
+            )
+            self.private_export_button.connect(
+                "clicked", lambda *_: self.export_private_zip(),
             )
         # FlowBox wraps the five capture/review buttons at sidebar/mobile
         # widths; a single horizontal Box could push Stop/Clear off-screen.
@@ -300,6 +331,11 @@ class PrivateReviewPanel:
             self.sessions_refresh.set_sensitive(not self._closed and not busy)
             self.sessions_open.set_sensitive(not self._closed and not busy)
             self.sessions_delete.set_sensitive(not self._closed and not busy)
+            self.private_export_button.set_sensitive(
+                not self._closed and not busy
+                and self.private_export_confirm.get_active()
+                and bool(self.session_list.get_active_id())
+            )
         self.stop.set_sensitive(not self._closed and busy)
         self.third_party_origins.set_sensitive(
             not self._closed and not busy and self._trace is None
@@ -603,6 +639,48 @@ class PrivateReviewPanel:
             self._discard_private()
         self.refresh_sessions()
         self.status.set_label("Session locale supprimée du coffre.")
+        self._refresh()
+
+    def export_private_zip(self):
+        if self.vault_directory is None or self._closed or self.is_recording():
+            return
+        if not self.private_export_confirm.get_active():
+            self.status.set_label(
+                "Export privé refusé : confirmation spécifique requise."
+            )
+            return
+        self.private_export_confirm.set_active(False)
+        sid = self.session_list.get_active_id()
+        path = self.private_export_directory.get_text().strip()
+        passphrase = self.vault_passphrase.get_text()
+        self.vault_passphrase.set_text("")
+        if not sid or not path:
+            self.status.set_label(
+                "Choisir une session et un dossier privé de destination."
+            )
+            return
+        stored = None
+        try:
+            stored = PrivateSessionVault(self.vault_directory).open(
+                sid, passphrase,
+            )
+            filename = save_private_zip(
+                stored, Path(path), passphrase, confirmed=True,
+            )
+        except Exception:
+            # Never emit path, provider data or cryptography exception text.
+            self.status.set_label(
+                "ZIP privé refusé : déverrouillage, répertoire 0700 ou "
+                "limite de sécurité incorrecte. Aucun export non chiffré."
+            )
+            return
+        finally:
+            if stored is not None:
+                stored.trace.destroy()
+        self.status.set_label(
+            "ZIP PRIVÉ CHIFFRÉ enregistré : " + filename
+            + " — ne pas partager sans revue ; aucun téléversement."
+        )
         self._refresh()
 
     def toggle_pause(self):

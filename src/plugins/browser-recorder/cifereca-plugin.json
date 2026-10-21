@@ -15,7 +15,7 @@
       "entrypoint": "browser_recorder_page:PLUGIN",
       "display_name": "Browser Recorder",
       "description": "HAR expurgé et parcours HTTP privé avec revue individuelle et export ZIP volontaire.",
-      "help_text": "Désactivé par défaut. Chromium Playwright visible après consentement. HAR classique : métadonnées expurgées et rejeu GET supervisé uniquement. Parcours HTTP privé : corps textuels bornés en mémoire, choix par identifiant, aperçu local, préparation d'un ZIP structurel filtré, consultation de chaque membre et confirmation séparée avant l'enregistrement 0600 local. Aucun téléversement vers un LLM. Le dépistage des secrets est heuristique : relire toute archive avant partage. Pas de session persistante ni capture à l'activation.",
+      "help_text": "Désactivé par défaut. Chromium Playwright visible après consentement. HAR classique : métadonnées expurgées et rejeu GET supervisé uniquement. Parcours HTTP privé : corps textuels bornés en mémoire, choix par identifiant, aperçu local, préparation d'un ZIP structurel filtré, consultation de chaque membre et confirmation séparée avant l'enregistrement 0600 local. Aucun téléversement vers un LLM. Le dépistage des secrets est heuristique : relire toute archive avant partage. Capture et archivage local chiffré seulement après consentement dédié et phrase secrète ; sessions réouvrables pour revue différée. Export .brzip privé non anonymisé uniquement sur confirmation distincte et destination 0700 choisie ; jamais de ZIP privé clair sur disque, jamais de capture à l'activation.",
       "enabled_by_default": false,
       "priority": 35,
       "instantiation": "singleton_public",
@@ -24,7 +24,8 @@
         "browser.recorder.replay.manual",
         "browser.recorder.har.sanitized",
         "browser.recorder.http.private.review",
-        "browser.recorder.http.reviewed_zip.local"
+        "browser.recorder.http.reviewed_zip.local",
+        "browser.recorder.http.private_zip.encrypted"
       ],
       "requires": [],
       "recommends": [],
