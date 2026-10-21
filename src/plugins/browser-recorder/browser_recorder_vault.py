@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
+import unicodedata
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,8 @@ from browser_recorder_http import (
 
 SCHEMA = "cifereca.browser-recorder.private-session/1"
 MAGIC = b"CFRVLT01"
+LABEL_MAGIC = b"CFRLBL01"
+MAX_LABEL_FILE = 1024
 MAX_FILE = 3 * 1024 * 1024
 MAX_SESSIONS = 128
 MAX_VAULT_BYTES = 128 * 1024 * 1024
@@ -254,6 +257,111 @@ class PrivateSessionVault:
         finally:
             os.close(fd)
 
+    @staticmethod
+    def _label_value(value: str) -> str:
+        # No newline, control, bidi format or terminal escape in GTK labels.
+        # Label is private metadata, never a filename or diagnostic.
+        if (type(value) is not str or len(value) > 80
+                or len(value.encode("utf-8")) > 320
+                or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"}
+                       for char in value)):
+            raise VaultError("vault_label_invalid")
+        return value
+
+    def get_label(self, session_id: str, passphrase: str) -> str:
+        """Read AEAD sidecar after authenticating the immutable capture."""
+        session = self.open(session_id, passphrase)
+        session.trace.destroy()
+        fd = self._open_dir(create=False)
+        try:
+            try:
+                handle = os.open(
+                    session_id + ".cbrn",
+                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd,
+                )
+            except FileNotFoundError:
+                return ""
+            try:
+                info = os.fstat(handle)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or info.st_uid != os.getuid()
+                        or stat.S_IMODE(info.st_mode) != 0o600
+                        or not 53 <= info.st_size <= MAX_LABEL_FILE):
+                    raise VaultError("vault_unsafe_file")
+                with os.fdopen(handle, "rb", closefd=False) as stream:
+                    data = stream.read(MAX_LABEL_FILE + 1)
+            finally:
+                os.close(handle)
+        except VaultError:
+            raise
+        except OSError as exc:
+            raise VaultError("vault_unsafe_file") from exc
+        finally:
+            os.close(fd)
+        if len(data) > MAX_LABEL_FILE or not data.startswith(LABEL_MAGIC):
+            raise VaultError("vault_label_invalid")
+        salt = data[8:24]
+        nonce = data[24:36]
+        try:
+            plaintext = _aead()(_key(passphrase, salt)).decrypt(
+                nonce, data[36:], LABEL_MAGIC + salt + nonce
+                + bytes.fromhex(session_id),
+            )
+            return self._label_value(plaintext.decode("utf-8"))
+        except Exception as exc:
+            raise VaultError("vault_label_invalid") from exc
+
+    def set_label(self, session_id: str, passphrase: str, label: str) -> None:
+        """Atomic, separately encrypted metadata; never change .cbrv."""
+        label = self._label_value(label)
+        # Verify the existing source *and* any existing sidecar first.
+        # Corrupt sidecars must not be silently overwritten.
+        self.get_label(session_id, passphrase)
+        salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)
+        encrypted = _aead()(_key(passphrase, salt)).encrypt(
+            nonce, label.encode("utf-8"),
+            LABEL_MAGIC + salt + nonce + bytes.fromhex(session_id),
+        )
+        data = LABEL_MAGIC + salt + nonce + encrypted
+        if len(data) > MAX_LABEL_FILE:
+            raise VaultError("vault_label_invalid")
+        fd = self._open_dir(create=False)
+        temp = "." + session_id + "-" + secrets.token_hex(8) + ".labelpart"
+        dest = session_id + ".cbrn"
+        try:
+            try:
+                old = os.stat(dest, dir_fd=fd, follow_symlinks=False)
+            except FileNotFoundError:
+                old = None
+            if old is not None and (
+                not stat.S_ISREG(old.st_mode) or old.st_nlink != 1
+                or old.st_uid != os.getuid()
+                or stat.S_IMODE(old.st_mode) != 0o600
+            ):
+                raise VaultError("vault_unsafe_file")
+            handle = os.open(
+                temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=fd,
+            )
+            try:
+                with os.fdopen(handle, "wb") as stream:
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temp, dest, src_dir_fd=fd, dst_dir_fd=fd)
+                os.fsync(fd)
+            finally:
+                try:
+                    os.unlink(temp, dir_fd=fd)
+                except FileNotFoundError:
+                    pass
+        except VaultError:
+            raise
+        except OSError as exc:
+            raise VaultError("vault_write_failed") from exc
+        finally:
+            os.close(fd)
+
     def unlocked_index(self, passphrase: str) -> tuple[tuple[dict, ...], int]:
         """Read an opt-in private session index, never persist an index file.
 
@@ -277,7 +385,14 @@ class PrivateSessionVault:
                 unavailable += 1
                 continue
             try:
-                summaries.append(item.private_summary())
+                summary = item.private_summary()
+                # A forged/invalid sidecar does not poison other sessions.
+                try:
+                    summary["label"] = self.get_label(identity, passphrase)
+                except VaultError:
+                    summary["label"] = ""
+                    summary["label_unavailable"] = True
+                summaries.append(summary)
             finally:
                 item.trace.destroy()
         summaries.sort(key=lambda entry: (
@@ -346,6 +461,20 @@ class PrivateSessionVault:
         session.trace.destroy()
         fd = self._open_dir(create=False)
         try:
+            try:
+                sidecar = os.stat(
+                    session_id + ".cbrn", dir_fd=fd, follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                sidecar = None
+            if sidecar is not None and (
+                not stat.S_ISREG(sidecar.st_mode) or sidecar.st_nlink != 1
+                or sidecar.st_uid != os.getuid()
+                or stat.S_IMODE(sidecar.st_mode) != 0o600
+            ):
+                raise VaultError("vault_unsafe_file")
+            if sidecar is not None:
+                os.unlink(session_id + ".cbrn", dir_fd=fd)
             os.unlink(session_id + ".cbrv", dir_fd=fd)
             os.fsync(fd)
         except OSError as exc:
