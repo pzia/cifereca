@@ -88,11 +88,13 @@ def from_audit_result(report: object, duration_ms: object = None) -> dict:
                 unknown = True
     if unknown:
         reasons.add("unclassified_limit")
-    if value.get("status") == "complete" and not reasons:
+    raw_status = value.get("status")
+    safe_status = raw_status if type(raw_status) is str else None
+    if safe_status == "complete" and not reasons:
         status = "complete"
     elif reasons & _CANCELLED and not reasons & _FAILED:
         status = "cancelled"
-    elif reasons & _FAILED or value.get("status") not in {"complete", "incomplete_scan"}:
+    elif reasons & _FAILED or safe_status not in {"complete", "incomplete_scan"}:
         status = "failed"
     else:
         status = "partial"
