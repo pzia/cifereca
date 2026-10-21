@@ -18,6 +18,7 @@ from browser_recorder_vault import PrivateSessionVault
 
 ORIGIN = "https://fictional-books.example.org"
 PASSWORD = "FICTIONAL-CIFERECA-VAULT-2026"
+EXPORT_PASSWORD = "FICTIONAL-SEPARATE-EXPORT-KEY-2026"
 ACCOUNT = "acct-FICTIONAL-300"
 TOKEN = "FAKE_PRIVATE_BODY_TOKEN_TEST"
 
@@ -122,6 +123,7 @@ def test_real_gtk_private_zip_requires_its_own_confirmation(tmp_path, monkeypatc
         folder.mkdir(mode=0o700)
         panel.private_export_directory.set_text(str(folder))
         panel.vault_passphrase.set_text(PASSWORD)
+        panel.private_export_passphrase.set_text(EXPORT_PASSWORD)
         panel.private_export_button.emit("clicked")
         assert not list(folder.iterdir())
         assert not panel.private_export_button.get_sensitive()
@@ -133,7 +135,7 @@ def test_real_gtk_private_zip_requires_its_own_confirmation(tmp_path, monkeypatc
         files = list(folder.glob("*.brzip"))
         assert len(files) == 1
         assert files[0].stat().st_mode & 0o777 == 0o600
-        with ZipFile(BytesIO(decrypt_private_zip(files[0].read_bytes(), PASSWORD))) as zipped:
+        with ZipFile(BytesIO(decrypt_private_zip(files[0].read_bytes(), EXPORT_PASSWORD))) as zipped:
             data = json.loads(zipped.read("trace.json"))
             assert data["exchanges"][0]["url"].endswith(ACCOUNT)
             assert TOKEN in data["exchanges"][0]["request_body"]
