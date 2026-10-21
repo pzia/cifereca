@@ -369,16 +369,16 @@ class LocalInspectionController:
                 # The same private, revocable identity-specific projection as
                 # the main list. Query only case labels, never hidden proofs,
                 # and retrieve a SINGLE file without materializing every file.
-                page = session.page(
-                    state='local_file_without_attested_right',
+                page = session.unconfirmed_files(
                     offset=manual_index[0], limit=1,
                     query=manual_search.get_text()[:160],
                 )
                 manual_toggle.set_label('Voir les candidats exacts')
                 candidate_title.set_text('Fichiers non liés · comparaison manuelle')
                 candidate_note.set_text(
-                    'Fichiers de cette identité sans droit attesté. '
-                    'Aucun n’est attribué à ce droit ni à son fournisseur.'
+                    'Fichiers de cette identité sans lien de droit confirmé '
+                    '(y compris SHA non vérifié). Aucun n’est attribué '
+                    'à ce droit ni à son fournisseur.'
                 )
                 candidate_prev.set_label('◀ Fichier')
                 candidate_next.set_label('Fichier ▶')
