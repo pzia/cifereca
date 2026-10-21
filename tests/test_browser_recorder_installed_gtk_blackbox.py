@@ -266,6 +266,10 @@ def test_installed_zip_full_review_and_independent_archive_oracle(
         consent = _children(root.get_child().get_child())[2]
         site.set_text(origin + "/catalog")
         consent.set_active(True)
+        plugin.private_panel.vault_consent.set_active(True)
+        plugin.private_panel.vault_passphrase.set_text(
+            "FICTIONAL-TEST-PASSPHRASE-2026"
+        )
         # Use only exposed native GTK controls to complete the flow.
         assert tasks.handle is None
         assert not plugin.private_panel.export_button.get_sensitive()
@@ -461,6 +465,10 @@ def test_installed_zip_browser_failure_reaches_core_diagnostics_without_private_
         ]
 
         consent.set_active(True)
+        plugin.private_panel.vault_consent.set_active(True)
+        plugin.private_panel.vault_passphrase.set_text(
+            "FICTIONAL-TEST-PASSPHRASE-2026"
+        )
         plugin.private_panel.start.emit("clicked")
         assert tasks.submissions == 1
         assert tasks.handle is not None
