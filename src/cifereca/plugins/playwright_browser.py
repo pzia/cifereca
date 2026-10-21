@@ -51,7 +51,7 @@ def _version() -> str | None:
         return None
 
 
-def _cache_path() -> Path:
+def _cache_path(*, require_writable: bool = False) -> Path:
     """Only the user's own cache. Reject relative/foreign/env '0' paths."""
     home = Path.home()
     raw = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
@@ -84,7 +84,9 @@ def _cache_path() -> Path:
     existing = next((p for p in (cache, *cache.parents) if p.exists()), None)
     if existing is None or not existing.is_dir():
         raise ValueError("browser_cache_unavailable")
-    if not os.access(existing, os.W_OK | os.X_OK):
+    if not os.access(existing, os.X_OK):
+        raise ValueError("browser_cache_unavailable")
+    if require_writable and not os.access(existing, os.W_OK | os.X_OK):
         raise ValueError("browser_cache_unavailable")
     return cache
 
@@ -229,7 +231,7 @@ def install_chromium(
                 or not Path(sys.executable).is_file()):
             return BrowserState("venv_required", before.version)
         try:
-            cache = _cache_path()
+            cache = _cache_path(require_writable=True)
             target = next((p for p in (cache, *cache.parents) if p.is_dir()), None)
             if target is None or shutil.disk_usage(target).free < _MIN_AVAILABLE_BYTES:
                 return BrowserState("disk_space_insufficient", before.version)
