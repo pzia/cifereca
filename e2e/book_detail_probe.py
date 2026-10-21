@@ -236,7 +236,7 @@ def main():
                     and x.get_title() == "Détail"]
         assert len(expanded) == 1, f"Expander Détail GTK absent ({route}): {len(expanded)}"
         rows = [
-            x for x in walk(p.content)
+            x for x in walk(expanded[0])
             if isinstance(x, Adw.ActionRow) and x is not expanded[0]
             and x.get_title() in {"Titre", "Auteur", "Sujet", "ISBN déclaré",
                                  "EAN déclaré", "Identifiant déclaré", "Éditeur",
