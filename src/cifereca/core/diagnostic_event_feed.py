@@ -37,7 +37,9 @@ from .diagnostic_adept import (
     public_message as public_adept_message,
 )
 from ..diagnostics import Diagnostics
-from .diagnostic_reconciliation import public_fields as public_reconciliation_fields
+from .diagnostic_reconciliation import (
+    known_reason_code, public_fields as public_reconciliation_fields,
+)
 
 _LOG_LINE = re.compile(
     r"^(?P<date>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+) "
@@ -507,7 +509,7 @@ def query_diagnostic_events(
     diagnostics: Any, *, log_path: Path,
     source: str = "all", module: str = "", severity: str = "",
     since: str | None = None, until: str | None = None,
-    limit: int = 50, offset: int = 0,
+    limit: int = 50, offset: int = 0, reason_code: str = "",
 ) -> dict[str, Any]:
     """A bounded/paginated snapshot with explicit source states.
 
@@ -518,6 +520,10 @@ def query_diagnostic_events(
         raise ValueError("unknown diagnostic source")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("diagnostic module must be a string of at most 90 characters")
+    if type(reason_code) is not str or (
+        reason_code and not known_reason_code(reason_code)
+    ):
+        raise ValueError("unknown reconciliation reason code")
     if not isinstance(severity, str) or severity.lower() not in {"", "debug", "info", "warning", "error", "critical"}:
         raise ValueError("unknown diagnostic severity")
     if any(value is not None and (not isinstance(value, str) or len(value) > 64) for value in (since, until)):
@@ -561,6 +567,18 @@ def query_diagnostic_events(
             row for row in events
             if (not lower or _stamp(row["timestamp"]) >= lower)
             and (not upper or _stamp(row["timestamp"]) <= upper)
+        ]
+    if reason_code:
+        # Apply before sorting/pagination to preserve a correct global total.
+        # Never inspect free-form log messages or fabricated plugin fields:
+        # only Core-attested LIBRARY terminal projections contain reasons.
+        events = [
+            row for row in events
+            if row.get("source") == "core_events"
+            and row.get("module") == "LIBRARY"
+            and type(row.get("detail")) is dict
+            and row["detail"].get("operation") == "library_reconciliation_audit"
+            and reason_code in row["detail"].get("reasons", ())
         ]
     events.sort(key=lambda row: (_stamp(row["timestamp"]), row["source"], row["event_id"]))
     total = len(events)
