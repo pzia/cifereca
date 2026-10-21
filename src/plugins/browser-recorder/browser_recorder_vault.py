@@ -194,7 +194,7 @@ class StoredSession:
 
     def __repr__(self):
         return (f"StoredSession(state={self.recovery_status!r}, "
-                f"exchanges={len(self.trace.exchanges)})"
+                f"exchanges={len(self.trace.exchanges)})")
 
 
 class PrivateSessionVault:
