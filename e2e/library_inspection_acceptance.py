@@ -120,6 +120,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(allocated,click)
 
     def initial():
+        report['checks']['inspection_window_mapped']=True
         window=controller.dialog
         assert window.get_width()<=parent.get_width()
         dropdowns=[w for w in walk(window) if isinstance(w,Gtk.DropDown)]
@@ -140,6 +141,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                          for w in walk(controller.dialog)), compare_right)
 
     def compare_right():
+        report['checks']['inspection_candidates_initially_visible']=True
         labels='\n'.join(w.get_text() for w in walk(controller.dialog)
                           if isinstance(w,Gtk.Label))
         assert 'Fichiers candidats' in labels
@@ -159,6 +161,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                          for w in walk(controller.dialog)), compare_next)
 
     def compare_next():
+        report['checks']['inspection_candidate_navigation_reached']=True
         labels='\n'.join(w.get_text() for w in walk(controller.dialog)
                           if isinstance(w,Gtk.Label))
         right = controller.session.page(
