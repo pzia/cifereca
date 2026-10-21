@@ -40,14 +40,14 @@ def result_text(result) -> str:
 class MaintenanceResultView:
     """GTK-thread-owned view, revocable independently from session report text."""
 
-    def __init__(self, *, Gtk, Adw, Pango, parent, row, title, alive, inspector=None):
+    def __init__(self, *, Gtk, Adw, Pango, parent, row, title, alive, inspector=None, inspection_row=None):
         self.Gtk, self.Adw, self.Pango = Gtk, Adw, Pango
         self.parent, self.row, self.title, self.alive = parent, row, title, alive
         self.button = self.dialog = None
         self.text = ""
         self.inspector = inspector
         if inspector is not None:
-            inspector.attach_activity_row(row)
+            inspector.attach_activity_row(inspection_row if inspection_row is not None else row)
 
     def clear(self):
         if self.inspector is not None:
