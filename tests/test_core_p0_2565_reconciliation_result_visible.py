@@ -16,7 +16,7 @@ from tests import test_core_ui_1358_maintenance_preview_cancellation as harness
 
 def test_reconciliation_plan_is_explained_and_execution_has_distinct_task_kind():
     m = mounted("library.reconciliation.audit")
-    assert m.preview.text == "Préparer l’analyse…"
+    assert m.preview.label == "Préparer l’analyse…"
     m.preview.click()
     plan_args, plan_kwargs = m.jobs[-1]
     assert plan_kwargs["kind"] == "maintenance-plan"
