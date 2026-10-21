@@ -268,6 +268,10 @@ def install_chromium(
                 code = proc.poll()
                 if code is not None:
                     if code != 0:
+                        # A failed CLI may have exited before its worker
+                        # downloader subprocesses. Reap the *entire* dedicated
+                        # group even when the parent already has an exit code.
+                        _stop(proc)
                         return BrowserState("download_failed", before.version)
                     break
                 time.sleep(0.2)
