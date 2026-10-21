@@ -55,7 +55,7 @@ _COUNTS = {
 }
 _PHASES = frozenset({
     "snapshot", "sha256", "epub_opf", "structure", "pdf_signature",
-    "candidate_index", "candidate_match",
+    "candidate_index", "candidate_match", "stored_paths",
 })
 _INVENTORY_PHASES = frozenset({"sha256", "epub_opf", "structure", "pdf_signature"})
 _STATUSES = frozenset({"complete", "partial", "failed", "cancelled"})
@@ -145,6 +145,9 @@ def from_audit_result(report: object, duration_ms: object = None) -> dict:
         measured = _number(candidates.get(source))
         if measured is not None:
             times[target] = measured
+    stored = _number(_section(value, "stored_paths").get("duration_ms"))
+    if stored is not None:
+        times["stored_paths"] = stored
     fields["phase_ms"] = times
     fields["phase_calls"] = calls
     return fields
