@@ -291,6 +291,8 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         site.set_text(origin + "/catalog")
         consent.set_active(True)
         panel = plugin.private_panel
+        panel.vault_consent.set_active(True)
+        panel.vault_passphrase.set_text("FICTIONAL-TEST-PASSPHRASE-2026")
         assert not panel.export_button.get_sensitive()
         assert not tasks.handles
         panel.start.emit("clicked")  # actual page → installed HTTP collector
@@ -306,6 +308,18 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         )
         trace = panel._trace
         assert trace is not None
+        assert trace.vault_session_id
+        from browser_recorder_vault import PrivateSessionVault
+        vault = PrivateSessionVault(
+            tmp_path / "core-data" / "plugins" / "data" / PLUGIN_ID
+            / "private-sessions"
+        )
+        session = vault.open(
+            trace.vault_session_id, "FICTIONAL-TEST-PASSPHRASE-2026",
+        )
+        assert session.state == "completed"
+        assert len(session.trace.exchanges) == len(trace.exchanges)
+        session.trace.destroy()
         assert len(trace.exchanges) >= 9
         assert {401, 403, 429}.issubset({x.status for x in trace.exchanges})
         assert any(x.method == "POST" and x.status == 302 for x in trace.exchanges)
