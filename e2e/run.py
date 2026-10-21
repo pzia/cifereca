@@ -505,6 +505,19 @@ def main() -> int:
             visual_change_ratio = None
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
+                if (scenario.get("runner") == "gtk-recommendations"
+                        and report_data.get("status") != "PASS"):
+                    # Probe owns this closed vocabulary. Never echo exception,
+                    # ISBN, source account, image/GTK text or private report
+                    # fields into CI logs (same policy as UX611).
+                    allowed = {
+                        "probe_start", "initial", "long_detail", "scrolled",
+                        "exact_setup", "exact_button", "exact_key",
+                        "exact_verdict", "return_list",
+                    }
+                    stage = report_data.get("p1_1354_phase")
+                    if type(stage) is str and stage in allowed:
+                        print("P1_1354_CLOSED_FAILURE_STAGE=" + stage, flush=True)
                 if scenario.get("geometry_1300") and report_data.get("status") != "PASS":
                     stages = {"probe_start", "search_ready", "selected_search", "selected_library",
                               "xwininfo_lookup", "xwininfo_parse", "monitor_and_paned",
