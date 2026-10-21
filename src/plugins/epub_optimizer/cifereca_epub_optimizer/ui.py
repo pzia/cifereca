@@ -565,6 +565,7 @@ class OptimizerPage:
             f"{before} → {after} ({report.reduction_percent:.1f}% de réduction).\n"
             f"Sortie : {report.output_path}"
             + (f"\n{len(report.image_errors)} image(s) conservée(s) après erreur de décodage." if report.image_errors else "")
+            + "".join(f"\n{note}" for note in report.image_notes if note.startswith("Processus CPU"))
         )
         self.host.toast("Variante optimisée créée")
         return False

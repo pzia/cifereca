@@ -555,7 +555,9 @@ def _epub_payloads(
                 try:
                     with Image.open(io.BytesIO(data)) as image:
                         cost = image.width * image.height * 16 + len(data) * 2
-                except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+                except MemoryError:
+                    raise EpubOptimizationError("cpu_image_memory_exhausted") from None
+                except Exception:
                     # Preserve historical image-decoding policy in the normal
                     # sequential path, without admitting unknown decoded costs.
                     cost = _CPU_BATCH_WORKING_BYTES + 1

@@ -347,3 +347,37 @@ def test_real_epub_modes_have_identical_checksums_of_every_entry(tmp_path):
         assert source.read_bytes() == original
     assert outputs[0] == outputs[1] == outputs[2]
     assert changes[0] == changes[1] == changes[2]
+
+
+@pytest.mark.parametrize("budget", ["source", "decoded"])
+def test_epub_inflight_aggregate_budget_admits_only_two_images(tmp_path, monkeypatch, budget):
+    from tests.test_p1_2432_cpu_process_pdf import install_pool
+    source, target = tmp_path / "source.epub", tmp_path / "out.epub"
+    _many_pages(source)
+    maximum_bytes = max(len(_image(i)) for i in range(4))
+    if budget == "source": monkeypatch.setattr(engine, "_CPU_BATCH_BYTES", maximum_bytes * 2)
+    if budget == "decoded": monkeypatch.setattr(engine, "_CPU_BATCH_WORKING_BYTES", (320 * 480 * 16 + maximum_bytes * 2) * 2)
+    class Pool:
+        _pool = ()
+        pending = bytes_inflight = max_pending = max_bytes = 0
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def apply_async(self, function, args, kwds):
+            self.pending += 1
+            self.bytes_inflight += len(args[0])
+            self.max_pending = max(self.max_pending, self.pending)
+            self.max_bytes = max(self.max_bytes, self.bytes_inflight)
+            value = function(*args, **kwds)
+            pool = self
+            class Result:
+                def get(self, timeout):
+                    pool.pending -= 1
+                    pool.bytes_inflight -= len(args[0])
+                    return value
+            return Result()
+    pool = Pool()
+    install_pool(monkeypatch, pool)
+    report = engine.optimize_epub(source, target, profile=builtin_profile("xteink-x3"), cpu_workers=4)
+    assert pool.max_pending == 2
+    assert pool.max_bytes <= engine._CPU_BATCH_BYTES
+    assert report.images_optimized == 4 and not report.image_errors

@@ -53,6 +53,7 @@ def main():
                 for workers in ((1,) if os.environ.get("CIFERECA_GTK_BASELINE") else (1, 2, 4)):
                     context.config = {"cpu_workers": workers}
                     page = OptimizerPage(host=SimpleNamespace(toast=messages.append), context=context)
+                    window.set_focus(None)
                     window.set_child(page.widget)
                     window.present()
                     page.source_entry.set_text(str(source))
@@ -95,6 +96,7 @@ def main():
                               "full_application_e2e": False, "results": results}, indent=2))
     finally:
         tasks.close()
+        window.set_focus(None)
         window.destroy()
 
 
