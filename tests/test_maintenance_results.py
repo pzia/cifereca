@@ -244,12 +244,63 @@ def test_other_maintenance_results_still_clear_on_retry():
 def test_reconciliation_audit_and_inspection_have_distinct_action_rows():
     m = mounted('library.reconciliation.audit')
     rows = m.host._tools_box.children[0].children
-    assert len(rows) == 2
-    audit_row, inspection_row = rows
-    assert audit_row is not inspection_row
+    assert len(rows) == 3
+    audit_row, last_report_row, inspection_row = rows
+    assert audit_row is not last_report_row
+    assert last_report_row is not inspection_row
+    assert last_report_row.title == 'Dernière analyse : aucune'
     assert inspection_row.title == 'Inspection détaillée des cas'
     assert m.host._maintenance_result_views[0].inspector._activity_row is inspection_row
     assert m.feedback is m.host._maintenance_line_rows[0][0]
     # Other tools still use exactly one ActionRow.
     other = mounted('covers.audit')
     assert len(other.host._tools_box.children[0].children) == 1
+
+
+@pytest.mark.parametrize(('ok', 'summary', 'expected'), [
+    (False, 'Analyse incomplète. 290 fichiers observés.', 'incomplète'),
+    (True, 'Analyse terminée. 290 fichiers observés.', 'terminée'),
+    (False, 'Inspection impossible : snapshot indisponible.', 'indisponible'),
+])
+def test_last_report_state_is_distinct_from_activity_and_persists(
+    ok, summary, expected, monkeypatch,
+):
+    monkeypatch.setattr(harness.Dialog, 'destroy', lambda self: None, raising=False)
+    m = mounted('library.reconciliation.audit')
+    audit, last, inspection = m.host._tools_box.children[0].children
+    args = execute(m)
+    args[2](MaintenanceResult(ok, summary=summary))
+    view = m.host._maintenance_result_views[0]
+    assert view.state == expected
+    assert last.title == f'Dernière analyse : {expected}'
+    assert last.subtitle.startswith('Rapport conservé')
+    assert inspection.title == 'Inspection détaillée des cas'
+    assert 'Dernière analyse' not in getattr(audit, 'title', '')
+    assert view.button in last.children
+    assert view.button not in audit.children
+    assert m.host._maintenance_reconciliation_report['state'] == expected
+    view.dialog.handlers['response'](view.dialog, 'close')
+    m.refresh()
+    audit, last, inspection = m.host._tools_box.children[0].children
+    assert last.title == f'Dernière analyse : {expected}'
+    assert m.host._maintenance_result_views[0].button.visible
+    assert inspection.title == 'Inspection détaillée des cas'
+    # A new attempt only manipulates the audit row, not the last report.
+    m.preview.click()
+    assert last.title == f'Dernière analyse : {expected}'
+
+
+def test_last_report_scope_change_restores_neither_text_nor_label(monkeypatch):
+    monkeypatch.setattr(harness.Dialog, 'destroy', lambda self: None, raising=False)
+    m = mounted('library.reconciliation.audit')
+    args = execute(m)
+    args[2](MaintenanceResult(False, summary='Analyse incomplète. PRIVATE_2732'))
+    view = m.host._maintenance_result_views[0]
+    view.dialog.handlers['response'](view.dialog, 'close')
+    m.host.service.current_identity = NS(identity_id='other')
+    m.refresh()
+    _audit, last, _inspection = m.host._tools_box.children[0].children
+    assert last.title == 'Dernière analyse : aucune'
+    assert m.host._maintenance_result_views[0].text == ''
+    assert m.host._maintenance_reconciliation_report is None
+    assert 'PRIVATE_2732' not in last.title
