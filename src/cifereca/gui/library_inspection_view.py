@@ -463,6 +463,7 @@ class LocalInspectionController:
         candidate_index = [0]
         manual_mode = [False]
         manual_index = [0]
+        manual_total = [0]
         manual_rebuilding = [False]
         manual_page_size = 25
 
@@ -489,6 +490,7 @@ class LocalInspectionController:
                     offset=page_start, limit=manual_page_size,
                     query=manual_search.get_text()[:160], **options,
                 )
+                manual_total[0] = page.total
                 manual_toggle.set_label('Voir les candidats exacts')
                 candidate_title.set_text('Fichiers non liés · comparaison manuelle')
                 candidate_note.set_text(
@@ -607,8 +609,21 @@ class LocalInspectionController:
                 return
             # A keyboard/click selection is a local page index, not an
             # acquisition request and never a proof or right/file link.
+            # Do NOT destroy Gtk.ListBoxRow widgets from their own
+            # row-selected signal: update only the already-present detail.
             manual_index[0] = row._manual_offset
-            show_candidate()
+            case = session.detail(row._manual_file_key)
+            if case is None:
+                return
+            candidate_detail.set_text(case.label + '\n\n' + case.details)
+            candidate_number.set_text(
+                f'{manual_index[0]+1} / {manual_total[0]}'
+                ' · exploration non probante'
+                + (' · scan incomplet'
+                   if session.summary().get('status') != 'complete' else '')
+            )
+            candidate_prev.set_sensitive(manual_index[0] > 0)
+            candidate_next.set_sensitive(manual_index[0] + 1 < manual_total[0])
 
         def select(_listing, row):
             if row is None or not valid():
