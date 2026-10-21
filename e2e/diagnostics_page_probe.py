@@ -45,15 +45,31 @@ class Broker:
     def __init__(self):
         self.event_queries = []
         self.checks = 0
+        self.core_version = "0.9.2"
+        self.recorder_version = "0.1.3"
 
     def system_status(self):
-        return {"application": {"online": False, "attempts": 0,
+        return {"version": self.core_version,
+                "application": {"online": False, "attempts": 0,
                                 "secret": "EXEMPLE-PRIVE-UX"},
                 "diagnostics": "Simulation locale, sans réseau"}
 
     def inventory(self):
-        return ({"plugin_id": "ui.page.diagnostics", "version": "fixture",
-                 "state": "ready", "type": "ui.page"},)
+        return (
+            {"plugin_id": "ui.page.diagnostics", "display_name": "Diagnostics",
+             "version": "0.2.3", "package_version": "0.2.3",
+             "expected_package_version": "0.2.3", "enabled": True,
+             "state": "ready", "type": "ui.page",
+             "token": "PRIVATE_VERSION_TOKEN_2665"},
+            {"plugin_id": "browser.recorder", "display_name": "Browser Recorder",
+             "version": self.recorder_version, "package_version": "0.1.3",
+             "expected_package_version": "0.1.4", "enabled": True,
+             "state": "blocked", "path": "/PRIVATE_HOME_2665/recorder"},
+            {"plugin_id": "plugin.disabled", "display_name": "Extension arrêtée",
+             "version": "1.7.0", "package_version": "1.7.0",
+             "expected_package_version": "1.7.0", "enabled": False,
+             "state": "disabled", "account_id": "PRIVATE_ACCOUNT_2665"},
+        )
 
     def runtime_diagnostic(self, _plugin):
         return {}
@@ -612,7 +628,79 @@ def main():
         report["checks"]["P0_2139_capture_keyboard_tabs_lifetime_and_local_json"] = True
         # Fixture destination selected programmatically; opening the chooser,
         # tab/start/stop/save activation and actual private write are real GTK.
-        tab_key("Rapports et vérifications", "reports", report_step)
+        tab_key("État système", "system", versions_initial)
+
+    def versions_expected():
+        from cifereca.plugin_api.version_inventory import version_inventory
+        return version_inventory(broker.system_status(), broker.inventory()).text
+
+    def versions_initial():
+        report["stage"] = "P1_2665_versions_visible_and_copy"
+        assert find_label("Core Cifereca · v0.9.2")
+        assert find_label("3 plugins installés / enregistrés")
+        assert find_label("Browser Recorder [browser.recorder]")
+        assert find_label("Extension : 0.1.3")
+        assert find_label("Écart paquet actif/attendu")
+        assert find_label("Désactivé · activé : non")
+        button = find_button("Copier les versions")
+        assert button.get_mapped() and button.get_sensitive()
+        assert button.get_tooltip_text()
+        assert broker.checks == 0 and plugin.llm is None
+        screenshot("02-versions-core-plugins")
+        keyboard_action("Copier les versions", versions_clipboard_first)
+
+    def versions_clipboard_first():
+        expected = versions_expected()
+        def copied(clipboard, task):
+            try:
+                actual = clipboard.read_text_finish(task)
+                assert actual == expected
+                assert actual.startswith("Core Cifereca · v0.9.2")
+                assert actual.count("browser.recorder") == 1
+                for secret in (
+                    "EXEMPLE-PRIVE-UX", "PRIVATE_VERSION_TOKEN_2665",
+                    "PRIVATE_HOME_2665", "PRIVATE_ACCOUNT_2665",
+                    "RAPPORT SUPPORT EXPURGÉ",
+                ):
+                    assert secret not in actual
+                assert "Versions copiées" in host.toasts
+                report["checks"]["P1_2665_exact_versions_clipboard_no_support_secrets"] = True
+                # Simulate new broker inventory (plugin updated in place),
+                # refreshing the *public snapshot*, never a remote provider.
+                broker.core_version = "0.9.3"
+                broker.recorder_version = "0.1.5"
+                refresh = next(w for w in walk(page[0])
+                               if isinstance(w, Gtk.Button)
+                               and w.get_tooltip_text() == "Actualiser les diagnostics")
+                assert refresh.get_sensitive()
+                refresh.emit("clicked")
+                later(versions_refreshed, 180)
+            except Exception:
+                fail("P1_2665_versions_clipboard_mismatch")
+        Gdk.Display.get_default().get_clipboard().read_text_async(None, copied)
+
+    def versions_refreshed():
+        assert find_label("Core Cifereca · v0.9.3")
+        assert find_label("Extension : 0.1.5")
+        assert not find_label("Core Cifereca · v0.9.2")
+        assert "Core Cifereca · v0.9.3" in versions_expected()
+        keyboard_action("Copier les versions", versions_clipboard_updated)
+
+    def versions_clipboard_updated():
+        expected = versions_expected()
+        def copied(clipboard, task):
+            try:
+                actual = clipboard.read_text_finish(task)
+                assert actual == expected
+                assert "Core Cifereca · v0.9.2" not in actual
+                assert "Extension : 0.1.3" not in actual
+                assert "Extension : 0.1.5" in actual
+                assert broker.checks == 0
+                report["checks"]["P1_2665_refresh_replaces_clipboard_snapshot"] = True
+                tab_key("Rapports et vérifications", "reports", report_step)
+            except Exception:
+                fail("P1_2665_refreshed_clipboard_mismatch")
+        Gdk.Display.get_default().get_clipboard().read_text_async(None, copied)
 
     def initial():
         assert window[0].get_width() <= args.width, "Fenêtre trop large"
