@@ -769,9 +769,21 @@ class MainWindow(Adw.ApplicationWindow):
             inspector = (LocalInspectionController(parent=self, Gtk=Gtk, Adw=Adw, Pango=Pango,
                                                    GLib=GLib, alive=result_alive)
                          if getattr(info, "id", None) == "library.reconciliation.audit" else None)
+            inspection_row = None
+            if inspector is not None:
+                # The previous audit may be incomplete while a *new* private
+                # case inspection is running. These are different operations:
+                # never put their competing status/cancel widgets on one row.
+                inspection_row = Adw.ActionRow()
+                inspection_row.set_title("Inspection détaillée des cas")
+                inspection_row.set_subtitle(
+                    "À ouvrir depuis les résultats · vérification locale distincte."
+                )
+                group.add(inspection_row)
             result_view = MaintenanceResultView(
                 Gtk=Gtk, Adw=Adw, Pango=Pango, parent=self, row=row,
                 title=info.title, alive=result_alive, inspector=inspector,
+                inspection_row=inspection_row,
             )
             self._maintenance_result_views.append(result_view)
             if is_reconciliation:
