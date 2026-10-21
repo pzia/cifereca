@@ -410,6 +410,10 @@ class LocalInspectionController:
         )
         manual_list_scroll.set_min_content_height(90)
         manual_list_scroll.set_max_content_height(180)
+        # The list and the comparison details share extra vertical space
+        # when the private window is maximized, rather than leaving a fixed
+        # one-row widget in the middle of an otherwise empty full-screen pane.
+        manual_list_scroll.set_vexpand(True)
         manual_list_scroll.set_child(manual_list)
         manual_list_scroll.set_visible(False)
         candidate_box.append(manual_list_scroll)
