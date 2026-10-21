@@ -158,14 +158,20 @@ def _json_shape(node, *, name="", approved=frozenset(), depth=0, counter=None):
     if type(node) in (int, float) and not isinstance(node, bool):
         if type(node) is float and not math.isfinite(node):
             return "[NUMBER]"
-        # An unreviewed telephone, postal code or other numeric identifier
-        # may use an arbitrary field name not matched by _IDS. Do not
-        # export long values just because their JSON type is numeric.
-        if str(node) in approved:
-            return node
+        # Unfamiliar short numeric fields can carry PINs, OTPs and account
+        # fragments just as longer numbers can. Unlike catalogue counters
+        # and years, their semantic role was never attested. A value approved
+        # elsewhere (e.g. bookId 214) MUST NOT authorize it under a different,
+        # non-identifier key.
         if _IDS.search(name):
-            return "[UNREVIEWED_ID]"
-        return node if abs(node) < 10_000 else "[NUMBER]"
+            return node if str(node) in approved else "[UNREVIEWED_ID]"
+        safe_public_counters = {
+            "year", "price", "count", "total", "page", "pages",
+            "limit", "offset",
+        }
+        if name.casefold() in safe_public_counters and abs(node) < 10_000:
+            return node
+        return "[NUMBER]"
     if node is None or type(node) is bool:
         return node
     if type(node) is str:
