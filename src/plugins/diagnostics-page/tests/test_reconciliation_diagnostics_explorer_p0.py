@@ -132,3 +132,26 @@ def test_page_source_contains_direct_readable_summary_not_private_core_import():
     assert "code" in explorer
     assert "cifereca.core" not in page
     assert "cifereca.core" not in explorer
+
+
+def test_snapshot_timeout_is_readable_without_invented_inventory_or_wal_stage():
+    raw = event(status="partial", reasons=["snapshot_time_budget"],
+                counts={}, phase_ms={"snapshot": 10027})
+    projection = reconciliation_event_summary(raw)
+    assert projection is not None
+    assert projection["state"] == "Incomplète"
+    assert "Lecture SQLite/WAL : 10027 ms" in projection["timing"]
+    assert "SHA :" not in projection["timing"]
+    assert projection["coverage"] == "Couverture non mesurée"
+    assert "Zéro candidat n’est pas une preuve d’absence" in projection["note"]
+    assert PRIVATE not in json.dumps(projection, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("invalid", [True, -1, "PRIVATE", 1.5, {"path": PRIVATE}])
+def test_snapshot_timing_untrusted_values_are_never_echoed(invalid):
+    raw = event(status="partial", reasons=["snapshot_time_budget"],
+                phase_ms={"snapshot": invalid})
+    result = reconciliation_event_summary(raw)
+    assert result is not None
+    assert "Lecture SQLite/WAL" not in result["timing"]
+    assert PRIVATE not in json.dumps(result, ensure_ascii=False)
