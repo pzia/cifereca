@@ -168,6 +168,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._identity_context_generation = 0
         # Session memory only: never serialize private reconciliation reports.
         self._maintenance_reconciliation_report = None
+        self._maintenance_reconciliation_run = None
         self._account_context_generation = 0
         self._cached_book_request_generation = 0
         self._cached_book_context = None
@@ -371,6 +372,10 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_close_request(self, *_args) -> bool:
         self._maintenance_reconciliation_report = None
+        live = getattr(self, "_maintenance_reconciliation_run", None)
+        self._maintenance_reconciliation_run = None
+        if type(live) is dict and live.get("control") is not None:
+            live["control"].cancel()
         self._dispose_maintenance_lines()
         return close_window_resources(self, source_remove=GLib.source_remove)
 
@@ -661,10 +666,16 @@ class MainWindow(Adw.ApplicationWindow):
     def _dispose_maintenance_lines(self) -> None:
         # Navigation, identity changes and teardown invalidate cache callbacks
         # even while their row is still attached to the window's widget tree.
+        retained = getattr(self, "_maintenance_reconciliation_run", None)
         for old_feedback, old_state in getattr(self, "_maintenance_line_rows", ()):
             old_feedback.dispose()
-            if old_state["control"] is not None:
-                old_state["control"].cancel()
+            control = old_state["control"]
+            # Only a running, read-only audit outlives its presentation row.
+            if control is not None and not (
+                type(retained) is dict and retained.get("control") is control
+                and not control.cancelled()
+            ):
+                control.cancel()
         self._maintenance_line_rows = []
         for readiness in getattr(self, "_maintenance_readiness_states", ()):
             readiness["active"] = False
@@ -809,6 +820,29 @@ class MainWindow(Adw.ApplicationWindow):
                 else:
                     # No fallback to a report from another identity/context.
                     self._maintenance_reconciliation_report = None
+                live = getattr(self, "_maintenance_reconciliation_run", None)
+                if type(live) is dict:
+                    old_control = live.get("control")
+                    if (live.get("scope") != current_scope or old_control is None
+                            or old_control.cancelled()):
+                        if old_control is not None:
+                            old_control.cancel()
+                        self._maintenance_reconciliation_run = None
+                    elif line_feedback is not None:
+                        line_scope.update(
+                            active=True, identity=current_scope[1],
+                            generation=current_scope[2],
+                        )
+                        live_ticket = line_feedback.begin()
+                        line_feedback.confirmation(live_ticket)
+                        line_feedback.running(live_ticket)
+                        live["progress_target"] = (line_feedback, live_ticket)
+                        live["view"] = result_view
+                        live["controls"] = (active_cancel, cancel, run)
+                        active_cancel.update(control=old_control, ticket=live_ticket)
+                        cancel.set_visible(True)
+                        cancel.set_sensitive(True)
+                        run.set_sensitive(False)
 
             def update_readiness(*, button=run, action=row, info=info,
                                  scope=readiness, local_gate=can_check_readiness):
@@ -917,6 +951,9 @@ class MainWindow(Adw.ApplicationWindow):
             ):
                 if self._closed or _button.get_root() is None:
                     return
+                if (getattr(meta, "id", None) == "library.reconciliation.audit"
+                        and getattr(self, "_maintenance_reconciliation_run", None) is not None):
+                    return  # No overlapping read-only audit attempts.
                 if local_gate and (not readiness_scope["active"] or
                                    readiness_scope["status"] in (
                                        "initializing", "temporarily_busy", "blocked"
