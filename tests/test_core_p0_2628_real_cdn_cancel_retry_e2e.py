@@ -122,12 +122,13 @@ def test_real_cli_cancelled_while_running_then_same_cache_recovers(
         worker.join(timeout=2)
         # No foreign browser cache, user files or process is touched.
         for proc in subprocesses:
-            if proc.poll() is None:
-                try:
-                    import signal
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+            # A reaped Playwright launcher may still have Node/download
+            # descendants in its dedicated process group.
+            try:
+                import signal
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             try:
                 proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
