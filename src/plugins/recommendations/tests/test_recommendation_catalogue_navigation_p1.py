@@ -466,7 +466,7 @@ def test_256th_is_bounded_and_257th_has_explicit_non_exhaustive_warning():
     view._selected_row(row)
     assert [x["record_id"] for x in availability] == ["exact-256"]
     section = next(s for s in presented[-1].sections if s.id == "source-editions")
-    assert any(f.id == "source-edition-limit" and "non exhaustive" in f.value
+    assert any(f.id == "source-edition-limit" and "pas exhaustive" in f.value
                for f in section.fields)
     assert not searches
 
