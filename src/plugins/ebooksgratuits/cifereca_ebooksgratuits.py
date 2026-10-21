@@ -317,7 +317,7 @@ class EbooksSession(ProviderSession):
             timeout=float(self.options.get('timeout_seconds',30)),
             follow_redirects=True, trust_env=False,
             headers={
-                'User-Agent':'Cifereca-EbooksGratuits/0.1.25',
+                'User-Agent':'Cifereca-EbooksGratuits/0.1.26',
                 'Accept-Language':'fr-FR,fr;q=0.9',
             },
         )
