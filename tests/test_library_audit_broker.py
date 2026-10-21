@@ -160,3 +160,51 @@ def test_registered_broker_is_additive_to_legacy_library_read(scoped):
     brokers = build_public_brokers(service)
     assert 'library.read' in brokers
     assert isinstance(brokers['library.reconciliation.read'], LibraryReconciliationReadBroker)
+
+
+def test_explicit_scoped_audit_uses_full_600s_budget_not_generic_120s(scoped, tmp_path):
+    """The scan is fast in CI; assert the budget really reaches both layers."""
+    from cifereca.core.library_audit import audit_library as real_audit
+    service, _, _root = scoped
+    before = filesystem(tmp_path)
+    with patch('cifereca.core.library_audit_broker.audit_library', wraps=real_audit) as audit:
+        report = LibraryReconciliationReadBrokerImpl(service).audit(identity_id='alice')
+    assert report['status'] == 'complete'
+    assert audit.call_count == 1
+    options = audit.call_args.kwargs
+    assert options['seconds'] == 600
+    assert options['limits'].seconds == 600
+    assert callable(options['cancelled'])
+    assert callable(options['progress'])
+    assert options['_snapshot'] is not None
+    assert filesystem(tmp_path) == before
+
+
+def test_invalid_identity_never_opens_source_even_with_longer_audit_budget(scoped):
+    service, _, _ = scoped
+    with patch('cifereca.core.library_audit_broker.audit_library') as audit:
+        result = LibraryReconciliationReadBrokerImpl(service).audit(identity_id='bob')
+    assert result['status'] == 'incomplete_scan'
+    assert result['reasons'] == ['reconciliation_identity_not_active']
+    audit.assert_not_called()
+
+
+def test_scoped_audit_600s_budget_still_observes_explicit_cancellation(scoped):
+    service, _, _ = scoped
+    was_cancelled = [False]
+
+    def cancellation_from_progress(**event):
+        if event.get('message') == 'Inventaire local' and event.get('current') == 1:
+            was_cancelled[0] = True
+
+    control = SimpleNamespace(
+        cancelled=lambda: was_cancelled[0],
+        report=cancellation_from_progress,
+    )
+    result = LibraryReconciliationReadBrokerImpl(service).audit(
+        identity_id='alice', control=control,
+    )
+    assert was_cancelled[0]
+    assert result['status'] == 'incomplete_scan'
+    assert result['reasons'] == ['audit_cancelled']
+    assert 'inventory' not in result
