@@ -270,7 +270,9 @@ def _safe_headers(headers):
                 result[key] = ", ".join(projected)
         elif key in {"retry-after", "x-ratelimit-limit", "x-ratelimit-remaining"}:
             if re.fullmatch(r"[0-9]{1,9}", value):
-                result[key] = value
+                # A technical-looking header can carry a short private code.
+                # Preserve only its structural presence, never raw digits.
+                result[key] = "[NUMBER]"
     return result
 
 
