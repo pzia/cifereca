@@ -247,3 +247,111 @@ def test_native_replay_vfs_does_not_modify_copied_images(wal):
         assert db.execute('SELECT artifact_id FROM artifacts').fetchall() == [('committed',)]
     finally:
         db.close()
+
+
+def test_wal_child_stdout_closed_but_process_still_alive_is_time_budget(
+    wal, monkeypatch,
+):
+    """A child can close stdout before it exits: wait() deadline still counts."""
+    from cifereca.core import library_wal_image as capture
+    real_popen = subprocess.Popen
+    children = []
+
+    def stalled_child(*_args, **_kwargs):
+        # Synthetic child only; does not open the user's source database.
+        child = real_popen(
+            [sys.executable, '-B', '-c',
+             'import os,time; os.close(1); time.sleep(3)'],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, close_fds=True,
+        )
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(capture.subprocess, 'Popen', stalled_child)
+    started = time.monotonic()
+    image, reason = capture.read_wal_image(wal[0], max_bytes=1024*1024,
+                                           seconds=0.35)
+    assert image is None and reason == 'snapshot_time_budget'
+    assert time.monotonic() - started < 2.0
+    assert len(children) == 1 and children[0].poll() is not None
+    assert children[0].stdout.closed
+
+
+def test_real_wal_snapshot_of_524_rows_keeps_all_source_bytes(wal, tmp_path):
+    """Exercise the actual Linux child/WAL in a 524-entry synthetic catalog."""
+    import json
+    path, db = wal
+    rows = [(f'synthetic-{i:04}', 'alice', 'kobo', f'item-{i:04}',
+             json.dumps({'identifiers': [{'scheme': 'isbn13',
+                                          'value': '9780306406157'}]}))
+            for i in range(524)]
+    db.executemany(
+        'INSERT INTO catalog_entries '
+        '(catalog_entry_id, identity_id, provider_id, item_id, metadata_json) '
+        'VALUES (?, ?, ?, ?, ?)', rows,
+    )
+    db.commit()
+    before = filesystem(tmp_path)
+    start = time.monotonic()
+    result = read_library_snapshot(path, seconds=10)
+    duration = time.monotonic()-start
+    assert not result.reasons
+    assert len(result.tables['catalog_entries']) == 524
+    assert duration < 10
+    assert filesystem(tmp_path) == before
+
+
+def test_snapshot_trace_distinguishes_direct_and_wal_outcomes_without_paths(
+    wal, monkeypatch, caplog,
+):
+    """Only closed statuses and bounded durations enter user debug logs."""
+    import logging
+    from cifereca.core import library_reconciliation as reconciliation
+    path, _ = wal
+    caplog.set_level(logging.INFO, logger='cifereca')
+    assert not read_library_snapshot(path).reasons
+    rows = [line for line in caplog.messages
+            if 'TRACE reconciliation_snapshot' in line]
+    assert any('phase=start stage=direct' in row for row in rows)
+    assert any('phase=handoff stage=wal' in row for row in rows)
+    assert any('phase=finish stage=wal code=complete duration_ms=' in row
+               for row in rows)
+    assert 'PRIVATE' not in '\n'.join(rows)
+    caplog.clear()
+    monkeypatch.setattr(
+        reconciliation, 'read_quiescent_snapshot',
+        lambda *_a, **_kw: reconciliation.EvidenceSnapshot(
+            reasons={'snapshot_live_journal'},
+        ),
+    )
+    from cifereca.core import library_wal_image
+    monkeypatch.setattr(
+        library_wal_image, 'read_wal_image',
+        lambda *_a, **_kw: (None, 'snapshot_time_budget'),
+    )
+    failure = read_library_snapshot(path)
+    assert failure.reasons == {'snapshot_time_budget'}
+    assert any('phase=finish stage=wal code=snapshot_time_budget' in line
+               for line in caplog.messages)
+    assert 'PRIVATE' not in '\n'.join(caplog.messages)
+
+
+def test_snapshot_trace_never_logs_untrusted_failure_details(
+    wal, monkeypatch, caplog,
+):
+    import logging
+    from cifereca.core import library_reconciliation as reconciliation
+    caplog.set_level(logging.INFO, logger='cifereca')
+    monkeypatch.setattr(
+        reconciliation, 'read_quiescent_snapshot',
+        lambda *_a, **_kw: reconciliation.EvidenceSnapshot(
+            reasons={'/PRIVATE/account?token=secret'},
+        ),
+    )
+    assert read_library_snapshot(wal[0]).reasons
+    lines = [line for line in caplog.messages
+             if 'TRACE reconciliation_snapshot' in line]
+    assert any('code=incomplete' in line for line in lines)
+    assert 'PRIVATE' not in '\n'.join(lines)
+    assert 'secret' not in '\n'.join(lines)
