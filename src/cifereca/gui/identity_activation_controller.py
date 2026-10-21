@@ -44,6 +44,7 @@ def activate_identity(window, identity_id: str) -> None:
     window._search_generation = getattr(window, "_search_generation", 0) + 1
     window._search_detail_request_generation += 1
     window._search_local_objects = {}; window.search_objects = {}; window._remote_search_results = []
+    window._loaded_search_context = None
     window._search_mode = "local"; window._remote_query_key = None; window._selected_search_id = None
     if hasattr(window, "search_page"):
         window.search_page.clear_rows()
