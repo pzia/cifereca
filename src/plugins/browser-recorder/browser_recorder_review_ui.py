@@ -925,6 +925,11 @@ class PrivateReviewPanel:
         self._generation += 1
         if self._stop is not None:
             self._stop.set()
+        # Never leave typed vault/export secrets in a detached GTK page.
+        if self.vault_passphrase is not None:
+            self.vault_passphrase.set_text("")
+        if self.private_export_passphrase is not None:
+            self.private_export_passphrase.set_text("")
         self._discard_private()
         self._stop = None
         self._handle = None
