@@ -338,3 +338,165 @@ def test_installed_zip_full_review_and_independent_archive_oracle(
         window.close()
         manager.close()
         _flush()
+
+
+@pytest.mark.parametrize(("code", "expected_severity"), [
+    ("playwright_unavailable", "warning"),
+    ("capture_interrupted", "error"),
+])
+def test_installed_zip_browser_failure_reaches_core_diagnostics_without_private_data(
+    monkeypatch, tmp_path, code, expected_severity,
+):
+    """Real release ZIP -> installed plugin -> GTK action -> Core Diagnostics.
+
+    Only the capture boundary is replaced by a synthetic, closed exception;
+    no Chromium, provider, real account, HAR, browser profile or ZIP export.
+    """
+    from cifereca.core.diagnostic_event_feed import query_diagnostic_events
+    from cifereca.diagnostics import Diagnostics
+
+    Gtk.init()
+    assert str(SOURCE.resolve()) not in sys.path
+    assert "browser_recorder_page" not in sys.modules
+    monkeypatch.setattr(
+        "cifereca.plugins.manager.data_dir", lambda: tmp_path / "core-data",
+    )
+    monkeypatch.setattr(
+        "cifereca.plugins.manager.cache_dir", lambda: tmp_path / "core-cache",
+    )
+
+    class FailedFuture:
+        def __init__(self, work):
+            self.work = work
+            self.callback = None
+            self.complete = False
+            self.failure = None
+
+        def done(self):
+            return self.complete
+
+        def result(self):
+            assert self.complete and self.failure is not None
+            raise self.failure
+
+        def add_done_callback(self, callback):
+            self.callback = callback
+
+        def finish(self):
+            assert self.callback is not None
+            try:
+                self.work(None)
+            except Exception as exc:
+                self.failure = exc
+            self.complete = True
+            self.callback(self)
+
+    class SyntheticTasks:
+        def __init__(self):
+            self.handle = None
+            self.submissions = 0
+
+        def submit(self, work, *, kind, label):
+            assert kind == "browser-recorder"
+            self.submissions += 1
+            self.handle = FailedFuture(work)
+            return self.handle
+
+    collector = Diagnostics()
+    tasks = SyntheticTasks()
+    store = PackageStore(tmp_path / "packages")
+    manager = PluginManager(
+        package_store=store,
+        state_store=PluginStateStore(tmp_path / "state.json"),
+        config_store=PluginConfigStore(tmp_path / "config.json"),
+        brokers={"tasks": tasks},
+        diagnostics=collector,
+    )
+    window = Gtk.Window()
+    window.set_default_size(1366, 850)
+    secret = "FICTIONAL_PRIVATE_SECRET_NEVER_EXPORT"
+    try:
+        archive = _real_package_zip(tmp_path / "browser-recorder.zip")
+        package = manager.installer.install(archive, activate=True)
+        assert package.root.is_relative_to(store.version_root(PACKAGE_ID, "0.1.3"))
+        manager.activate()
+        assert manager.status(PLUGIN_ID).enabled is False
+        assert manager.service(PLUGIN_ID) is None
+        manager.set_enabled(PLUGIN_ID, True)
+        assert manager.status(PLUGIN_ID).state == "ready"
+        plugin = manager.service(PLUGIN_ID)
+        assert plugin is not None
+
+        root = plugin.pages()[0].factory(None)
+        review_module = importlib.import_module("browser_recorder_review_ui")
+        recorder_module = importlib.import_module("browser_recorder")
+        for module in (review_module, recorder_module):
+            assert Path(module.__file__).resolve().is_relative_to(
+                package.root.resolve(),
+            )
+        failure = recorder_module.RecorderError(code)
+        def synthetic_failure(_start, _stop, **_kw):
+            raise failure
+        monkeypatch.setattr(review_module, "record_http", synthetic_failure)
+
+        window.set_child(root)
+        window.present()
+        _flush()
+        assert not [
+            x for x in collector.snapshot()
+            if x.get("verified_browser_recorder")
+        ]
+        site = _children(root)[1]
+        consent = _children(root)[2]
+        site.set_text("https://books.example.org/catalog")
+        # No browser or diagnostic merely because a disabled/optional plugin
+        # was installed or the page was opened.
+        assert not consent.get_active()
+        plugin.private_panel.start.emit("clicked")
+        _flush()
+        assert tasks.submissions == 0
+        assert not [
+            x for x in collector.snapshot()
+            if x.get("verified_browser_recorder")
+        ]
+
+        consent.set_active(True)
+        plugin.private_panel.start.emit("clicked")
+        assert tasks.submissions == 1
+        assert tasks.handle is not None
+        tasks.handle.finish()
+        _flush()
+        assert "Plugins" in plugin.private_panel.status.get_label() or (
+            "Navigateur fermé" in plugin.private_panel.status.get_label()
+        )
+        assert secret not in plugin.private_panel.status.get_label()
+        assert plugin.private_panel._trace is None
+        assert not plugin.private_panel.has_private_data()
+
+        results = query_diagnostic_events(
+            collector, log_path=tmp_path / "absent-application.log",
+            source="core_events", module="PLUGIN",
+            severity=expected_severity,
+        )
+        attested = [
+            x for x in results["events"]
+            if x.get("detail", {}).get("operation") == "http_capture"
+        ]
+        assert len(attested) == 1
+        assert attested[0]["detail"] == {
+            "plugin_id": PLUGIN_ID,
+            "operation": "http_capture",
+            "code": "playwright_missing" if code == "playwright_unavailable"
+                    else "capture_interrupted",
+        }
+        assert "verified_browser_recorder" not in repr(results)
+        assert secret not in repr(results)
+        assert "books.example.org" not in repr(results)
+        assert not list(
+            (tmp_path / "core-data" / "plugins" / "data" / PLUGIN_ID
+             / "exports").glob("*.zip")
+        )
+    finally:
+        window.close()
+        manager.close()
+        _flush()
