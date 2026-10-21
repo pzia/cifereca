@@ -358,7 +358,7 @@ class PrivateReviewPanel:
                 code = exc.args[0] if len(exc.args) == 1 else None
                 result, message = None, _capture_failure_message(code)
                 failure_code = (
-                    "playwright_missing" if code == "playwright_unavailable"
+                    "playwright_missing" if type(code) is str and code == "playwright_unavailable"
                     else code if type(code) is str and code in {
                         "capture_interrupted", "capture_limit",
                     } else "capture_failed"
