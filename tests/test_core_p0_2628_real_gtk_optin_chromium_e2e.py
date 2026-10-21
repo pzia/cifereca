@@ -1,6 +1,6 @@
 """#2628: a REAL Plugins GTK page installs official Chromium on first use.
 
-Fresh Playwright Python venv, empty Chromium cache, native GTK4/libadwaita,
+Fresh Core venv WITHOUT Playwright, empty Chromium cache, GTK4/libadwaita,
 real installed Browser Recorder package and Core PluginManager. No vendor,
 account, capture or human files. Network is allowed ONLY after the actual
 confirmation-dialog response is generated in GTK. CI runner opt-in required.
@@ -109,7 +109,7 @@ def test_real_plugin_page_dialog_consent_then_core_download(
     assert "PLAYWRIGHT_BROWSERS_PATH" not in os.environ
     cache = Path.home() / ".cache" / "ms-playwright"
     assert not cache.exists()
-    assert inspect_chromium().code == "chromium_missing"
+    assert inspect_chromium().code == "playwright_missing"
     Gtk.init()
     Adw.init()
 
@@ -140,22 +140,47 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         window.present()
         flush()
         assert PLUGIN_ID in page._plugin_widgets
-        installer = button_named(page._plugin_widgets[PLUGIN_ID], "Installer Chromium…")
-        assert installer.get_sensitive()
-        # Simulate an absent Python wheel without a subprocess or network:
-        # the disabled plugin must offer the Core repair action first.
-        from cifereca.plugins import playwright_browser
-        with monkeypatch.context() as missing_python:
-            missing_python.setattr(playwright_browser, "_version", lambda: None)
-            page.refresh()
-            row = page._plugin_widgets[PLUGIN_ID]
-            assert button_named(row, "Installer les dépendances Python…").get_sensitive()
-            assert not any(
-                isinstance(widget, Gtk.Button) and label_of_button(widget) == "Installer Chromium…"
-                for widget in descendants(row)
-            )
-            assert not cache.exists()
-        page.refresh()
+        # Entire Python prerequisite is absent, not a mock. The default-
+        # disabled Browser Recorder must offer Core pip repair anyway.
+        repair = button_named(
+            page._plugin_widgets[PLUGIN_ID], "Installer les dépendances Python…"
+        )
+        assert repair.get_sensitive()
+        assert not any(
+            isinstance(widget, Gtk.Button) and
+            label_of_button(widget) == "Installer Chromium…"
+            for widget in descendants(page._plugin_widgets[PLUGIN_ID])
+        )
+        assert not cache.exists()
+
+        # Cancel the actual Python-repair dialog; no package/browser mutation.
+        repair.emit("clicked")
+        assert eventually(lambda: visible_dialog() is not None)
+        dialog = visible_dialog()
+        assert "Python" in dialog.get_heading()
+        dialog.response("cancel")
+        dialog.close()
+        assert eventually(lambda: visible_dialog() is None)
+        assert inspect_chromium().code == "playwright_missing"
+        assert not cache.exists()
+
+        # Explicit second consent: Core installs declared Python dependencies
+        # into the managed venv asynchronously (no GUI-thread pip invocation).
+        button_named(
+            page._plugin_widgets[PLUGIN_ID], "Installer les dépendances Python…"
+        ).emit("clicked")
+        assert eventually(lambda: visible_dialog() is not None)
+        dialog = visible_dialog()
+        dialog.response("install")
+        dialog.close()
+        assert eventually(lambda: page._python_deps_install_running)
+        assert eventually(lambda: not page._python_deps_install_running, seconds=240)
+        assert inspect_chromium().code == "chromium_missing", window.messages
+        assert not cache.exists()
+        assert not manager.status(PLUGIN_ID).enabled
+
+        # Python stage is independently complete; only now does Chromium
+        # show up as a second opt-in operation.
         installer = button_named(page._plugin_widgets[PLUGIN_ID], "Installer Chromium…")
         assert installer.get_sensitive()
         assert not cache.exists()
