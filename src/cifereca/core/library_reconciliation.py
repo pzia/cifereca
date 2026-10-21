@@ -208,6 +208,20 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
                                 metadata = {}
                             if name == 'catalog_entries':
                                 row['bibliographic_identifiers'] = identifiers(metadata)
+                                # Safe, bounded display hints stay in Core-only
+                                # private evidence. They are never exported by
+                                # EvidenceSnapshot/LibraryAudit.redacted().
+                                if isinstance(metadata, dict):
+                                    title = metadata.get('title')
+                                    authors = metadata.get('authors', metadata.get('author'))
+                                    if type(title) is str:
+                                        row['display_title'] = title[:256]
+                                    if type(authors) is str:
+                                        row['display_authors'] = authors[:256]
+                                    elif type(authors) is list:
+                                        row['display_authors'] = ', '.join(
+                                            a[:96] for a in authors[:4] if type(a) is str
+                                        )[:256]
                             else:
                                 source = metadata.get('source') if isinstance(metadata, dict) else None
                                 row['attested_source'] = (

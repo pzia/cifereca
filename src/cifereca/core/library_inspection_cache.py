@@ -90,7 +90,10 @@ def remember_inspection_cache(service, identity_id, audit, scope_valid, generati
         # Late import keeps the Core-private projector off the public broker's
         # import path and avoids a module initialization cycle.
         from .library_local_inspection import LocalInspection
-        session = LocalInspection(audit, scope_valid, identity_id)
+        from .library_audit_roots import configured_identity_roots
+        roots = configured_identity_roots(service.config, identity_id)
+        session = LocalInspection(audit, scope_valid, identity_id,
+                                  roots=roots.get(identity_id, ()))
         expires = monotonic() + _TTL_SECONDS
         session._valid = lambda: (scope_valid() and monotonic() < expires
                                   and _service_stamp(service) == stamp)

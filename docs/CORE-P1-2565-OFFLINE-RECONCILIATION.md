@@ -348,3 +348,40 @@ absence de marqueur n'établit pas à elle seule la phase (journalisation
 éventuellement tronquée). Aucun chemin, livre, compte, empreinte ou texte SQL
 n'est ajouté aux traces. Les budgets de 10 secondes/128 Mio/100 000 lignes
 et les garanties sans réseau ni mutation restent inchangés.
+
+
+## Inspection compréhensible des droits Numilog — P0 #2657
+
+Une ligne **« Droit sans fichier vérifié »** représente un droit actif non
+confirmé par la chaîne *droit → acquisition complète → artefact →
+placement explicite → fichier SHA et EPUB validés*. Ce n'est **jamais** une
+preuve d'absence physique du livre, ni un indice suffisant pour télécharger.
+Un fichier physiquement présent mais non confirmé se trouve dans
+**« Fichiers sans provenance attestée »** (pas sous « Local » et pas sous
+« Numilog » par simple concordance de nom, de titre ou de SHA).
+Un lien de navigation rapide permet de passer des droits non vérifiés
+aux fichiers sans droit attesté **sans fabriquer de correspondance 1:1**.
+
+Le libellé local d'un fichier privilégie le titre et les auteurs extraits
+de l'OPF ; son nom de fichier reste visible. Une notice privée du même
+fournisseur, de la même édition et de la même identité peut fournir
+un titre/auteur pour un **droit**, mais un tel titre n'atteste ni la
+propriété d'un EPUB local ni son identité fournisseur. Chaque droit
+non confirmé indique les **preuves locales manquantes, conflictuelles
+ou non vérifiables** : attestation du droit, acquisition incomplète,
+placements multiples/absents, chemin non observé, artefact/SHA/taille,
+structure EPUB et éventuel audit partiel. L'examen ne produit aucun
+plan de réparation, aucun appel fournisseur, aucune mutation SQLite.
+
+La fenêtre conserve une **synthèse non additive** : effectifs des fichiers
+inspectés, liens confirmés, fichiers sans droit attesté, droits non vérifiés,
+fichiers sans provenance et chemins en anomalie. Les catégories
+peuvent se recouvrir et les droits/fichiers n'ont **pas** le même
+dénominateur : additionner ces chiffres pour reconstruire « achats =
+fichiers » serait erroné. Le filtre texte se combine au fournisseur
+et à l'état pour rechercher instantanément titre, auteur, nom de fichier
+et identifiant d’édition visibles dans les libellés, sans requête réseau.
+Les SHA et le texte technique des preuves restent consultables dans les
+détails mais ne participent pas à la recherche libre. Les racines effectivement
+inspectées sont lisibles **uniquement dans la fenêtre privée**, jamais
+dans le broker expurgé, les diagnostics ou un export.
