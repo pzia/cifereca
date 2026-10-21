@@ -458,6 +458,10 @@ def test_gtk_capture_failure_is_attested_and_privacy_safe(
         assert not list(tmp_path.iterdir())
 
         consent.set_active(True)
+        page.private_panel.vault_consent.set_active(True)
+        page.private_panel.vault_passphrase.set_text(
+            "FICTIONAL-TEST-PASSPHRASE-2026"
+        )
         page.private_panel.start.emit("clicked")
         assert tasks.submissions == 1
         assert diagnostics.snapshot() == []
@@ -477,7 +481,9 @@ def test_gtk_capture_failure_is_attested_and_privacy_safe(
         }
         assert secret not in repr(feed)
         assert "example.invalid" not in repr(feed)
-        assert not list(tmp_path.iterdir())
+        # Consent can create the private directory, but a failed synthetic
+        # launch must never persist source bytes, ciphertext or ZIP.
+        assert not any(path.is_file() for path in tmp_path.rglob("*"))
         assert not page.private_panel.has_private_data()
     finally:
         page.deactivate()

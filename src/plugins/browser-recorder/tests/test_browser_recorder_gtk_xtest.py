@@ -102,7 +102,7 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, h
         assert not advanced.get_expanded()
         assert not advanced.get_child().get_mapped()
         private_start = plugin.private_panel.start
-        for _ in range(8):
+        for _ in range(24):
             _xtest("key", "--clearmodifiers", "Tab")
             _flush()
             focus = window.get_focus()

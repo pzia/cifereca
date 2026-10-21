@@ -34,6 +34,12 @@
           "name": "playwright",
           "version": ">=1.50,<2",
           "import": "playwright"
+        },
+        {
+          "type": "python-package",
+          "name": "cryptography",
+          "version": ">=42,<48",
+          "import": "cryptography"
         }
       ],
       "requires_brokers": [

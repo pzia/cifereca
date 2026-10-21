@@ -14,6 +14,7 @@ from browser_recorder import RecorderError, site_origin
 from browser_recorder_http import CapturePause, record_http
 from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
+from browser_recorder_vault import PrivateSessionVault, VaultError
 
 
 _REVIEW_PAGE_SIZE = 24  # Bound GTK widgets even for 256 distinct private IDs.
@@ -78,13 +79,18 @@ def _metadata_only_origins(raw: str, primary: str) -> tuple[str, ...]:
 
 class PrivateReviewPanel:
     def __init__(self, Gtk, GLib, tasks, site, consent, legacy_running,
-                 export_directory=None, diagnostic=None):
+                 export_directory=None, diagnostic=None, vault_directory=None):
         self.Gtk, self.GLib, self.tasks = Gtk, GLib, tasks
         self._diagnostic = diagnostic
         self.site, self.consent = site, consent
         self.legacy_running = legacy_running
         self.export_directory = (Path(export_directory)
                                  if export_directory is not None else None)
+        self.vault_directory = Path(vault_directory) if vault_directory else None
+        self.vault_consent = None
+        self.vault_passphrase = None
+        self.session_list = None
+        self.delete_confirm = None
         self._bundle_plan = None
         self._bundle_preview = None
         self._handle = None
@@ -121,6 +127,43 @@ class PrivateReviewPanel:
             "https://identite.exemple.org, https://auth.exemple.org"
         )
         box.append(self.third_party_origins)
+        if self.vault_directory is not None:
+            box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            box.append(Gtk.Label(
+                label="Coffre chiffré : chaque capture consentie est archivée "
+                      "pour être revue plus tard, sans export ZIP. Entrez une "
+                      "phrase secrète d'au moins 12 caractères et conservez-la. "
+                      "Une panne peut ne laisser qu'une capture partielle.",
+                xalign=0, wrap=True,
+            ))
+            self.vault_consent = Gtk.CheckButton(
+                label="J'autorise le stockage local chiffré de cette capture."
+            )
+            box.append(self.vault_consent)
+            self.vault_passphrase = Gtk.Entry()
+            self.vault_passphrase.set_visibility(False)
+            self.vault_passphrase.set_placeholder_text(
+                "Phrase secrète du coffre (capture, ouverture ou suppression)"
+            )
+            box.append(self.vault_passphrase)
+            self.sessions_refresh = Gtk.Button(label="Lister les sessions archivées")
+            self.session_list = Gtk.ComboBoxText()
+            self.sessions_open = Gtk.Button(label="Ouvrir une session — nouvelle revue")
+            self.delete_confirm = Gtk.CheckButton(
+                label="Je confirme la suppression locale de la session choisie."
+            )
+            self.sessions_delete = Gtk.Button(label="Supprimer cette session")
+            for widget in (self.sessions_refresh, self.session_list,
+                           self.sessions_open, self.delete_confirm,
+                           self.sessions_delete):
+                box.append(widget)
+            self.sessions_refresh.connect(
+                "clicked", lambda *_: self.refresh_sessions(),
+            )
+            self.sessions_open.connect("clicked", lambda *_: self.open_session())
+            self.sessions_delete.connect(
+                "clicked", lambda *_: self.delete_session(),
+            )
         # FlowBox wraps the five capture/review buttons at sidebar/mobile
         # widths; a single horizontal Box could push Stop/Clear off-screen.
         controls = Gtk.FlowBox()
@@ -245,10 +288,18 @@ class PrivateReviewPanel:
 
     def _refresh(self):
         busy = self.is_recording()
+        replaceable = self._trace is None or (
+            self.vault_directory is not None
+            and bool(getattr(self._trace, "vault_session_id", None))
+        )
         self.start.set_sensitive(
-            not self._closed and not busy and self._trace is None
+            not self._closed and not busy and replaceable
             and not self.legacy_running()
         )
+        if self.vault_directory is not None:
+            self.sessions_refresh.set_sensitive(not self._closed and not busy)
+            self.sessions_open.set_sensitive(not self._closed and not busy)
+            self.sessions_delete.set_sensitive(not self._closed and not busy)
         self.stop.set_sensitive(not self._closed and busy)
         self.third_party_origins.set_sensitive(
             not self._closed and not busy and self._trace is None
@@ -328,6 +379,12 @@ class PrivateReviewPanel:
     def begin(self):
         if self._closed or self.is_recording() or self.legacy_running():
             return
+        if (self.vault_directory is not None and self._trace is not None
+                and not getattr(self._trace, "vault_session_id", None)):
+            self.status.set_label(
+                "Capture non archivée en mémoire : ne pas la remplacer."
+            )
+            return
         if not self.consent.get_active():
             self.status.set_label("Consentement explicite requis.")
             return
@@ -343,6 +400,21 @@ class PrivateReviewPanel:
                 "sans chemin ni identifiant. Aucun navigateur lancé."
             )
             return
+        passphrase = None
+        if self.vault_directory is not None:
+            if not self.vault_consent.get_active():
+                self.status.set_label(
+                    "Consentement au stockage local chiffré requis avant capture."
+                )
+                return
+            passphrase = self.vault_passphrase.get_text()
+            if len(passphrase) < 12:
+                self.status.set_label(
+                    "Phrase secrète d'au moins 12 caractères requise."
+                )
+                return
+            self.vault_passphrase.set_text("")
+            self.vault_consent.set_active(False)
         self._discard_private()
         self._generation += 1
         generation = self._generation
@@ -353,10 +425,14 @@ class PrivateReviewPanel:
         self.status.set_label("Navigateur HTTP privé en cours, sans export…")
 
         def work(_control):
-            return record_http(
-                start_url, stop, pause_control=pause_control,
-                metadata_only_origins=metadata_only_origins,
-            )
+            kwargs = {
+                "pause_control": pause_control,
+                "metadata_only_origins": metadata_only_origins,
+            }
+            if self.vault_directory is not None:
+                writer = PrivateSessionVault(self.vault_directory).begin(passphrase)
+                kwargs["vault_writer"] = writer
+            return record_http(start_url, stop, **kwargs)
 
         try:
             handle = self.tasks.submit(
@@ -375,6 +451,13 @@ class PrivateReviewPanel:
         def finished(done):
             try:
                 result, message, failure_code = done.result(), None, None
+            except VaultError:
+                result = None
+                message = (
+                    "Coffre chiffré indisponible : vérifiez les dépendances, "
+                    "permissions et phrase secrète. Aucun stockage en clair."
+                )
+                failure_code = "capture_failed"
             except RecorderError as exc:
                 # Only a literal known RecorderError code may affect UI text;
                 # never call str(exc) or inspect Playwright's raw exception.
@@ -423,6 +506,12 @@ class PrivateReviewPanel:
                         self._emit_failure("http_review", "review_failed")
                     else:
                         self._show_candidates()
+                        if getattr(result, "vault_session_id", None):
+                            self.status.set_label(
+                                f"Session archivée en coffre chiffré : "
+                                f"{len(result.exchanges)} échanges. "
+                                "Nouvelle capture possible sans effacer l'archive."
+                            )
                         if result.end_reason == "browser_closed":
                             self.status.set_label(
                                 "Capture terminée (navigateur fermé) : "
@@ -437,6 +526,84 @@ class PrivateReviewPanel:
             self.GLib.idle_add(deliver)
 
         handle.add_done_callback(finished)
+
+    def refresh_sessions(self):
+        if self.vault_directory is None or self._closed or self.is_recording():
+            return
+        try:
+            ids = PrivateSessionVault(self.vault_directory).list_ids()
+        except VaultError:
+            self.status.set_label("Bibliothèque chiffrée inaccessible.")
+            return
+        self.session_list.remove_all()
+        for index, session_id in enumerate(ids, 1):
+            self.session_list.append(session_id, f"Session {index} · {session_id[:8]}")
+        if ids:
+            self.session_list.set_active_id(ids[-1])
+        self.status.set_label(
+            f"{len(ids)} sessions chiffrées trouvées ; aucun site contacté."
+        )
+
+    def open_session(self):
+        if self.vault_directory is None or self._closed or self.is_recording():
+            return
+        session_id = self.session_list.get_active_id()
+        if not session_id:
+            self.status.set_label("Choisir d'abord une session locale.")
+            return
+        passphrase = self.vault_passphrase.get_text()
+        self.vault_passphrase.set_text("")
+        try:
+            stored = PrivateSessionVault(self.vault_directory).open(
+                session_id, passphrase,
+            )
+        except VaultError:
+            self.status.set_label(
+                "Ouverture refusée : clé incorrecte, session illisible "
+                "ou coffre non sûr. Aucun site contacté."
+            )
+            return
+        self._discard_private()
+        self._trace = stored.trace
+        try:
+            self._review = IdentifierReview(stored.trace)
+        except Exception:
+            self._discard_private()
+            self.status.set_label(
+                "Archive conservée dans le coffre, revue impossible en mémoire."
+            )
+            return
+        self._show_candidates(update_status=False)
+        self.status.set_label(
+            f"Session {stored.state} rechargée : "
+            f"{len(stored.trace.exchanges)} échanges ; "
+            f"{self._review.pending()} décisions individuelles à reprendre."
+        )
+        self._refresh()
+
+    def delete_session(self):
+        if self.vault_directory is None or self._closed or self.is_recording():
+            return
+        if not self.delete_confirm.get_active():
+            self.status.set_label("Suppression interdite sans confirmation.")
+            return
+        self.delete_confirm.set_active(False)
+        session_id = self.session_list.get_active_id()
+        passphrase = self.vault_passphrase.get_text()
+        self.vault_passphrase.set_text("")
+        try:
+            PrivateSessionVault(self.vault_directory).delete(
+                session_id, passphrase, confirmed=True,
+            )
+        except VaultError:
+            self.status.set_label("Suppression refusée : session ou clé invalide.")
+            return
+        if (self._trace is not None
+                and getattr(self._trace, "vault_session_id", None) == session_id):
+            self._discard_private()
+        self.refresh_sessions()
+        self.status.set_label("Session locale supprimée du coffre.")
+        self._refresh()
 
     def toggle_pause(self):
         if (self._closed or not self.is_recording() or self._pause_control is None

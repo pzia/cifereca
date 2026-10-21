@@ -18,20 +18,20 @@ PLUGIN = ROOT / "src/plugins/browser-recorder/cifereca-plugin.json"
 GUI = ROOT / "src/cifereca/gui/plugin_manager_page.py"
 
 
-def test_browser_recorder_manifest_declares_playwright_python_only():
+def test_browser_recorder_manifest_declares_playwright_and_vault_crypto():
     manifest = load_manifest(PLUGIN)
     assert manifest.package.id == "org.cifereca.technical.browser-recorder"
     assert manifest.package.version == "0.1.3"
     descriptor, = manifest.plugins
     assert descriptor.enabled_by_default is False
-    assert descriptor.system_requires == (
-        descriptor.system_requires[0],
-    )
-    requirement, = descriptor.system_requires
-    assert (requirement.type, requirement.name, requirement.version,
-            requirement.import_name) == (
-                "python-package", "playwright", ">=1.50,<2", "playwright"
-            )
+    requirements = {
+        r.name: (r.type, r.version, r.import_name)
+        for r in descriptor.system_requires
+    }
+    assert requirements == {
+        "playwright": ("python-package", ">=1.50,<2", "playwright"),
+        "cryptography": ("python-package", ">=42,<48", "cryptography"),
+    }
     assert not any(r.type == "binary" for r in descriptor.system_requires)
 
 
