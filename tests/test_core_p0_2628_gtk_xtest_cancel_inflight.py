@@ -19,6 +19,8 @@ from gi.repository import Adw, Gtk  # noqa: E402
 from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
 from cifereca.plugins.configuration import PluginConfigStore
 from cifereca.plugins import playwright_browser as browser
+from cifereca.diagnostics import Diagnostics
+from cifereca.core.diagnostic_event_feed import query_diagnostic_events
 from scripts.plugin_packaging import build_plugin_zip, validate_plugin_zip
 from tests.test_core_p0_2628_real_gtk_optin_chromium_e2e import (
     FakeWindow, PLUGIN_ID, SOURCE, button_named, eventually, flush,
@@ -72,6 +74,7 @@ def test_xtest_cancel_active_chromium_installer_without_touching_cache(
         brokers={},
     )
     window = FakeWindow()
+    window.diagnostics = Diagnostics()
     window.set_title("Cifereca Browser Recorder Plugins fixture")
     window.set_default_size(1366, 850)
     page = None
@@ -85,6 +88,7 @@ def test_xtest_cancel_active_chromium_installer_without_touching_cache(
         window.present()
         flush()
         assert not page._chromium_operation_running
+        assert window.diagnostics.snapshot() == []  # no passive diagnostic
 
         # XTEST opens and confirms the REAL native dialog, not Gtk.emit.
         install_button = button_named(
@@ -95,6 +99,7 @@ def test_xtest_cancel_active_chromium_installer_without_touching_cache(
         dialog = visible_dialog()
         assert dialog.get_heading() == "Installer Chromium avec Playwright ?"
         assert call_count == []
+        assert window.diagnostics.snapshot() == []
         physical_dialog_choice(dialog, "Installer")
         assert eventually(lambda: started.is_set())
         assert eventually(lambda: page._chromium_operation_running)
@@ -108,6 +113,16 @@ def test_xtest_cancel_active_chromium_installer_without_touching_cache(
         assert eventually(lambda: not page._chromium_operation_running)
         assert call_count == ["started"]
         assert page._chromium_cancel.is_set()
+        public = query_diagnostic_events(
+            window.diagnostics, log_path=tmp_path / "absent",
+            source="core_events", module="PLUGIN", severity="warning",
+        )
+        assert public["total"] == 1
+        assert public["events"][0]["detail"] == {
+            "plugin_id": "ui.page.browser-recorder",
+            "operation": "chromium_install",
+            "code": "cancelled",
+        }
 
         result = visible_dialog()
         assert result is not None

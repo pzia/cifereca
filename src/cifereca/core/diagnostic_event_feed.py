@@ -376,6 +376,17 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                  if word in _STRUCTURED_TERMS][:5]
         message = " ".join(terms) if terms else "[opération masquée]"
         public_detail = {}
+        # The Core attests user-requested Browser Recorder provisioning
+        # operations. A generic PLUGIN.add() record with identical text
+        # cannot publish even a fixed code without this provenance flag.
+        if (category == "PLUGIN"
+                and row.get("verified_browser_recorder") is True
+                and type(diagnostics) is Diagnostics):
+            from .browser_recorder_diagnostics import verified_fields
+            attested = verified_fields(row.get("detail"), operation, status)
+            if attested:
+                public_detail = attested
+                message = operation
         # This projection is restricted to the Core connection producer's
         # exact fixed operation/code pair. Other PLUGIN records remain masked,
         # even if an arbitrary plugin supplies a well-formed provider_id.

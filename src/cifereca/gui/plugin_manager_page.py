@@ -1044,6 +1044,13 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 self.manager.activate()
             except Exception:
                 success = False
+        # Only this explicit user-requested repair emits a durable, closed
+        # diagnostic event. No pip stderr, exception or environment is stored.
+        from .browser_recorder_diagnostics import emit_browser_recorder_diagnostic
+        emit_browser_recorder_diagnostic(
+            self.window, "python_dependencies_install",
+            "python_ready" if success else "python_install_failed",
+        )
         self.refresh()
         if success:
             self._toast("Dépendances Python installées. Vérifiez Chromium séparément.")
@@ -1093,7 +1100,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             except Exception:
                 # Driver errors, cache paths and proxy text stay off stderr/UI.
                 code = "browser_probe_failed"
-            GLib.idle_add(self._finish_chromium_operation, code)
+            GLib.idle_add(self._finish_chromium_operation, code, "chromium_probe")
         Thread(target=work, name="cifereca-chromium-probe", daemon=True).start()
 
     def _confirm_chromium_install(self) -> None:
@@ -1137,7 +1144,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             except Exception:
                 # Never let a worker traceback disclose subprocess or proxy data.
                 code = "installer_unavailable"
-            GLib.idle_add(self._finish_chromium_operation, code)
+            GLib.idle_add(self._finish_chromium_operation, code, "chromium_install")
         Thread(target=work, name="cifereca-chromium-install", daemon=True).start()
 
     def _chromium_progress(self, phase: str) -> bool:
@@ -1148,11 +1155,15 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 self._toast("Téléchargement Chromium en cours…", 5)
         return False
 
-    def _finish_chromium_operation(self, code: str) -> bool:
+    def _finish_chromium_operation(
+        self, code: str, operation: str = "chromium_probe",
+    ) -> bool:
         self._chromium_operation_running = False
         self._chromium_cancel.set()
         if getattr(self.window, "_closed", False):
             return False
+        from .browser_recorder_diagnostics import emit_browser_recorder_diagnostic
+        emit_browser_recorder_diagnostic(self.window, operation, code)
         self.refresh()
         message = self._chromium_label(code)
         dialog = Adw.MessageDialog.new(self.window, "État Chromium", message)
