@@ -27,8 +27,8 @@ _CAPTURE_FAILURE_LABELS = {
         "→ Installer les dépendances Python…, puis Installer Chromium…."
     ),
     "capture_interrupted": (
-        "Navigateur fermé avant l'arrêt de la capture. Relancez un parcours "
-        "autorisé depuis Browser Recorder."
+        "Session Chromium interrompue ou limite dépassée : la capture privée "
+        "a été effacée. Ouvrez Plugins → Browser Recorder → Vérifier Chromium… avant de relancer."
     ),
     "capture_limit": (
         "Limite de capture atteinte : réduisez le parcours ou arrêtez la capture."
@@ -397,6 +397,18 @@ class PrivateReviewPanel:
                     self.status.set_label(message)
                     self._emit_failure("http_capture", failure_code)
                 else:
+                    # A window closed before any HTTP observation is not a
+                    # usable archive and must not create review/export state.
+                    if not result.exchanges:
+                        reason = (" (navigateur fermé)"
+                                  if result.end_reason == "browser_closed" else "")
+                        result.destroy()
+                        self.status.set_label(
+                            "Capture terminée" + reason
+                            + " : aucune donnée recueillie ; aucun ZIP possible."
+                        )
+                        self._refresh()
+                        return False
                     self._trace = result
                     try:
                         self._review = IdentifierReview(result)
@@ -411,6 +423,14 @@ class PrivateReviewPanel:
                         self._emit_failure("http_review", "review_failed")
                     else:
                         self._show_candidates()
+                        if result.end_reason == "browser_closed":
+                            self.status.set_label(
+                                "Capture terminée (navigateur fermé) : "
+                                f"{len(result.exchanges)} échanges, "
+                                f"{sum(result.omitted.values())} omissions. "
+                                f"{self._review.pending()} décisions individuelles "
+                                "restantes ; aucun ZIP automatique."
+                            )
                 self._refresh()
                 return False
 
@@ -431,7 +451,7 @@ class PrivateReviewPanel:
         self._refresh()
 
     def stop_capture(self):
-        if self._stop is not None:
+        if self._stop is not None and not self._stop.is_set():
             self._stop.set()
             self.status.set_label("Arrêt demandé ; préparation de la revue…")
             self._refresh()

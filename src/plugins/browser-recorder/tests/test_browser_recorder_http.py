@@ -192,6 +192,24 @@ def test_network_error_is_correlated_without_exception_details():
 class FakePage:
     def __init__(self, context):
         self.context = context
+        self.handlers = {}
+        self.closed = False
+
+    def on(self, name, callback):
+        self.handlers.setdefault(name, []).append(callback)
+
+    def is_closed(self):
+        return self.closed
+
+    def close(self):
+        self.closed = True
+        for callback in self.handlers.get("close", []):
+            callback(self)
+
+    def crash(self):
+        for callback in self.handlers.get("crash", []):
+            callback(self)
+        self.close()
 
     def goto(self, url, **kw):
         req = Request(url)
@@ -202,10 +220,17 @@ class FakePage:
             listener(resp)
         for listener in self.context.events.get("requestfinished", []):
             listener(req)
-        self.context.stopped.set()
+        if self.context.stop_on_navigation:
+            self.context.stopped.set()
+        if self.context.close_during_navigation:
+            self.close()
+            raise RuntimeError("Synthetic TargetClosed")
 
     def wait_for_timeout(self, timeout):
-        pass
+        if self.context.on_wait:
+            self.context.on_wait(self)
+        if self.closed:
+            raise RuntimeError("Synthetic TargetClosed")
 
 
 class FakeContext:
@@ -213,12 +238,20 @@ class FakeContext:
         self.stopped = stopped
         self.events = {}
         self.closed = False
+        self.pages = []
+        self.stop_on_navigation = True
+        self.close_during_navigation = False
+        self.on_wait = None
 
     def on(self, kind, callback):
         self.events.setdefault(kind, []).append(callback)
 
     def new_page(self):
-        return FakePage(self)
+        page = FakePage(self)
+        self.pages.append(page)
+        for callback in self.events.get("page", []):
+            callback(page)
+        return page
 
     def close(self):
         self.closed = True
@@ -246,6 +279,9 @@ class FakePlaywright:
 
     def close(self):
         pass
+
+    def is_connected(self):
+        return self.context.connected if hasattr(self.context, "connected") else True
 
 
 def test_record_http_returns_only_in_memory_after_operator_stop(tmp_path):
@@ -440,4 +476,131 @@ def test_unlisted_third_party_remains_invisible_and_metadata_scope_is_bounded():
         ))
     with pytest.raises(RecorderError, match="invalid_origin"):
         PrivateHttpTrace((ORIGIN,), metadata_only_origins=("http://localhost",))
+    trace.destroy()
+
+
+
+def test_close_last_chromium_window_returns_sealed_ram_trace_without_stop(tmp_path):
+    stopped = Event()
+    ctx = FakeContext(stopped)
+    ctx.stop_on_navigation = False
+    ctx.on_wait = lambda page: page.close()
+    trace = record_http(ORIGIN + "/catalog", stopped,
+                        factory=lambda: FakePlaywright(ctx), max_seconds=2)
+    try:
+        assert not stopped.is_set()
+        assert trace.end_reason == "browser_closed"
+        assert len(trace.exchanges) == 1
+        assert trace.exchanges[0].response_body == '{"fake":true}'
+        assert ctx.pages[0].is_closed()  # browser window was closed
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        trace.destroy()
+
+
+def test_first_tab_close_keeps_session_until_last_tab_closes():
+    stopped = Event()
+    ctx = FakeContext(stopped)
+    ctx.stop_on_navigation = False
+    actions = []
+
+    def on_wait(page):
+        actions.append(page)
+        if len(actions) == 1:
+            ctx.new_page()
+            page.close()
+        else:
+            page.close()
+
+    ctx.on_wait = on_wait
+    trace = record_http(ORIGIN + "/catalog", stopped,
+                        factory=lambda: FakePlaywright(ctx), max_seconds=2)
+    assert trace.end_reason == "browser_closed"
+    assert len(actions) == 2 and actions[0] is not actions[1]
+    assert len(trace.exchanges) == 1
+    trace.destroy()
+
+
+def test_closing_window_during_navigation_is_not_a_leaked_error():
+    stopped = Event()
+    ctx = FakeContext(stopped)
+    ctx.stop_on_navigation = False
+    ctx.close_during_navigation = True
+    trace = record_http(ORIGIN + "/catalog", stopped,
+                        factory=lambda: FakePlaywright(ctx), max_seconds=2)
+    assert trace.end_reason == "browser_closed"
+    assert len(trace.exchanges) == 1
+    trace.destroy()
+
+
+def test_stop_and_last_window_close_race_finishes_only_once():
+    stopped = Event()
+    ctx = FakeContext(stopped)
+    ctx.stop_on_navigation = False
+
+    def on_wait(page):
+        page.close()
+        stopped.set()
+
+    ctx.on_wait = on_wait
+    trace = record_http(ORIGIN + "/catalog", stopped,
+                        factory=lambda: FakePlaywright(ctx), max_seconds=2)
+    assert trace.end_reason == "button"
+    assert len(trace.exchanges) == 1
+    trace.destroy()
+
+
+def test_crash_is_not_mistaken_for_manual_window_close():
+    stopped = Event()
+    ctx = FakeContext(stopped)
+    ctx.stop_on_navigation = False
+    ctx.on_wait = lambda page: page.crash()
+    with pytest.raises(RecorderError, match="capture_interrupted"):
+        record_http(ORIGIN + "/catalog", stopped,
+                    factory=lambda: FakePlaywright(ctx), max_seconds=2)
+
+
+def test_browser_disconnect_without_tab_close_is_error():
+    stopped = Event()
+    ctx = FakeContext(stopped)
+    ctx.stop_on_navigation = False
+    ctx.connected = True
+
+    def on_wait(_page):
+        ctx.connected = False
+
+    ctx.on_wait = on_wait
+    with pytest.raises(RecorderError, match="capture_interrupted"):
+        record_http(ORIGIN + "/catalog", stopped,
+                    factory=lambda: FakePlaywright(ctx), max_seconds=2)
+
+
+def test_normal_close_seals_unfinished_requests_without_body_reads():
+    trace = PrivateHttpTrace((ORIGIN,))
+    pending = Request(ORIGIN + "/api/private?token=FICTIONAL_PRIVATE")
+    trace.request(pending)
+    response = Response(pending, data=b'{"account":"SECRET"}')
+    trace.response(response)
+    trace.finish_open_requests()
+    assert trace.omitted["unfinished"] == 1
+    assert trace.exchanges[0].response_body_state == "unfinished"
+    assert trace.exchanges[0].response_body is None
+    assert response.body_reads == 0
+    assert not trace._pending and not trace._responses
+    trace.destroy()
+
+
+def test_last_window_close_while_paused_never_restores_dropped_bodies():
+    from browser_recorder_http import CapturePause
+    control = CapturePause()
+    trace = PrivateHttpTrace((ORIGIN,), pause_control=control)
+    req = Request(ORIGIN + "/private?token=FICTIONAL")
+    trace.request(req)
+    control.set_paused(True)
+    trace._is_paused()
+    trace.finish_open_requests()
+    assert trace.omitted["paused"] == 1
+    assert trace.omitted["unfinished"] == 0
+    assert not trace._pending
+    assert trace.exchanges[0].request_body is None
     trace.destroy()

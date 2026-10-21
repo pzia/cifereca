@@ -162,9 +162,11 @@ class PrivateHttpTrace:
         self.max_body = min(MAX_BODY_BYTES, max(1, int(max_body)))
         self.total_body = min(MAX_TOTAL_BODY_BYTES, max(0, int(total_body)))
         self.exchanges: list[PrivateExchange] = []
+        # Closed vocabulary only: no provider value or browser exception.
+        self.end_reason = "button"
         self.omitted = {"out_of_scope": 0, "limit": 0, "binary_skipped": 0,
                         "oversize": 0, "unknown_size": 0, "network_error": 0,
-                        "paused": 0}
+                        "paused": 0, "unfinished": 0}
         self._pending: dict[int, PrivateExchange] = {}
         self._responses: dict[int, object] = {}
         self._begin = monotonic()
@@ -376,6 +378,24 @@ class PrivateHttpTrace:
             entry.response_body_state = "network_error"
             self.omitted["network_error"] += 1
 
+    def finish_open_requests(self) -> None:
+        """Seal outstanding requests on a *normal* stop without inventing HTTP.
+
+        Pending responses are not read. No Playwright object may survive in
+        the resulting review, and neither paused nor abandoned bodies leak.
+        """
+        now_ms = int((monotonic() - self._begin) * 1000)
+        self.omitted["unfinished"] += len(self._pending)
+        for entry in self._pending.values():
+            entry.duration_ms = max(0, now_ms - entry.started_ms)
+            entry.request_body = None
+            entry.response_body = None
+            entry.request_body_state = "body_omitted"
+            if entry.response_body_state != "redirect":
+                entry.response_body_state = "unfinished"
+        self._pending.clear()
+        self._responses.clear()
+
     def destroy(self) -> None:
         """Discard all values in memory; do not create a local capture."""
         for entry in self.exchanges:
@@ -411,6 +431,7 @@ def record_http(start_url: str, stop: Event, *,
     if origin not in trace.origins:
         raise RecorderError("invalid_origin")
     try:
+        reason = None
         with _playwright(factory) as pw:
             browser = pw.chromium.launch(headless=False)
             try:
@@ -418,23 +439,104 @@ def record_http(start_url: str, stop: Event, *,
                     accept_downloads=False, service_workers="block",
                 )
                 try:
+                    last_page_closed = Event()
+                    crashed = Event()
+                    tracked_pages = set()
+
+                    def track_page(opened):
+                        # A tab can be closed without closing the Chromium
+                        # session. Observe *all* tabs, including new popups.
+                        if id(opened) in tracked_pages:
+                            return
+                        tracked_pages.add(id(opened))
+                        last_page_closed.clear()
+                        opened.on("crash", lambda *_: crashed.set())
+
+                        def on_close(*_):
+                            try:
+                                if not any(not item.is_closed() for item in context.pages):
+                                    last_page_closed.set()
+                            except Exception:
+                                # A disconnected browser without a verified
+                                # last-page close is a failure, never consent.
+                                pass
+
+                        opened.on("close", on_close)
+
+                    context.on("page", track_page)
                     context.on("request", trace.request)
                     context.on("response", trace.response)
                     context.on("requestfinished", trace.finished)
                     context.on("requestfailed", trace.failed)
                     page = context.new_page()
-                    page.goto(start_url, wait_until="domcontentloaded", timeout=30000)
-                    if status:
+                    track_page(page)
+                    try:
+                        page.goto(
+                            start_url, wait_until="domcontentloaded", timeout=30000,
+                        )
+                    except Exception:
+                        # Closing the last window during navigation can raise
+                        # TargetClosed; do not swallow unrelated navigation
+                        # failures, missing pages or crashes.
+                        if crashed.is_set() or not last_page_closed.is_set():
+                            raise
+                    if status and not last_page_closed.is_set():
                         status("capture_ready")
-                    end = monotonic() + min(MAX_CAPTURE_SECONDS, max(1, int(max_seconds)))
-                    while not stop.is_set() and monotonic() < end:
-                        page.wait_for_timeout(200)
+                    end = monotonic() + min(
+                        MAX_CAPTURE_SECONDS, max(1, int(max_seconds)),
+                    )
+                    while True:
+                        if crashed.is_set():
+                            raise RecorderError("capture_interrupted")
+                        if stop.is_set():
+                            reason = "button"
+                            break
+                        if last_page_closed.is_set():
+                            reason = "browser_closed"
+                            break
+                        if monotonic() >= end:
+                            raise RecorderError("capture_interrupted")
+                        connected = getattr(browser, "is_connected", None)
+                        if callable(connected) and not connected():
+                            raise RecorderError("capture_interrupted")
+                        # Waiting on the original page after it was closed
+                        # aborts multi-tab sessions. Prefer a surviving tab.
+                        live_pages = [item for item in context.pages
+                                      if not item.is_closed()]
+                        if not live_pages:
+                            raise RecorderError("capture_interrupted")
+                        try:
+                            live_pages[0].wait_for_timeout(200)
+                        except Exception:
+                            if crashed.is_set():
+                                raise RecorderError("capture_interrupted") from None
+                            # A user may close the first tab while a popup
+                            # stays open. That page's timeout raises
+                            # TargetClosed, but the capture must continue on
+                            # the surviving tab (not swallow unrelated errors).
+                            other_tab_survives = (
+                                live_pages[0].is_closed()
+                                and any(not tab.is_closed() for tab in context.pages)
+                            )
+                            if not (stop.is_set() or last_page_closed.is_set()
+                                    or other_tab_survives):
+                                raise
+                            # The next iteration settles Stop vs last-page X
+                            # exactly once, rather than losing the RAM trace.
                 finally:
-                    context.close()
+                    try:
+                        context.close()
+                    except Exception:
+                        # Cleanup after a user-closed window may itself yield
+                        # TargetClosed; never override a completed capture.
+                        pass
             finally:
-                browser.close()
-        if not stop.is_set():
-            raise RecorderError("capture_interrupted")
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+        trace.finish_open_requests()
+        trace.end_reason = reason
         return trace
     except Exception:
         trace.destroy()

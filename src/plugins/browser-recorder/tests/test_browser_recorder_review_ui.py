@@ -218,6 +218,39 @@ def test_inactive_consent_and_legacy_capture_block_http(monkeypatch):
     panel.destroy()
 
 
+def test_last_window_close_opens_same_review_but_never_exports(monkeypatch, tmp_path):
+    panel, tasks, raw = make_panel(
+        monkeypatch, export_directory=tmp_path / "exports",
+    )
+    panel.begin()
+    panel.stop_capture()
+    raw.end_reason = "browser_closed"
+    tasks.handles[0].finish()
+    assert "Capture terminée (navigateur fermé)" in panel.status.label
+    assert "échanges" in panel.status.label
+    assert panel._review is not None
+    assert not panel.export_button.sensitive
+    assert not list(tmp_path.iterdir())
+    panel.destroy()
+
+
+def test_empty_window_close_creates_no_review_or_archive(monkeypatch, tmp_path):
+    panel, tasks, raw = make_panel(
+        monkeypatch, export_directory=tmp_path / "exports",
+    )
+    raw.exchanges.clear()
+    raw.end_reason = "browser_closed"
+    panel.begin()
+    panel.stop_capture()
+    tasks.handles[0].finish()
+    assert "aucune donnée recueillie" in panel.status.label
+    assert panel._review is None
+    assert not panel.has_private_data()
+    assert not panel.export_button.sensitive
+    assert not list(tmp_path.iterdir())
+    panel.destroy()
+
+
 def test_closing_during_capture_destroys_late_private_result(monkeypatch):
     panel, tasks, raw = make_panel(monkeypatch)
     panel.begin()
@@ -476,7 +509,7 @@ def test_actionable_private_capture_failure_labels_never_echo_secrets(monkeypatc
         (RecorderError("playwright_unavailable"), "Installer les dépendances Python"),
         (RuntimeError(secret), "Vérifier Chromium"),
         (RecorderError(secret), "Vérifier Chromium"),
-        (RecorderError("capture_interrupted"), "Navigateur fermé"),
+        (RecorderError("capture_interrupted"), "Session Chromium interrompue"),
     )
     for error, expected in cases:
         panel, tasks, trace = make_panel(monkeypatch)
