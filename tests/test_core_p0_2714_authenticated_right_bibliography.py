@@ -88,9 +88,18 @@ def test_unsupported_provider_cannot_borrow_another_providers_attestation():
 
 
 def test_unsafe_metadata_values_cannot_become_provenance_or_inferred_ownership():
-    right = _right(display_title={"private": "value"}, display_authors=None)
+    # The edition identifier must not contain the attack marker: this test
+    # validates hostile *descriptive* metadata, not a private but legitimate
+    # identifier on a private CoreUI inspection screen.
+    right = _right(
+        item_id="edition-synthétique-2714",
+        display_title={"private": "value"},
+        display_authors=None,
+        display_media_format={"private": "format"},
+    )
     title, authors, details = _right_bibliography(right, [_notice()])
     assert title == "Titre catalogue divergent"
     assert authors == "Auteur catalogue divergent"
     assert "private" not in details.lower()
+    assert "Format déclaré : Non renseigné" in details
     assert "preuve de fichier" in details
