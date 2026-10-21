@@ -460,3 +460,54 @@ def test_short_numeric_query_in_actual_approved_zip_is_not_auto_public():
     finally:
         review.destroy()
         trace.destroy()
+
+
+@pytest.mark.parametrize("field", [
+    "pin", "pinCode", "payment_pin", "passcode", "pass_code",
+    "verificationCode", "security_code", "accessCode", "totp",
+])
+def test_short_authentication_codes_always_have_secret_classification(field):
+    from browser_recorder_review import _is_secret
+    from browser_recorder_zip import _json_shape
+
+    assert _is_secret(field, "1234")
+    assert _json_shape(1234, name=field, approved=frozenset({"1234"})) == "[SECRET]"
+    assert _json_shape("1234", name=field, approved=frozenset({"1234"})) == "[SECRET]"
+
+
+def test_short_pin_never_reaches_any_zip_member_even_with_approved_book_id():
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST", url=ORIGIN + "/api/books?pinCode=0007&BookId=214",
+        request_headers={"content-type": "application/json"},
+        request_body=json.dumps({
+            "pin": 1234, "passcode": "4321",
+            "security_code": 5678, "BookId": 214, "count": 2,
+        }),
+        response_headers={"content-type": "application/json"},
+        response_body='{"BookId":214,"verificationCode":"6543","success":true}',
+        status=200,
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            # Only the public fictional BookId is an exportable decision;
+            # credentials never appear as choices that can be kept.
+            assert candidate.value not in {"0007", "1234", "4321", "5678", "6543"}
+            review.decide(candidate.key, "keep" if candidate.value == "214"
+                          else "anonymize")
+        plan = prepare_reviewed_zip(review)
+        serialized = json.dumps(plan.preview(), sort_keys=True)
+        for secret in ("0007", "1234", "4321", "5678", "6543"):
+            assert secret not in serialized
+        body = next(item["text"] for item in plan.preview()["members"]
+                    if item["name"] == "bodies/0001-request.txt")
+        shaped = json.loads(body)
+        assert shaped["pin"] == "[SECRET]"
+        assert shaped["passcode"] == "[SECRET]"
+        assert shaped["security_code"] == "[SECRET]"
+        assert shaped["BookId"] == 214
+        assert shaped["count"] == 2
+    finally:
+        review.destroy()
+        trace.destroy()
