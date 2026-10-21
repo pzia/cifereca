@@ -6,6 +6,74 @@ from ..task_queue import TaskPriority
 from .maintenance_tools import MaintenanceCancelControl
 
 
+# Core-only closed failure causes: never expose private source text in GTK.
+_INSPECTION_FAILURE_MESSAGES = {
+    'snapshot_time_budget': (
+        'La lecture des preuves SQLite a dépassé sa durée maximale. '
+        'L’inspection n’a pas pu vérifier les livres : cela ne prouve pas '
+        'leur absence. Les traces Réconciliation indiquent la phase concernée.'
+    ),
+    'snapshot_wal_reader_unavailable': (
+        'La lecture sécurisée de la base SQLite active (WAL) est indisponible. '
+        'Aucun constat sur les livres ne peut être établi.'
+    ),
+    'snapshot_reader_unavailable': (
+        'La lecture sécurisée de la base SQLite est indisponible. '
+        'Aucun constat sur les livres ne peut être établi.'
+    ),
+    'snapshot_unavailable': (
+        'Les preuves SQLite locales sont indisponibles. '
+        'Les livres non vérifiés ne sont pas réputés absents.'
+    ),
+    'snapshot_changed': (
+        'La base SQLite a changé pendant la lecture. '
+        'L’inspection est incomplète ; aucun livre n’est réputé absent.'
+    ),
+    'snapshot_identity_migration': (
+        'Une migration des identités doit être terminée avant '
+        'de pouvoir inspecter les preuves locales.'
+    ),
+    'snapshot_cancelled': 'La lecture des preuves SQLite a été interrompue.',
+    'audit_cancelled': 'L’inspection locale a été interrompue.',
+    'reconciliation_scope_changed': (
+        'L’identité active ou sa configuration a changé pendant l’inspection. '
+        'Relancez l’analyse sous l’identité voulue.'
+    ),
+    'reconciliation_identity_not_active': (
+        'L’identité sélectionnée n’est plus active. '
+        'Sélectionnez-la avant de relancer l’inspection.'
+    ),
+    'unknown_reconciliation_identity': (
+        'L’identité sélectionnée n’est plus disponible. '
+        'Vérifiez l’identité active.'
+    ),
+}
+_INSPECTION_FALLBACK = (
+    'Inspection locale indisponible ou incomplète. '
+    'Les preuves non vérifiées ne signifient pas que les livres sont absents.'
+)
+
+
+def _inspection_failure_message(result: object) -> str:
+    """Project one validated Core reason, never untrusted diagnostic prose.
+
+    Multiple concurrent causes or malformed/foreign envelopes fail closed:
+    a single convenient reason must not override another unknown failure.
+    """
+    if (type(result) is not dict or type(result.get('schema')) is not int
+            or result.get('schema') != 1
+            or result.get('read_only') is not True
+            or result.get('acquisition_authorized') is not False
+            or result.get('repair_authorized') is not False
+            or result.get('status') != 'incomplete_scan'):
+        return _INSPECTION_FALLBACK
+    reasons = result.get('reasons')
+    if (type(reasons) is not list or len(reasons) != 1
+            or type(reasons[0]) is not str):
+        return _INSPECTION_FALLBACK
+    return _INSPECTION_FAILURE_MESSAGES.get(reasons[0], _INSPECTION_FALLBACK)
+
+
 class LocalInspectionController:
     """GTK owner of a cancellable fresh read and its revocable local window."""
 
@@ -62,8 +130,16 @@ class LocalInspectionController:
             if self.dialog is dialog:
                 self.dialog = None
                 dialog.destroy()
-            if not isinstance(session, LocalInspection) or not session.valid():
-                self.parent.show_error('Inspection indisponible ou contexte modifié. Relancez la réconciliation.', 'Inspection locale')
+            if not isinstance(session, LocalInspection):
+                self.parent.show_error(_inspection_failure_message(session), 'Inspection locale')
+                return
+            if not session.valid():
+                # Unlike a failed snapshot envelope, an established private
+                # session can really be invalidated by the active scope guard.
+                self.parent.show_error(
+                    _INSPECTION_FAILURE_MESSAGES['reconciliation_scope_changed'],
+                    'Inspection locale',
+                )
                 return
             self.session = session
             self.present()
