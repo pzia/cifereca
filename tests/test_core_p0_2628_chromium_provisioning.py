@@ -133,6 +133,16 @@ def test_cancellation_reaps_owned_process_group(tmp_path, monkeypatch):
     assert waited == [3]
 
 
+def test_custom_download_host_is_not_silently_used(tmp_path, monkeypatch):
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "cache"))
+    monkeypatch.setenv("PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST", "https://custom.invalid")
+    monkeypatch.setattr(browser, "chromium_status", lambda: {"state": "chromium_missing"})
+    monkeypatch.setattr(browser.shutil, "disk_usage", lambda _: NS(free=2**40))
+    monkeypatch.setattr(browser.subprocess, "Popen", lambda *_a, **_kw:
+                        (_ for _ in ()).throw(AssertionError("install prohibited")))
+    assert browser.install_chromium(consented=True) == "custom_download_source"
+
+
 def test_low_disk_space_blocks_before_process(tmp_path, monkeypatch):
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "cache"))
     monkeypatch.setattr(browser, "chromium_status", lambda: {"state": "chromium_missing"})
