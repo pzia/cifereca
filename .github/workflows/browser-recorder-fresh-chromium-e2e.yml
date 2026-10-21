@@ -9,6 +9,7 @@ on:
       - 'src/cifereca/plugins/playwright_browser.py'
       - 'src/cifereca/gui/plugin_manager_page.py'
       - 'tests/test_core_p0_2628_real_chromium_provisioning_e2e.py'
+      - 'tests/test_core_p0_2628_real_gtk_optin_chromium_e2e.py'
       - '.github/workflows/browser-recorder-fresh-chromium-e2e.yml'
   workflow_dispatch:
 
@@ -54,6 +55,29 @@ jobs:
               CIFERECA_REAL_CHROMIUM_PROVISION_E2E=1 \
               "$RUNNER_TEMP/recorder-clean-venv/bin/python" -m pytest -q -rs \
               tests/test_core_p0_2628_real_chromium_provisioning_e2e.py
+      - name: Create independent fresh GTK/libadwaita Core venv (CI only)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-venv xvfb xauth
+          /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/gtk-ui-venv"
+          "$RUNNER_TEMP/gtk-ui-venv/bin/python" -m pip install --disable-pip-version-check \
+            -e . 'playwright>=1.50,<2' 'pytest>=8,<9'
+          mkdir -p "$RUNNER_TEMP/empty-ui-home"
+          test ! -e "$RUNNER_TEMP/empty-ui-home/.cache/ms-playwright"
+      - name: Real Plugins GTK dialog consent and Core Chromium first-install
+        env:
+          GDK_BACKEND: x11
+        run: |
+          set -euo pipefail
+          env -u PLAYWRIGHT_BROWSERS_PATH \
+              -u PLAYWRIGHT_DOWNLOAD_HOST \
+              -u PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST \
+              HOME="$RUNNER_TEMP/empty-ui-home" \
+              CIFERECA_REAL_CHROMIUM_PROVISION_E2E=1 \
+              xvfb-run -a "$RUNNER_TEMP/gtk-ui-venv/bin/python" -m pytest -q -rs \
+              tests/test_core_p0_2628_real_gtk_optin_chromium_e2e.py
       - name: No browser profile, HAR or private ZIP artifacts published
         if: always()
         run: |
