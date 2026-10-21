@@ -73,6 +73,7 @@ _TIMINGS = (
     ("pdf_signature", "signature PDF"),
     ("candidate_index", "index catalogue"),
     ("candidate_match", "comparaison bibliographique"),
+    ("stored_paths", "chemins enregistrés"),
 )
 
 
