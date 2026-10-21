@@ -108,28 +108,36 @@ def _right_bibliography(right, matches):
             'elle ne prouve pas le compte ni un fichier.'
         )
 
+    # A catalogue record identifies an edition for browsing, not the
+    # acquisition/account. When the right itself has an attested, bounded
+    # description, that source takes precedence over a conflicting public
+    # catalogue label. This is a *display* priority, never a file/right link.
+    attested_description = (
+        (right.get('provider_id') == 'numilog'
+         and right.get('attested_source') == 'numilog.authenticated_library')
+        or (right.get('provider_id') == 'kobo'
+            and right.get('attested_source') == 'kobo.personal_manifest')
+    )
+
     def field(name, label):
-        candidate = notice.get(name)
-        if type(candidate) is str and candidate.strip():
-            return _text(candidate).strip()[:256], (
-                'notice de catalogue locale de cette édition (non probante)'
-            )
-        candidate = right.get(name)
-        if type(candidate) is str and candidate.strip():
-            status = (
-                'bibliothèque authentifiée (description du droit enregistré)'
-                if right.get('attested_source') in {
-                    'kobo.personal_manifest', 'numilog.authenticated_library',
-                }
-                else 'droit enregistré (source descriptive non attestée)'
-            )
-            return _text(candidate).strip()[:256], status
+        recorded = right.get(name)
+        catalogued = notice.get(name)
+        if attested_description and type(recorded) is str and recorded.strip():
+            return (_text(recorded).strip()[:256],
+                    'bibliothèque authentifiée (description du droit enregistré)')
+        if type(catalogued) is str and catalogued.strip():
+            return (_text(catalogued).strip()[:256],
+                    'notice de catalogue locale de cette édition (non probante)')
+        if type(recorded) is str and recorded.strip():
+            return (_text(recorded).strip()[:256],
+                    'droit enregistré (source descriptive non attestée)')
         return 'Non renseigné', 'Indisponible dans les données locales'
 
     title, title_source = field('display_title', 'Titre')
     authors, authors_source = field('display_authors', 'Auteur(s)')
     media = right.get('display_media_format')
-    media = media if media in {'epub', 'kepub', 'pdf', 'acsm'} else 'Non renseigné'
+    media = (media if type(media) is str
+             and media in {'epub', 'kepub', 'pdf', 'acsm'} else 'Non renseigné')
     lines = (
         'Bibliographie de l’achat / droit (description, pas preuve de fichier) :',
         '• Titre : ' + title,
