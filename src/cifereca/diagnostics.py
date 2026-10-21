@@ -145,6 +145,7 @@ class DiagnosticEntry:
     verified_kobo_adept: bool = False
     verified_numilog_startup: bool = False
     verified_kobo_backup: bool = False
+    verified_browser_recorder: bool = False
 
 
 class Diagnostics:
@@ -179,6 +180,32 @@ class Diagnostics:
             duration_ms=duration_ms if type(duration_ms) is int and 0 <= duration_ms <= 86_400_000 else None,
             detail=safe_detail,
             task_ref=numilog_task_reference() if type(category) is str and category == "NUMILOG" else None,
+        )
+        with self._lock:
+            self._items.append(entry)
+
+    def add_core_browser_recorder_result(self, operation: str, code: str) -> None:
+        """Attest an explicitly requested Browser Recorder GUI operation.
+
+        Only fixed code/operation identifiers cross into the public broker
+        feed. The generic add() path cannot claim this provenance and private
+        Playwright/pip exceptions, paths and proxy values never enter memory.
+        """
+        from .core.browser_recorder_diagnostics import (
+            OPERATIONS, public_fields, public_status,
+        )
+        if not self.enabled or self.LEVELS["normal"] > self.LEVELS[self.level]:
+            return
+        fields = public_fields(operation, code)
+        if fields is None:
+            return
+        status = public_status(fields)
+        if self.level == "errors" and status == "ok":
+            return
+        entry = DiagnosticEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            category="PLUGIN", operation=OPERATIONS[fields["operation"]],
+            status=status, detail=fields, verified_browser_recorder=True,
         )
         with self._lock:
             self._items.append(entry)
@@ -389,6 +416,8 @@ class Diagnostics:
                     row.pop("verified_numilog_startup", None)
                 if row.get("verified_kobo_backup") is False:
                     row.pop("verified_kobo_backup", None)
+                if row.get("verified_browser_recorder") is False:
+                    row.pop("verified_browser_recorder", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
