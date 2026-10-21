@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - 'src/plugins/browser-recorder/**'
+      - 'tests/test_browser_recorder_installed_gtk_blackbox.py'
       - '.github/workflows/browser-recorder-chromium-e2e.yml'
   workflow_dispatch:
 
@@ -57,7 +58,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-gi gir1.2-gtk-4.0 python3-pytest xvfb xauth xdotool
+            python3-gi gir1.2-gtk-4.0 python3-pytest python3-venv xvfb xauth xdotool
       - name: Native GTK4 page, XTEST keyboard and ZIP review with synthetic RAM trace
         env:
           PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/src/plugins/browser-recorder
@@ -68,6 +69,16 @@ jobs:
           xvfb-run -a /usr/bin/python3 -m pytest -q -rs \
             src/plugins/browser-recorder/tests/test_browser_recorder_gtk_e2e.py \
             src/plugins/browser-recorder/tests/test_browser_recorder_gtk_xtest.py
+      - name: Install actual plugin ZIP in isolated GTK venv and open Core contribution
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          GDK_BACKEND: x11
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/recorder-gtk-venv"
+          "$RUNNER_TEMP/recorder-gtk-venv/bin/python" -m pip install --disable-pip-version-check 'playwright>=1.50,<2'
+          xvfb-run -a "$RUNNER_TEMP/recorder-gtk-venv/bin/python" -m pytest -q -rs \
+            tests/test_browser_recorder_installed_gtk_blackbox.py
       - name: Never upload private UI data
         if: always()
         run: |
