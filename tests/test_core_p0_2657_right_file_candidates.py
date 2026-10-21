@@ -24,6 +24,13 @@ def notice_index(audit, number):
     ) if row.get('catalog_entry_id') == f'catalog-{number}')
 
 
+def right_key(audit, number):
+    return 'right:' + str(next(
+        i for i, row in enumerate(audit.snapshot.tables['entitlements'])
+        if row.get('entitlement_id') == f'right-{number}'
+    ))
+
+
 def file_case_ids(audit, *numbers):
     lookup = keys_by_filename(audit)
     return {f'file:{lookup[f"code-{number}.epub"]}' for number in numbers}
@@ -76,9 +83,9 @@ def test_six_numilog_rights_have_candidates_but_never_a_bijection(
 
     # Inverted metadata_only catalogue matches for the same exact edition:
     # two different rights can both show the same two EPUB candidates.
-    left = session.candidate_files('right:3')
-    also_left = session.candidate_files('right:4')
-    other = session.candidate_files('right:5')
+    left = session.candidate_files(right_key(audit, 3))
+    also_left = session.candidate_files(right_key(audit, 4))
+    other = session.candidate_files(right_key(audit, 5))
     expected = file_case_ids(audit, 3, 4)
     assert {c.key for c in left} == expected
     assert {c.key for c in also_left} == expected
@@ -86,7 +93,7 @@ def test_six_numilog_rights_have_candidates_but_never_a_bijection(
     for case in left + other:
         assert case.provider == 'unattributed'
         assert 'confirmed_link' not in case.states
-    right = session.detail('right:3')
+    right = session.detail(right_key(audit, 3))
     assert 'non probant' in right.details
     assert 'Candidats multiples' in right.details
     assert 'PRIVATE book 3' in right.details
@@ -100,7 +107,7 @@ def test_six_numilog_rights_have_candidates_but_never_a_bijection(
     assert 'PRIVATE_FOREIGN_SECRET' not in json.dumps(audit.redacted())
     assert filesystem(tmp_path) == before
     session.close()
-    assert session.candidate_files('right:3') == ()
+    assert session.candidate_files(right_key(audit, 3)) == ()
 
 
 def test_foreign_or_non_metadata_only_candidates_never_enter_right_comparison(
@@ -132,11 +139,11 @@ def test_foreign_or_non_metadata_only_candidates_never_enter_right_comparison(
         MetadataCandidate(fi5, ci5, certainty='attested'),
     ])
     session = LocalInspection(audit, lambda: True, 'alice')
-    assert {case.key for case in session.candidate_files('right:3')} == file_case_ids(
+    assert {case.key for case in session.candidate_files(right_key(audit, 3))} == file_case_ids(
         audit, 3, 4,
     )
-    assert session.candidate_files('right:5') == ()
-    assert 'FOREIGN_LEAK' not in session.detail('right:3').details
+    assert session.candidate_files(right_key(audit, 5)) == ()
+    assert 'FOREIGN_LEAK' not in session.detail(right_key(audit, 3)).details
     assert 'FOREIGN_LEAK' not in '\n'.join(
         c.details for c in session.page().cases)
 
@@ -148,10 +155,10 @@ def test_single_file_can_be_candidate_for_multiple_rights_with_no_ownership(
     audit = audit_library(database, {'alice': (root,)})
     session = LocalInspection(audit, lambda: True, 'alice')
     keys = file_case_ids(audit, 3, 4)
-    assert session.candidate_files('right:3')[0] == session.detail(
-        session.candidate_files('right:3')[0].key,
+    assert session.candidate_files(right_key(audit, 3))[0] == session.detail(
+        session.candidate_files(right_key(audit, 3))[0].key,
     )
-    assert {c.key for c in session.candidate_files('right:4')} == keys
-    assert session.candidate_files('right:3')[0] in session.candidate_files('right:4')
+    assert {c.key for c in session.candidate_files(right_key(audit, 4))} == keys
+    assert session.candidate_files(right_key(audit, 3))[0] in session.candidate_files(right_key(audit, 4))
     assert all('confirmed_link' not in session.detail(key).states for key in keys)
-    assert 'rights_without_verified_file' in session.detail('right:3').states
+    assert 'rights_without_verified_file' in session.detail(right_key(audit, 3)).states
