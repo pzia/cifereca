@@ -12,6 +12,7 @@ import time
 import unicodedata
 
 from cifereca_runtime_diagnostics import safe_message, output_bytes, operation_family, stderr_summary
+from cifereca_kobo_adept_loan_envelope import attested_readonly_loans_list
 from cifereca.plugin_api import (
     ArtifactInput, AttentionRequired, DrmMutationRequest, DrmMutationResult,
     PluginContext, UserFacingError,
@@ -294,10 +295,12 @@ class KoboAdeptRuntime:
             )
             fail('Kobo-Adept a renvoyé un document inattendu.', 'kobo_adept_invalid_response', returncode=proc.returncode)
         self.last_run_diagnostic.update(stdout_mode='json', stdout_summary='objet JSON')
-        # A *descriptive* "contract --json" document is not an operation
-        # receipt. Kobo-ADEPT 0.13.6 publishes name/contract_version without
-        # "ok" here. Its known, read-only schema is the sole exception to the
-        # mandatory boolean acknowledgement on all other CLI commands.
+        # Descriptive read-only documents are not operation receipts:
+        # contract --json is an attested schema without "ok", and loans list
+        # can publish a fully validated loans[] document without "ok" too.
+        # All mutating CLI commands still require an explicit native boolean
+        # acknowledgement. No fallback is allowed for malformed/ambiguous
+        # inventory JSON, including the independently read-only loans expired.
         raw_version = value.get('contract_version')
         descriptive_contract = (
             type(args) is list and args == ['contract', '--json']
@@ -310,11 +313,16 @@ class KoboAdeptRuntime:
                     and raw_version.isascii() and raw_version.isdecimal())
             )
         )
+        descriptive_loan_list = attested_readonly_loans_list(
+            args, payload=payload, returncode=proc.returncode, value=value,
+        )
         # Exit 0 alone is never proof that a profile was created, an ACSM
         # fulfilled or a loan returned. Null, integer and string "ok" values
-        # stay invalid, even for the read-only contract command.
+        # stay invalid. A missing ok is allowed only for one exact, validated
+        # read-only schema; do not infer success from arbitrary JSON.
         if (proc.returncode == 0 and value.get('ok') is not True
-                and value.get('ok') is not False and not descriptive_contract):
+                and value.get('ok') is not False
+                and not descriptive_contract and not descriptive_loan_list):
             self.last_run_diagnostic['validation_reason'] = (
                 'ok_missing' if 'ok' not in value else 'ok_not_boolean'
             )

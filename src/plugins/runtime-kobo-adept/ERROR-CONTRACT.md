@@ -430,3 +430,38 @@ d'une licence Adobe demeure bloquante pour clore #979.
 
 Tests synthétiques hors réseau :
 `tests/test_adept_closed_diagnostic_codes_p0.py`.
+
+
+## #1120 P0 — consultation `loans list` à enveloppe descriptive sans `ok`
+
+Preuve terrain expurgée du 21/10/2026 : trois consultations `loans list`
+retournent `returncode=0` mais sont refusées avec la raison fermée
+`validation_reason=ok_missing` ; les commandes `contract`, `capabilities`
+et `profile list` aboutissent. Le journal **n'expose pas** le JSON CLI :
+il ne prouve donc pas, à lui seul, la validité interne des lignes.
+
+Le Core connaît toutefois le **minimum stable préexistant** du contrat
+`loans[]` (id unique non vide, `expired`/`returned`/`token_present`
+booléens). Désormais `run_json` accepte une réponse *descriptive* sans
+`ok` uniquement pour la commande exacte
+`loans list --profile NAME --json`, en lecture seule, lorsque :
+- le processus termine avec code 0 et sans payload stdin ;
+- la réponse contient `loans` liste (0 à 5000) ; tous les éléments
+  respectent les champs minimaux du contrat, les identifiants sont bornés
+  et distincts, et un profil déclaré doit correspondre au profil interrogé ;
+- aucun champ supérieur `ok`, `error`, `errors`, `success`, `status`
+  ou `failure` n'exprime une confirmation ou un conflit ambigu.
+
+Les champs facultatifs inconnus ne sont pas propagés par
+`_loan_inventory` : seuls les éléments autorisés y sont projetés.
+Une réponse partielle, contradictoire ou mal formée reste
+`kobo_adept_invalid_response`, `ok_missing`, non relançable,
+sans transmettre le JSON, les profils ou les livres aux diagnostics.
+`loans expired`, `acsm return`, `download request` et toute autre
+commande conservent **l'exigence de l'accusé `ok` booléen natif**.
+Aucun retour, acquisition, prêt ni profil ne sont déclenchés par ce changement.
+
+Tests : simulateur subprocess hors réseau + projection d'inventaire, cas
+positifs/négatifs, isolation des commandes mutatrices. **Le succès auprès du
+CLI réel reste à confirmer sur l'installation utilisateur, sans publier sa
+sortie JSON.**

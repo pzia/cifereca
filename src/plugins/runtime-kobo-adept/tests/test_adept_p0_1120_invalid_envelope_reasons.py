@@ -37,7 +37,7 @@ def fixture(monkeypatch, json_value, *, returncode=0, stderr=b""):
 @pytest.mark.parametrize("response,exit_code,reason", [
     ([], 0, "json_not_object"),
     (None, 0, "json_not_object"),
-    ({"loans": [], "private": PRIVATE_URL}, 0, "ok_missing"),
+    ({"loans": [{"id": "partial-only"}], "private": PRIVATE_URL}, 0, "ok_missing"),
     ({"ok": 1, "private": PRIVATE_URL}, 0, "ok_not_boolean"),
     ({"ok": "true", "private": PRIVATE_LICENSE}, 0, "ok_not_boolean"),
     ({"ok": None, "private": PRIVATE_URL}, 0, "ok_not_boolean"),
@@ -133,7 +133,7 @@ def test_reporter_rejects_forged_or_non_closed_reason(reason):
 def test_cause_is_cleared_between_operations_and_never_copied_to_other_errors(
     monkeypatch,
 ):
-    runtime, published, calls, _ = fixture(monkeypatch, {"loans": []})
+    runtime, published, calls, _ = fixture(monkeypatch, {"loans": [{"id": "partial-only"}]})
     with pytest.raises(KoboAdeptError):
         runtime.run_json(["loans", "list", "--profile", PRIVATE_PROFILE, "--json"])
     assert runtime.last_run_diagnostic["validation_reason"] == "ok_missing"
