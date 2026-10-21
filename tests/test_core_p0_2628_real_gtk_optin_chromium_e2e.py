@@ -168,7 +168,10 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         assert "Chromium" in dialog.get_heading()
         assert not cache.exists()
         assert not page._chromium_operation_running
+        # Programmatic response() emits the signal but does not itself
+        # close the toplevel: real Adw response buttons perform both steps.
         dialog.response("cancel")
+        dialog.close()
         assert eventually(lambda: visible_dialog() is None)
         assert not cache.exists()
         assert not page._chromium_operation_running
@@ -176,7 +179,9 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         # Second real UI invocation and explicit confirmation.
         button_named(page._plugin_widgets[PLUGIN_ID], "Installer Chromium…").emit("clicked")
         assert eventually(lambda: visible_dialog() is not None)
-        visible_dialog().response("install")
+        dialog = visible_dialog()
+        dialog.response("install")
+        dialog.close()
         assert eventually(lambda: page._chromium_operation_running)
         assert eventually(lambda: "Annuler Chromium" in [
             label_of_button(b) for b in descendants(page._plugin_widgets[PLUGIN_ID])
@@ -189,6 +194,7 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         assert result.get_heading() == "État Chromium"
         assert "prêt" in result.get_body().lower()
         result.response("close")
+        result.close()
         assert eventually(lambda: visible_dialog() is None)
         assert inspect_chromium(test_launch=True).code == "ready"
 
