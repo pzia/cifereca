@@ -100,8 +100,19 @@ def inspect_chromium(*, test_launch: bool = False) -> BrowserState:
     try:
         cache = _cache_path()
         exe = _executable()
-        if (not exe.is_relative_to(cache) or ".." in exe.parts
-                or exe.is_symlink() or not exe.is_file() or not os.access(exe, os.X_OK)):
+        # Reject symlinks anywhere between the cache root and executable;
+        # a replaced revision directory must not redirect a probe/launch.
+        relative_parts = exe.relative_to(cache).parts if exe.is_relative_to(cache) else ()
+        ancestor = cache
+        unsafe = not relative_parts
+        for part in relative_parts:
+            ancestor = ancestor / part
+            if ancestor.is_symlink():
+                unsafe = True
+                break
+        if unsafe:
+            return BrowserState("browser_cache_unavailable", version)
+        if (not exe.is_file() or not os.access(exe, os.X_OK)):
             # Detect a cached older revision without claiming compatibility.
             if cache.is_dir() and any(
                 row.name.startswith("chromium-") for row in cache.iterdir()
