@@ -200,3 +200,73 @@ def test_commercial_namespace_preserves_existing_limits_and_duplicate_semantics(
     }})
     assert len(rows) == 201 and "30 valeur(s)" in rows[-1][1]
     assert detail_metadata_items({"brand":"No new root key"}) == ()
+
+
+def test_indexed_editorial_facts_are_also_visible_and_individually_actionable():
+    rows = detail_metadata_items({
+        'awards': ['Prix du Quai', 'Prix public'], 'prizes': ['Prix du Quai'],
+        'literary_prizes': ['Prix des lecteurs'],
+        'keywords': ['enquête', 'roman'], 'tags': ['roman'],
+        'collections': ['Policier', 'Poche'], 'series_index': 2,
+        'collection_index': 12, 'edition_statement': 'Édition revue',
+        'original_language': 'en', 'genre': 'policier', 'categories': ['Romans'],
+        'catalogue_metadata': {'awards': ['Prix catalogue']},
+        'epub_metadata': {'keywords': ['enquête locale']},
+        'public_product_metadata': {'awards': ['Non attesté pour cette édition']},
+    })
+    assert rows.count(('Prix littéraire', 'Prix du Quai', 'all')) == 1
+    assert ('Prix littéraire', 'Prix des lecteurs', 'all') in rows
+    assert rows.count(('Mot-clé', 'roman', 'subject')) == 1
+    assert ('Collection', 'Poche', 'collection') in rows
+    assert ('Numéro dans la série', '2', 'copy') in rows
+    assert ('Numéro dans la collection', '12', 'copy') in rows
+    assert ('Édition', 'Édition revue', 'all') in rows
+    assert ('Langue originale', 'en', 'language') in rows
+    assert ('Catalogue · Prix littéraire', 'Prix catalogue', 'all') in rows
+    assert ('EPUB · Mot-clé', 'enquête locale', 'subject') in rows
+    assert 'Non attesté' not in repr(rows)
+
+
+def test_editorial_extensions_keep_the_existing_public_text_boundary():
+    rows = detail_metadata_items({
+        'awards': [{'secret': 'PRIVATE'}, 'https://example.test/?token=PRIVATE'],
+        'keywords': ['Enquête', 'Authorization: Bearer PRIVATE'],
+        'collections': [{'name': 'Unknown structure', 'account': 'PRIVATE'}],
+        'tags': ['\x00PRIVATE'], 'literary_prizes': ['Prix public'],
+    })
+    assert rows == (('Mot-clé', 'Enquête', 'subject'),
+                    ('Prix littéraire', 'Prix public', 'all'))
+
+
+def test_summaries_keep_paragraphs_complete_copy_and_source_differences():
+    text = "Premier paragraphe.\n\nSecond paragraphe."
+    rows = detail_metadata_items({
+        'description': '<p>Premier paragraphe.</p><p>Second paragraphe.</p>',
+        'summary': text,
+        'synopsis': '<script>PRIVATE</script><p>Résumé différent.</p>',
+        'epub_metadata': {'description': 'Version EPUB attestée.'},
+    })
+    assert rows.count(('Résumé', text, 'copy')) == 1
+    assert ('Résumé', 'Résumé différent.', 'copy') in rows
+    assert ('EPUB · Résumé', 'Version EPUB attestée.', 'copy') in rows
+    assert 'PRIVATE' not in repr(rows) and '<p>' not in repr(rows)
+    assert detail_metadata_items({'summary': 'https://example.test/?token=PRIVATE'}) == ()
+
+
+def test_declared_identifiers_do_not_extract_isbn_from_unrelated_references():
+    from cifereca.book_detail_metadata import canonical_book_isbn
+    for value in ('SKU9780306406157', '9780306406157suffix',
+                  '9780306406157 / 9780306406157', '<b>9780306406157</b>'):
+        assert canonical_book_isbn(value) == ''
+        rows = detail_metadata_items({'isbn': value})
+        assert rows and all(kind != 'isbn' for _, _, kind in rows)
+    assert canonical_book_isbn('978 0 306 40615 7') == '9780306406157'
+
+
+def test_sensitive_assignments_and_addresses_never_reach_detail_actions():
+    from cifereca.book_detail_metadata import safe_detail_value
+    for value in ('token = PRIVATE', 'cookie : PRIVATE', 'password = PRIVATE',
+                  'Basic cHJpdmF0ZQ==', 'Compte <private@example.test>'):
+        assert safe_detail_value(value) == ''
+        assert detail_metadata_items({'keywords': [value], 'awards': [value]}) == ()
+    assert safe_detail_value('Le Secret de la maison') == 'Le Secret de la maison'

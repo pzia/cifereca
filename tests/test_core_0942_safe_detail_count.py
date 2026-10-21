@@ -22,6 +22,9 @@ class Widget:
         self.title = ""
         self.subtitle = ""
 
+    def set_use_markup(self, value):
+        self.use_markup = value
+
     def set_title(self, value):
         self.title = value
 

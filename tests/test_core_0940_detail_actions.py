@@ -17,6 +17,7 @@ class Widget:
         self.children = []
         self.handlers = {}
     def set_title(self, value): self.title = value
+    def set_use_markup(self, value): self.use_markup = value
     def set_subtitle(self, value): self.subtitle = value
     def set_subtitle_lines(self, *_): pass
     def set_tooltip_text(self, value): self.tooltip = value
@@ -80,6 +81,7 @@ def test_copy_is_independent_and_search_is_explicit_and_typed():
     assert events == [] and clipboard.value is None
     expander = groups[0].children[0]
     assert len(expander.children) == 4
+    assert all(row.use_markup is False for row in expander.children)
     buttons = [[x for x in row.children if isinstance(x, Button)] for row in expander.children]
     assert len(buttons[0]) == 2
     assert len(buttons[2]) == 1  # Date is copy-only
