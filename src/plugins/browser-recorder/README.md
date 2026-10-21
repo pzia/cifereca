@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.3, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.4, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -363,7 +363,7 @@ Le ZIP interne n'est jamais écrit en clair par Cifereca. Le fichier
 le déchiffrement en mémoire est une étape volontaire distincte.
 
 
-## Choix de la destination ZIP (0.2.3)
+## Choix de la destination ZIP (0.2.4)
 
 Après l'examen **exact** de chaque membre et la confirmation explicite,
 **« Enregistrer sous… le ZIP anonymisé »** ouvre le dialogue natif GTK4
@@ -380,7 +380,7 @@ préexistant : le dossier doit appartenir à l'utilisateur avec permissions
 obligatoires. Le contenu privé n'est jamais enregistré en ZIP non chiffré.
 
 
-## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.3, #2740)
+## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.4, #2740)
 
 Chaque archive **revue** contient maintenant le répertoire
 `plugin-dev-kit/` avec ses guides indépendants, le
@@ -399,3 +399,22 @@ budget, **la préparation du ZIP refuse** plutôt que de produire des
 spécifications faussement compatibles. L'archive est un guide de
 développement, pas une preuve de droits/licences, et ne contient ni tokens
 ni profil Chromium ni source private Core.
+
+
+## Plugin de référence hors ligne (0.2.4, #2740)
+
+Le kit documentaire du ZIP anonymisé inclut désormais un **exemple complet**
+dans `plugin-dev-kit/examples/provider-fixture-example/` : un manifeste
+`catalog.service`, un module d'entrée `fixture_catalog:PLUGIN` et ses
+tests pytest. Il couvre recherche, pagination, détail, cache limité et
+exceptions typées, sur **trois livres entièrement fictifs**. Aucun fournisseur
+externe, compte, prêt, DRM ou requête réseau ; `owned` et
+`downloadable` demeurent `null` (non attestés).
+
+La CI extrait uniquement les fichiers du ZIP, valide leur manifeste contre
+le **Core effectivement installé**, construit une archive plugin par
+`build_plugin_zip`/`validate_plugin_zip`, puis exécute les tests de cet
+exemple dans un sous-processus indépendant. Ceci est une **preuve de
+reproductibilité du squelette**, pas une preuve qu'un LLM isolé reconstitue
+avec succès une API réelle sans hypothèse. L'exemple doit être adapté aux
+endpoints effectivement observés et aux permissions autorisées.
