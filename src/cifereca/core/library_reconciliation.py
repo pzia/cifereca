@@ -30,6 +30,15 @@ _COLUMNS = {
     'paris_borrower_adept_bindings': 'connection_identity_id borrower_identity_id profile_id',
 }
 
+# These tables can be reduced inside SQLite for exactly one active identity.
+# DO NOT filter acquisition_ledger: foreign acquisition entries with a matching
+# entitlement or exact provider/credential/item are evidence of conflicting
+# ownership even when their identity_id differs. Artifacts are content-addressed
+# and have no identity_id; they must also remain unfiltered.
+_SCOPABLE_COLUMNS = frozenset({
+    'entitlements', 'placements', 'backup_items', 'catalog_entries',
+})
+
 
 @dataclass(repr=False)
 class EvidenceSnapshot:
@@ -39,7 +48,7 @@ class EvidenceSnapshot:
 
 def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
                             max_bytes: int = 128*1024*1024, seconds: float = 10,
-                            cancelled=lambda: False) -> EvidenceSnapshot:
+                            cancelled=lambda: False, identity_id: str | None = None) -> EvidenceSnapshot:
     """Bounded copy of a stable, non-symlink, quiescent DB, queried in memory.
 
     A live WAL/journal yields snapshot_live_journal, not an empty rights list.
@@ -49,7 +58,8 @@ def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
     """
     if (type(max_rows) is not int or not 1 <= max_rows <= 100_000
             or type(max_bytes) is not int or not 1 <= max_bytes <= 128*1024*1024
-            or type(seconds) not in (int, float) or not 0 < seconds <= 30):
+            or type(seconds) not in (int, float) or not 0 < seconds <= 30
+            or (identity_id is not None and (type(identity_id) is not str or not identity_id or len(identity_id) > 1024))):
         raise ValueError('invalid_snapshot_limits')
     result = EvidenceSnapshot()
     path = Path(path)
@@ -101,7 +111,9 @@ def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
         if image[:16] != b'SQLite format 3\0':
             result.reasons.add('snapshot_unavailable')
             return result
-        return _query_image(image, max_rows=max_rows, deadline=deadline, cancelled=cancelled)
+        logging.getLogger('cifereca').info('TRACE reconciliation_snapshot phase=projection stage=direct')
+        return _query_image(image, max_rows=max_rows, deadline=deadline,
+                            cancelled=cancelled, identity_id=identity_id)
     except (OSError, sqlite3.Error, ValueError):
         result.tables.clear()
         result.reasons.add('snapshot_cancelled' if cancelled() else 'snapshot_time_budget' if time.monotonic() >= deadline else 'snapshot_unavailable')
@@ -114,7 +126,7 @@ def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
 
 
 def _query_image(image: bytes, *, max_rows: int, deadline: float,
-                 cancelled=lambda: False) -> EvidenceSnapshot:
+                 cancelled=lambda: False, identity_id: str | None = None) -> EvidenceSnapshot:
     """Project a bounded coherent image in memory, never source SQLite handles."""
     result = EvidenceSnapshot()
     try:
@@ -157,9 +169,16 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
                 # identity cancellation callback at most every 64 rows.
                 # SQLite's progress handler also enforces the shared deadline
                 # during slow SELECT/fetchmany work.
+                # Scope the bibliographic and placement-heavy tables BEFORE
+                # JSON extraction. SQLite still operates only on the private,
+                # immutable in-memory image; no source disk handle is opened.
+                # Retain the full acquisition ledger for inter-identity
+                # entitlement/source collisions (scope_evidence keeps those).
+                scoped = identity_id is not None and name in _SCOPABLE_COLUMNS
                 cursor = db.execute(
-                    f"SELECT {','.join(wanted)} FROM {name} LIMIT ?",
-                    (remaining_rows + 1,),
+                    f"SELECT {','.join(wanted)} FROM {name}"
+                    + (" WHERE identity_id=?" if scoped else "") + " LIMIT ?",
+                    (identity_id, remaining_rows + 1) if scoped else (remaining_rows + 1,),
                 )
                 projected = []
                 overflow = False
@@ -224,12 +243,15 @@ _SNAPSHOT_TRACE_CODES = frozenset({
 
 def read_library_snapshot(path: Path, *, max_rows: int = 100_000,
                           max_bytes: int = 128*1024*1024, seconds: float = 10,
-                          cancelled=lambda: False) -> EvidenceSnapshot:
+                          cancelled=lambda: False, identity_id: str | None = None) -> EvidenceSnapshot:
     """Stable main image, or isolated Linux WAL capture, under one deadline.
 
     Emit only bounded timing + closed statuses for an operator to distinguish
     a slow WAL reader from an unavailable DB. TRACE never carries source data.
     """
+    if identity_id is not None and (
+            type(identity_id) is not str or not identity_id or len(identity_id) > 1024):
+        raise ValueError('invalid_snapshot_limits')
     started = time.monotonic()
     trace = logging.getLogger('cifereca')
     trace.info('TRACE reconciliation_snapshot phase=start stage=direct')
@@ -248,7 +270,8 @@ def read_library_snapshot(path: Path, *, max_rows: int = 100_000,
         return result
 
     result = read_quiescent_snapshot(path, max_rows=max_rows, max_bytes=max_bytes,
-                                     seconds=seconds, cancelled=cancelled)
+                                     seconds=seconds, cancelled=cancelled,
+                                     identity_id=identity_id)
     deadline = started+seconds
     if result.reasons != {'snapshot_live_journal'}:
         return finish(result, 'direct')
@@ -265,8 +288,9 @@ def read_library_snapshot(path: Path, *, max_rows: int = 100_000,
         return finish(EvidenceSnapshot(reasons={'snapshot_wal_reader_unavailable'}), 'wal')
     if reason:
         return finish(EvidenceSnapshot(reasons={reason}), 'wal')
+    trace.info('TRACE reconciliation_snapshot phase=projection stage=wal')
     return finish(_query_image(image, max_rows=max_rows, deadline=deadline,
-                               cancelled=cancelled), 'wal')
+                               cancelled=cancelled, identity_id=identity_id), 'wal')
 
 
 @dataclass(frozen=True, repr=False)
