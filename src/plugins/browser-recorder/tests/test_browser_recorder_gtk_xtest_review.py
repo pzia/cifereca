@@ -174,16 +174,14 @@ def test_xtest_81_choices_exact_zip_and_confirmed_export(
                 combo = row.get_last_child()
                 assert isinstance(combo, Gtk.ComboBoxText)
                 assert combo.get_active_id() == "choose"
-                # From the placeholder, one Down is "anonymize"; two is
-                # "keep" and three is "exclude". No set_active_id() is used.
-                presses = 2 if page == 0 and index == 0 else (
+                # Physical 1/2/3 shortcut on the candidate's native GTK
+                # row, independently of popover/combo GTK minor versions.
+                # The widget still requires each identifier to be focused.
+                shortcut = 2 if page == 0 and index == 0 else (
                     3 if page == 3 and index == 8 else 1
                 )
-                press(combo, "Home")
-                for _ in range(presses):
-                    press(combo, "Down")
-                press(combo, "Return")
-                expected = {1: "anonymize", 2: "keep", 3: "exclude"}[presses]
+                press(combo, str(shortcut))
+                expected = {1: "anonymize", 2: "keep", 3: "exclude"}[shortcut]
                 assert combo.get_active_id() == expected
                 decided += 1
             assert panel._review.pending() == 81 - decided
