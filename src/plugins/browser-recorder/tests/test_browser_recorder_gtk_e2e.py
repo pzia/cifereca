@@ -277,3 +277,69 @@ def test_real_gtk4_large_identifier_list_requires_each_decision_and_scrolls(
         panel.destroy()
         window.close()
         flush_glib()
+
+
+@pytest.mark.parametrize("width", (1280, 1366, 1600))
+def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
+    monkeypatch, tmp_path, width,
+):
+    """Actual plugin page GTK tree, not a panel constructed in isolation.
+
+    Only synthetic local UI: zero browser navigations, captures or downloads.
+    Keyboard focus/visibility is checked on real GTK widgets; XTEST physical
+    keystrokes and installed-ZIP black-box use remain separate acceptance gates.
+    """
+    from browser_recorder_page import BrowserRecorderPage
+
+    Gtk.init()
+    tasks = FakeTasks()
+    plugin = BrowserRecorderPage()
+    plugin.activate(NS(
+        data_directory=tmp_path,
+        broker=lambda name: tasks if name == "tasks" else None,
+    ))
+    window = Gtk.Window()
+    window.set_default_size(width, 850)
+    root = plugin.build(None)
+    window.set_child(root)
+    window.present()
+    flush_glib()
+    try:
+        assert tasks.handle is None  # building the page never starts Chromium
+        children = []
+        item = root.get_first_child()
+        while item is not None:
+            children.append(item)
+            item = item.get_next_sibling()
+        assert len(children) == 6
+        description, site, consent, workflow, private, advanced = children
+        assert isinstance(site, Gtk.Entry)
+        assert isinstance(consent, Gtk.CheckButton)
+        assert private is plugin.private_panel.widget
+        assert isinstance(advanced, Gtk.Expander)
+        assert not advanced.get_expanded()
+        assert "HAR" in advanced.get_label()
+        assert "HTTP" in description.get_label()
+        assert "ZIP" in workflow.get_label()
+        assert plugin.private_panel.start.get_sensitive()
+        assert not plugin.private_panel.export_button.get_sensitive()
+        # Verify real GTK accepts focus on the consent and HTTP start
+        # while the folded HAR controls are not user-visible.
+        assert site.grab_focus()
+        # Gtk.Entry delegates keyboard focus to its internal Gtk.Text child.
+        focus = window.get_focus()
+        assert focus is site or focus.is_ancestor(site)
+        assert plugin.private_panel.start.grab_focus()
+        assert window.get_focus() is plugin.private_panel.start
+        legacy = advanced.get_child()
+        assert isinstance(legacy, Gtk.Box)
+        assert not legacy.get_mapped()
+        advanced.set_expanded(True)
+        flush_glib()
+        assert advanced.get_expanded()
+        assert legacy.get_mapped()
+        assert tasks.handle is None
+    finally:
+        plugin.deactivate()
+        window.close()
+        flush_glib()

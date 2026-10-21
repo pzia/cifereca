@@ -9,7 +9,7 @@ from browser_recorder import RecorderError, record, replay, site_origin, FILENAM
 
 
 _MESSAGES = {
-    "playwright_unavailable": "Playwright absent : installer playwright puis Chromium (voir README).",
+    "playwright_unavailable": "Playwright/Chromium indisponibles : ouvrir Plugins → Browser Recorder → Installer les dépendances Python / Installer Chromium.",
     "invalid_origin": "Utiliser une URL HTTPS publique valide (sans identifiants).",
     "invalid_filename": "Nom de capture invalide.",
     "read_failed": "Capture introuvable ou illisible.",
@@ -64,11 +64,10 @@ class BrowserRecorderPage:
             getattr(box, "set_margin_" + side)(16)
 
         description = Gtk.Label(
-            label="Navigateur Playwright visible, connexion manuelle. "
-                  "Le mode HAR classique enregistre uniquement des métadonnées expurgées "
-                  "(sans cookie, corps ni en-têtes) et rejoue seulement des GET statiques. "
-                  "La capture HTTP privée plus bas garde des textes en mémoire jusqu'à "
-                  "effacement, sans ZIP ni upload automatique.",
+            label="Capture HTTP privée → revue individuelle → ZIP pour analyse "
+                  "technique. Navigation manuelle dans Chromium visible. "
+                  "Les données privées restent en mémoire jusqu'à effacement ; "
+                  "aucun ZIP ni envoi externe automatique.",
             xalign=0, wrap=True,
         )
         box.append(description)
@@ -81,6 +80,33 @@ class BrowserRecorderPage:
         consent = Gtk.CheckButton(label="Je consens à ouvrir un navigateur et à capturer ce parcours.")
         box.append(consent)
 
+        workflow = Gtk.Label(
+            label="1 · Préparer site HTTPS et consentement   →   "
+                  "2 · Capturer / pause / arrêt   →   "
+                  "3 · Revoir chaque identifiant   →   "
+                  "4 · Examiner le ZIP exact   →   5 · Exporter localement",
+            xalign=0, wrap=True,
+        )
+        workflow.add_css_class("heading")
+        box.append(workflow)
+        self.private_panel = PrivateReviewPanel(
+            Gtk, GLib, self.tasks, site, consent,
+            legacy_running=lambda: self.handle is not None and not self.handle.done(),
+            export_directory=self.context.data_directory / "exports",
+        )
+        box.append(self.private_panel.widget)
+
+        advanced = Gtk.Expander(label="Fonctions avancées / héritées — HAR expurgé et rejeu GET")
+        advanced.set_expanded(False)
+        legacy_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        advanced.set_child(legacy_box)
+        legacy_box.append(Gtk.Label(
+            label="Mode secondaire : HAR sans corps ni cookies, rejeu limité aux "
+                  "GET statiques et confirmé étape par étape. "
+                  "Ne produit PAS le ZIP HTTP privé destiné à l'analyse.",
+            xalign=0, wrap=True,
+        ))
+
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         start = Gtk.Button(label="Démarrer la capture")
         stop = Gtk.Button(label="Arrêter / enregistrer")
@@ -88,22 +114,23 @@ class BrowserRecorderPage:
         next_button = Gtk.Button(label="Étape GET suivante")
         for button in (start, stop, replay_button, next_button):
             row.append(button)
-        box.append(row)
+        legacy_box.append(row)
 
         filename = Gtk.Entry()
         filename.set_placeholder_text("Nom du fichier .har produit (sans chemin)")
         filename.set_text(self.last_filename)
-        box.append(filename)
+        legacy_box.append(filename)
 
         state = Gtk.Label(label="Inactif — aucune capture ni accès réseau.", xalign=0, wrap=True)
         state.set_selectable(True)
-        box.append(state)
+        legacy_box.append(state)
 
         directory = self.context.data_directory / "captures"
         destination = Gtk.Label(label="Exports locaux privés : " + str(directory),
                                 xalign=0, wrap=True)
         destination.set_selectable(True)
-        box.append(destination)
+        legacy_box.append(destination)
+        box.append(advanced)
 
         def buttons(mode=None):
             active = mode in {"record", "replay"}
@@ -222,12 +249,6 @@ class BrowserRecorderPage:
         stop.connect("clicked", stop_clicked)
         next_button.connect("clicked", lambda *_: self.advance.release() if self.advance else None)
 
-        self.private_panel = PrivateReviewPanel(
-            Gtk, GLib, self.tasks, site, consent,
-            legacy_running=lambda: self.handle is not None and not self.handle.done(),
-            export_directory=self.context.data_directory / "exports",
-        )
-        box.append(self.private_panel.widget)
         return box
 
     def deactivate(self):
