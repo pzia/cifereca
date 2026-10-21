@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urljoin, quote_plus, quote, urlsplit, parse_qsl
 import httpx
 import xml.etree.ElementTree as ET
-from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession
+from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession, TemporaryUnavailable, UnsupportedOperation, Conflict, Cancelled
 
 BASE='https://www.ebooksgratuits.com/'
 MAX_REQUESTED_PAGES = 101  # Pages 0..100, not an unbounded upstream scan.
@@ -222,6 +222,65 @@ def _public_search_error(exc):
     return ProviderError(f'Ebooks libres et gratuits : {code}')
 
 
+# A failed public download is different from a failed search. Convert ONLY
+# typed broker errors into closed, actionable categories. Never forward a
+# transport exception, response body, signed URL or dynamically supplied MIME.
+_DOWNLOAD_HTTP_ERRORS = {
+    'auth_required': 'download_auth_required',
+    'access_denied': 'download_access_denied',
+    'not_found': 'download_not_found',
+    'rate_limited': 'download_rate_limited',
+    'service_unavailable': 'download_service_unavailable',
+}
+_DOWNLOAD_REJECTION_ERRORS = {
+    'transport.http: réponse HTML refusée': 'download_invalid_content',
+    'transport.http: réponse vide': 'download_empty_response',
+    'transport.http: artefact protégé refusé': 'download_protected',
+    'transport.http: fichier trop volumineux': 'download_too_large',
+    'transport.http: redirection hors origine refusée': 'download_redirect_denied',
+    'transport.http: redirection HTTPS vers HTTP refusée': 'download_redirect_denied',
+    'transport.http: destination de redirection invalide': 'download_redirect_denied',
+    'transport.http: politique de redirection invalide': 'download_redirect_denied',
+    'transport.http: redirection sans destination': 'download_redirect_limit',
+    'transport.http: trop de redirections': 'download_redirect_limit',
+    'transport.http: redirections non résolues': 'download_redirect_limit',
+}
+
+
+def _public_download_error(exc):
+    """Return a source-scoped safe code, not provider text or a raw exception.
+
+    This is a *classification of the failed request*, never proof that a
+    catalogue entry no longer exists or that a repeat request is authorized.
+    """
+    if isinstance(exc, TemporaryUnavailable):
+        raw = str(exc)
+        prefix = 'transport.http: '
+        code = raw[len(prefix):] if raw.startswith(prefix) else ''
+        mapped = _DOWNLOAD_HTTP_ERRORS.get(code)
+        if mapped is None and code in {
+            'redirection sans destination', 'trop de redirections',
+            'redirections non résolues',
+        }:
+            mapped = 'download_redirect_limit'
+        return ProviderError('Ebooks libres et gratuits : ' +
+                             (mapped or 'download_service_unavailable'))
+    if isinstance(exc, UnsupportedOperation):
+        raw = str(exc)
+        mapped = _DOWNLOAD_REJECTION_ERRORS.get(raw)
+        if mapped is None:
+            if raw.startswith('transport.http: content-type refusé ('):
+                mapped = 'download_invalid_content'
+            elif raw.startswith('transport.http: artefact invalide ('):
+                mapped = 'download_invalid_epub'
+        return ProviderError('Ebooks libres et gratuits : ' +
+                             (mapped or 'download_rejected'))
+    if isinstance(exc, Conflict):
+        return ProviderError('Ebooks libres et gratuits : download_destination_conflict')
+    return ProviderError('Ebooks libres et gratuits : download_unavailable')
+
+
+
 def _validated_public_query(query):
     """Accept public text, not arbitrary objects serialized into HTTP URLs."""
     if query is None:
@@ -258,7 +317,7 @@ class EbooksSession(ProviderSession):
             timeout=float(self.options.get('timeout_seconds',30)),
             follow_redirects=True, trust_env=False,
             headers={
-                'User-Agent':'Cifereca-EbooksGratuits/0.1.25',
+                'User-Agent':'Cifereca-EbooksGratuits/0.1.26',
                 'Accept-Language':'fr-FR,fr;q=0.9',
             },
         )
@@ -424,8 +483,13 @@ class EbooksSession(ProviderSession):
             source['redirect_policy']='same_origin'
             source['classify_http_status']=True
         try: dest=Path(self.transport.fetch(source,dest))
+        except Cancelled: raise
         except ProviderError: raise
-        except Exception as e: raise ProviderError('Ebooks libres et gratuits : téléchargement inaccessible ou EPUB invalide') from e
+        except (TemporaryUnavailable, UnsupportedOperation, Conflict) as exc:
+            raise _public_download_error(exc) from None
+        except Exception:
+            # Error text can include a private URL, file path or response.
+            raise ProviderError('Ebooks libres et gratuits : download_unavailable') from None
         return dest,(item.friendly_url or item.download_url) if opds_item else (item.friendly_url or self.base_url)
 class Plugin(ProviderPlugin):
     descriptor=DESCRIPTOR
