@@ -3,7 +3,8 @@
 Fresh Core venv WITHOUT Playwright, empty Chromium cache, GTK4/libadwaita,
 real installed Browser Recorder package and Core PluginManager. No vendor,
 account, capture or human files. Network is allowed ONLY after the actual
-confirmation button is physically activated with XTEST on the GTK dialog. CI runner opt-in required.
+confirmation buttons and launch actions are physically activated with
+XTEST on the GTK page and dialog. CI runner opt-in required.
 """
 from __future__ import annotations
 
@@ -100,6 +101,25 @@ def xtest(*args):
     )
     assert result.returncode == 0, "XTEST keyboard dispatch failed"
     return result.stdout.strip()
+
+
+def physical_page_action(window, button):
+    """Operate the Plugins page's visible native action, not emit clicked."""
+    assert button.get_sensitive() and button.get_visible()
+    assert button.get_mapped(), "Plugins action not visible for keyboard user"
+    title = "Cifereca Browser Recorder Plugins fixture"
+    hits = xtest("search", "--onlyvisible", "--name", title).splitlines()
+    assert len(hits) == 1, "expected the actual Plugins app window"
+    xtest("windowfocus", "--sync", hits[0])
+    flush()
+    assert button.grab_focus()
+    flush()
+    sleep(.08)
+    flush()
+    focused = window.get_focus()
+    assert focused is button or focused.is_ancestor(button)
+    xtest("key", "--clearmodifiers", "space")
+    flush()
 
 
 def physical_dialog_choice(dialog, label: str):
@@ -212,7 +232,7 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         assert not cache.exists()
 
         # Cancel the actual Python-repair dialog; no package/browser mutation.
-        repair.emit("clicked")
+        physical_page_action(window, repair)
         assert eventually(lambda: visible_dialog() is not None)
         dialog = visible_dialog()
         assert "Python" in dialog.get_heading()
@@ -222,9 +242,9 @@ def test_real_plugin_page_dialog_consent_then_core_download(
 
         # Explicit second consent: Core installs declared Python dependencies
         # into the managed venv asynchronously (no GUI-thread pip invocation).
-        button_named(
+        physical_page_action(window, button_named(
             page._plugin_widgets[PLUGIN_ID], "Installer les dépendances Python…"
-        ).emit("clicked")
+        ))
         assert eventually(lambda: visible_dialog() is not None)
         dialog = visible_dialog()
         physical_dialog_choice(dialog, "Installer")
@@ -242,7 +262,7 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         assert not page._chromium_operation_running
 
         # Initial button presents the REAL Adw.MessageDialog, but no download.
-        installer.emit("clicked")
+        physical_page_action(window, installer)
         assert eventually(lambda: visible_dialog() is not None)
         dialog = visible_dialog()
         assert "Chromium" in dialog.get_heading()
@@ -254,7 +274,9 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         assert not page._chromium_operation_running
 
         # Second real UI invocation and explicit confirmation.
-        button_named(page._plugin_widgets[PLUGIN_ID], "Installer Chromium…").emit("clicked")
+        physical_page_action(window, button_named(
+            page._plugin_widgets[PLUGIN_ID], "Installer Chromium…"
+        ))
         assert eventually(lambda: visible_dialog() is not None)
         dialog = visible_dialog()
         physical_dialog_choice(dialog, "Installer")
