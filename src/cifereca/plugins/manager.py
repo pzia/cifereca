@@ -680,7 +680,7 @@ class PluginManager:
                                      detail={"code": "unverified_runtime_producer"}, level=level)
                 return
             from ..core.browser_recorder_diagnostics import (
-                PLUGIN_ID as RECORDER_ID, RUNTIME_OPERATIONS, RUNTIME_CODES,
+                PLUGIN_ID as RECORDER_ID, RUNTIME_CODES_BY_OPERATION,
             )
             if plugin_id == RECORDER_ID:
                 # The Core-bound context, not a plugin-supplied identity field,
@@ -691,9 +691,10 @@ class PluginManager:
                         "org.cifereca.technical.browser-recorder"
                         and type(detail) is dict):
                     operation = detail.get("operation")
-                    if type(operation) is str and operation in RUNTIME_OPERATIONS:
+                    if type(operation) is str and operation in RUNTIME_CODES_BY_OPERATION:
                         code = detail.get("code")
-                        safe_code = (code if type(code) is str and code in RUNTIME_CODES
+                        valid_codes = RUNTIME_CODES_BY_OPERATION[operation]
+                        safe_code = (code if type(code) is str and code in valid_codes
                                      else "browser_operation_failed")
                         self.diagnostics.add_core_browser_recorder_result(operation, safe_code)
                 return
