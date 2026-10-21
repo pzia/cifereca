@@ -209,6 +209,8 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
             ("candidate_button_clicked", "candidate_button_clicked"),
             ("inspection_candidate_navigation_reached", "candidate_next"),
             ("local_inspection_right_candidate_side_by_side_no_attestation", "candidate_validated"),
+            ("local_inspection_manual_unlinked_filter_same_identity", "manual_filtered"),
+            ("local_inspection_manual_does_not_change_candidate_set", "manual_restored"),
             ("local_inspection_state_pagination_and_private_proof", "inspection_paginated"),
             ("local_inspection_epoch_revokes_window_and_sources_unchanged", "inspection_complete"),
         )
