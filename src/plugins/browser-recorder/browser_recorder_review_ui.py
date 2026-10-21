@@ -47,6 +47,15 @@ def _capture_failure_message(code: object) -> str:
             if type(code) is str else _CAPTURE_FAILURE_DEFAULT)
 
 
+def _capture_diagnostic_code(code: object) -> str:
+    """Map RecorderError arguments to a literal code, never calling hooks."""
+    if type(code) is not str:
+        return "capture_failed"
+    if code == "playwright_unavailable":
+        return "playwright_missing"
+    return code if code in {"capture_interrupted", "capture_limit"} else "capture_failed"
+
+
 def _metadata_only_origins(raw: str, primary: str) -> tuple[str, ...]:
     """Validate opt-in third-party origins; never echo private input in errors."""
     if type(raw) is not str or len(raw) > 512:
@@ -357,12 +366,7 @@ class PrivateReviewPanel:
                 # never call str(exc) or inspect Playwright's raw exception.
                 code = exc.args[0] if len(exc.args) == 1 else None
                 result, message = None, _capture_failure_message(code)
-                failure_code = (
-                    "playwright_missing" if type(code) is str and code == "playwright_unavailable"
-                    else code if type(code) is str and code in {
-                        "capture_interrupted", "capture_limit",
-                    } else "capture_failed"
-                )
+                failure_code = _capture_diagnostic_code(code)
             except Exception:
                 result, message, failure_code = None, _capture_failure_message(None), "capture_failed"
 
