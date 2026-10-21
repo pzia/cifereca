@@ -451,15 +451,18 @@ Si aucune notice ne partage l'ISBN ou un autre identifiant explicite du
 livre, la **comparaison privée à deux colonnes** ne s'arrête pas à
 « 0 candidat ». Ouvrir le droit non vérifié, puis sélectionner
 **« Comparer tous les fichiers non liés »** : la seconde colonne permet de
-parcourir, **un fichier à la fois**, les fichiers inventoriés sans droit
-attesté **de l'identité active seulement**. Le champ de recherche filtre
+parcourir, **un fichier à la fois**, les fichiers inventoriés **sans lien de droit confirmé**
+**de l'identité active seulement**, y compris ceux dont le SHA n'a pas pu
+être vérifié (état « Fichier non vérifié » conservé). Le champ de recherche filtre
 le libellé affiché (titre/auteurs OPF, nom de fichier), jamais les preuves
 cachées ; navigation et nombre total restent disponibles même au-delà de
 50 fichiers. « Voir les candidats exacts » restaure la sélection
 bibliographique initiale, sans modifier les sources ni l'audit.
 
 **Distinction impérative :** en mode exploration, tous les fichiers sont
-de simples fichiers locaux **non liés**. Leur présence à côté d'un droit
+de simples fichiers locaux **sans lien confirmé**. Une empreinte SHA
+indisponible ne démontre ni la présence exploitable du fichier ni son
+absence : l'état reste explicitement « non vérifié ». Leur présence à côté d'un droit
 Numilog ne prouve **ni** qu'ils proviennent de Numilog, **ni** qu'ils sont
 achetés, attribuables ou manquants. Il n'existe aucune sélection
 automatique d'une « bonne contrepartie » parmi les fichiers. Le compteur
