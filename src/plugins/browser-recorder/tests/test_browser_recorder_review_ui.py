@@ -377,3 +377,90 @@ def test_invalid_third_party_scope_refuses_browser_without_leaking_origin(
         assert "PRIVATE_CODE" not in panel.status.label
         panel.destroy()
     assert _metadata_only_origins("", ORIGIN) == ()
+
+
+def test_large_identifier_review_is_paginated_without_bulk_decisions(monkeypatch):
+    """90 private IDs do not produce 90 GTK rows; choices survive navigation."""
+    from browser_recorder_review import IdentifierReview
+
+    panel, _tasks, _unused = make_panel(monkeypatch)
+    trace = PrivateHttpTrace((ORIGIN,))
+    for number in range(90):
+        trace.exchanges.append(PrivateExchange(
+            number + 1, "GET",
+            url=ORIGIN + f"/api/books?AccountId=ACC{number:04d}",
+            status=200,
+        ))
+    panel._trace = trace
+    panel._review = IdentifierReview(trace)
+    panel._show_candidates()
+    assert len(panel._review.candidates()) == 90
+    assert panel._review.pending() == 90
+    assert len(panel.candidates_box.children) == 24
+    assert "1–24 sur 90" in panel.candidate_page_status.label
+    assert not panel.candidate_previous.sensitive
+    assert panel.candidate_next.sensitive
+    assert not panel.plan_button.sensitive
+
+    first = panel.candidates_box.children[0].children[-1]
+    first.set_active_id("anonymize")
+    assert panel._review.pending() == 89
+
+    panel.candidate_next.callbacks["clicked"](panel.candidate_next)
+    assert "25–48 sur 90" in panel.candidate_page_status.label
+    assert len(panel.candidates_box.children) == 24
+    assert panel._review.pending() == 89
+    panel.candidates_box.children[0].children[-1].set_active_id("keep")
+    assert panel._review.pending() == 88
+
+    panel.candidate_previous.callbacks["clicked"](panel.candidate_previous)
+    assert panel.candidates_box.children[0].children[-1].get_active_id() == "anonymize"
+    panel.candidate_next.callbacks["clicked"](panel.candidate_next)
+    assert panel.candidates_box.children[0].children[-1].get_active_id() == "keep"
+
+    panel.candidate_next.callbacks["clicked"](panel.candidate_next)
+    panel.candidate_next.callbacks["clicked"](panel.candidate_next)
+    assert "73–90 sur 90" in panel.candidate_page_status.label
+    assert len(panel.candidates_box.children) == 18
+    assert not panel.candidate_next.sensitive
+    panel.prepare_zip()
+    assert panel._bundle_plan is None
+    assert "Toutes les décisions" in panel.status.label
+    panel.discard()
+    assert trace.exchanges == []
+    assert not panel.candidate_next.sensitive
+    panel.destroy()
+
+
+def test_paginated_choices_all_require_explicit_review_before_zip(monkeypatch):
+    """Pagination must neither auto-approve nor lose later-page decisions."""
+    from browser_recorder_review import IdentifierReview
+
+    panel, _tasks, _unused = make_panel(monkeypatch)
+    trace = PrivateHttpTrace((ORIGIN,))
+    for number in range(81):
+        trace.exchanges.append(PrivateExchange(
+            number + 1, "GET",
+            url=ORIGIN + f"/api/books?BookId={1000 + number}",
+            status=200,
+        ))
+    panel._trace = trace
+    panel._review = IdentifierReview(trace)
+    panel._show_candidates()
+    assert panel._review.pending() == 81
+    assert not panel.plan_button.sensitive
+    for page in range(4):
+        for row in panel.candidates_box.children:
+            row.children[-1].set_active_id("anonymize")
+        if page != 3:
+            panel.change_candidate_page(1)
+    assert panel._review.pending() == 0
+    assert panel.plan_button.sensitive
+    panel.change_candidate_page(-1)
+    assert all(row.children[-1].get_active_id() == "anonymize"
+               for row in panel.candidates_box.children)
+    panel.prepare_zip()
+    assert panel._bundle_plan is not None
+    assert not panel.export_button.sensitive
+    panel.destroy()
+    assert trace.exchanges == []
