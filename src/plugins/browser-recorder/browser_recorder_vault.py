@@ -261,7 +261,7 @@ class PrivateSessionVault:
     def _label_value(value: str) -> str:
         # No newline, control, bidi format or terminal escape in GTK labels.
         # Label is private metadata, never a filename or diagnostic.
-        if (type(value) is not str or len(value) > 80
+        if (type(value) is not str or not 1 <= len(value) <= 80
                 or len(value.encode("utf-8")) > 320
                 or any(unicodedata.category(char) in {"Cc", "Cf", "Cs"}
                        for char in value)):
