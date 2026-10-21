@@ -628,7 +628,7 @@ def main():
         report["checks"]["P0_2139_capture_keyboard_tabs_lifetime_and_local_json"] = True
         # Fixture destination selected programmatically; opening the chooser,
         # tab/start/stop/save activation and actual private write are real GTK.
-        tab_key("État système", "system", versions_initial)
+        tab_key("Rapports et vérifications", "reports", report_step)
 
     def versions_expected():
         from cifereca.plugin_api.version_inventory import version_inventory
@@ -697,7 +697,7 @@ def main():
                 assert "Extension : 0.1.5" in actual
                 assert broker.checks == 0
                 report["checks"]["P1_2665_refresh_replaces_clipboard_snapshot"] = True
-                tab_key("Rapports et vérifications", "reports", report_step)
+                complete_scenario()
             except Exception:
                 fail("P1_2665_refreshed_clipboard_mismatch")
         Gdk.Display.get_default().get_clipboard().read_text_async(None, copied)
@@ -1131,7 +1131,10 @@ def main():
         report["checks"]["P0_2140_over_200_explicit_refusal_no_partial_export"] = True
         assert broker.checks == 0 and plugin.llm is None
         screenshot("15-bulk-limit-refused")
-        complete_scenario()
+        # Version refresh changes the public event-broker snapshot. Keep
+        # legacy journal pagination and bulk-selection assertions intact:
+        # run the independent version clipboard acceptance only afterwards.
+        tab_key("État système", "system", versions_initial)
 
     def press(key):
         device[0].key(key, True)
