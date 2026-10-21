@@ -12,6 +12,7 @@ neither paths, SQLite prose nor image bytes belong in logs or diagnostics.
 from __future__ import annotations
 
 import os
+import logging
 from pathlib import Path
 import selectors
 import stat
@@ -26,6 +27,31 @@ from .library_inventory import _fingerprint, _open_root
 _ERRORS = frozenset({'snapshot_unavailable', 'snapshot_changed',
                      'snapshot_byte_budget_or_invalid', 'snapshot_time_budget',
                      'snapshot_cancelled', 'snapshot_wal_reader_unavailable'})
+
+# Closed, child-only telemetry over stderr, *never* source content or errors.
+# The parent only recognizes these exact lines and discards all other stderr.
+_STAGE_PREFIX = b'CIFERECA_WAL_PHASE:'
+_STAGES = frozenset({b'capture', b'validate', b'replay', b'serialize', b'emit'})
+
+
+def _emit_stage(stage: bytes) -> None:
+    if __name__ == '__main__' and stage in _STAGES:
+        try:
+            sys.stderr.buffer.write(_STAGE_PREFIX + stage + b'\n')
+            sys.stderr.buffer.flush()
+        except OSError:
+            # Telemetry must never change the verified WAL read's outcome.
+            pass
+
+
+def _trace_stage(stage: bytes, started: float) -> None:
+    if stage not in _STAGES:
+        return
+    elapsed = max(0, min(30000, int((time.monotonic() - started) * 1000)))
+    logging.getLogger('cifereca').info(
+        'TRACE reconciliation_wal phase=stage step=%s elapsed_ms=%d',
+        stage.decode('ascii'), elapsed,
+    )
 
 
 class _Unavailable(Exception):
@@ -222,6 +248,7 @@ def _replay(image, log, max_bytes, deadline):
         if pages*size > max_bytes:
             raise _Unavailable('snapshot_byte_budget_or_invalid')
         _check(deadline)
+        _emit_stage(b'serialize')
         result = db.serialize('main')
         _check(deadline)
         return result
@@ -242,26 +269,46 @@ def read_wal_image(path, *, max_bytes, seconds, cancelled=lambda: False):
         return None, 'snapshot_cancelled'
     child = subprocess.Popen(
         [sys.executable, '-B', '-m', __name__, str(path), str(max_bytes), str(seconds)],
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         close_fds=True,
     )
     payload = bytearray()
+    # Bound the parser state even if external libraries write arbitrary stderr.
+    # No stderr bytes are returned, printed, or copied into any diagnostic.
+    stage_fragment = bytearray()
+    stage_bytes = 0
     try:
         with selectors.DefaultSelector() as selector:
-            selector.register(child.stdout, selectors.EVENT_READ)
-            while True:
+            selector.register(child.stdout, selectors.EVENT_READ, data='image')
+            selector.register(child.stderr, selectors.EVENT_READ, data='telemetry')
+            while selector.get_map():
                 if cancelled():
                     return None, 'snapshot_cancelled'
                 if time.monotonic() >= deadline:
                     return None, 'snapshot_time_budget'
-                if not selector.select(min(0.05, max(0, deadline-time.monotonic()))):
-                    continue
-                chunk = os.read(child.stdout.fileno(), 65536)
-                if not chunk:
-                    break
-                payload.extend(chunk)
-                if len(payload) > max_bytes+128:
-                    return None, 'snapshot_byte_budget_or_invalid'
+                for key, _events in selector.select(min(0.05, max(0, deadline-time.monotonic()))):
+                    chunk = os.read(key.fileobj.fileno(), 65536)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    if key.data == 'image':
+                        payload.extend(chunk)
+                        if len(payload) > max_bytes+128:
+                            return None, 'snapshot_byte_budget_or_invalid'
+                        continue
+                    # The child may print unrelated errors containing paths
+                    # or tokens; never log or propagate them. Parse at most
+                    # 1024 bytes of exact, line-framed stage markers.
+                    if stage_bytes >= 1024:
+                        continue
+                    remain = 1024 - stage_bytes
+                    stage_bytes += len(chunk[:remain])
+                    stage_fragment.extend(chunk[:remain])
+                    while b'\n' in stage_fragment:
+                        line, _, tail = stage_fragment.partition(b'\n')
+                        stage_fragment = bytearray(tail)
+                        if line.startswith(_STAGE_PREFIX):
+                            _trace_stage(line[len(_STAGE_PREFIX):], deadline-seconds)
         child.wait(timeout=max(0.001, deadline-time.monotonic()))
         if child.returncode == 0 and payload[:1] == b'O' and 101 <= len(payload) <= max_bytes+1:
             return bytes(payload[1:]), None
@@ -280,6 +327,7 @@ def read_wal_image(path, *, max_bytes, seconds, cancelled=lambda: False):
             child.kill()
         child.wait()
         child.stdout.close()
+        child.stderr.close()
 
 
 def _main():
@@ -293,10 +341,14 @@ def _main():
         # Import before source locks; missing dependency fails closed.
         import apsw  # noqa: F401
         deadline = time.monotonic()+seconds
+        _emit_stage(b'capture')
         image, log = _capture(path, max_bytes, deadline)
         # All source locks/descriptors are now released, before CPU replay.
+        _emit_stage(b'validate')
         _validate_wal(log, deadline)
+        _emit_stage(b'replay')
         image = _replay(image, log, max_bytes, deadline)
+        _emit_stage(b'emit')
         sys.stdout.buffer.write(b'O'+image)
     except ImportError:
         sys.stdout.buffer.write(b'Esnapshot_wal_reader_unavailable')
