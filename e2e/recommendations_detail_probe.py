@@ -128,6 +128,17 @@ def main():
     def fail(exc):
         if report["status"] != "RUNNING":
             return
+        # Stable closed error phase for CI. Never print exception contents,
+        # user-entered text, source coordinates, GTK labels or traceback.
+        allowed = {
+            "probe_start", "initial", "long_detail", "scrolled",
+            "exact_setup", "exact_button", "exact_focus", "exact_key",
+            "exact_verdict", "exact_key_dispatch", "exact_navigation",
+            "exact_selection", "exact_no_search", "return_list",
+        }
+        phase = report.get("p1_1354_phase")
+        if type(phase) is str and phase in allowed:
+            print("P1_1354_CLOSED_FAILURE_STAGE=" + phase, flush=True)
         report["status"] = "FAIL"
         report["error"] = str(exc)
         report["traceback"] = traceback.format_exc(limit=6)
