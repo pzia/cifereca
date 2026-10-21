@@ -9,6 +9,7 @@ on:
       - 'src/cifereca/plugins/playwright_browser.py'
       - 'src/cifereca/gui/plugin_manager_page.py'
       - 'tests/test_core_p0_2628_real_chromium_provisioning_e2e.py'
+      - 'tests/test_core_p0_2628_real_proxy_failure_e2e.py'
       - 'tests/test_core_p0_2628_real_gtk_optin_chromium_e2e.py'
       - '.github/workflows/browser-recorder-fresh-chromium-e2e.yml'
   workflow_dispatch:
@@ -45,6 +46,18 @@ jobs:
           set -euo pipefail
           # Administration of throwaway CI runner only, never application behavior.
           sudo "$RUNNER_TEMP/recorder-clean-venv/bin/python" -m playwright install-deps chromium
+      - name: Real Playwright CLI: deny official CDN via synthetic localhost proxy
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/empty-proxy-home"
+          test ! -e "$RUNNER_TEMP/empty-proxy-home/.cache/ms-playwright"
+          env -u PLAYWRIGHT_BROWSERS_PATH \
+              -u PLAYWRIGHT_DOWNLOAD_HOST \
+              -u PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST \
+              HOME="$RUNNER_TEMP/empty-proxy-home" \
+              CIFERECA_REAL_CHROMIUM_PROVISION_E2E=1 \
+              "$RUNNER_TEMP/recorder-clean-venv/bin/python" -m pytest -q -rs \
+              tests/test_core_p0_2628_real_proxy_failure_e2e.py
       - name: Check no consent/no download, then opt-in Core install and real launch
         run: |
           set -euo pipefail
