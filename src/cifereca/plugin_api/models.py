@@ -1169,7 +1169,7 @@ __all__ = [
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult",
     "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost",
-    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiBookNavigationHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
+    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiBookNavigationHost", "UiLoadedSearchNoticeHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "PluginLifecycle", "PluginContext",
 ]
 
