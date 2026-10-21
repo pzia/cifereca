@@ -40,10 +40,10 @@ def test_six_numilog_unlinked_files_are_selectable_without_metadata_right_match(
     assert session.unconfirmed_files(query='code-5').total == 1
     assert session.unconfirmed_files(query='PRIVATE_NOT_IN_LIST').total == 0
     assert session.unconfirmed_files(
-        media_format='epub', sha_state='verified', epub_crc='confirmed',
+        media_format='epub', sha_state='calculated', epub_crc='confirmed',
     ).total == 3
     assert session.unconfirmed_files(media_format='pdf').total == 0
-    assert session.unconfirmed_files(sha_state='unverified').total == 0
+    assert session.unconfirmed_files(sha_state='not_calculated').total == 0
     assert session.unconfirmed_files(epub_crc='other').total == 0
     assert session.page(state='rights_without_verified_file').total == 3
     assert session.candidate_files(session.page(
@@ -61,11 +61,11 @@ def test_sha_unverified_still_visible_without_claiming_missing_file(six_numilog)
     root, database = six_numilog
     audit, session = _session({"alice": (root,)}, database,
                               limits=InventoryLimits(hash_bytes=1))
-    page = session.unconfirmed_files(sha_state='unverified', limit=25)
+    page = session.unconfirmed_files(sha_state='not_calculated', limit=25)
     assert page.total == 6
     assert 'hash_byte_budget' in audit.inventory.reasons
     assert session.unconfirmed_files(epub_crc='confirmed').total == 0
-    assert session.unconfirmed_files(sha_state='verified').total == 0
+    assert session.unconfirmed_files(sha_state='calculated').total == 0
     assert session.summary()['status'] == 'incomplete_scan'
     assert all(case.key.startswith('file:') for case in page.cases)
     assert not any('confirmed_link' in case.states for case in page.cases)
@@ -79,7 +79,7 @@ def test_pdf_and_epub_filters_do_not_call_a_provider(six_numilog):
     _audit, session = _session({"alice": (root,)}, database)
     assert session.unconfirmed_files(media_format='pdf').total == 1
     pdf_page = session.unconfirmed_files(
-        media_format='pdf', sha_state='verified', limit=20,
+        media_format='pdf', sha_state='calculated', limit=20,
     )
     assert len(pdf_page.cases) == 1
     assert pdf_page.cases[0].key.startswith('file:')
@@ -144,7 +144,7 @@ def test_in_memory_filter_is_no_io_after_evidence_snapshot(
     monkeypatch.setattr(os, 'open', cannot_open)
     selected = session.unconfirmed_files(
         query='titre cache 5', limit=25, sort='title',
-        media_format='epub', sha_state='verified', epub_crc='confirmed',
+        media_format='epub', sha_state='calculated', epub_crc='confirmed',
     )
     assert selected.total == 1
     assert 'Titre caché 5' in selected.cases[0].label
