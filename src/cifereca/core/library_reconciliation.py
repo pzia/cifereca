@@ -1,9 +1,9 @@
 """Read-only evidence graph for #2565; no action token, mutation or acquisition.
 
 Private input/output stays local. redacted() exports only closed counters.
-The standalone snapshot reader deliberately refuses live WAL/journal databases:
-SQLite mode=ro can create/write SHM. A stable bounded main-file copy is instead
-queried in memory, WITHOUT starting Storage/migrations or writing temp files.
+Source SQLite handles are never opened: mode=ro may create/write SHM.
+Stable main files and isolated Linux WAL captures are queried in memory,
+WITHOUT starting Storage/migrations or writing temp files.
 """
 from __future__ import annotations
 
@@ -100,6 +100,26 @@ def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
         if image[:16] != b'SQLite format 3\0':
             result.reasons.add('snapshot_unavailable')
             return result
+        return _query_image(image, max_rows=max_rows, deadline=deadline, cancelled=cancelled)
+    except (OSError, sqlite3.Error, ValueError):
+        result.tables.clear()
+        result.reasons.add('snapshot_cancelled' if cancelled() else 'snapshot_time_budget' if time.monotonic() >= deadline else 'snapshot_unavailable')
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if parent >= 0:
+            os.close(parent)
+    return result
+
+
+def _query_image(image: bytes, *, max_rows: int, deadline: float,
+                 cancelled=lambda: False) -> EvidenceSnapshot:
+    """Project a bounded coherent image in memory, never source SQLite handles."""
+    result = EvidenceSnapshot()
+    try:
+        if not 100 <= len(image) <= 128*1024*1024 or image[:16] != b'SQLite format 3\0':
+            result.reasons.add('snapshot_unavailable')
+            return result
         # A closed WAL-mode DB without a WAL is complete. Normalize ONLY the
         # in-memory copy's journal header so deserialize never seeks a sidecar.
         image = image[:18] + b'\x01\x01' + image[20:]
@@ -113,8 +133,15 @@ def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
             db.set_progress_handler(lambda: int(cancelled() or time.monotonic() >= deadline), 1000)
             db.execute('BEGIN')
             names = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if 'metadata' in names and db.execute(
+                    "SELECT 1 FROM metadata WHERE key=? AND value IS NOT NULL AND value<>'' LIMIT 1",
+                    ('identity-directory-migration-v1',)).fetchone():
+                result.reasons.add('snapshot_identity_migration')
+                return result
             remaining_rows = max_rows
             for name, columns in _COLUMNS.items():
+                if cancelled() or time.monotonic() >= deadline:
+                    raise sqlite3.OperationalError('interrupted')
                 if name not in names:
                     result.reasons.add('snapshot_schema_incomplete')
                     continue
@@ -133,6 +160,8 @@ def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
                     # Import here avoids the module-level snapshot/type cycle.
                     from .library_metadata_candidates import identifiers
                     for row in result.tables[name]:
+                        if cancelled() or time.monotonic() >= deadline:
+                            raise sqlite3.OperationalError('interrupted')
                         raw = row.pop('metadata_json', None)
                         try:
                             metadata = json.loads(raw) if type(raw) is str and len(raw) <= 65536 else {}
@@ -141,6 +170,8 @@ def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
                         row['bibliographic_identifiers'] = identifiers(metadata)
                 if name == 'entitlements':
                     for row in result.tables[name]:
+                        if cancelled() or time.monotonic() >= deadline:
+                            raise sqlite3.OperationalError('interrupted')
                         raw = row.pop('metadata_json', None)
                         try:
                             metadata = json.loads(raw) if type(raw) is str and len(raw) <= 65536 else {}
@@ -148,15 +179,33 @@ def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
                             metadata = {}
                         source = metadata.get('source') if isinstance(metadata, dict) else None
                         row['attested_source'] = source if source in ('kobo.personal_manifest', 'numilog.authenticated_library') else None
-    except (OSError, sqlite3.Error, ValueError):
+    except (sqlite3.Error, ValueError):
         result.tables.clear()
         result.reasons.add('snapshot_cancelled' if cancelled() else 'snapshot_time_budget' if time.monotonic() >= deadline else 'snapshot_unavailable')
-    finally:
-        if fd >= 0:
-            os.close(fd)
-        if parent >= 0:
-            os.close(parent)
     return result
+
+
+def read_library_snapshot(path: Path, *, max_rows: int = 100_000,
+                          max_bytes: int = 128*1024*1024, seconds: float = 10,
+                          cancelled=lambda: False) -> EvidenceSnapshot:
+    """Stable main image, or isolated Linux WAL capture, under one deadline."""
+    started = time.monotonic()
+    result = read_quiescent_snapshot(path, max_rows=max_rows, max_bytes=max_bytes,
+                                     seconds=seconds, cancelled=cancelled)
+    deadline = started+seconds
+    if result.reasons != {'snapshot_live_journal'}:
+        return result
+    if cancelled() or time.monotonic() >= deadline:
+        return EvidenceSnapshot(reasons={'snapshot_cancelled' if cancelled() else 'snapshot_time_budget'})
+    from .library_wal_image import read_wal_image
+    try:
+        image, reason = read_wal_image(path, max_bytes=max_bytes,
+                                      seconds=deadline-time.monotonic(), cancelled=cancelled)
+    except OSError:
+        return EvidenceSnapshot(reasons={'snapshot_wal_reader_unavailable'})
+    if reason:
+        return EvidenceSnapshot(reasons={reason})
+    return _query_image(image, max_rows=max_rows, deadline=deadline, cancelled=cancelled)
 
 
 @dataclass(frozen=True, repr=False)
@@ -342,7 +391,7 @@ def main(argv=None):
         previous = signal.signal(signal.SIGINT, lambda *_: cancelled.set())
         try:
             inventory = scan_identity_roots({k: tuple(v) for k, v in roots.items()}, cancelled=cancelled.is_set)
-            snapshot = EvidenceSnapshot(reasons={'snapshot_cancelled'}) if cancelled.is_set() else read_quiescent_snapshot(args.database, cancelled=cancelled.is_set)
+            snapshot = EvidenceSnapshot(reasons={'snapshot_cancelled'}) if cancelled.is_set() else read_library_snapshot(args.database, cancelled=cancelled.is_set)
             snapshot = scope_evidence(snapshot, tuple(roots))
             report = reconcile(inventory, snapshot, cancelled=cancelled.is_set)
             groups = group_evidence(inventory, snapshot, report, tuple(roots))

@@ -5,8 +5,8 @@ primitive, not a plugin capability or repair token. Only redacted() and the
 progress payloads may enter diagnostics. No service startup, network, export,
 mkdir, Storage migration or mutation is performed.
 
-The current snapshot reader refuses live journals. WAL support is a separate
-tranche; an unavailable snapshot remains visible in the aggregate result.
+The snapshot reader supports isolated Linux WAL capture. Unsupported or
+unavailable journals remain visible in the aggregate result.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from .library_evidence_scope import GroupedEvidence, group_evidence, scope_evide
 from .library_inventory import Inventory, InventoryLimits, scan_identity_roots
 from .library_metadata_candidates import MetadataCandidateReport, metadata_candidates
 from .library_reconciliation import (
-    EvidenceSnapshot, ReconciliationReport, read_quiescent_snapshot, reconcile,
+    EvidenceSnapshot, ReconciliationReport, read_library_snapshot, reconcile,
 )
 from .library_stored_paths import StoredPathReport, inspect_stored_paths
 
@@ -60,6 +60,7 @@ def audit_library(
     limits: InventoryLimits | None = None, seconds: float = 180,
     cancelled: Callable[[], bool] = lambda: False,
     progress: Callable[[dict], None] | None = None,
+    _snapshot: EvidenceSnapshot | None = None,
 ) -> LibraryAudit:
     """Run all existing local phases with a shared deadline/cancel signal.
 
@@ -114,8 +115,13 @@ def audit_library(
     emit('snapshot')
     if stopped():
         snapshot = EvidenceSnapshot(reasons=set(reasons))
+    elif _snapshot is not None:
+        # Internal callers may capture before inventory to reject pending
+        # identity migrations BEFORE opening library files. It is evidence of
+        # that instant only and still undergoes identity scoping below.
+        snapshot = _snapshot
     else:
-        snapshot = read_quiescent_snapshot(
+        snapshot = read_library_snapshot(
             database, seconds=min(10, max(0.001, deadline-monotonic())),
             cancelled=stopped,
         )
