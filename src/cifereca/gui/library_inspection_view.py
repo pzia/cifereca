@@ -300,6 +300,19 @@ class LocalInspectionController:
         )
         candidate_note.set_wrap(True)
         candidate_box.append(candidate_note)
+        # Manual exploration must be strictly distinct from metadata_only
+        # candidates: any unlinked file of this identity can be inspected, but
+        # none becomes a suggested right/file match.
+        manual_toggle = Gtk.Button(label='Comparer tous les fichiers non liés')
+        manual_toggle.set_tooltip_text(
+            'Exploration manuelle uniquement : aucune correspondance '
+            'bibliographique ni provenance fournisseur supposée.'
+        )
+        candidate_box.append(manual_toggle)
+        manual_search = Gtk.SearchEntry()
+        manual_search.set_placeholder_text('Filtrer les fichiers non liés…')
+        manual_search.set_visible(False)
+        candidate_box.append(manual_search)
         candidate_nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         candidate_prev, candidate_next = (
             Gtk.Button(label='◀ Candidat'),
@@ -340,6 +353,8 @@ class LocalInspectionController:
         current_total = [0]
         candidate_items = [()]
         candidate_index = [0]
+        manual_mode = [False]
+        manual_index = [0]
 
         def valid():
             if self.session is session and self.alive() and session.valid():
@@ -350,6 +365,48 @@ class LocalInspectionController:
         def show_candidate():
             if not valid():
                 return
+            if manual_mode[0]:
+                # The same private, revocable identity-specific projection as
+                # the main list. Query only case labels, never hidden proofs,
+                # and retrieve a SINGLE file without materializing every file.
+                page = session.page(
+                    state='local_file_without_attested_right',
+                    offset=manual_index[0], limit=1,
+                    query=manual_search.get_text()[:160],
+                )
+                manual_toggle.set_label('Voir les candidats exacts')
+                candidate_title.set_text('Fichiers non liés · comparaison manuelle')
+                candidate_note.set_text(
+                    'Fichiers de cette identité sans droit attesté. '
+                    'Aucun n’est attribué à ce droit ni à son fournisseur.'
+                )
+                candidate_prev.set_label('◀ Fichier')
+                candidate_next.set_label('Fichier ▶')
+                candidate_number.set_text(
+                    f'{manual_index[0]+1 if page.cases else 0} / {page.total}'
+                    ' · exploration non probante'
+                )
+                candidate_detail.set_text(
+                    page.cases[0].label + '\n\n' + page.cases[0].details
+                    if page.cases else
+                    'Aucun fichier non lié visible avec ce filtre. Cela ne '
+                    'prouve pas que le livre soit absent.'
+                )
+                candidate_prev.set_sensitive(manual_index[0] > 0)
+                candidate_next.set_sensitive(
+                    manual_index[0]+len(page.cases) < page.total
+                )
+                return
+            manual_toggle.set_label('Comparer tous les fichiers non liés')
+            candidate_title.set_text(
+                'Fichiers candidats · comparaison bibliographique uniquement'
+            )
+            candidate_note.set_text(
+                'Même identifiant explicite dans une notice : '
+                'aucun lien de droit prouvé.'
+            )
+            candidate_prev.set_label('◀ Candidat')
+            candidate_next.set_label('Candidat ▶')
             files = candidate_items[0]
             if not files:
                 candidate_number.set_text('0 candidat')
@@ -372,9 +429,26 @@ class LocalInspectionController:
         def move_candidate(delta):
             if not valid():
                 return
-            candidate_index[0] = max(
-                0, min(candidate_index[0] + delta, len(candidate_items[0])-1)
-            )
+            if manual_mode[0]:
+                manual_index[0] = max(0, manual_index[0] + delta)
+            else:
+                candidate_index[0] = max(
+                    0, min(candidate_index[0] + delta, len(candidate_items[0])-1)
+                )
+            show_candidate()
+
+        def toggle_manual():
+            if not valid():
+                return
+            manual_mode[0] = not manual_mode[0]
+            manual_index[0] = 0
+            manual_search.set_visible(manual_mode[0])
+            show_candidate()
+
+        def filter_manual():
+            if not valid() or not manual_mode[0]:
+                return
+            manual_index[0] = 0
             show_candidate()
 
         def select(_listing, row):
@@ -387,6 +461,11 @@ class LocalInspectionController:
                 if case.key.startswith('right:'):
                     candidate_items[0] = session.candidate_files(case.key)
                     candidate_index[0] = 0
+                    manual_mode[0] = False
+                    manual_index[0] = 0
+                    manual_search.set_visible(False)
+                    if manual_search.get_text():
+                        manual_search.set_text('')
                     candidate_box.set_visible(True)
                     show_candidate()
                 else:
@@ -428,6 +507,8 @@ class LocalInspectionController:
         listing.connect('row-selected', select)
         candidate_prev.connect('clicked', lambda *_: move_candidate(-1))
         candidate_next.connect('clicked', lambda *_: move_candidate(1))
+        manual_toggle.connect('clicked', lambda *_: toggle_manual())
+        manual_search.connect('search-changed', lambda *_: filter_manual())
         provider.connect('notify::selected', lambda *_: render(reset=True))
         state.connect('notify::selected', lambda *_: render(reset=True))
         search.connect('search-changed', lambda *_: render(reset=True))
