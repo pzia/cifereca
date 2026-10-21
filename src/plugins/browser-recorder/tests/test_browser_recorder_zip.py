@@ -294,8 +294,8 @@ def test_zip_technical_headers_never_publish_unreviewed_string_values():
     assert _safe_headers(headers) == {
         "content-type": "application/json",
         "accept": "application/json, */*",
-        "retry-after": "42",
-        "x-ratelimit-remaining": "7",
+        "retry-after": "[NUMBER]",
+        "x-ratelimit-remaining": "[NUMBER]",
     }
     assert _safe_headers({
         "content-type": "application/vnd.fictional+json",
@@ -305,7 +305,7 @@ def test_zip_technical_headers_never_publish_unreviewed_string_values():
     }) == {
         "content-type": "application/*+json",
         "accept": "application/xml, text/html",
-        "x-ratelimit-limit": "1000",
+        "x-ratelimit-limit": "[NUMBER]",
     }
     assert _safe_headers({"content-type": "text/html; charset=utf-8"}) == {
         "content-type": "text/html",
@@ -336,8 +336,8 @@ def test_actual_zip_member_excludes_private_technical_header_values():
         doc = json.loads(member["text"])
         assert doc["response_headers"] == {
             "content-type": "application/json",
-            "retry-after": "123",
-            "x-ratelimit-remaining": "3",
+            "retry-after": "[NUMBER]",
+            "x-ratelimit-remaining": "[NUMBER]",
         }
         combined = json.dumps(summary)
         assert "FICTIONAL_PRIVATE_MIME" not in combined
@@ -513,6 +513,38 @@ def test_short_pin_never_reaches_any_zip_member_even_with_approved_book_id():
         assert shaped["security_code"] == "[SECRET]"
         assert shaped["BookId"] == 214
         assert shaped["count"] == 2
+    finally:
+        review.destroy()
+        trace.destroy()
+
+
+
+@pytest.mark.parametrize(("header", "value"), [
+    ("retry-after", "007"),
+    ("retry-after", "123456789"),
+    ("x-ratelimit-limit", "42"),
+    ("x-ratelimit-remaining", "1234"),
+])
+def test_zip_numeric_header_values_are_structural_only(header, value):
+    """A numeric HTTP header can contain a private code regardless of length."""
+    from browser_recorder_zip import _safe_headers
+
+    assert _safe_headers({header: value}) == {header: "[NUMBER]"}
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/api/books", status=429,
+        response_headers={"content-type": "application/json", header: value},
+        response_body='{"books":[]}',
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key, "keep")
+        plan = prepare_reviewed_zip(review)
+        descriptor = json.loads(next(row["text"] for row in plan.preview()["members"]
+                                     if row["name"] == "exchanges/0001.json"))
+        assert descriptor["response_headers"][header] == "[NUMBER]"
+        assert value not in descriptor["response_headers"][header]
     finally:
         review.destroy()
         trace.destroy()
