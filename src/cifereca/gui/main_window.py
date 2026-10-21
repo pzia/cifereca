@@ -168,6 +168,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._identity_context_generation = 0
         # Session memory only: never serialize private reconciliation reports.
         self._maintenance_reconciliation_report = None
+        self._maintenance_reconciliation_run = None
         self._account_context_generation = 0
         self._cached_book_request_generation = 0
         self._cached_book_context = None
@@ -371,6 +372,10 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _on_close_request(self, *_args) -> bool:
         self._maintenance_reconciliation_report = None
+        live = getattr(self, "_maintenance_reconciliation_run", None)
+        self._maintenance_reconciliation_run = None
+        if type(live) is dict and live.get("control") is not None:
+            live["control"].cancel()
         self._dispose_maintenance_lines()
         return close_window_resources(self, source_remove=GLib.source_remove)
 
@@ -661,10 +666,16 @@ class MainWindow(Adw.ApplicationWindow):
     def _dispose_maintenance_lines(self) -> None:
         # Navigation, identity changes and teardown invalidate cache callbacks
         # even while their row is still attached to the window's widget tree.
+        retained = getattr(self, "_maintenance_reconciliation_run", None)
         for old_feedback, old_state in getattr(self, "_maintenance_line_rows", ()):
             old_feedback.dispose()
-            if old_state["control"] is not None:
-                old_state["control"].cancel()
+            control = old_state["control"]
+            # Only a running, read-only audit outlives its presentation row.
+            if control is not None and not (
+                type(retained) is dict and retained.get("control") is control
+                and not control.cancelled()
+            ):
+                control.cancel()
         self._maintenance_line_rows = []
         for readiness in getattr(self, "_maintenance_readiness_states", ()):
             readiness["active"] = False
@@ -688,12 +699,28 @@ class MainWindow(Adw.ApplicationWindow):
             config = getattr(service, "config", None)
             storage = getattr(service, "storage", None)
             identity = getattr(service, "current_identity", None)
+            identity_id = getattr(identity, "identity_id", None)
+            roots_stamp = None
+            if config is not None and identity_id is not None:
+                # The config object can be modified in place without an
+                # identity-generation change. Compare only a fingerprint of
+                # Core-normalized root capabilities; keep paths private.
+                try:
+                    from hashlib import sha256
+                    from cifereca.core.library_audit_roots import configured_identity_roots
+                    selected = configured_identity_roots(config, identity_id)
+                    normalized = selected[identity_id]
+                    roots_stamp = sha256(
+                        "\0".join(str(path) for path in normalized).encode("utf-8")
+                    ).hexdigest()[:24]
+                except Exception:
+                    roots_stamp = "scope_unavailable"
             return (
                 id(service),
                 getattr(identity, "identity_id", None),
                 getattr(self, "_identity_context_generation", None),
                 getattr(service, "_account_context_epoch", None),
-                id(config), id(getattr(config, "data", None)),
+                id(config), id(getattr(config, "data", None)), roots_stamp,
                 id(storage), getattr(storage, "path", None),
             )
 
@@ -809,6 +836,29 @@ class MainWindow(Adw.ApplicationWindow):
                 else:
                     # No fallback to a report from another identity/context.
                     self._maintenance_reconciliation_report = None
+                live = getattr(self, "_maintenance_reconciliation_run", None)
+                if type(live) is dict:
+                    old_control = live.get("control")
+                    if (live.get("scope") != current_scope or old_control is None
+                            or old_control.cancelled()):
+                        if old_control is not None:
+                            old_control.cancel()
+                        self._maintenance_reconciliation_run = None
+                    elif line_feedback is not None:
+                        line_scope.update(
+                            active=True, identity=current_scope[1],
+                            generation=current_scope[2],
+                        )
+                        live_ticket = line_feedback.begin()
+                        line_feedback.confirmation(live_ticket)
+                        line_feedback.running(live_ticket)
+                        live["progress_target"] = (line_feedback, live_ticket)
+                        live["view"] = result_view
+                        live["controls"] = (active_cancel, cancel, run)
+                        active_cancel.update(control=old_control, ticket=live_ticket)
+                        cancel.set_visible(True)
+                        cancel.set_sensitive(True)
+                        run.set_sensitive(False)
 
             def update_readiness(*, button=run, action=row, info=info,
                                  scope=readiness, local_gate=can_check_readiness):
@@ -917,6 +967,9 @@ class MainWindow(Adw.ApplicationWindow):
             ):
                 if self._closed or _button.get_root() is None:
                     return
+                if (getattr(meta, "id", None) == "library.reconciliation.audit"
+                        and getattr(self, "_maintenance_reconciliation_run", None) is not None):
+                    return  # No overlapping read-only audit attempts.
                 if local_gate and (not readiness_scope["active"] or
                                    readiness_scope["status"] in (
                                        "initializing", "temporarily_busy", "blocked"
@@ -1115,15 +1168,35 @@ class MainWindow(Adw.ApplicationWindow):
                         if feedback is not None:
                             feedback.running(ticket)
 
+                        reconciliation = getattr(meta, "id", None) == "library.reconciliation.audit"
+                        run_state = ({
+                            "scope": reconciliation_scope(),
+                            "progress_target": (feedback, ticket),
+                            "view": result_view,
+                            "controls": (cancellation_state, cancel_button, _button),
+                        } if reconciliation else None)
+
+                        def report_progress(current, total, message):
+                            target = (run_state.get("progress_target")
+                                      if run_state is not None else (feedback, ticket))
+                            if target is not None and target[0] is not None:
+                                target[0].report(
+                                    target[1], current=current, total=total, message=message,
+                                )
+
                         worker_control = MaintenanceCancelControl(
+                            # Core's broker already checks the private
+                            # full scope cooperatively inside the worker. Do
+                            # not rehash all configured roots for every EPUB
+                            # chunk on that worker thread; GTK revalidates at
+                            # refresh and terminal publication.
                             owner_closed=lambda: self._closed,
-                            on_progress=(
-                                (lambda current, total, message:
-                                 feedback.report(ticket, current=current, total=total, message=message))
-                                if feedback is not None else None
-                            ),
+                            on_progress=report_progress if feedback is not None else None,
                         )
                         cancellation_state["control"] = worker_control
+                        if run_state is not None:
+                            run_state["control"] = worker_control
+                            self._maintenance_reconciliation_run = run_state
                         can_cancel = getattr(meta, "cancellable", False) is True
                         cancel_button.set_visible(can_cancel)
                         cancel_button.set_sensitive(can_cancel)
@@ -1143,8 +1216,55 @@ class MainWindow(Adw.ApplicationWindow):
                             return feedback is None or feedback.valid(ticket)
 
                         def completed(result) -> None:
-                            # Cancellation may arrive after the worker returns
-                            # but before its queued GTK completion callback.
+                            if run_state is not None:
+                                # One terminal receipt, owned by the session
+                                # rather than the possibly detached GTK row.
+                                if self._maintenance_reconciliation_run is not run_state:
+                                    return
+                                self._maintenance_reconciliation_run = None
+                                # Reset current buttons after an explicit
+                                # cancel too; scope changes never reenable
+                                # controls for an invalidated identity.
+                                if reconciliation_scope() != run_state["scope"]:
+                                    return
+                                controls = run_state.get("controls")
+                                if controls is not None:
+                                    controls[0]["control"] = None
+                                    if not self._closed and controls[2].get_root() is not None:
+                                        controls[1].set_visible(False)
+                                        controls[2].set_sensitive(True)
+                                if worker_control.cancelled():
+                                    return
+                                target = run_state.get("progress_target")
+                                if target is not None and target[0] is not None:
+                                    target[0].finish(
+                                        target[1], "success" if result.ok else "error",
+                                    )
+                                from cifereca.gui.maintenance_result_view import result_text
+                                safe_text = result_text(result)
+                                state = (
+                                    "incomplète" if safe_text.startswith("Analyse incomplète.")
+                                    else "terminée" if getattr(result, "ok", None) is True
+                                    else "indisponible"
+                                )
+                                self._maintenance_reconciliation_report = {
+                                    "scope": run_state["scope"], "text": safe_text,
+                                    "state": state,
+                                }
+                                view = run_state.get("view")
+                                if view is not None and view.alive():
+                                    view.publish(result)
+                                    # A refresh must not force an unexpected
+                                    # dialog over a newly navigated page.
+                                    if view is result_view:
+                                        view.open(None)
+                                self._activity_result(
+                                    result.summary or ("Analyse terminée" if result.ok else "Analyse incomplète"),
+                                    success=bool(result.ok),
+                                    persistent=not bool(result.ok),
+                                )
+                                return
+                            # Other Maintenance tools remain widget-scoped.
                             if feedback is not None and worker_control.cancelled():
                                 failed(MaintenanceCancelledError("Opération de maintenance annulée"))
                                 return
@@ -1153,20 +1273,6 @@ class MainWindow(Adw.ApplicationWindow):
                             if feedback is not None:
                                 feedback.finish(ticket, "success" if result.ok else "error")
                             result_view.publish(result)
-                            if (getattr(meta, "id", None) == "library.reconciliation.audit"
-                                    and result_view.text):
-                                self._maintenance_reconciliation_report = {
-                                    "scope": reconciliation_scope(),
-                                    "text": result_view.text,
-                                    "state": result_view.state,
-                                }
-                            # For reconciliation the user has already completed
-                            # the explicit plan + run flow: surface its outcome
-                            # immediately, including ok=False (WAL timeout,
-                            # unavailable snapshot). The button remains available
-                            # for reopening. Other maintenance tools are unchanged.
-                            if getattr(meta, "id", None) == "library.reconciliation.audit":
-                                result_view.open(None)
                             self._activity_result(
                                 result.summary or ("Outil terminé" if result.ok else "Outil terminé avec erreurs"),
                                 success=bool(result.ok),
@@ -1174,6 +1280,36 @@ class MainWindow(Adw.ApplicationWindow):
                             )
 
                         def failed(exc) -> None:
+                            if run_state is not None:
+                                if self._maintenance_reconciliation_run is not run_state:
+                                    return
+                                self._maintenance_reconciliation_run = None
+                                if reconciliation_scope() != run_state["scope"]:
+                                    return
+                                controls = run_state.get("controls")
+                                if controls is not None:
+                                    controls[0]["control"] = None
+                                    if not self._closed and controls[2].get_root() is not None:
+                                        controls[1].set_visible(False)
+                                        controls[2].set_sensitive(True)
+                                if worker_control.cancelled():
+                                    return
+                                target = run_state.get("progress_target")
+                                if target is not None and target[0] is not None:
+                                    target[0].finish(
+                                        target[1], "cancelled" if isinstance(
+                                            exc, MaintenanceCancelledError
+                                        ) else "error",
+                                    )
+                                # Keep the previous valid result, never expose
+                                # an arbitrary plugin/runtime exception.
+                                self.show_error(
+                                    "Analyse interrompue." if isinstance(
+                                        exc, MaintenanceCancelledError
+                                    ) else execution_error,
+                                    meta.title,
+                                )
+                                return
                             if not finish_maintenance():
                                 return
                             if feedback is not None:
