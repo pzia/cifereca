@@ -97,7 +97,7 @@ def main():
     state = {"view": None, "plugin": None, "window": None,
              "device": None, "searches": [], "toasts": [],
              "old_action": None, "exact_navigations": [],
-             "exact_selected": [], "exact_button": None}
+             "exact_selected": [], "exact_button": None, "exact_clicked": 0}
 
     def save():
         report["duration_seconds"] = round(monotonic() - start, 2)
@@ -388,16 +388,30 @@ def main():
         assert not state["exact_navigations"] and not state["exact_selected"]
         assert not state["searches"][1:], "Rendering must not search"
         state["exact_button"] = button
+        button.connect("clicked", lambda _button: state.__setitem__(
+            "exact_clicked", state["exact_clicked"] + 1
+        ))
         capture("05b-loaded-exact-route")
+        report["p1_1354_phase"] = "exact_focus"
+        # This action lives below a long detail's scrolled content.
+        # Separate GTK focus/scroll from XTEST Return: activation in the
+        # same GTK main-loop turn is not guaranteed to reach the button.
+        assert button.grab_focus() is not False
+        later(170, lambda: exact_press(button))
+
+    def exact_press(button):
         report["p1_1354_phase"] = "exact_key"
-        # Let GTK commit focus on the newly rendered action before XTEST
-        # sends Return. A same-turn key can be delivered to the prior widget.
-        later(120, lambda: activate_key(button))
-        later(420, after_exact_loaded_bridge)
+        assert button.get_mapped() and button.get_sensitive()
+        assert button.has_focus(), "Exact action did not receive GTK focus"
+        state["device"].key("Return", True)
+        state["device"].key("Return", False)
+        later(300, after_exact_loaded_bridge)
 
     def after_exact_loaded_bridge():
         report["p1_1354_phase"] = "exact_verdict"
         view = state["view"]
+        report["p1_1354_phase"] = "exact_key_dispatch"
+        assert state["exact_clicked"] == 1, "Exact action did not receive keyboard activation"
         report["p1_1354_phase"] = "exact_navigation"
         assert state["exact_navigations"] == ["search"]
         report["p1_1354_phase"] = "exact_selection"
