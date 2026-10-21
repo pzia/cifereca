@@ -5,7 +5,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from cifereca.core.version_inventory import version_inventory
+from cifereca.plugin_api.version_inventory import version_inventory
 
 
 def _row(plugin_id, name, version, *, enabled=True, state="ready",
@@ -148,7 +148,7 @@ def test_pages_share_exact_projector_and_copy_only_displayed_snapshot():
     fallback = (root / "src/cifereca/builtin_ui/system_page.py").read_text()
     external = (root / "src/plugins/diagnostics-page/cifereca_diagnostics_page.py").read_text()
     for source in (fallback, external):
-        assert "from cifereca.core.version_inventory import version_inventory" in source
+        assert "from cifereca.plugin_api.version_inventory import version_inventory" in source
         assert "Copier les versions" in source
         assert "versions_snapshot[0]" in source
         assert "get_clipboard().set_content(provider)" in source
