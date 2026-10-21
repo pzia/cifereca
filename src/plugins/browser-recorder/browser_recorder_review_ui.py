@@ -18,6 +18,34 @@ from browser_recorder_zip import prepare_reviewed_zip
 
 _REVIEW_PAGE_SIZE = 24  # Bound GTK widgets even for 256 distinct private IDs.
 
+# User-requested capture failures are rendered with fixed, actionable text.
+# RecorderError.args can contain arbitrary provider/URL text: never format it
+# into GTK, Diagnostics, logs or ZIP. These are labels, not diagnostic data.
+_CAPTURE_FAILURE_LABELS = {
+    "playwright_unavailable": (
+        "Playwright Python indisponible : ouvrez Plugins → Browser Recorder "
+        "→ Installer les dépendances Python…, puis Installer Chromium…."
+    ),
+    "capture_interrupted": (
+        "Navigateur fermé avant l'arrêt de la capture. Relancez un parcours "
+        "autorisé depuis Browser Recorder."
+    ),
+    "capture_limit": (
+        "Limite de capture atteinte : réduisez le parcours ou arrêtez la capture."
+    ),
+}
+_CAPTURE_FAILURE_DEFAULT = (
+    "Capture privée indisponible. Ouvrez Plugins → Browser Recorder → "
+    "Vérifier Chromium… ; consultez ensuite Diagnostics pour les codes "
+    "de prérequis et d'installation."
+)
+
+
+def _capture_failure_message(code: object) -> str:
+    # type() rather than str() avoids side effects/repr leaks from exceptions.
+    return (_CAPTURE_FAILURE_LABELS.get(code, _CAPTURE_FAILURE_DEFAULT)
+            if type(code) is str else _CAPTURE_FAILURE_DEFAULT)
+
 
 def _metadata_only_origins(raw: str, primary: str) -> tuple[str, ...]:
     """Validate opt-in third-party origins; never echo private input in errors."""
@@ -303,7 +331,7 @@ class PrivateReviewPanel:
         except Exception:
             self._stop = None
             self._pause_control = None
-            self.status.set_label("Impossible de démarrer le navigateur privé.")
+            self.status.set_label(_capture_failure_message(None))
             self._refresh()
             return
         self._handle = handle
@@ -312,10 +340,13 @@ class PrivateReviewPanel:
         def finished(done):
             try:
                 result, message = done.result(), None
-            except RecorderError:
-                result, message = None, "Capture interrompue ou indisponible."
+            except RecorderError as exc:
+                # Only a literal known RecorderError code may affect UI text;
+                # never call str(exc) or inspect Playwright's raw exception.
+                code = exc.args[0] if len(exc.args) == 1 else None
+                result, message = None, _capture_failure_message(code)
             except Exception:
-                result, message = None, "Navigateur indisponible."
+                result, message = None, _capture_failure_message(None)
 
             def deliver():
                 if self._closed or self._generation != generation:
