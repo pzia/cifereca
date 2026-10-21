@@ -1204,20 +1204,24 @@ class MainWindow(Adw.ApplicationWindow):
                                 if self._maintenance_reconciliation_run is not run_state:
                                     return
                                 self._maintenance_reconciliation_run = None
-                                if (worker_control.cancelled()
-                                        or reconciliation_scope() != run_state["scope"]):
+                                # Reset current buttons after an explicit
+                                # cancel too; scope changes never reenable
+                                # controls for an invalidated identity.
+                                if reconciliation_scope() != run_state["scope"]:
                                     return
-                                target = run_state.get("progress_target")
-                                if target is not None and target[0] is not None:
-                                    target[0].finish(
-                                        target[1], "success" if result.ok else "error",
-                                    )
                                 controls = run_state.get("controls")
                                 if controls is not None:
                                     controls[0]["control"] = None
                                     if not self._closed and controls[2].get_root() is not None:
                                         controls[1].set_visible(False)
                                         controls[2].set_sensitive(True)
+                                if worker_control.cancelled():
+                                    return
+                                target = run_state.get("progress_target")
+                                if target is not None and target[0] is not None:
+                                    target[0].finish(
+                                        target[1], "success" if result.ok else "error",
+                                    )
                                 from cifereca.gui.maintenance_result_view import result_text
                                 safe_text = result_text(result)
                                 state = (
@@ -1262,8 +1266,12 @@ class MainWindow(Adw.ApplicationWindow):
                                 if self._maintenance_reconciliation_run is not run_state:
                                     return
                                 self._maintenance_reconciliation_run = None
-                                if (worker_control.cancelled()
-                                        or reconciliation_scope() != run_state["scope"]):
+                                # Reset current buttons after an explicit
+                                # cancel too; scope changes never reenable
+                                # controls for an invalidated identity.
+                                if reconciliation_scope() != run_state["scope"]:
+                                    return
+                                if worker_control.cancelled():
                                     return
                                 target = run_state.get("progress_target")
                                 if target is not None and target[0] is not None:
