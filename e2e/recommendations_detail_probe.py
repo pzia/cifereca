@@ -390,14 +390,19 @@ def main():
         state["exact_button"] = button
         capture("05b-loaded-exact-route")
         report["p1_1354_phase"] = "exact_key"
-        activate_key(button)
-        later(180, after_exact_loaded_bridge)
+        # Let GTK commit focus on the newly rendered action before XTEST
+        # sends Return. A same-turn key can be delivered to the prior widget.
+        later(120, lambda: activate_key(button))
+        later(420, after_exact_loaded_bridge)
 
     def after_exact_loaded_bridge():
         report["p1_1354_phase"] = "exact_verdict"
         view = state["view"]
+        report["p1_1354_phase"] = "exact_navigation"
         assert state["exact_navigations"] == ["search"]
+        report["p1_1354_phase"] = "exact_selection"
         assert state["exact_selected"] == ["fixture:core-loaded-1"]
+        report["p1_1354_phase"] = "exact_no_search"
         assert len(state["searches"]) == 1  # Only the earlier explicit ISBN
         assert view.selected_identity_id() == "alice"
         assert view._master._page.store.get_n_items() == 1
