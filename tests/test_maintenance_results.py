@@ -239,3 +239,17 @@ def test_other_maintenance_results_still_clear_on_retry():
     assert view.text
     m.preview.click()
     assert not view.text and not view.button.visible
+
+
+def test_reconciliation_audit_and_inspection_have_distinct_action_rows():
+    m = mounted('library.reconciliation.audit')
+    rows = m.host._tools_box.children[0].children
+    assert len(rows) == 2
+    audit_row, inspection_row = rows
+    assert audit_row is not inspection_row
+    assert inspection_row.title == 'Inspection détaillée des cas'
+    assert m.host._maintenance_result_views[0].inspector._activity_row is inspection_row
+    assert m.feedback is m.host._maintenance_line_rows[0][0]
+    # Other tools still use exactly one ActionRow.
+    other = mounted('covers.audit')
+    assert len(other.host._tools_box.children[0].children) == 1
