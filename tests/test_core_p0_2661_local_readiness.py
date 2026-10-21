@@ -1,5 +1,6 @@
 """P0 #2661 — local readiness is not first provider sync, and GTK stays async."""
 from pathlib import Path
+import sqlite3
 from types import SimpleNamespace as NS
 
 from cifereca.core.library_reconciliation_readiness import (
@@ -40,21 +41,33 @@ def test_local_initialization_and_active_identity_are_real_blockers(scoped, tmp_
     assert local_reconciliation_readiness(service, None).reason == "identity_missing"
 
 
-def test_migration_blocks_but_unknown_reader_does_not_strand_button(scoped, tmp_path):
-    service, _, _ = scoped
-    service.storage.metadata_get = lambda key: "PRIVATE_JOURNAL" if (
-        key == "identity-directory-migration-v1"
-    ) else None
+def test_migration_blocks_but_live_wal_unknown_does_not_strand_button(scoped, tmp_path):
+    service, database, _ = scoped
+    with sqlite3.connect(database) as db:
+        db.execute("CREATE TABLE IF NOT EXISTS metadata "
+                   "(key TEXT PRIMARY KEY, value TEXT)")
+        db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (
+            "identity-directory-migration-v1", "PRIVATE_JOURNAL",
+        ))
+    before = filesystem(tmp_path)
     report = local_reconciliation_readiness(service, "alice")
     assert report.status == "temporarily_busy"
     assert report.reason == "migration_pending" and not report.enabled
     assert "PRIVATE" not in repr(report)
-    def unavailable(_key):
-        raise RuntimeError("/home/PRIVATE/sqlite path")
-    service.storage.metadata_get = unavailable
-    report = local_reconciliation_readiness(service, "alice")
-    assert report.status == "indeterminate" and report.enabled
-    assert report.reason == "migration_unchecked"
+    assert filesystem(tmp_path) == before
+    with sqlite3.connect(database) as db:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (
+            "OTHER", "SYNTHETIC",
+        ))
+        db.commit()
+        # The WAL may contain a different migration state: no optimistic
+        # conclusion from the base image, and no connection side-effects.
+        before_wal = filesystem(tmp_path)
+        report = local_reconciliation_readiness(service, "alice")
+        assert report.status == "indeterminate" and report.enabled
+        assert report.reason == "migration_unchecked"
+        assert filesystem(tmp_path) == before_wal
 
 
 def test_invalid_or_symlinked_sqlite_cannot_be_presented_as_ready(scoped, tmp_path):
