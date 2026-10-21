@@ -659,7 +659,9 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 "Installer les dépendances Python…", "system-software-install-symbolic",
                 tooltip="Installation Core dans le venv Cifereca, avec confirmation ; ne télécharge pas Chromium",
             )
-            repair.set_sensitive(not self._python_deps_install_running)
+            repair.set_sensitive(
+                not self._python_deps_install_running and not self._chromium_busy
+            )
             repair.connect("clicked", lambda _b: self._confirm_python_dependencies())
             box.append(repair)
 
@@ -675,9 +677,12 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             check.set_sensitive(not self._chromium_busy)
             check.connect("clicked", lambda _b: self._check_chromium())
             actions.append(check)
-            py_ready = all(
-                row.ok for row in getattr(status, "requirements", ())
+            python_rows = [
+                row for row in getattr(status, "requirements", ())
                 if row.requirement.type == "python-package"
+            ]
+            py_ready = status.enabled and bool(python_rows) and all(
+                row.ok for row in python_rows
             )
             install_browser = action_button(
                 "Installer/réparer Chromium…", "system-software-install-symbolic",
@@ -1015,7 +1020,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         dialog.present()
 
     def _install_python_dependencies(self) -> None:
-        if self._python_deps_install_running:
+        if self._python_deps_install_running or self._chromium_busy:
             return
         self._python_deps_install_running = True
         self._toast("Installation des dépendances Python en cours…", 5)
