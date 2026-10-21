@@ -405,3 +405,28 @@ def test_other_maintenance_refresh_still_cancels_pending_work():
     control = m.host._maintenance_line_rows[0][1]['control']
     m.refresh()
     assert control.cancelled()
+
+
+def test_in_place_library_root_change_revokes_unfinished_reconciliation(tmp_path):
+    m = mounted('library.reconciliation.audit')
+
+    class MutableConfiguration:
+        def __init__(self):
+            self.data = {'library.directory': str(tmp_path / 'one')}
+        def get(self, key, default=None):
+            return self.data.get(key, default)
+        def identities(self):
+            return [{'id': 'alice', 'directory_name': 'alice'}]
+
+    config = MutableConfiguration()
+    m.host.service.config = config
+    pending = execute(m)
+    control = m.host._maintenance_line_rows[0][1]['control']
+    initial_data_id = id(config.data)
+    config.data['library.directory'] = str(tmp_path / 'two')
+    assert id(config.data) == initial_data_id
+    m.refresh()
+    assert control.cancelled()
+    pending[2](MaintenanceResult(True, summary='PRIVATE_STALE_ROOT'))
+    assert m.host._maintenance_reconciliation_report is None
+    assert m.host._maintenance_result_views[0].text == ''
