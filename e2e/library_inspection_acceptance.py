@@ -67,13 +67,32 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         device.key(key,True);device.key(key,False)
 
     def choose(dropdown,index,callback):
-        device.click_widget(dropdown)
+        # A mapped window does not prove that the native popup owns input.
+        # Await GTK state instead of an estimated animation duration.
+        def popup_open():
+            return any(isinstance(w,Gtk.Popover) and w.get_visible() and w.get_mapped()
+                       for w in walk(dropdown))
+
+        def allocated():
+            if not dropdown.get_mapped() or not dropdown.get_sensitive() or dropdown.get_width() <= 0:
+                return False
+            try:
+                x,y=device.widget_point(dropdown)
+                return x>=0 and y>=0
+            except RuntimeError:
+                return False
+
+        def open_popup():
+            device.click_widget(dropdown)
+            until(popup_open,keys)
+
         def keys():
             press('Home')
             for _ in range(index):press('Down')
             press('Return')
-            until(lambda:dropdown.get_selected()==index,callback)
-        GLib.timeout_add(120,lambda:(keys(),False)[1])
+            until(lambda:dropdown.get_selected()==index and not popup_open(),callback)
+
+        until(allocated,open_popup)
 
     def result_ready():
         result_view.publish(MaintenanceResult(True,summary='Lecture seule ; détails privés accessibles localement.'))
