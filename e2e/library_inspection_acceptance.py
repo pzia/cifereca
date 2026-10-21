@@ -21,6 +21,7 @@ from cifereca.plugin_api import MaintenanceResult
 
 
 def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done):
+    report['checks']['inspection_setup_entered']=True
     tmp = tempfile.TemporaryDirectory()
     root = Path(tmp.name)
     library = root/'library'
@@ -51,6 +52,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
     # A real GTK host with the synthetic Core scope lets the production result
     # action and controller execute unchanged; plugin discovery is not stubbed
     # into a claimed full entry E2E.
+    report['checks']['inspection_fixture_created']=True
     host=Adw.Window(transient_for=parent,modal=True,title='Inspection locale synthétique')
     host.set_default_size(920,620)
     host.service=service
@@ -98,14 +100,17 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(allocated,open_popup)
 
     def result_ready():
+        report['checks']['inspection_host_mapped']=True
         result_view.publish(MaintenanceResult(True,summary='Lecture seule ; détails privés accessibles localement.'))
         until(lambda:result_view.button.get_mapped(),open_result)
 
     def open_result():
+        report['checks']['inspection_result_button_ready']=True
         device.click_widget(result_view.button)
         until(lambda:result_view.dialog is not None and result_view.dialog.get_mapped(),inspect_action)
 
     def inspect_action():
+        report['checks']['inspection_result_dialog_mapped']=True
         response=next(w for w in walk(result_view.dialog) if isinstance(w,Gtk.Button) and 'Examiner les cas' in str(w.get_label()))
         def allocated():
             if not response.get_mapped():return False
@@ -115,6 +120,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             except RuntimeError:
                 return False
         def click():
+            report['checks']['inspection_click_dispatched']=True
             device.click_widget(response)
             until(lambda:controller.session is not None and controller.dialog is not None and controller.dialog.get_mapped(),initial)
         until(allocated,click)
