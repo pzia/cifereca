@@ -1,7 +1,7 @@
 """P0 #2657: unlinked-file browsing must remain independent from ISBN leads.
 
-The interface uses the existing revocable LocalInspection.page() API with
-limit=1, never a new provider/ownership matcher or unscoped disk traversal.
+The interface uses a revocable, file-only local projection with limit=1;
+this is never a new provider/ownership matcher or unscoped disk traversal.
 """
 from __future__ import annotations
 
@@ -41,8 +41,8 @@ def test_manual_side_by_side_remains_possible_without_exact_isbn(
     assert rights.total == 3
     assert all(session.candidate_files(case.key) == () for case in rights.cases)
 
-    # Manual exploration is a plain state-scoped local list; no pairing and no
-    # provider label are introduced even though the active right is Numilog.
+    # Manual exploration includes both unlinked and unhashed file states;
+    # neither pairing nor provider ownership is introduced for Numilog.
     assert session.page(state='local_file_without_attested_right').total == 2
     first = session.unconfirmed_files(limit=1)
     assert first.total == 3 and len(first.cases) == 1
