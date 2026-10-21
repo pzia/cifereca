@@ -16,6 +16,9 @@ from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
 
 
+_REVIEW_PAGE_SIZE = 24  # Bound GTK widgets even for 256 distinct private IDs.
+
+
 def _metadata_only_origins(raw: str, primary: str) -> tuple[str, ...]:
     """Validate opt-in third-party origins; never echo private input in errors."""
     if type(raw) is not str or len(raw) > 512:
@@ -51,6 +54,7 @@ class PrivateReviewPanel:
         self._pause_control = None
         self._trace = None
         self._review = None
+        self._candidate_page = 0
         self._closed = False
         self._generation = 0
 
@@ -103,6 +107,18 @@ class PrivateReviewPanel:
         )
         scroll.set_child(self.candidates_box)
         box.append(scroll)
+        pagination = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.candidate_previous = Gtk.Button(label="Identifiants précédents")
+        self.candidate_next = Gtk.Button(label="Identifiants suivants")
+        self.candidate_page_status = Gtk.Label(
+            label="Aucun identifiant à examiner.", xalign=0, wrap=True,
+        )
+        pagination.append(self.candidate_previous)
+        pagination.append(self.candidate_page_status)
+        pagination.append(self.candidate_next)
+        box.append(pagination)
+        self.candidate_previous.connect("clicked", lambda *_: self.change_candidate_page(-1))
+        self.candidate_next.connect("clicked", lambda *_: self.change_candidate_page(1))
 
         box.append(Gtk.Label(
             label="L'aperçu est local et peut contenir des identifiants "
@@ -190,6 +206,14 @@ class PrivateReviewPanel:
         self.clear.set_sensitive(
             not self._closed and not busy and self._trace is not None
         )
+        candidate_count = len(self._review.candidates()) if self._review is not None else 0
+        self.candidate_previous.set_sensitive(
+            not self._closed and not busy and self._candidate_page > 0
+        )
+        self.candidate_next.set_sensitive(
+            not self._closed and not busy
+            and (self._candidate_page + 1) * _REVIEW_PAGE_SIZE < candidate_count
+        )
         ready = not self._closed and not busy and self._review is not None
         self.plan_button.set_sensitive(ready and not self._review.pending()
                                        if ready else False)
@@ -222,6 +246,7 @@ class PrivateReviewPanel:
         self._refresh()
 
     def _discard_private(self):
+        self._candidate_page = 0
         self._invalidate_bundle()
         self._text("")
         self._clear_candidates()
@@ -336,22 +361,44 @@ class PrivateReviewPanel:
             self.status.set_label("Arrêt demandé ; préparation de la revue…")
             self._refresh()
 
-    def _show_candidates(self):
+    def change_candidate_page(self, offset: int):
+        """Navigate bounded local GTK rows; review decisions stay in RAM."""
+        if self._closed or self._review is None or self.is_recording():
+            return
+        total = len(self._review.candidates())
+        last = max(0, (total - 1) // _REVIEW_PAGE_SIZE)
+        target = min(last, max(0, self._candidate_page + offset))
+        if target != self._candidate_page:
+            self._candidate_page = target
+            self._show_candidates(update_status=False)
+
+    def _show_candidates(self, *, update_status=True):
         self._clear_candidates()
         self._text("")
         rows = self._review.local_rows()
-        self.status.set_label(
-            f"{len(self._trace.exchanges)} échanges en mémoire ; "
-            f"{len(rows)} identifiants à décider individuellement. "
-            "Aucun export possible."
+        total = len(rows)
+        self._candidate_page = min(
+            self._candidate_page, max(0, (total - 1) // _REVIEW_PAGE_SIZE),
         )
+        first = self._candidate_page * _REVIEW_PAGE_SIZE
+        last = min(total, first + _REVIEW_PAGE_SIZE)
+        self.candidate_page_status.set_label(
+            f"Identifiants {first + 1}–{last} sur {total}"
+            if total else "Aucun identifiant à examiner."
+        )
+        if update_status:
+            self.status.set_label(
+                f"{len(self._trace.exchanges)} échanges en mémoire ; "
+                f"{total} identifiants à décider individuellement. "
+                "Aucun export possible."
+            )
         Gtk = self.Gtk
         if not rows:
             self.candidates_box.append(Gtk.Label(
                 label="Aucun identifiant proposé : vérifier quand même les contenus.",
                 xalign=0, wrap=True,
             ))
-        for row in rows:
+        for row in rows[first:last]:
             line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             # Candidate values are shown only to the local operator.
             label = Gtk.Label(
@@ -367,7 +414,7 @@ class PrivateReviewPanel:
             chooser.append("anonymize", "Anonymiser")
             chooser.append("keep", "Conserver explicitement")
             chooser.append("exclude", "Exclure l'échange")
-            chooser.set_active_id("choose")
+            chooser.set_active_id(row["decision"] or "choose")
             candidate_key = row["key"]
             review = self._review
 
@@ -386,6 +433,7 @@ class PrivateReviewPanel:
             chooser.connect("changed", changed)
             line.append(chooser)
             self.candidates_box.append(line)
+        self._refresh()
 
     def preview(self):
         if self._closed or self._review is None:
