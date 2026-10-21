@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from threading import Thread
 from typing import Any, Callable
 
 import gi
@@ -56,6 +57,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self._plugin_switches: dict[str, Gtk.Switch] = {}
         self._refresh_anchor_id: str | None = None
         self._viewport_token = None
+        self._python_deps_install_running = False
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.outer.set_margin_top(24); self.outer.set_margin_bottom(24)
@@ -646,6 +648,17 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         if status.state in {"blocked", "error", "incompatible", "degraded"}:
             warning = Gtk.Label(label=self._friendly_problem(status), xalign=0)
             warning.set_wrap(True); warning.add_css_class("warning"); box.append(warning)
+        if any(
+            not row.ok and row.requirement.type == "python-package"
+            for row in getattr(status, "requirements", ())
+        ):
+            repair = action_button(
+                "Installer les dépendances Python…", "system-software-install-symbolic",
+                tooltip="Installation Core dans le venv Cifereca, avec confirmation ; ne télécharge pas Chromium",
+            )
+            repair.set_sensitive(not self._python_deps_install_running)
+            repair.connect("clicked", lambda _b: self._confirm_python_dependencies())
+            box.append(repair)
 
         primary_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         if d.config_schema:
@@ -933,6 +946,71 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         except Exception as exc:
             self.window.show_error(plugin_error_message(exc), "Installation impossible"); return
         self._toast(f"{package.manifest.package.name} installé"); self.refresh(); self.on_changed()
+
+    def _confirm_python_dependencies(self) -> None:
+        """Explicit consent for modifying only the Core virtualenv."""
+        if self._python_deps_install_running:
+            return
+        dialog = Adw.MessageDialog.new(
+            self.window,
+            "Installer les dépendances Python ?",
+            "Cifereca peut télécharger les paquets Python déclarés par vos "
+            "plugins actifs dans son environnement virtuel. Cela peut utiliser "
+            "Internet et modifier les paquets de ce venv, avec tentative de "
+            "restauration en cas d'échec. Aucun navigateur Chromium ne sera "
+            "téléchargé par cette action. Continuer ?",
+        )
+        dialog.add_response("cancel", "Annuler")
+        dialog.add_response("install", "Installer")
+        dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
+        dialog.connect(
+            "response",
+            lambda _dialog, response:
+                self._install_python_dependencies() if response == "install" else None,
+        )
+        dialog.present()
+
+    def _install_python_dependencies(self) -> None:
+        if self._python_deps_install_running:
+            return
+        self._python_deps_install_running = True
+        self._toast("Installation des dépendances Python en cours…", 5)
+        self.refresh()
+
+        def work():
+            success = False
+            try:
+                # Only the Core may run pip, from an explicit UI action. Do
+                # not import/activate GTK contributions on this worker thread.
+                self.manager.ensure_python_dependencies(activate=False)
+                success = True
+            except Exception:
+                # Raw pip/OS errors may contain credentials, paths or proxy
+                # URLs. Return a fixed message, never repr(exc) or its text.
+                pass
+            GLib.idle_add(self._finish_python_dependencies, success)
+
+        Thread(target=work, name="cifereca-python-deps", daemon=True).start()
+
+    def _finish_python_dependencies(self, success: bool) -> bool:
+        self._python_deps_install_running = False
+        if success:
+            try:
+                self.manager.activate()
+            except Exception:
+                success = False
+        self.refresh()
+        if success:
+            self._toast("Dépendances Python installées. Vérifiez Chromium séparément.")
+            self.on_changed()
+        else:
+            self.window.show_error(
+                "La réparation Python n’a pas abouti. Vérifiez les prérequis "
+                "du plugin et l’environnement virtuel dans Diagnostic. "
+                "Aucun téléchargement Chromium n’a été demandé.",
+                "Dépendances Python indisponibles",
+            )
+        return False
 
     def _diagnostic(self, plugin_id: str) -> None:
         row = self.manager.diagnostic(plugin_id)[0]
