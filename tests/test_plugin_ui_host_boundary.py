@@ -178,3 +178,33 @@ def test_live_plugin_host_still_routes_navigation_and_sync():
         ("identity-view", "alice", {"route": "library", "providers": ("local",)}),
         ("sync", None, False),
     ]
+
+
+
+def test_optional_search_provider_scope_preserves_legacy_host_signature():
+    """No providers kwarg for legacy callbacks; opt-in is still forwarded."""
+    calls = []
+
+    def legacy(query, *, field, online, identity_id):
+        calls.append((query, field, online, identity_id))
+        return True
+
+    window = NS(_closed=False, search_books=legacy)
+    host = host_type()(window)
+    assert host.search_books(
+        "9780306406157", field="isbn", online=False, identity_id="alice",
+    ) is True
+    assert calls == [("9780306406157", "isbn", False, "alice")]
+
+    def scoped(query, *, field, online, identity_id, providers):
+        calls.append((query, field, online, identity_id, providers))
+        return True
+
+    window.search_books = scoped
+    assert host.search_books(
+        "9780140328721", field="isbn", online=False, identity_id="alice",
+        providers=("paris",),
+    ) is True
+    assert calls[-1] == (
+        "9780140328721", "isbn", False, "alice", ("paris",),
+    )

@@ -91,6 +91,7 @@ def _build_search_page(self: SearchControllerHost) -> MasterDetailPage:
 def search_books(
     self: SearchControllerHost, query: str, *, field: str = "title",
     online: bool = False, identity_id: str | None = None,
+    providers: tuple[str, ...] = (),
 ) -> bool:
     """Search from a trusted book detail; exactly one explicit query.
 
@@ -114,8 +115,28 @@ def search_books(
     controls = getattr(self, "search_controls", None)
     if controls is None:
         return False
+    # A plugin may request an explicit known source; never allow an
+    # unconfigured/disabled provider, a stale identity, or a raw credential
+    # from a merged recommendation to select a remote endpoint.
+    if (type(providers) is not tuple or len(providers) > 4
+            or any(type(value) is not str for value in providers)
+            or len(set(providers)) != len(providers)
+            or "local" in providers):
+        return False
+    if providers:
+        try:
+            active = {
+                provider for provider, _label in self.service.searchable_providers()
+                if type(provider) is str
+            }
+        except Exception:
+            return False
+        if not set(providers) <= active:
+            return False
     controls.set_state(
-        QueryState(text=query.strip(), field=field, scope="all"), notify=False,
+        QueryState(
+            text=query.strip(), field=field, scope="all", providers=providers,
+        ), notify=False,
     )
     self.navigate("search")
     # Local by default for #906; online only on an explicit loupe click.

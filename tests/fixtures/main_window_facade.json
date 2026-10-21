@@ -938,7 +938,7 @@
     "async": false
   },
   "MainWindow.search_books": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='query', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[arg(arg='field', annotation=Name(id='str', ctx=Load())), arg(arg='online', annotation=Name(id='bool', ctx=Load())), arg(arg='identity_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kw_defaults=[Constant(value='title'), Constant(value=False), Constant(value=None)], defaults=[])",
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='query', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[arg(arg='field', annotation=Name(id='str', ctx=Load())), arg(arg='online', annotation=Name(id='bool', ctx=Load())), arg(arg='identity_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='providers', annotation=Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Constant(value=Ellipsis)], ctx=Load()), ctx=Load()))], kw_defaults=[Constant(value='title'), Constant(value=False), Constant(value=None), Tuple(elts=[], ctx=Load())], defaults=[])",
     "returns": "Name(id='bool', ctx=Load())",
     "decorators": [],
     "async": false

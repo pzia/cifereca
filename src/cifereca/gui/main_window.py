@@ -1087,13 +1087,14 @@ class MainWindow(Adw.ApplicationWindow):
     def search_books(
         self, query: str, *, field: str = "title",
         online: bool = False, identity_id: str | None = None,
+        providers: tuple[str, ...] = (),
     ) -> bool:
         """Search from a trusted book detail; exactly one explicit query.
 
         This API is public through UiSearchNavigationHost. No credentials,
         selected identity or old filters are copied into a new search.
         """
-        return search_controller.search_books(self, query, field=field, online=online, identity_id=identity_id)
+        return search_controller.search_books(self, query, field=field, online=online, identity_id=identity_id, providers=providers)
 
     def run_search(self, force: bool = False, *, keyboard: bool = False) -> None:
         from .search_host_port import SearchRunPort

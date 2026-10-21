@@ -117,9 +117,18 @@ class _UiHost:
     def search_books(
         self, query: str, *, field: str = "title",
         online: bool = False, identity_id: str | None = None,
+        providers: tuple[str, ...] = (),
     ) -> bool:
         if not self._window_alive():
             return False
+        # Preserve the legacy public host contract for the default route:
+        # existing GTK harnesses and plugins accept no providers keyword.
+        # Only a caller explicitly narrowing the scope uses the extension.
+        if providers:
+            return self.window.search_books(
+                query, field=field, online=online, identity_id=identity_id,
+                providers=providers,
+            )
         return self.window.search_books(
             query, field=field, online=online, identity_id=identity_id,
         )

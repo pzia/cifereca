@@ -1692,6 +1692,42 @@ class UxRecommendationsView:
                     f"Chercher l’édition ISBN {isbn} dans Recherche",
                     "system-search-symbolic", callback=open_isbn,
                 ))
+            # When distinct providers contributed attested editions, offer
+            # explicit provider-local Search routes, not synthetic borrow /
+            # download buttons. Core validates the active provider and owns
+            # the standard details/actions after the user selects a result.
+            verified_sources = tuple(dict.fromkeys(
+                (variant.source_provider, _attested_catalogue_isbns((variant,))[0])
+                for variant in exact_variants
+                if (_attested_catalogue_isbns((variant,))
+                    and type(variant.source_provider) is str
+                    and re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}",
+                                     variant.source_provider))
+            ))
+            if len({provider for provider, _isbn in verified_sources}) > 1:
+                for provider, isbn in verified_sources[:8]:
+                    def open_source(provider=provider, isbn=isbn):
+                        if (
+                            self._generation != generation_at_selection
+                            or self._detail_selection_generation != detail_generation_at_selection
+                            or self._llm_selection_key != key_at_selection
+                            or self._ranked_by_key.get(key_at_selection) is not ranked_at_selection
+                            or self.selected_identity_id() != identity_at_selection
+                        ):
+                            return False
+                        search = getattr(self.host, "search_books", None)
+                        if not callable(search):
+                            return False
+                        return bool(search(
+                            isbn, field="isbn", online=False,
+                            identity_id=identity_at_selection,
+                            providers=(provider,),
+                        ))
+                    actions.append(UiBookDetailAction(
+                        f"recommendation.search.provider.{provider}.{isbn}",
+                        f"Chercher cette édition dans {self._display_source(provider)}",
+                        "system-search-symbolic", callback=open_source,
+                    ))
             # A source may publish no validated ISBN or direct HTML page.
             # Preserve a *local, approximate* exploration action rather
             # than inventing a provider-specific detail/loan/download.
