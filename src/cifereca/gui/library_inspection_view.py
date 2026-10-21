@@ -592,6 +592,23 @@ class LocalInspectionController:
                 return
             manual_mode[0] = not manual_mode[0]
             manual_index[0] = 0
+            if not manual_mode[0]:
+                # A hidden Gtk.ListBox still retains its labels and private
+                # filenames in the live widget tree. Leaving this mode must
+                # retire that stale page, not just conceal its scroller.
+                # Do not reset candidate_index: return to the exact
+                # bibliographic candidate previously selected.
+                manual_rebuilding[0] = True
+                try:
+                    child = manual_list.get_first_child()
+                    while child is not None:
+                        manual_list.remove(child)
+                        child = manual_list.get_first_child()
+                finally:
+                    manual_rebuilding[0] = False
+                manual_total[0] = 0
+                if manual_search.get_text():
+                    manual_search.set_text('')
             manual_search.set_visible(manual_mode[0])
             manual_filters.set_visible(manual_mode[0])
             manual_list_scroll.set_visible(manual_mode[0])
