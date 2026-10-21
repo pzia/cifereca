@@ -169,3 +169,27 @@ def test_gtk_install_has_separate_consent_async_progress_and_cancel():
     assert "getattr(self.window, '_closed', False)" in (
         methods["_finish_chromium_operation"].replace('"', "'")
     )
+
+
+def test_cache_unwritable_parent_fails_before_download(monkeypatch, tmp_path):
+    home = tmp_path / "private-home"
+    home.mkdir()
+    cache = home / ".cache" / "ms-playwright"
+    monkeypatch.setattr(browser.Path, "home", lambda: home)
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(cache))
+    monkeypatch.setattr(browser, "_version", lambda: "1.55.0")
+    monkeypatch.setattr(browser, "_executable", lambda: cache / "chromium-123" / "chrome")
+    original_access = browser.os.access
+
+    def inaccessible(path, mode):
+        if path == home and mode & os.W_OK:
+            return False
+        return original_access(path, mode)
+
+    monkeypatch.setattr(browser.os, "access", inaccessible)
+    assert browser.inspect_chromium().code == "browser_cache_unavailable"
+    monkeypatch.setattr(browser.subprocess, "Popen", lambda *_a, **_kw: (
+        (_ for _ in ()).throw(AssertionError("unexpected download"))
+    ))
+    assert browser.install_chromium(consent=True).code == "browser_cache_unavailable"
+    assert not cache.exists()
