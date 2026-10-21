@@ -11,6 +11,8 @@ from typing import Any
 import json
 import re
 
+from diagnostics_reconciliation import reconciliation_event_summary
+
 def local_timestamp_label(value: object) -> str:
     """Present a broker UTC instant in the machine's local offset, GUI only.
 
@@ -143,15 +145,25 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             key: redacted_detail(raw[key])[:500] if isinstance(raw.get(key), str) else ""
             for key in ("timestamp", "source", "module", "severity", "message", "status", "event_id")
         }
+        # The Core attests the terminal reconciliation event; present only
+        # finite, local aggregate labels. The code is searchable on this page
+        # without changing the broker's server-side query or exporting books.
+        reconciliation = reconciliation_event_summary(raw)
+        if reconciliation is not None:
+            safe["reconciliation"] = reconciliation
+            safe["reconciliation_code"] = reconciliation["code"]
         # Only explicitly published Core references may link observations.
         # Never extract one from a timestamp, event ID or message text.
         reference = published_task_reference(raw)
         if reference is not None:
             safe["task_ref"] = reference
         # Full text search is explicitly local to this 50-item broker page.
-        if search and search.casefold() not in " ".join(
+        searchable = " ".join(
             safe[key] for key in ("timestamp", "source", "module", "severity", "message", "status")
-        ).casefold():
+        )
+        if reconciliation is not None:
+            searchable += " " + " ".join(reconciliation.values())
+        if search and search.casefold() not in searchable.casefold():
             continue
         # Detailed GTK inspection is opt-in. AI previews keep the minimal
         # operational projection and must never inherit arbitrary detail.
