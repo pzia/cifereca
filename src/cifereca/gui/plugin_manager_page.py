@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from typing import Any, Callable
 
 import gi
@@ -58,6 +58,9 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         self._refresh_anchor_id: str | None = None
         self._viewport_token = None
         self._python_deps_install_running = False
+        self._chromium_busy = False
+        self._chromium_cancel = None
+        self._chromium_status_text = "Chromium non vérifié · bibliothèques Linux non vérifiées."
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.outer.set_margin_top(24); self.outer.set_margin_bottom(24)
@@ -660,6 +663,47 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             repair.connect("clicked", lambda _b: self._confirm_python_dependencies())
             box.append(repair)
 
+        if d.id == "ui.page.browser-recorder":
+            chromium_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            chromium_label = Gtk.Label(
+                label=self._chromium_status_text, xalign=0, wrap=True,
+            )
+            chromium_label.set_selectable(True)
+            chromium_row.append(chromium_label)
+            actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            check = action_button("Vérifier Chromium", "view-refresh-symbolic")
+            check.set_sensitive(not self._chromium_busy)
+            check.connect("clicked", lambda _b: self._check_chromium())
+            actions.append(check)
+            py_ready = all(
+                row.ok for row in getattr(status, "requirements", ())
+                if row.requirement.type == "python-package"
+            )
+            install_browser = action_button(
+                "Installer/réparer Chromium…", "system-software-install-symbolic",
+            )
+            install_browser.set_tooltip_text(
+                "Télécharge uniquement Chromium officiel pour ce Playwright, "
+                "sur consentement. Aucun sudo, apt ou headless shell."
+            )
+            install_browser.set_sensitive(
+                py_ready and not self._chromium_busy
+                and not self._python_deps_install_running
+            )
+            install_browser.connect(
+                "clicked", lambda _b: self._confirm_chromium_install()
+            )
+            actions.append(install_browser)
+            if self._chromium_busy:
+                spinner = Gtk.Spinner()
+                spinner.start()
+                actions.append(spinner)
+                cancel = action_button("Annuler", "process-stop-symbolic")
+                cancel.connect("clicked", lambda _b: self._cancel_chromium())
+                actions.append(cancel)
+            chromium_row.append(actions)
+            box.append(chromium_row)
+
         primary_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         if d.config_schema:
             cfg = action_button("Configurer…", "preferences-system-symbolic")
@@ -1010,6 +1054,103 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 "Aucun téléchargement Chromium n’a été demandé.",
                 "Dépendances Python indisponibles",
             )
+        return False
+
+    def _check_chromium(self) -> None:
+        """Offline capability check only after a user action."""
+        if self._chromium_busy or self._python_deps_install_running:
+            return
+        self._chromium_busy = True
+        self._chromium_status_text = "Vérification locale de Chromium…"
+        self.refresh()
+
+        def worker():
+            from cifereca.plugins.chromium_provisioning import chromium_status
+            try:
+                state = str(chromium_status()["state"])
+            except Exception:
+                state = "probe_failed"
+            GLib.idle_add(self._finish_chromium, state)
+
+        Thread(target=worker, name="cifereca-chromium-check", daemon=True).start()
+
+    def _confirm_chromium_install(self) -> None:
+        if self._chromium_busy or self._python_deps_install_running:
+            return
+        dialog = Adw.MessageDialog.new(
+            self.window, "Télécharger Chromium Playwright ?",
+            "Cette opération volontaire utilise Internet et plusieurs centaines "
+            "de Mo de stockage (au moins 750 Mio libres). Elle installe "
+            "uniquement le Chromium visible correspondant au Playwright du "
+            "venv Cifereca. Aucun sudo/apt ni Firefox/WebKit ; pas de shell "
+            "headless. Les bibliothèques natives Linux doivent être présentes "
+            "séparément. Vous pourrez annuler, sans effacer d'autres navigateurs.",
+        )
+        dialog.add_response("cancel", "Annuler")
+        dialog.add_response("install", "Télécharger Chromium")
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect(
+            "response", lambda _d, response:
+                self._install_chromium() if response == "install" else None,
+        )
+        dialog.present()
+
+    def _install_chromium(self) -> None:
+        if self._chromium_busy or self._python_deps_install_running:
+            return
+        self._chromium_busy = True
+        cancel = Event()
+        self._chromium_cancel = cancel
+        self._chromium_status_text = (
+            "Téléchargement Chromium en cours · progression indéterminée ; "
+            "annulation disponible."
+        )
+        self.refresh()
+
+        def worker():
+            from cifereca.plugins.chromium_provisioning import install_chromium
+            try:
+                result = install_chromium(consented=True, cancel=cancel)
+            except Exception:
+                result = "download_failed"
+            GLib.idle_add(self._finish_chromium, result)
+
+        Thread(target=worker, name="cifereca-chromium-install", daemon=True).start()
+
+    def _cancel_chromium(self) -> None:
+        if self._chromium_cancel is not None:
+            self._chromium_cancel.set()
+            self._chromium_status_text = "Annulation Chromium demandée…"
+            self.refresh()
+
+    def _finish_chromium(self, result: str) -> bool:
+        self._chromium_busy = False
+        self._chromium_cancel = None
+        messages = {
+            "ready": "Chromium présent pour Playwright · bibliothèques Linux non vérifiées.",
+            "already_ready": "Chromium déjà présent · aucune installation effectuée.",
+            "chromium_missing": "Chromium absent : installation volontaire nécessaire.",
+            "playwright_missing": "Playwright Python absent : installer d'abord ses dépendances.",
+            "platform_unsupported": "Installation Chromium guidée disponible sur Linux uniquement.",
+            "probe_failed": "Vérification Chromium indisponible.",
+            "unsafe_cache_path": "Cache Chromium non sûr : chemin ou lien symbolique refusé.",
+            "insufficient_space": "Espace libre insuffisant (750 Mio minimum).",
+            "storage_unavailable": "Espace disque impossible à vérifier.",
+            "invalid_timeout": "Délai d'installation invalide.",
+            "download_timeout": "Téléchargement Chromium interrompu (délai dépassé).",
+            "download_failed": "Installation Chromium échouée : vérifier réseau/proxy et espace libre.",
+            "cancelled": "Téléchargement Chromium annulé.",
+            "revision_incompatible": "Révision Chromium incompatible ou absente après installation.",
+            "consent_required": "Confirmation d'installation requise.",
+        }
+        self._chromium_status_text = messages.get(
+            result, "Vérification Chromium indisponible."
+        )
+        if getattr(self.window, "_closed", False):
+            return False
+        self.refresh()
+        self.on_changed()
         return False
 
     def _diagnostic(self, plugin_id: str) -> None:
