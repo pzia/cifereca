@@ -49,7 +49,7 @@ def gtk_layout_critical_failure(counts: dict[str, int | bool]) -> str | None:
 # Other scenarios retain observational telemetry, not an implicit new gate.
 GTK_LAYOUT_ZERO_GATE_2027 = frozenset({
     "mainwindow-baseline-1366", "mainwindow-baseline-1600",
-    "maintenance-tools-1366", "maintenance-tools-1600",
+    "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600",
 })
 
 

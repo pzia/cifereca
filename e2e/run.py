@@ -86,6 +86,11 @@ SCENARIOS = {
         "runner": "gtk-llm-settings",
         "width": 1600,
     },
+    "maintenance-tools-1280": {
+        "plugin": "core", "fixture": "startup",
+        "description": "P1 #2565 : Maintenance, résultats locaux et limites en GTK/XTEST 1280.",
+        "runner": "gtk-maintenance", "width": 1280,
+    },
     "maintenance-tools-1366": {
         "plugin": "core", "fixture": "startup",
         "description": "P0 #1358: vrai GTK/XTEST Outils, lock sync, preview lente, annulation et plan périmé 1366.",
