@@ -37,6 +37,17 @@ pas être confondues avec la capture textuelle principale.
 
 **Limites de cette livraison :** aucune commande `sudo`/`apt` automatique, aucun téléchargement au démarrage, à la découverte ou à l'activation du plugin, aucun navigateur empaqueté dans le ZIP. Le contrôle de disque est préventif et ne garantit pas l'espace pendant le téléchargement ; une interruption peut laisser des fichiers incomplets propres à Playwright, sans autoriser la suppression des caches des autres clients. Le provisionnement par ce bouton et son UX doivent encore être validés sur **un vrai poste Linux vierge** ; les doubles de tests n'effectuent pas de téléchargement réel. Aucun fournisseur tiers n'est contacté par la vérification.
  
+## Revue au clavier (GTK4)
+
+Sur chaque identifiant de la revue, utilisez **Tab** pour atteindre son
+sélecteur, puis **1** pour *anonymiser*, **2** pour *conserver explicitement*
+ou **3** pour *exclure l'échange*. Les raccourcis agissent sur l'identifiant
+focalisé **uniquement** ; aucune décision n'est appliquée en lot. Les touches
+du pavé numérique sont également prises en charge. Naviguez entre les
+pages de 24 identifiants avec les boutons « Identifiants précédents /
+suivants ». Préparer le ZIP, examiner les membres puis confirmer l'export
+restent des actions séparées et volontaires.
+
 ## Recette d'installation du plugin (synthétique, #2531)
 
 La CI vérifie désormais deux niveaux distincts :
