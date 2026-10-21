@@ -19,7 +19,8 @@ class Widget:
     def set_title(self, value): self.title = value
     def set_subtitle(self, value): self.subtitle = value
     def set_subtitle_lines(self, *_): pass
-    def set_tooltip_text(self, *_): pass
+    def set_tooltip_text(self, value): self.tooltip = value
+    def update_property(self, keys, values): self.accessible_label = values[0]
     def set_expanded(self, *_): pass
     def get_expanded(self): return True
     def add_css_class(self, *_): pass
@@ -49,7 +50,7 @@ def _group():
     display = NS(get_clipboard=lambda: clipboard)
     env = {
         "Adw": NS(PreferencesGroup=Widget, ExpanderRow=Widget, ActionRow=Widget),
-        "Gtk": NS(Button=Button),
+        "Gtk": NS(Button=Button, AccessibleProperty=NS(LABEL="label")),
         "Gdk": NS(Display=NS(get_default=lambda: display),
                   ContentProvider=NS(new_for_value=lambda text: text)),
         "detail_display_value": lambda _label, value: (value, value),
@@ -175,3 +176,25 @@ def test_isbn_validator_refuses_non_bookland_ean_and_invalid_checksum():
     assert canonical_book_isbn("4006381333931") == ""
     assert canonical_book_isbn("9780306406158") == ""
     assert canonical_book_isbn("0-306-40615-2") == "9780306406157"
+
+
+def test_value_names_distinguish_repeated_authors_and_keep_full_copy():
+    method, clipboard = _group()
+    groups, events = [], []
+    window = NS(service=NS(current_identity=None), toast=lambda *_: None,
+                search_books=lambda *a, **kw: events.append((a, kw)))
+    host = NS(window=window, _append_content=groups.append)
+    long_value = "Long début " + "texte " * 50 + "fin distincte"
+    method(host, "Détail", [("Auteur", "Alice Exemple"), ("Auteur", "Bob Exemple"),
+                             ("Description", long_value)],
+           fields=(NS(kind="author"), NS(kind="author"), NS(kind="copy")))
+    rows = groups[0].children[0].children
+    names = [row.children[0].accessible_label for row in rows]
+    assert names[:2] == ["Copier Auteur : Alice Exemple", "Copier Auteur : Bob Exemple"]
+    assert rows[1].children[1].accessible_label == "Rechercher en ligne : Auteur : Bob Exemple"
+    assert all(child.tooltip == child.accessible_label for row in rows for child in row.children)
+    assert len(names[2]) <= len("Copier Description : ") + 180
+    assert names[2].endswith("fin distincte")
+    assert events == []
+    rows[2].children[0].click()
+    assert clipboard.value == long_value and events == []

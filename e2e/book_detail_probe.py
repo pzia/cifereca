@@ -7,6 +7,7 @@ observed at the UI action boundary and never reach remote providers.
 from __future__ import annotations
 
 import argparse
+import ctypes as C
 import hashlib
 import json
 import os
@@ -20,12 +21,16 @@ from time import monotonic
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "environnements/openai-chat-debian"))
 
+# Native GTK accessibility test context, independent of a screen reader.
+os.environ["GTK_A11Y"] = "test"
+
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from PIL import ImageGrab
 from x11_input import X11Input
+from native_capture import pointer
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
 
@@ -243,6 +248,22 @@ def main():
         buttons = [x for x in walk(row) if isinstance(x, Gtk.Button)]
         return {str(x.get_tooltip_text() or ""): x for x in buttons}
 
+    def assert_accessible_name(button, expected):
+        # GTK's variadic test API is not introspectable by PyGObject.
+        # Read the real native accessible property, not a Python mirror.
+        gtk = C.CDLL("libgtk-4.so.1")
+        gtk.gtk_test_accessible_check_property.argtypes = [C.c_void_p, C.c_int, C.c_char_p]
+        gtk.gtk_test_accessible_check_property.restype = C.c_void_p
+        mismatch = gtk.gtk_test_accessible_check_property(
+            pointer(button), int(Gtk.AccessibleProperty.LABEL), expected.encode("utf-8"),
+        )
+        if mismatch:
+            actual = C.string_at(mismatch).decode("utf-8")
+            glib = C.CDLL("libglib-2.0.so.0")
+            glib.g_free.argtypes = [C.c_void_p]
+            glib.g_free(mismatch)
+            raise AssertionError(f"Nom accessible incorrect : {actual!r}, attendu {expected!r}")
+
     def search_initial():
         if args.geometry_1300:
             report["ux611_probe_stage"] = "search_ready"
@@ -326,13 +347,21 @@ def main():
             next((k for k in buttons_for(row) if k.startswith("Copier ")), "")
             for row in authors
         ]
-        # Record an accessibility discrepancy, but do not turn the entire
-        # functional E2E red on a pre-existing UX issue.
+        # #940: per-value names must distinguish authors in the real GTK tree.
         report["duplicate_author_tooltips"] = (
             len(set(report["author_copy_tooltips"])) != len(authors)
         )
+        assert not report["duplicate_author_tooltips"], "Actions auteurs indiscernables"
+        assert report["author_copy_tooltips"] == [
+            "Copier Auteur : Alice Exemple", "Copier Auteur : Bob Exemple",
+        ]
+        for row in authors:
+            for tooltip, button in buttons_for(row).items():
+                if tooltip.startswith(("Copier ", "Rechercher en ligne")):
+                    assert_accessible_name(button, tooltip)
+        report["checks"]["native_accessible_value_names"] = True
         subject = next(x for x in rows if x.get_title() == "Sujet" and x.get_subtitle() == "nature")
-        copy = buttons_for(subject).get("Copier Sujet")
+        copy = buttons_for(subject).get("Copier Sujet : nature")
         assert copy is not None, "Copie individuelle de sujet absente"
         assert copy.get_mapped(), "Action Copier de la ligne sélectionnée non mappée"
         assert copy.grab_focus() is not False
@@ -340,7 +369,10 @@ def main():
         later(230, lambda: click_copy(copy))
 
     def click_copy(button):
-        report["copy_pointer"] = device.click_widget(button)
+        assert button.has_focus(), "Focus copie perdu"
+        device.key("space", True)
+        device.key("space", False)
+        report["checks"]["copy_space_key"] = True
         later(210, read_clipboard)
 
     def read_clipboard():
@@ -365,7 +397,10 @@ def main():
         later(250, lambda: click_isbn(search))
 
     def click_isbn(button):
-        report["isbn_pointer"] = device.click_widget(button)
+        assert button.has_focus(), "Focus recherche perdu"
+        device.key("Return", True)
+        device.key("Return", False)
+        report["checks"]["search_return_key"] = True
         later(180, verify_isbn)
 
     def verify_isbn():
