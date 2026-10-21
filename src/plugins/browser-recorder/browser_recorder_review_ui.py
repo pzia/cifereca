@@ -97,6 +97,12 @@ class PrivateReviewPanel:
                                 xalign=0, wrap=True)
         self.status.set_selectable(True)
         box.append(self.status)
+        box.append(Gtk.Label(
+            label="Revue clavier : Tab pour cibler un identifiant ; "
+                  "1 = anonymiser, 2 = conserver, 3 = exclure. "
+                  "Chaque choix reste individuel, aucun choix par défaut.",
+            xalign=0, wrap=True,
+        ))
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_min_content_height(180)
@@ -431,6 +437,35 @@ class PrivateReviewPanel:
                     "Conserver un identifiant peut révéler des données personnelles."
                 )
             chooser.connect("changed", changed)
+            chooser.set_tooltip_text(
+                "Raccourcis clavier : 1 anonymiser, 2 conserver, 3 exclure."
+            )
+            # Gtk.ComboBoxText navigation depends on a popover / GTK minor
+            # version. Capture only unmodified keys in this candidate row
+            # before the popup handles them, allowing a reliable accessible
+            # choice with XTEST and keyboard alone. No bulk decision is made.
+            shortcuts = Gtk.EventControllerKey()
+            shortcuts.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+            def candidate_key_pressed(_controller, keyval, _keycode, state,
+                                      current=chooser):
+                from gi.repository import Gdk
+                if state & (Gdk.ModifierType.CONTROL_MASK
+                            | Gdk.ModifierType.ALT_MASK
+                            | Gdk.ModifierType.SUPER_MASK):
+                    return False
+                action = {
+                    Gdk.KEY_1: "anonymize", Gdk.KEY_KP_1: "anonymize",
+                    Gdk.KEY_2: "keep", Gdk.KEY_KP_2: "keep",
+                    Gdk.KEY_3: "exclude", Gdk.KEY_KP_3: "exclude",
+                }.get(keyval)
+                if action is None:
+                    return False
+                current.set_active_id(action)
+                return True
+
+            shortcuts.connect("key-pressed", candidate_key_pressed)
+            line.add_controller(shortcuts)
             line.append(chooser)
             self.candidates_box.append(line)
         self._refresh()
