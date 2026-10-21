@@ -103,21 +103,23 @@ class PriorityExecutor:
     def shutdown(self, *, wait: bool = False, cancel_futures: bool = True) -> None:
         cancelled: list[Future[Any]] = []
         with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-            if cancel_futures:
-                while True:
-                    try:
-                        _priority, _seq, future, _fn = self._queue.get_nowait()
-                    except queue.Empty:
-                        break
-                    if future is not None:
-                        self._pending -= 1
-                        cancelled.append(future)
-                    self._queue.task_done()
-            for _ in self._threads:
-                self._queue.put((10_000, next(self._sequence), None, None))
+            if not self._closed:
+                self._closed = True
+                if cancel_futures:
+                    while True:
+                        try:
+                            _priority, _seq, future, _fn = self._queue.get_nowait()
+                        except queue.Empty:
+                            break
+                        if future is not None:
+                            self._pending -= 1
+                            cancelled.append(future)
+                        self._queue.task_done()
+                for _ in self._threads:
+                    self._queue.put((10_000, next(self._sequence), None, None))
+        # A later shutdown(wait=True) must still join a pool that was
+        # previously closed with wait=False. Closing is idempotent; waiting
+        # for shutdown completion is an independent caller request.
         # Future.cancel() synchronously invokes arbitrary user callbacks.
         # Never call it under the pool lock: callbacks may inspect admission
         # metrics, submit more work or call shutdown themselves.

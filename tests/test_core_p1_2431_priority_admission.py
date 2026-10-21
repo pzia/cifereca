@@ -181,3 +181,71 @@ def test_worker_shutdown_cancels_queued_work_before_return():
         proceed.set()
         for thread in pool._threads:
             thread.join(timeout=3)
+
+
+def test_shutdown_wait_after_earlier_nonblocking_close_joins_workers():
+    """Closing twice is idempotent, but a later waiter must actually wait."""
+    pool = PriorityExecutor(max_workers=1, max_pending=1,
+                            thread_name_prefix="test-late-join")
+    entered, release, waiting, joined = (threading.Event() for _ in range(4))
+    closer = None
+
+    def running():
+        entered.set()
+        assert release.wait(3)
+        return "finished"
+
+    try:
+        task = pool.submit(TaskPriority.USER_ACTION, running)
+        assert entered.wait(2)
+        pool.shutdown(wait=False)
+        assert pool.admission_snapshot()["closed"] is True
+
+        def wait_again():
+            waiting.set()
+            pool.shutdown(wait=True)
+            joined.set()
+
+        closer = threading.Thread(target=wait_again)
+        closer.start()
+        assert waiting.wait(2)
+        # The first close must not cause the second to return while the
+        # original worker is still held by the user action.
+        assert not joined.wait(0.1)
+        release.set()
+        assert task.result(timeout=3) == "finished"
+        assert joined.wait(3)
+        closer.join(timeout=3)
+        assert not closer.is_alive()
+        assert all(not t.is_alive() for t in pool._threads)
+        assert pool.admission_snapshot()["pending"] == 0
+        assert pool.admission_snapshot()["active"] == 0
+    finally:
+        release.set()
+        if closer is not None:
+            closer.join(timeout=3)
+        pool.shutdown(wait=True)
+
+
+def test_repeated_worker_shutdown_after_nonblocking_close_does_not_self_join():
+    """A repeated worker call to shutdown(wait=True) must never join itself."""
+    pool = PriorityExecutor(max_workers=1, thread_name_prefix="test-reclose")
+    entered, resume = threading.Event(), threading.Event()
+
+    def worker():
+        entered.set()
+        assert resume.wait(3)
+        pool.shutdown(wait=True)
+        return "done"
+
+    try:
+        result = pool.submit(TaskPriority.NORMAL, worker)
+        assert entered.wait(2)
+        pool.shutdown(wait=False)
+        resume.set()
+        assert result.result(timeout=3) == "done"
+        pool.shutdown(wait=True)
+        assert all(not t.is_alive() for t in pool._threads)
+    finally:
+        resume.set()
+        pool.shutdown(wait=True)
