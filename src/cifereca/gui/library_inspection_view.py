@@ -282,7 +282,47 @@ class LocalInspectionController:
         detail_scroll = Gtk.ScrolledWindow()
         detail_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         detail_scroll.set_child(detail)
-        paned.set_end_child(detail_scroll)
+        # Read-only, local side-by-side comparison. This second pane is only
+        # present for an inspected right. Its candidate files have *no*
+        # attested link to the right; selection never writes or authorizes.
+        comparison = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        comparison.set_start_child(detail_scroll)
+        candidate_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        candidate_title = Gtk.Label(
+            label='Fichiers candidats · comparaison bibliographique uniquement',
+            xalign=0,
+        )
+        candidate_title.set_wrap(True)
+        candidate_box.append(candidate_title)
+        candidate_note = Gtk.Label(
+            label='Même identifiant explicite dans une notice : aucun lien de droit prouvé.',
+            xalign=0,
+        )
+        candidate_note.set_wrap(True)
+        candidate_box.append(candidate_note)
+        candidate_nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        candidate_prev, candidate_next = (
+            Gtk.Button(label='◀ Candidat'),
+            Gtk.Button(label='Candidat ▶'),
+        )
+        candidate_number = Gtk.Label(xalign=0)
+        candidate_number.set_hexpand(True)
+        for widget in (candidate_prev, candidate_number, candidate_next):
+            candidate_nav.append(widget)
+        candidate_box.append(candidate_nav)
+        candidate_detail = Gtk.Label(xalign=0, yalign=0)
+        candidate_detail.set_wrap(True)
+        candidate_detail.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        candidate_detail.set_selectable(True)
+        candidate_scroll = Gtk.ScrolledWindow()
+        candidate_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        candidate_scroll.set_child(candidate_detail)
+        candidate_scroll.set_vexpand(True)
+        candidate_box.append(candidate_scroll)
+        candidate_box.set_visible(False)
+        comparison.set_end_child(candidate_box)
+        comparison.set_position(315)
+        paned.set_end_child(comparison)
         paned.set_position(300)
         box.append(paned)
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -295,12 +335,44 @@ class LocalInspectionController:
         window.set_content(box)
         offset = [0]
         current_total = [0]
+        candidate_items = [()]
+        candidate_index = [0]
 
         def valid():
             if self.session is session and self.alive() and session.valid():
                 return True
             self.clear()
             return False
+
+        def show_candidate():
+            if not valid():
+                return
+            files = candidate_items[0]
+            if not files:
+                candidate_number.set_text('0 candidat')
+                candidate_detail.set_text(
+                    'Aucun ISBN ou identifiant bibliographique exact commun '
+                    'à une notice de ce droit et aux fichiers non liés dans '
+                    'les racines inspectées. Cela ne prouve pas l’absence du livre.'
+                )
+            else:
+                candidate_number.set_text(
+                    f'{candidate_index[0]+1} / {len(files)} · non probant'
+                )
+                candidate = files[candidate_index[0]]
+                candidate_detail.set_text(candidate.label + '\n\n' + candidate.details)
+            candidate_prev.set_sensitive(bool(files) and candidate_index[0] > 0)
+            candidate_next.set_sensitive(
+                bool(files) and candidate_index[0]+1 < len(files)
+            )
+
+        def move_candidate(delta):
+            if not valid():
+                return
+            candidate_index[0] = max(
+                0, min(candidate_index[0] + delta, len(candidate_items[0])-1)
+            )
+            show_candidate()
 
         def select(_listing, row):
             if row is None or not valid():
@@ -309,6 +381,14 @@ class LocalInspectionController:
             if case is not None:
                 states = ', '.join(STATES[name] for name in case.states)
                 detail.set_text(PROVIDERS[case.provider]+' · '+states+'\n\n'+case.details)
+                if case.key.startswith('right:'):
+                    candidate_items[0] = session.candidate_files(case.key)
+                    candidate_index[0] = 0
+                    candidate_box.set_visible(True)
+                    show_candidate()
+                else:
+                    candidate_items[0] = ()
+                    candidate_box.set_visible(False)
 
         def render(*_args, reset=False):
             if not valid():
@@ -323,6 +403,8 @@ class LocalInspectionController:
                 listing.remove(child)
                 child = listing.get_first_child()
             detail.set_text('Sélectionnez un cas pour consulter ses preuves.' if page.total else 'Aucun cas dans ces filtres. Ce résultat ne prouve pas l’absence d’un livre.')
+            candidate_items[0] = ()
+            candidate_box.set_visible(False)
             for case in page.cases:
                 row = Gtk.ListBoxRow()
                 row._local_case_key = case.key
@@ -341,6 +423,8 @@ class LocalInspectionController:
             render()
 
         listing.connect('row-selected', select)
+        candidate_prev.connect('clicked', lambda *_: move_candidate(-1))
+        candidate_next.connect('clicked', lambda *_: move_candidate(1))
         provider.connect('notify::selected', lambda *_: render(reset=True))
         state.connect('notify::selected', lambda *_: render(reset=True))
         search.connect('search-changed', lambda *_: render(reset=True))
