@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.technical.browser-recorder",
-    "version": "0.2.4",
+    "version": "0.2.5",
     "name": "Browser Recorder (technique)",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -11,7 +11,7 @@
     {
       "id": "ui.page.browser-recorder",
       "type": "ui.page",
-      "version": "0.2.4",
+      "version": "0.2.5",
       "entrypoint": "browser_recorder_page:PLUGIN",
       "display_name": "Browser Recorder",
       "description": "HAR expurgé et parcours HTTP privé avec revue individuelle et export ZIP volontaire.",

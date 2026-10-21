@@ -258,7 +258,7 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         plugin = manager.service(PLUGIN_ID)
         assert plugin is not None
         assert Path(sys.modules["browser_recorder_page"].__file__).resolve().is_relative_to(
-            store.version_root(PACKAGE_ID, "0.2.4").resolve()
+            store.version_root(PACKAGE_ID, "0.2.5").resolve()
         )
         root = plugin.pages()[0].factory(None)
 
@@ -269,7 +269,7 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         zipped = importlib.import_module("browser_recorder_zip")
         for module in (ui, network, zipped):
             assert Path(module.__file__).resolve().is_relative_to(
-                store.version_root(PACKAGE_ID, "0.2.4").resolve()
+                store.version_root(PACKAGE_ID, "0.2.5").resolve()
             )
         original = network.site_origin
 

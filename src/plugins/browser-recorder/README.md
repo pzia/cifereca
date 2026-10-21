@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.4, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.5, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -363,7 +363,7 @@ Le ZIP interne n'est jamais écrit en clair par Cifereca. Le fichier
 le déchiffrement en mémoire est une étape volontaire distincte.
 
 
-## Choix de la destination ZIP (0.2.4)
+## Choix de la destination ZIP (0.2.5)
 
 Après l'examen **exact** de chaque membre et la confirmation explicite,
 **« Enregistrer sous… le ZIP anonymisé »** ouvre le dialogue natif GTK4
@@ -380,7 +380,7 @@ préexistant : le dossier doit appartenir à l'utilisateur avec permissions
 obligatoires. Le contenu privé n'est jamais enregistré en ZIP non chiffré.
 
 
-## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.4, #2740)
+## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.5, #2740)
 
 Chaque archive **revue** contient maintenant le répertoire
 `plugin-dev-kit/` avec ses guides indépendants, le
@@ -401,7 +401,7 @@ développement, pas une preuve de droits/licences, et ne contient ni tokens
 ni profil Chromium ni source private Core.
 
 
-## Plugin de référence hors ligne (0.2.4, #2740)
+## Plugin de référence hors ligne (0.2.5, #2740)
 
 Le kit documentaire du ZIP anonymisé inclut désormais un **exemple complet**
 dans `plugin-dev-kit/examples/provider-fixture-example/` : un manifeste
@@ -418,3 +418,22 @@ exemple dans un sous-processus indépendant. Ceci est une **preuve de
 reproductibilité du squelette**, pas une preuve qu'un LLM isolé reconstitue
 avec succès une API réelle sans hypothèse. L'exemple doit être adapté aux
 endpoints effectivement observés et aux permissions autorisées.
+
+
+## Bibliothèque de sessions déverrouillable (0.2.5, #2725)
+
+« Lister les sessions archivées » ne montre que des **ID opaques**.
+Saisir la phrase secrète puis « Déverrouiller les métadonnées des sessions… »
+lance un travail de lecture AES-GCM en arrière-plan (jamais dans la boucle
+GTK). Seules les sessions déchiffrées avec cette clé affichent alors
+**date de la dernière sauvegarde, origine HTTPS, statut completed/partial/
+interrupted, nombre d'échanges et omissions**. Un fichier chiffré avec
+une autre clé ou corrompu demeure « verrouillé/illisible » sans empêcher
+la consultation des autres sessions. Aucun index en clair n'est persisté.
+
+« Lister » à nouveau masque les métadonnées ; quitter la page détruit
+les libellés déchiffrés en mémoire GTK. Les opérations capturer, ouvrir,
+supprimer, exporter sont désactivées pendant l'indexation asynchrone.
+Un résultat d'indexation tardif après changement de capture ou fermeture
+est ignoré. L'utilisateur peut avoir des **phrases secrètes différentes**
+pour ses sessions ; les autres ne sont ni perdues ni révélées.
