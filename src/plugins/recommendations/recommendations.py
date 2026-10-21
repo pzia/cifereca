@@ -1714,7 +1714,8 @@ class UxRecommendationsView:
                 edition_fields.append(DetailField(
                     "source-edition-limit", "Portée non exhaustive",
                     "Seules les 256 premières variantes ont été examinées. "
-                    "D'autres éditions peuvent exister.",
+                    "La liste n'est pas exhaustive : d'autres éditions "
+                    "peuvent exister.",
                 ))
             sections.append(DetailSection(
                 "source-editions", "Éditions et sources distinctes",
