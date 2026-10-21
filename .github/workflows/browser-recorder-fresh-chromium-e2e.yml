@@ -60,7 +60,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-venv xvfb xauth
+            python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-venv xvfb xauth xdotool
           /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/gtk-ui-venv"
           "$RUNNER_TEMP/gtk-ui-venv/bin/python" -m pip install --disable-pip-version-check \
             -e . 'pytest>=8,<9'
@@ -71,7 +71,7 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/empty-ui-home"
           test ! -e "$RUNNER_TEMP/empty-ui-home/.cache/ms-playwright"
-      - name: Real Plugins GUI: consented Python repair then Chromium install from zero
+      - name: Real Plugins GUI XTEST: physical consent for Python repair and Chromium
         env:
           GDK_BACKEND: x11
         run: |

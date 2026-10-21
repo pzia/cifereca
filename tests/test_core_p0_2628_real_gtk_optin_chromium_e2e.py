@@ -3,11 +3,13 @@
 Fresh Core venv WITHOUT Playwright, empty Chromium cache, GTK4/libadwaita,
 real installed Browser Recorder package and Core PluginManager. No vendor,
 account, capture or human files. Network is allowed ONLY after the actual
-confirmation-dialog response is generated in GTK. CI runner opt-in required.
+confirmation buttons and launch actions are physically activated with
+XTEST on the GTK page and dialog. CI runner opt-in required.
 """
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -87,6 +89,82 @@ def visible_dialog():
     return dialogs[0] if dialogs else None
 
 
+
+def xtest(*args):
+    """Dispatch physical XTEST input, never GTK signal emission."""
+    assert shutil.which("xdotool"), "XTEST dependency absent on native runner"
+    result = subprocess.run(
+        ["xdotool", *args],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, timeout=8, check=False,
+    )
+    assert result.returncode == 0, "XTEST keyboard dispatch failed"
+    return result.stdout.strip()
+
+
+def physical_page_action(window, button):
+    """Operate the Plugins page's visible native action, not emit clicked."""
+    assert button.get_sensitive() and button.get_visible()
+    assert button.get_mapped(), "Plugins action not visible for keyboard user"
+    title = "Cifereca Browser Recorder Plugins fixture"
+    hits = xtest("search", "--onlyvisible", "--name", title).splitlines()
+    assert len(hits) == 1, "expected the actual Plugins app window"
+    xtest("windowfocus", "--sync", hits[0])
+    flush()
+    assert button.grab_focus()
+    flush()
+    sleep(.08)
+    flush()
+    focused = window.get_focus()
+    assert focused is button or focused.is_ancestor(button)
+    xtest("key", "--clearmodifiers", "space")
+    flush()
+
+
+def physical_dialog_choice(dialog, label: str):
+    """Choose a real libadwaita dialog button with physical X11 keyboard.
+
+    GTK internal response buttons may contain a Gtk.Label child rather than
+    setting Gtk.Button.label directly. We inspect the actual widget tree,
+    focus the chosen button and send XTEST Space; never call response() or
+    emit GTK clicked from the test.
+    """
+    def text_of_button(button):
+        words = [button.get_label() or ""]
+        words.extend(widget.get_label()
+                     for widget in descendants(button)
+                     if isinstance(widget, Gtk.Label))
+        return " ".join(words)
+
+    buttons = [node for node in descendants(dialog)
+               if isinstance(node, Gtk.Button)
+               and label in text_of_button(node)]
+    assert len(buttons) == 1, "dialog has no unique keyboard action"
+    button = buttons[0]
+    assert button.get_sensitive() and button.get_visible()
+    # Set a synthetic title solely to select this dialog's real X11 window.
+    # Never inspect or record user/browser window contents.
+    title = "Cifereca XTEST Chromium confirmation fixture"
+    dialog.set_title(title)
+    dialog.present()
+    flush()
+    matches = xtest("search", "--onlyvisible", "--name", title).splitlines()
+    assert len(matches) == 1, "expected one physical confirmation window"
+    xtest("windowfocus", "--sync", matches[0])
+    flush()
+    assert button.grab_focus()
+    flush()
+    sleep(.08)
+    flush()
+    focused = dialog.get_focus()
+    assert focused is button or focused.is_ancestor(button)
+    xtest("key", "--clearmodifiers", "space")
+    assert eventually(lambda: visible_dialog() is None), (
+        "physical confirmation did not dismiss dialog"
+    )
+
+
 class FakeWindow(Gtk.Window):
     def __init__(self):
         super().__init__()
@@ -154,25 +232,22 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         assert not cache.exists()
 
         # Cancel the actual Python-repair dialog; no package/browser mutation.
-        repair.emit("clicked")
+        physical_page_action(window, repair)
         assert eventually(lambda: visible_dialog() is not None)
         dialog = visible_dialog()
         assert "Python" in dialog.get_heading()
-        dialog.response("cancel")
-        dialog.close()
-        assert eventually(lambda: visible_dialog() is None)
+        physical_dialog_choice(dialog, "Annuler")
         assert inspect_chromium().code == "playwright_missing"
         assert not cache.exists()
 
         # Explicit second consent: Core installs declared Python dependencies
         # into the managed venv asynchronously (no GUI-thread pip invocation).
-        button_named(
+        physical_page_action(window, button_named(
             page._plugin_widgets[PLUGIN_ID], "Installer les dépendances Python…"
-        ).emit("clicked")
+        ))
         assert eventually(lambda: visible_dialog() is not None)
         dialog = visible_dialog()
-        dialog.response("install")
-        dialog.close()
+        physical_dialog_choice(dialog, "Installer")
         assert eventually(lambda: page._python_deps_install_running)
         assert eventually(lambda: not page._python_deps_install_running, seconds=240)
         assert inspect_chromium().code == "chromium_missing", window.messages
@@ -187,26 +262,24 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         assert not page._chromium_operation_running
 
         # Initial button presents the REAL Adw.MessageDialog, but no download.
-        installer.emit("clicked")
+        physical_page_action(window, installer)
         assert eventually(lambda: visible_dialog() is not None)
         dialog = visible_dialog()
         assert "Chromium" in dialog.get_heading()
         assert not cache.exists()
         assert not page._chromium_operation_running
-        # Programmatic response() emits the signal but does not itself
-        # close the toplevel: real Adw response buttons perform both steps.
-        dialog.response("cancel")
-        dialog.close()
-        assert eventually(lambda: visible_dialog() is None)
+        # XTEST activates the real libadwaita response button and modal close.
+        physical_dialog_choice(dialog, "Annuler")
         assert not cache.exists()
         assert not page._chromium_operation_running
 
         # Second real UI invocation and explicit confirmation.
-        button_named(page._plugin_widgets[PLUGIN_ID], "Installer Chromium…").emit("clicked")
+        physical_page_action(window, button_named(
+            page._plugin_widgets[PLUGIN_ID], "Installer Chromium…"
+        ))
         assert eventually(lambda: visible_dialog() is not None)
         dialog = visible_dialog()
-        dialog.response("install")
-        dialog.close()
+        physical_dialog_choice(dialog, "Installer")
         assert eventually(lambda: page._chromium_operation_running)
         assert eventually(lambda: "Annuler Chromium" in [
             label_of_button(b) for b in descendants(page._plugin_widgets[PLUGIN_ID])
@@ -218,9 +291,7 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         assert result is not None
         assert result.get_heading() == "État Chromium"
         assert "prêt" in result.get_body().lower()
-        result.response("close")
-        result.close()
-        assert eventually(lambda: visible_dialog() is None)
+        physical_dialog_choice(result, "Fermer")
         assert inspect_chromium(test_launch=True).code == "ready"
         assert not manager.status(PLUGIN_ID).enabled  # no implicit activation
 

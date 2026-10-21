@@ -8,6 +8,7 @@ on:
       - 'src/plugins/browser-recorder/**'
       - 'tests/test_browser_recorder_installed_gtk_blackbox.py'
       - 'tests/test_browser_recorder_installed_chromium_e2e.py'
+      - 'tests/test_core_p0_2628_real_gtk_optin_chromium_e2e.py'
       - '.github/workflows/browser-recorder-chromium-e2e.yml'
   workflow_dispatch:
 
@@ -64,7 +65,7 @@ jobs:
   gtk:
     name: Real GTK4 · reviewed ZIP controls
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,7 +74,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-gi gir1.2-gtk-4.0 python3-pytest python3-venv xvfb xauth xdotool
+            python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-pytest python3-venv xvfb xauth xdotool
       - name: Native GTK4 page, XTEST keyboard and ZIP review with synthetic RAM trace
         env:
           PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/src/plugins/browser-recorder
@@ -95,6 +96,26 @@ jobs:
           "$RUNNER_TEMP/recorder-gtk-venv/bin/python" -m pip install --disable-pip-version-check 'playwright>=1.50,<2'
           xvfb-run -a "$RUNNER_TEMP/recorder-gtk-venv/bin/python" -m pytest -q -rs \
             tests/test_browser_recorder_installed_gtk_blackbox.py
+      - name: Fresh Plugins GUI XTEST opt-in (no preinstalled Python Playwright)
+        env:
+          GDK_BACKEND: x11
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -m venv --system-site-packages "$RUNNER_TEMP/fresh-ui-venv"
+          "$RUNNER_TEMP/fresh-ui-venv/bin/python" -m pip install --disable-pip-version-check -e . 'pytest>=8,<9'
+          if "$RUNNER_TEMP/fresh-ui-venv/bin/python" -m pip show playwright >/dev/null 2>&1; then
+            echo 'Fresh GUI unexpectedly contains Playwright before consent' >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/empty-ui-home"
+          test ! -e "$RUNNER_TEMP/empty-ui-home/.cache/ms-playwright"
+          env -u PLAYWRIGHT_BROWSERS_PATH \
+              -u PLAYWRIGHT_DOWNLOAD_HOST \
+              -u PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST \
+              HOME="$RUNNER_TEMP/empty-ui-home" \
+              CIFERECA_REAL_CHROMIUM_PROVISION_E2E=1 \
+              xvfb-run -a "$RUNNER_TEMP/fresh-ui-venv/bin/python" -m pytest -q -rs \
+              tests/test_core_p0_2628_real_gtk_optin_chromium_e2e.py
       - name: Never upload private UI data
         if: always()
         run: |
