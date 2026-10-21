@@ -6,6 +6,7 @@ from pathlib import Path
 from time import monotonic
 
 from .library_audit import audit_library
+from .library_inventory import InventoryLimits
 from .library_audit_roots import configured_identity_roots
 from .library_inspection_cache import begin_inspection_cache, remember_inspection_cache
 from .library_reconciliation import read_library_snapshot
@@ -14,6 +15,11 @@ _ROOT_ERRORS = frozenset({
     'invalid_reconciliation_identity_scope', 'invalid_reconciliation_root_configuration',
     'reconciliation_identity_root_collision', 'unknown_reconciliation_identity',
 })
+# Full explicit identity scan: the 120-second InventoryLimits default used by
+# the generic API is too short for hundreds of EPUB/CRC checks. This scope
+# remains read-only, cancellable and hard-capped by both Core validators.
+_SCOPED_AUDIT_SECONDS = 600
+
 _MESSAGES = {
     'inventory': 'Inventaire local', 'snapshot': 'Lecture des preuves locales',
     'reconciliation': 'Comparaison des preuves locales',
@@ -136,8 +142,11 @@ def _execute_scoped_audit(service, identity_id, control, finish):
             if changed:
                 return _unavailable({'reconciliation_scope_changed'})
             return _unavailable(snapshot.reasons)
-        result = audit_library(database, roots, cancelled=cancelled,
-                               progress=progress, _snapshot=snapshot)
+        result = audit_library(
+            database, roots, limits=InventoryLimits(seconds=_SCOPED_AUDIT_SECONDS),
+            seconds=_SCOPED_AUDIT_SECONDS,
+            cancelled=cancelled, progress=progress, _snapshot=snapshot,
+        )
         stopped = cancelled()
         if changed:
             return _unavailable({'reconciliation_scope_changed'})
