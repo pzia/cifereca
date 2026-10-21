@@ -53,5 +53,12 @@ def test_naming_audit_never_renames():
 def test_manifest_requires_plugin_api_14_for_maintenance_contracts():
     manifest = json.loads((Path(__file__).resolve().parents[1] / "cifereca-plugin.json").read_text(encoding="utf-8"))
     assert manifest["package"]["plugin_api"] == ">=1.4,<2"
-    assert manifest["package"]["version"] == "0.2.4"
-    assert {row["version"] for row in manifest["plugins"]} == {"0.2.4"}
+    assert manifest["package"]["version"] == "0.2.5"
+    assert {row["version"] for row in manifest["plugins"]} == {"0.2.5"}
+
+
+def test_reconciliation_declares_only_its_public_read_broker():
+    manifest = json.loads((Path(__file__).resolve().parents[1] / "cifereca-plugin.json").read_text())
+    row = next(row for row in manifest['plugins'] if row['id'] == 'maintenance.audit.reconciliation')
+    assert row['requires_brokers'] == ['library.reconciliation.read']
+    assert row['entrypoint'] == 'cifereca_library_reconciliation:RECONCILIATION_AUDIT'
