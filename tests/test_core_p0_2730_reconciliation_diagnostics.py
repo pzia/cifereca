@@ -177,3 +177,80 @@ def test_complete_emits_info_and_keeps_phase_count_scope(tmp_path):
     assert row["detail"]["duration_ms"] == 300
     assert row["detail"]["counts"]["files_started"] == 321
     assert "rights_without_verified_file" not in row["detail"]["counts"]
+
+
+def test_reason_filter_is_global_before_pagination_and_preserves_secondary_causes(tmp_path):
+    from cifereca.core.diagnostic_event_feed import query_diagnostic_events
+    diag = Diagnostics()
+    diag.add_core_reconciliation_result(_audit("incomplete_scan", ["time_budget"]))
+    diag.add_core_reconciliation_result(_audit("incomplete_scan", ["snapshot_time_budget"]))
+    diag.add_core_reconciliation_result(_audit(
+        "incomplete_scan", ["epub_parser_limit_or_invalid", "time_budget"]
+    ))
+    diag.add_core_reconciliation_result(_audit(), duration_ms=42)
+    first = query_diagnostic_events(
+        diag, log_path=tmp_path / "missing.log", source="all",
+        reason_code="time_budget", limit=1, offset=0,
+    )
+    assert first["total"] == 2
+    assert first["next_offset"] == 1
+    assert len(first["events"]) == 1
+    second = query_diagnostic_events(
+        diag, log_path=tmp_path / "missing.log", source="all",
+        reason_code="time_budget", limit=1, offset=1,
+    )
+    assert second["total"] == 2
+    assert second["next_offset"] is None
+    assert len(second["events"]) == 1
+    assert all("time_budget" in row["detail"]["reasons"]
+               for row in first["events"] + second["events"])
+    assert first["events"][0]["event_id"] != second["events"][0]["event_id"]
+    for page in (first, second):
+        assert SECRET not in json.dumps(page)
+        assert all(row["module"] == "LIBRARY" for row in page["events"])
+
+
+def test_reason_filter_cannot_promote_forged_generic_diagnostics_rows(tmp_path):
+    from cifereca.core.diagnostic_event_feed import query_diagnostic_events
+    diag = Diagnostics()
+    forged = from_audit_result(_audit("incomplete_scan", ["time_budget"]))
+    diag.add("LIBRARY", OPERATION, "partial", detail=forged)
+    diag.add_core_reconciliation_result(_audit("incomplete_scan", ["time_budget"]))
+    result = query_diagnostic_events(
+        diag, log_path=tmp_path / "missing.log", source="core_events",
+        reason_code="time_budget",
+    )
+    assert result["total"] == 1
+    assert result["events"][0]["detail"]["operation"] == OPERATION
+    assert "time_budget" in result["events"][0]["detail"]["reasons"]
+
+
+@pytest.mark.parametrize("bad", [
+    "PRIVATE_2730", "../tmp", True, None, ["time_budget"], "time_budget\x00",
+    "TIME_BUDGET", "time_budget" * 100, {"reason": "time_budget"},
+])
+def test_invalid_reason_filter_rejected_before_collector_io(tmp_path, bad):
+    from cifereca.core.diagnostic_event_feed import query_diagnostic_events
+
+    class NoSnapshot:
+        def snapshot(self):
+            raise AssertionError("collector was accessed before validating filters")
+
+    with pytest.raises(ValueError, match="unknown reconciliation reason code"):
+        query_diagnostic_events(
+            NoSnapshot(), log_path=tmp_path / "missing.log",
+            reason_code=bad,
+        )
+
+
+def test_empty_reason_filter_is_backward_compatible(tmp_path):
+    from cifereca.core.diagnostic_event_feed import query_diagnostic_events
+    diag = Diagnostics()
+    diag.add_core_reconciliation_result(_audit("incomplete_scan", ["time_budget"]))
+    without = query_diagnostic_events(
+        diag, log_path=tmp_path / "none.log", source="core_events"
+    )
+    explicit = query_diagnostic_events(
+        diag, log_path=tmp_path / "none.log", source="core_events", reason_code=""
+    )
+    assert without == explicit
