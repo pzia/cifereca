@@ -10,6 +10,7 @@ import json
 from typing import Any
 
 from .loan_return_guard import _public_timestamp, _verification_time_attested
+from . import return_adept_origin_preflight
 
 
 def adept_return_key(provider_id: str, credential_id: str,
@@ -165,18 +166,9 @@ def return_loan_prefer_adept(
         raw_id if type(raw_id) is str and 0 < len(raw_id) <= 256 else None
     )
     if acquisition_id is None:
-        reason = _public_origin_status(
-            source.get("status"), default="adept_return_binding_required",
+        return return_adept_origin_preflight.missing_acquisition_outcome(
+            source, public_origin_status=_public_origin_status,
         )
-        # "ready" without an exact acquisition is not permission to mutate.
-        if reason == "ready":
-            reason = "adept_return_binding_required"
-        return {
-            "status": "provider_action_available" if reason == "no_acquisition" else reason,
-            "scope": "adobe_first_paris",
-            "retry": "provider_action_explicit" if reason == "no_acquisition"
-                     else "resolve_identity",
-        }
     acquisition = self.storage.acquisition_get(acquisition_id)
     if acquisition is None:
         return {
@@ -193,15 +185,12 @@ def return_loan_prefer_adept(
         }
     previous = self.storage.loan_return_state(key)
     if previous is None:
-        source_status = _public_origin_status(
-            source.get("status"), default="adept_return_state_required",
+        # Pure preflight decision precedes the *first* durable return claim.
+        refusal = return_adept_origin_preflight.unready_to_return_outcome(
+            source, public_origin_status=_public_origin_status,
         )
-        if source_status != "ready" or source.get("return_available") is not True:
-            return {
-                "status": source_status if source_status != "ready"
-                          else "adept_return_state_required",
-                "scope": "adobe_first_paris", "retry": "verification_only",
-            }
+        if refusal is not None:
+            return refusal
         claimed, record = self.storage.loan_return_claim(key, uuid.uuid4().hex)
         if not claimed:
             previous = record
