@@ -152,7 +152,10 @@ def test_broker_and_executor_can_share_a_single_budget():
             pool.submit(TaskPriority.NORMAL, lambda: None)
         release.set()
         assert task.result(timeout=3) is None
+        executor = broker._executor
         broker.close()
+        if executor is not None:
+            executor.shutdown(wait=True)
         pool.shutdown(wait=True)
         assert budget.snapshot()["inflight"] == 0
     finally:
