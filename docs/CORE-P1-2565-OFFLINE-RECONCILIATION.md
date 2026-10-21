@@ -184,8 +184,11 @@ Ce contrat ne fournit encore ni filtre ni inspection privée des cas individuels
 
 ## Inspection privée locale depuis Maintenance
 
-« Résultats… → Examiner les cas… » lance une **nouvelle** lecture hors réseau
-pour l’identité active. Cette inspection Core, séparée du broker public expurgé,
+« Résultats… → Examiner les cas… » reprend **une seule fois** la projection
+privée de la dernière réconciliation terminée (si sa portée et ses fichiers
+SQLite/WAL/SHM sont toujours valides et si son âge est inférieur à 5 minutes) ;
+sinon, elle lance une nouvelle lecture hors réseau pour l’identité active.
+Cette inspection Core, séparée du broker public expurgé,
 reste en mémoire et n’offre ni export, ni réparation, ni acquisition. La liste
 paginée (50 cas) filtre les fichiers, droits non vérifiés et chemins enregistrés
 par fournisseur/état ; l’identité est limitée à celle explicitement active.
@@ -269,7 +272,7 @@ et ne transforme pas un candidat bibliographique en droit attesté.
 
 ## Échec d’inspection : conserver la cause fermée, sans fausse révocation (P0 #2565)
 
-Lorsque **« Examiner les cas… »** lance une nouvelle lecture hors réseau, le
+Lorsque **« Examiner les cas… »** doit lancer une nouvelle lecture hors réseau, le
 broker Core peut renvoyer une enveloppe d'échec expurgée (sans session privée)
 plutôt qu'une `LocalInspection`. L'interface distingue maintenant les codes
 validés de **timeout SQLite `snapshot_time_budget`**, d'indisponibilité du
@@ -281,8 +284,10 @@ Une enveloppe malformée, inconnue ou présentant plusieurs causes ne devient
 pas un diagnostic privilégié : seul un message générique fixe est affiché ;
 aucun texte de retour brut, chemin, compte, ISBN ou détail SQLite n'est repris.
 Le résultat de l'Inspection n'est jamais réutilisé comme jeton de réparation.
-L'inspection effectue toujours une nouvelle lecture pour établir la validité
-des preuves à l'instant de l'ouverture, sous contrôle de l'identité active.
+L'inspection réutilise au plus une fois la projection privée fraîche de la
+dernière analyse réussie (#2655), ou effectue une nouvelle lecture si elle
+est absente/expirée/invalide. Cette revalidation est une condition d'affichage,
+**pas une attestation du droit à réparer**.
 
 Si le timeout se répète : consulter localement les traces fermées
 `TRACE reconciliation_snapshot` et `TRACE reconciliation_wal` pour
@@ -313,3 +318,33 @@ utilise 4 096 notices commises dans une DB en WAL actif. Ceci limite
 l'empreinte mémoire additionnelle et le coût des callbacks, **sans attester
 que le timeout de la base utilisateur est résolu** : les traces de phase et
 la recette réelle demeurent nécessaires.
+
+
+## Projection SQL ciblée par identité — P0 #2565
+
+Le broker Maintenance fournit au lecteur une **identité active explicite
+préalablement contrôlée**. Après capture de l'image SQLite/WAL cohérente,
+la projection SQL des tables `entitlements`, `placements`, `backup_items`
+et `catalog_entries` applique `WHERE identity_id=?` **dans l'image en
+mémoire**, avant le décodage des métadonnées et les budgets de lignes.
+L'inventaire et l'audit global hors broker (plusieurs identités autorisées)
+ne changent pas de sémantique : sans filtre explicite, toutes les tables
+sont projetées comme précédemment.
+
+**Important :** `acquisition_ledger` reste lu intégralement afin de
+conserver les acquisitions de comptes étrangers portant sur le même
+`entitlement_id` ou le même triplet fournisseur/connexion/édition que
+les droits sélectionnés. Ces lignes sont ensuite strictement filtrées par
+`scope_evidence` pour ne garder que les conflits établis. Les artefacts
+adressés par SHA ne sont pas filtrés par identité, et le SHA seul ne prouve
+jamais un droit. Aucune nouvelle association automatique n'en résulte.
+
+Pour diagnostiquer les timeout, un marqueur littéral supplémentaire
+`TRACE reconciliation_snapshot phase=projection stage=direct|wal` signale
+la **fin de la capture et l'entrée en projection**. Si `snapshot_time_budget`
+survient **après** ce marqueur, le temps est consommé dans la projection
+en mémoire ; s'il survient avant, exploiter les étapes WAL connues. Une
+absence de marqueur n'établit pas à elle seule la phase (journalisation
+éventuellement tronquée). Aucun chemin, livre, compte, empreinte ou texte SQL
+n'est ajouté aux traces. Les budgets de 10 secondes/128 Mio/100 000 lignes
+et les garanties sans réseau ni mutation restent inchangés.
