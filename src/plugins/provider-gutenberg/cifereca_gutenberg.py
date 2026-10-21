@@ -655,7 +655,21 @@ class GutenbergSession(ProviderSession):
                     "rate_limited" if status == 429 else
                     "service_unavailable"
                 )
-                raise ProviderError(f"Project Gutenberg : recherche OPDS indisponible ({code})") from None
+                failure = ProviderError(
+                    f"Project Gutenberg : recherche OPDS indisponible ({code})"
+                )
+                # The public Core fallback accepts only a built-in, exact
+                # machine code; it must never infer an outage from an HTTP
+                # 401/403, generic 400, upstream text or exception repr.
+                if status == 401:
+                    failure.code = "search_authentication_required"
+                elif status == 403:
+                    failure.code = "search_access_denied"
+                elif (status is None or type(status) is int
+                      and (status in {408, 429} or status >= 500)):
+                    failure.code = "search_temporarily_unavailable"
+                    failure.retryable = False  # No second equivalent GET.
+                raise failure from None
             self._remember_page(rows_cache,page_index,str(response.url))
             next_url=self._next_page_url(response.content,str(response.url))
             if next_url: self._remember_page(rows_cache,page_index+1,next_url)
