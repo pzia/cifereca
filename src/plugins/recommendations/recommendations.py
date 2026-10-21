@@ -1650,9 +1650,10 @@ class UxRecommendationsView:
                     or coordinates in seen_coordinates):
                 continue
             seen_coordinates.add(coordinates)
-            exact_variants.append(variant)
-            if len(exact_variants) >= 16:
-                break
+            # Inspect all 256 bounded candidates even after 16 displayable
+            # rows: only a *verified overflow* may claim partial display.
+            if len(exact_variants) < 16:
+                exact_variants.append(variant)
         hidden_variants = (
             type(raw_variants) in (tuple, list)
             and len(raw_variants) > 256
@@ -1674,7 +1675,7 @@ class UxRecommendationsView:
                     "Choisir une notice dans Recherche pour consulter les "
                     "disponibilités et les actions réellement autorisées.",
                 ))
-            if len(exact_variants) == 16 or hidden_variants:
+            if len(seen_coordinates) > 16 or hidden_variants:
                 edition_fields.append(DetailField(
                     "source-edition-limit", "Limite d'affichage",
                     "Au plus 16 notices exactes affichées ; seules les "
