@@ -282,6 +282,17 @@ class LocalInspection:
                 notices[(row['provider_id'], row['item_id'])].append(
                     (notice_index, row)
                 )
+        # Compute each identity/provider/item candidate set once, not once
+        # per unverified right (multiple rights may refer to one edition).
+        # The shared metadata_candidates pass is already limited to 10,000
+        # exact-key pairs. Its incompleteness is displayed by the audit.
+        candidates_by_edition = {}
+        for edition, entries in notices.items():
+            candidates_by_edition[edition] = tuple(sorted({
+                fi for notice_index, _row in entries
+                for fi in candidate_files_by_notice.get(notice_index, ())
+                if f'file:{fi}' in self._cases
+            }))
         for index in audit.reconciliation.unverified_rights:
             if not 0 <= index < len(rights) or rights[index].get('identity_id') != identity_id:
                 continue
@@ -304,11 +315,9 @@ class LocalInspection:
             # A catalogue notice belongs to this explicit identity/provider/
             # item scope, but an ISBN match between it and an EPUB is only a
             # bibliographic inspection lead, never evidence of ownership.
-            candidate_indices = sorted({
-                fi for notice_index, _ in matches
-                for fi in candidate_files_by_notice.get(notice_index, ())
-                if f'file:{fi}' in self._cases
-            })
+            candidate_indices = candidates_by_edition.get(
+                (right_provider, right_item), (),
+            )
             file_keys = tuple(f'file:{fi}' for fi in candidate_indices[:20])
             self._candidate_file_keys[f'right:{index}'] = file_keys
             suggestions = [
