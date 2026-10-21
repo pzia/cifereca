@@ -10,6 +10,7 @@ from enum import IntEnum
 from typing import Any, Callable
 
 from .diagnostic_task_context import diagnostic_task_scope
+from .task_admission import SharedTaskAdmission, AdmissionLease
 
 
 def _bounded_percentile_ms(samples: tuple[int, ...], percentile: int) -> float:
@@ -42,9 +43,24 @@ class PriorityExecutor:
     global I/O/CPU quota (#2431).
     """
 
-    def __init__(self, max_workers: int = 3, thread_name_prefix: str = "cifereca-task", *, max_pending: int | None = None):
+    def __init__(
+        self, max_workers: int = 3, thread_name_prefix: str = "cifereca-task",
+        *, max_pending: int | None = None,
+        shared_admission: SharedTaskAdmission | None = None,
+        admission_scope: str | None = None,
+    ):
         if max_pending is not None and (type(max_pending) is not int or max_pending < 1):
             raise ValueError("max_pending must be a positive integer")
+        if shared_admission is not None and not isinstance(shared_admission, SharedTaskAdmission):
+            raise ValueError("invalid shared admission")
+        if admission_scope is not None and (
+            type(admission_scope) is not str or
+            not 1 <= len(admission_scope) <= 128 or shared_admission is None
+        ):
+            raise ValueError("invalid task scope")
+        self._shared_admission = shared_admission
+        self._admission_scope = admission_scope
+        self._leases: dict[Future[Any], AdmissionLease] = {}
         self._max_pending = max_pending
         self._pending = 0
         self._active = 0
@@ -72,11 +88,30 @@ class PriorityExecutor:
                 self._rejected += 1
                 raise RuntimeError("executor pending queue full")
             future: Future[Any] = Future()
+            if self._shared_admission is not None:
+                lease = self._shared_admission.acquire(
+                    priority=int(priority), scope=self._admission_scope,
+                )
+                if lease is None:
+                    self._rejected += 1
+                    raise RuntimeError("shared task admission full")
+                self._leases[future] = lease
+                future.add_done_callback(self._release_cancelled_lease)
             self._queued_at[future] = monotonic_ns()
             self._queue.put((int(priority), next(self._sequence), future, fn))
             self._pending += 1
             self._admitted += 1
             return future
+
+    def _release_cancelled_lease(self, future: Future[Any]) -> None:
+        if future.cancelled():
+            self._release_lease(future)
+
+    def _release_lease(self, future: Future[Any]) -> None:
+        with self._lock:
+            lease = self._leases.pop(future, None)
+        if lease is not None:
+            lease.release()
 
     def admission_snapshot(self) -> dict[str, int | bool | None]:
         """Return only numeric local admission metrics (no task/user labels)."""
@@ -121,6 +156,7 @@ class PriorityExecutor:
                     self._pending -= 1
                     queued_at = self._queued_at.pop(future, None)
                 if not future.set_running_or_notify_cancel():
+                    self._release_lease(future)
                     continue
                 started_at = monotonic_ns()
                 with self._lock:
@@ -140,6 +176,9 @@ class PriorityExecutor:
                     with self._lock:
                         self._active -= 1
                         self._worker_ns.append(elapsed_ns)
+                    # set_result invokes user callbacks before worker exit.
+                    # Only worker finally may free an active reservation.
+                    self._release_lease(future)
             finally:
                 self._queue.task_done()
 
