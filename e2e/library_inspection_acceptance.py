@@ -155,9 +155,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         right = controller.session.page(
             provider='numilog', state='rights_without_verified_file',
         ).cases[0]
-        candidates = controller.session.candidate_files(right.key)
-        assert len(candidates) == 20
-        assert candidates[0].label in labels
+        candidate_cases = controller.session.candidate_files(right.key)
+        assert len(candidate_cases) == 20
+        assert candidate_cases[0].label in labels
         assert 'Droit sans fichier vérifié' in labels
         following_candidate=next(w for w in walk(controller.dialog)
                                  if isinstance(w,Gtk.Button)
@@ -173,8 +173,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         right = controller.session.page(
             provider='numilog', state='rights_without_verified_file',
         ).cases[0]
-        candidates = controller.session.candidate_files(right.key)
-        assert candidates[1].label in labels
+        candidate_cases = controller.session.candidate_files(right.key)
+        assert candidate_cases[1].label in labels
         assert 'FOREIGN_SECRET' not in labels
         report['checks']['local_inspection_right_candidate_side_by_side_no_attestation']=True
         choose(widgets['provider'],0,lambda:choose(widgets['state'],3,candidates))
