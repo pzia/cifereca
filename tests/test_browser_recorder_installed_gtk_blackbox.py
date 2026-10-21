@@ -47,18 +47,17 @@ def _children(widget):
 
 
 def _real_package_zip(path):
-    """Recreate the distributable code ZIP, without source-test imports."""
-    sources = list(SOURCE.glob("*.py"))
-    assert len(sources) >= 5
-    assert (SOURCE / "cifereca-plugin.json").is_file()
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as bundle:
-        for member in sorted([*sources, SOURCE / "cifereca-plugin.json", SOURCE / "README.md"]):
-            bundle.write(member, member.name)
-    with zipfile.ZipFile(path) as bundle:
+    """Use the *production* release packager and validate its real artifact."""
+    from scripts.plugin_packaging import build_plugin_zip, validate_plugin_zip
+    archive = build_plugin_zip(SOURCE, path.parent)
+    verified = validate_plugin_zip(archive)
+    assert verified["package"]["id"] == PACKAGE_ID
+    assert verified["package"]["version"] == "0.1.3"
+    with zipfile.ZipFile(archive) as bundle:
         assert "browser_recorder_page.py" in bundle.namelist()
         assert "browser_recorder_review_ui.py" in bundle.namelist()
-        assert "tests/" not in " ".join(bundle.namelist())
-    return path
+        assert not any(name.startswith("tests/") for name in bundle.namelist())
+    return archive
 
 
 class FailClosedTasks:
