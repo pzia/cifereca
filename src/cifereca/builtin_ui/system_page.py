@@ -28,7 +28,7 @@ class SystemPages:
 
         from cifereca.gui.action_widgets import AdaptiveActionBar, action_button, mirror_sensitivity
         from cifereca.gui.diagnostic_presentation import diagnostic_plugin_rows
-        from cifereca.core.version_inventory import version_inventory
+        from cifereca.plugin_api.version_inventory import version_inventory
         from cifereca.gui.main_window import clear_box, fr_date
 
         scroll = Gtk.ScrolledWindow()
