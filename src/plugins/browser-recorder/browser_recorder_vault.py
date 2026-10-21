@@ -71,8 +71,10 @@ def _record(trace: PrivateHttpTrace, session_id: str, state: str) -> bytes:
         "id": session_id,
         "state": state,
         "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "end_reason": trace.end_reason if trace.end_reason in (
-            "button", "browser_closed"
+        "end_reason": trace.end_reason if (
+            state == "completed" and trace.end_reason in (
+                "button", "browser_closed",
+            )
         ) else None,
         "origins": list(trace.origins),
         "metadata_only_origins": list(trace.metadata_only_origins),

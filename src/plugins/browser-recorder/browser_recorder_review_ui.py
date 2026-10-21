@@ -15,6 +15,7 @@ from browser_recorder_http import CapturePause, record_http
 from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
 from browser_recorder_vault import PrivateSessionVault, VaultError
+from browser_recorder_private_zip import save_private_zip
 
 
 _REVIEW_PAGE_SIZE = 24  # Bound GTK widgets even for 256 distinct private IDs.
@@ -28,8 +29,10 @@ _CAPTURE_FAILURE_LABELS = {
         "→ Installer les dépendances Python…, puis Installer Chromium…."
     ),
     "capture_interrupted": (
-        "Session Chromium interrompue ou limite dépassée : la capture privée "
-        "a été effacée. Ouvrez Plugins → Browser Recorder → Vérifier Chromium… avant de relancer."
+        "Session Chromium interrompue ou limite dépassée : mémoire temporaire "
+        "effacée. Une projection partielle peut rester dans Sessions archivées "
+        "si le coffre était activé. Ouvrez Plugins → Browser Recorder → "
+        "Vérifier Chromium… avant de relancer."
     ),
     "capture_limit": (
         "Limite de capture atteinte : réduisez le parcours ou arrêtez la capture."
@@ -91,6 +94,10 @@ class PrivateReviewPanel:
         self.vault_passphrase = None
         self.session_list = None
         self.delete_confirm = None
+        self.private_export_confirm = None
+        self.private_export_button = None
+        self.private_export_directory = None
+        self.private_export_passphrase = None
         self._bundle_plan = None
         self._bundle_preview = None
         self._handle = None
@@ -163,6 +170,39 @@ class PrivateReviewPanel:
             self.sessions_open.connect("clicked", lambda *_: self.open_session())
             self.sessions_delete.connect(
                 "clicked", lambda *_: self.delete_session(),
+            )
+            box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            box.append(Gtk.Label(
+                label="Export DE SECOURS non anonymisé : contient URL, "
+                      "identifiants, titres et corps privés observés. "
+                      "Ne jamais partager sans une revue spécifique. "
+                      "Le résultat est un .brzip CHIFFRÉ, pas le ZIP LLM.",
+                xalign=0, wrap=True,
+            ))
+            self.private_export_directory = Gtk.Entry()
+            self.private_export_directory.set_placeholder_text(
+                "Dossier privé préexistant (absolu, permissions 0700)"
+            )
+            box.append(self.private_export_directory)
+            self.private_export_passphrase = Gtk.Entry()
+            self.private_export_passphrase.set_visibility(False)
+            self.private_export_passphrase.set_placeholder_text(
+                "NOUVELLE phrase secrète réservée à ce ZIP privé chiffré"
+            )
+            box.append(self.private_export_passphrase)
+            self.private_export_confirm = Gtk.CheckButton(
+                label="Je confirme cet export privé distinct du ZIP anonymisé."
+            )
+            box.append(self.private_export_confirm)
+            self.private_export_button = Gtk.Button(
+                label="Exporter le ZIP privé chiffré de cette session"
+            )
+            box.append(self.private_export_button)
+            self.private_export_confirm.connect(
+                "toggled", lambda *_: self._refresh(),
+            )
+            self.private_export_button.connect(
+                "clicked", lambda *_: self.export_private_zip(),
             )
         # FlowBox wraps the five capture/review buttons at sidebar/mobile
         # widths; a single horizontal Box could push Stop/Clear off-screen.
@@ -300,6 +340,11 @@ class PrivateReviewPanel:
             self.sessions_refresh.set_sensitive(not self._closed and not busy)
             self.sessions_open.set_sensitive(not self._closed and not busy)
             self.sessions_delete.set_sensitive(not self._closed and not busy)
+            self.private_export_button.set_sensitive(
+                not self._closed and not busy
+                and self.private_export_confirm.get_active()
+                and bool(self.session_list.get_active_id())
+            )
         self.stop.set_sensitive(not self._closed and busy)
         self.third_party_origins.set_sensitive(
             not self._closed and not busy and self._trace is None
@@ -605,6 +650,56 @@ class PrivateReviewPanel:
         self.status.set_label("Session locale supprimée du coffre.")
         self._refresh()
 
+    def export_private_zip(self):
+        if self.vault_directory is None or self._closed or self.is_recording():
+            return
+        if not self.private_export_confirm.get_active():
+            self.status.set_label(
+                "Export privé refusé : confirmation spécifique requise."
+            )
+            return
+        self.private_export_confirm.set_active(False)
+        sid = self.session_list.get_active_id()
+        path = self.private_export_directory.get_text().strip()
+        passphrase = self.vault_passphrase.get_text()
+        self.vault_passphrase.set_text("")
+        export_passphrase = self.private_export_passphrase.get_text()
+        self.private_export_passphrase.set_text("")
+        if not sid or not path or len(export_passphrase) < 12:
+            self.status.set_label(
+                "Choisir une session, un dossier privé et une nouvelle phrase "
+                "secrète d'export distincte (12 caractères minimum)."
+            )
+            return
+        if passphrase == export_passphrase:
+            self.status.set_label(
+                "Utiliser une phrase d'export différente de celle du coffre."
+            )
+            return
+        stored = None
+        try:
+            stored = PrivateSessionVault(self.vault_directory).open(
+                sid, passphrase,
+            )
+            filename = save_private_zip(
+                stored, Path(path), export_passphrase, confirmed=True,
+            )
+        except Exception:
+            # Never emit path, provider data or cryptography exception text.
+            self.status.set_label(
+                "ZIP privé refusé : déverrouillage, répertoire 0700 ou "
+                "limite de sécurité incorrecte. Aucun export non chiffré."
+            )
+            return
+        finally:
+            if stored is not None:
+                stored.trace.destroy()
+        self.status.set_label(
+            "ZIP PRIVÉ CHIFFRÉ enregistré : " + filename
+            + " — ne pas partager sans revue ; aucun téléversement."
+        )
+        self._refresh()
+
     def toggle_pause(self):
         if (self._closed or not self.is_recording() or self._pause_control is None
                 or self._stop is None or self._stop.is_set()):
@@ -830,6 +925,11 @@ class PrivateReviewPanel:
         self._generation += 1
         if self._stop is not None:
             self._stop.set()
+        # Never leave typed vault/export secrets in a detached GTK page.
+        if self.vault_passphrase is not None:
+            self.vault_passphrase.set_text("")
+        if self.private_export_passphrase is not None:
+            self.private_export_passphrase.set_text("")
         self._discard_private()
         self._stop = None
         self._handle = None

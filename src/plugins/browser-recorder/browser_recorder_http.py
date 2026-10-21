@@ -548,6 +548,7 @@ def record_http(start_url: str, stop: Event, *,
     except Exception:
         if vault_writer is not None:
             try:
+                trace.finish_open_requests()
                 vault_writer.save(trace, "interrupted", force=True)
             except Exception:
                 # The last 'recording' encrypted snapshot remains recoverable.

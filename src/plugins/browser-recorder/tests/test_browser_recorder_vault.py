@@ -113,6 +113,7 @@ def test_multiple_sessions_partial_and_deferred_independent_zip(tmp_path):
     assert len(vault.list_ids()) == 3
     restored = vault.open(ids[1], PASSPHRASE)
     assert restored.state == "recording"
+    assert restored.trace.end_reason is None  # Never claim a successful Stop
     assert "Batch=1" in restored.trace.exchanges[0].url
     immutable = (tmp_path / "vault" / (ids[1] + ".cbrv")).read_bytes()
     for _ in range(2):
