@@ -95,6 +95,7 @@ class PrivateReviewPanel:
         self.private_export_confirm = None
         self.private_export_button = None
         self.private_export_directory = None
+        self.private_export_passphrase = None
         self._bundle_plan = None
         self._bundle_preview = None
         self._handle = None
@@ -181,6 +182,12 @@ class PrivateReviewPanel:
                 "Dossier privé préexistant (absolu, permissions 0700)"
             )
             box.append(self.private_export_directory)
+            self.private_export_passphrase = Gtk.Entry()
+            self.private_export_passphrase.set_visibility(False)
+            self.private_export_passphrase.set_placeholder_text(
+                "NOUVELLE phrase secrète réservée à ce ZIP privé chiffré"
+            )
+            box.append(self.private_export_passphrase)
             self.private_export_confirm = Gtk.CheckButton(
                 label="Je confirme cet export privé distinct du ZIP anonymisé."
             )
@@ -654,9 +661,17 @@ class PrivateReviewPanel:
         path = self.private_export_directory.get_text().strip()
         passphrase = self.vault_passphrase.get_text()
         self.vault_passphrase.set_text("")
-        if not sid or not path:
+        export_passphrase = self.private_export_passphrase.get_text()
+        self.private_export_passphrase.set_text("")
+        if not sid or not path or len(export_passphrase) < 12:
             self.status.set_label(
-                "Choisir une session et un dossier privé de destination."
+                "Choisir une session, un dossier privé et une nouvelle phrase "
+                "secrète d'export distincte (12 caractères minimum)."
+            )
+            return
+        if passphrase == export_passphrase:
+            self.status.set_label(
+                "Utiliser une phrase d'export différente de celle du coffre."
             )
             return
         stored = None
@@ -665,7 +680,7 @@ class PrivateReviewPanel:
                 sid, passphrase,
             )
             filename = save_private_zip(
-                stored, Path(path), passphrase, confirmed=True,
+                stored, Path(path), export_passphrase, confirmed=True,
             )
         except Exception:
             # Never emit path, provider data or cryptography exception text.
