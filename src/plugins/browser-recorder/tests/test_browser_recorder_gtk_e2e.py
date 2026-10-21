@@ -458,6 +458,10 @@ def test_gtk_capture_failure_is_attested_and_privacy_safe(
         assert not list(tmp_path.iterdir())
 
         consent.set_active(True)
+        page.private_panel.vault_consent.set_active(True)
+        page.private_panel.vault_passphrase.set_text(
+            "FICTIONAL-TEST-PASSPHRASE-2026"
+        )
         page.private_panel.start.emit("clicked")
         assert tasks.submissions == 1
         assert diagnostics.snapshot() == []
