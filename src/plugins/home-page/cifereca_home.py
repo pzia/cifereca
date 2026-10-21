@@ -25,13 +25,14 @@ def issues_text(sync):
     if detail.get('error'):lines.append(safe_issue(detail['error']))
     return '\n\n'.join(lines) or 'Ancienne synchronisation sans détail. Relancez-la ou consultez Récents.'
 
-PUBLIC_PROVIDERS = {'gallica', 'gutenberg', 'bnf-catalogue', 'baen', 'ebooksgratuits'}
+PUBLIC_PROVIDERS = {'gallica', 'gutenberg', 'bnf-catalogue', 'baen', 'ebooksgratuits', 'numilog-catalog'}
 LOCAL_PROVIDERS = {'local'}
 SOURCE_NAMES = {
     'local':'Local',
     'paris':'Bibliothèques de Paris',
     'kobo':'Kobo',
     'numilog':'Numilog',
+    'numilog-catalog':'Numilog — Catalogue public',
     'gallica':'Gallica',
     'gutenberg':'Gutenberg',
     'bnf-catalogue':'BnF',
@@ -63,7 +64,15 @@ def source_groups(row, public_providers=PUBLIC_PROVIDERS, local_providers=LOCAL_
         return item
 
     local=[build(pid,'local') for pid in sorted(candidates & set(local_providers))]
-    public=[build(pid,'public') for pid in sorted(candidates & set(public_providers))]
+    public=[
+        build(pid, 'public')
+        for pid in sorted(candidates & set(public_providers))
+        # Numilog's commercial public source intentionally creates NO
+        # Account. Only a live enabled-session descriptor in the Core's
+        # dashboard snapshot may prove it is currently available.
+        # Historical placement origins cannot re-enable a disabled plugin.
+        if pid != 'numilog-catalog' or pid in observed
+    ]
     authenticated=[build(pid,'authenticated') for pid in sorted(linked-set(public_providers)-set(local_providers))]
     return {'local':local,'public':public,'authenticated':authenticated}
 
