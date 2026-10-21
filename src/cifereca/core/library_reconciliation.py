@@ -206,22 +206,31 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
                                             if type(raw) is str and len(raw) <= 65536 else {})
                             except (ValueError, RecursionError):
                                 metadata = {}
+                            # The authenticated store's entitlement often
+                            # holds title/author/format even when an exact
+                            # catalogue row is absent. Carry only these bounded
+                            # *descriptive* fields in private Core memory.
+                            # Never copy receipts, URLs, tokens, raw metadata
+                            # or account details to the redacted/public view.
+                            if isinstance(metadata, dict):
+                                title = metadata.get('title')
+                                authors = metadata.get('authors', metadata.get('author'))
+                                if type(title) is str:
+                                    row['display_title'] = title[:256]
+                                if type(authors) is str:
+                                    row['display_authors'] = authors[:256]
+                                elif type(authors) is list:
+                                    row['display_authors'] = ', '.join(
+                                        a[:96] for a in authors[:4] if type(a) is str
+                                    )[:256]
+                                if name == 'entitlements':
+                                    format_value = metadata.get('media_format')
+                                    if type(format_value) is str and format_value.lower() in {
+                                        'epub', 'kepub', 'pdf', 'acsm',
+                                    }:
+                                        row['display_media_format'] = format_value.lower()
                             if name == 'catalog_entries':
                                 row['bibliographic_identifiers'] = identifiers(metadata)
-                                # Safe, bounded display hints stay in Core-only
-                                # private evidence. They are never exported by
-                                # EvidenceSnapshot/LibraryAudit.redacted().
-                                if isinstance(metadata, dict):
-                                    title = metadata.get('title')
-                                    authors = metadata.get('authors', metadata.get('author'))
-                                    if type(title) is str:
-                                        row['display_title'] = title[:256]
-                                    if type(authors) is str:
-                                        row['display_authors'] = authors[:256]
-                                    elif type(authors) is list:
-                                        row['display_authors'] = ', '.join(
-                                            a[:96] for a in authors[:4] if type(a) is str
-                                        )[:256]
                             else:
                                 source = metadata.get('source') if isinstance(metadata, dict) else None
                                 row['attested_source'] = (
