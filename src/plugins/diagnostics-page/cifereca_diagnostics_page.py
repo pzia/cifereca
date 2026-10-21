@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from cifereca.plugin_api import UiPageContribution
+from cifereca.core.version_inventory import version_inventory
 from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_consent, export_analysis_json
 from diagnostics_explorer import (
     SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
@@ -567,6 +568,26 @@ class DiagnosticsPagePlugin:
         status_title = Gtk.Label(label="État système", xalign=0)
         status_title.add_css_class("heading")
         system_tab.append(status_title)
+        versions_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        versions_core = Gtk.Label(label="Core Cifereca · version inconnue", xalign=0)
+        versions_core.set_hexpand(True)
+        versions_core.set_wrap(True)
+        versions_core.add_css_class("heading")
+        versions_copy = Gtk.Button(label="Copier les versions")
+        versions_copy.set_tooltip_text("Copier uniquement les versions et états des composants affichés")
+        versions_copy.set_sensitive(False)
+        versions_header.append(versions_core)
+        versions_header.append(versions_copy)
+        system_tab.append(versions_header)
+        versions_count = Gtk.Label(label="Inventaire local des plugins", xalign=0)
+        versions_count.set_wrap(True)
+        system_tab.append(versions_count)
+        versions_scroll = Gtk.ScrolledWindow()
+        versions_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        versions_scroll.set_size_request(-1, 230)
+        versions_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        versions_scroll.set_child(versions_list)
+        system_tab.append(versions_scroll)
         status_grid = Gtk.FlowBox()
         status_grid.set_selection_mode(Gtk.SelectionMode.NONE)
         status_grid.set_homogeneous(True)
@@ -1805,17 +1826,60 @@ class DiagnosticsPagePlugin:
         ai_snapshot.connect("toggled", invalidate_ai)
         ai_support_report.connect("toggled", invalidate_ai)
 
+        versions_snapshot = [None]
+
+        def copy_versions(_button):
+            snapshot = versions_snapshot[0]
+            if snapshot is None:
+                host.toast("Versions indisponibles : actualiser l’inventaire")
+                return
+            display = Gdk.Display.get_default()
+            if display is None:
+                host.toast("Presse-papiers indisponible")
+                return
+            try:
+                provider = Gdk.ContentProvider.new_for_value(snapshot.text)
+                self._versions_clipboard_provider = provider
+                if display.get_clipboard().set_content(provider):
+                    host.toast("Versions copiées")
+                else:
+                    host.toast("Copie des versions impossible")
+            except Exception:
+                host.toast("Copie des versions impossible")
+
         def render(*_args) -> None:
+            versions_snapshot[0] = None
+            versions_copy.set_sensitive(False)
+            clear_container(versions_list)
             clear_container(status_grid)
             clear_container(diag_box)
             try:
                 status = broker.system_status()
+                inventory = public_inventory(broker)
+                versions = version_inventory(status, inventory)
+                versions_snapshot[0] = versions
+                versions_copy.set_sensitive(True)
+                versions_core.set_text(f"Core Cifereca · v{versions.core_version}")
+                versions_count.set_text(
+                    f"{len(versions.plugins)} plugins installés / enregistrés"
+                    + (" · inventaire limité à 300" if versions.limited else "")
+                )
+                for component in versions.plugins:
+                    item_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+                    item_name = Gtk.Label(
+                        label=f"{component.name} [{component.plugin_id}]", xalign=0)
+                    item_name.set_wrap(True)
+                    item_box.append(item_name)
+                    item_detail = Gtk.Label(label=component.details, xalign=0)
+                    item_detail.set_wrap(True)
+                    item_detail.add_css_class("dim-label")
+                    item_box.append(item_detail)
+                    versions_list.append(item_box)
                 if isinstance(status, Mapping):
                     for key in sorted(status, key=lambda item: str(item).casefold()):
                         add_status(str(key), status[key])
                 else:
                     add_status("État", status)
-                inventory = public_inventory(broker)
                 for row in inventory:
                     plugin_id = str(row.get("plugin_id") or "Plugin")
                     version = str(row.get("version") or "—")
@@ -1929,6 +1993,7 @@ class DiagnosticsPagePlugin:
             reset_events()
 
         refresh.connect("clicked", refresh_diagnostics)
+        versions_copy.connect("clicked", copy_versions)
         check.connect("clicked", run_checks)
         copy.connect("clicked", copy_report)
         def initial_load() -> None:
