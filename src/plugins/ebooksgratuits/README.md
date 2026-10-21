@@ -434,3 +434,27 @@ supplémentaire ni changement d'acquisition n'est introduit.
 Tests offline : refus des trois valeurs globales et des sélecteurs
 contenant seulement un choix par défaut. Les identifiants sont ceux
 observés par l'adaptateur actuel, sans hypothèse sur de futurs schémas.
+
+---
+
+## #2460 — téléchargement EPUB : échecs classés sans données privées (0.1.26)
+
+Les recherches OPDS publient les liens EPUB **exacts** et l'action « Voir en ligne »
+reste absente sans fiche HTML explicite. Les téléchargements déjà fonctionnels
+restent inchangés. En cas d'échec du broker public `transport.http`, le plugin
+émet désormais un **code stable** sans URL, titre, compte, contenu de réponse
+ou chemin : `download_auth_required` (401), `download_access_denied` (403),
+`download_not_found` (404/410), `download_rate_limited` (429),
+`download_service_unavailable` (5xx/transport), `download_redirect_denied`,
+`download_redirect_limit`, `download_invalid_content` (HTML/MIME),
+`download_invalid_epub`, `download_protected`, `download_too_large`,
+`download_empty_response`, `download_destination_conflict` et les replis
+fermés `download_rejected`/`download_unavailable`.
+
+Ces codes catégorisent **une tentative**, et ne prouvent ni une indisponibilité
+générale ni la suppression d'une notice. Aucun retry, élargissement d'origine,
+contournement du refus HTTP, téléchargement implicite ou changement de droit.
+Annulation préservée. Tests entièrement hors réseau couvrent une notice fraîche
+et sa copie en cache, chaque classe d'erreur et le parcours réussi. Un comparatif
+avec deux vraies notices (une réussie, une échouée) reste nécessaire pour isoler
+la cause des défaillances rapportées sur le poste utilisateur.
