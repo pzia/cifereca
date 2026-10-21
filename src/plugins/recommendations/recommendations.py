@@ -1614,17 +1614,34 @@ class UxRecommendationsView:
         # Show only accountable, originally observed variants. Never display
         # credential IDs, private record IDs or infer borrowing availability.
         raw_variants = getattr(ranked, "notices", ())
+        # This is a bounded LOCAL inspection of public catalogue coordinates,
+        # never a network search. The historical first-64 slice could hide
+        # every valid edition behind 64 incomplete catalogue variants.
         variants = (
-            tuple(raw_variants[:64])
+            tuple(raw_variants[:256])
             if type(raw_variants) in (tuple, list) else ()
         )
-        # Unresolved rows must not consume the visible exact-notice budget:
-        # an attested edition may follow many incomplete search hits.
-        exact_variants = [
-            variant for variant in variants
-            if (type(variant) is CatalogNoticeVariant
-                and variant.has_source_coordinates)
-        ][:16]
+        # ISBN is not a provider-record identifier: one exact notice may be
+        # present with several ISBNs. Deduplicate on the 5 coordinates that
+        # Core's real Search detail uses, keeping credentials distinct.
+        exact_variants = []
+        seen_coordinates = set()
+        for variant in variants:
+            if type(variant) is not CatalogNoticeVariant:
+                continue
+            coordinates = (
+                variant.source_provider, variant.source_credential,
+                variant.record_id, variant.docbase, variant.source_collection,
+            )
+            if (any(type(value) is not str or len(value) > 512
+                    for value in coordinates)
+                    or not all(coordinates[:3])
+                    or coordinates in seen_coordinates):
+                continue
+            seen_coordinates.add(coordinates)
+            exact_variants.append(variant)
+            if len(exact_variants) >= 16:
+                break
         if exact_variants:
             edition_fields = []
             for index, variant in enumerate(exact_variants, 1):
@@ -1641,6 +1658,15 @@ class UxRecommendationsView:
                 "Choisir une notice dans Recherche pour consulter les "
                 "disponibilités et les actions réellement autorisées.",
             ))
+            if (len(exact_variants) == 16
+                    or (type(raw_variants) in (tuple, list)
+                        and len(raw_variants) > 256)):
+                edition_fields.append(DetailField(
+                    "source-edition-limit", "Limite d'affichage",
+                    "Au plus 16 notices exactes affichées ; seules les "
+                    "256 premières variantes peuvent être examinées. "
+                    "La liste n'est pas exhaustive.",
+                ))
             sections.append(DetailSection(
                 "source-editions", "Éditions et sources distinctes",
                 tuple(edition_fields), 35,
