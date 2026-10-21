@@ -191,12 +191,67 @@ def test_cache_unwritable_parent_fails_before_download(monkeypatch, tmp_path):
         return original_access(path, mode)
 
     monkeypatch.setattr(browser.os, "access", inaccessible)
-    assert browser.inspect_chromium().code == "browser_cache_unavailable"
+    # Browser discovery is read-only: a read-only HOME is not a broken
+    # Chromium installation. Download, however, must fail before Popen.
+    assert browser.inspect_chromium().code == "chromium_missing"
     monkeypatch.setattr(browser.subprocess, "Popen", lambda *_a, **_kw: (
         (_ for _ in ()).throw(AssertionError("unexpected download"))
     ))
     assert browser.install_chromium(consent=True).code == "browser_cache_unavailable"
     assert not cache.exists()
+
+
+def test_readonly_installed_chromium_remains_visible_to_inspection(monkeypatch, tmp_path):
+    """A shared/immutable but valid existing browser remains usable."""
+    home = tmp_path / "home"
+    cache = home / ".cache" / "ms-playwright"
+    exe = cache / "chromium-123" / "chrome-linux64" / "chrome"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"synthetic executable, never launched")
+    exe.chmod(0o755)
+    monkeypatch.setattr(browser.Path, "home", lambda: home)
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(cache))
+    monkeypatch.setattr(browser, "_version", lambda: "1.55.0")
+    monkeypatch.setattr(browser, "_executable", lambda: exe)
+    original_access = browser.os.access
+
+    def readonly(path, mode):
+        if path == cache and mode & os.W_OK:
+            return False
+        return original_access(path, mode)
+
+    monkeypatch.setattr(browser.os, "access", readonly)
+    monkeypatch.setattr(browser.subprocess, "Popen", lambda *_args, **_kw: (
+        (_ for _ in ()).throw(AssertionError("read-only inspection spawned process"))
+    ))
+    assert browser.inspect_chromium().code == "chromium_installed_unverified"
+    assert browser.install_chromium(consent=False).code == "consent_required"
+    assert exe.is_file()
+
+
+def test_readonly_existing_cache_refuses_download_without_mutation(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    cache = home / ".cache" / "ms-playwright"
+    cache.mkdir(parents=True)
+    monkeypatch.setattr(browser.Path, "home", lambda: home)
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(cache))
+    monkeypatch.setattr(browser, "_version", lambda: "1.55.0")
+    monkeypatch.setattr(browser, "_executable",
+                        lambda: cache / "chromium-123" / "chrome")
+    original_access = browser.os.access
+
+    def readonly(path, mode):
+        if path == cache and mode & os.W_OK:
+            return False
+        return original_access(path, mode)
+
+    monkeypatch.setattr(browser.os, "access", readonly)
+    monkeypatch.setattr(browser.subprocess, "Popen", lambda *_args, **_kw: (
+        (_ for _ in ()).throw(AssertionError("download into read-only cache"))
+    ))
+    assert browser.inspect_chromium().code == "chromium_missing"
+    assert browser.install_chromium(consent=True).code == "browser_cache_unavailable"
+    assert tuple(cache.iterdir()) == ()
 
 
 
