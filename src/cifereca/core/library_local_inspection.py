@@ -12,6 +12,7 @@ import unicodedata
 
 from .library_audit_broker import _run_scoped_audit, _unavailable
 from .library_inspection_cache import take_inspection_cache
+from .library_manual_link_preflight import review_local_pair
 
 PROVIDERS = {'all': 'Tous les fournisseurs', 'kobo': 'Kobo', 'numilog': 'Numilog',
              'paris': 'Paris', 'local': 'Local (origine attestée)',
@@ -267,6 +268,10 @@ class LocalInspection:
         # These references exist solely inside this revocable Core UI session.
         # They never enter an audit payload or a future repair capability.
         self._candidate_file_keys = {}
+        # Revocable, private evidence summaries; no raw account/path exported.
+        self._manual_right_proofs = {}
+        self._manual_file_proofs = {}
+        self._manual_audit_complete = audit.redacted().get('status') == 'complete'
         # Private, same-identity facets for the direct-selection file browser.
         # No file metadata or query is ever exported through summary()/logs.
         self._file_facets = {}
@@ -429,6 +434,15 @@ class LocalInspection:
                 'search': search_text,
                 'name': _searchable(Path(observation.path).name[:260]),
             }
+            if 'confirmed_link' not in states:
+                self._manual_file_proofs[f'file:{index}'] = {
+                    'verified': (
+                        observation.media_format == 'epub'
+                        and observation.validation == 'ok'
+                        and observation.structure_validation == 'epub_structure_crc_ok'
+                    ),
+                    'signature': (observation.sha256, observation.size),
+                }
         placements = audit.snapshot.tables.get('placements', [])
         artifacts = audit.snapshot.tables.get('artifacts', [])
         own_files = [f for f in audit.inventory.files if f.identity_id == identity_id]
@@ -463,6 +477,16 @@ class LocalInspection:
                 for fi in candidate_files_by_notice.get(notice_index, ())
                 if f'file:{fi}' in self._cases
             }))
+        def right_scope(row):
+            keys = tuple(row.get(name) for name in (
+                'identity_id', 'provider_id', 'credential_id',
+                'account_id', 'item_id',
+            ))
+            return keys if all(type(value) is str and value for value in keys) else None
+
+        scope_counts = Counter(
+            key for right in rights if (key := right_scope(right)) is not None
+        )
         for index in audit.reconciliation.unverified_rights:
             if not 0 <= index < len(rights) or rights[index].get('identity_id') != identity_id:
                 continue
@@ -486,6 +510,33 @@ class LocalInspection:
                                   if all(acquisition_rows[i].get(key) == right.get(key)
                                          for key in scope_keys)]
             own_ledger = [acquisition_rows[i] for i in own_ledger_indices]
+            right_signature = None
+            ledger_ok = (len(own_ledger) == 1
+                         and own_ledger[0].get('status') == 'complete'
+                         and type(own_ledger[0].get('artifact_id')) is str
+                         and bool(own_ledger[0]['artifact_id']))
+            if ledger_ok:
+                matching_artifacts = by_artifact.get(own_ledger[0]['artifact_id'], ())
+                if len(matching_artifacts) == 1:
+                    right_signature = (
+                        matching_artifacts[0].get('sha256'),
+                        matching_artifacts[0].get('size'),
+                    )
+            scope = right_scope(right)
+            self._manual_right_proofs[f'right:{index}'] = {
+                'attested': (
+                    right.get('provider_id') == 'numilog'
+                    and right.get('attested_source') == 'numilog.authenticated_library'
+                    and right.get('state') == 'active'
+                    and right.get('entitlement_type') == 'owned'
+                    and scope is not None
+                ),
+                'ambiguous': scope is None or scope_counts[scope] != 1,
+                'ledger_conflict': len(own_ledger_indices) != len(ledger_indices),
+                'ledger_count': len(own_ledger),
+                'ledger_complete': ledger_ok,
+                'signature': right_signature,
+            }
             why = _right_explanation(
                 right, own_ledger, by_edition.get((right_provider, right_item), ()),
                 by_artifact, by_path, incomplete,
@@ -564,6 +615,9 @@ class LocalInspection:
         self._cases.clear()
         self._candidate_file_keys.clear()
         self._file_facets.clear()
+        self._manual_right_proofs.clear()
+        self._manual_file_proofs.clear()
+        self._manual_audit_complete = False
         self._summary = {}
         self._roots = ()
         self._unavailable_directories = ()
@@ -668,6 +722,34 @@ class LocalInspection:
             ))
         return LocalPage(tuple(rows[offset:offset+limit]), len(rows),
                          offset, self._limited)
+
+    def preflight_manual_link(self, right_key, file_key):
+        """Explain a selected Numilog right/file pair without IO or authority.
+
+        Only the already scoped, same-session, *unlinked* cases can enter this
+        local assessment. No preflight object permits a subsequent SQLite
+        mutation: a separate fresh locked transaction is mandatory.
+        """
+        if (not self.valid() or type(right_key) is not str
+                or type(file_key) is not str
+                or len(right_key) > 128 or len(file_key) > 128):
+            return review_local_pair(None, None, audit_complete=False)
+        right = self._cases.get(right_key)
+        file = self._cases.get(file_key)
+        if (right is None or file is None
+                or 'rights_without_verified_file' not in right.states
+                or 'confirmed_link' in file.states
+                or not right_key.startswith('right:')
+                or not file_key.startswith('file:')):
+            return review_local_pair(None, None, audit_complete=False)
+        return review_local_pair(
+            self._manual_right_proofs.get(right_key),
+            self._manual_file_proofs.get(file_key),
+            audit_complete=self._manual_audit_complete,
+            bibliographic_hint=(
+                file_key in self._candidate_file_keys.get(right_key, ())
+            ),
+        )
 
     def candidate_files(self, right_key):
         """Only local, metadata_only cross-reference hints; never an action plan.
