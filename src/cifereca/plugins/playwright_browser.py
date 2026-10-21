@@ -206,6 +206,14 @@ def install_chromium(
                 return BrowserState("disk_space_insufficient", before.version)
         except (OSError, ValueError):
             return BrowserState("browser_cache_unavailable", before.version)
+        # A provider-controlled environment must not silently replace the
+        # official browser archive source claimed in the user consent dialog.
+        # Normal HTTPS proxies remain supported; custom mirrors require a
+        # separate, explicitly reviewed administrative workflow.
+        if any(os.environ.get(key) for key in (
+            "PLAYWRIGHT_DOWNLOAD_HOST", "PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST",
+        )):
+            return BrowserState("browser_download_source_unapproved", before.version)
         if progress is not None:
             progress("starting")
         try:
