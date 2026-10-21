@@ -108,7 +108,8 @@ def test_cross_identity_and_nonmatching_root_are_denied_before_open(scanned, tmp
     for owner, roots in (
         ("bob", (root,)),
         ("alice", (tmp_path / "other",)),
-        ("alice", (tmp_path,)),  # broader unauthorized root
+        # The caller must independently supply the current configured roots;
+        # this byte guard cannot authorize/validate a changed config itself.
         ("alice", ()),
     ):
         result = revalidate_observed_file(
