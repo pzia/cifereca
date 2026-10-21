@@ -79,8 +79,10 @@ def test_reconciliation_label_is_closed_allowlist_value():
     pending.pop(0)()
     assert rendered[-1].label == "Réconciliation en cours…"
     line.report(ticket, message="/PRIVATE/NAME", current=4, total=10)
-    pending.pop(0)()
-    assert rendered[-1].label == "Réconciliation en cours · 40 %"
+    # A fabricated plugin total must not bypass the closed phase allowlist.
+    assert not pending
+    assert rendered[-1].label == "Réconciliation en cours…"
+    assert rendered[-1].fraction is None
     assert "/PRIVATE" not in rendered[-1].label
 
 

@@ -101,6 +101,42 @@ def test_untrusted_progress_is_not_rendered_or_allowed_to_replace_safe_stage():
     assert "PRIVATE_TOKEN" not in line.state.label
 
 
+def test_reconciliation_never_accepts_a_plugin_reported_total_as_percent():
+    line, ticket, pending, rendered = _line()
+    line.report(ticket, current=517, total=517, message="Inventaire local")
+    pending.pop(0)()
+    assert rendered[-1].label == "Réconciliation · Inventaire local…"
+    assert rendered[-1].fraction is None
+    line.report(ticket, current=9999, total=10000, message="Audit local terminé")
+    pending.pop(0)()
+    assert rendered[-1].label == "Réconciliation · Audit local terminé…"
+    assert rendered[-1].fraction is None
+    line.report(ticket, current=1, total=1, message="/PRIVATE/SECRET")
+    assert pending == []
+    assert line.state.fraction is None
+    assert "/PRIVATE" not in line.state.label
+
+
+def test_other_maintenance_tools_retain_bounded_known_total_progress():
+    pending, rendered = [], []
+    line = MaintenanceLineProgress(
+        idle_add=pending.append, render=rendered.append,
+        activity_label="Purge",
+    )
+    ticket = line.begin()
+    line.confirmation(ticket)
+    line.running(ticket)
+    pending.pop(0)()
+    line.report(ticket, current=2, total=5, message="some irrelevant plugin text")
+    pending.pop(0)()
+    assert rendered[-1].label == "Purge en cours · 40 %"
+    assert rendered[-1].fraction == 0.4
+    line.report(ticket, current=5, total=5, message="done")
+    pending.pop(0)()
+    assert rendered[-1].label == "Purge en cours · 99 %"
+    assert rendered[-1].fraction == 0.99
+
+
 def test_cancelled_or_failed_job_never_claims_hundred_percent():
     line, ticket, pending, rendered = _line()
     line.report(ticket, current=517, total=None, message="Inventaire local")

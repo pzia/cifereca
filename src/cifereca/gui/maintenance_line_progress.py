@@ -129,26 +129,26 @@ class MaintenanceLineProgress:
             type(current) is int and type(total) is int
             and total > 0 and 0 <= current <= total
         )
-        if valid:
-            # 100% is reserved for the success callback, NOT for a report
-            # that the plugin may emit before returning a failed result.
-            percent = min(99, (current * 100) // total)
-            label = f"{self._activity_label} en cours · {percent} %"
-            fraction = percent / 100.0
-        elif (self._activity_label == "Réconciliation" and type(message) is str
-              and message in _RECONCILIATION_PHASES):
-            # The broker can report the number of scanned files but has no
-            # reliable total. Show a bounded count, never a made-up percent.
+        if self._activity_label == "Réconciliation":
+            # Phase names (not a plugin-provided numeric total) are the only
+            # presentation authority for a reconciliation audit. Its recursive
+            # inventory has no trustworthy denominator: even current=total
+            # cannot establish percentage completion. No arbitrary message
+            # can override the phase or smuggle private plugin text.
+            if type(message) is not str or message not in _RECONCILIATION_PHASES:
+                return
             if (message == "Inventaire local" and type(current) is int
                     and 0 <= current <= 1_000_000 and total is None):
                 label = f"Réconciliation · Inventaire local · {current} fichier(s)"
             else:
                 label = f"Réconciliation · {message}…"
             fraction = None
-        elif self._activity_label == "Réconciliation":
-            # Unknown progress prose is ignored instead of overwriting the
-            # last known phase or displaying potentially private strings.
-            return
+        elif valid:
+            # Known-total maintenance tools may report their own progress.
+            # 100% is reserved exclusively for a successful terminal callback.
+            percent = min(99, (current * 100) // total)
+            label = f"{self._activity_label} en cours · {percent} %"
+            fraction = percent / 100.0
         else:
             label = f"{self._activity_label} en cours…"
             fraction = None
