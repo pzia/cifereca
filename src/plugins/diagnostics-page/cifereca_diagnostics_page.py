@@ -605,7 +605,8 @@ class DiagnosticsPagePlugin:
         journals_tab.append(journals_title)
         journals_hint = Gtk.Label(
             label="Flux expurgé et borné du Core ; aucune collecte réseau. "
-                  "La recherche texte et le tri agissent sur la page chargée.",
+                  "La recherche texte (y compris les codes de limites de réconciliation) "
+                  "et le tri agissent sur la page chargée, pas sur tout l’historique.",
             xalign=0,
         )
         journals_hint.set_wrap(True)
@@ -1239,6 +1240,23 @@ class DiagnosticsPagePlugin:
                     provenance.set_wrap(True)
                     provenance.set_selectable(True)
                     item.append(provenance)
+                    # A closed Core terminal event gets a readable local
+                    # coverage/phase summary. Never draw raw provider or
+                    # private audit fields in this expedited explanation.
+                    reconciliation = row.get("reconciliation")
+                    if type(reconciliation) is dict:
+                        content = (
+                            f"{reconciliation['state']} · Code : {reconciliation['code']}\n"
+                            f"{reconciliation['coverage']}\n"
+                            f"{reconciliation['timing']}\n"
+                            f"{reconciliation['limits']}\n"
+                            f"{reconciliation['note']}"
+                        )
+                        extra = Gtk.Label(label=content, xalign=0)
+                        extra.set_wrap(True)
+                        extra.set_selectable(True)
+                        extra.add_css_class("dim-label")
+                        item.append(extra)
                     add_detail_view(item, row)
                     group_box.append(item)
                 expander.set_child(group_box)
