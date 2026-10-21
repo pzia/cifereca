@@ -363,5 +363,11 @@ def open_local_inspection(service, *, identity_id, control=None):
     cached = take_inspection_cache(service, identity_id)
     if cached is not None:
         return cached
-    return _run_scoped_audit(service, identity_id, control,
-                             lambda audit, valid: LocalInspection(audit, valid, identity_id))
+    from .library_audit_roots import configured_identity_roots
+
+    def finish(audit, valid):
+        roots = configured_identity_roots(service.config, identity_id)
+        return LocalInspection(audit, valid, identity_id,
+                               roots=roots.get(identity_id, ()))
+
+    return _run_scoped_audit(service, identity_id, control, finish)
