@@ -8,6 +8,7 @@ from concurrent.futures import Future
 from typing import Any, Callable
 
 from ..task_queue import PriorityExecutor, TaskPriority
+from ..task_admission import SharedTaskAdmission
 from ..plugin_api import AttentionRequired, UserFacingError
 
 import gi
@@ -22,11 +23,18 @@ class TaskRunner:
     """Run non-UI operations outside GTK with priority and global feedback."""
 
 
-    def __init__(self, window: Any, *, max_workers: int = 3, max_pending: int | None = None):
+    def __init__(
+        self, window: Any, *, max_workers: int = 3,
+        max_pending: int | None = None,
+        shared_admission: SharedTaskAdmission | None = None,
+        admission_scope: str | None = None,
+    ):
         self.window = window
         self.pool = PriorityExecutor(
             max_workers=max_workers, thread_name_prefix="cifereca-task",
             max_pending=max_pending,
+            shared_admission=shared_admission,
+            admission_scope=admission_scope,
         )
         self._count = 0
         self._lock = threading.Lock()
