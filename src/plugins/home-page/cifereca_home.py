@@ -107,11 +107,31 @@ def _loan_scope_not_configured(row):
         return False
     providers = row.get('providers')
     if (type(providers) not in (list, tuple, set, frozenset)
-            or not providers or len(providers) > 128
+            or len(providers) > 128
             or any(type(pid) is not str for pid in providers)):
         return False
     if any(pid not in _NON_LOAN_PROVIDERS for pid in providers):
         return False
+    sources = row.get('sources')
+    if type(sources) in (list, tuple):
+        if (len(sources) > 128
+                or any(
+                    not isinstance(item, dict)
+                    or type(item.get('provider_id')) is not str
+                    or item['provider_id'] not in _NON_LOAN_PROVIDERS
+                    for item in sources
+                )):
+            return False
+    # Public singleton catalogues have no Account by design. A valid,
+    # nonempty, Core-provided live source list is enough when the explicit
+    # account list is empty; neither historical file origins nor a missing
+    # inventory is treated as a current connection.
+    if not providers:
+        if (type(sources) not in (list, tuple)
+                or not sources
+                or any(item['provider_id'] not in PUBLIC_PROVIDERS
+                       for item in sources)):
+            return False
     capabilities = row.get('capabilities')
     if isinstance(capabilities, (list, tuple)):
         # This Core-authoritative projection contains only public capability
