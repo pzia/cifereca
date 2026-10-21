@@ -38,6 +38,8 @@ class MaintenanceResultView:
         self.button = self.dialog = None
         self.text = ""
         self.inspector = inspector
+        if inspector is not None:
+            inspector.attach_activity_row(row)
 
     def clear(self):
         if self.inspector is not None:
