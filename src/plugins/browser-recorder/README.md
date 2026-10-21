@@ -37,6 +37,26 @@ pas être confondues avec la capture textuelle principale.
 
 **Limites de cette livraison :** aucune commande `sudo`/`apt` automatique, aucun téléchargement au démarrage, à la découverte ou à l'activation du plugin, aucun navigateur empaqueté dans le ZIP. Le contrôle de disque est préventif et ne garantit pas l'espace pendant le téléchargement ; une interruption peut laisser des fichiers incomplets propres à Playwright, sans autoriser la suppression des caches des autres clients. Le provisionnement par ce bouton et son UX doivent encore être validés sur **un vrai poste Linux vierge** ; les doubles de tests n'effectuent pas de téléchargement réel. Aucun fournisseur tiers n'est contacté par la vérification.
  
+## Recette d'installation du plugin (synthétique, #2531)
+
+La CI vérifie désormais deux niveaux distincts :
+
+- **Source** : Chromium réel avec faux fournisseur localhost, interface GTK4
+  et clavier XTEST ; aucun compte réel ni export durable publié.
+- **ZIP installé** : construction d'un ZIP depuis les fichiers de production,
+  validation/extraction dans un `PackageStore` temporaire, activation
+  volontaire du plugin désactivé par défaut par le **vrai PluginManager**,
+  ouverture de la contribution publique `ui.page` sous GTK4 aux largeurs
+  1280/1366/1600. Cette recette utilise un venv isolé avec **Playwright
+  Python réellement installé**, mais ne télécharge pas Chromium et ne
+  déclenche ni navigation, capture ni export. Les modules ne sont pas
+  chargés à partir du chemin source du plugin.
+
+**Limites :** l'ouverture du ZIP installé ne prouve pas encore la capture
+de navigateur depuis la distribution, ni le parcours interactif complet
+jusqu'au ZIP sur une VM vierge. La recette humaine d'accessibilité et
+l'oracle indépendant de l'archive restent à réaliser avant clôture #2531.
+
 ## Capture
 
 1. Saisir l’**URL HTTPS** de départ d'un site autorisé. Sites localhost, IP littérales et URL contenant des identifiants refusés.
