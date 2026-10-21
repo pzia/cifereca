@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
+from time import sleep
 import json
 import shutil
 import subprocess
@@ -51,6 +52,13 @@ def xtest(*args):
 def press(widget, *key):
     assert widget.grab_focus()
     flush()
+    # GTK4 ComboBox popovers and the surrounding ScrolledWindow may
+    # schedule focus/scroll transitions that do not show as pending on
+    # the main context immediately; let the native compositor settle.
+    sleep(.04)
+    flush()
+    focused = widget.get_root().get_focus()
+    assert focused is widget or focused.is_ancestor(widget)
     xtest("key", "--clearmodifiers", *key)
     flush()
 
@@ -214,6 +222,10 @@ def test_xtest_81_choices_exact_zip_and_confirmed_export(
         press(combo, "Return")
         after = combo.get_active_id()
         assert after is not None and after != before
+        # GtkComboBoxText may keep its X11 popup up after Return. Close it
+        # before moving to the export checkbox, otherwise Space can be
+        # consumed by the popover instead of toggling explicit consent.
+        press(combo, "Escape")
         member = next(m for m in preview["members"] if m["name"] == after)
         buff = panel.bundle_text.get_buffer()
         assert buff.get_text(buff.get_start_iter(), buff.get_end_iter(), True) == member["text"]
