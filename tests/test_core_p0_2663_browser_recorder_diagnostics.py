@@ -61,7 +61,7 @@ def test_requested_result_is_visible_via_attested_public_broker_feed(
     assert event["severity"] == severity
     assert event["message"] == OPERATIONS[operation]
     assert event["detail"] == row[0]["detail"]
-    assert event["read_only"] if "read_only" in event else True
+    assert published["read_only"] is True
     assert "private" not in json.dumps(published).lower()
 
 
