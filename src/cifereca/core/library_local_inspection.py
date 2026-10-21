@@ -256,6 +256,21 @@ class LocalInspection:
         for row in catalog:
             if row.get('identity_id') == identity_id:
                 notices[(row.get('provider_id'), row.get('item_id'))].append(row)
+        # Cross-side hints are bibliographic only, never evidence of ownership.
+        # Restrict to the same identity, observed files lacking an attested link,
+        # and explicit identifiers shared with the selected catalog notice.
+        # Keep a small bounded candidate index; ambiguity remains visible.
+        from .library_metadata_candidates import identifiers as book_identifiers
+        unlinked_by_identifier = defaultdict(list)
+        for fi, observation in enumerate(audit.inventory.files):
+            if observation.identity_id != identity_id:
+                continue
+            states = audit.reconciliation.files.get(fi, ())
+            if 'confirmed_link' in states:
+                continue
+            for pair in set(book_identifiers(observation.metadata)):
+                unlinked_by_identifier[pair].append(fi)
+
         for index in audit.reconciliation.unverified_rights:
             if not 0 <= index < len(rights) or rights[index].get('identity_id') != identity_id:
                 continue
@@ -273,9 +288,36 @@ class LocalInspection:
                                                   right.get('item_id')), ()),
                 by_artifact, by_path, incomplete,
             )
+            candidate_ids = set()
+            if len(matches) == 1:
+                for identifier in matches[0].get('bibliographic_identifiers', ())[:64]:
+                    candidate_ids.update(unlinked_by_identifier.get(tuple(identifier), ()))
+            candidate_ids = sorted(candidate_ids)
+            if candidate_ids:
+                candidate_note = (
+                    'Candidats bibliographiques locaux, non probants : '
+                    + str(len(candidate_ids)) + ' fichier(s) avec identifiant explicite identique.\\n'
+                    + '\\n'.join(
+                        '• ' + _display_book(
+                            audit.inventory.files[fi].metadata.get('title'),
+                            audit.inventory.files[fi].metadata.get('authors'),
+                            Path(audit.inventory.files[fi].path).name,
+                        ) + ' · ' + _text(audit.inventory.files[fi].path)
+                        for fi in candidate_ids[:10]
+                    )
+                    + ('\\nAffichage limité à dix candidats.' if len(candidate_ids) > 10 else '')
+                    + '\\nUn ISBN commun ne confirme ni fournisseur, ni droit, ni édition exacte.'
+                )
+            else:
+                candidate_note = (
+                    'Aucun candidat par identifiant bibliographique explicite '
+                    'parmi les fichiers non liés inspectés. Ce constat ne prouve '
+                    'ni absence de fichier ni absence de droit.'
+                )
             detail = ('Droit sans fichier vérifié · ' + right_label + '\n\n'
                       + evidence('entitlements', index)
                       + '\n\nPourquoi ce droit n’est-il pas confirmé ?\n' + why
+                      + '\n\n' + candidate_note
                       + '\n\n' + '\n\n'.join(
                           'Acquisition enregistrée :\n' + evidence('acquisition_ledger', li)
                           for li in ledgers[right.get('entitlement_id')][:20])
