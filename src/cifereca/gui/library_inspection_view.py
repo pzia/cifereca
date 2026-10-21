@@ -379,6 +379,40 @@ class LocalInspectionController:
         manual_search.set_placeholder_text('Filtrer les fichiers non liés…')
         manual_search.set_visible(False)
         candidate_box.append(manual_search)
+        # A real selectable, paginated list replaces the one-file-at-a-time
+        # browsing of unattested EPUBs (#2714). A collapsed filter section
+        # keeps controls reachable at 920px and can expand in full-screen.
+        manual_filters = Gtk.Expander(label='Filtres fichiers · format, SHA, CRC, tri')
+        filter_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        format_filter = Gtk.DropDown.new_from_strings([
+            'Tous les formats', 'EPUB', 'PDF',
+        ])
+        sha_filter = Gtk.DropDown.new_from_strings([
+            'SHA : tous', 'SHA vérifié', 'SHA non calculé',
+        ])
+        crc_filter = Gtk.DropDown.new_from_strings([
+            'Structure : toutes', 'EPUB avec CRC validé', 'Autres / non validées',
+        ])
+        file_sort = Gtk.DropDown.new_from_strings([
+            'Tri : titre / auteur', 'Tri : nom de fichier', 'Tri : ordre du scan',
+        ])
+        for widget in (format_filter, sha_filter, crc_filter, file_sort):
+            widget.set_hexpand(True)
+            filter_body.append(widget)
+        manual_filters.set_child(filter_body)
+        manual_filters.set_visible(False)
+        candidate_box.append(manual_filters)
+        manual_list = Gtk.ListBox()
+        manual_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        manual_list_scroll = Gtk.ScrolledWindow()
+        manual_list_scroll.set_policy(
+            Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
+        )
+        manual_list_scroll.set_min_content_height(90)
+        manual_list_scroll.set_max_content_height(180)
+        manual_list_scroll.set_child(manual_list)
+        manual_list_scroll.set_visible(False)
+        candidate_box.append(manual_list_scroll)
         candidate_nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         candidate_prev, candidate_next = (
             Gtk.Button(label='◀ Candidat'),
