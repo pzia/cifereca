@@ -24,17 +24,18 @@ from .detail_model import fr_date
 
 
 def _build_loans_page(self) -> MasterDetailPage:
-    page = MasterDetailPage(self, "Mes emprunts", "Prêts physiques et numériques", "Aucun emprunt", "Vos prêts actifs apparaîtront ici.")
+    page = MasterDetailPage(self, "Mes emprunts", "Prêts physiques et numériques", "Aucun emprunt affiché", "Vérifiez l’identité et les filtres, puis actualisez les emprunts. Une liste vide ne prouve pas l’absence de prêts chez le fournisseur.")
     history = Gtk.Button(label="Historique"); history.connect("clicked", lambda _b: self.navigate("history")); page.header_actions.append(history)
     bookings = Gtk.Button(label="Réservations"); bookings.connect("clicked", lambda _b: self.navigate("bookings")); page.header_actions.append(bookings)
-    self.loan_filter = "digital"
+    # Open on every loan medium: the digital-only default hid physical loans.
+    self.loan_filter = "all"
     segment = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
     buttons: list[Gtk.ToggleButton] = []
     self.loan_filter_buttons: dict[str, Gtk.ToggleButton] = {}
     for value, label in [("all", "Tous"), ("physical", "Physiques"), ("digital", "Numériques")]:
         b = Gtk.ToggleButton(label=label); b.set_name(value)
         if buttons: b.set_group(buttons[0])
-        if value == "digital": b.set_active(True)
+        if value == "all": b.set_active(True)
         b.connect("toggled", self._loan_filter_toggled)
         segment.append(b); buttons.append(b)
         self.loan_filter_buttons[value] = b
@@ -50,7 +51,7 @@ def _build_loans_page(self) -> MasterDetailPage:
     self.loan_languages = MultiSelect('Langues', [(code, language_label(code)) for code in ('fr','en','de','es','it','pt','nl')], self._render_loans)
     page.toolbar.append(self.loan_languages)
     refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic"); refresh.set_tooltip_text("Actualiser les emprunts")
-    refresh.set_tooltip_text("Actualiser les catalogues de prêts et vérifier ADEPT, sans acquisition ni synchronisation des stores")
+    refresh.set_tooltip_text("Actualiser les inventaires des prêts pour l’identité active, sans emprunt ni retour")
     refresh.connect("clicked", lambda _b: self.refresh_loans(True, refresh)); page.header_actions.append(refresh)
     page.connect_selected(self._loan_selected)
     return page
