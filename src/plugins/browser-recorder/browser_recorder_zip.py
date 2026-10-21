@@ -42,6 +42,34 @@ _SAFE_CLASS = frozenset((
 ))
 
 
+# Provider-controlled field names can themselves contain account IDs or
+# credentials even when their VALUES are masked. Keep normal schema labels
+# but omit suspicious dynamic names from an externally shared ZIP.
+_STANDARD_SECRET_FIELDS = frozenset((
+    "password", "passwd", "secret", "session", "sessionid", "cookie",
+    "authorization", "bearer", "csrf", "csrftoken", "xsrf", "xsrftoken",
+    "accesstoken", "refreshtoken", "apikey", "privatekey", "authkey",
+    "token", "signature", "signed", "hash", "license", "licence", "acsm",
+    "drm", "payment", "cardnumber", "cvv", "otp", "totp", "mfa",
+    "pin", "pincode", "passcode", "verificationcode",
+    "securitycode", "accesscode",
+))
+
+
+def _safe_field_key(key: str) -> bool:
+    if type(key) is not str or not _FIELD.fullmatch(key):
+        return False
+    # isbn13 remains useful; unreviewed long numeric/hex key fragments do not.
+    if re.search(r"[0-9]{5,}", key) or re.search(
+        r"(?i)(?:^|[._:])[a-f0-9]{12,}(?:$|[._:])", key,
+    ):
+        return False
+    normalized = re.sub(r"[_.:-]", "", key.casefold())
+    if _SECRETS.search(key) and normalized not in _STANDARD_SECRET_FIELDS:
+        return False
+    return True
+
+
 def _safe_url(url: str, approved: frozenset[str],
               allowed_origins: frozenset[str]) -> str:
     if type(url) is not str or len(url) > 4096:
@@ -69,8 +97,9 @@ def _safe_url(url: str, approved: frozenset[str],
         query = []
         for key, value in parse_qsl(p.query, keep_blank_values=True,
                                     max_num_fields=120):
-            if not _FIELD.fullmatch(key):
-                raise ValueError("invalid_key")
+            if not _safe_field_key(key):
+                # An unreviewed field NAME must not disclose private material.
+                continue
             if _SECRETS.search(key):
                 query.append((key, "[SECRET]"))
             elif value in approved:
@@ -146,7 +175,7 @@ def _json_shape(node, *, name="", approved=frozenset(), depth=0, counter=None):
             raise RecorderError("bundle_structure_limit")
         result = {}
         for k, v in node.items():
-            if type(k) is not str or not _FIELD.fullmatch(k):
+            if not _safe_field_key(k):
                 continue
             result[k] = _json_shape(v, name=k, approved=approved,
                                     depth=depth+1, counter=counter)

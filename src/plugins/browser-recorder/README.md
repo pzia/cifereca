@@ -2,6 +2,17 @@
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
+**Parcours recommandé (expérimental, #2527–#2531) :** utiliser
+**« Parcours HTTP privé »**, distinct du HAR historique. Après consentement,
+démarrer Chromium, naviguer manuellement (pause/reprise facultative),
+puis « Arrêter / revoir ». Pour **chaque identifiant**, choisir anonymiser,
+conserver explicitement ou exclure ; préparer ensuite le **ZIP exact en mémoire**,
+inspecter ses membres et confirmer séparément l'export **local**. Aucun upload
+LLM n'est réalisé. Les valeurs non approuvées et les noms de champs suspects
+(identifiants dynamiques, fragments de secrets) peuvent être omis du ZIP ;
+une clé de schéma n'est pas automatiquement publique. Relecture humaine
+impérative avant partage. Le HAR ci-dessous reste une fonction secondaire.
+
 ## Pré-requis
 
 Le plugin ne télécharge **pas** automatiquement un navigateur ni des dépendances. Sur la machine Linux qui exécute Cifereca (avec une session graphique), installez volontairement :
@@ -28,7 +39,7 @@ Dans l'interface, conserver le même site HTTPS et renseigner le nom `.har` (aut
 
 ## Limites de confiance
 
-Le navigateur peut toujours afficher des informations privées et contacter des hôtes tiers **dans la session** pendant une connexion normale ; ce n'est pas un proxy de sécurité et ne bloque pas le trafic réel. Le plugin ne collecte aucun de ces contenus tiers dans l'export. Les sessions sont terminées à l'arrêt ; pas de persistance de mots de passe ou d'état Playwright. Fermer Cifereca termine une capture en cours, sans la sauvegarder si l'arrêt explicite n'a pas eu lieu. Les tests automatisés emploient uniquement des faux objets Playwright ; aucune authentification fournisseur réelle n'est revendiquée.
+Le navigateur peut toujours afficher des informations privées et contacter des hôtes tiers **dans la session** pendant une connexion normale ; ce n'est pas un proxy de sécurité et ne bloque pas le trafic réel. Le plugin ne collecte aucun de ces contenus tiers dans l'export. Les sessions sont terminées à l'arrêt ; pas de persistance de mots de passe ou d'état Playwright. Fermer Cifereca termine une capture en cours, sans la sauvegarder si l'arrêt explicite n'a pas eu lieu. Les tests comprennent des doubles Playwright **et des scénarios Chromium/GTK4 réels sur serveurs locaux synthétiques**. La recette en boîte noire de la page distribuée (#2531) reste ouverte ; aucune authentification auprès d'un fournisseur réel n'est revendiquée.
 
 ## Travail P1 #2528 — collecteur HTTP en mémoire (sans export utilisateur)
 
@@ -56,8 +67,9 @@ sensibles** : ne jamais le journaliser, sérialiser ou transmettre.
 abandonnée. Aucune écriture disque n'est autorisée par cette API.
 
 **Livré séparément** : revue individuelle (#2529) et archive filtrée
-explicitement exportable localement (#2530). La recette Chromium/GTK réelle
-(#2531) reste à réaliser. Aucune trace HTTP brute n'est exportée ni
+explicitement exportable localement (#2530). Des tests Chromium et GTK4
+réels sur fournisseurs synthétiques existent ; la recette autonome de la
+page distribuée (clavier, focus et accessibilité, #2531) reste à réaliser. Aucune trace HTTP brute n'est exportée ni
 transmise ; l'ancien HAR reste strictement limité aux métadonnées.
 
 
@@ -121,7 +133,7 @@ ni profil Playwright. Le fichier local utilise un nom aléatoire et le mode
 valeurs sensibles restent heuristiques et **ne garantissent pas
 l'anonymat absolu**. Ce flux est expérimental ; seules des fixtures
 synthétiques ont été utilisées dans les tests automatiques. La recette
-Chromium/Playwright et GTK réelle (#2531) doit encore être effectuée ;
+en boîte noire de la page distribuée (#2531) reste à effectuer ;
 un export contenant des données privées doit être relu soigneusement
 avant toute transmission volontaire. Ne jamais déduire un droit
 d'acquisition d'un JSON partiellement préservé.
