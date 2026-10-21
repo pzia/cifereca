@@ -1,3 +1,18 @@
+## 0.1.18 — Export expurgé des agrégats de réconciliation (#2730)
+
+L'export d'événements sélectionnés comporte un objet `reconciliation`
+**uniquement** pour les événements terminaux Core validés de catégorie
+`LIBRARY`. Il inclut statut et causes sous codes fermés, compteurs
+d'inventaire et de catalogue, durées de phases (dont SQLite/WAL) et durée
+totale mesurée. Ces données sont **reconstruites et revalidées** avant la copie
+ou l'export multi-page ; aucune preuve individuelle n'est exportée.
+
+Titres, auteurs, identités, comptes, chemins, ISBN, empreintes, corps EPUB,
+lignes SQLite et texte d'erreur restent interdits. Un zéro de candidat sur
+une analyse partielle ne vaut **jamais** preuve d'absence. Les plafonds
+existants (50 événements/24 Ko par page ; 200/96 Ko en sélection avancée)
+restent stricts : en cas de dépassement l'export est refusé, jamais tronqué.
+
 ## 0.1.17 — Durée de lecture SQLite/WAL (#2730)
 
 Les événements de réconciliation issus du broker Core #2750 peuvent afficher
