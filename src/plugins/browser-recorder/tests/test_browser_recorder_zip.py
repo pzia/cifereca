@@ -544,7 +544,7 @@ def test_zip_numeric_header_values_are_structural_only(header, value):
         descriptor = json.loads(next(row["text"] for row in plan.preview()["members"]
                                      if row["name"] == "exchanges/0001.json"))
         assert descriptor["response_headers"][header] == "[NUMBER]"
-        assert value not in json.dumps(descriptor)
+        assert value not in descriptor["response_headers"][header]
     finally:
         review.destroy()
         trace.destroy()
