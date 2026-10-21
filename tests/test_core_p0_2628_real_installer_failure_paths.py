@@ -57,7 +57,7 @@ def test_real_linux_installer_group_stops_on_every_failure(
         "import os,signal,sys,time\n"
         "from pathlib import Path\n"
         "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        "Path(sys.argv[1]).write_text(f"{os.getpid()}:{os.getpgrp()}")\n"
+        "Path(sys.argv[1]).write_text(f'{os.getpid()}:{os.getpgrp()}')\n"
         "while True: time.sleep(.1)\n"
     )
     parent_code = (
