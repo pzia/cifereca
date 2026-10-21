@@ -37,6 +37,7 @@ from .diagnostic_adept import (
     public_message as public_adept_message,
 )
 from ..diagnostics import Diagnostics
+from .diagnostic_reconciliation import public_fields as public_reconciliation_fields
 
 _LOG_LINE = re.compile(
     r"^(?P<date>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+) "
@@ -405,6 +406,25 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 and row.get("verified_kobo_backup") is True):
             public_detail = public_kobo_backup_decision(row.get("detail"))
             message = public_kobo_backup_message(public_detail) or "[opération masquée]"
+        reconciliation_detail = {}
+        if (category == "LIBRARY"
+                and operation == "library_reconciliation_audit"
+                and type(diagnostics) is Diagnostics
+                and row.get("verified_reconciliation") is True):
+            inspected = public_reconciliation_fields(row.get("detail"))
+            if inspected and status == (
+                    "ok" if inspected["status"] == "complete" else inspected["status"]):
+                reconciliation_detail = inspected
+                public_detail = inspected
+                message = {
+                    "complete": "réconciliation locale terminée",
+                    "partial": "réconciliation locale incomplète",
+                    "failed": "réconciliation locale indisponible",
+                    "cancelled": "réconciliation locale interrompue",
+                }[inspected["status"]]
+                severity = ("info" if inspected["status"] == "complete"
+                            else "error" if inspected["status"] == "failed"
+                            else "warning")
         source_sync_detail = {}
         adept_detail = {}
         if (category == "ADEPT" and operation == "kobo adept"
@@ -465,7 +485,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "severity": severity,
             "message": message,
             **({"detail": public_detail} if public_detail else {}),
-            "status": adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
+            "status": reconciliation_detail["status"] if reconciliation_detail else adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
                 status if status in {"ok", "error", "failed", "warning",
                                          "attention_required", "partial", "success"}
                 else "unknown"),
