@@ -1,3 +1,15 @@
+## 0.1.17 — Durée de lecture SQLite/WAL (#2730)
+
+Les événements de réconciliation issus du broker Core #2750 peuvent afficher
+« **Lecture SQLite/WAL : N ms** », y compris lorsque la lecture échoue avant
+le premier fichier. Cette mesure bornée décrit le temps écoulé, **pas**
+l'exhaustivité, la validité ou l'absence d'un droit. Si le Core ne l'a pas
+mesurée, le champ est absent : zéro milliseconde n'est jamais inventé.
+
+La valeur est un entier non négatif issu du contrat Diagnostics attesté,
+jamais un chemin local, une ligne SQLite, un compte ou du texte d'exception.
+Les durées SHA/OPF/structure restent affichées séparément.
+
 ## 0.1.16 — Filtrer globalement les causes de réconciliation (#2730)
 
 Dans **Diagnostics → Journaux**, le champ « Limite de réconciliation » accepte
