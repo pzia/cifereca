@@ -151,35 +151,59 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
                 if not set(wanted) <= available:
                     result.reasons.add('snapshot_schema_incomplete')
                     continue
-                rows = db.execute(f"SELECT {','.join(wanted)} FROM {name} LIMIT ?", (remaining_rows+1,)).fetchall()
-                if len(rows) > remaining_rows:
-                    result.reasons.add('snapshot_row_budget')
-                rows = rows[:remaining_rows]
-                remaining_rows -= len(rows)
-                result.tables[name] = [dict(zip(wanted, row)) for row in rows]
+                # Stream small batches instead of materialising potentially
+                # 100k raw SQLite tuples before parsing each row. This keeps
+                # extra projection memory bounded and checks the expensive
+                # identity cancellation callback at most every 64 rows.
+                # SQLite's progress handler also enforces the shared deadline
+                # during slow SELECT/fetchmany work.
+                cursor = db.execute(
+                    f"SELECT {','.join(wanted)} FROM {name} LIMIT ?",
+                    (remaining_rows + 1,),
+                )
+                projected = []
+                overflow = False
                 if name == 'catalog_entries':
-                    # Import here avoids the module-level snapshot/type cycle.
+                    # Avoid an import/type cycle until this particular table.
                     from .library_metadata_candidates import identifiers
-                    for row in result.tables[name]:
-                        if cancelled() or time.monotonic() >= deadline:
+                while True:
+                    if cancelled() or time.monotonic() >= deadline:
+                        raise sqlite3.OperationalError('interrupted')
+                    batch = cursor.fetchmany(256)
+                    if not batch:
+                        break
+                    for values in batch:
+                        if len(projected) >= remaining_rows:
+                            overflow = True
+                            break
+                        if len(projected) % 64 == 0 and (
+                                cancelled() or time.monotonic() >= deadline):
                             raise sqlite3.OperationalError('interrupted')
-                        raw = row.pop('metadata_json', None)
-                        try:
-                            metadata = json.loads(raw) if type(raw) is str and len(raw) <= 65536 else {}
-                        except (ValueError, RecursionError):
-                            metadata = {}
-                        row['bibliographic_identifiers'] = identifiers(metadata)
-                if name == 'entitlements':
-                    for row in result.tables[name]:
-                        if cancelled() or time.monotonic() >= deadline:
-                            raise sqlite3.OperationalError('interrupted')
-                        raw = row.pop('metadata_json', None)
-                        try:
-                            metadata = json.loads(raw) if type(raw) is str and len(raw) <= 65536 else {}
-                        except (ValueError, RecursionError):
-                            metadata = {}
-                        source = metadata.get('source') if isinstance(metadata, dict) else None
-                        row['attested_source'] = source if source in ('kobo.personal_manifest', 'numilog.authenticated_library') else None
+                        row = dict(zip(wanted, values))
+                        if name in {'catalog_entries', 'entitlements'}:
+                            raw = row.pop('metadata_json', None)
+                            try:
+                                metadata = (json.loads(raw)
+                                            if type(raw) is str and len(raw) <= 65536 else {})
+                            except (ValueError, RecursionError):
+                                metadata = {}
+                            if name == 'catalog_entries':
+                                row['bibliographic_identifiers'] = identifiers(metadata)
+                            else:
+                                source = metadata.get('source') if isinstance(metadata, dict) else None
+                                row['attested_source'] = (
+                                    source if source in (
+                                        'kobo.personal_manifest',
+                                        'numilog.authenticated_library',
+                                    ) else None
+                                )
+                        projected.append(row)
+                    if overflow:
+                        break
+                if overflow:
+                    result.reasons.add('snapshot_row_budget')
+                remaining_rows -= len(projected)
+                result.tables[name] = projected
     except (sqlite3.Error, ValueError):
         result.tables.clear()
         result.reasons.add('snapshot_cancelled' if cancelled() else 'snapshot_time_budget' if time.monotonic() >= deadline else 'snapshot_unavailable')
