@@ -379,7 +379,9 @@ fichiers sans provenance et chemins en anomalie. Les catégories
 peuvent se recouvrir et les droits/fichiers n'ont **pas** le même
 dénominateur : additionner ces chiffres pour reconstruire « achats =
 fichiers » serait erroné. Le filtre texte se combine au fournisseur
-et à l'état pour rechercher instantanément titre, auteur, nom, identifiant
-et preuves locales, sans requête réseau. Les racines effectivement
+et à l'état pour rechercher instantanément titre, auteur, nom de fichier
+et identifiant d’édition visibles dans les libellés, sans requête réseau.
+Les SHA et le texte technique des preuves restent consultables dans les
+détails mais ne participent pas à la recherche libre. Les racines effectivement
 inspectées sont lisibles **uniquement dans la fenêtre privée**, jamais
 dans le broker expurgé, les diagnostics ou un export.
