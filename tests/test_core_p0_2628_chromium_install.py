@@ -183,6 +183,8 @@ def test_cache_unwritable_parent_fails_before_download(monkeypatch, tmp_path):
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(cache))
     monkeypatch.setattr(browser, "_version", lambda: "1.55.0")
     monkeypatch.setattr(browser, "_executable", lambda: cache / "chromium-123" / "chrome")
+    monkeypatch.setattr(browser.sys, "prefix", str(tmp_path / "managed-venv"))
+    monkeypatch.setattr(browser.sys, "base_prefix", "/usr")
     original_access = browser.os.access
 
     def inaccessible(path, mode):
@@ -238,6 +240,8 @@ def test_readonly_existing_cache_refuses_download_without_mutation(monkeypatch, 
     monkeypatch.setattr(browser, "_version", lambda: "1.55.0")
     monkeypatch.setattr(browser, "_executable",
                         lambda: cache / "chromium-123" / "chrome")
+    monkeypatch.setattr(browser.sys, "prefix", str(tmp_path / "managed-venv"))
+    monkeypatch.setattr(browser.sys, "base_prefix", "/usr")
     original_access = browser.os.access
 
     def readonly(path, mode):
