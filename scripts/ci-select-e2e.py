@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 
 LLM = ("llm-settings-1366", "llm-settings-1600")
-MAINT = ("maintenance-tools-1366", "maintenance-tools-1600")
+MAINT = ("maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600")
 # P0 source operations affect the real Synchronisation page even when no
 # GTK module changes. Baselines cover source rows, exact account targeting,
 # preview/audit gating and independent inventory/acquisition feedback.
@@ -66,6 +66,7 @@ LOCAL_GUI = {
     "settings_lifetime.py": LLM,
     "llm_settings.py": LLM,
     "maintenance_tools.py": MAINT,
+    "maintenance_result_view.py": MAINT,
     "maintenance_line_progress.py": MAINT,
     "maintenance_line_widgets.py": MAINT,
 }

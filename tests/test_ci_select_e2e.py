@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 25)
+        self.assertEqual(len(mod.ALL), 26)
         self.assertIn("public-fault-search-1366", mod.ALL)
         self.assertIn("kobo-fault-search-1366", mod.ALL)
         self.assertIn("book-detail-1300", mod.ALL)
@@ -51,7 +51,7 @@ class SelectionTests(unittest.TestCase):
         )  # Unknown direct GUI owner remains fail-closed to full E2E.
 
     def test_1358_maintenance_safety_selected_at_both_widths(self):
-        for path in ("src/cifereca/gui/maintenance_tools.py", "e2e/maintenance_tools_probe.py"):
+        for path in ("src/cifereca/gui/maintenance_tools.py", "src/cifereca/gui/maintenance_result_view.py", "e2e/maintenance_tools_probe.py"):
             self.assertEqual(mod.select([path]), mod.MAINT)
         self.assertTrue(set(mod.MAINT).issubset(set(mod.MAINWINDOW)))
 

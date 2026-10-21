@@ -110,7 +110,7 @@ def test_post_fix_geometry_gate_is_closed_and_only_on_attested_repro_scenarios()
     covered = parser["GTK_LAYOUT_ZERO_GATE_2027"]
     assert covered == frozenset({
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
-        "maintenance-tools-1366", "maintenance-tools-1600",
+        "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600",
     })
     clean = {"GtkStack": 0, "GtkRevealer": 0, "stream_truncated": False}
     critical = {"GtkStack": 2, "GtkRevealer": 3, "stream_truncated": False}

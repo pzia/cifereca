@@ -24,7 +24,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
         "search-filter-p0", "book-detail-1300", "book-detail-1366", "book-detail-1600",
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "llm-settings-1366", "llm-settings-1600",
-        "maintenance-tools-1366", "maintenance-tools-1600",
+        "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600",
         "startup", "core-navigation", "public-fault-search-1366", "kobo-fault-search-1366",
     ]
 
@@ -55,7 +55,7 @@ def test_1127_real_gtk_llm_consent_cancel_and_lifetime_1366_1600():
 def test_1358_maintenance_safety_uses_real_GTK_XTEST_without_destructive_IO():
     runner = _module()
     source = (ROOT / "e2e/maintenance_tools_probe.py").read_text(encoding="utf-8")
-    for width in (1366, 1600):
+    for width in (1280, 1366, 1600):
         scenario = runner.SCENARIOS[f"maintenance-tools-{width}"]
         assert scenario["plugin"] == "core"
         assert scenario["fixture"] == "startup"

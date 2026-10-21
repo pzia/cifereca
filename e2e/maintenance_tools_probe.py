@@ -118,7 +118,7 @@ class DummyTool:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1366, 1600))
+    parser.add_argument("--width", required=True, type=int, choices=(1280, 1366, 1600))
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
@@ -224,7 +224,7 @@ def main():
         if button.get_root() is window[0] and button in tuple(walk(window[0]._tools_box)):
             # The GTK4 ActionRow reports unreliable native transformations
             # under our rootless Xvfb runner (its computed click landed on the
-            # title bar). This isolated screen is fixed at 1366/1600, window
+            # title bar). This isolated screen is fixed at 1280/1366/1600, window
             # starts at 0,0 and the trailing action is top-right at y=144.
             # Explicit screen coordinates still send genuine XTEST events.
             assert window[0].get_width() > 800, "Unexpected GTK window geometry"
