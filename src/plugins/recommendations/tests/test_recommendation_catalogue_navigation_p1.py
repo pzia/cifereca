@@ -271,3 +271,105 @@ def test_old_targeted_provider_action_cannot_escape_selection_epoch():
     view._selected_row(row)
     assert old() is False
     assert not calls
+
+
+
+def test_exact_loaded_search_notice_goes_to_shared_actions_only_on_click():
+    variants = (
+        _variant(provider="kobo", credential="vault-1", record="book-1"),
+        _variant(provider="kobo", credential="vault-2", record="book-2"),
+    )
+    view, identity, local_searches, _initial_detail, row = _view(variants)
+    available_calls, open_calls, delivered = [], [], []
+
+    def available(**coordinates):
+        available_calls.append(coordinates.copy())
+        # One specific account/edition is loaded in Search; the other isn't.
+        return coordinates["record_id"] == "book-2"
+
+    def open_exact(**coordinates):
+        open_calls.append(coordinates.copy())
+        return True
+
+    view.host = NS(
+        search_books=lambda *a, **kw: local_searches.append((a, kw)) or True,
+        can_open_loaded_search_notice=available,
+        open_loaded_search_notice=open_exact,
+    )
+    view._master.show_detail = delivered.append
+    view._selected_row(row)
+    assert len(available_calls) == 2
+    assert len(open_calls) == 0  # rendering checks cache, no navigation
+    actions = [a for a in delivered[-1].actions
+               if a.id.startswith("recommendation.loaded-notice.")]
+    assert len(actions) == 1
+    assert "notice 2" in actions[0].title
+    assert all(secret not in actions[0].title
+               for secret in ("vault-1", "vault-2", "book-2"))
+    assert actions[0].callback() is True
+    assert open_calls == [{
+        "provider": "kobo", "credential": "vault-2", "record_id": "book-2",
+        "docbase": "BOOKS", "source_collection": "catalogue",
+        "identity_id": "reader-1",
+    }]
+    assert local_searches == []
+
+
+def test_exact_loaded_notice_refuses_stale_identity_selection_and_disposal():
+    view, identity, calls, _detail, row = _view((_variant(),))
+    navigations, presentations = [], []
+    view.host = NS(
+        can_open_loaded_search_notice=lambda **kw: True,
+        open_loaded_search_notice=lambda **kw: navigations.append(kw) or True,
+        search_books=lambda *a, **kw: calls.append((a, kw)) or True,
+    )
+    view._master.show_detail = presentations.append
+    view._selected_row(row)
+    action = next(a.callback for a in presentations[-1].actions
+                  if a.id.startswith("recommendation.loaded-notice."))
+    identity[0] = "reader-2"
+    assert action() is False
+    identity[0] = "reader-1"
+    view._selected_row(None)
+    assert action() is False
+    view._selected_row(row)
+    current = next(a.callback for a in presentations[-1].actions
+                   if a.id.startswith("recommendation.loaded-notice."))
+    view._generation += 1
+    assert current() is False
+    view._generation -= 1
+    view._disposed = True
+    assert current() is False
+    assert navigations == []
+    assert calls == []
+
+
+def test_no_exact_route_when_host_missing_unresolved_or_fails_closed():
+    unresolved = _variant(credential="")
+    view, _, calls, _detail, row = _view((unresolved,))
+    presentations = []
+    view._master.show_detail = presentations.append
+    view.host = NS(
+        can_open_loaded_search_notice=lambda **kw: True,
+        open_loaded_search_notice=lambda **kw: True,
+    )
+    view._selected_row(row)
+    assert not [action for action in presentations[-1].actions
+                if action.id.startswith("recommendation.loaded-notice.")]
+    assert calls == []
+
+    view._ranked_by_key[row.key] = RankedCandidate(
+        item=view._ranked_by_key[row.key].item, score=75,
+        reasons=("Similaire",), sources=("kobo",),
+        notices=(_variant(),),
+    )
+    view.host = NS(
+        can_open_loaded_search_notice=lambda **kw: (_ for _ in ()).throw(
+            RuntimeError("PRIVATE_ACCOUNT")
+        ),
+        open_loaded_search_notice=lambda **kw: True,
+    )
+    view._selected_row(row)
+    assert not [action for action in presentations[-1].actions
+                if action.id.startswith("recommendation.loaded-notice.")]
+    assert "PRIVATE_ACCOUNT" not in repr(presentations[-1])
