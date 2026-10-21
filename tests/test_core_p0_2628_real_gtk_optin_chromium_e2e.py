@@ -295,6 +295,18 @@ def test_real_plugin_page_dialog_consent_then_core_download(
         assert inspect_chromium(test_launch=True).code == "ready"
         assert not manager.status(PLUGIN_ID).enabled  # no implicit activation
 
+        # Real browser check on a temporarily immutable Playwright cache.
+        # A read-only cache must not hide a valid installed Chromium from
+        # Plugins diagnostics; restore the filesystem mode in all cases.
+        original_mode = cache.stat().st_mode & 0o7777
+        try:
+            cache.chmod(original_mode & ~0o222)
+            assert not os.access(cache, os.W_OK), "GTK CI must be non-root"
+            assert inspect_chromium().code == "chromium_installed_unverified"
+            assert inspect_chromium(test_launch=True).code == "ready"
+        finally:
+            cache.chmod(original_mode)
+
         # A fresh render must not trigger another download or leave busy state.
         page.refresh()
         flush()

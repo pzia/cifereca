@@ -78,13 +78,11 @@ def _cache_path() -> Path:
             raise ValueError("browser_cache_unavailable")
         if item == cache and not stat.S_ISDIR(value.st_mode):
             raise ValueError("browser_cache_unavailable")
-    # A cache can be inside HOME yet unwritable (read-only mount, ACL or
-    # inaccessible parent). Fail before spawning the official downloader;
-    # Playwright must not fall back to a different directory silently.
+    # Read-only inspection must work on an installed, executable Chromium
+    # even if HOME/cache is mounted read-only. Write access is an INSTALL
+    # precondition, never a browser availability precondition.
     existing = next((p for p in (cache, *cache.parents) if p.exists()), None)
     if existing is None or not existing.is_dir():
-        raise ValueError("browser_cache_unavailable")
-    if not os.access(existing, os.W_OK | os.X_OK):
         raise ValueError("browser_cache_unavailable")
     return cache
 
@@ -231,7 +229,11 @@ def install_chromium(
         try:
             cache = _cache_path()
             target = next((p for p in (cache, *cache.parents) if p.is_dir()), None)
-            if target is None or shutil.disk_usage(target).free < _MIN_AVAILABLE_BYTES:
+            if target is None or not os.access(target, os.W_OK | os.X_OK):
+                # An existing browser can be inspected/used read-only. Only
+                # a new download needs a writable and traversable cache.
+                return BrowserState("browser_cache_unavailable", before.version)
+            if shutil.disk_usage(target).free < _MIN_AVAILABLE_BYTES:
                 return BrowserState("disk_space_insufficient", before.version)
         except (OSError, ValueError):
             return BrowserState("browser_cache_unavailable", before.version)

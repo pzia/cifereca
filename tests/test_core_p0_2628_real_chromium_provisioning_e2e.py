@@ -64,6 +64,23 @@ def test_empty_cache_consent_gate_then_real_chromium_download_and_launch():
     assert repeat.code == "ready"
     assert second_phases == []
 
+    # Real regression: a previously installed, version-coupled Chromium must
+    # remain launchable when its cache is intentionally made read-only. No
+    # download or extra installation is permitted in this state.
+    original_mode = cache.stat().st_mode & 0o7777
+    try:
+        cache.chmod(original_mode & ~0o222)
+        assert not os.access(cache, os.W_OK), "CI must run as non-root"
+        assert inspect_chromium().code == "chromium_installed_unverified"
+        assert inspect_chromium(test_launch=True).code == "ready"
+        readonly_phases = []
+        assert install_chromium(
+            consent=True, progress=readonly_phases.append
+        ).code == "ready"
+        assert readonly_phases == []
+    finally:
+        cache.chmod(original_mode)
+
     # Never dump stdout/stderr, browser paths, proxy environment or user data.
     redacted = repeat.redacted()
     assert set(redacted) == {"code", "playwright_version", "browser", "read_only"}
