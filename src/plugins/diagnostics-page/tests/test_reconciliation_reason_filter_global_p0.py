@@ -122,6 +122,9 @@ def test_gtk_uses_separate_code_row_and_refreshes_server_page():
            "cifereca_diagnostics_page.py").read_text(encoding="utf-8")
     assert 'reason_code_filter = Gtk.Entry()' in src
     assert 'journals_tab.append(reason_row)' in src
+    assert 'reason_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL' in src
+    assert 'reason_code_filter.set_width_chars(18)' in src
+    assert 'reason_code_filter.set_max_width_chars(32)' in src
     assert 'reason_code_filter.connect("activate", reset_events)' in src
     assert '"reason_code": reason_code_filter.get_text().strip()' in src
     assert "query[\"reason_code\"]" not in src  # passed only through broker
