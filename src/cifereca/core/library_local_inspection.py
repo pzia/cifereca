@@ -136,7 +136,8 @@ def _right_bibliography(right, matches):
     title, title_source = field('display_title', 'Titre')
     authors, authors_source = field('display_authors', 'Auteur(s)')
     media = right.get('display_media_format')
-    media = media if media in {'epub', 'kepub', 'pdf', 'acsm'} else 'Non renseigné'
+    media = (media if type(media) is str
+             and media in {'epub', 'kepub', 'pdf', 'acsm'} else 'Non renseigné')
     lines = (
         'Bibliographie de l’achat / droit (description, pas preuve de fichier) :',
         '• Titre : ' + title,
