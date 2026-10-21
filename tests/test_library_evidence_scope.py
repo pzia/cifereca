@@ -29,6 +29,58 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(len(result.tables['adept_profile_bindings']), 1)
         self.assertFalse(result.tables['paris_borrower_adept_bindings'])
 
+    def test_null_or_blank_right_coordinates_never_import_foreign_acquisitions(self):
+        # Legacy half-imported rights do not establish a shared product.
+        # Before the fix, (None, None, None) joined every equally incomplete
+        # foreign acquisition and exposed its private data in local inspection.
+        for empty in (None, '', '   '):
+            snapshot = EvidenceSnapshot({
+                'entitlements': [
+                    dict(identity_id='PRIVATE_ALICE', entitlement_id=empty,
+                         provider_id='numilog', credential_id=empty,
+                         item_id=empty, state='active'),
+                ],
+                'acquisition_ledger': [
+                    dict(identity_id='PRIVATE_BOB', entitlement_id=empty,
+                         provider_id='numilog', credential_id=empty,
+                         item_id=empty, account_id='PRIVATE_BORROWER'),
+                    dict(identity_id='PRIVATE_BOB', entitlement_id='unrelated',
+                         provider_id='numilog', credential_id='c-bob',
+                         item_id='item-bob', account_id='PRIVATE_OTHER'),
+                ],
+            })
+            scoped = scope_evidence(snapshot, ('PRIVATE_ALICE',))
+            self.assertEqual(len(scoped.tables['entitlements']), 1)
+            self.assertEqual(scoped.tables['acquisition_ledger'], [])
+            self.assertNotIn('PRIVATE_BORROWER', repr(scoped.tables))
+            self.assertNotIn('PRIVATE_OTHER', repr(scoped.tables))
+
+    def test_complete_selected_provenance_keeps_foreign_conflict_evidence(self):
+        # Shared exact entitlement or provider/credential/item is genuine
+        # conflicting-owner evidence and must not be hidden by this guard.
+        right = dict(identity_id='PRIVATE_ALICE', entitlement_id='right-a',
+                     provider_id='numilog', credential_id='cred-a',
+                     item_id='item-a', state='active')
+        foreign_same_entitlement = dict(identity_id='PRIVATE_BOB',
+                                        entitlement_id='right-a',
+                                        provider_id='another',
+                                        credential_id='cred-b', item_id='item-b')
+        foreign_same_source = dict(identity_id='PRIVATE_BOB',
+                                   entitlement_id='right-b',
+                                   provider_id='numilog', credential_id='cred-a',
+                                   item_id='item-a')
+        scoped = scope_evidence(EvidenceSnapshot({
+            'entitlements': [right],
+            'acquisition_ledger': [
+                foreign_same_entitlement, foreign_same_source,
+                dict(identity_id='PRIVATE_BOB', entitlement_id=None,
+                     provider_id=None, credential_id=None, item_id=None),
+            ],
+        }), ('PRIVATE_ALICE',))
+        self.assertEqual(scoped.tables['acquisition_ledger'], [
+            foreign_same_entitlement, foreign_same_source,
+        ])
+
     def test_no_provider_inference_or_private_identifiers_in_groups(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
