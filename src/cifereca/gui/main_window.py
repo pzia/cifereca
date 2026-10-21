@@ -1218,7 +1218,7 @@ class MainWindow(Adw.ApplicationWindow):
                                     if not self._closed and controls[2].get_root() is not None:
                                         controls[1].set_visible(False)
                                         controls[2].set_sensitive(True)
-                                from .maintenance_result_view import result_text
+                                from cifereca.gui.maintenance_result_view import result_text
                                 safe_text = result_text(result)
                                 state = (
                                     "incomplète" if safe_text.startswith("Analyse incomplète.")
