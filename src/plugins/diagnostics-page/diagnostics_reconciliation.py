@@ -150,3 +150,85 @@ def reconciliation_event_summary(raw: object) -> dict[str, str] | None:
         "limits": limit,
         "note": note,
     }
+
+
+def exportable_reconciliation_aggregates(raw: object) -> dict | None:
+    """Closed numeric projection; no file, book, path or arbitrary prose.
+
+    Input is the *same* Core event that passed the presentation validator.
+    The returned projection must be validated again at clipboard/export time:
+    callers may also supply hand-built sanitized row dictionaries.
+    """
+    summary = reconciliation_event_summary(raw)
+    if summary is None:
+        return None
+    detail = raw["detail"]
+    counts = detail.get("counts")
+    phases = detail.get("phase_ms")
+    values = {
+        "schema_version": 1, "status": detail["status"],
+        "code": summary["code"],
+        "reasons": sorted({
+            reason if reason in _REASON_LABELS else "unclassified_limit"
+            for reason in detail["reasons"]
+        }),
+        "counts": {
+            key: count for key, _ in _COUNTS
+            if type(counts) is dict
+            and (count := _bounded(counts.get(key))) is not None
+        },
+        "phase_ms": {
+            key: elapsed for key, _ in _TIMINGS
+            if type(phases) is dict
+            and (elapsed := _bounded(phases.get(key))) is not None
+        },
+    }
+    duration = _bounded(detail.get("duration_ms"))
+    if duration is not None:
+        values["duration_ms"] = duration
+    return values
+
+
+def sanitized_reconciliation_export(row: object) -> dict | None:
+    """Second, strict trust boundary for selected-events JSON serialization."""
+    if not isinstance(row, Mapping) or (
+        row.get("source") != "core_events" or row.get("module") != "LIBRARY"
+    ):
+        return None
+    raw = row.get("reconciliation_export")
+    if type(raw) is not dict or type(raw.get("schema_version")) is not int or raw["schema_version"] != 1:
+        return None
+    status = raw.get("status")
+    reasons = raw.get("reasons")
+    code = raw.get("code")
+    if (type(status) is not str or status not in _STATUSES
+            or type(reasons) is not list or len(reasons) > 64
+            or any(type(reason) is not str or reason not in _REASON_LABELS for reason in reasons)
+            or type(code) is not str or code not in {*_REASON_LABELS, "none"}
+            or (status == "complete" and reasons)
+            or (status != "complete" and not reasons)):
+        return None
+    # Raw original codes may be unknown and map to unclassified_limit;
+    # publishing a fixed generic enum is preferable to echoing the original.
+    if code != "none" and code not in reasons:
+        return None
+    if code == "none" and reasons:
+        return None
+    counts = raw.get("counts")
+    phases = raw.get("phase_ms")
+    projected = {
+        "schema_version": 1, "status": status, "code": code,
+        "reasons": sorted(set(reasons)),
+        "counts": {
+            key: value for key, _ in _COUNTS
+            if type(counts) is dict and (value := _bounded(counts.get(key))) is not None
+        },
+        "phase_ms": {
+            key: value for key, _ in _TIMINGS
+            if type(phases) is dict and (value := _bounded(phases.get(key))) is not None
+        },
+    }
+    elapsed = _bounded(raw.get("duration_ms"))
+    if elapsed is not None:
+        projected["duration_ms"] = elapsed
+    return projected
