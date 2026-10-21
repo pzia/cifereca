@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 from cifereca.plugin_api import UiPageContribution
-from cifereca.core.version_inventory import version_inventory
+from cifereca.plugin_api.version_inventory import version_inventory
 from diagnostics_ai import llm_destination, prepare_analysis, analyze_with_consent, export_analysis_json
 from diagnostics_explorer import (
     SOURCES, SEVERITIES, PERIODS, PAGE_SIZE, fetch_explorer_page,
