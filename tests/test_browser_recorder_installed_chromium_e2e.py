@@ -287,7 +287,7 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         window.set_child(root)
         window.present()
         _flush()
-        site, consent = _children(root)[1:3]
+        site, consent = _children(root.get_child())[1:3]
         site.set_text(origin + "/catalog")
         consent.set_active(True)
         panel = plugin.private_panel
