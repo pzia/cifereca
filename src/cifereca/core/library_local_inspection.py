@@ -270,8 +270,8 @@ class LocalInspection:
                       + '\n\n' + '\n\n'.join(
                           'Acquisition enregistrée :\n' + evidence('acquisition_ledger', li)
                           for li in ledgers[right.get('entitlement_id')][:20])
-                      + '\n\nAucun téléchargement ni rattachement autorisé.')
-            if not add('right', index, 'Droit non vérifié · ' + right_label,
+                      + '\n\nAbsence de preuve de fichier, pas preuve de livre absent. Aucun téléchargement ni rattachement autorisé.')
+            if not add('right', index, 'Droit sans fichier vérifié · ' + right_label,
                        _provider(right.get('provider_id')),
                        {'rights_without_verified_file'}, detail):
                 break
