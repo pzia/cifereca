@@ -1152,15 +1152,33 @@ class MainWindow(Adw.ApplicationWindow):
                         if feedback is not None:
                             feedback.running(ticket)
 
+                        reconciliation = getattr(meta, "id", None) == "library.reconciliation.audit"
+                        run_state = ({
+                            "scope": reconciliation_scope(),
+                            "progress_target": (feedback, ticket),
+                            "view": result_view,
+                            "controls": (cancellation_state, cancel_button, _button),
+                        } if reconciliation else None)
+
+                        def report_progress(current, total, message):
+                            target = (run_state.get("progress_target")
+                                      if run_state is not None else (feedback, ticket))
+                            if target is not None and target[0] is not None:
+                                target[0].report(
+                                    target[1], current=current, total=total, message=message,
+                                )
+
                         worker_control = MaintenanceCancelControl(
-                            owner_closed=lambda: self._closed,
-                            on_progress=(
-                                (lambda current, total, message:
-                                 feedback.report(ticket, current=current, total=total, message=message))
-                                if feedback is not None else None
+                            owner_closed=lambda: (
+                                self._closed or (run_state is not None
+                                    and reconciliation_scope() != run_state["scope"])
                             ),
+                            on_progress=report_progress if feedback is not None else None,
                         )
                         cancellation_state["control"] = worker_control
+                        if run_state is not None:
+                            run_state["control"] = worker_control
+                            self._maintenance_reconciliation_run = run_state
                         can_cancel = getattr(meta, "cancellable", False) is True
                         cancel_button.set_visible(can_cancel)
                         cancel_button.set_sensitive(can_cancel)
