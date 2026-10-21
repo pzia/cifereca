@@ -254,6 +254,37 @@ class PrivateSessionVault:
         finally:
             os.close(fd)
 
+    def unlocked_index(self, passphrase: str) -> tuple[tuple[dict, ...], int]:
+        """Read an opt-in private session index, never persist an index file.
+
+        No filename or ordinary list view exposes an origin, book, date or
+        status. Each summary comes from a fully AEAD-authenticated session,
+        after verifying the supplied passphrase; locked/tampered sessions do
+        not block other, independently decryptable sessions. Call this API
+        in a worker, as scrypt may take seconds across many sessions.
+        """
+        if not isinstance(passphrase, str) or not 12 <= len(passphrase) <= 1024:
+            raise VaultError("vault_passphrase_required")
+        ids = self.list_ids()
+        if len(ids) > MAX_SESSIONS:
+            raise VaultError("vault_limit")
+        summaries = []
+        unavailable = 0
+        for identity in ids:
+            try:
+                item = self.open(identity, passphrase)
+            except VaultError:
+                unavailable += 1
+                continue
+            try:
+                summaries.append(item.private_summary())
+            finally:
+                item.trace.destroy()
+        summaries.sort(key=lambda entry: (
+            entry["saved_at"], entry["id"]
+        ), reverse=True)
+        return tuple(summaries), unavailable
+
     def begin(self, passphrase: str):
         """Explicit action *before* capture; fail closed before Chromium runs."""
         salt = secrets.token_bytes(16)
@@ -354,11 +385,6 @@ class SessionWriter:
         dest = self.session_id + ".cbrv"
         try:
             count, total = self.vault._entries(fd)
-            if total + len(data) > MAX_VAULT_BYTES or (
-                count >= MAX_SESSIONS and not self.session_id in
-                [name[:-5] for name in os.listdir(fd) if name.endswith(".cbrv")]
-            ):
-                raise VaultError("vault_limit")
             try:
                 old = os.stat(dest, dir_fd=fd, follow_symlinks=False)
             except FileNotFoundError:
@@ -369,6 +395,14 @@ class SessionWriter:
                 or stat.S_IMODE(old.st_mode) != 0o600
             ):
                 raise VaultError("vault_unsafe_file")
+            # Replacing an existing snapshot does not allocate a *second*
+            # permanent session. Account for its previously persisted size
+            # before checking the final cap (temporary fsync space is managed
+            # by the filesystem; never loosen the total retention quota).
+            previous_size = old.st_size if old is not None else 0
+            if (total - previous_size + len(data) > MAX_VAULT_BYTES
+                    or (count >= MAX_SESSIONS and old is None)):
+                raise VaultError("vault_limit")
             handle = os.open(
                 tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                 | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=fd,
