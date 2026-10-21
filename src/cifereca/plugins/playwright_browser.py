@@ -176,8 +176,9 @@ def install_chromium(
 
     The official Playwright installer selects its coupled Chromium revision
     and verifies its own downloads. Its output is discarded, never logged.
-    We leave pre-existing revisions untouched (--no-remove). Failure does
-    not authorize deleting any shared browser cache.
+    PLAYWRIGHT_SKIP_BROWSER_GC=1 protects pre-existing browser revisions:
+    the Playwright CLI has no --no-remove option. Failure does not authorize
+    deleting any shared browser cache.
     """
     if consent is not True:
         return BrowserState("consent_required")
@@ -210,12 +211,17 @@ def install_chromium(
             progress("starting")
         try:
             # No shell, sudo, install-deps or pip. No raw output in diagnostics.
-            # --no-remove protects browsers used by other Playwright clients.
+            # The real Playwright CLI supports --no-shell but NOT --no-remove.
+            # Skip its cache GC instead, protecting browser revisions used by
+            # other clients. Inherit network/proxy settings without logging.
+            environment = os.environ.copy()
+            environment["PLAYWRIGHT_SKIP_BROWSER_GC"] = "1"
             proc = subprocess.Popen(
                 [sys.executable, "-m", "playwright", "install",
-                 "--no-shell", "--no-remove", "chromium"],
+                 "--no-shell", "chromium"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True,
+                env=environment,
             )
         except OSError:
             return BrowserState("installer_unavailable", before.version)
