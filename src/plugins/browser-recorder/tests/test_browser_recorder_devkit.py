@@ -31,9 +31,9 @@ def test_kit_embeds_exact_public_contracts_and_provenance():
     assert manifest["core_version"]
     assert manifest["generated_at_utc"]
     assert manifest["git_revision"] == "unknown"  # no invented revision
-    assert json.loads(result["plugin-dev-kit/contract-registry.json"]) == [
-        asdict(row) for row in CONTRACT_REGISTRY
-    ]
+    assert json.loads(result["plugin-dev-kit/contract-registry.json"]) == json.loads(
+        json.dumps([asdict(row) for row in CONTRACT_REGISTRY])
+    )
     declared = manifest["files"]
     assert len(declared) == len(result) - 1
     assert {row["path"] for row in declared} == set(result) - {
