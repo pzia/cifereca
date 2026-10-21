@@ -88,7 +88,7 @@ def revalidate_observed_file(
         return unavailable("invalid_scope")
     permitted = []
     for item in roots:
-        if (type(item) is not Path or not item.is_absolute()
+        if (not isinstance(item, Path) or not item.is_absolute()
                 or item == Path("/") or ".." in item.parts):
             return unavailable("invalid_scope")
         if path != item and path.is_relative_to(item):
