@@ -127,3 +127,34 @@ def test_provider_wrapped_refusals_never_return_stale_or_retry(
         assert "PRIVATE" not in str(batches) + str(summary)
     finally:
         service.close()
+
+
+@pytest.mark.parametrize(("provider_code", "expected"), [
+    ("search_authentication_required", "SearchAuthenticationRequired"),
+    ("search_access_denied", "SearchAccessDenied"),
+    ("search_temporarily_unavailable", "SearchTemporarilyUnavailable"),
+    ("search_does_not_exist", None),
+])
+def test_closed_public_provider_machine_codes_are_exact(
+    provider_code, expected,
+):
+    error = ProviderError("PRIVATE_PROVIDER_ACCOUNT")
+    error.code = provider_code
+    assert search_failure_code(error) == expected
+    assert public_service_unavailable(error) == (
+        expected == "SearchTemporarilyUnavailable"
+    )
+
+
+def test_explicit_provider_refusal_outweighs_generic_outage_wrapper():
+    access = ProviderError("PRIVATE")
+    access.code = "search_access_denied"
+    access.__cause__ = httpx.ReadTimeout("PRIVATE")
+    assert search_failure_code(access) == "SearchAccessDenied"
+    assert not public_service_unavailable(access)
+
+    # A genuine HTTP refusal in the chain outranks an inaccurate provider
+    # wrapper and must never authorize stale results.
+    outage = _wrapped(_http_error(401), outage=True)
+    assert search_failure_code(outage) == "SearchAuthenticationRequired"
+    assert not public_service_unavailable(outage)

@@ -118,3 +118,59 @@ def test_search_transport_error_does_not_retain_private_httpx_exception():
         assert SECRET not in str(caught.value)
     finally:
         session.close()
+
+
+@pytest.mark.parametrize(("status", "public_marker", "machine_code", "core_code"), [
+    (400, "service_unavailable", None, None),
+    (401, "auth_required", "search_authentication_required",
+     "SearchAuthenticationRequired"),
+    (403, "access_denied", "search_access_denied", "SearchAccessDenied"),
+    (408, "service_unavailable", "search_temporarily_unavailable",
+     "SearchTemporarilyUnavailable"),
+    (429, "rate_limited", "search_temporarily_unavailable",
+     "SearchTemporarilyUnavailable"),
+    (503, "service_unavailable", "search_temporarily_unavailable",
+     "SearchTemporarilyUnavailable"),
+])
+def test_search_http_codes_map_to_closed_core_status_without_retry(
+    status, public_marker, machine_code, core_code, caplog,
+):
+    from cifereca.search_failures import search_failure_code
+
+    calls = []
+    def handler(request):
+        calls.append(request.method)
+        return httpx.Response(status, text="PRIVATE_TOKEN_203948 " + str(request.url))
+
+    session, diag = session_with_handler(handler)
+    try:
+        with caplog.at_level("WARNING", logger="cifereca.plugin.provider.gutenberg"):
+            with pytest.raises(ProviderError, match=public_marker) as caught:
+                session.search("FICTIONAL_BOOK", page=0)
+        assert getattr(caught.value, "code", None) == machine_code
+        assert search_failure_code(caught.value) == core_code
+        assert calls == ["GET"]  # no variant/retry on a failed OPDS endpoint
+        assert_redacted(caught, diag, caplog)
+    finally:
+        session.close()
+
+
+def test_search_transport_failure_publishes_closed_outage_without_raw_cause():
+    from cifereca.search_failures import search_failure_code
+
+    calls = []
+    def handler(request):
+        calls.append(1)
+        raise httpx.ConnectError("PRIVATE_TOKEN_203948")
+
+    session, diag = session_with_handler(handler)
+    try:
+        with pytest.raises(ProviderError, match="service_unavailable") as caught:
+            session.search("FICTIONAL_BOOK")
+        assert caught.value.__cause__ is None
+        assert caught.value.code == "search_temporarily_unavailable"
+        assert search_failure_code(caught.value) == "SearchTemporarilyUnavailable"
+        assert len(calls) == 1
+        assert SECRET not in repr(diag.events) + str(caught.value)
+    finally:
+        session.close()
