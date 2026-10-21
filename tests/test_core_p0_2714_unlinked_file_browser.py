@@ -163,8 +163,13 @@ def test_explicit_isbn_and_opf_author_are_searchable_but_never_right_evidence(
     by_isbn = session.unconfirmed_files(query='9780306406157', limit=25)
     by_title = session.unconfirmed_files(query='oceanique', limit=25)
     by_author = session.unconfirmed_files(query='private_author', limit=25)
-    assert by_isbn.total == by_title.total == by_author.total == 1
-    assert by_isbn.cases[0].key == by_title.cases[0].key == by_author.cases[0].key
+    assert by_isbn.total == by_title.total == 1
+    # The six-book fixture intentionally uses the same PRIVATE_AUTHOR for
+    # every EPUB. All three *unlinked* books must match that author filter;
+    # a shared author is never a unique edition or a right/file link.
+    assert by_author.total == 3
+    assert by_isbn.cases[0].key == by_title.cases[0].key
+    assert by_isbn.cases[0].key in {case.key for case in by_author.cases}
     assert session.overview()['confirmed_files'] == 3
     assert session.overview()['unverified_rights'] == 3
     assert audit.redacted()['repair_authorized'] is False
