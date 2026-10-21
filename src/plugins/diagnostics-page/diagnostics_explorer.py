@@ -102,7 +102,7 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
 def fetch_explorer_page(
     broker: Any, *, source: str = "all", module: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
-    reference_time: datetime | None = None,
+    reference_time: datetime | None = None, reason_code: str = "",
 ) -> dict[str, Any]:
     """Only public diagnostics.events; never a path or arbitrary log query."""
     if not isinstance(source, str) or not isinstance(severity, str) or not isinstance(period, str):
@@ -111,13 +111,22 @@ def fetch_explorer_page(
         raise ValueError("unsupported diagnostics filter")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("invalid diagnostics module")
+    if (type(reason_code) is not str
+            or (reason_code and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", reason_code) is None)):
+        raise ValueError("invalid reconciliation reason code")
     if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
         raise ValueError("invalid diagnostics offset")
-    return broker.events(
-        source=source, module=module.strip()[:90],
-        severity=severity, since=explorer_since(period, now=reference_time), until=None,
-        limit=PAGE_SIZE, offset=offset,
-    )
+    query = {
+        "source": source, "module": module.strip()[:90],
+        "severity": severity, "since": explorer_since(period, now=reference_time),
+        "until": None, "limit": PAGE_SIZE, "offset": offset,
+    }
+    # Older Core versions can still serve the unfiltered page. Require the
+    # optional new broker keyword ONLY for an explicitly selected code;
+    # never silently downgrade a global filter to local 50-item search.
+    if reason_code:
+        query["reason_code"] = reason_code
+    return broker.events(**query)
 
 
 def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",

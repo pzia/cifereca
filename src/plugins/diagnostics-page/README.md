@@ -1,3 +1,19 @@
+## 0.1.16 — Filtrer globalement les causes de réconciliation (#2730)
+
+Dans **Diagnostics → Journaux**, le champ « Limite de réconciliation » accepte
+un **code Core exact** : par exemple `time_budget` ou
+`metadata_candidate_time_budget`. Valider avec **Entrée**. À la différence
+de « Rechercher dans cette page », le filtre est appliqué **par le Core
+avant la pagination** et retrouve aussi les causes secondaires
+`detail.reasons`. Il respecte source, module, période et gravité.
+
+La sélection multi-page réutilise exactement ce filtre à chaque lecture
+et refuse un broker renvoyant un événement hors code, plutôt que d’exporter
+une sélection trompeuse. Les exports demeurent expurgés et bornés. Un
+ancien Core qui ne connaît pas `reason_code` ne reçoit **aucun repli
+silencieux** vers une recherche locale : le filtre est indisponible.
+Le Core doit inclure le contrat de la PR #2746 pour activer ce parcours.
+
 ## 0.1.15 — Réconciliation dans les Journaux (#2730)
 
 Les événements Core `LIBRARY / library_reconciliation_audit` (issus du broker
