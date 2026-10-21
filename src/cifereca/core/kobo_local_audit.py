@@ -262,10 +262,17 @@ def kobo_local_reconciliation_audit(
     # Other providers' indexed local files are not Kobo orphan candidates.
     # The only scan roots remain confined to the selected Kobo identities.
     all_catalog = service.storage.catalog_entries()
+    # Only a local catalogue placement can supply a file path to the SHA
+    # reconciliation below. Remote/search-only and historical non-local rows
+    # still participate in indexed_paths (to avoid false orphan candidates),
+    # but must NOT consume the finite budget for local evidence. This also
+    # prevents an arbitrary ordering of 4,096 remote notices from hiding an
+    # otherwise verifiable Kobo library with 522 local placements.
     catalog = [
         row for row in all_catalog
         if row.get("provider_id") == "kobo"
         and row.get("identity_id") in selected_identities
+        and row.get("local_state") == "local"
     ]
     indexed_paths: dict[str, set[str]] = {
         identity: set() for identity in selected_identities
@@ -304,8 +311,6 @@ def kobo_local_reconciliation_audit(
     by_catalog: dict[tuple[str, str], list[object]] = defaultdict(list)
     unlinked_catalog = 0
     for row in catalog[:_MAX_RECORDS]:
-        if row.get("provider_id") != "kobo" or row.get("local_state") != "local":
-            continue
         identity, product = row.get("identity_id"), row.get("item_id")
         if identity not in selected_identities:
             continue
@@ -319,8 +324,9 @@ def kobo_local_reconciliation_audit(
 
     # These are persisted ROWS within the selected local scope, not a count
     # of distinct books: backup rows may include older/repeated attempts,
-    # catalogue rows include non-local/historical states, while rights are
-    # already restricted to ACTIVE rows for the selected credentials.
+    # catalogue rows include only local-state evidence candidates, not the
+    # remote/search-only notices that were already excluded from this
+    # reconciliation; rights are restricted to ACTIVE selected credentials.
     # Report only fixed origin codes; never publish row contents or IDs.
     persisted_row_budgets = {
         "backup_records_budget": len(records),
