@@ -416,6 +416,128 @@ def test_attested_notice_is_capped_after_filter_not_before():
     view, _identity, _calls, detail, _row = _view((*unresolved, *verified))
     section = next(x for x in detail.sections if x.id == "source-editions")
     editions = [f for f in section.fields if f.id.startswith("source-edition-")
-                and f.id != "source-edition-warning"]
+                and f.id not in {"source-edition-warning", "source-edition-limit"}]
     assert len(editions) == 16
     assert all("Kobo" in f.value for f in editions)
+
+
+def test_65th_verified_notice_survives_unresolved_first_64_without_network():
+    incomplete = tuple(
+        _variant(credential="", record=f"unknown-{index}") for index in range(64)
+    )
+    exact = _variant(credential="vault-2", record="valid-65")
+    view, identity, searches, _detail, row = _view((*incomplete, exact))
+    presented, available, opened = [], [], []
+    view.host = NS(
+        search_books=lambda *_args, **_kwargs: searches.append("search") or True,
+        can_open_loaded_search_notice=lambda **kw: available.append(kw) or True,
+        open_loaded_search_notice=lambda **kw: opened.append(kw) or True,
+    )
+    view._master.show_detail = presented.append
+    view._selected_row(row)
+    assert len(available) == 1
+    assert available[0]["record_id"] == "valid-65"
+    assert available[0]["credential"] == "vault-2"
+    assert not searches and not opened
+    actions = [a for a in presented[-1].actions
+               if a.id.startswith("recommendation.loaded-notice.")]
+    assert len(actions) == 1
+    assert actions[0].callback() is True
+    assert opened == available
+    identity[0] = "reader-2"
+    assert actions[0].callback() is False
+
+
+def test_256th_is_bounded_and_257th_has_explicit_non_exhaustive_warning():
+    unresolved = tuple(
+        _variant(credential="", record=f"unresolved-{index}")
+        for index in range(255)
+    )
+    last_visible = _variant(credential="vault-1", record="exact-256")
+    hidden = _variant(credential="vault-1", record="exact-257")
+    view, _, searches, _detail, row = _view((*unresolved, last_visible, hidden))
+    presented, availability = [], []
+    view.host = NS(
+        search_books=lambda *_a, **_kw: searches.append("search") or True,
+        can_open_loaded_search_notice=lambda **kw: availability.append(kw) or True,
+        open_loaded_search_notice=lambda **kw: True,
+    )
+    view._master.show_detail = presented.append
+    view._selected_row(row)
+    assert [x["record_id"] for x in availability] == ["exact-256"]
+    section = next(s for s in presented[-1].sections if s.id == "source-editions")
+    assert any(f.id == "source-edition-limit" and "non exhaustive" in f.value
+               for f in section.fields)
+    assert not searches
+
+    # All 256 scanned candidates can be incomplete; never suggest that this
+    # proves there is no exact edition in the remaining source catalogue.
+    view._ranked_by_key[row.key] = RankedCandidate(
+        item=view._ranked_by_key[row.key].item, score=80,
+        reasons=("Sujet proche",), sources=("kobo",),
+        notices=(*unresolved, _variant(credential="", record="unresolved-256"), hidden),
+    )
+    view._selected_row(row)
+    section = next(s for s in presented[-1].sections if s.id == "source-editions")
+    assert any(f.id == "source-edition-limit" for f in section.fields)
+    assert not any(a.id.startswith("recommendation.loaded-notice.")
+                   for a in presented[-1].actions)
+
+
+def test_duplicate_provider_record_is_one_action_but_distinct_accounts_remain():
+    duplicates = tuple(
+        _variant(isbn=(ISBN_1 if index % 2 == 0 else ISBN_2),
+                 credential="vault-1", record="same-edition")
+        for index in range(32)
+    )
+    distinct = (
+        _variant(credential="vault-2", record="same-edition"),
+        _variant(credential="vault-1", record="new-edition"),
+    )
+    view, _, searches, _detail, row = _view((*duplicates, *distinct))
+    available, opened, presented = [], [], []
+    view.host = NS(
+        search_books=lambda *_a, **_kw: searches.append("search") or True,
+        can_open_loaded_search_notice=lambda **kw: available.append(kw) or True,
+        open_loaded_search_notice=lambda **kw: opened.append(kw) or True,
+    )
+    view._master.show_detail = presented.append
+    view._selected_row(row)
+    assert len(available) == 3
+    assert {(x["credential"], x["record_id"]) for x in available} == {
+        ("vault-1", "same-edition"), ("vault-2", "same-edition"),
+        ("vault-1", "new-edition"),
+    }
+    actions = [a for a in presented[-1].actions
+               if a.id.startswith("recommendation.loaded-notice.")]
+    assert len(actions) == 3
+    assert [a.id for a in actions] == [
+        "recommendation.loaded-notice.1",
+        "recommendation.loaded-notice.2",
+        "recommendation.loaded-notice.3",
+    ]
+    assert [action.callback() for action in actions] == [True] * 3
+    assert len(opened) == 3
+    assert not searches
+
+
+def test_malformed_coordinates_do_not_create_executable_action():
+    # CatalogNoticeVariant is a frozen dataclass but its values can still be
+    # malformed upstream: do not let an unhashable list poison a detail view.
+    malformed = _variant(credential="vault-1", record="real")
+    from dataclasses import replace
+    invalid = replace(malformed, source_provider=["kobo"], record_id=["fake"])
+    giant = replace(malformed, source_credential="SECRET" * 100)
+    view, _, searches, _detail, row = _view((invalid, giant, malformed))
+    presented, available = [], []
+    view.host = NS(
+        search_books=lambda *_a, **_kw: searches.append("search") or True,
+        can_open_loaded_search_notice=lambda **kw: available.append(kw) or True,
+        open_loaded_search_notice=lambda **kw: True,
+    )
+    view._master.show_detail = presented.append
+    view._selected_row(row)
+    assert len(available) == 1
+    assert available[0]["credential"] == "vault-1"
+    assert "SECRET" not in repr(presented[-1])
+    assert not searches
