@@ -328,3 +328,46 @@ def test_failed_playwright_cli_also_stops_descendants_and_redacts_proxy(
     assert spawned[0][1]["start_new_session"] is True
     assert "FAKE_SECRET_CI" not in repr(result)
     assert "FAKE_SECRET_CI" not in str(result.redacted())
+
+
+def test_stop_kills_remaining_group_when_installer_parent_exits(monkeypatch):
+    """A reaped Node launcher can leave an orphan Chromium downloader."""
+    calls = []
+    class ExitedParent:
+        pid = 45123
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            return 0
+        def poll(self):
+            return 0
+
+    def killpg(pgid, sig):
+        calls.append(("killpg", pgid, sig))
+        # A surviving descendant remains in the dedicated installer group.
+        if sig == 0:
+            return None
+
+    monkeypatch.setattr(browser.os, "killpg", killpg)
+    browser._stop(ExitedParent())
+    assert ("killpg", 45123, signal.SIGTERM) in calls
+    assert ("killpg", 45123, 0) in calls
+    assert ("killpg", 45123, signal.SIGKILL) in calls
+
+
+def test_stop_does_not_kill_missing_process_group(monkeypatch):
+    calls = []
+    class ExitedParent:
+        pid = 45124
+        def wait(self, timeout=None):
+            return 0
+        def poll(self):
+            return 0
+
+    def killpg(pgid, sig):
+        calls.append(sig)
+        if sig == 0:
+            raise ProcessLookupError("installer process group exited")
+
+    monkeypatch.setattr(browser.os, "killpg", killpg)
+    browser._stop(ExitedParent())
+    assert calls == [signal.SIGTERM, 0]
