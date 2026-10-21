@@ -658,7 +658,9 @@ class PluginManagerPage(Gtk.ScrolledWindow):
                 "Installer les dépendances Python…", "system-software-install-symbolic",
                 tooltip="Installation Core dans le venv Cifereca, avec confirmation ; ne télécharge pas Chromium",
             )
-            repair.set_sensitive(not self._python_deps_install_running)
+            repair.set_sensitive(
+                not self._python_deps_install_running and not self._chromium_operation_running
+            )
             repair.connect("clicked", lambda _b: self._confirm_python_dependencies())
             box.append(repair)
 
@@ -976,7 +978,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
 
     def _confirm_python_dependencies(self) -> None:
         """Explicit consent for modifying only the Core virtualenv."""
-        if self._python_deps_install_running:
+        if self._python_deps_install_running or self._chromium_operation_running:
             return
         dialog = Adw.MessageDialog.new(
             self.window,
@@ -998,7 +1000,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         dialog.present()
 
     def _install_python_dependencies(self) -> None:
-        if self._python_deps_install_running:
+        if self._python_deps_install_running or self._chromium_operation_running:
             return
         self._python_deps_install_running = True
         self._toast("Installation des dépendances Python en cours…", 5)
@@ -1053,6 +1055,7 @@ class PluginManagerPage(Gtk.ScrolledWindow):
             "disk_space_insufficient": "Espace disque insuffisant (768 Mio libres requis au minimum).",
             "venv_required": "Le Core refuse l'installation hors de son environnement virtuel.",
             "download_failed": "Le téléchargement Chromium a échoué ; vérifiez réseau/proxy/espace disque.",
+            "browser_download_source_unapproved": "Source Chromium personnalisée : installation automatique refusée. Procédure administrateur séparée requise.",
             "download_timeout": "Le téléchargement Chromium a dépassé la durée maximale.",
             "download_incomplete": "L'installation Chromium a terminé sans produire la révision attendue.",
             "cancelled": "Installation Chromium annulée ; aucun autre navigateur n’a été supprimé.",
@@ -1132,6 +1135,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
     def _finish_chromium_operation(self, code: str) -> bool:
         self._chromium_operation_running = False
         self._chromium_cancel.set()
+        if getattr(self.window, "_closed", False):
+            return False
         self.refresh()
         message = self._chromium_label(code)
         dialog = Adw.MessageDialog.new(self.window, "État Chromium", message)
