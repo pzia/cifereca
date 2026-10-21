@@ -1500,6 +1500,7 @@ class UxRecommendationsView:
         self._master.show_rows(tuple(rows), total_count=len(self._ranked))
 
         if not rows:
+            self._exact_notice_state = None
             # Empty filters invalidate prior detail and pending LLM callbacks,
             # even if the host emits no selection-changed signal.
             self._detail_selection_generation = (
@@ -2179,6 +2180,8 @@ class UxRecommendationsView:
         # Set before cancelling work: idle callbacks already queued may still
         # execute after deactivation, even when their sources are removed.
         self._disposed = True
+        # Do not retain ranking/identity-bound source choices after teardown.
+        self._exact_notice_state = None
         self._reset_llm_selection(None)
         self._clear_overview_refresh()
         if self._task_handle is not None:
