@@ -20,7 +20,8 @@ from cifereca.gui.maintenance_result_view import MaintenanceResultView
 from cifereca.plugin_api import MaintenanceResult
 
 
-def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done):
+def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
+             report, done, checkpoint=lambda phase: None):
     report['checks']['inspection_setup_entered']=True
     tmp = tempfile.TemporaryDirectory()
     root = Path(tmp.name)
@@ -150,6 +151,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(allocated,click)
 
     def initial():
+        checkpoint('maint_inspection_opened')
         report['checks']['inspection_window_mapped']=True
         window=controller.dialog
         assert window.get_width()<=parent.get_width()
@@ -211,6 +213,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                          for w in walk(controller.dialog)), compare_right)
 
     def compare_right():
+        checkpoint('maint_inspection_right_selected')
         report['checks']['inspection_candidates_initially_visible']=True
         labels='\n'.join(w.get_text() for w in walk(controller.dialog)
                           if isinstance(w,Gtk.Label))
@@ -336,6 +339,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             until(candidate_allocated, candidate_click)
 
     def compare_next():
+        checkpoint('maint_inspection_candidate_navigated')
         report['checks']['inspection_candidate_navigation_reached']=True
         labels='\n'.join(w.get_text() for w in walk(controller.dialog)
                           if isinstance(w,Gtk.Label))
@@ -408,6 +412,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(file_row_ready, click_file)
 
     def manual_direct_selected():
+        checkpoint('maint_inspection_file_selected')
         report['checks']['P0_2714_click_file_from_paged_list']=True
         text='\\n'.join(w.get_text() for w in walk(controller.dialog)
                          if isinstance(w,Gtk.Label))
@@ -474,6 +479,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(preflight_ready, run_preflight)
 
     def manual_preflight():
+        checkpoint('maint_inspection_preflight')
         text='\\n'.join(w.get_text() for w in walk(controller.dialog)
                        if isinstance(w,Gtk.Label))
         assert 'Aucun fichier n’a été rattaché.' in text
