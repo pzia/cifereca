@@ -7,6 +7,8 @@ from __future__ import annotations
 import time
 import hashlib
 import json
+from contextlib import ExitStack
+from .source_sync_timing import measure, timing_scope
 from datetime import datetime, timezone
 from typing import Any, Callable
 from ..diagnostics import redact
@@ -81,12 +83,14 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
     if control is not None and callable(getattr(control, "check_cancelled", None)):
         control.check_cancelled()
     if session.capabilities.loans:
-        loans = self._loans_for_account(account, force=True)
+        with measure("loan_refresh_ms"):
+            loans = self._loans_for_account(account, force=True)
         result["loans"] = len(loans)
     if session.capabilities.personal_library:
         # A provider can implement a one-shot iterable: both the entitlement
         # mirror and remote catalog must see the exact same authenticated rows.
-        rows = list(session.library())
+        with measure("library_read_ms"):
+            rows = list(session.library())
         if account.provider_id == "numilog" and not numilog_inventory_binding_valid(
             self, account, session=session,
         ):
@@ -100,21 +104,23 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         if account.provider_id == "kobo":
             # Persist attested personal rights, but never start Kobo acquisition.
             from .kobo_manifest_rights import mirror_kobo_manifest_rights
-            result["owned_rights"] = mirror_kobo_manifest_rights(
-                self, rows, identity_id=account.identity_id,
-                credential_id=account.credential_id,
-                account_id=account.unique_id or None,
-            )
+            with measure("rights_mirror_ms"):
+                result["owned_rights"] = mirror_kobo_manifest_rights(
+                    self, rows, identity_id=account.identity_id,
+                    credential_id=account.credential_id,
+                    account_id=account.unique_id or None,
+                )
         elif account.provider_id == "numilog":
             # The private connected library is the only positive evidence of
             # purchases. Public search, even with owned=True, cannot grant
             # ownership. No signed ACSM resolution or download happens here.
             from .numilog_manifest_rights import mirror_numilog_manifest_rights
-            result["owned_rights"] = mirror_numilog_manifest_rights(
-                self, rows, identity_id=account.identity_id,
-                credential_id=account.credential_id,
-                account_id=account.unique_id or None,
-            )
+            with measure("rights_mirror_ms"):
+                result["owned_rights"] = mirror_numilog_manifest_rights(
+                    self, rows, identity_id=account.identity_id,
+                    credential_id=account.credential_id,
+                    account_id=account.unique_id or None,
+                )
         # A source-level sync is an inventory/rights refresh, not a request
         # to materialize local files. In particular, Numilog may advertise
         # direct_download but that capability must not implicitly acquire
@@ -125,9 +131,11 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         ):
             # Revoke a stale source even if the ownership projection completed.
             raise ProviderConfigurationError("Source Numilog non liée au compte demandé")
-        result["library"] = self._mirror_remote_results(rows, identity_id=account.identity_id)
+        with measure("catalog_mirror_ms"):
+            result["library"] = self._mirror_remote_results(rows, identity_id=account.identity_id)
     if deep:
-        result["catalog_scan"] = self.catalog_scan()
+        with measure("catalog_scan_ms"):
+            result["catalog_scan"] = self.catalog_scan()
     return result
 
 
@@ -135,6 +143,7 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
     from .public_provider_diagnostics import registered_public_provider_id
     from ..plugin_api import Cancelled
     started = time.monotonic()
+    timings: dict[str, int] = {}
 
     def observe(phase, status, code, result=None):
         try:
@@ -143,6 +152,7 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                 provider, phase=phase, status=status, code=code,
                 duration_ms=(max(0, int((time.monotonic() - started) * 1000))
                              if phase == "completed" else None), counts=result,
+                timings=timings if phase == "completed" else None,
             )
         except Exception:
             pass  # telemetry is optional and never changes the sync outcome
@@ -152,8 +162,11 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
         # Source synchronization is also a library writer. Serialize it
         # with maintenance destruction and opening/Kobo acquisition across
         # processes; never wait for the lock on a caller/UI thread.
-        with InterProcessLock(acquisition_lock_file()):
-            result = self._synchronize_account_source_impl(account, deep=deep, control=control)
+        with timing_scope(timings), ExitStack() as locks:
+            with measure("lock_acquire_ms"):
+                locks.enter_context(InterProcessLock(acquisition_lock_file()))
+            with measure("locked_work_ms"):
+                result = self._synchronize_account_source_impl(account, deep=deep, control=control)
         outcome = "skipped" if result.get("status") == "skipped" else "success"
         raw_reason = result.get("reason")
         reason = (raw_reason if type(raw_reason) is str

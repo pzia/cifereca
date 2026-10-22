@@ -5,6 +5,7 @@ import json
 import re
 
 from .public_provider_diagnostics import canonical_public_provider_id
+from .source_sync_timing import TIMING_FIELDS
 
 PREFIX = "TRACE source sync "
 _OUTCOMES = {
@@ -20,7 +21,7 @@ def public_fields(value: object) -> dict:
     if type(value) is not dict or set(value) - {
         "schema_version", "provider_id", "operation_kind", "phase", "status",
         "code", "duration_ms", "task_ref", "loans", "library",
-    }:
+    } - TIMING_FIELDS:
         return {}
     if (type(value.get("schema_version")) is not int or value["schema_version"] != 1
             or canonical_public_provider_id(value.get("provider_id")) is None
@@ -33,6 +34,11 @@ def public_fields(value: object) -> dict:
     if expected is None or (value["code"] not in expected if isinstance(expected, frozenset)
                             else value["code"] != expected):
         return {}
+    if any(key in value for key in TIMING_FIELDS) and value["phase"] != "completed":
+        return {}
+    for key in TIMING_FIELDS:
+        if key in value and (type(value[key]) is not int or not 0 <= value[key] <= 86_400_000):
+            return {}
     for key, limit in (("duration_ms", 86_400_000), ("loans", 1_000_000), ("library", 1_000_000)):
         if key in value and (type(value[key]) is not int or not 0 <= value[key] <= limit):
             return {}

@@ -328,7 +328,8 @@ class Diagnostics:
 
     def add_core_source_sync(self, provider_id: str, *, phase: str, status: str,
                              code: str, duration_ms: int | None = None,
-                             counts: dict | None = None) -> None:
+                             counts: dict | None = None,
+                             timings: dict | None = None) -> None:
         """Internal producer; caller attests the provider via Core's registry.
 
         Generic plugin add() cannot set the publication provenance flag.
@@ -350,6 +351,12 @@ class Diagnostics:
             for key in ("loans", "library"):
                 value = counts.get(key)
                 if type(value) is int and 0 <= value <= 1_000_000:
+                    fields[key] = value
+        if type(timings) is dict and phase == "completed":
+            from .core.source_sync_timing import TIMING_FIELDS
+            for key in TIMING_FIELDS:
+                value = timings.get(key)
+                if type(value) is int and 0 <= value <= 86_400_000:
                     fields[key] = value
         fields = public_fields(fields)
         if not fields:
