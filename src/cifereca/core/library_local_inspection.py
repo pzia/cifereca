@@ -12,7 +12,7 @@ import unicodedata
 
 from .library_audit_broker import _run_scoped_audit, _unavailable
 from .library_inspection_cache import take_inspection_cache
-from .library_manual_link_preflight import review_local_pair, review_source_read_only
+from .library_manual_link_preflight import review_local_pair, review_source_read_only, review_kobo_candidate
 
 PROVIDERS = {'all': 'Tous les fournisseurs', 'kobo': 'Kobo', 'numilog': 'Numilog',
              'paris': 'Paris', 'local': 'Local (origine attestée)',
@@ -284,6 +284,8 @@ class LocalInspection:
         self._candidate_file_keys = {}
         # Revocable, private evidence summaries; no raw account/path exported.
         self._manual_right_proofs = {}
+        self._kobo_right_proofs = {}
+        self._kobo_right_scopes = {}
         self._manual_file_proofs = {}
         self._manual_right_scopes = {}
         self._manual_file_observations = {}
@@ -560,6 +562,24 @@ class LocalInspection:
             scope = right_scope(right)
             if scope is not None and right.get('provider_id') == 'numilog':
                 self._manual_right_scopes[f'right:{index}'] = scope
+            # The shared audit does not project backup revision or provider
+            # connections. These are deliberately NOT inferred from metadata:
+            # the independent Kobo transaction recollects them freshly.
+            if right.get('provider_id') == 'kobo':
+                kobo_attested = (
+                    scope is not None
+                    and right.get('attested_source') == 'kobo.personal_manifest'
+                    and right.get('state') == 'active'
+                    and right.get('entitlement_type') == 'owned'
+                    and not right.get('loan_id') and not right.get('expires_at')
+                    and scope_counts[scope] == 1
+                )
+                self._kobo_right_proofs[f'right:{index}'] = {
+                    'attested': kobo_attested,
+                    'ambiguous': scope is None or scope_counts[scope] != 1,
+                }
+                if kobo_attested:
+                    self._kobo_right_scopes[f'right:{index}'] = scope
             self._manual_right_proofs[f'right:{index}'] = {
                 'attested': (
                     right.get('provider_id') == 'numilog'
@@ -654,6 +674,8 @@ class LocalInspection:
         self._candidate_file_keys.clear()
         self._file_facets.clear()
         self._manual_right_proofs.clear()
+        self._kobo_right_proofs.clear()
+        self._kobo_right_scopes.clear()
         self._manual_file_proofs.clear()
         self._manual_right_scopes.clear()
         self._manual_file_observations.clear()
@@ -815,6 +837,25 @@ class LocalInspection:
         # accidentally enter Numilog's purchase-only transaction from here.
         # An explicit reason is safer than reporting a real Kobo/Paris right
         # as a missing Numilog entitlement.
+        if right.provider == 'kobo':
+            observation = self._manual_file_observations.get(file_key)
+            verified = (
+                observation is not None
+                and observation.validation == 'ok'
+                and observation.media_format in ('epub', 'pdf')
+                and (observation.media_format == 'pdf'
+                     or observation.structure_validation == 'epub_structure_crc_ok')
+            )
+            return review_kobo_candidate(
+                self._kobo_right_proofs.get(right_key),
+                {'verified': verified,
+                 'signature': (observation.sha256, observation.size)
+                              if observation is not None else None},
+                audit_complete=self._manual_audit_complete,
+                bibliographic_hint=(
+                    file_key in self._candidate_file_keys.get(right_key, ())
+                ),
+            )
         if right.provider != 'numilog':
             return review_source_read_only(
                 right.provider,
@@ -860,6 +901,35 @@ class LocalInspection:
             'credential_id': credential,
             'account_id': account,
             'item_id': edition,
+        }
+
+    def _kobo_transaction_inputs(self, right_key, file_key):
+        """Private exact identifiers only; never an authorization by title/ISBN."""
+        if (not self.valid() or self._manual_service is None
+                or type(right_key) is not str or type(file_key) is not str
+                or self._cases.get(right_key) is None
+                or self._cases[right_key].provider != 'kobo'
+                or self.preflight_manual_link(right_key, file_key).status
+                   != 'eligible_for_fresh_validation'):
+            return None
+        scope = self._kobo_right_scopes.get(right_key)
+        observation = self._manual_file_observations.get(file_key)
+        if (scope is None or observation is None or len(scope) != 5
+                or scope[0] != self._manual_identity or scope[1] != 'kobo'
+                or not all(type(value) is str and value for value in scope)
+                or type(observation.sha256) is not str
+                or len(observation.sha256) != 64
+                or any(ch not in '0123456789abcdef' for ch in observation.sha256)
+                or type(observation.path) is not str
+                or not observation.path.startswith('/')):
+            return None
+        return {
+            'identity_id': scope[0],
+            'credential_id': scope[2],
+            'account_id': scope[3],
+            'item_id': scope[4],
+            'expected_sha256': observation.sha256,
+            'path': observation.path,
         }
 
     def preview_manual_attachment(self, right_key, file_key, *, cancelled=lambda: False):
