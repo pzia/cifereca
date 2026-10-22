@@ -61,6 +61,59 @@ def _zip_bytes(session: StoredSession) -> bytes:
     return data
 
 
+def save_session_llm_zip(
+    session: StoredSession, destination: Path, *, confirmed=False,
+) -> int:
+    """Write one explicitly selected *cleartext* session ZIP for a user's LLM.
+
+    Vault remains AES-GCM encrypted at rest; the plain ZIP exists only after
+    a Save As confirmation. The destination may be the user's ordinary
+    Documents/Downloads folder (no 0700 prerequisite). Create it as 0600,
+    exclusively and without following symlinks; never overwrite. No upload.
+    """
+    if confirmed is not True:
+        raise VaultError("private_zip_confirmation_required")
+    destination = Path(destination)
+    if not destination.is_absolute() or destination.suffix.lower() != ".zip":
+        raise VaultError("private_zip_destination")
+    # Validate and bound the snapshot before opening the destination.
+    payload = _zip_bytes(session)
+    folder_fd = None
+    try:
+        folder_fd = os.open(
+            destination.parent, os.O_RDONLY | os.O_DIRECTORY
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        info = os.fstat(folder_fd)
+        if not stat.S_ISDIR(info.st_mode):
+            raise VaultError("private_zip_destination")
+        fd = os.open(
+            destination.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=folder_fd,
+        )
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.fsync(folder_fd)
+        except Exception:
+            try:
+                os.unlink(destination.name, dir_fd=folder_fd)
+            except OSError:
+                pass
+            raise
+        return len(payload)
+    except VaultError:
+        raise
+    except OSError as exc:
+        # No path or OS exception text may appear in the UI/diagnostics.
+        raise VaultError("private_zip_write_failed") from exc
+    finally:
+        if folder_fd is not None:
+            os.close(folder_fd)
+
+
 def save_private_zip(session: StoredSession, directory: Path, passphrase: str,
                      *, confirmed=False) -> str:
     """Save protected .brzip in a *user-selected existing* private directory.

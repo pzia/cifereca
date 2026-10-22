@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
 from browser_recorder_vault import PrivateSessionVault, VaultError
 from browser_recorder_private_zip import (
-    MAGIC, save_private_zip, decrypt_private_zip,
+    MAGIC, save_private_zip, decrypt_private_zip, save_session_llm_zip,
 )
 from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
@@ -105,6 +105,46 @@ def test_explicit_private_export_and_external_read(tmp_path):
     assert not any(path.suffix == ".zip" for path in folder.iterdir())
     session.trace.destroy()
 
+
+
+def test_simple_llm_export_works_in_0755_folder_without_second_secret(tmp_path):
+    """Only the vault uses encryption; user Save As produces ordinary ZIP 0600."""
+    import os
+    from pathlib import Path
+
+    vault, session = stored(tmp_path)
+    downloads = tmp_path / "downloads"
+    downloads.mkdir(mode=0o755)
+    destination = downloads / "session-for-llm.zip"
+    vault_blob = (vault.path / (session.session_id + ".cbrv")).read_bytes()
+    with pytest.raises(VaultError, match="private_zip_confirmation_required"):
+        save_session_llm_zip(session, destination)
+    assert not destination.exists()
+    size = save_session_llm_zip(session, destination, confirmed=True)
+    assert size == destination.stat().st_size
+    assert destination.stat().st_mode & 0o777 == 0o600
+    with ZipFile(destination) as zf:
+        assert zf.testzip() is None
+        assert set(zf.namelist()) == {"README.txt", "trace.json"}
+        data = json.loads(zf.read("trace.json"))
+        assert ACCOUNT in data["exchanges"][0]["url"]
+        assert TOKEN in data["exchanges"][0]["request_body"]
+    with pytest.raises(VaultError, match="private_zip_write_failed"):
+        save_session_llm_zip(session, destination, confirmed=True)
+    assert destination.read_bytes().startswith(b"PK")
+    assert (vault.path / (session.session_id + ".cbrv")).read_bytes() == vault_blob
+    assert ACCOUNT.encode() not in vault_blob
+    link = downloads / "symlink.zip"
+    link.symlink_to(destination)
+    with pytest.raises(VaultError, match="private_zip_write_failed"):
+        save_session_llm_zip(session, link, confirmed=True)
+    assert link.is_symlink()
+    other = tmp_path / "relative.zip"
+    with pytest.raises(VaultError, match="private_zip_destination"):
+        save_session_llm_zip(session, Path("relative.zip"), confirmed=True)
+    with pytest.raises(VaultError, match="private_zip_destination"):
+        save_session_llm_zip(session, downloads / "no-extension", confirmed=True)
+    session.trace.destroy()
 
 def test_wrong_key_and_tampering_not_accepted(tmp_path):
     _, session = stored(tmp_path)

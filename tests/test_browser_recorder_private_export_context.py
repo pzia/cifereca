@@ -49,7 +49,7 @@ def test_private_export_crosses_public_context_to_attested_feed(tmp_path, monkey
     source = vault.path / (writer.session_id + ".cbrv")
     before = source.read_bytes()
     chosen = tmp_path / "chosen"
-    chosen.mkdir(mode=0o700)
+    chosen.mkdir(mode=0o755)
 
     collector = Diagnostics()
     plugin_id = "ui.page.browser-recorder"
@@ -67,12 +67,13 @@ def test_private_export_crosses_public_context_to_attested_feed(tmp_path, monkey
     page.context = context
     panel = object.__new__(PrivateReviewPanel)
     panel._closed, panel._handle = False, None
+    panel._generation = 0
+    panel._private_destination_dialog = None
+    panel.is_scanning = lambda: False
     panel.vault_directory = vault.path
-    panel.private_export_confirm = NS(get_active=lambda: True, set_active=lambda _: None)
     panel.session_list = NS(get_active_id=lambda: writer.session_id)
-    panel.private_export_directory = Entry(str(chosen))
+    panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(chosen / "session.zip")
     panel.vault_passphrase = Entry(password if not bad_key else "FICTIONAL-WRONG-VAULT-KEY")
-    panel.private_export_passphrase = Entry("FICTIONAL-SEPARATE-EXPORT-KEY-2026")
     panel._diagnostic = page._report_http_outcome
     panel._refresh = lambda: None
     panel.status = NS(set_label=lambda _: None)
@@ -81,7 +82,6 @@ def test_private_export_crosses_public_context_to_attested_feed(tmp_path, monkey
     page.context = None
     panel._closed = True
     assert panel.vault_passphrase.get_text() == ""
-    assert panel.private_export_passphrase.get_text() == ""
     assert source.read_bytes() == before
     result = query_diagnostic_events(collector, source="core_events", log_path=tmp_path / "absent")
     assert result["total"] == 1
@@ -92,7 +92,7 @@ def test_private_export_crosses_public_context_to_attested_feed(tmp_path, monkey
     if bad_key:
         assert not files and detail["output_bytes"] == 0
     else:
-        assert len(files) == 1 and files[0].suffix == ".brzip"
+        assert len(files) == 1 and files[0].suffix == ".zip"
         assert files[0].stat().st_mode & 0o777 == 0o600
         assert detail["output_bytes"] == files[0].stat().st_size
     errors = query_diagnostic_events(collector, source="core_events", severity="error", log_path=tmp_path / "absent")
