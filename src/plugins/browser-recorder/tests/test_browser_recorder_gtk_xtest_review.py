@@ -143,8 +143,7 @@ def test_xtest_81_choices_exact_zip_and_confirmed_export(
         export_directory=tmp_path / "exports",
     )
     root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-    root.append(site)
-    root.append(consent)
+    # Site and consent are now owned by the Capture tab of the panel.
     root.append(panel.widget)
     scroller = Gtk.ScrolledWindow()
     scroller.set_child(root)
