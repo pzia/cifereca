@@ -910,6 +910,7 @@ class LocalInspectionController:
             )
             dialog.add_response('cancel', 'Annuler')
             dialog.add_response('apply', 'Confirmer le placement')
+            dialog.set_default_response('cancel')
             dialog.set_close_response('cancel')
             dialog.set_response_appearance('apply', Adw.ResponseAppearance.DESTRUCTIVE)
 
@@ -1066,6 +1067,7 @@ class LocalInspectionController:
                 )
                 dialog.add_response('cancel', 'Conserver le placement')
                 dialog.add_response('undo', 'Confirmer l’annulation')
+                dialog.set_default_response('cancel')
                 dialog.set_close_response('cancel')
                 dialog.set_response_appearance(
                     'undo', Adw.ResponseAppearance.DESTRUCTIVE,
