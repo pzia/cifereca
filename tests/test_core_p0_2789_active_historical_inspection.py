@@ -58,7 +58,7 @@ def test_273_historical_missing_and_zero_active_do_not_look_like_273_failures(tm
     # visible, archives are still recoverable immediately by unchecking.
     visible = session.page(state="all", hide_historical_paths=True)
     assert visible.total == 2
-    assert all("historical" not in case.states for case in visible.cases)
+    assert all("stored_path_missing_historical" not in case.states for case in visible.cases)
     assert session.page(state="all", hide_historical_paths=False).total == 275
     assert session.page(state="stored_path_missing", hide_historical_paths=True).total == 2
     import pytest
