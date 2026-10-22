@@ -28,7 +28,7 @@ def _attach(rig):
 
 def _undo(rig, done, **kw):
     return undo_numilog_manual(
-        rig[0], **rig[2], operation_id=done["operation_id"], **kw,
+        rig[0], **{**rig[2], **kw, "operation_id": done["operation_id"]},
     )
 
 
