@@ -575,3 +575,49 @@ def test_prepared_zip_shows_no_body_warning_in_real_summary_control(monkeypatch,
         assert not list(tmp_path.iterdir())
     finally:
         panel.destroy()
+
+
+def test_saved_zip_shows_exact_local_path_and_opens_folder_only_when_clicked(
+    tmp_path, monkeypatch,
+):
+    """No filesystem path reaches logs or Diagnostics; only the private GTK label."""
+    import sys
+    from types import ModuleType
+
+    panel, tasks, raw = make_panel(
+        monkeypatch, export_directory=tmp_path / "old-default",
+    )
+    try:
+        _capture_and_decide(panel, tasks)
+        assert not panel.open_export_folder_button.sensitive
+        panel.open_export_folder()  # no prior successful save => no effect
+        panel.prepare_zip()
+        folder = tmp_path / "ZIP choisis"
+        folder.mkdir(mode=0o700)
+        destination = folder / "approved.zip"
+        panel.export_confirm.set_active(True)
+        panel._prompt_export_file = lambda callback: callback(destination)
+        panel.export_zip()
+        assert destination.exists()
+        assert str(destination) in panel.status.label
+        assert "aucun téléversement" in panel.status.label
+        assert panel.open_export_folder_button.sensitive
+
+        launched = []
+        fake_gi = ModuleType("gi")
+        fake_repository = ModuleType("gi.repository")
+        fake_repository.Gio = NS(AppInfo=NS(
+            launch_default_for_uri=lambda uri, context: launched.append(
+                (uri, context)
+            ),
+        ))
+        monkeypatch.setitem(sys.modules, "gi", fake_gi)
+        monkeypatch.setitem(sys.modules, "gi.repository", fake_repository)
+        assert launched == []  # Save-As never launches a file manager.
+        panel.open_export_folder()
+        assert launched == [(folder.as_uri(), None)]
+    finally:
+        panel.destroy()
+        assert panel._last_export_path is None
+        assert not panel.open_export_folder_button.sensitive
+        assert raw.exchanges == []

@@ -103,6 +103,7 @@ class PrivateReviewPanel:
         self._bundle_plan = None
         self._bundle_preview = None
         self._export_dialog = None
+        self._last_export_path = None
         self._download_dialog = None
         self._download_choice_done = None
         self._download_outcomes = {}
@@ -411,6 +412,13 @@ class PrivateReviewPanel:
         box.append(self.export_confirm)
         self.export_button = Gtk.Button(label="Enregistrer sous… le ZIP anonymisé")
         box.append(self.export_button)
+        self.open_export_folder_button = Gtk.Button(
+            label="Ouvrir le dossier du ZIP enregistré"
+        )
+        box.append(self.open_export_folder_button)
+        self.open_export_folder_button.connect(
+            "clicked", lambda *_: self.open_export_folder()
+        )
         self.plan_button.connect("clicked", lambda *_: self.prepare_zip())
         self.bundle_member.connect("changed", lambda *_: self._show_zip_member())
         self.export_confirm.connect("toggled", lambda *_: self._refresh())
@@ -514,6 +522,9 @@ class PrivateReviewPanel:
         self.export_button.set_sensitive(
             not self._closed and self._bundle_plan is not None
             and self.export_confirm.get_active()
+        )
+        self.open_export_folder_button.set_sensitive(
+            not self._closed and self._last_export_path is not None
         )
 
     def _text(self, value):
@@ -1632,6 +1643,24 @@ class PrivateReviewPanel:
         chooser.connect("response", responded)
         chooser.show()
 
+    def open_export_folder(self):
+        """Open only the directory of a ZIP saved by this panel, on a click."""
+        if self._closed or self._last_export_path is None:
+            return
+        try:
+            # The only destination is the local file:// URI of the parent.
+            # A file-manager launch is never implied by export or preview.
+            from gi.repository import Gio
+            Gio.AppInfo.launch_default_for_uri(
+                self._last_export_path.parent.as_uri(), None,
+            )
+        except Exception:
+            # Never put a chosen private pathname into a diagnostic or log.
+            self.status.set_label(
+                "Impossible d'ouvrir le dossier automatiquement ; "
+                "utilisez le chemin affiché après l'enregistrement."
+            )
+
     def export_zip(self):
         if (self._closed or self._bundle_plan is None
                 or self._export_dialog is not None
@@ -1657,9 +1686,12 @@ class PrivateReviewPanel:
                 self._emit_failure("zip_export", "zip_export_failed")
                 return
             self._invalidate_bundle()
+            self._last_export_path = Path(path)
+            # This GTK label is private UI only: never send the pathname
+            # through Diagnostics, callbacks, telemetry or logs.
             self.status.set_label(
-                "ZIP anonymisé enregistré à l'emplacement choisi "
-                "(mode privé 0600) — aucun téléversement."
+                "ZIP anonymisé enregistré (mode privé 0600) : "
+                + str(path) + " — aucun téléversement."
             )
             self._refresh()
 
@@ -1674,6 +1706,9 @@ class PrivateReviewPanel:
 
     def destroy(self):
         self._retention_plan = None
+        self._last_export_path = None
+        self.status.set_label("Page Browser Recorder fermée.")
+        self.open_export_folder_button.set_sensitive(False)
         if self._download_choice_done is not None:
             self._cancel_download_dialog(self._download_choice_done)
         if self._private_destination_dialog is not None:
