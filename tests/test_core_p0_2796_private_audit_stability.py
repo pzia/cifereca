@@ -60,6 +60,7 @@ def test_equal_six_hundred_observations_and_sqlite_proofs_are_stable():
     assert report['same_file_evidence'] is True
     assert report['same_sqlite_proofs'] is True
     assert report['changed_sqlite_tables'] == []
+    assert report['sqlite_proof_row_deltas'] == {}
     assert report['lost_confirmed'] == report['gained_confirmed'] == 0
     assert report['interpretation'] == 'stable_inputs'
     assert 'PRIVATE' not in json.dumps(report)
@@ -78,6 +79,9 @@ def test_twenty_nine_sqlite_placement_path_changes_explain_a_bounded_loss():
     assert result['same_file_evidence'] is True
     assert result['same_sqlite_proofs'] is False
     assert result['changed_sqlite_tables'] == ['placements']
+    assert result['sqlite_proof_row_deltas'] == {
+        'placements': {'removed': 29, 'added': 29},
+    }
     assert result['files_added'] == result['files_removed'] == 0
     assert result['lost_confirmed'] == 29
     assert result['gained_confirmed'] == 0
@@ -99,6 +103,7 @@ def test_twenty_nine_replaced_paths_keep_total_but_change_file_cohort():
     assert result['files_added'] == result['files_removed'] == 29
     assert result['same_observed_cohort'] is False
     assert result['same_sqlite_proofs'] is True
+    assert result['sqlite_proof_row_deltas'] == {}
     assert result['lost_confirmed'] == 29
     assert result['gained_confirmed'] == 0
     assert result['interpretation'] == 'different_observed_cohort'
@@ -188,6 +193,9 @@ def test_broker_exposes_only_aggregate_comparison_and_rechecks_sqlite(scoped):
     assert diff['same_observed_cohort'] is True
     assert diff['same_sqlite_proofs'] is False
     assert diff['changed_sqlite_tables'] == ['entitlements']
+    assert diff['sqlite_proof_row_deltas'] == {
+        'entitlements': {'removed': 0, 'added': 1},
+    }
     assert 'PRIVATE' not in json.dumps(third)
 
 def test_identical_inputs_but_changed_link_result_is_flagged_not_marked_stable():

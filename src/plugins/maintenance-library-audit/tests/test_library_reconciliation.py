@@ -534,6 +534,37 @@ def test_changed_sqlite_proof_and_twenty_nine_links_are_safe_user_details(tool, 
     assert 'PRIVATE' not in repr(displayed)
 
 
+def test_aggregate_sqlite_proof_row_deltas_are_private_and_accounted(tool, monkeypatch):
+    drift = _drift()
+    drift['sqlite_proof_row_deltas'] = {
+        'placements': {'removed': 29, 'added': 29},
+    }
+    displayed = _capture_drift(tool, monkeypatch, drift)
+    rendered = ' '.join(displayed['details'])
+    assert ('Évolution des lignes de preuve SQLite '
+            '(retirées / apparues' in rendered)
+    assert 'placements 29 / 29' in rendered
+    assert 'PRIVATE' not in repr(displayed)
+
+
+@pytest.mark.parametrize('invalid', [
+    {'/PRIVATE/secret': {'removed': 1, 'added': 2}},
+    {'placements': {'removed': '/PRIVATE/secret', 'added': 2}},
+    {'placements': {'removed': True, 'added': 0}},
+    {'placements': {'removed': -1, 'added': 1}},
+    {'placements': {'removed': 0, 'added': 0}},
+    {'placements': {'removed': 100001, 'added': 0}},
+    {'placements': {'removed': 1, 'added': 1, 'path': '/PRIVATE'}},
+    {},
+])
+def test_sqlite_row_count_detail_rejects_untrusted_nested_payloads(tool, monkeypatch, invalid):
+    drift = _drift()
+    drift['sqlite_proof_row_deltas'] = invalid
+    displayed = _capture_drift(tool, monkeypatch, drift)
+    assert 'Évolution entre deux audits de même portée' not in ' '.join(displayed['details'])
+    assert 'PRIVATE' not in repr(displayed)
+
+
 def test_unexplained_link_drift_is_not_presented_as_stable(tool, monkeypatch):
     drift = _drift()
     drift['same_sqlite_proofs'] = True
