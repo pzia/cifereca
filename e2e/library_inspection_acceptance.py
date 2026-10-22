@@ -202,6 +202,10 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert synopsis_panel.get_mapped()
         widgets['overview_panel'] = synopsis_panel
         report['checks']['P0_2712_inspection_overview_collapsed_initially'] = True
+        # Open deliberately after asserting the production default, before
+        # the long-right click. This makes the existing real wheel gesture
+        # exercise the complete detailed view, not a hidden summary.
+        synopsis_panel.set_expanded(True)
         dropdowns=[w for w in walk(window) if isinstance(w,Gtk.DropDown)]
         widgets['provider'],widgets['state']=dropdowns
         widgets['list']=next(w for w in walk(window) if isinstance(w,Gtk.ListBox))
