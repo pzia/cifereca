@@ -260,15 +260,31 @@ def _refresh_sync_page(self) -> None:
             return
         # A disclosure keeps the #2141 dense Synchronisation page usable.
         # These are catalogue SEARCH capabilities, not synchronizable cards.
-        disclosure = Gtk.Expander(label=f"Catalogues · recherche ({len(catalogues)})")
-        disclosure.set_expanded(False)
+        paris = next((item for item in catalogues if item.provider_id == "paris"), None)
+        paris_status = (
+            " · Bibliothèques de Paris disponibles"
+            if paris is not None and paris.catalog_search_available is True
+            else " · Bibliothèques de Paris non connectées"
+            if paris is not None else ""
+        )
+        disclosure = Gtk.Expander(
+            label=f"Catalogues · recherche ({len(catalogues)}){paris_status}"
+        )
+        # A disconnected Paris catalogue must not disappear inside a closed
+        # disclosure. This is metadata only: it never initiates a connection.
+        disclosure.set_expanded(
+            paris is not None and paris.catalog_search_available is not True
+        )
         group = Adw.PreferencesGroup()
         group.set_title("Recherche de catalogues — aucune actualisation d’index")
         for item in catalogues:
             row = Adw.ActionRow()
             # Only registered descriptor IDs, never credentials, can label
             # a catalogue in this read-only section.
-            row.set_title(item.provider_id)
+            row.set_title(
+                "Bibliothèques de Paris"
+                if item.provider_id == "paris" else item.provider_id
+            )
             availability = (
                 "Recherche disponible"
                 if getattr(item, "catalog_search_available", None) is True
