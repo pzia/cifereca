@@ -148,7 +148,7 @@ def test_zip_offline_sdk_handles_zero_one_many_requests_and_missing_bodies(
     names = {row["name"] for row in preview["members"]}
     assert "plugin-dev-kit/manifest.json" in names
     assert "plugin-dev-kit/LLM_GUIDE.md" in names
-    assert "plugin-dev-kit/reference-catalog/cifereca-plugin.json" in names
+    assert "plugin-dev-kit/examples/provider-fixture-example/cifereca-plugin.json" in names
     assert "timeline.json" in names
     assert "manifest.json" in names
     assert {
