@@ -43,7 +43,7 @@ class Tasks:
 
     def submit(self, fn, *, kind, label):
         assert kind == "browser-recorder"
-        assert label in {"Indexer le coffre privé", "Nommer la session chiffrée"}
+        assert label in {"Indexer le coffre privé", "Nommer la session chiffrée", "Nettoyer les résidus chiffrés"}
         self.handle = Handle(fn)
         return self.handle
 
@@ -168,3 +168,49 @@ def test_scanning_completion_after_page_destroy_cannot_reveal_session(tmp_path):
     assert panel.vault_passphrase.get_text() == ""
     window.close()
     flush()
+
+
+
+def test_gtk_orphan_preview_never_deletes_without_distinct_confirmation(tmp_path):
+    import os
+    import time
+    from browser_recorder_vault import MIN_STAGING_AGE_SECONDS
+
+    panel, tasks, window, vault, ids = panel_fixture(tmp_path)
+    try:
+        source = vault.path / (ids[0] + ".cbrv")
+        ciphertext = source.read_bytes()
+        staged = vault.path / ("." + ids[0] + "-abcdef0123456789.part")
+        staged.write_bytes(ciphertext)
+        staged.chmod(0o600)
+        old = time.time() - MIN_STAGING_AGE_SECONDS - 100
+        os.utime(staged, (old, old))
+        before = {identity: (vault.path / (identity + ".cbrv")).read_bytes()
+                  for identity in ids}
+        assert not panel.staging_prune.get_sensitive()
+        panel.staging_inspect.emit("clicked")
+        assert "1 résidus chiffrés" in panel.status.get_label()
+        assert "1 nettoyables" in panel.status.get_label()
+        assert staged.exists()
+        panel.prune_staging()  # Bypass disabled button: still fails closed.
+        assert staged.exists() and not panel.is_scanning()
+        assert "confirmation" in panel.status.get_label()
+        panel.staging_confirm.set_active(True)
+        assert panel.staging_prune.get_sensitive()
+        panel.staging_prune.emit("clicked")
+        assert not panel.staging_confirm.get_active()
+        assert panel.is_scanning()
+        assert not panel.sessions_open.get_sensitive()
+        tasks.handle.finish()
+        flush()
+        assert not staged.exists()
+        assert "1 résidus chiffrés anciens nettoyés" in panel.status.get_label()
+        assert not panel.is_scanning()
+        assert before == {
+            identity: (vault.path / (identity + ".cbrv")).read_bytes()
+            for identity in ids
+        }
+    finally:
+        panel.destroy()
+        window.close()
+        flush()
