@@ -157,9 +157,12 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         report['checks']['inspection_window_has_maximize_controls']=True
         # Real GTK geometry: the entire inspection must be reachable without
         # maximizing, independently of the nested list/detail scrollbars.
-        main_scroll = next(w for w in walk(window)
-                           if isinstance(w, Gtk.ScrolledWindow)
-                           and w.get_name() == 'reconciliation-content-scroll')
+        toolbar_view = next(w for w in walk(window)
+                            if isinstance(w, Adw.ToolbarView))
+        # CSS/widget names are not reliable during GTK child traversal:
+        # read the content installed by the production ToolbarView instead.
+        main_scroll = toolbar_view.get_content()
+        assert isinstance(main_scroll, Gtk.ScrolledWindow)
         assert isinstance(main_scroll.get_child(), Gtk.Box)
         report['checks']['P0_2712_initial_scroller_child_ok']=True
         adjustment = main_scroll.get_vadjustment()
