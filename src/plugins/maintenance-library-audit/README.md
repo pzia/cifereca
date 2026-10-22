@@ -1,6 +1,6 @@
 # Audits de bibliothèque
 
-Le package 0.2.8 détaille les compteurs dans « Résultats… » avec un Core proposant
+Le package 0.2.9 détaille les compteurs dans « Résultats… » avec un Core proposant
 `MaintenanceResult.details`. Les anciennes versions compatibles conservent le
 résumé et les avertissements. Les catégories peuvent se recouper ; leurs nombres
 ne prouvent jamais une association ou une absence de livre.
@@ -36,3 +36,11 @@ mémoire, inspectés pendant cet audit et revalidés après péremption. Chaque
 nouvel audit relit SQLite/WAL et vérifie les chemins/fichiers ; ces nombres ne
 prouvent aucun droit. Un ancien Core conserve les mêmes résultats sans ligne
 de reprise. Aucune donnée privée du checkpoint n'est exportée.
+
+Depuis la version 0.2.9, si le Core retourne une comparaison de deux audits
+réalisés avec la même identité et les mêmes racines, les détails de
+Réconciliation distinguent les changements de cohorte observée, de fichiers
+et des cinq tables SQLite de preuve. Seuls des compteurs, booléens et libellés
+fermés sont affichés ; les preuves privées et leurs empreintes ne sortent
+jamais du Core. Une comparaison partielle n'atteste pas une couverture totale.
+Les versions Core antérieures n'affichent pas cette ligne facultative.
