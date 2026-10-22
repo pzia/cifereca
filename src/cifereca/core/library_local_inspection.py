@@ -12,7 +12,7 @@ import unicodedata
 
 from .library_audit_broker import _run_scoped_audit, _unavailable
 from .library_inspection_cache import take_inspection_cache
-from .library_manual_link_preflight import review_local_pair, review_source_read_only
+from .library_manual_link_preflight import review_local_pair, review_source_read_only, review_kobo_candidate
 
 PROVIDERS = {'all': 'Tous les fournisseurs', 'kobo': 'Kobo', 'numilog': 'Numilog',
              'paris': 'Paris', 'local': 'Local (origine attestée)',
@@ -284,6 +284,8 @@ class LocalInspection:
         self._candidate_file_keys = {}
         # Revocable, private evidence summaries; no raw account/path exported.
         self._manual_right_proofs = {}
+        self._kobo_right_proofs = {}
+        self._kobo_right_scopes = {}
         self._manual_file_proofs = {}
         self._manual_right_scopes = {}
         self._manual_file_observations = {}
@@ -336,6 +338,16 @@ class LocalInspection:
         edges, candidates, ledgers = defaultdict(list), defaultdict(list), defaultdict(list)
         rights = audit.snapshot.tables.get('entitlements', [])
         catalog = audit.snapshot.tables.get('catalog_entries', [])
+        # The older Kobo mirror intentionally omits manifest provenance and
+        # revision from the generic snapshot. It DOES contain a previously
+        # recorded backup SHA/size. Use this only to gate a fresh Kobo preview;
+        # the dedicated writer checks the missing account/revision/connection.
+        kobo_backups = defaultdict(list)
+        for backup in audit.snapshot.tables.get('backup_items', ()):
+            if backup.get('provider_id') == 'kobo':
+                kobo_backups[(
+                    backup.get('credential_id'), backup.get('item_id'),
+                )].append(backup)
         # Invert the already bounded, exact, same-identity, metadata_only
         # candidates from the shared auditor. There is deliberately NO
         # title/author/path/provider inference at the file level.
@@ -560,6 +572,45 @@ class LocalInspection:
             scope = right_scope(right)
             if scope is not None and right.get('provider_id') == 'numilog':
                 self._manual_right_scopes[f'right:{index}'] = scope
+            # The shared audit does not project backup revision or provider
+            # connections. These are deliberately NOT inferred from metadata:
+            # the independent Kobo transaction recollects them freshly.
+            if right.get('provider_id') == 'kobo':
+                backup_rows = (
+                    kobo_backups.get((scope[2], scope[4]), ())
+                    if scope is not None else ()
+                )
+                backup = backup_rows[0] if len(backup_rows) == 1 else {}
+                backup_sha = backup.get('sha256')
+                backup_signature = (
+                    (backup_sha.lower(), backup.get('size'))
+                    if type(backup_sha) is str else None
+                )
+                kobo_attested = (
+                    scope is not None
+                    and len(backup_rows) == 1
+                    and backup.get('identity_id') == scope[0]
+                    and type(backup_sha) is str and len(backup_sha) == 64
+                    and all(ch in '0123456789abcdef' for ch in backup_sha.lower())
+                    and type(backup.get('size')) is int and backup['size'] > 0
+                    # Legacy backup_items compatibility rights have no
+                    # attested_source marker. This gate only permits a fresh
+                    # read-only preview, NEVER a write. The Kobo engine
+                    # independently requires the personal backup, revision,
+                    # active owned entitlement and exact account/SHA.
+                    and right.get('state') == 'active'
+                    and right.get('entitlement_type') == 'owned'
+                    and not right.get('loan_id') and not right.get('expires_at')
+                    and scope_counts[scope] == 1
+                )
+                self._kobo_right_proofs[f'right:{index}'] = {
+                    'attested': kobo_attested,
+                    'ambiguous': (scope is None or scope_counts[scope] != 1
+                                  or len(backup_rows) != 1),
+                    'signature': backup_signature,
+                }
+                if kobo_attested:
+                    self._kobo_right_scopes[f'right:{index}'] = scope
             self._manual_right_proofs[f'right:{index}'] = {
                 'attested': (
                     right.get('provider_id') == 'numilog'
@@ -654,6 +705,8 @@ class LocalInspection:
         self._candidate_file_keys.clear()
         self._file_facets.clear()
         self._manual_right_proofs.clear()
+        self._kobo_right_proofs.clear()
+        self._kobo_right_scopes.clear()
         self._manual_file_proofs.clear()
         self._manual_right_scopes.clear()
         self._manual_file_observations.clear()
@@ -815,6 +868,33 @@ class LocalInspection:
         # accidentally enter Numilog's purchase-only transaction from here.
         # An explicit reason is safer than reporting a real Kobo/Paris right
         # as a missing Numilog entitlement.
+        if right.provider == 'kobo':
+            proof = self._kobo_right_proofs.get(right_key)
+            if not proof or proof.get('attested') is not True:
+                return review_source_read_only(
+                    'kobo', audit_complete=self._manual_audit_complete,
+                    bibliographic_hint=(
+                        file_key in self._candidate_file_keys.get(right_key, ())
+                    ),
+                )
+            observation = self._manual_file_observations.get(file_key)
+            verified = (
+                observation is not None
+                and observation.validation == 'ok'
+                and observation.media_format in ('epub', 'pdf')
+                and (observation.media_format == 'pdf'
+                     or observation.structure_validation == 'epub_structure_crc_ok')
+            )
+            return review_kobo_candidate(
+                proof,
+                {'verified': verified,
+                 'signature': (observation.sha256, observation.size)
+                              if observation is not None else None},
+                audit_complete=self._manual_audit_complete,
+                bibliographic_hint=(
+                    file_key in self._candidate_file_keys.get(right_key, ())
+                ),
+            )
         if right.provider != 'numilog':
             return review_source_read_only(
                 right.provider,
@@ -862,6 +942,35 @@ class LocalInspection:
             'item_id': edition,
         }
 
+    def _kobo_transaction_inputs(self, right_key, file_key):
+        """Private exact identifiers only; never an authorization by title/ISBN."""
+        if (not self.valid() or self._manual_service is None
+                or type(right_key) is not str or type(file_key) is not str
+                or self._cases.get(right_key) is None
+                or self._cases[right_key].provider != 'kobo'
+                or self.preflight_manual_link(right_key, file_key).status
+                   != 'eligible_for_fresh_validation'):
+            return None
+        scope = self._kobo_right_scopes.get(right_key)
+        observation = self._manual_file_observations.get(file_key)
+        if (scope is None or observation is None or len(scope) != 5
+                or scope[0] != self._manual_identity or scope[1] != 'kobo'
+                or not all(type(value) is str and value for value in scope)
+                or type(observation.sha256) is not str
+                or len(observation.sha256) != 64
+                or any(ch not in '0123456789abcdef' for ch in observation.sha256)
+                or type(observation.path) is not str
+                or not observation.path.startswith('/')):
+            return None
+        return {
+            'identity_id': scope[0],
+            'credential_id': scope[2],
+            'account_id': scope[3],
+            'item_id': scope[4],
+            'expected_sha256': observation.sha256,
+            'path': observation.path,
+        }
+
     def preview_manual_attachment(self, right_key, file_key, *, cancelled=lambda: False):
         """Fresh SQL/no-follow SHA preview, kept exclusively inside CoreUI.
 
@@ -871,6 +980,35 @@ class LocalInspection:
         """
         self.revoke_manual_attachment_preview()
         generation = self._manual_preview_generation
+        case = self._cases.get(right_key) if self.valid() else None
+        if case is not None and case.provider == 'kobo':
+            options = self._kobo_transaction_inputs(right_key, file_key)
+            if options is None:
+                return {'status': 'unavailable', 'read_only': True}
+            from .kobo_local_reconciliation import (
+                ReconciliationRejected, reconcile_kobo_local,
+            )
+            try:
+                result = reconcile_kobo_local(
+                    self._manual_service, **options,
+                    cancelled=lambda: (
+                        cancelled() or not self.valid()
+                        or self._manual_preview_generation != generation
+                    ),
+                )
+            except ReconciliationRejected:
+                return {'status': 'blocked', 'read_only': True}
+            if (not self.valid() or cancelled()
+                    or self._manual_preview_generation != generation):
+                return {'status': 'unavailable', 'read_only': True}
+            token = result.get('plan_token')
+            if result.get('status') == 'preview' and type(token) is str and len(token) == 64:
+                self._manual_pending = (right_key, file_key, token)
+                return {'status': 'preview', 'read_only': True,
+                        'requires_explicit_confirmation': True}
+            return {'status': 'already_linked', 'read_only': True} if (
+                result.get('status') == 'already_linked'
+            ) else {'status': 'unavailable', 'read_only': True}
         options = self._transaction_inputs(right_key, file_key)
         if options is None:
             return {'status': 'unavailable', 'read_only': True}
@@ -907,6 +1045,46 @@ class LocalInspection:
         generation = self._manual_preview_generation
         if (user_confirmed is not True or pending is None
                 or pending[:2] != (right_key, file_key)):
+            return {'status': 'unavailable', 'read_only': True}
+        case = self._cases.get(right_key) if self.valid() else None
+        if case is not None and case.provider == 'kobo':
+            options = self._kobo_transaction_inputs(right_key, file_key)
+            if options is None:
+                return {'status': 'unavailable', 'read_only': True}
+            from .kobo_local_reconciliation import (
+                ReconciliationRejected, reconcile_kobo_local,
+            )
+            cache_stamp_accepted = [None]
+
+            def committed_under_lock():
+                callback = self._accept_own_core_commit
+                if callable(callback):
+                    cache_stamp_accepted[0] = callback() is True
+
+            try:
+                result = reconcile_kobo_local(
+                    self._manual_service, **options, confirmation=pending[2],
+                    cancelled=lambda: (
+                        cancelled() or not self.valid()
+                        or self._manual_preview_generation != generation
+                    ), on_committed=committed_under_lock,
+                )
+            except ReconciliationRejected:
+                return {'status': 'blocked', 'read_only': True}
+            status = result.get('status')
+            if status in ('applied', 'already_linked'):
+                operation = result.get('operation_id')
+                if (status == 'applied' and type(operation) is str
+                        and len(operation) == 64
+                        and (self._accept_own_core_commit is None
+                             or cache_stamp_accepted[0] is True)
+                        and self.valid()):
+                    self._manual_undo = (right_key, file_key, operation)
+                return {
+                    'status': status, 'read_only': status != 'applied',
+                    'undo_available': status == 'applied'
+                                      and self._manual_undo is not None,
+                }
             return {'status': 'unavailable', 'read_only': True}
         options = self._transaction_inputs(right_key, file_key)
         if options is None:
@@ -968,6 +1146,37 @@ class LocalInspection:
         if (previous is None or previous[:2] != (right_key, file_key)
                 or self._manual_service is None):
             return {'status': 'unavailable', 'read_only': True}
+        case = self._cases.get(right_key) if self.valid() else None
+        if case is not None and case.provider == 'kobo':
+            options = self._kobo_transaction_inputs(right_key, file_key)
+            if options is None:
+                return {'status': 'unavailable', 'read_only': True}
+            from .kobo_local_reconciliation import (
+                ReconciliationRejected, reconcile_kobo_local,
+            )
+            try:
+                result = reconcile_kobo_local(
+                    self._manual_service, **options,
+                    undo_operation=previous[2],
+                    cancelled=lambda: (
+                        cancelled() or not self.valid()
+                        or self._manual_preview_generation != generation
+                    ),
+                )
+            except ReconciliationRejected:
+                return {'status': 'blocked', 'read_only': True}
+            if (not self.valid() or cancelled()
+                    or self._manual_preview_generation != generation):
+                return {'status': 'unavailable', 'read_only': True}
+            token = result.get('plan_token')
+            if result.get('status') == 'preview' and type(token) is str and len(token) == 64:
+                self._manual_undo_pending = (right_key, file_key, previous[2], token)
+                return {'status': 'undo_preview', 'read_only': True,
+                        'requires_explicit_confirmation': True}
+            if result.get('status') == 'already_undone':
+                self._manual_undo = None
+                return {'status': 'already_undone', 'read_only': True}
+            return {'status': 'unavailable', 'read_only': True}
         options = self._transaction_inputs(right_key, file_key)
         if options is None:
             return {'status': 'unavailable', 'read_only': True}
@@ -1006,6 +1215,30 @@ class LocalInspection:
         if (user_confirmed is not True or pending is None
                 or pending[:2] != (right_key, file_key)
                 or self._manual_undo != pending[:3]):
+            return {'status': 'unavailable', 'read_only': True}
+        case = self._cases.get(right_key) if self.valid() else None
+        if case is not None and case.provider == 'kobo':
+            options = self._kobo_transaction_inputs(right_key, file_key)
+            if options is None:
+                return {'status': 'unavailable', 'read_only': True}
+            from .kobo_local_reconciliation import (
+                ReconciliationRejected, reconcile_kobo_local,
+            )
+            try:
+                result = reconcile_kobo_local(
+                    self._manual_service, **options,
+                    undo_operation=pending[2], confirmation=pending[3],
+                    cancelled=lambda: (
+                        cancelled() or not self.valid()
+                        or self._manual_preview_generation != generation
+                    ),
+                )
+            except ReconciliationRejected:
+                return {'status': 'blocked', 'read_only': True}
+            if result.get('status') in ('undone', 'already_undone'):
+                self._manual_undo = None
+                return {'status': result['status'],
+                        'read_only': result['status'] != 'undone'}
             return {'status': 'unavailable', 'read_only': True}
         options = self._transaction_inputs(right_key, file_key)
         if options is None:
