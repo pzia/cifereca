@@ -236,7 +236,12 @@ class PythonDependencyManager:
                     if exc.args != ("dependency_too_recent",) or not exc.name or not exc.version:
                         raise PythonDependencyError(str(exc)) from None
                     if exc.name in constraints:
-                        raise PythonDependencyError("dependency_not_eligible") from None
+                        from packaging.version import InvalidVersion, Version
+                        try:
+                            if Version(exc.version) >= Version(constraints[exc.name]):
+                                raise PythonDependencyError("dependency_not_eligible") from None
+                        except InvalidVersion:
+                            raise PythonDependencyError("dependency_not_eligible") from None
                     constraints[exc.name] = exc.version
                 except (OSError, ValueError, TypeError):
                     raise PythonDependencyError("dependency_provenance_unavailable") from None
