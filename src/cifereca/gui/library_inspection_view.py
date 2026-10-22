@@ -335,7 +335,15 @@ class LocalInspectionController:
         Gtk, Adw, Pango = self.Gtk, self.Adw, self.Pango
         session = self.session
         window = Adw.Window(transient_for=self.parent, modal=True, title='Réconciliation · cas locaux')
-        window.set_default_size(920, 620)
+        # A nominal 920×620 dialogue must *fit* smaller real display
+        # geometries, not rely on an Xvfb with surplus vertical pixels.
+        # Keep the controls and comparisons scrollable rather than clipped.
+        parent_width = self.parent.get_width()
+        parent_height = self.parent.get_height()
+        window.set_default_size(
+            min(920, max(540, parent_width - 24)) if parent_width > 0 else 920,
+            min(620, max(420, parent_height - 24)) if parent_height > 0 else 620,
+        )
         # Adw.Window does not add an application header by itself: without
         # one, a private comparison window has no discoverable maximize/close
         # controls on client-side decorated desktops. Always keep it resizable.
