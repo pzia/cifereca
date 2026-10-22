@@ -383,3 +383,118 @@ def reconcile_numilog_manual(
         if type(exc) is ManualAttachmentRejected:
             raise
         raise ManualAttachmentRejected("invalid_local_evidence") from None
+
+
+def undo_numilog_manual(
+    service, *, observation: FileObservation, identity_id: str,
+    credential_id: str, account_id: str, item_id: str,
+    operation_id: str, confirmation: str | None = None,
+    cancelled=lambda: False,
+):
+    """Preview/confirm removing precisely OUR journaled placement; nothing else.
+
+    This is not a general placement_delete API: foreign, legacy or edited
+    entries have no matching journal and can never be removed by this call.
+    """
+    _require(type(operation_id) is str
+             and re.fullmatch(r"[0-9a-f]{64}", operation_id) is not None,
+             "invalid_operation")
+    _require(type(item_id) is str and 0 < len(item_id) <= 1024
+             and not any(c in item_id for c in ("\\0", "\\n", "\\r")),
+             "invalid_item")
+    _require(type(observation) is FileObservation, "invalid_file_observation")
+    _require(confirmation is None or (
+        type(confirmation) is str and re.fullmatch(r"[0-9a-f]{64}", confirmation)
+        is not None), "invalid_confirmation")
+    _require(callable(cancelled), "invalid_cancellation")
+    roots, valid = _scope(
+        service, identity_id=identity_id,
+        credential_id=credential_id, account_id=account_id,
+    )
+    _require(observation.identity_id == identity_id, "source_scope_changed")
+    write = confirmation is not None
+    scope = {
+        "identity": identity_id, "credential": credential_id,
+        "account": account_id, "item": item_id,
+        "roots": list(map(str, roots)), "database": str(service.storage.path),
+    }
+    try:
+        lock = InterProcessLock(acquisition_lock_file()) if write else nullcontext()
+        with lock, _db_transaction(service.storage, write=write) as db:
+            _require(valid() and not cancelled(), "source_scope_changed")
+            journal = _journal_read(db, operation_id)
+            original_scope = journal["scope"]
+            _require(set(original_scope) == {*scope, "epoch"}
+                     and all(original_scope.get(key) == value
+                             for key, value in scope.items())
+                     and type(original_scope.get("epoch")) is int,
+                     "journal_scope_changed")
+            _require(journal["file"] == _checkpoint(observation),
+                     "journal_file_changed")
+            evidence = _evidence(
+                db, identity_id=identity_id, credential_id=credential_id,
+                account_id=account_id, item_id=item_id,
+                observed=observation,
+            )
+            prior = {**evidence, "placement": None}
+            _require(journal["token"] == _token(
+                original_scope, prior, observation,
+            ), "journal_evidence_changed")
+            if journal["state"] == "undone":
+                _require(evidence["placement"] is None, "journal_state_conflict")
+                return _receipt("already_undone", operation=operation_id)
+            _require(evidence["placement"] == journal["after"],
+                     "journal_state_conflict")
+            fresh = revalidate_observed_file(
+                observation, roots, identity_id=identity_id,
+                cancelled=lambda: cancelled() or not valid(),
+            )
+            _require(fresh.verified and valid() and not cancelled(),
+                     "file_revalidation_failed")
+            token = _undo_token(journal, journal["token"])
+            if not write:
+                return _receipt(
+                    "undo_preview", token=token, operation=operation_id,
+                )
+            _require(confirmation == token, "preview_changed")
+            db.execute(
+                "DELETE FROM placements WHERE placement_id=? AND path=? "
+                "AND artifact_id=? AND identity_id=? AND provider_id='numilog' "
+                "AND source_item_id=? AND state='present'",
+                (journal["after"]["placement_id"], observation.path,
+                 journal["after"]["artifact_id"], identity_id, item_id),
+            )
+            _require(db.execute("SELECT changes()").fetchone()[0] == 1,
+                     "journal_state_conflict")
+            final = _evidence(
+                db, identity_id=identity_id, credential_id=credential_id,
+                account_id=account_id, item_id=item_id,
+                observed=observation,
+            )
+            _require(final["placement"] is None
+                     and journal["token"] == _token(
+                         original_scope, final, observation,
+                     ), "journal_evidence_changed")
+            fresh_again = revalidate_observed_file(
+                observation, roots, identity_id=identity_id,
+                cancelled=lambda: cancelled() or not valid(),
+            )
+            _require(fresh_again.verified and valid() and not cancelled(),
+                     "file_changed_before_commit")
+            journal["state"] = "undone"
+            db.execute(
+                "UPDATE metadata SET value=? WHERE key=?",
+                (json.dumps(journal, ensure_ascii=True, sort_keys=True),
+                 _JOURNAL + operation_id),
+            )
+            _require(db.execute("SELECT changes()").fetchone()[0] == 1,
+                     "journal_state_conflict")
+            return _receipt("undone", changed=1, operation=operation_id)
+    except LockBusyError:
+        raise ManualAttachmentRejected("acquisition_busy") from None
+    except (OSError, sqlite3.Error):
+        raise ManualAttachmentRejected("local_storage_unavailable") from None
+    except (ValueError, TypeError, KeyError, RecursionError, UnicodeError) as exc:
+        if type(exc) is ManualAttachmentRejected:
+            raise
+        raise ManualAttachmentRejected("invalid_local_evidence") from None
