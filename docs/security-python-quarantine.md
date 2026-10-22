@@ -80,7 +80,13 @@ vérifiée en amont (signature de release avant import).
 
 **Toujours ouvert dans #2770** : le script d'attestation inspecte des
 wheels déjà téléchargées ; l'admission **avant téléchargement** dans tous
-les workflows CI/release n'est pas encore prouvée. L'installation depuis
-un checkout source **sans** wheelhouse utilise encore pip et doit recevoir
-son propre garde-fou. La réparation/installation de packages plugins
+les workflows CI/release n'est pas encore prouvée. L'installation gérée depuis un checkout source **sans** wheelhouse est
+maintenant **refusée avant la création du venv** : le repli pip non attesté a
+été supprimé. Pour le gate d'intégration `core-full-install.yml`, le script
+`scripts/prepare-admitted-wheelhouse.py` résout les dépendances runtime
+(transitives comprises), refuse les wheels récentes, réessaie via les contraintes
+pip uniquement lorsqu'une version plus ancienne est admissible, puis assemble
+et atteste `offline-wheels/` avant le test de l'updater. Son préflight pip
+peut encore télécharger des métadonnées ou wheels avant admission : ce point
+reste ouvert et ne doit pas être présenté comme une admission avant récupération. La réparation/installation de packages plugins
 hors ligne et la dérogation CVE nominative restent à traiter.
