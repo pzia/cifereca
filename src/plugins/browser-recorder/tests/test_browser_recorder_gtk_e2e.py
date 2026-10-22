@@ -112,6 +112,13 @@ def test_real_gtk4_private_review_zip_export_keyboard_controls(
         panel.start.emit("clicked")
         assert not panel.prefer_identity.get_sensitive()
         assert tasks.handle is not None
+        active_handle, generation = panel._handle, panel._generation
+        for page in (1, 2, 0):
+            panel.tabs.set_current_page(page)
+            flush_glib()
+            assert panel._handle is active_handle and panel._generation == generation
+            assert panel.stop.get_mapped() and panel.pause_button.get_mapped()
+            assert panel.stop.get_sensitive()
         panel.stop.emit("clicked")
         tasks.handle.finish()
         flush_glib()
@@ -320,9 +327,9 @@ def test_real_gtk4_large_identifier_list_requires_each_decision_and_scrolls(
         flush_glib()
 
 
-@pytest.mark.parametrize("width", (1280, 1366, 1600))
+@pytest.mark.parametrize("width,height", ((920, 620), (1280, 800), (1728, 895)))
 def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
-    monkeypatch, tmp_path, width,
+    monkeypatch, tmp_path, width, height,
 ):
     """Actual plugin page GTK tree, not a panel constructed in isolation.
 
@@ -340,7 +347,7 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
         broker=lambda name: tasks if name == "tasks" else None,
     ))
     window = Gtk.Window()
-    window.set_default_size(width, 850)
+    window.set_default_size(width, height)
     root = plugin.build(None)
     window.set_child(root)
     window.present()
@@ -352,8 +359,9 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
         while item is not None:
             children.append(item)
             item = item.get_next_sibling()
-        assert len(children) == 3
-        description, private, advanced = children
+        assert len(children) == 2
+        description, private = children
+        advanced = plugin.private_panel.settings_box.get_last_child()
         site = plugin.private_panel.site
         consent = plugin.private_panel.consent
         assert isinstance(site, Gtk.Entry)
@@ -363,8 +371,15 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
         assert not advanced.get_expanded()
         assert "HAR" in advanced.get_label()
         assert "HTTP" in description.get_label()
-        assert plugin.private_panel.tabs.get_n_pages() == 4
+        assert plugin.private_panel.tabs.get_n_pages() == 3
+        assert plugin.private_panel.tabs.get_current_page() == 0
+        assert site.get_parent() is plugin.private_panel.capture_box
+        assert consent.get_parent() is plugin.private_panel.capture_box
+        assert plugin.private_panel.vault_consent.get_parent() is plugin.private_panel.capture_box
         assert plugin.private_panel.start.get_sensitive()
+        visible, bounds = plugin.private_panel.start.compute_bounds(window)
+        assert visible and bounds.get_y() >= 0
+        assert bounds.get_y() + bounds.get_height() <= window.get_height()
         assert not plugin.private_panel.export_button.get_sensitive()
         # Verify real GTK accepts focus on the consent and HTTP start
         # while the folded HAR controls are not user-visible.
@@ -372,13 +387,14 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
         # Gtk.Entry delegates keyboard focus to its internal Gtk.Text child.
         focus = window.get_focus()
         assert focus is site or focus.is_ancestor(site)
-        plugin.private_panel.tabs.set_current_page(1)
+        plugin.private_panel.tabs.set_current_page(0)
         flush_glib()
         assert plugin.private_panel.start.grab_focus()
         assert window.get_focus() is plugin.private_panel.start
         legacy = advanced.get_child()
         assert isinstance(legacy, Gtk.Box)
         assert not legacy.get_mapped()
+        plugin.private_panel.tabs.set_current_page(2)
         advanced.set_expanded(True)
         flush_glib()
         assert advanced.get_expanded()
@@ -653,9 +669,10 @@ def test_native_gtk_legacy_har_errors_reach_safe_core_diagnostics(
     try:
         # The HAR controls are secondary, and page rendering is silent.
         assert diagnostics.snapshot() == []
-        advanced = root.get_last_child()
+        advanced = plugin.private_panel.settings_box.get_last_child()
         assert isinstance(advanced, Gtk.Expander)
         assert not advanced.get_expanded()
+        plugin.private_panel.tabs.set_current_page(2)
         advanced.set_expanded(True)
         flush_glib()
         contents = advanced.get_child()
