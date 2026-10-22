@@ -88,6 +88,7 @@ def test_real_gtk4_private_review_zip_export_keyboard_controls(
         assert start.startswith(ORIGIN)
         assert stop.is_set()
         assert _kw.get("prefer_identity", False) is prefer_identity
+        assert _kw.get("diagnose_origins", False) is prefer_identity
         return trace
 
     monkeypatch.setattr(view, "record_http", fake_http)
@@ -107,10 +108,14 @@ def test_real_gtk4_private_review_zip_export_keyboard_controls(
     try:
         assert panel.start.get_sensitive()
         assert not panel.prefer_identity.get_active()  # explicit opt-in
+        assert not panel.diagnose_origins.get_active()
+        panel.diagnose_origins.set_active(prefer_identity)
         panel.prefer_identity.set_active(prefer_identity)
         assert not panel.export_button.get_sensitive()
         panel.start.emit("clicked")
         assert not panel.prefer_identity.get_sensitive()
+        assert not panel.diagnose_origins.get_sensitive()
+        assert not panel.diagnose_origins.get_active()
         assert tasks.handle is not None
         panel.stop.emit("clicked")
         tasks.handle.finish()
