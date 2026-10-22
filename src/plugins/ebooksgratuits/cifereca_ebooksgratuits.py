@@ -317,7 +317,7 @@ class EbooksSession(ProviderSession):
             timeout=float(self.options.get('timeout_seconds',30)),
             follow_redirects=True, trust_env=False,
             headers={
-                'User-Agent':'Cifereca-EbooksGratuits/0.1.26',
+                'User-Agent':'Cifereca-EbooksGratuits/0.1.27',
                 'Accept-Language':'fr-FR,fr;q=0.9',
             },
         )
@@ -1143,6 +1143,14 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
                     if field=='genre':return data.get('genres',[])
                     return data.get('categories',[])+data.get('genres',[])
                 rows=[row for row in rows if any(_fold(needle) in _fold(x) for x in tokens(row))]
+            if len(rows) > session.page_size:
+                # The next API page follows the server's next feed, not the
+                # omitted tail of this feed. Never imply exhaustive coverage
+                # or fetch more pages/downloads implicitly to fill the gap.
+                session.last_search_warnings.append(
+                    'partial_results : page OPDS tronquée par la limite locale ; '
+                    'des notices de cette page ne sont pas affichées'
+                )
             return rows[:session.page_size]
         url,_,_=_opds_find_link(feed,current,'next')
         if not url:

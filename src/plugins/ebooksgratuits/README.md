@@ -458,3 +458,19 @@ Annulation préservée. Tests entièrement hors réseau couvrent une notice fra�
 et sa copie en cache, chaque classe d'erreur et le parcours réussi. Un comparatif
 avec deux vraies notices (une réussie, une échouée) reste nécessaire pour isoler
 la cause des défaillances rapportées sur le poste utilisateur.
+
+## #1917 — limite locale de page OPDS (0.1.27)
+
+Si une page serveur contient plus de livres correspondant au filtre que la
+limite locale, le fournisseur publie `partial_results` : des notices de
+cette page ne sont pas affichées. La page API suivante suit le lien OPDS
+`next`, pas la fin masquée de la page précédente : elle ne garantit donc
+pas de retrouver ces notices. Aucun parcours supplémentaire ni téléchargement
+automatique. Le filtre auteur reste limité à la page reçue et conserve son
+avertissement propre. Un résultat dans la limite ne reçoit pas ce nouvel
+avertissement ; les avertissements sont réinitialisés à chaque recherche.
+
+Tests Atom/MockTransport synthétiques : 0/1/2/3 livres pour une limite de 2,
+liens EPUB préservés, avertissement retiré à la recherche suivante et limite
+appliquée après filtrage auteur. Ceci ne prouve pas la cause de la recherche
+auteur terrain ni la disponibilité HTTP des téléchargements (#2460).
