@@ -98,15 +98,11 @@ class BrowserRecorderPage:
         if self.private_panel is not None:
             self.private_panel.destroy()
             self.private_panel = None
-        # Plugin pages are inserted directly in Core's ViewStack: there is
-        # no guaranteed Core-level scroll container. Keep the entire review,
-        # including the exact ZIP and its confirmation, keyboard/mouse reachable.
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_hexpand(True)
-        scroller.set_vexpand(True)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        # Each Browser Recorder workspace owns its own scrolling region.
+        # Avoid a giant outer scroll that hides stop/review/export controls.
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.set_hexpand(True)
+        box.set_vexpand(True)
         for side in ("top", "bottom", "start", "end"):
             getattr(box, "set_margin_" + side)(16)
 
@@ -123,20 +119,9 @@ class BrowserRecorderPage:
         site = Gtk.Entry()
         site.set_placeholder_text("https://site-fournisseur.example/")
         site.set_tooltip_text("Site HTTPS dont le parcours doit être capturé")
-        box.append(site)
-
-        consent = Gtk.CheckButton(label="Je consens à ouvrir un navigateur et à capturer ce parcours.")
-        box.append(consent)
-
-        workflow = Gtk.Label(
-            label="1 · Préparer site HTTPS et consentement   →   "
-                  "2 · Capturer / pause / arrêt   →   "
-                  "3 · Revoir chaque identifiant   →   "
-                  "4 · Examiner le ZIP exact   →   5 · Exporter localement",
-            xalign=0, wrap=True,
-        )
-        workflow.add_css_class("heading")
-        box.append(workflow)
+        # The site and consent widgets are inserted in the Capture tab by
+        # PrivateReviewPanel, not duplicated across multiple GTK parents.
+        consent = Gtk.CheckButton(label="Je consens à capturer ce parcours HTTPS.")
         self.private_panel = PrivateReviewPanel(
             Gtk, GLib, self.tasks, site, consent,
             legacy_running=lambda: self.handle is not None and not self.handle.done(),
@@ -332,8 +317,7 @@ class BrowserRecorderPage:
         stop.connect("clicked", stop_clicked)
         next_button.connect("clicked", lambda *_: self.advance.release() if self.advance else None)
 
-        scroller.set_child(box)
-        return scroller
+        return box
 
     def deactivate(self):
         if self.private_panel is not None:
