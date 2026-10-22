@@ -264,7 +264,34 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                     f'index : {candidates["index_ms"]} ms, '
                     f'rapprochement : {candidates["match_ms"]} ms.',
                 )
-            presentation['details'] = stages + coverage + candidate_metrics + tuple(
+            missing_context_lines = ()
+            context = result['stored_paths'].get('missing_path_context')
+            missing_count = paths.get('stored_path_missing', 0)
+            context_keys = (
+                'sqlite_present', 'sqlite_missing', 'sqlite_other',
+                'distinct_paths', 'distinct_artifacts_with_id',
+                'distinct_placements_with_id',
+            )
+            if (type(context) is dict and type(missing_count) is int
+                    and 0 <= missing_count <= 1_000_000
+                    and all(type(context.get(key)) is int
+                            and 0 <= context[key] <= missing_count
+                            for key in context_keys)
+                    and sum(context[key] for key in context_keys[:3]) == missing_count):
+                missing_context_lines = (
+                    'Chemins enregistrés absents (lignes SQLite contrôlées) : '
+                    f'{missing_count} ligne(s) · placements encore actifs '
+                    f'(état present) : {context["sqlite_present"]} · '
+                    f'historique déjà marqué missing : {context["sqlite_missing"]} · '
+                    f'autre état : {context["sqlite_other"]}.',
+                    'Références distinctes parmi ces absences : '
+                    f'{context["distinct_paths"]} chemin(s) · '
+                    f'{context["distinct_artifacts_with_id"]} artefact(s) avec ID · '
+                    f'{context["distinct_placements_with_id"]} placement(s) avec ID. '
+                    'Ces compteurs ne mesurent pas des livres perdus ; '
+                    'le parcours peut rester partiel.',
+                )
+            presentation['details'] = stages + coverage + candidate_metrics + missing_context_lines + tuple(
                 f'{label} : {counts[name]}' for name, label in _COUNTER_LABELS.items()
             ) + ('Les catégories peuvent se recouper ; ne pas additionner ces compteurs.',)
         return MaintenanceResult(ok=complete, changed=0, summary=summary,
