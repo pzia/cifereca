@@ -8,6 +8,8 @@ another Chromium run and produce two independently reviewed ZIPs.
 from __future__ import annotations
 
 from hashlib import sha256
+import os
+import subprocess
 from pathlib import Path
 import importlib
 import sys
@@ -136,8 +138,51 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
         manager.close()
         _flush()
 
-    # A *new* plugin manager/window/PrivateReviewPanel works from disk.
-    # This models the full GTK plugin component lifecycle without internet.
+    # Additionally decrypt *all three* encrypted archives in a newly
+    # launched Python interpreter: no cached trace or plugin object survives.
+    # Test-only fixture URL exception is again limited to one random port.
+    installed_module_root = Path(net.__file__).resolve().parent
+    isolated_script = r"""
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
+from browser_recorder import site_origin as policy
+import browser_recorder_http as network
+from browser_recorder_vault import PrivateSessionVault
+origin = sys.argv[2]
+def only_fixture(value):
+    parsed = urlsplit(value)
+    expected = urlsplit(origin)
+    if (parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+            and parsed.port == expected.port
+            and parsed.username is None and parsed.password is None):
+        return origin
+    return policy(value)
+network.site_origin = only_fixture
+vault = PrivateSessionVault(Path(sys.argv[1]))
+ids = vault.list_ids()
+assert len(ids) == 3
+for sid in ids:
+    item = vault.open(sid, sys.argv[3])
+    assert item.recovery_status == "completed"
+    assert len(item.trace.exchanges) >= 9
+    item.trace.destroy()
+print("3")
+"""
+    probe_env = dict(os.environ)
+    probe_env["PYTHONPATH"] = os.pathsep.join((
+        str(installed_module_root), probe_env.get("PYTHONPATH", ""),
+    ))
+    probe = subprocess.run(
+        [sys.executable, "-c", isolated_script,
+         str(vault_path), origin, PASSPHRASE],
+        env=probe_env, cwd=tmp_path, stdin=subprocess.DEVNULL,
+        capture_output=True, text=True, timeout=40,
+    )
+    assert probe.returncode == 0
+    assert probe.stdout.strip() == "3" and not probe.stderr
+
+    # A *new* plugin manager/window/PrivateReviewPanel also works from disk.
     tasks2 = TaskBroker()
     manager2 = make_manager(tmp_path, tasks2)
     window2 = Gtk.Window()
