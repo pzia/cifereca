@@ -292,6 +292,22 @@ class LocalInspection:
         # No file metadata or query is ever exported through summary()/logs.
         self._file_facets = {}
         self._summary = audit.redacted()
+        # Distinct evidence universes: active rights and recorded placements
+        # must not be counted as if each corresponded to one scanned file.
+        # Kept only in this revocable, identity-scoped private inspection.
+        active_right_indices = {
+            i for i, right in enumerate(audit.snapshot.tables.get('entitlements', ()))
+            if right.get('identity_id') == identity_id
+            and right.get('state') == 'active'
+        }
+        self._rights_active_count = len(active_right_indices)
+        self._rights_unverified_count = len(
+            active_right_indices.intersection(audit.reconciliation.unverified_rights)
+        )
+        self._placements_registered_count = sum(
+            placement.get('identity_id') == identity_id
+            for placement in audit.snapshot.tables.get('placements', ())
+        )
         # Private-only coverage: configured roots are not proof that they were
         # traversed successfully. Never mix these paths into audit.redacted().
         self._roots = tuple(str(path) for path in roots)[:128]
@@ -676,7 +692,24 @@ class LocalInspection:
         by_kind = Counter(case.key.split(':', 1)[0] for case in self._cases.values())
         by_state = Counter(state for case in self._cases.values()
                            for state in case.states)
+        file_cases = (
+            case for case in self._cases.values() if case.key.startswith('file:')
+        )
+        # This partition is exclusive even when other evidence states overlap.
+        file_partition = Counter(
+            'attested' if 'confirmed_link' in case.states else
+            'unverified' if 'unverified_file' in case.states else
+            'without_attested_link'
+            for case in file_cases
+        )
         return {'files': by_kind['file'], 'rights': by_kind['right'],
+                'files_attested': file_partition['attested'],
+                'files_individually_unverified': file_partition['unverified'],
+                'files_without_attested_link': file_partition['without_attested_link'],
+                'rights_active': self._rights_active_count,
+                'rights_attested': self._rights_active_count - self._rights_unverified_count,
+                'rights_unverified_total': self._rights_unverified_count,
+                'placements_registered': self._placements_registered_count,
                 'paths': by_kind['path'],
                 'confirmed_files': by_state['confirmed_link'],
                 'unattributed_files': sum(case.key.startswith('file:')
