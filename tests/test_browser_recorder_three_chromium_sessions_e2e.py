@@ -182,6 +182,122 @@ print("3")
     assert probe.returncode == 0
     assert probe.stdout.strip() == "3" and not probe.stderr
 
+    # Also create the *installed Core plugin and real GTK window* in a
+    # separate OS process. Parent's Python imports, GTK widgets, futures and
+    # browser context cannot be reused. This exercises real UI restoration.
+    fresh_gui = r"""
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from time import monotonic, sleep
+from urllib.parse import urlsplit
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk, GLib
+import cifereca.plugins.manager as core_manager
+from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
+from cifereca.plugins.configuration import PluginConfigStore
+from browser_recorder import site_origin as production_origin
+from browser_recorder_vault import PrivateSessionVault
+import browser_recorder_http as network
+
+home, origin, password, plugin_id, vault_path = sys.argv[1:]
+home = Path(home)
+core_manager.data_dir = lambda: home / "core-data"
+core_manager.cache_dir = lambda: home / "core-cache"
+def test_only(value):
+    candidate = urlsplit(value)
+    expected = urlsplit(origin)
+    if (candidate.scheme == "http"
+            and candidate.hostname == "127.0.0.1"
+            and candidate.port == expected.port
+            and candidate.username is None and candidate.password is None):
+        return origin
+    return production_origin(value)
+network.site_origin = test_only
+
+class Tasks:
+    def __init__(self):
+        self.pool = ThreadPoolExecutor(max_workers=1)
+    def submit(self, work, *, kind, label):
+        assert kind == "browser-recorder"
+        return self.pool.submit(work, None)
+    def close(self):
+        self.pool.shutdown(wait=True, cancel_futures=True)
+
+def flush():
+    context = GLib.MainContext.default()
+    for _ in range(100):
+        if not context.pending():
+            return
+        context.iteration(False)
+
+Gtk.init()
+tasks = Tasks()
+manager = PluginManager(
+    package_store=PackageStore(home / "packages"),
+    state_store=PluginStateStore(home / "state.json"),
+    config_store=PluginConfigStore(home / "config.json"),
+    brokers={"tasks": tasks},
+)
+window = Gtk.Window()
+window.set_default_size(1024, 768)
+try:
+    manager.activate()
+    manager.set_enabled(plugin_id, True)
+    plugin = manager.service(plugin_id)
+    assert plugin is not None
+    root = plugin.pages()[0].factory(None)
+    window.set_child(root)
+    window.present()
+    flush()
+    panel = plugin.private_panel
+    assert panel.vault_directory == Path(vault_path)
+    panel.sessions_refresh.emit("clicked")
+    ids = PrivateSessionVault(Path(vault_path)).list_ids()
+    assert len(ids) == 3
+    for sid in ids:
+        panel.session_list.set_active_id(sid)
+        assert origin not in panel.session_list.get_active_text()
+    panel.vault_passphrase.set_text(password)
+    panel.sessions_unlock.emit("clicked")
+    stop_at = monotonic() + 35
+    while monotonic() < stop_at and panel.is_scanning():
+        flush()
+        sleep(.03)
+    flush()
+    assert not panel.is_scanning()
+    assert "3 sessions déverrouillées" in panel.status.get_label()
+    for sid in ids:
+        panel.session_list.set_active_id(sid)
+        assert origin in panel.session_list.get_active_text()
+        panel.vault_passphrase.set_text(password)
+        panel.sessions_open.emit("clicked")
+        assert panel._trace.vault_session_id == sid
+        assert panel._review is not None
+        assert len(panel._trace.exchanges) >= 9
+    assert not (home / "private.zip").exists()
+    print("fresh-gtk-3")
+finally:
+    window.close()
+    manager.close()
+    tasks.close()
+    flush()
+"""
+    gui_probe = subprocess.run(
+        [sys.executable, "-c", fresh_gui, str(tmp_path), origin,
+         PASSPHRASE, PLUGIN_ID, str(vault_path)],
+        env=probe_env, cwd=tmp_path, stdin=subprocess.DEVNULL,
+        capture_output=True, text=True, timeout=65,
+    )
+    assert gui_probe.returncode == 0, (
+        "independent GTK subprocess failed; no captured HTTP dumped"
+    )
+    assert gui_probe.stdout.strip() == "fresh-gtk-3"
+    assert ACCOUNT not in gui_probe.stderr
+    assert TOKEN not in gui_probe.stderr
+    assert COOKIE not in gui_probe.stderr
+
     # A *new* plugin manager/window/PrivateReviewPanel also works from disk.
     tasks2 = TaskBroker()
     manager2 = make_manager(tmp_path, tasks2)
