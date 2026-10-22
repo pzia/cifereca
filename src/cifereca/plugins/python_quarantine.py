@@ -22,11 +22,18 @@ _HASH = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class QuarantineRejected(ValueError):
-    """Only the closed reason code may reach UI, logs or plug-in boundaries."""
+    """Closed code plus optional validated name/version for pip constraints."""
+
+    def __init__(self, code: str, *, name: str | None = None,
+                 version: str | None = None):
+        super().__init__(code)
+        self.name = name
+        self.version = version
 
 
-def _rejected(reason: str) -> None:
-    raise QuarantineRejected(reason)
+def _rejected(reason: str, *, name: str | None = None,
+              version: str | None = None) -> None:
+    raise QuarantineRejected(reason, name=name, version=version)
 
 
 def _https_pypi_release(name: str, version: str) -> dict:
@@ -131,7 +138,8 @@ def check_pip_report(
         if stamp.tzinfo is None or stamp.utcoffset() != timedelta(0) or stamp > now_utc:
             _rejected("dependency_provenance_unavailable")
         if now_utc - stamp < _QUARANTINE:
-            _rejected("dependency_too_recent")
+            _rejected("dependency_too_recent", name=canonicalize_name(name),
+                      version=str(Version(version)))
         # pip checks the wheel SHA itself when downloading this exact URL.
         pinned.append(url + "#sha256=" + sha)
     return tuple(pinned)
