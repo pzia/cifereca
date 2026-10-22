@@ -49,7 +49,7 @@ def preview_numilog_link(storage: Storage, observation: FileObservation,
     if (type(storage) is not Storage or type(observation) is not FileObservation
             or type(roots) is not tuple
             or any(type(value) is not str or not 0 < len(value) <= 1024
-                   or any(char in value for char in ("\\0", "\\r", "\\n"))
+                   or any(ord(char) < 32 for char in value)
                    for value in (identity_id, credential_id, account_id, item_id))
             or observation.identity_id != identity_id
             or not callable(cancelled)):
