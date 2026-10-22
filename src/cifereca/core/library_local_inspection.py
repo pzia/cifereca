@@ -548,9 +548,10 @@ class LocalInspection:
         # Preserve active-right priority at the 10,000-case UI memory cap.
         # Historical closed loans cannot hide actionable active rights.
         active_unverified = tuple(dict.fromkeys(audit.reconciliation.unverified_rights))
+        active_indices = set(active_unverified)
         displayed_rights = active_unverified + tuple(
             index for index in sorted(inactive_paris_loans)
-            if index not in set(active_unverified)
+            if index not in active_indices
         )
         for index in displayed_rights:
             if not 0 <= index < len(rights) or rights[index].get('identity_id') != identity_id:
