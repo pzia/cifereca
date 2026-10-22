@@ -48,3 +48,39 @@ La commande existante de réparation conserve sa demande de confirmation.
 Aucun contournement silencieux de la quarantaine n'est autorisé. Les correctifs
 urgents nécessitant une dérogation explicite, bornée et auditable restent
 également à concevoir dans #2770.
+
+## Préflight hors ligne de l'updater (tranche suivante)
+
+Lorsqu'un répertoire `offline-wheels/` est présent, **avant même la
+création du nouveau venv**, l'updater exige `wheelhouse-provenance.json`.
+Pour chaque wheel de ce répertoire, il vérifie l'inventaire exhaustif,
+l'identité nom/version tirée du nom de fichier, le SHA-256 des octets,
+l'origine PyPI déclarée et l'âge UTC **>= 168 h**. Un fichier ajouté,
+modifié ou dépourvu de manifeste provoque `dependency_provenance_unavailable`
+ou `dependency_not_eligible`, sans pip ni création de venv. La wheel Core
+`cifereca` construite localement pour la version attendue est exemptée
+du délai de son propre build, **pas** ses dépendances tierces.
+
+Le producteur de wheelhouse, sous **pipeline de confiance**, exécute par
+exemple :
+
+```bash
+python scripts/attest-wheelhouse.py offline-wheels --core-version "$(cat VERSION)"
+```
+
+Cette commande vérifie les métadonnées HTTPS du **fichier exact** sur
+PyPI (SHA, horodatage, non-yanked), puis écrit le manifeste complet.
+Elle échoue si une transitive, même pour une ancienne version, n'est
+pas admissible. Le manifeste doit être **embarqué et protégé avec l'archive
+signée** ; une copie JSON isolée, modifiable par l'expéditeur, **n'est pas
+une preuve authentique**. Le vérificateur local garantit l'intégrité
+relativement à ce manifeste, il ne vérifie pas une signature cryptographique
+à lui seul. L'archive doit donc provenir d'une chaîne de confiance
+vérifiée en amont (signature de release avant import).
+
+**Toujours ouvert dans #2770** : le script d'attestation inspecte des
+wheels déjà téléchargées ; l'admission **avant téléchargement** dans tous
+les workflows CI/release n'est pas encore prouvée. L'installation depuis
+un checkout source **sans** wheelhouse utilise encore pip et doit recevoir
+son propre garde-fou. La réparation/installation de packages plugins
+hors ligne et la dérogation CVE nominative restent à traiter.
