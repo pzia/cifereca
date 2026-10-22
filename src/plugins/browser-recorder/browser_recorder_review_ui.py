@@ -103,6 +103,9 @@ class PrivateReviewPanel:
         self._bundle_plan = None
         self._bundle_preview = None
         self._export_dialog = None
+        self._download_dialog = None
+        self._download_choice_done = None
+        self._download_outcomes = {}
         self._handle = None
         self._stop = None
         self._pause_control = None
@@ -126,6 +129,13 @@ class PrivateReviewPanel:
                   "Les valeurs peuvent contenir des données privées et restent en mémoire. "
                   "Choisissez pour chaque identifiant avant de préparer le ZIP. "
                   "L'export n'a lieu qu'après prévisualisation et confirmation.",
+            xalign=0, wrap=True,
+        ))
+        box.append(Gtk.Label(
+            label="Téléchargements Chromium : les fichiers binaires/licences "
+                  "n'entrent JAMAIS dans la trace ou le ZIP. À l'arrêt, un "
+                  "« Enregistrer sous… » distinct est proposé pour chaque "
+                  "téléchargement (8 maximum). Annuler = aucune conservation.",
             xalign=0, wrap=True,
         ))
         box.append(Gtk.Label(
@@ -563,6 +573,82 @@ class PrivateReviewPanel:
     def is_scanning(self):
         return self._index_handle is not None and not self._index_handle.done()
 
+    def _download_status(self, code):
+        """Only fixed counters from worker, never URL or output path."""
+        if code in {
+            "download_started", "download_saved_by_user", "download_failed",
+            "download_cancelled", "download_limit",
+        }:
+            self._download_outcomes[code] = self._download_outcomes.get(code, 0) + 1
+
+    def _cancel_download_dialog(self, ready):
+        """GTK thread: unblock worker on cancel, timeout, or page shutdown."""
+        if self._download_choice_done is ready:
+            self._download_choice_done = None
+            chooser, self._download_dialog = self._download_dialog, None
+            if chooser is not None:
+                chooser.destroy()
+        ready.set()
+        return False
+
+    def _choose_download_from_worker(self, number):
+        """Save-As choice; only the worker waits, GTK remains responsive."""
+        ready = Event()
+        result = {}
+        generation = self._generation
+
+        def show():
+            if (self._closed or self._generation != generation
+                    or self._download_dialog is not None
+                    or not hasattr(self.Gtk, "FileChooserNative")):
+                ready.set()
+                return False
+            Gtk = self.Gtk
+            root = self.widget.get_root()
+            parent = root if isinstance(root, Gtk.Window) else None
+            chooser = Gtk.FileChooserNative.new(
+                f"Enregistrer volontairement le téléchargement {number}",
+                parent, Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
+            )
+            chooser.set_current_name(
+                f"cifereca-telechargement-{number:02d}.bin",
+            )
+            self._download_dialog = chooser
+            self._download_choice_done = ready
+            self.status.set_label(
+                f"Téléchargement {number} : choisir un fichier ou annuler. "
+                "Aucun contenu téléchargé dans le ZIP."
+            )
+
+            def responded(dialog, response):
+                if dialog is not self._download_dialog:
+                    dialog.destroy()
+                    ready.set()
+                    return
+                self._download_dialog = None
+                self._download_choice_done = None
+                try:
+                    if (response == Gtk.ResponseType.ACCEPT
+                            and not self._closed
+                            and self._generation == generation):
+                        selected = dialog.get_file()
+                        selected_path = selected.get_path() if selected else None
+                        if selected_path:
+                            result["path"] = Path(selected_path)
+                finally:
+                    dialog.destroy()
+                    ready.set()
+
+            chooser.connect("response", responded)
+            chooser.show()
+            return False
+
+        self.GLib.idle_add(show)
+        if not ready.wait(timeout=120):
+            self.GLib.idle_add(self._cancel_download_dialog, ready)
+            return None
+        return result.get("path")
+
     def begin(self):
         if (self._closed or self.is_recording() or self.is_scanning()
                 or self.legacy_running()):
@@ -610,12 +696,15 @@ class PrivateReviewPanel:
         stop = self._stop
         self._pause_control = CapturePause()
         pause_control = self._pause_control
+        self._download_outcomes = {}
         self.status.set_label("Navigateur HTTP privé en cours, sans export…")
 
         def work(_control):
             kwargs = {
                 "pause_control": pause_control,
                 "metadata_only_origins": metadata_only_origins,
+                "download_destination": self._choose_download_from_worker,
+                "status": self._download_status,
             }
             if self.vault_directory is not None:
                 writer = PrivateSessionVault(self.vault_directory).begin(passphrase)
@@ -708,6 +797,18 @@ class PrivateReviewPanel:
                                 f"{self._review.pending()} décisions individuelles "
                                 "restantes ; aucun ZIP automatique."
                             )
+                observed = self._download_outcomes.get("download_started", 0)
+                if observed:
+                    saved = self._download_outcomes.get("download_saved_by_user", 0)
+                    skipped = self._download_outcomes.get("download_cancelled", 0)
+                    failed = self._download_outcomes.get("download_failed", 0)
+                    self.status.set_label(
+                        self.status.get_label()
+                        + f" · Téléchargements : {observed} observés, "
+                        + f"{saved} enregistrés explicitement, "
+                        + f"{skipped} annulés, {failed} en échec. "
+                        + "Aucun binaire dans le ZIP."
+                    )
                 self._refresh()
                 return False
 
@@ -1559,6 +1660,8 @@ class PrivateReviewPanel:
 
     def destroy(self):
         self._retention_plan = None
+        if self._download_choice_done is not None:
+            self._cancel_download_dialog(self._download_choice_done)
         if self._private_destination_dialog is not None:
             chooser, self._private_destination_dialog = (
                 self._private_destination_dialog, None

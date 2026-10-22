@@ -14,6 +14,9 @@ from time import monotonic
 from urllib.parse import urlsplit
 
 from browser_recorder import RecorderError, _playwright, site_origin
+from browser_recorder_download import (
+    MAX_MANUAL_DOWNLOADS, is_download_response, save_chosen_download,
+)
 
 MAX_EXCHANGES = 240
 MAX_BODY_BYTES = 32 * 1024
@@ -274,7 +277,10 @@ class PrivateHttpTrace:
                 # or body access, even for a redirect/authentication failure.
                 return
             entry.response_headers = _headers(resp)
-            entry.mime = _mime(entry.response_headers)
+            # Attachment/license/download bodies are never held in RAM,
+            # regardless of their advertised XML/JSON MIME or sizes.
+            entry.mime = ("" if is_download_response(resp)
+                          else _mime(entry.response_headers))
             entry.response_body_state = (
                 "body_omitted" if not entry.mime else "pending"
             )
@@ -417,6 +423,7 @@ def record_http(start_url: str, stop: Event, *,
                 pause_control: CapturePause | None = None,
                 metadata_only_origins: tuple[str, ...] = (),
                 vault_writer=None,
+                download_destination=None,
                 ) -> PrivateHttpTrace:
     """Observe a manually controlled Chromium session; return RAM-only trace.
 
@@ -439,12 +446,13 @@ def record_http(start_url: str, stop: Event, *,
             browser = pw.chromium.launch(headless=False)
             try:
                 context = browser.new_context(
-                    accept_downloads=False, service_workers="block",
+                    accept_downloads=True, service_workers="block",
                 )
                 try:
                     last_page_closed = Event()
                     crashed = Event()
                     tracked_pages = set()
+                    downloads = []  # Playwright-only objects; never serialized.
 
                     def track_page(opened):
                         # A tab can be closed without closing the Chromium
@@ -454,6 +462,16 @@ def record_http(start_url: str, stop: Event, *,
                         tracked_pages.add(id(opened))
                         last_page_closed.clear()
                         opened.on("crash", lambda *_: crashed.set())
+
+                        def on_download(download):
+                            if len(downloads) < MAX_MANUAL_DOWNLOADS:
+                                downloads.append(download)
+                                if status:
+                                    status("download_started")
+                            elif status:
+                                status("download_limit")
+
+                        opened.on("download", on_download)
 
                         def on_close(*_):
                             try:
@@ -528,6 +546,28 @@ def record_http(start_url: str, stop: Event, *,
                                 raise
                             # The next iteration settles Stop vs last-page X
                             # exactly once, rather than losing the RAM trace.
+                    # Keep the browser context alive until optional *human*
+                    # file choices finish. Without a callback, Playwright's
+                    # temporary downloads are discarded on context.close().
+                    for number, download in enumerate(downloads, 1):
+                        if download_destination is None:
+                            continue
+                        try:
+                            chosen = download_destination(number)
+                        except Exception:
+                            chosen = None
+                        if chosen is None:
+                            if status:
+                                status("download_cancelled")
+                            continue
+                        try:
+                            save_chosen_download(download, chosen)
+                        except Exception:
+                            if status:
+                                status("download_failed")
+                        else:
+                            if status:
+                                status("download_saved_by_user")
                 finally:
                     try:
                         context.close()

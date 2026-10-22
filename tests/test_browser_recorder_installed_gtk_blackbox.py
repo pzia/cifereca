@@ -52,10 +52,11 @@ def _real_package_zip(path):
     archive = build_plugin_zip(SOURCE, path.parent)
     verified = validate_plugin_zip(archive)
     assert verified["package"]["id"] == PACKAGE_ID
-    assert verified["package"]["version"] == "0.2.10"
+    assert verified["package"]["version"] == "0.2.11"
     with zipfile.ZipFile(archive) as bundle:
         assert "browser_recorder_page.py" in bundle.namelist()
         assert "browser_recorder_review_ui.py" in bundle.namelist()
+        assert "browser_recorder_download.py" in bundle.namelist()
         assert not any(name.startswith("tests/") for name in bundle.namelist())
     return archive
 
@@ -100,10 +101,10 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
         # avoid PluginManager.install(... activate=True) here: its Core-owned
         # pip resolver is tested elsewhere and may download dependencies.
         package = manager.installer.install(archive, activate=True)
-        assert package.root == store.version_root(PACKAGE_ID, "0.2.10")
+        assert package.root == store.version_root(PACKAGE_ID, "0.2.11")
         assert package.root.is_dir()
         assert package.sha256
-        assert manager.packages.active_version(PACKAGE_ID) == "0.2.10"
+        assert manager.packages.active_version(PACKAGE_ID) == "0.2.11"
         manager.activate()
         assert manager.status(PLUGIN_ID).enabled is False
         assert manager.service(PLUGIN_ID) is None
@@ -237,7 +238,7 @@ def test_installed_zip_full_review_and_independent_archive_oracle(
         http_module = importlib.import_module("browser_recorder_http")
         for module in (review_module, http_module):
             assert Path(module.__file__).resolve().is_relative_to(
-                store.version_root(PACKAGE_ID, "0.2.10").resolve()
+                store.version_root(PACKAGE_ID, "0.2.11").resolve()
             )
         origin = "https://books.example.org"
         ids = tuple(str(2000 + n) for n in range(81))
@@ -426,7 +427,7 @@ def test_installed_zip_browser_failure_reaches_core_diagnostics_without_private_
     try:
         archive = _real_package_zip(tmp_path / "browser-recorder.zip")
         package = manager.installer.install(archive, activate=True)
-        assert package.root.is_relative_to(store.version_root(PACKAGE_ID, "0.2.10"))
+        assert package.root.is_relative_to(store.version_root(PACKAGE_ID, "0.2.11"))
         manager.activate()
         assert manager.status(PLUGIN_ID).enabled is False
         assert manager.service(PLUGIN_ID) is None

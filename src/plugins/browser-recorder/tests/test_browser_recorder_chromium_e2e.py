@@ -143,6 +143,18 @@ def fake_bookstore():
                 self.send(403, b'{"error":"access_denied"}')
             elif target == "/bad-request":
                 self.send(400, b'{"error":"invalid_input"}')
+            elif target == "/download-page":
+                self.send(200, b'''<!doctype html><html><body>
+                    <a href="/fixture.acsm" download>Fictional loan</a>
+                    <script>window.addEventListener("DOMContentLoaded", () =>
+                      setTimeout(() => document.querySelector("a").click(), 250));
+                    </script></body></html>''', "text/html")
+            elif target == "/fixture.acsm":
+                # Real Chromium download with XML MIME; NEVER retain as body.
+                self.send(200, b"<ACSM>FAKE_LICENSE_NEVER_ARCHIVE</ACSM>",
+                          "application/vnd.adobe.adept+xml", {
+                    "Content-Disposition": 'attachment; filename="private-acsm.acsm"'
+                })
             elif target == "/binary.png":
                 self.send(200, b"\x89PNG\r\n\x1a\nFICTIONAL_BINARY", "image/png")
             elif target == "/uuid":
@@ -803,3 +815,85 @@ def test_real_chromium_second_origin_is_metadata_only_not_replayable(
         identity.server_close()
         thread.join(timeout=3)
         assert trace.exchanges == []
+
+
+
+@pytest.mark.parametrize("approve", (True, False))
+def test_real_chromium_download_is_separate_explicit_save_not_a_trace_body(
+    fake_bookstore, monkeypatch, tmp_path, approve,
+):
+    """Real ACSM-like attachment, NO DRM/account, no automatic binary export."""
+    from hashlib import sha256
+
+    server, stop, calls = fake_bookstore
+    origin = f"http://127.0.0.1:{server.server_port}"
+    original = http_recorder.site_origin
+
+    def only_fake(url):
+        parsed = urlsplit(url)
+        if (parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+                and parsed.port == server.server_port
+                and not parsed.username and not parsed.password):
+            return origin
+        return original(url)
+
+    monkeypatch.setattr(http_recorder, "site_origin", only_fake)
+    events = []
+    chosen = tmp_path / "fictional-approved.acsm"
+    choices = []
+
+    def status(code):
+        events.append(code)
+        if code == "download_started":
+            stop.set()
+
+    def destination(number):
+        choices.append(number)
+        return chosen if approve else None
+
+    trace = http_recorder.record_http(
+        origin + "/download-page", stop, origins=(origin,),
+        status=status, max_seconds=16, download_destination=destination,
+    )
+    try:
+        assert "download_started" in events
+        assert "download_saved_by_user" in events if approve else (
+            "download_cancelled" in events
+        )
+        assert choices == [1]
+        assert [path for method, path in calls
+                if (method, path) == ("GET", "/fixture.acsm")] == [
+                    "/fixture.acsm"
+                ]
+        assert stop.is_set()
+        assert (chosen.exists() is approve)
+        if approve:
+            assert chosen.stat().st_mode & 0o777 == 0o600
+            assert sha256(chosen.read_bytes()).hexdigest() == sha256(
+                b"<ACSM>FAKE_LICENSE_NEVER_ARCHIVE</ACSM>"
+            ).hexdigest()
+        assert all("FAKE_LICENSE_NEVER_ARCHIVE" not in (entry.request_body or "")
+                   and "FAKE_LICENSE_NEVER_ARCHIVE" not in (entry.response_body or "")
+                   for entry in trace.exchanges)
+        assert all(entry.mime != "application/vnd.adobe.adept+xml"
+                   for entry in trace.exchanges)
+        assert all(entry.response_body is None
+                   for entry in trace.exchanges
+                   if "/fixture.acsm" in entry.url)
+        # No Playwright temp file, raw HAR, ACSM, EPUB or PDF in review ZIP.
+        import browser_recorder_zip as zip_tool
+        monkeypatch.setattr(zip_tool, "site_origin", only_fake)
+        review = IdentifierReview(trace)
+        try:
+            for candidate in review.candidates():
+                review.decide(candidate.key, "anonymize")
+            plan = prepare_reviewed_zip(review)
+            preview = plan.preview()
+            joined = "\n".join(item["text"] for item in preview["members"])
+            assert "FAKE_LICENSE_NEVER_ARCHIVE" not in joined
+            assert not any(path.suffix == ".har" for path in tmp_path.iterdir())
+            assert not any(path.suffix == ".zip" for path in tmp_path.iterdir())
+        finally:
+            review.destroy()
+    finally:
+        trace.destroy()

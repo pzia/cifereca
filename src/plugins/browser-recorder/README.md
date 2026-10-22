@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.10, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.11, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -511,7 +511,7 @@ physique sur SSD/backups. Aucun ZIP n'est automatiquement produit ou
 transmis. Les tests fonctionnent uniquement sur des données fictives.
 
 
-## Vérification d'authenticité des noms lors de la rétention (0.2.10)
+## Vérification d'authenticité des noms lors de la rétention (0.2.11)
 
 Une étiquette de session est protégée par AES-256-GCM et associée
 cryptographiquement à un ID de capture précis. La revue de rétention
@@ -523,7 +523,7 @@ Les captures, mêmes anciennes, sont préservées. La confirmation manuelle
 et le délai d'expiration du plan restent obligatoires.
 
 
-## Renommage chiffré et concurrence avec la suppression (0.2.10, #2725)
+## Renommage chiffré et concurrence avec la suppression (0.2.11, #2725)
 
 Le renommage privé authentifie **sous le même verrou exclusif POSIX**
 l'archive source et son nom AES-GCM existant, puis écrit le nouveau sidecar
@@ -539,3 +539,40 @@ au moment exact où un renommage attend le verrou ; aucune donnée privée
 fictive n'est publiée. Le verrou est coopératif entre processus Cifereca
 et n'est pas une garantie contre un acteur local ayant accès en écriture
 au coffre en dehors de l'application.
+
+
+## Téléchargements Chromium sous décision explicite (0.2.11, #2528)
+
+Le mode de capture HTTP privé utilise maintenant **`accept_downloads=True`**
+(la capture HAR legacy demeure distincte). Un fichier obtenu par Chromium
+reste **temporaire dans Playwright** et est supprimé lors de la fermeture du
+contexte, sauf décision spécifique de l'utilisateur. À la fin du parcours
+(bouton Arrêter ou fermeture normale de la dernière fenêtre Chromium),
+Cifereca propose **un dialogue natif « Enregistrer sous… » par téléchargement**
+jusqu'à **8** téléchargements. Annuler ne conserve rien. Chaque dialogue
+attend au plus **120 secondes**, sans bloquer la boucle GTK ; fermer la page
+annule le choix en cours. Le nom suggéré par le serveur est ignoré au profit
+d'un nom générique, modifiable avant validation.
+
+La sauvegarde, indépendante de la trace et du ZIP, accepte un chemin
+absolu dont les composants ne sont pas des symlinks ; dossier propriétaire
+non modifiable par groupe/autres ; nom ASCII borné, sans traversée ;
+**aucun écrasement** d'un fichier existant. Après `Download.save_as` vers un
+staging éphémère 0700, le contenu (au plus **128 Mio**) est copié dans
+un temporaire 0600 et publié par lien atomique après `fsync`, puis le
+temporaire est supprimé. En cas d'annulation, échec ou dépassement de
+limite, aucun nom final partiel n'est laissé. Une interruption système
+brutale peut cependant laisser un temporaire 0600 après consentement ;
+aucun effacement forensique SSD n'est promis.
+
+**Aucun octet de téléchargement ni licence** ACSM/LCPL/EPUB/PDF,
+réponse `Content-Disposition: attachment`, MIME de licence, ni contenu
+binaire ne rejoint la trace chiffrée, le ZIP anonymisé ou le ZIP privé.
+Les événements de téléchargement sont suivis par **codes fermés** et
+compteurs locaux, jamais par URL, nom de fichier du fournisseur ou chemin
+dans Diagnostics. Les GET restent ceux du navigateur ; aucun rejeu HTTP
+ni publication réseau de fichier n'est introduit. La conservation d'un
+fichier volontairement téléchargé ne constitue pas un déchiffrement DRM.
+
+Les tests utilisent uniquement un faux portail local et un faux fichier
+ACSM, sans compte fournisseur, titre réel ou licence réelle.
