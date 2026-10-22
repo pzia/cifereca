@@ -179,6 +179,11 @@ def finish_audit_stability(service, identity_id: str, scope: tuple,
         interpretation = 'file_evidence_changed'
     elif not same_sqlite:
         interpretation = 'sqlite_proofs_changed'
+    elif old_confirmed != new_confirmed:
+        # Identical observed file evidence AND identical SQLite proof rows
+        # must not yield different confirmed links in a completed comparison.
+        # Report this as unexplained, never silently classify it as stable.
+        interpretation = 'unexplained_link_drift'
     else:
         interpretation = 'stable_inputs'
     return {
