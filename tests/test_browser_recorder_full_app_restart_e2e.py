@@ -146,9 +146,21 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
                     ["xdotool", "windowclose", window_id],
                     env=env, capture_output=True, check=True, timeout=5,
                 )
-                assert app.wait(timeout=18) == 0, (
-                    "Cifereca did not quit gracefully after windowclose"
-                )
+                rc = app.wait(timeout=18)
+                if rc != 0:
+                    # Emit *only known safe diagnostic codes*. Never dump raw
+                    # logs that may someday contain real account URLs.
+                    content = app_log.read_text(encoding="utf-8", errors="replace")
+                    probes = {
+                        "startup": "TRACE startup begin" in content,
+                        "shown": "TRACE gui window-presented" in content,
+                        "activated": "TRACE gui plugin-activation begin" in content,
+                        "shutdown": "TRACE shutdown app.run end" in content,
+                        "fatal": "Fatal GTK GUI error" in content,
+                        "traceback": "Traceback" in content,
+                        "critical": "CRITICAL" in content,
+                    }
+                    pytest.fail(f"full application exit={rc}; probes={probes}")
             finally:
                 if app.poll() is None:
                     app.terminate()
