@@ -263,6 +263,7 @@ def test_real_gtk4_large_identifier_list_requires_each_decision_and_scrolls(
             assert panel.candidate_page_status.get_label() == (
                 f"Identifiants {page * 24 + 1}–"
                 f"{min(80, (page + 1) * 24)} sur 80"
+                f" · {80 - total_reviewed} à décider"
             )
             for chooser in choices:
                 chooser.set_active_id("anonymize")
