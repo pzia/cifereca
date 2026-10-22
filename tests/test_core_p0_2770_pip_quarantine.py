@@ -177,6 +177,60 @@ def test_ineligible_or_missing_pypi_proof_never_mutates_venv(monkeypatch):
     assert commands == []
 
 
+def test_pip_standard_constraints_choose_an_older_eligible_release(monkeypatch):
+    fresh_item, _fresh = _item(version="2.0")
+    old_item, _old = _item(version="1.0")
+    calls = []
+    def fake_pip(command, **kwargs):
+        calls.append(command)
+        if "--dry-run" in command:
+            payload = old_item if "--constraint" in command else fresh_item
+            if "--constraint" in command:
+                constraints = Path(command[command.index("--constraint") + 1]).read_text()
+                assert constraints == "sample-pkg<2.0\\n"
+            Path(command[command.index("--report") + 1]).write_text(
+                json.dumps({"install": [payload]}), encoding="utf-8",
+            )
+        return SimpleNamespace(returncode=0)
+    def checked(plan, now):
+        version = plan["install"][0]["metadata"]["version"]
+        if version == "2.0":
+            raise QuarantineRejected(
+                "dependency_too_recent", name="sample-pkg", version="2.0",
+            )
+        return (old_item["download_info"]["url"] + "#sha256=" + SHA,)
+    monkeypatch.setattr(subprocess, "run", fake_pip)
+    monkeypatch.setattr(manager_module, "check_pip_report", checked)
+    PythonDependencyManager(allow_index=True)._pip_install(("sample-pkg>=1",), ())
+    assert len(calls) == 3
+    assert "--constraint" not in calls[0]
+    assert "--constraint" in calls[1]
+    assert "--no-deps" in calls[2]
+    assert old_item["download_info"]["url"] in calls[2][-1]
+
+
+def test_pip_solver_conflict_after_constrained_retry_never_installs(monkeypatch):
+    item, _registry = _item(version="2.0")
+    calls = []
+    def fake_pip(command, **kwargs):
+        calls.append(command)
+        if "--constraint" in command:
+            return SimpleNamespace(returncode=1, stderr="SECRET PRIVATE INDEX URL")
+        Path(command[command.index("--report") + 1]).write_text(
+            json.dumps({"install": [item]}), encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(subprocess, "run", fake_pip)
+    def too_recent(plan, now):
+        raise QuarantineRejected(
+            "dependency_too_recent", name="sample-pkg", version="2.0",
+        )
+    monkeypatch.setattr(manager_module, "check_pip_report", too_recent)
+    with pytest.raises(PythonDependencyError, match="^dependency_not_eligible$"):
+        PythonDependencyManager(allow_index=True)._pip_install(("sample-pkg==2.0",), ())
+    assert len(calls) == 2 and all("--dry-run" in command for command in calls)
+
+
 def test_no_candidate_to_change_skips_mutating_pip(monkeypatch):
     calls = []
     def fake_pip(command, **kwargs):
