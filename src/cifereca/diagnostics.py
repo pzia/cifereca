@@ -185,19 +185,23 @@ class Diagnostics:
         with self._lock:
             self._items.append(entry)
 
-    def add_core_browser_recorder_result(self, operation: str, code: str) -> None:
+    def add_core_browser_recorder_result(self, operation: str, code: str, *,
+                                         duration_ms=None, output_bytes=None) -> None:
         """Attest an explicitly requested Browser Recorder GUI operation.
 
         Only fixed code/operation identifiers cross into the public broker
         feed. The generic add() path cannot claim this provenance and private
         Playwright/pip exceptions, paths and proxy values never enter memory.
+        Private ZIP exports additionally accept strict integers for elapsed
+        milliseconds (0..24 h) and encrypted output bytes (0..16 MiB).
+        Missing or invalid metrics are omitted, never coerced or logged.
         """
         from .core.browser_recorder_diagnostics import (
             OPERATIONS, public_fields, public_status,
         )
         if not self.enabled:
             return
-        fields = public_fields(operation, code)
+        fields = public_fields(operation, code, duration_ms=duration_ms, output_bytes=output_bytes)
         if fields is None:
             return
         status = public_status(fields)
@@ -212,6 +216,7 @@ class Diagnostics:
         entry = DiagnosticEntry(
             timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             category="PLUGIN", operation=OPERATIONS[fields["operation"]],
+            duration_ms=fields.get("duration_ms"),
             status=status, detail=fields, verified_browser_recorder=True,
         )
         with self._lock:

@@ -696,7 +696,14 @@ class PluginManager:
                         valid_codes = RUNTIME_CODES_BY_OPERATION[operation]
                         safe_code = (code if type(code) is str and code in valid_codes
                                      else "browser_operation_failed")
-                        self.diagnostics.add_core_browser_recorder_result(operation, safe_code)
+                        if operation == "private_zip_export":
+                            self.diagnostics.add_core_browser_recorder_result(
+                                operation, safe_code,
+                                duration_ms=detail.get("duration_ms"),
+                                output_bytes=detail.get("output_bytes"),
+                            )
+                        else:
+                            self.diagnostics.add_core_browser_recorder_result(operation, safe_code)
                 return
             payload = dict(detail or {}) if isinstance(detail, dict) else {"detail": detail}
             payload["plugin"] = plugin_id
