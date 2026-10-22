@@ -26,7 +26,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
     root = Path(tmp.name)
     library = root/'library'
     for name in ('a','b'): (library/name).mkdir(parents=True)
-    for index in range(61):
+    # Stress the real inspection at the reported 600-file scale, not only
+    # the earlier 61-file fixture, while keeping all I/O local and synthetic.
+    for index in range(600):
         with zipfile.ZipFile(library/'a'/f'synthetic-{index:02d}.epub','w') as book:
             book.writestr('mimetype','application/epub+zip')
             book.writestr('META-INF/container.xml',"<container><rootfile full-path='content.opf'/></container>")
@@ -295,7 +297,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                 return False
         def click():
             device.click_widget(manual)
-            until(lambda:any(isinstance(w,Gtk.Label) and '1 / 61' in w.get_text()
+            until(lambda:any(isinstance(w,Gtk.Label) and '1 / 600' in w.get_text()
                              for w in walk(controller.dialog)),manual_first)
         until(ready,click)
 
@@ -305,13 +307,13 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert 'Fichiers non liés · comparaison manuelle' in texts
         assert 'Aucun n’est attribué' in texts
         assert 'FOREIGN_SECRET' not in texts
-        assert controller.session.unconfirmed_files().total == 61
+        assert controller.session.unconfirmed_files().total == 600
         search=next(w for w in walk(controller.dialog)
                     if isinstance(w,Gtk.SearchEntry)
                     and w.get_placeholder_text()=='Filtrer les fichiers non liés…')
         assert search.get_visible()
         # Direct physical selection from the NEW bounded list, not merely
-        # next/previous navigation. The first page contains 25 of 61 files.
+        # next/previous navigation. The first page contains 25 of 600 files.
         file_list = next(w for w in walk(controller.dialog)
                          if isinstance(w, Gtk.ListBox)
                          and w is not widgets['list'])
@@ -336,7 +338,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         def click_file():
             device.click_widget(selected_row)
             until(lambda:any(isinstance(w,Gtk.Label)
-                             and '2 / 61 · exploration non probante' in w.get_text()
+                             and '2 / 600 · exploration non probante' in w.get_text()
                              for w in walk(controller.dialog)),
                   manual_direct_selected)
 
@@ -351,7 +353,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         search=next(w for w in walk(controller.dialog)
                     if isinstance(w,Gtk.SearchEntry)
                     and w.get_placeholder_text()=='Filtrer les fichiers non liés…')
-        search.set_text('synthetic-59')
+        search.set_text('synthetic-599')
         until(lambda:any(isinstance(w,Gtk.Label)
                          and '1 / 1 · exploration non probante' in w.get_text()
                          for w in walk(controller.dialog)),manual_filtered)
@@ -359,7 +361,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
     def manual_filtered():
         texts='\\n'.join(w.get_text() for w in walk(controller.dialog)
                         if isinstance(w,Gtk.Label))
-        assert 'synthetic-59.epub' in texts
+        assert 'synthetic-599.epub' in texts
         assert 'FOREIGN_SECRET' not in texts
         assert 'Droit sans fichier vérifié' in texts
         report['checks']['local_inspection_manual_unlinked_filter_same_identity']=True
@@ -452,16 +454,16 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         texts='\\n'.join(w.get_text() for w in walk(controller.dialog)
                         if isinstance(w,Gtk.Label))
         assert 'Fichiers candidats' in texts
-        assert 'synthetic-59.epub' not in texts
+        assert 'synthetic-599.epub' not in texts
         report['checks']['local_inspection_manual_does_not_change_candidate_set']=True
         choose(widgets['provider'],0,lambda:choose(widgets['state'],3,candidates))
 
     def candidates():
-        assert controller.session.page(state='metadata_candidate').total==61
+        assert controller.session.page(state='metadata_candidate').total==600
         following=next(w for w in walk(controller.dialog) if isinstance(w,Gtk.Button) and w.get_label()=='Suivant')
         assert following.get_sensitive()
         device.click_widget(following)
-        until(lambda:any(isinstance(w,Gtk.Label) and w.get_text()=='51–61 / 61' for w in walk(controller.dialog)),detail)
+        until(lambda:any(isinstance(w,Gtk.Label) and w.get_text()=='51–100 / 600' for w in walk(controller.dialog)),detail)
 
     def detail():
         row=widgets['list'].get_first_child()
