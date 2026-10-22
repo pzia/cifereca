@@ -432,6 +432,7 @@ def test_manifest_reports_bounded_capture_omissions_without_private_values():
             "oversize": 0, "unknown_size": 1, "compressed": 0,
             "network_error": 0,
             "paused": 5,
+            "static_metadata_budget": 0,
         }
         assert manifest["excluded_exchanges"] == 1
         assert all(type(v) is int for v in manifest["capture_omissions"].values())

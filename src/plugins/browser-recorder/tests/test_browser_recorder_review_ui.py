@@ -182,7 +182,7 @@ def make_panel(monkeypatch, *, allowed=True, busy=False, export_directory=None):
     ))
 
     def recorder(start, stop, *, pause_control=None, metadata_only_origins=(),
-                 download_destination=None, status=None):
+                 download_destination=None, status=None, coverage_callback=None):
         assert start.startswith(ORIGIN) and stop.is_set()
         assert pause_control is not None
         assert type(metadata_only_origins) is tuple
@@ -774,3 +774,20 @@ def test_encrypted_capture_remains_exportable_when_identifier_review_fails(
     finally:
         panel.destroy()
 
+
+
+def test_coverage_reports_empty_responses_and_near_limit_without_private_values(monkeypatch):
+    panel, tasks, raw = make_panel(monkeypatch)
+    try:
+        panel._show_coverage({
+            "exchanges": 237, "limit": 240, "text_responses": 0,
+            "binary_skipped": 166, "compressed": 68, "out_of_scope": 631,
+            "static_metadata_budget": 0,
+        })
+        assert "237/240" in panel.coverage_status.label
+        assert "analyse des réponses impossible" in panel.coverage_status.label
+        assert "presque atteinte" in panel.coverage_status.label
+        panel.discard()
+        assert panel.coverage_status.label == ""
+    finally:
+        panel.destroy()

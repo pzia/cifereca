@@ -22,6 +22,7 @@ MAX_EXCHANGES = 240
 MAX_BODY_BYTES = 32 * 1024
 MAX_TOTAL_BODY_BYTES = 768 * 1024
 MAX_CAPTURE_SECONDS = 900
+MAX_STATIC_METADATA = 64
 # Closed, source-independent codes; safe to persist in the encrypted vault
 # and export as diagnostic provenance without revealing URL/header/body.
 _BODY_REASONS = frozenset((
@@ -224,6 +225,8 @@ class PrivateHttpTrace:
         self.omitted = {"out_of_scope": 0, "limit": 0, "binary_skipped": 0,
                         "oversize": 0, "unknown_size": 0, "compressed": 0,
                         "network_error": 0, "paused": 0, "unfinished": 0}
+        self.omitted["static_metadata_budget"] = 0
+        self._static_metadata = 0
         self._pending: dict[int, PrivateExchange] = {}
         self._responses: dict[int, object] = {}
         self._begin = monotonic()
@@ -235,6 +238,17 @@ class PrivateHttpTrace:
     def __repr__(self):
         return (f"PrivateHttpTrace(exchanges={len(self.exchanges)}, "
                 f"omissions={sum(self.omitted.values())})")
+
+    def coverage(self):
+        """Closed numeric summary; never a URL, MIME or provider payload."""
+        return {
+            "exchanges": len(self.exchanges), "limit": self.limit,
+            "text_responses": sum(type(e.response_body) is str for e in self.exchanges),
+            "binary_skipped": self.omitted["binary_skipped"],
+            "compressed": self.omitted["compressed"],
+            "out_of_scope": self.omitted["out_of_scope"],
+            "static_metadata_budget": self.omitted["static_metadata_budget"],
+        }
 
     def _drop_inflight_on_pause(self) -> None:
         # A pause cannot finish capturing a request that began earlier.
@@ -295,9 +309,19 @@ class PrivateHttpTrace:
             if origin not in self.origins and not metadata_only:
                 self.omitted["out_of_scope"] += 1
                 return
+            # Browser-declared request intent, not a claim about final MIME.
+            # Keep a bounded sample of static-resource chronology. Never
+            # discard POSTs or classify xhr/fetch/document/scripts as assets.
+            static = (req.method == "GET" and getattr(req, "resource_type", None)
+                      in {"image", "font", "media", "stylesheet"})
+            if static and self._static_metadata >= min(MAX_STATIC_METADATA, self.limit // 3):
+                self.omitted["static_metadata_budget"] += 1
+                return
             if len(self.exchanges) >= self.limit:
                 self.omitted["limit"] += 1
                 return
+            if static:
+                self._static_metadata += 1
             method = str(req.method).upper()
             if method not in {"GET", "HEAD", "OPTIONS", "POST", "PUT",
                               "PATCH", "DELETE"}:
@@ -539,6 +563,7 @@ def record_http(start_url: str, stop: Event, *,
                 metadata_only_origins: tuple[str, ...] = (),
                 vault_writer=None,
                 download_destination=None,
+                coverage_callback=None,
                 prefer_identity: bool = False,
                 ) -> PrivateHttpTrace:
     """Observe a manually controlled Chromium session; return RAM-only trace.
@@ -626,6 +651,8 @@ def record_http(start_url: str, stop: Event, *,
                             raise
                     if status and not last_page_closed.is_set():
                         status("capture_ready")
+                    if coverage_callback:
+                        coverage_callback(trace.coverage())
                     end = monotonic() + min(
                         MAX_CAPTURE_SECONDS, max(1, int(max_seconds)),
                     )
@@ -651,6 +678,8 @@ def record_http(start_url: str, stop: Event, *,
                             raise RecorderError("capture_interrupted")
                         try:
                             live_pages[0].wait_for_timeout(200)
+                            if coverage_callback:
+                                coverage_callback(trace.coverage())
                             if vault_writer is not None:
                                 vault_writer.save(trace)
                         except Exception:
