@@ -163,6 +163,9 @@ class PriorityExecutor:
                     self._active += 1
                     if queued_at is not None:
                         self._queue_wait_ns.append(max(0, started_at - queued_at))
+                    lease = self._leases.get(future)
+                if lease is not None:
+                    lease.mark_running()
                 try:
                     try:
                         with diagnostic_task_scope():

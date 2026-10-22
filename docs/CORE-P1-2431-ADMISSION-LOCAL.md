@@ -77,3 +77,26 @@ d'absence de fuite. L'attente synthétique n'est pas un profil CPU/métier réel
 Ce banc reproductible **ne qualifie aucun gain**, ni famine sous arrivée continue,
 ni latence GTK, ni identité/annulation d'opérations métier ; ces preuves et
 l'activation contrôlée restent à #2431/#1741. Aucun quota produit n'est activé.
+
+## Occupation partagée observée aux transitions worker
+
+`SharedTaskAdmission.snapshot()` distingue `running` (lease marquée par le
+worker, conservée jusqu'à sa sortie et la fin des callbacks de Future) de
+`queued = inflight - running` (réservée, pas encore démarrée). Ce dernier
+compte les réservations avant démarrage, **pas la taille physique des heaps** :
+un Future annulé peut encore avoir une entrée dans un pool tout en ayant
+libéré sa réservation partagée. Un utilisateur direct de `acquire()` reste
+compté dans `queued` tant qu'il n'appelle pas `mark_running()`.
+
+`peak_inflight`, `peak_running`, `peak_queued` sont des maxima numériques
+cumulés pendant la vie de ce budget, actualisés sous son verrou à chaque
+transition. Ce sont des observations de cet objet partagé process-local,
+indépendantes de la fréquence de lecture du snapshot ; aucun scope, compte,
+URL, label ou contenu n'est publié. Les appels répétés de démarrage/libération
+et un démarrage après libération ne peuvent pas gonfler ou ressusciter une lease.
+
+`PriorityExecutor` marque le début après acceptation de la Future par son
+worker, sans changer ses priorités, ses workers ni son admission. Les pools
+historiques sans budget partagé gardent leur comportement. Aucun nouveau
+quota n'est activé et ces compteurs ne constituent pas une preuve d'absence
+de famine, de charge réseau réelle ou de gain de latence GTK.
