@@ -1,4 +1,4 @@
-"""Private local inspection UI. No export, provider call or repair action."""
+"""Private inspection with separate, explicitly confirmed local Numilog placement."""
 from __future__ import annotations
 
 from time import monotonic
@@ -280,7 +280,7 @@ class LocalInspectionController:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         for edge in ('top', 'bottom', 'start', 'end'):
             getattr(box, 'set_margin_'+edge)(12)
-        notice = Gtk.Label(label='Identité active uniquement · détails privés locaux · aucun rattachement ni téléchargement', xalign=0)
+        notice = Gtk.Label(label='Identité active · détails privés · placement possible uniquement après vérification et confirmation explicite · aucun téléchargement', xalign=0)
         notice.set_wrap(True)
         box.append(notice)
         # This is a private provenance hint only, not a declaration that the
@@ -525,7 +525,7 @@ class LocalInspectionController:
         pair_explanation.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         pair_explanation.set_selectable(True)
         pair_explanation.set_max_width_chars(45)
-        pair_report = Gtk.Expander(label='Préflight local · aucune écriture autorisée')
+        pair_report = Gtk.Expander(label='Préflight local · aucune écriture automatique')
         pair_report.set_child(pair_explanation)
         pair_report.set_visible(False)
         candidate_box.append(pair_report)
