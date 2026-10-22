@@ -461,8 +461,11 @@ def _body(raw, mime, approved):
         # Some HTTP APIs label JSON as text/plain. Retain its *reviewed*
         # structure, not arbitrary prose, XML licenses, or raw text. Reuse
         # the exact JSON projection and output limits used for proper MIME.
-        if (len(raw.encode("utf-8")) <= 32768
-                and raw.lstrip().startswith(("{", "["))):
+        try:
+            bounded = len(raw.encode("utf-8")) <= 32768
+        except UnicodeError:
+            return None, "body_omitted"
+        if bounded and raw.lstrip().startswith(("{", "[")):
             return _body(raw, "application/json", approved)
     # Unknown plain text may contain licenses, auth material or private prose.
     return None, "body_omitted"
