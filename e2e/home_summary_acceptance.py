@@ -76,8 +76,13 @@ def check_home_summary(window, *, later, capture, report, done):
         widgets = list(walk(page))
         labels = [node for node in widgets if isinstance(node, Gtk.Label)]
         text = [node.get_text() for node in labels]
+        no_lending_source = name in {"store", "unknown"}
+        loan_label = (
+            "aucune source de prêt configurée" if no_lending_source
+            else f"prêts de bibliothèque connus : {loans if loans is not None else '—'}"
+        )
         expected = (
-            f"Livres locaux : {local} · prêts de bibliothèque connus : {loans if loans is not None else '—'}",
+            f"Livres locaux : {local} · {loan_label}",
             f"Droits d’achat distants : {owned if owned is not None else '—'} "
             "(ne prouvent pas la présence d’un fichier local)",
         )
@@ -94,6 +99,13 @@ def check_home_summary(window, *, later, capture, report, done):
             assert node.get_layout().get_pixel_size()[0] <= node.get_width() + 1
             allocations.append({"width": node.get_width(), "height": node.get_height()})
         assert not any("emprunts connus" in value for value in text)
+        if no_lending_source:
+            assert not any(
+                "Inventaire des prêts à actualiser" in value
+                or "Prêts de bibliothèque non actualisés" in value
+                for value in text
+            ), (name, text)
+            report["checks"]["P1_1867_no_false_loan_alert_" + name] = True
         if "numilog" in providers:
             assert any(value.startswith("Numilog ·") for value in text), text
         report.setdefault("home_summary_allocations", {})[name] = allocations

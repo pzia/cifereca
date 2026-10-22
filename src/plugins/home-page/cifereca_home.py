@@ -78,20 +78,71 @@ def readers_text(row):
         return 'Liseuses : aucune associée'
     return 'Liseuses : '+', '.join(str(r.get('label') or 'Liseuse') for r in readers if isinstance(r,dict))
 
+# Current, explicitly non-loan providers only. Unknown providers fail open
+# to the existing "loans not refreshed" warning: this is presentation logic,
+# not a provider capability registry or a source entitlement inference.
+_NON_LOAN_PROVIDERS = frozenset({
+    'kobo', 'numilog', 'numilog-catalog', 'gallica', 'gutenberg',
+    'bnf-catalogue', 'baen', 'ebooksgratuits', 'local',
+})
+
+
+def _loan_scope_not_configured(row):
+    """True only for an explicitly non-loan provider-only identity.
+
+    Never treat a missing provider inventory, unseen plugin, observed loan,
+    or an explicit Core loans capability as a known absence of lending.
+    Source origins (statistics.sources) are NOT connected providers.
+    """
+    if not isinstance(row, dict):
+        return False
+    providers = row.get('providers')
+    if (type(providers) not in (list, tuple, set, frozenset)
+            or not providers or len(providers) > 128
+            or any(type(pid) is not str for pid in providers)):
+        return False
+    if any(pid not in _NON_LOAN_PROVIDERS for pid in providers):
+        return False
+    capabilities = row.get('capabilities')
+    if isinstance(capabilities, (list, tuple)):
+        # This Core-authoritative projection contains only public capability
+        # names and labels; never read or copy provider-specific raw data.
+        if any(isinstance(cap, dict) and cap.get('id') == 'loans'
+               for cap in capabilities):
+            return False
+    stats = row.get('statistics')
+    if not isinstance(stats, dict):
+        return False
+    # A loan observed before a provider was disconnected is not erased by a
+    # newly non-lending source list, including the zero-loan observation case.
+    observed = stats.get('loan_sources_observed')
+    known = stats.get('known_loans')
+    if type(observed) is int and observed > 0:
+        return False
+    if type(known) is int and known > 0:
+        return False
+    return True
+
+
 def statistics_lines(row):
     stats=row.get('statistics')
     if not isinstance(stats,dict):return ['Statistiques : Core029 requis']
     loans=stats.get('known_loans')
-    lines=[f"{stats.get('local_books',0)} livres locaux · {loans if loans is not None else '—'} prêts de bibliothèque connus"]
+    if _loan_scope_not_configured(row):
+        loan_text = "aucune source de prêt configurée"
+    else:
+        loan_text = f"{loans if loans is not None else '—'} prêts de bibliothèque connus"
+    lines=[f"{stats.get('local_books',0)} livres locaux · {loan_text}"]
     names={'paris':'Paris','kobo':'Kobo','gallica':'Gallica','gutenberg':'Gutenberg','bnf-catalogue':'BnF','numilog':'Numilog','local':'Local (origine non rapprochée)'}
     sources=stats.get('sources') or {}
     if sources:lines.append('Livres par catalogue : '+ ' · '.join(f"{names.get(key,key)} : {count}" for key,count in sorted(sources.items())))
     lines.append(f"{stats.get('local_placements',0)} emplacements · {stats.get('remote_owned_rights',0)} droits d’achat distants")
-    if loans is None:lines.append('Prêts de bibliothèque non actualisés')
+    if loans is None and not _loan_scope_not_configured(row):
+        lines.append('Prêts de bibliothèque non actualisés')
     lines.append('Inventaire local et droits d’achat distincts des prêts de bibliothèque. Les sources peuvent se chevaucher.')
     return lines
 
-def overview_counts_lines(stats):
+def overview_counts_lines(stats, *, row=None):
     """Keep physical files, store-owned rights and library loans distinct.
 
     Missing observations are unknown, never zero. These counts may overlap
@@ -101,9 +152,13 @@ def overview_counts_lines(stats):
         value = stats.get(key)
         return value if type(value) is int and value >= 0 else '—'
 
+    loan_text = (
+        "aucune source de prêt configurée"
+        if row is not None and _loan_scope_not_configured(row)
+        else f"prêts de bibliothèque connus : {number('known_loans')}"
+    )
     return (
-        f"Livres locaux : {number('local_books')} · "
-        f"prêts de bibliothèque connus : {number('known_loans')}",
+        f"Livres locaux : {number('local_books')} · {loan_text}",
         f"Droits d’achat distants : {number('remote_owned_rights')} "
         "(ne prouvent pas la présence d’un fichier local)",
     )
@@ -156,7 +211,7 @@ def attention_items(row, *, now=None):
             pass
     # A failed/partial synchronization already owns the refresh action; avoid
     # presenting the same underlying freshness problem twice.
-    if loans_stale and not sync_problem:
+    if loans_stale and not sync_problem and not _loan_scope_not_configured(row):
         add('loans-stale','warning','Inventaire des prêts à actualiser',priority=60,
             action='sync',action_label='Actualiser',context='Prêts · données non actualisées')
 
@@ -425,7 +480,7 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
             if stats is None:
                 compact_row(summary,'Statistiques indisponibles · actualisation nécessaire')
             else:
-                local_and_loans, owned_rights = overview_counts_lines(stats)
+                local_and_loans, owned_rights = overview_counts_lines(stats, row=row)
                 compact_row(
                     summary,
                     local_and_loans,
@@ -434,7 +489,7 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
                     tooltip='Ouvrir les fichiers locaux et prêts de cette identité. Les prêts peuvent être partiels.',
                 )
                 compact_row(summary, owned_rights)
-                if stats.get('known_loans') is None:
+                if stats.get('known_loans') is None and not _loan_scope_not_configured(row):
                     compact_row(summary,'Prêts de bibliothèque non actualisés · vérifier les alertes et la synchronisation')
 
             groups=compact_source_groups(row,public_providers)
