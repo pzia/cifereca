@@ -77,10 +77,12 @@ def preview_numilog_link(storage: Storage, observation: FileObservation,
                 # entitlement row. An unbound account is not purchase proof.
                 source, n = _single(
                     db, "provider_connections",
-                    "provider_id=? AND credential_id=? AND identity_id=? AND enabled=1",
-                    ("numilog", credential_id, identity_id),
+                    "provider_id=? AND credential_id=?",
+                    ("numilog", credential_id),
                 )
-                if n != 1 or source is None:
+                if (n != 1 or source is None
+                        or source["identity_id"] != identity_id
+                        or source["enabled"] != 1):
                     return stop("source_unavailable")
                 rights = _rows(db,
                     "SELECT entitlement_id, identity_id, provider_id, credential_id, "
