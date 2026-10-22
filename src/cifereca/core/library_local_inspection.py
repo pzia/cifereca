@@ -868,11 +868,21 @@ class LocalInspection:
         from .numilog_manual_link_transaction import (
             ManualAttachmentRejected, reconcile_numilog_manual,
         )
+        # Capture this specific durable commit's stamp *inside* Core's
+        # writer/acquisition locks, not afterwards in the GTK worker: another
+        # SQLite writer could otherwise advance the cache stamp in between.
+        cache_stamp_accepted = [None]
+        def committed_under_lock():
+            callback = self._accept_own_core_commit
+            if callable(callback):
+                cache_stamp_accepted[0] = callback() is True
+
         try:
             result = reconcile_numilog_manual(
                 self._manual_service, **options, confirmation=pending[2],
                 cancelled=lambda: (cancelled() or not self.valid()
                                    or self._manual_preview_generation != generation),
+                on_committed=committed_under_lock,
             )
         except ManualAttachmentRejected:
             return {'status': 'blocked', 'read_only': True}
@@ -888,14 +898,12 @@ class LocalInspection:
                 # without this one-time acknowledgement the next valid()
                 # would revoke the private undo token before the user can
                 # use it. Never acknowledge a rejected/preview-only write.
-                allowed = True
-                callback = self._accept_own_core_commit
-                if callable(callback):
-                    try:
-                        allowed = callback() is True
-                    except Exception:
-                        allowed = False
-                if allowed:
+                allowed = (self._accept_own_core_commit is None
+                           or cache_stamp_accepted[0] is True)
+                # A foreign modification between transaction return and GUI
+                # completion must not be normalized as our own commit. The
+                # private session is revoked when the stamp changed again.
+                if allowed and self.valid():
                     self._manual_undo = (right_key, file_key, operation)
             return {
                 'status': result['status'],

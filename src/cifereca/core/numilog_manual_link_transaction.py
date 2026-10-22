@@ -90,7 +90,7 @@ def _scope(service, *, identity_id, credential_id, account_id):
 
 
 @contextmanager
-def _db_transaction(storage, *, write):
+def _db_transaction(storage, *, write, after_commit=None):
     """Same writer exclusion/schema guard as existing Kobo local repair."""
     with storage._lock:
         db = storage._connect()
@@ -110,6 +110,15 @@ def _db_transaction(storage, *, write):
                 yield db
                 if write:
                     db.commit()
+                    # The caller may acknowledge this *specific* committed
+                    # SQLite/WAL image while Storage._lock and the acquisition
+                    # lock are still held. Never include a later unrelated
+                    # writer's stamp. A callback cannot undo a durable commit.
+                    if after_commit:
+                        try:
+                            after_commit()
+                        except Exception:
+                            pass
                 else:
                     db.rollback()
             except BaseException:
@@ -293,6 +302,7 @@ def reconcile_numilog_manual(
     service, *, observation: FileObservation, identity_id: str,
     credential_id: str, account_id: str, item_id: str,
     confirmation: str | None = None, cancelled=lambda: False,
+    on_committed=None,
 ):
     """Preview or confirm ONE already-owned, precisely receipted Numilog EPUB.
 
@@ -309,6 +319,7 @@ def reconcile_numilog_manual(
                  and re.fullmatch(r"[0-9a-f]{64}", confirmation) is not None),
              "invalid_confirmation")
     _require(callable(cancelled), "invalid_cancellation")
+    _require(on_committed is None or callable(on_committed), "invalid_commit_hook")
     roots, valid = _scope(
         service, identity_id=identity_id,
         credential_id=credential_id, account_id=account_id,
@@ -324,7 +335,17 @@ def reconcile_numilog_manual(
     }
     try:
         lock = InterProcessLock(acquisition_lock_file()) if write else nullcontext()
-        with lock, _db_transaction(service.storage, write=write) as db:
+        # Only a real new placement installs a post-commit observer.
+        # This remains a private Core callback, never a plugin event.
+        callbacks = []
+        def post_commit():
+            if callbacks:
+                callbacks[0]()
+
+        with lock, _db_transaction(
+            service.storage, write=write,
+            after_commit=post_commit if on_committed is not None else None,
+        ) as db:
             _require(valid() and not cancelled(), "source_scope_changed")
             snapshot = _evidence(
                 db, identity_id=identity_id, credential_id=credential_id,
@@ -378,6 +399,8 @@ def reconcile_numilog_manual(
             )
             _require(fresh_again.verified and valid() and not cancelled(),
                      "file_changed_before_commit")
+            if on_committed is not None:
+                callbacks.append(on_committed)
             return _receipt("applied", changed=1, operation=operation)
     except LockBusyError:
         raise ManualAttachmentRejected("acquisition_busy") from None

@@ -284,3 +284,33 @@ def test_catalogue_reference_overflow_cannot_hide_foreign_edition_on_existing_li
     with pytest.raises(ManualAttachmentRejected, match="^catalogue_evidence_ambiguous$"):
         _review(rig, confirmation=plan["plan_token"])
     assert _rows(service, "placements") == before
+
+
+def test_commit_stamp_callback_runs_once_only_after_actual_durable_placement(rig):
+    calls = []
+    # Read-only previews and already-linked no-ops cannot refresh a private
+    # cached stamp; only a real successful SQL placement may acknowledge.
+    preview = _review(rig, on_committed=lambda: calls.append("commit"))
+    assert preview["status"] == "preview"
+    assert calls == []
+    applied = _review(
+        rig, confirmation=preview["plan_token"],
+        on_committed=lambda: calls.append("commit"),
+    )
+    assert applied["status"] == "applied"
+    assert calls == ["commit"]
+    again = _review(rig, on_committed=lambda: calls.append("replay"))
+    assert again["status"] == "already_linked"
+    assert calls == ["commit"]
+
+
+def test_failed_after_commit_observer_does_not_lie_about_durable_write(rig):
+    def observer():
+        raise RuntimeError("PRIVATE observer failure")
+
+    plan = _stage(rig)
+    result = _review(rig, confirmation=plan["plan_token"],
+                     on_committed=observer)
+    assert result["status"] == "applied"
+    assert len(_rows(rig[0], "placements")) == 1
+    assert "PRIVATE" not in json.dumps(result)
