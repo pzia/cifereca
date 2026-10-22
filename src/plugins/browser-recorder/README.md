@@ -68,8 +68,16 @@ ou **3** pour *exclure l'échange*. Les raccourcis agissent sur l'identifiant
 focalisé **uniquement** ; aucune décision n'est appliquée en lot. Les touches
 du pavé numérique sont également prises en charge. Naviguez entre les
 pages de 24 identifiants avec les boutons « Identifiants précédents /
-suivants ». Préparer le ZIP, examiner les membres puis confirmer l'export
-restent des actions séparées et volontaires.
+suivants » ou « Aller au prochain identifiant sans décision » : ce dernier
+n'applique **aucun choix** et parcourt seulement les entrées à examiner.
+Préparer le ZIP, examiner les membres puis confirmer l'export restent des
+actions séparées et volontaires. Dans l'onglet **Revue et ZIP LLM**, la
+recherche filtre uniquement les **noms des membres** du ZIP exact, et le
+bouton « Voir directement le rapport de couverture » ouvre
+`coverage-report.json` ; tous les contenus restent en mémoire, sans
+recherche réseau ni acceptation implicite de l'archive. L'archive est
+**filtrée/revue, pas nécessairement anonymisée** : les identifiants
+conservés explicitement peuvent rester sensibles.
 
 ## Recette d'installation du plugin (synthétique, #2531)
 
