@@ -135,3 +135,99 @@ def test_destination_must_be_preselected_private_and_no_overwrite(tmp_path):
         save_private_zip(session, symlink, PASSPHRASE, confirmed=True)
     assert not list(nonprivate.iterdir())
     session.trace.destroy()
+
+
+
+# Standalone reader deliberately imports no package named cifereca/browser_recorder.
+# Only Python stdlib, cryptography and the published CFRZIP01 envelope are used.
+_EXTERNAL_READER = r"""
+import io
+import json
+from pathlib import Path
+import sys
+from zipfile import ZipFile
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+
+raw = Path(sys.argv[1]).read_bytes()
+secret = sys.stdin.buffer.readline().rstrip(b"\n")
+assert raw.startswith(b"CFRZIP01"), "private envelope signature"
+salt, nonce, body = raw[8:24], raw[24:36], raw[36:]
+try:
+    key = Scrypt(salt=salt, length=32, n=2**15, r=8, p=1).derive(secret)
+    clear = AESGCM(key).decrypt(nonce, body, b"CFRZIP01" + salt + nonce)
+except Exception:
+    raise SystemExit(17)  # closed external error, no ciphertext dump
+
+with ZipFile(io.BytesIO(clear)) as archive:
+    assert archive.testzip() is None
+    assert set(archive.namelist()) == {"README.txt", "trace.json"}
+    contents = json.loads(archive.read("trace.json"))
+    assert contents["schema"] == "cifereca.browser-recorder.private-session/1"
+    assert len(contents["exchanges"]) == 2
+    first, second = contents["exchanges"]
+    assert first["url"].endswith("AccountId=acct-FICTIONAL-88")
+    assert first["status"] == 302
+    assert first["redirect_to"].endswith("AccountId=acct-FICTIONAL-88")
+    assert json.loads(first["request_body"])["access_token"] == (
+        "FAKE_TOKEN_IN_JSON_FOR_SECURITY_TEST"
+    )
+    assert second["response_body"] == "<Books><BookId>214</BookId></Books>"
+    assert second["status"] == 200
+print("EXTERNAL_PRIVATE_FIXTURE_OK")
+"""
+
+
+def test_private_zip_reopened_in_isolated_external_python_with_no_plugin_import(
+    tmp_path,
+):
+    """Real cross-process format interoperability, without publishing ZIP."""
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+
+    vault, source = stored(tmp_path)
+    output = tmp_path / "operator-chosen-private-directory"
+    output.mkdir(mode=0o700)
+    encrypted_name = save_private_zip(
+        source, output, PASSPHRASE, confirmed=True,
+    )
+    protected = output / encrypted_name
+    assert protected.stat().st_mode & 0o777 == 0o600
+    capture = vault.path / (source.session_id + ".cbrv")
+    before = capture.read_bytes()
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)  # forbid relying on plugin source directory
+
+    def external_read(secret, path):
+        return subprocess.run(
+            [sys.executable, "-I", "-c", _EXTERNAL_READER, str(path)],
+            input=(secret + "\n").encode("utf-8"),
+            cwd=tmp_path, env=env, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25,
+            check=False,
+        )
+
+    good = external_read(PASSPHRASE, protected)
+    assert good.returncode == 0
+    assert good.stdout == b"EXTERNAL_PRIVATE_FIXTURE_OK\n"
+    assert good.stderr == b""
+    for private in (ACCOUNT, TOKEN, ORIGIN, PASSPHRASE):
+        assert private.encode("utf-8") not in good.stdout
+        assert private.encode("utf-8") not in protected.read_bytes()
+    bad = external_read("FICTIONAL-INVALID-PRIVATE-ZIP-PASSWORD", protected)
+    assert bad.returncode == 17
+    assert bad.stdout == b"" and bad.stderr == b""
+    altered = output / "tampered.brzip"
+    raw = protected.read_bytes()
+    altered.write_bytes(raw[:-1] + bytes([raw[-1] ^ 1]))
+    altered.chmod(0o600)
+    invalid = external_read(PASSPHRASE, altered)
+    assert invalid.returncode == 17
+    assert invalid.stdout == b"" and invalid.stderr == b""
+    assert capture.read_bytes() == before
+    assert len(vault.list_ids()) == 1
+    assert not list(output.glob("*.zip"))
+    assert not list(output.glob("*.json"))
+    source.trace.destroy()
