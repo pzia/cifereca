@@ -25,7 +25,7 @@ def test_release_zip_contains_scoped_recorder_and_explicit_browser_dependency(
     archive = build_plugin_zip(SOURCE, tmp_path)
     validated = validate_plugin_zip(archive)
     assert validated["package"]["id"] == PACKAGE
-    assert validated["package"]["version"] == "0.2.12"
+    assert validated["package"]["version"] == "0.2.13"
 
     with ZipFile(archive) as bundle:
         names = set(bundle.namelist())

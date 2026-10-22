@@ -406,6 +406,13 @@ def _xml_structure(raw: str, approved: frozenset[str]) -> str:
     return serialized
 
 
+# Allowlisted producer states only; provider text must not become a state.
+_CAPTURE_STATES = frozenset((
+    "body_omitted", "captured", "binary_skipped", "truncated",
+    "redirect", "network_error", "unfinished", "pending",
+))
+
+
 def _body(raw, mime, approved):
     if type(raw) is not str:
         return None, "body_omitted"
@@ -716,7 +723,14 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
                                 (entry[direction + "_headers"].get("content-type")
                                  or entry["mime"]).split(";", 1)[0].lower(),
                                 approved)
-            outgoing["bodies"][direction] = {"state": state, "file": None}
+            raw_state = entry.get(direction + "_body_state")
+            capture_state = (
+                raw_state if type(raw_state) is str
+                and raw_state in _CAPTURE_STATES else "unknown"
+            )
+            outgoing["bodies"][direction] = {
+                "state": state, "capture_state": capture_state, "file": None,
+            }
             if body is not None:
                 body_path = f"bodies/{eid:04d}-{direction}.txt"
                 files[body_path] = body.encode("utf-8")
