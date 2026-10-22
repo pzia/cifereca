@@ -100,6 +100,8 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, h
         assert isinstance(advanced, Gtk.Expander)
         assert not advanced.get_expanded()
         assert not advanced.get_child().get_mapped()
+        plugin.private_panel.tabs.set_current_page(1)
+        _flush()
         private_start = plugin.private_panel.start
         for _ in range(24):
             _xtest("key", "--clearmodifiers", "Tab")
@@ -113,9 +115,9 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, h
         assert not plugin.private_panel.export_button.get_sensitive()
         # The review owns an independent scroll area. A keyboard operator
         # reaches it via Notebook tabs, not a giant shared page scroll.
-        plugin.private_panel.tabs.set_current_page(2)
+        plugin.private_panel.tabs.set_current_page(3)
         _flush()
-        scroller = plugin.private_panel.tabs.get_nth_page(2)
+        scroller = plugin.private_panel.tabs.get_nth_page(3)
         assert isinstance(scroller, Gtk.ScrolledWindow)
         adj = scroller.get_vadjustment()
         assert adj.get_upper() > adj.get_page_size()
