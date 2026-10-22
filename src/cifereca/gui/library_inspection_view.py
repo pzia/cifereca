@@ -366,6 +366,28 @@ class LocalInspectionController:
         notice = Gtk.Label(label='Identité active · détails privés · placement possible uniquement après vérification et confirmation explicite · aucun téléchargement', xalign=0)
         notice.set_wrap(True)
         box.append(notice)
+        summary = session.summary()
+        overview = session.overview()
+        # Essential warning is always visible, including with the optional
+        # long counters/personal roots collapsed on a short desktop.
+        if summary.get('status') != 'complete' or summary.get('inspection_limited'):
+            warning = Gtk.Label(label='Analyse ou affichage incomplet : certaines preuves restent non vérifiées. Un livre non vérifié n’est pas réputé absent.', xalign=0)
+            warning.set_wrap(True)
+            box.append(warning)
+        # The user comes here to reconcile, not to read a multi-line audit.
+        # Retain every original count/root in an expandable disclosure so the
+        # interactive cases and controls are reachable immediately.
+        overview_panel = Gtk.Expander(label=(
+            'Afficher les statistiques et le périmètre · '
+            f"{overview.get('files', 0)} fichier(s) · "
+            f"{overview.get('rights_active', 0)} droit(s) actif(s) · "
+            f"{overview.get('paths_active_missing', 0)} chemin(s) actif(s) absent(s)"
+        ))
+        overview_panel.set_name('reconciliation-overview-expander')
+        overview_panel.set_expanded(False)
+        overview_content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        overview_panel.set_child(overview_content)
+        box.append(overview_panel)
         # This is a private provenance hint only, not a declaration that the
         # filesystem is still unchanged or a right/file link is proven.
         if session.from_audit_cache():
@@ -379,15 +401,9 @@ class LocalInspectionController:
             )
         origin_note = Gtk.Label(label=origin, xalign=0)
         origin_note.set_wrap(True)
-        box.append(origin_note)
-        summary = session.summary()
-        if summary.get('status') != 'complete' or summary.get('inspection_limited'):
-            warning = Gtk.Label(label='Analyse ou affichage incomplet : certaines preuves restent non vérifiées. Un livre non vérifié n’est pas réputé absent.', xalign=0)
-            warning.set_wrap(True)
-            box.append(warning)
+        overview_content.append(origin_note)
         # These are counts of different evidence objects, not a 1:1 matching
         # between owned rights and local files. States can overlap.
-        overview = session.overview()
         synopsis = Gtk.Label(xalign=0, label=(
             f"FICHIERS LOCAUX · {overview.get('files', 0)} cas visibles : "
             f"{overview.get('files_attested', 0)} avec lien attesté · "
@@ -433,7 +449,7 @@ class LocalInspectionController:
             f"{overview.get('local_without_right', 0)} fichiers sans droit attesté."
         ))
         synopsis.set_wrap(True)
-        box.append(synopsis)
+        overview_content.append(synopsis)
         roots = overview.get('roots', ())
         unavailable = overview.get('unavailable_directories', ())
         unavailable_total = overview.get('unavailable_directories_total', len(unavailable))
@@ -445,7 +461,7 @@ class LocalInspectionController:
             f"{len(notes)} cause(s) de limite d’inventaire"
         ))
         scope_summary.set_wrap(True)
-        box.append(scope_summary)
+        overview_content.append(scope_summary)
         # This disclosure contains private local filesystem paths. It is
         # attached only to the revocable inspection dialog, not exported to
         # logs, broker, plugins, or the system status page.
@@ -484,14 +500,14 @@ class LocalInspectionController:
         coverage_scroll.set_child(coverage)
         scope.set_child(coverage_scroll)
         scope.set_expanded(bool(notes or unavailable))
-        box.append(scope)
+        overview_content.append(scope)
         legend = Gtk.Label(xalign=0, label=(
             'Droits et fichiers ne se correspondent pas nécessairement un à un. '
             'Un état peut en recouvrir un autre ; aucun total ne prouve la présence '
             'ou l’absence d’un livre.'
         ))
         legend.set_wrap(True)
-        box.append(legend)
+        overview_content.append(legend)
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         provider = Gtk.DropDown.new_from_strings(list(PROVIDERS.values()))
         provider.set_tooltip_text('Filtrer par fournisseur attesté pour les fichiers ; source déclarée pour les droits')
