@@ -23,6 +23,15 @@ _REASON_LABELS = {
     "artifact_mismatch": "Les octets du fichier ne concordent pas avec l’artefact du reçu.",
     "bibliographic_hint_only": "Une notice/ISBN identique est une simple piste, jamais une preuve d’achat.",
     "transaction_unavailable": "Aucune écriture autorisée : transaction et revalidation à construire séparément.",
+    "kobo_fresh_proof_required": (
+        "Kobo : le manifeste personnel, la sauvegarde antérieure, la révision, "
+        "le compte, la taille et le SHA doivent encore être revérifiés par "
+        "le contrat Kobo dédié avant toute confirmation."
+    ),
+    "kobo_personal_right_unverified": (
+        "Le droit Kobo personnel et son compte unique ne sont pas attestés "
+        "dans cette inspection ; aucune restauration n’est possible."
+    ),
     "kobo_separate_recovery": (
         "Kobo : une restauration de lien exige les preuves personnelles "
         "et la sauvegarde déjà attestées par le contrat Kobo dédié. "
@@ -139,3 +148,29 @@ def review_source_read_only(
     if bibliographic_hint is True:
         reasons.add("bibliographic_hint_only")
     return ManualLinkPreflight("blocked", tuple(sorted(reasons)))
+
+
+def review_kobo_candidate(
+    right: object, file: object, *, audit_complete: bool,
+    bibliographic_hint: bool = False,
+) -> ManualLinkPreflight:
+    """Review only whether to INVOKE Kobo's separate fresh offline preview.
+
+    This is not evidence of a backup, revision or an authorization to write.
+    The Kobo transaction must independently validate all historical proofs
+    against live SQLite and freshly hashed file bytes under its own lock.
+    """
+    blockers = set()
+    if audit_complete is not True:
+        blockers.add("audit_incomplete")
+    if type(right) is not dict or right.get("attested") is not True or right.get("ambiguous") is True:
+        blockers.add("kobo_personal_right_unverified")
+    if type(file) is not dict or file.get("verified") is not True or _strict_signature(file.get("signature")) is None:
+        blockers.add("file_unverified")
+    reasons = blockers | {"kobo_fresh_proof_required"}
+    if bibliographic_hint is True:
+        reasons.add("bibliographic_hint_only")
+    return ManualLinkPreflight(
+        "blocked" if blockers else "eligible_for_fresh_validation",
+        tuple(sorted(reasons)),
+    )
