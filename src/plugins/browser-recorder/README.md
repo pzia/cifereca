@@ -702,3 +702,34 @@ MIME, taille mesurée par Chromium et budget cumulé. Un serveur qui impose
 encore gzip/Brotli reste refusé (`capture_reason=compressed`), sans lecture
 ni décompression du corps. Les captures antérieures ne peuvent pas être
 réparées et aucune méthode de décompression bornée n'est revendiquée.
+
+
+## Diagnostic privé des domaines exclus (#2864)
+
+Pour **une nouvelle capture**, cocher dans Paramètres l'affichage local des
+origines exclues. L'option est désactivée par défaut et consommée à chaque
+démarrage : aucun consentement implicite pour la capture suivante. Seules
+16 origines normalisées et leur nombre de requêtes sont conservés en RAM,
+jamais leurs chemins, paramètres, en-têtes ou corps. Les requêtes hors de
+cet inventaire sont décomptées séparément. Pause ne collecte aucun domaine.
+
+La liste locale de Sessions est informative : elle ne prouve pas qu'un
+CDN ou un domaine est nécessaire au scraper. Pour examiner une origine,
+démarrer une nouvelle capture sur son URL avec consentement, ou l'autoriser
+explicitement en métadonnées seulement. Aucun ajout automatique au périmètre.
+La liste n'entre ni dans le coffre, ni dans aucun ZIP, ni dans Diagnostics ;
+fermeture, verrouillage et effacement suppriment aussi l'affichage local.
+Les sessions réouvertes n'ont donc pas cet inventaire transitoire.
+
+Les GET de scripts Chromium partagent désormais l'échantillon statique de
+64 avec images/polices/médias/feuilles de style. Les 176 places restantes
+restent disponibles aux documents, XHR/fetch et POST. Ce classement exprime
+l'intention de Chromium, pas le MIME final ; les scripts omis sont comptés
+comme `static_metadata_budget`. Une capture de plus de 240 échanges utiles
+reste bornée : les compteurs et l'avertissement de capacité restent vrais.
+
+Les corps des GET statiques partagent aussi un sous-budget de 64 Kio maximum
+(et au plus un quart du budget textuel initial). Leur lecture reste soumise
+aux mêmes preuves de taille et de MIME ; un script omis faute de budget
+porte `response_body_reason=over_budget`. Cette réserve empêche les scripts
+précoces de vider le budget des réponses API tardives.

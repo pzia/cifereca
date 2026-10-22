@@ -156,6 +156,10 @@ def fake_bookstore():
                     self.send(200, gzip.compress(value), mime, {"Content-Encoding": "gzip"})
                 else:
                     self.send(200, value, mime)
+            elif target == "/static-script.js":
+                self.send(200, b"void 0;", "application/javascript")
+            elif target == "/excluded-domain":
+                self.send(200, b"private", "text/plain", {"Access-Control-Allow-Origin": "*"})
             elif target == "/catalog":
                 self.send(200, catalog_page(), "text/html; charset=utf-8")
             elif target == "/asset-flood":
@@ -165,6 +169,14 @@ def fake_bookstore():
                       const image = new Image(); image.onload = image.onerror = resolve;
                       image.src = '/binary.png?n=' + i;
                     })));
+                    for (let i=0; i<200; i++) {
+                      await new Promise(resolve => {
+                        const script = document.createElement('script');
+                        script.onload = script.onerror = resolve;
+                        script.src = '/static-script.js?n=' + i; document.body.appendChild(script);
+                      });
+                    }
+                    await fetch('http://localhost:' + location.port + '/excluded-domain').catch(() => {});
                     for (let i=0; i<10; i++) {
                       const r = await fetch('/api/books?page=' + i); await r.text();
                     }
@@ -1064,7 +1076,7 @@ def test_real_chromium_static_flood_retains_ten_json_and_late_post(
     original = http_recorder.site_origin
     def local(url):
         parsed = urlsplit(url)
-        return origin if parsed.scheme == "http" and parsed.netloc == urlsplit(origin).netloc else original(url)
+        return f"http://{parsed.netloc}" if parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"} and parsed.port == server.server_port else original(url)
     import browser_recorder_zip as zipped
     monkeypatch.setattr(http_recorder, "site_origin", local)
     monkeypatch.setattr(zipped, "site_origin", local)
@@ -1073,7 +1085,7 @@ def test_real_chromium_static_flood_retains_ten_json_and_late_post(
     summaries = []
     trace = http_recorder.record_http(
         origin + "/asset-flood", stop, max_seconds=60,
-        vault_writer=writer, coverage_callback=summaries.append,
+        vault_writer=writer, coverage_callback=summaries.append, diagnose_origins=True,
     )
     stored = vault.open(writer.session_id, "FICTIONAL-ASSET-FLOOD-PASSWORD")
     try:
@@ -1081,6 +1093,10 @@ def test_real_chromium_static_flood_retains_ten_json_and_late_post(
         assert trace.omitted["limit"] == 0
         assert trace.omitted["static_metadata_budget"] >= 936
         assert calls.count(("GET", "/binary.png")) == 1000
+        assert calls.count(("GET", "/static-script.js")) == 200
+        foreign = f"http://localhost:{server.server_port}"
+        assert trace.origin_diagnostics() == ({foreign: 1}, 0)
+        assert stored.trace.origin_diagnostics() == ({}, 0)
         assert calls.count(("GET", "/api/books")) == 10
         assert calls.count(("POST", "/post-target")) == 1
         assert sum(urlsplit(e.url).path == "/api/books" and e.response_body is not None
