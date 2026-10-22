@@ -270,7 +270,53 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             until(lambda:any(isinstance(w,Gtk.Label) and '2 / 20' in w.get_text()
                              for w in walk(controller.dialog)), compare_next)
 
-        until(candidate_allocated, candidate_click)
+        # A genuine mouse wheel must scroll the OUTER window without
+        # faking GtkAdjustment movement; the nested ListBoxes are separate.
+        def wheel_target():
+            if adjustment.get_value() > 0.5:
+                return False
+            summary = next(
+                w for w in walk(controller.dialog)
+                if isinstance(w, Gtk.Label)
+                and w.get_text().startswith('Périmètre local ·')
+            )
+            if not summary.get_mapped():
+                return False
+            window = controller.dialog
+            ok, rect = summary.compute_bounds(window)
+            if not ok or rect.get_width() <= 0 or rect.get_height() <= 0:
+                return False
+            cx = rect.get_x() + rect.get_width() / 2
+            cy = rect.get_y() + rect.get_height() / 2
+            if not (0 <= cx < window.get_width() and 0 <= cy < window.get_height()):
+                return False
+            picked = window.pick(cx, cy, Gtk.PickFlags.DEFAULT)
+            while picked is not None and picked is not summary:
+                picked = picked.get_parent()
+            return picked is summary
+
+        def send_wheel():
+            summary = next(
+                w for w in walk(controller.dialog)
+                if isinstance(w, Gtk.Label)
+                and w.get_text().startswith('Périmètre local ·')
+            )
+            x, y = device.widget_point(summary)
+            device.wheel(x, y, down=True, ticks=4)
+            until(lambda: adjustment.get_value() > 0.5, wheel_reached)
+
+        def wheel_reached():
+            report['checks']['P0_2712_physical_wheel_scroll_reached']=True
+            adjustment.set_value(0)
+            until(candidate_allocated, candidate_click)
+
+        if adjustment.get_upper() > adjustment.get_page_size() + 1:
+            adjustment.set_value(0)
+            until(wheel_target, send_wheel)
+        else:
+            # No scroll range means no wheel gesture is needed to reach
+            # these controls, and should not be counted as a wheel PASS.
+            until(candidate_allocated, candidate_click)
 
     def compare_next():
         report['checks']['inspection_candidate_navigation_reached']=True
@@ -456,7 +502,30 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert 'Fichiers candidats' in texts
         assert 'synthetic-599.epub' not in texts
         report['checks']['local_inspection_manual_does_not_change_candidate_set']=True
-        choose(widgets['provider'],0,lambda:choose(widgets['state'],3,candidates))
+        # Both real candidate buttons are enabled at 2 / 20. Verify actual
+        # XTEST Tab and Shift+Tab focus traversal rather than setting focus
+        # directly on the expected destination after each keypress.
+        previous = next(w for w in walk(controller.dialog)
+                        if isinstance(w, Gtk.Button)
+                        and w.get_label() == '◀ Candidat')
+        following = next(w for w in walk(controller.dialog)
+                         if isinstance(w, Gtk.Button)
+                         and w.get_label() == 'Candidat ▶')
+        assert previous.get_sensitive() and following.get_sensitive()
+        previous.grab_focus()
+        press('Tab')
+
+        def shift_back():
+            device.key('Shift_L', True)
+            press('Tab')
+            device.key('Shift_L', False)
+            until(lambda: previous.has_focus(), keyboard_reached)
+
+        def keyboard_reached():
+            report['checks']['P0_2712_tab_shift_tab_candidate_navigation']=True
+            choose(widgets['provider'],0,lambda:choose(widgets['state'],3,candidates))
+
+        until(lambda: following.has_focus(), shift_back)
 
     def candidates():
         assert controller.session.page(state='metadata_candidate').total==600
@@ -488,6 +557,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(lambda:controller.dialog is None,lambda:revoked(session))
 
     def revoked(session):
+        # The 920x620 inspection with long candidate actions MUST overflow.
+        # Never record a green E2E if the wheel branch was silently skipped
+        # at all three desktop resolutions; the gesture itself is the proof.
+        assert report['checks'].get('P0_2712_physical_wheel_scroll_reached') is True
+        assert report['checks'].get('P0_2712_tab_shift_tab_candidate_navigation') is True
         assert not session.valid() and not session.page().cases
         assert sources()==before
         report['checks']['local_inspection_epoch_revokes_window_and_sources_unchanged']=True
