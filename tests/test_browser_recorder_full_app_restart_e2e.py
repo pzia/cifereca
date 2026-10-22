@@ -47,8 +47,6 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
     from cifereca.core import CiferecaCore
     from cifereca.paths import data_dir
     from scripts.plugin_packaging import build_plugin_zip
-    from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-    from browser_recorder_vault import PrivateSessionVault
 
     # Running these real sessions is already covered by the separate three
     # headed Chromium E2E. This test isolates *full app boot + X11 close*.
@@ -77,6 +75,15 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
         core.plugins.set_enabled(PLUGIN_ID, True)
         assert core.plugins.status(PLUGIN_ID).state == "ready"
         assert core.plugins.service(PLUGIN_ID) is not None
+        installed_root = core.plugins.packages.version_root(
+            "org.cifereca.technical.browser-recorder", "0.2.8",
+        )
+        assert installed_root.is_dir()
+    # Only the *installed* plugin's code supplies fixture serializers; do not
+    # put the checked-out plugin source on the child's import path.
+    sys.path.insert(0, str(installed_root))
+    from browser_recorder_http import PrivateExchange, PrivateHttpTrace
+    from browser_recorder_vault import PrivateSessionVault
     vault = PrivateSessionVault(vault_dir)
     originals = {}
     for n in range(3):
