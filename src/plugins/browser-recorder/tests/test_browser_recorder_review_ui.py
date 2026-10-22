@@ -193,6 +193,12 @@ def test_private_http_review_requires_all_choices_and_never_exports(monkeypatch)
     combos = [row.children[-1] for row in panel.candidates_box.children]
     assert len(combos) == 2
     for row, combo in zip(panel._review.local_rows(), combos):
+        label = panel.candidates_box.children[combos.index(combo)].children[0].label
+        assert "Confiance non évaluée" in label
+        assert "suggestion heuristique" in label
+        assert "Provenance locale : " + ", ".join(row["fields"]) in label
+        assert row["value"] in label
+        assert "FAKE_AUTH_SECRET" not in label
         combo.set_active_id("anonymize" if row["value"] == "ACC77" else "keep")
     panel.preview()
     local_preview = panel.preview_text.get_buffer().text

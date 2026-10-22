@@ -25,12 +25,25 @@ class StoredPathReport:
     reasons: set[str] = field(default_factory=set)
     # Filled by the Core audit orchestrator, absent for standalone checks.
     duration_ms: int | None = None
+    # Only fixed SQLite placement-state classes; never raw path/ID/identity.
+    missing_by_sqlite_state: Counter = field(default_factory=Counter)
+    missing_unique_paths: int = 0
+    missing_unique_artifacts: int = 0
+    missing_unique_placements: int = 0
 
     def redacted(self):
         result = {'schema': 1, 'read_only': True,
                   'status': 'incomplete_scan' if self.reasons else 'complete',
                   'reasons': sorted(self.reasons),
-                  'counts': dict(sorted(Counter(self.states.values()).items()))}
+                  'counts': dict(sorted(Counter(self.states.values()).items())),
+                  'missing_path_context': {
+                      'sqlite_present': self.missing_by_sqlite_state['present'],
+                      'sqlite_missing': self.missing_by_sqlite_state['missing'],
+                      'sqlite_other': self.missing_by_sqlite_state['other'],
+                      'distinct_paths': self.missing_unique_paths,
+                      'distinct_artifacts_with_id': self.missing_unique_artifacts,
+                      'distinct_placements_with_id': self.missing_unique_placements,
+                  }}
         if type(self.duration_ms) is int and 0 <= self.duration_ms <= 30_000:
             result['duration_ms'] = self.duration_ms
         return result
@@ -67,6 +80,9 @@ def inspect_stored_paths(snapshot: EvidenceSnapshot, roots: dict[str, tuple[Path
         result.reasons.add('nofollow_unavailable')
         return result
     deadline = time.monotonic() + seconds
+    # Sensitive strings exist only inside this private call. The report
+    # retains strict aggregate integer counts, never a set of raw IDs/paths.
+    missing_paths, missing_artifacts, missing_placements = set(), set(), set()
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     for index, row in enumerate(snapshot.tables.get('placements', [])):
         if cancelled():
@@ -130,6 +146,20 @@ def inspect_stored_paths(snapshot: EvidenceSnapshot, roots: dict[str, tuple[Path
             if root_fd >= 0:
                 os.close(root_fd)
         result.states[index] = state
+        if state == 'stored_path_missing':
+            sqlite_state = row.get('state')
+            bucket = sqlite_state if sqlite_state in ('present', 'missing') else 'other'
+            result.missing_by_sqlite_state[bucket] += 1
+            missing_paths.add(raw)
+            artifact = row.get('artifact_id')
+            placement = row.get('placement_id')
+            if type(artifact) is str and artifact:
+                missing_artifacts.add(artifact)
+            if type(placement) is str and placement:
+                missing_placements.add(placement)
+            result.missing_unique_paths = len(missing_paths)
+            result.missing_unique_artifacts = len(missing_artifacts)
+            result.missing_unique_placements = len(missing_placements)
         if state == 'stored_path_unavailable':
             result.reasons.add('stored_path_unavailable')
     return result

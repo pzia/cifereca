@@ -275,6 +275,8 @@ class IdentifierReview:
         if type(text) is not str or len(text) > MAX_TEXT:
             raise RecorderError("review_limit")
         self._reserve_pseudonyms(html.unescape(unquote(text)))
+        counts_before = {value: c.occurrences for value, c in self._by_value.items()}
+        scalars = [text]
         if "json" in mime:
             try:
                 data = json.loads(text)
@@ -282,6 +284,18 @@ class IdentifierReview:
                 pass
             else:
                 self._json(data, where)
+                # Count actual scalar values, not their field names or the
+                # number of detectors that recognized them.
+                scalars = []
+                pending = [data]
+                while pending:
+                    value = pending.pop()
+                    if type(value) is dict:
+                        pending.extend(value.values())
+                    elif type(value) is list:
+                        pending.extend(value)
+                    elif type(value) in (str, int, float):
+                        scalars.append(value)
         if mime == "application/x-www-form-urlencoded":
             self._pairs(text, where)
         for match in _PAIRS.finditer(text):
@@ -311,6 +325,22 @@ class IdentifierReview:
                              (_JWT, "access_token")):
             for match in pattern.finditer(text):
                 self._observe(key, match.group(), where + ":text")
+
+        for value, candidate in self._by_value.items():
+            count = 0
+            forms = sorted(_variants(value), key=len, reverse=True)
+            for scalar in scalars:
+                if type(scalar) is not str:
+                    count += str(scalar) == value
+                    continue
+                # Match encoded forms once, longest first. A NUL separator
+                # prevents joining text into new matches; candidate values
+                # cannot contain control characters. No private regex cache.
+                remaining = scalar
+                for form in forms:
+                    count += remaining.count(form)
+                    remaining = remaining.replace(form, "\0")
+            candidate.occurrences = counts_before.get(value, 0) + count
 
     def _url(self, text, where):
         if type(text) is not str or len(text) > 4096:

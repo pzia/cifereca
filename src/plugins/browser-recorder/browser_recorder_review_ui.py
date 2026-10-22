@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from threading import Event
+from time import monotonic
 
 from browser_recorder import RecorderError, site_origin
 from browser_recorder_http import CapturePause, record_http
@@ -555,6 +556,18 @@ class PrivateReviewPanel:
         except Exception:
             # Optional Diagnostics must not interrupt private review or reveal
             # exceptions from a provider, exporter, or installed plugin.
+            pass
+
+    def _emit_private_export(self, code, started, output_bytes=0):
+        try:
+            if callable(self._diagnostic):
+                self._diagnostic(
+                    "private_zip_export", code,
+                    duration_ms=max(0, int((monotonic() - started) * 1000)),
+                    output_bytes=output_bytes,
+                )
+        except Exception:
+            # Optional/older Diagnostics cannot affect an encrypted export.
             pass
 
     def is_scanning(self):
@@ -1294,6 +1307,7 @@ class PrivateReviewPanel:
             Gtk.FileChooserAction.SELECT_FOLDER, "Choisir", "Annuler",
         )
         self._private_destination_dialog = chooser
+        started = monotonic()
 
         def responded(dialog, response):
             if dialog is not self._private_destination_dialog:
@@ -1306,6 +1320,8 @@ class PrivateReviewPanel:
                     path = selected.get_path() if selected else None
                     if path:
                         self.private_export_directory.set_text(path)
+                elif not self._closed:
+                    self._emit_private_export("private_zip_export_cancelled", started)
             finally:
                 dialog.destroy()
 
@@ -1320,6 +1336,7 @@ class PrivateReviewPanel:
                 "Export privé refusé : confirmation spécifique requise."
             )
             return
+        started = monotonic()
         self.private_export_confirm.set_active(False)
         sid = self.session_list.get_active_id()
         path = self.private_export_directory.get_text().strip()
@@ -1332,11 +1349,13 @@ class PrivateReviewPanel:
                 "Choisir une session, un dossier privé et une nouvelle phrase "
                 "secrète d'export distincte (12 caractères minimum)."
             )
+            self._emit_private_export("private_zip_export_failed", started)
             return
         if passphrase == export_passphrase:
             self.status.set_label(
                 "Utiliser une phrase d'export différente de celle du coffre."
             )
+            self._emit_private_export("private_zip_export_failed", started)
             return
         stored = None
         try:
@@ -1352,10 +1371,16 @@ class PrivateReviewPanel:
                 "ZIP privé refusé : déverrouillage, répertoire 0700 ou "
                 "limite de sécurité incorrecte. Aucun export non chiffré."
             )
+            self._emit_private_export("private_zip_export_failed", started)
             return
         finally:
             if stored is not None:
                 stored.trace.destroy()
+        try:
+            output_bytes = (Path(path) / filename).stat(follow_symlinks=False).st_size
+        except OSError:
+            output_bytes = None  # Export succeeded; metric unavailable.
+        self._emit_private_export("private_zip_exported", started, output_bytes)
         self.status.set_label(
             "ZIP PRIVÉ CHIFFRÉ enregistré : " + filename
             + " — ne pas partager sans revue ; aucun téléversement."
@@ -1422,7 +1447,10 @@ class PrivateReviewPanel:
             # Candidate values are shown only to the local operator.
             label = Gtk.Label(
                 label=f"{row['key']} · {row['kind']} · {row['occurrences']}× : "
-                      f"{row['value']}",
+                      f"{row['value']}\n"
+                      "Confiance non évaluée : suggestion heuristique, "
+                      "sensibilité à vérifier.\n"
+                      "Provenance locale : " + ", ".join(row["fields"]),
                 xalign=0, wrap=True,
             )
             label.set_selectable(True)

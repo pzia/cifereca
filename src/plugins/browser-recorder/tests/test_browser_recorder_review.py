@@ -53,6 +53,45 @@ def _by_value(review):
     return {row["value"]: row for row in review.local_rows()}
 
 
+@pytest.mark.parametrize("mime,body", [
+    ("application/json", json.dumps({"email": "reader@example.org", "uuid": UUID})),
+    ("application/xml", f"<email>reader@example.org</email><uuid>{UUID}</uuid>"),
+    ("text/html", f'<input name="email" value="reader@example.org"><p>{UUID}</p>'),
+    ("application/x-www-form-urlencoded", "email=reader%40example.org&uuid=" + UUID),
+])
+def test_occurrences_count_source_values_once_across_overlapping_detectors(mime, body):
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST", ORIGIN + "/catalog",
+        request_headers={"content-type": mime}, request_body=body,
+    ))
+    review = IdentifierReview(trace)
+    rows = _by_value(review)
+    assert rows["reader@example.org"]["occurrences"] == 1
+    assert rows[UUID]["occurrences"] == 1
+    review.destroy()
+    trace.destroy()
+
+
+def test_occurrences_include_repeated_json_values_but_not_keys_or_numeric_substrings():
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST", ORIGIN + "/catalog?ProductId=214",
+        request_headers={"content-type": "application/json"},
+        request_body=json.dumps({
+            "ProductId": 214, "other": 9214, "214": "unrelated",
+            "email": "reader@example.org",
+            "description": "Contact reader@example.org twice reader@example.org",
+        }),
+    ))
+    review = IdentifierReview(trace)
+    rows = _by_value(review)
+    assert rows["214"]["occurrences"] == 2
+    assert rows["reader@example.org"]["occurrences"] == 3
+    review.destroy()
+    trace.destroy()
+
+
 def test_independent_decisions_keep_product_anonymize_account_exclude_uuid():
     trace = fixture()
     review = IdentifierReview(trace)
