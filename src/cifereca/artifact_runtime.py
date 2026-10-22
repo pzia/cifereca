@@ -574,7 +574,27 @@ class LibraryMaintenanceBrokerImpl:
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
             old=Path(str(row.get("path") or "")).resolve(); new=old.with_name(str(plan.facts.get("new_filename") or old.name))
             if new != old:
-                if new.exists() and sha256_file(new) != sha256_file(old): raise Conflict("Collision de nom", code="library_filename_conflict")
+                # Never overwrite or merge a path on SHA equality alone:
+                # a different identity/provider/edition may share those bytes.
+                # Perform this check before os.replace() can change the disk.
+                target = self.service.storage.placement_for_path(new)
+                if target and str(target.get("placement_id")) != str(row.get("placement_id")):
+                    if not all((
+                        row.get("identity_id"),
+                        row.get("provider_id"),
+                        row.get("artifact_id"),
+                        row.get("source_item_id"),
+                        target.get("identity_id") == row.get("identity_id"),
+                        target.get("provider_id") == row.get("provider_id"),
+                        target.get("artifact_id") == row.get("artifact_id"),
+                        target.get("source_item_id") == row.get("source_item_id"),
+                    )):
+                        raise Conflict("Collision de placement", code="library_filename_conflict")
+                if new.exists():
+                    if target is None:
+                        raise Conflict("Destination existante non attestée", code="library_filename_conflict")
+                    if sha256_file(new) != sha256_file(old):
+                        raise Conflict("Collision de nom", code="library_filename_conflict")
                 os.replace(old,new)
                 self.service.storage.relocate_local_path(old,new,identity_id=str(row.get("identity_id") or ""),provider_id=str(row.get("provider_id") or "local"))
             placed=self.service.storage.placement_for_path(new)
