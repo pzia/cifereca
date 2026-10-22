@@ -1136,3 +1136,39 @@ def test_preflight_marks_retained_plain_text_as_projection_omission():
     finally:
         review.destroy()
         trace.destroy()
+
+
+def test_zip_preserves_closed_collector_state_separately_from_projection():
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges = [
+        PrivateExchange(1, "GET", url=ORIGIN + "/binary",
+                        status=200, response_body_state="binary_skipped"),
+        PrivateExchange(2, "POST", url=ORIGIN + "/api", status=200,
+                        request_body='{"BookId":214}',
+                        request_body_state="captured",
+                        request_headers={"content-type": "application/json"}),
+        PrivateExchange(3, "GET", url=ORIGIN + "/hostile",
+                        status=200, response_body_state="PRIVATE_STATE_VALUE"),
+    ]
+    review = IdentifierReview(trace)
+    try:
+        for item in review.candidates():
+            review.decide(item.key, "keep" if item.value == "214" else "anonymize")
+        preview = prepare_reviewed_zip(review).preview()
+        files = {item["name"]: item["text"] for item in preview["members"]}
+        binary = json.loads(files["exchanges/0001.json"])
+        assert binary["bodies"]["response"] == {
+            "state": "body_omitted",
+            "capture_state": "binary_skipped",
+            "file": None,
+        }
+        posted = json.loads(files["exchanges/0002.json"])
+        assert posted["bodies"]["request"]["capture_state"] == "captured"
+        assert posted["bodies"]["request"]["state"] == "captured_json_structure"
+        assert posted["bodies"]["request"]["file"] in files
+        hostile = json.loads(files["exchanges/0003.json"])
+        assert hostile["bodies"]["response"]["capture_state"] == "unknown"
+        assert "PRIVATE_STATE_VALUE" not in json.dumps(preview)
+    finally:
+        review.destroy()
+        trace.destroy()
