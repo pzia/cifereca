@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.9, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.10, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -511,7 +511,7 @@ physique sur SSD/backups. Aucun ZIP n'est automatiquement produit ou
 transmis. Les tests fonctionnent uniquement sur des données fictives.
 
 
-## Vérification d'authenticité des noms lors de la rétention (0.2.9)
+## Vérification d'authenticité des noms lors de la rétention (0.2.10)
 
 Une étiquette de session est protégée par AES-256-GCM et associée
 cryptographiquement à un ID de capture précis. La revue de rétention
@@ -521,3 +521,21 @@ transplanté depuis une autre session ou chiffré avec une autre clé,
 l'aperçu est refusé et **aucune suppression groupée n'est autorisée**.
 Les captures, mêmes anciennes, sont préservées. La confirmation manuelle
 et le délai d'expiration du plan restent obligatoires.
+
+
+## Renommage chiffré et concurrence avec la suppression (0.2.10, #2725)
+
+Le renommage privé authentifie **sous le même verrou exclusif POSIX**
+l'archive source et son nom AES-GCM existant, puis écrit le nouveau sidecar
+atomiquement. La suppression d'une session ou une politique de rétention
+manuelle ne peut plus intervenir entre la vérification cryptographique et
+l'écriture du nom. Si la capture a été supprimée ou si un nom a été
+altéré dans l'intervalle, le renommage échoue sans laisser de sidecar
+orphelin, sans restaurer une session supprimée et sans écraser une
+métadonnée non authentifiée.
+
+Les tests simulent une suppression effective et une altération du nom
+au moment exact où un renommage attend le verrou ; aucune donnée privée
+fictive n'est publiée. Le verrou est coopératif entre processus Cifereca
+et n'est pas une garantie contre un acteur local ayant accès en écriture
+au coffre en dehors de l'application.
