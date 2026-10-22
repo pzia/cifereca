@@ -106,6 +106,8 @@ def save_session_llm_zip(
         return len(payload)
     except VaultError:
         raise
+    except FileExistsError as exc:
+        raise VaultError("private_zip_exists") from exc
     except OSError as exc:
         # No path or OS exception text may appear in the UI/diagnostics.
         raise VaultError("private_zip_write_failed") from exc

@@ -129,14 +129,14 @@ def test_simple_llm_export_works_in_0755_folder_without_second_secret(tmp_path):
         data = json.loads(zf.read("trace.json"))
         assert ACCOUNT in data["exchanges"][0]["url"]
         assert TOKEN in data["exchanges"][0]["request_body"]
-    with pytest.raises(VaultError, match="private_zip_write_failed"):
+    with pytest.raises(VaultError, match="private_zip_exists"):
         save_session_llm_zip(session, destination, confirmed=True)
     assert destination.read_bytes().startswith(b"PK")
     assert (vault.path / (session.session_id + ".cbrv")).read_bytes() == vault_blob
     assert ACCOUNT.encode() not in vault_blob
     link = downloads / "symlink.zip"
     link.symlink_to(destination)
-    with pytest.raises(VaultError, match="private_zip_write_failed"):
+    with pytest.raises(VaultError, match="private_zip_exists"):
         save_session_llm_zip(session, link, confirmed=True)
     assert link.is_symlink()
     other = tmp_path / "relative.zip"

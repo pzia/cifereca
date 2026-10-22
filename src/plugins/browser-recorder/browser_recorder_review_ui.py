@@ -21,6 +21,30 @@ from browser_recorder_private_zip import save_session_llm_zip
 
 _REVIEW_PAGE_SIZE = 24  # Bound GTK widgets even for 256 distinct private IDs.
 
+_PRIVATE_EXPORT_FAILURES = {
+    "vault_unlock_failed": "Coffre impossible à déverrouiller : fermez-le puis ouvrez-le avec la bonne phrase secrète. Une archive altérée peut aussi empêcher son ouverture.",
+    "vault_passphrase_required": "Ouvrez le coffre avec une phrase secrète de 12 caractères minimum, puis réessayez.",
+    "vault_crypto_unavailable": "Chiffrement indisponible : ouvrez Plugins → Browser Recorder → Installer les dépendances Python…, puis réessayez.",
+    "vault_unsafe_directory": "Dossier du coffre non sûr : vérifiez son propriétaire et ses droits privés (0700). Le dossier de destination du ZIP n’exige pas ces droits.",
+    "vault_unsafe_file": "Session du coffre inaccessible ou non sûre : actualisez la liste et choisissez une session valide.",
+    "vault_invalid": "Archive privée invalide ou incompatible : choisissez une autre session ou mettez à jour Browser Recorder. Ne supprimez pas la source.",
+    "private_zip_invalid": "Archive privée invalide : rouvrez la session depuis le coffre, puis réessayez.",
+    "vault_limit": "Limite de taille du coffre atteinte : choisissez une session plus courte.",
+    "private_zip_limit": "Limite de taille du ZIP atteinte : choisissez une session plus courte.",
+    "private_zip_destination": "Destination invalide : choisissez un dossier existant et un nom de fichier terminé par .zip.",
+    "private_zip_exists": "Ce fichier existe déjà : choisissez un autre nom dans Enregistrer sous. Aucun écrasement.",
+    "private_zip_write_failed": "Écriture impossible : vérifiez l’espace libre et les droits d’écriture du dossier, puis réessayez.",
+}
+
+
+def _private_export_failure_message(error):
+    # Never stringify an exception or trust an arbitrary string argument.
+    code = error.args[0] if type(error) is VaultError and error.args else None
+    return (_PRIVATE_EXPORT_FAILURES.get(code,
+            "Export privé impossible : rouvrez la session et choisissez une autre destination, puis réessayez.")
+            if type(code) is str else
+            "Export privé impossible : rouvrez la session et choisissez une autre destination, puis réessayez.")
+
 # User-requested capture failures are rendered with fixed, actionable text.
 # RecorderError.args can contain arbitrary provider/URL text: never format it
 # into GTK, Diagnostics, logs or ZIP. These are labels, not diagnostic data.
@@ -1610,10 +1634,14 @@ class PrivateReviewPanel:
             else self.session_list.get_active_id()
         )
         passphrase = self._vault_password()
-        if not sid or len(passphrase) < 12:
+        if not sid:
             self.status.set_label(
-                "Sélectionner une session et saisir sa phrase secrète "
-                "du coffre (12 caractères minimum)."
+                "Aucune session sélectionnée : choisissez une session dans Sessions et export privé."
+            )
+            return
+        if len(passphrase) < 12:
+            self.status.set_label(
+                "Coffre fermé : cliquez Ouvrir le coffre avec votre phrase secrète, puis réessayez l’export."
             )
             return
         generation = self._generation
@@ -1645,12 +1673,9 @@ class PrivateReviewPanel:
                 size = save_session_llm_zip(
                     stored, Path(destination), confirmed=True,
                 )
-            except Exception:
+            except Exception as error:
                 # Never include chosen pathname or decrypted provider text.
-                self.status.set_label(
-                    "Export impossible : clé/coffre/destination invalide, "
-                    "limite atteinte ou fichier existant. Aucun écrasement."
-                )
+                self.status.set_label(_private_export_failure_message(error))
                 self._emit_private_export("private_zip_export_failed", started)
                 return
             finally:

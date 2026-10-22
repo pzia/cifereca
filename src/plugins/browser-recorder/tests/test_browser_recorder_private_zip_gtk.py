@@ -189,15 +189,30 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         assert panel.tabs.get_current_page() == 3
         assert panel.current_private_export_button.get_sensitive()
         assert len(PrivateSessionVault(tmp_path / "vault").list_ids()) == 1
+        # Failed destination then retry, without entering the master again.
+        panel.current_private_export_button.emit("clicked")
+        flush()
+        assert "existe déjà" in panel.status.get_label()
+        assert "autre nom" in panel.status.get_label()
+        assert panel.vault_passphrase.get_text() == ""
+        assert outcomes[-1][1] == "private_zip_export_failed"
+        panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(
+            folder / "session-retry.zip"
+        )
+        panel.current_private_export_button.emit("clicked")
+        flush()
+        assert (folder / "session-retry.zip").is_file()
+        assert outcomes[-1][1] == "private_zip_exported"
+        assert panel.vault_passphrase.get_text() == ""
     finally:
         panel.destroy()
         window.close()
         flush()
     # The terminal result remains visible after the private GTK page closes.
     result = query_diagnostic_events(collector, source="core_events", log_path=tmp_path / "absent")
-    assert result["total"] == 1
+    assert result["total"] == 3
     assert result["events"][0]["detail"]["code"] == "private_zip_exported"
     assert result["events"][0]["detail"]["output_bytes"] == files[0].stat().st_size
     assert query_diagnostic_events(collector, source="core_events", severity="error",
-                                   log_path=tmp_path / "absent")["total"] == 0
+                                   log_path=tmp_path / "absent")["total"] == 1
     assert ACCOUNT not in repr(result) and TOKEN not in repr(result)
