@@ -158,6 +158,34 @@ def test_exported_coverage_report_and_timeline_are_safe_and_correlated(tmp_path)
     trace.destroy()
 
 
+def test_full_240_exchange_capture_with_two_small_bodies_each_exports():
+    """Collector cap must not be blocked solely by an inconsistent member cap."""
+    trace = PrivateHttpTrace((ORIGIN,))
+    for number in range(1, 241):
+        trace.exchanges.append(PrivateExchange(
+            number, "POST", url=ORIGIN + "/api/books",
+            status=200, mime="application/json",
+            request_headers={"content-type": "application/json"},
+            response_headers={"content-type": "application/json"},
+            request_body='{"status":"ready"}',
+            response_body='{"status":"ready"}',
+        ))
+    review = IdentifierReview(trace)
+    assert review.pending() == 0
+    plan = prepare_reviewed_zip(review)
+    members = {item["name"]: item for item in plan.preview()["members"]}
+    assert "coverage-report.json" in members
+    assert len(members) >= 720
+    assert "bodies/0240-request.txt" in members
+    assert "bodies/0240-response.txt" in members
+    assert "exchanges/0240.json" in members
+    manifest = json.loads(members["manifest.json"]["text"])
+    assert manifest["exchange_count"] == 240
+    assert manifest["body_coverage"]["exported_structural_bodies"] == 480
+    review.destroy()
+    trace.destroy()
+
+
 def test_unreviewed_candidates_and_duplicate_exchange_ids_fail_closed():
     trace, review = setup()
     review.decide(next(iter(review.candidates())).key, "anonymize")
