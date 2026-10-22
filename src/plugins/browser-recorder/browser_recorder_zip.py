@@ -213,10 +213,11 @@ def _safe_url(url: str, approved: frozenset[str],
 class _MarkupSkeleton(HTMLParser):
     """Keep DOM selectors/element nesting, not private text/attributes."""
 
-    def __init__(self):
+    def __init__(self, approved=frozenset()):
         super().__init__(convert_charrefs=True)
         self.parts = []
         self.budget = 0
+        self.approved = approved
 
     def _emit(self, text: str):
         self.budget += len(text)
@@ -259,8 +260,11 @@ class _MarkupSkeleton(HTMLParser):
             self._emit("</" + tag + ">")
 
     def handle_data(self, data):
-        if data.strip():
-            self._emit("[TEXT]")
+        value = data.strip()
+        if value:
+            # A complete text node may contain an explicitly reviewed value.
+            # Never publish a substring of mixed, unreviewed private prose.
+            self._emit(escape(value) if value in self.approved else "[TEXT]")
 
     def handle_comment(self, data):
         pass
@@ -434,7 +438,7 @@ def _body(raw, mime, approved):
             return None, "body_omitted"
     if mime in {"text/html", "application/xhtml+xml"}:
         try:
-            parser = _MarkupSkeleton()
+            parser = _MarkupSkeleton(approved)
             parser.feed(raw)
             return "".join(parser.parts), "captured_markup_structure"
         except (ValueError, TypeError, RecorderError):
@@ -453,6 +457,16 @@ def _body(raw, mime, approved):
             # already apply this same structural whitelist.
             for k, v in pairs if _safe_field_key(k)
         ], ensure_ascii=True), "captured_form_structure"
+    if mime == "text/plain":
+        # Some HTTP APIs label JSON as text/plain. Retain its *reviewed*
+        # structure, not arbitrary prose, XML licenses, or raw text. Reuse
+        # the exact JSON projection and output limits used for proper MIME.
+        try:
+            bounded = len(raw.encode("utf-8")) <= 32768
+        except UnicodeError:
+            return None, "body_omitted"
+        if bounded and raw.lstrip().startswith(("{", "[")):
+            return _body(raw, "application/json", approved)
     # Unknown plain text may contain licenses, auth material or private prose.
     return None, "body_omitted"
 
