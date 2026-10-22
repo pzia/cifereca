@@ -57,7 +57,8 @@ def test_three_session_fixture_opt_in_manifest_without_gtk():
     descriptor = manifest["plugins"][0]
     assert descriptor["type"] == "ui.page"
     assert descriptor["enabled_by_default"] is False
-    assert "playwright" in " ".join(descriptor["system_requires"])
+    assert any(item.get("name") == "playwright"
+               for item in descriptor["system_requires"])
     assert PASSPHRASE.startswith("FICTIONAL-")
 
 
