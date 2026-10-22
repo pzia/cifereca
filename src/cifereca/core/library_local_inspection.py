@@ -139,14 +139,36 @@ def _right_bibliography(right, matches):
     media = right.get('display_media_format')
     media = (media if type(media) is str
              and media in {'epub', 'kepub', 'pdf', 'acsm'} else 'Non renseigné')
+    # Provider-private right kind matters for temporary library loans.
+    # Neither state="active" nor an expiry string confirms that a Paris
+    # loan is currently valid. No ADEPT/license/remote read is performed.
+    is_paris_loan = (right.get('provider_id') == 'paris'
+                     and right.get('entitlement_type') == 'loan')
+    kind = (
+        'Prêt temporaire (consultation uniquement)' if is_paris_loan
+        else 'Achat / possession enregistrée'
+        if right.get('entitlement_type') == 'owned'
+        else 'Nature non attestée (consultation uniquement)'
+    )
+    expiry = _text(right.get('expires_at'))[:96].strip()
+    loan_notes = (
+        '• Échéance déclarée dans SQLite : ' + (expiry or 'Non renseignée'),
+        '• Validité actuelle du prêt / identité ADEPT : non démontrée '
+        'par cet enregistrement local. Aucune prolongation, restitution '
+        'ou association permanente autorisée.',
+    ) if is_paris_loan else ()
     lines = (
-        'Bibliographie de l’achat / droit (description, pas preuve de fichier) :',
+        ('Bibliographie du prêt (description, pas preuve de fichier) :'
+         if is_paris_loan else
+         'Bibliographie de l’achat / droit (description, pas preuve de fichier) :'),
+        '• Nature du droit : ' + kind,
         '• Titre : ' + title,
         '• Auteur(s) : ' + authors,
         '• Format déclaré : ' + media,
         '• Fournisseur déclaré : ' + _text(right.get('provider_id')),
         '• Édition fournisseur : ' + (_text(right.get('item_id')) or 'Non renseignée'),
-        '• Statut de droit : ' + (_text(right.get('state')) or 'Indéterminé'),
+        '• Statut de droit enregistré : ' + (_text(right.get('state')) or 'Indéterminé'),
+        *loan_notes,
         '• Origine du titre : ' + title_source,
         '• Origine des auteurs : ' + authors_source,
         '• Catalogue : ' + catalogue_status,
