@@ -37,6 +37,27 @@ def result_text(result) -> str:
     return "\n\n".join(sections)
 
 
+def _split_compact_results(text: str) -> tuple[str, str]:
+    """Separate the read-only counter appendix without hiding limitations.
+
+    Works only on result_text's constant public headings; no facts or private
+    execution data are examined. A legacy/unknown text remains fully visible.
+    """
+    if type(text) is not str:
+        return "", ""
+    introduction, marker, appendix = text.partition("\n\nRésultats :\n")
+    if not marker:
+        return text, ""
+    # Complete audits may put their warnings after the counters; keep these
+    # important safety limitations ABOVE the collapsed details too.
+    counters, after_marker, later_warnings = appendix.partition(
+        "\n\nAvertissements et limites :\n"
+    )
+    if after_marker:
+        introduction += "\n\nAvertissements et limites :\n" + later_warnings
+    return introduction, "Résultats :\n" + counters
+
+
 class MaintenanceResultView:
     """GTK-thread-owned view, revocable independently from session report text."""
 
@@ -107,7 +128,9 @@ class MaintenanceResultView:
         Gtk, Adw = self.Gtk, self.Adw
         window = Adw.Window(transient_for=self.parent, modal=False,
                             title=self.title)
-        window.set_default_size(860, 650)
+        # Compact by default: the long audit appendix is optional, not a
+        # prerequisite to reaching the action to inspect actual books.
+        window.set_default_size(860, 475)
         window.set_decorated(True)
         window.set_resizable(True)
 
@@ -128,17 +151,36 @@ class MaintenanceResultView:
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         for edge in ('top', 'bottom', 'start', 'end'):
             getattr(body, 'set_margin_'+edge)(12)
-        label = Gtk.Label(label=self.text, xalign=0, yalign=0)
-        label.set_wrap(True)
-        label.set_wrap_mode(self.Pango.WrapMode.WORD_CHAR)
-        label.set_selectable(True)
-        label.set_max_width_chars(100)
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_min_content_height(100)
-        scroll.set_vexpand(True)
-        scroll.set_child(label)
-        body.append(scroll)
+        introduction, appendix = _split_compact_results(self.text)
+        intro_label = Gtk.Label(label=introduction, xalign=0, yalign=0)
+        intro_label.set_wrap(True)
+        intro_label.set_wrap_mode(self.Pango.WrapMode.WORD_CHAR)
+        intro_label.set_selectable(True)
+        intro_label.set_max_width_chars(100)
+        intro_scroll = Gtk.ScrolledWindow()
+        intro_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        intro_scroll.set_min_content_height(64)
+        intro_scroll.set_max_content_height(180)
+        intro_scroll.set_propagate_natural_height(True)
+        intro_scroll.set_child(intro_label)
+        body.append(intro_scroll)
+        if appendix:
+            details = Gtk.Expander(label='Afficher les statistiques détaillées')
+            details.set_name('reconciliation-result-statistics')
+            details.set_expanded(False)
+            details_label = Gtk.Label(label=appendix, xalign=0, yalign=0)
+            details_label.set_wrap(True)
+            details_label.set_wrap_mode(self.Pango.WrapMode.WORD_CHAR)
+            details_label.set_selectable(True)
+            details_label.set_max_width_chars(100)
+            details_scroll = Gtk.ScrolledWindow()
+            details_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            details_scroll.set_min_content_height(100)
+            details_scroll.set_max_content_height(390)
+            details_scroll.set_propagate_natural_height(False)
+            details_scroll.set_child(details_label)
+            details.set_child(details_scroll)
+            body.append(details)
 
         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         examine = Gtk.Button(label="Examiner les cas…")
@@ -148,7 +190,9 @@ class MaintenanceResultView:
         close = Gtk.Button(label="Fermer")
         controls.append(examine)
         controls.append(close)
-        body.append(controls)
+        # The actual action remains mapped even when warnings or statistics
+        # overflow the report's scrollable content.
+        top.add_bottom_bar(controls)
         top.set_content(body)
         window.set_content(top)
 
