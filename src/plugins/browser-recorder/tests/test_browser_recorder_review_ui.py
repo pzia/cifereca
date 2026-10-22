@@ -161,10 +161,13 @@ def make_panel(monkeypatch, *, allowed=True, busy=False, export_directory=None):
         request_headers={"content-type": "application/json"},
     ))
 
-    def recorder(start, stop, *, pause_control=None, metadata_only_origins=()):
+    def recorder(start, stop, *, pause_control=None, metadata_only_origins=(),
+                 download_destination=None, status=None):
         assert start.startswith(ORIGIN) and stop.is_set()
         assert pause_control is not None
         assert type(metadata_only_origins) is tuple
+        assert callable(download_destination)
+        assert callable(status)
         raw.third_party_scope = metadata_only_origins
         return raw
 
