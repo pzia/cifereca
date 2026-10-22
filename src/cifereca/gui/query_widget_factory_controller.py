@@ -35,18 +35,29 @@ def _paris_search_notice(window):
         ]
         if not matching or getattr(matching[0], "catalog_search_available", None) is True:
             return ""
-        accounts_reader = getattr(service, "accounts_for_identity", None)
-        accounts = accounts_reader(identity) if callable(accounts_reader) else ()
-        configured = any(
-            getattr(account, "provider_id", None) == "paris"
-            and getattr(account, "identity_id", None) == identity
-            for account in accounts
-        )
+        # service.accounts_for_identity contains *connected* accounts only.
+        # A failed login removes those rows: it cannot prove the absence of
+        # configured credentials. Consult the identity-scoped config projection.
+        config = getattr(service, "config", None)
+        config_reader = getattr(config, "provider_accounts", None)
+        if not callable(config_reader):
+            return "Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+        rows = config_reader("paris")
+        if type(rows) not in (list, tuple) or len(rows) > 128:
+            return "Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+        own = [
+            row for row in rows
+            if type(row) is dict and row.get("identity_id") == identity
+        ]
     except Exception:
         # Never leak provider error text, credentials or another identity's state.
-        return ""
-    if configured:
+        return "Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+    if any(row.get("enabled", True) is True for row in own):
         return "Bibliothèques de Paris : compte configuré mais source non connectée ; recherche en ligne indisponible."
+    if own:
+        return "Bibliothèques de Paris : compte désactivé pour ce profil ; recherche en ligne indisponible."
+    if any(type(row) is dict and not row.get("identity_id") for row in rows):
+        return "Bibliothèques de Paris : source non connectée ; profil du compte à vérifier."
     return "Bibliothèques de Paris : aucun compte rattaché à ce profil ; recherche en ligne indisponible."
 
 
