@@ -204,23 +204,44 @@ class PythonDependencyManager:
         with tempfile.NamedTemporaryFile(prefix="cifereca-pip-", suffix=".json", delete=False) as report:
             report_path = Path(report.name)
         try:
-            resolver = [
-                sys.executable, "-m", "pip", "--isolated", "install",
-                "--disable-pip-version-check", "--dry-run", "--report",
-                str(report_path), "--no-cache-dir", "--only-binary=:all:",
-                "--index-url", "https://pypi.org/simple", *requested,
-            ]
-            proc = subprocess.run(resolver, text=True, capture_output=True, timeout=300, check=False)
-            if proc.returncode != 0:
+            # pip itself finds an older compatible release when a selected
+            # wheel is quarantined. Bounded --constraint retries only; never
+            # implement our own dependency traversal or blindly downgrade.
+            constraints: dict[str, str] = {}
+            verified = None
+            for _attempt in range(12):
+                resolver = [
+                    sys.executable, "-m", "pip", "--isolated", "install",
+                    "--disable-pip-version-check", "--dry-run", "--report",
+                    str(report_path), "--no-cache-dir", "--only-binary=:all:",
+                    "--index-url", "https://pypi.org/simple", *requested,
+                ]
+                if constraints:
+                    constraint_path = report_path.with_suffix(".constraints.txt")
+                    constraint_path.write_text(
+                        "".join(f"{name}<{version}\\n" for name, version in sorted(constraints.items())),
+                        encoding="utf-8",
+                    )
+                    resolver += ["--constraint", str(constraint_path)]
+                proc = subprocess.run(resolver, text=True, capture_output=True, timeout=300, check=False)
+                if proc.returncode != 0:
+                    raise PythonDependencyError("dependency_not_eligible")
+                try:
+                    plan = json.loads(report_path.read_text(encoding="utf-8"))
+                    verified = check_pip_report(plan, now=datetime.now(timezone.utc))
+                    break
+                except QuarantineRejected as exc:
+                    # A missing proof, mismatch or yanked package must NEVER
+                    # be treated as an excuse to select an arbitrary fallback.
+                    if exc.args != ("dependency_too_recent",) or not exc.name or not exc.version:
+                        raise PythonDependencyError(str(exc)) from None
+                    if exc.name in constraints:
+                        raise PythonDependencyError("dependency_not_eligible") from None
+                    constraints[exc.name] = exc.version
+                except (OSError, ValueError, TypeError):
+                    raise PythonDependencyError("dependency_provenance_unavailable") from None
+            if verified is None:
                 raise PythonDependencyError("dependency_not_eligible")
-            try:
-                plan = json.loads(report_path.read_text(encoding="utf-8"))
-                verified = check_pip_report(plan, now=datetime.now(timezone.utc))
-            except (OSError, ValueError, TypeError, QuarantineRejected) as exc:
-                raise PythonDependencyError(
-                    str(exc) if isinstance(exc, QuarantineRejected)
-                    else "dependency_provenance_unavailable"
-                ) from None
             if not verified:
                 return  # All requested constraints were already satisfied.
             # SHA-fragment URLs retain the EXACT attested wheel choice, while
@@ -235,6 +256,7 @@ class PythonDependencyManager:
                 raise PythonDependencyError("dependency_not_eligible")
         finally:
             report_path.unlink(missing_ok=True)
+            report_path.with_suffix(".constraints.txt").unlink(missing_ok=True)
 
     def _restore(self, before: dict[str, tuple[str, str]], wheel_dirs: Sequence[Path]) -> None:
         after = _installed_versions()
