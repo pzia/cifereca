@@ -31,8 +31,9 @@ def test_private_auth_and_summary_errors_are_redacted(category, operation):
             raise RuntimeError(SECRET)
         with pytest.raises(RuntimeError, match="private-cookie"):
             client._timed(category, operation, fail)
-        errors = [kwargs.get("detail", {}) for args, kwargs in diagnostics.rows
-                  if args[:3] == (category, operation, "error")]
+        # _timed() passes the detail dict positionally as the fifth argument.
+        errors = [args[4] for args, kwargs in diagnostics.rows
+                  if args[:3] == (category, operation, "error") and len(args) >= 5]
         assert len(errors) == 1
         assert errors[0] == {"error": "RuntimeError"}
         assert SECRET not in repr(diagnostics.rows)
