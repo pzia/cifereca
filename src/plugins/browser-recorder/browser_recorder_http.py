@@ -220,6 +220,7 @@ class PrivateHttpTrace:
         self.exchanges: list[PrivateExchange] = []
         # Closed vocabulary only: no provider value or browser exception.
         self.end_reason = "button"
+        self.content_negotiation = "browser_default"
         self.omitted = {"out_of_scope": 0, "limit": 0, "binary_skipped": 0,
                         "oversize": 0, "unknown_size": 0, "compressed": 0,
                         "network_error": 0, "paused": 0, "unfinished": 0}
@@ -538,6 +539,7 @@ def record_http(start_url: str, stop: Event, *,
                 metadata_only_origins: tuple[str, ...] = (),
                 vault_writer=None,
                 download_destination=None,
+                prefer_identity: bool = False,
                 ) -> PrivateHttpTrace:
     """Observe a manually controlled Chromium session; return RAM-only trace.
 
@@ -545,6 +547,8 @@ def record_http(start_url: str, stop: Event, *,
     private vault writer may persist AES-GCM-encrypted snapshots, never
     plaintext. No extra requests or replay; LLM ZIP still requires review.
     """
+    if type(prefer_identity) is not bool:
+        raise RecorderError("invalid_capture_strategy")
     origin = site_origin(start_url)
     trace = PrivateHttpTrace(
         origins or (origin,), pause_control=pause_control,
@@ -552,6 +556,7 @@ def record_http(start_url: str, stop: Event, *,
     )
     if origin not in trace.origins:
         raise RecorderError("invalid_origin")
+    trace.content_negotiation = "identity_requested" if prefer_identity else "browser_default"
     try:
         if vault_writer is not None:
             vault_writer.save(trace, "recording", force=True)
@@ -559,9 +564,13 @@ def record_http(start_url: str, stop: Event, *,
         with _playwright(factory) as pw:
             browser = pw.chromium.launch(headless=False)
             try:
-                context = browser.new_context(
-                    accept_downloads=True, service_workers="block",
-                )
+                options = {"accept_downloads": True, "service_workers": "block"}
+                if prefer_identity:
+                    # Explicit representation negotiation, not replay or a
+                    # decoder. Servers may ignore it: the original compressed
+                    # body guard below MUST still reject those responses.
+                    options["extra_http_headers"] = {"Accept-Encoding": "identity"}
+                context = browser.new_context(**options)
                 try:
                     last_page_closed = Event()
                     crashed = Event()
