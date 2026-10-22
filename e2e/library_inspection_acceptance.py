@@ -230,6 +230,16 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             # Focus a control that may sit below the initial viewport; GTK
             # should scroll its ancestor viewport rather than clip it.
             following_candidate.grab_focus()
+            # A child may be mapped but clipped by the page scrollbar.
+            outer = widgets['main_scroll']
+            page = outer.get_child()
+            if isinstance(page, Gtk.Viewport):
+                page = page.get_child()
+            ok, rect = following_candidate.compute_bounds(page)
+            if ok:
+                adj = outer.get_vadjustment()
+                adj.set_value(max(0, min(rect.get_y() - adj.get_page_size() / 2,
+                                         adj.get_upper() - adj.get_page_size())))
             if not following_candidate.get_mapped() or not following_candidate.get_sensitive():
                 return False
             try:
