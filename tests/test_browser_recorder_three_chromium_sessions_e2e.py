@@ -248,6 +248,10 @@ try:
     plugin = manager.service(plugin_id)
     assert plugin is not None
     root = plugin.pages()[0].factory(None)
+    # PluginManager can reload the installed HTTP module on activation.
+    # Repeat the fixture-only patch after the *new* module is materialized.
+    import importlib
+    importlib.import_module("browser_recorder_http").site_origin = test_only
     window.set_child(root)
     window.present()
     flush()
