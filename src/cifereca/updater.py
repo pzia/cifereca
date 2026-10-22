@@ -224,7 +224,10 @@ def _create_venv(release: Path, python: str) -> Path:
         if not core_wheels or any(wheel not in verified for wheel in core_wheels):
             raise UpdateError("dependency_not_eligible")
     else:
-        core_wheels = []
+        # Installing from source allows pip to resolve unverified third-party
+        # build/runtime dependencies. A managed update must fail closed before
+        # creating a venv when the attested wheelhouse is absent (#2770).
+        raise UpdateError("dependency_provenance_unavailable")
 
     venv = release / ".venv"
     # PyGObject/GTK stays a system dependency, therefore the release venv may
@@ -239,15 +242,10 @@ def _create_venv(release: Path, python: str) -> Path:
     py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     if not py.is_file():
         raise UpdateError("Python du venv absent")
-    if core_wheels:
-        command = [
-            str(py), "-m", "pip", "install", "--disable-pip-version-check",
-            "--no-index", "--find-links", str(wheelhouse), "--ignore-installed", f"cifereca=={version}",
-        ]
-    else:
-        # Developer/source checkout fallback. Release archives must carry the
-        # wheelhouse and are tested with the branch above.
-        command = [str(py), "-m", "pip", "install", "--disable-pip-version-check", str(release)]
+    command = [
+        str(py), "-m", "pip", "install", "--disable-pip-version-check",
+        "--no-index", "--find-links", str(wheelhouse), "--ignore-installed", f"cifereca=={version}",
+    ]
     proc = _run_bounded_process(command, timeout=900, text=True, capture_output=True, check=False)
     if proc.returncode != 0:
         raise UpdateError("Installation du package dans le venv impossible")
