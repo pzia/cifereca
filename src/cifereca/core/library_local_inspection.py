@@ -568,7 +568,11 @@ class LocalInspection:
             if right.get('provider_id') == 'kobo':
                 kobo_attested = (
                     scope is not None
-                    and right.get('attested_source') == 'kobo.personal_manifest'
+                    # Legacy backup_items compatibility rights have no
+                    # attested_source marker. This gate only permits a fresh
+                    # read-only preview, NEVER a write. The Kobo engine
+                    # independently requires the personal backup, revision,
+                    # active owned entitlement and exact account/SHA.
                     and right.get('state') == 'active'
                     and right.get('entitlement_type') == 'owned'
                     and not right.get('loan_id') and not right.get('expires_at')
