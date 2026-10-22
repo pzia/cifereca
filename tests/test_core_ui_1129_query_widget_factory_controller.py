@@ -313,9 +313,11 @@ def test_unavailable_paris_hint_is_scoped_and_never_selectable():
         NS(provider_id="paris", identity_scope="authenticated",
            catalog_search_supported=True, catalog_search_available=False),
     ]
-    window.service.accounts_for_identity = lambda identity_id: (
-        [NS(provider_id="paris", identity_id="alice")] if identity_id == "alice" else []
-    )
+    window.service.accounts_for_identity = lambda identity_id: []  # login failed
+    window.service.config = NS(provider_accounts=lambda provider: [
+        {"provider": "paris", "identity_id": "alice", "enabled": True,
+         "credentials": {"password": "MUST_NOT_LEAK"}}
+    ])
     controls = NS(
         set_provider_choices=Mock(),
         set_provider_search_capabilities=Mock(),
@@ -327,6 +329,7 @@ def test_unavailable_paris_hint_is_scoped_and_never_selectable():
     assert "compte configuré mais source non connectée" in (
         controls.set_provider_status_notice.call_args.args[0]
     )
+    assert "MUST_NOT_LEAK" not in controls.set_provider_status_notice.call_args.args[0]
 
     # Switching profile must not retain evidence of another profile account.
     window.service.current_identity = NS(identity_id="bob")
@@ -355,3 +358,27 @@ def test_connected_or_disabled_paris_has_no_disconnected_notice():
     window.service.catalogue_source_capabilities = lambda identity_id=None: []
     refresh_query_providers(window)
     controls.set_provider_status_notice.assert_called_with("")
+
+
+def test_paris_disabled_and_legacy_unscoped_account_do_not_look_connected():
+    window, _events, _calls, _changed, _activate, _caps, _create = _setup()
+    window.service.current_identity = NS(identity_id="alice")
+    window.service.catalogue_source_capabilities = lambda identity_id=None: [
+        NS(provider_id="paris", identity_scope="authenticated",
+           catalog_search_supported=True, catalog_search_available=False),
+    ]
+    controls = NS(
+        set_provider_choices=Mock(), set_provider_search_capabilities=Mock(),
+        set_provider_status_notice=Mock(),
+    )
+    window.search_controls = controls
+    window.service.config = NS(provider_accounts=lambda provider: [
+        {"provider": "paris", "identity_id": "alice", "enabled": False},
+    ])
+    refresh_query_providers(window)
+    assert "compte désactivé" in controls.set_provider_status_notice.call_args.args[0]
+    window.service.config = NS(provider_accounts=lambda provider: [
+        {"provider": "paris", "enabled": True},
+    ])
+    refresh_query_providers(window)
+    assert "profil du compte à vérifier" in controls.set_provider_status_notice.call_args.args[0]
