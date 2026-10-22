@@ -109,3 +109,41 @@ def test_no_sqlite_writes_even_when_client_preview_is_repeated(evidence, tmp_pat
     for _ in range(3):
         assert preview(evidence).status == "reviewable"
     assert filesystem(tmp_path) == before
+
+
+def test_second_same_edition_entitlement_is_ambiguous(evidence):
+    storage, *_ = evidence
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "INSERT INTO entitlements (entitlement_id,identity_id,provider_id,"
+            "credential_id,account_id,item_id,state,entitlement_type,metadata_json)"
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            ("duplicate", "alice", "numilog", "cred", "another_account",
+             "edition", "active", "owned",
+             json.dumps({"source": "numilog.authenticated_library"})),
+        )
+    result = preview(evidence)
+    assert result.reason == "right_ambiguous_or_missing"
+    assert not result.attachment_authorized
+
+
+def test_second_acquisition_for_same_edition_is_ambiguous(evidence):
+    storage, *_ = evidence
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "INSERT INTO acquisition_ledger "
+            "(acquisition_id,entitlement_id,identity_id,provider_id,credential_id,"
+            "account_id,item_id,status) VALUES (?,?,?,?,?,?,?,?)",
+            ("other-receipt", "other-right", "alice", "numilog", "cred",
+             "account", "edition", "complete"),
+        )
+    result = preview(evidence)
+    assert result.reason == "acquisition_ambiguous_or_missing"
+    assert not result.attachment_authorized
+
+
+def test_disabled_connection_cannot_count_as_authenticated_purchase(evidence):
+    storage, *_ = evidence
+    with storage._lock, storage._connect() as db:
+        db.execute("UPDATE provider_connections SET enabled=0")
+    assert preview(evidence).reason == "source_unavailable"
