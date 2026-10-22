@@ -32,6 +32,23 @@ class X11Input:
         self.xtst.XTestFakeButtonEvent(self.display, 1, False, 0)
         self.x11.XSync(self.display, False)
 
+    def wheel_widget(self, widget, *, steps: int = 3) -> None:
+        """Dispatch genuine XTEST wheel-down events over a mapped GTK widget.
+
+        This is an acceptance-only input helper. It never mutates the GTK
+        adjustment directly and cannot fake successful scroll behavior.
+        """
+        if type(steps) is not int or not 1 <= steps <= 12:
+            raise RuntimeError("XTEST wheel count invalid")
+        x, y = self.widget_point(widget)
+        if x < 0 or y < 0:
+            raise RuntimeError("XTEST wheel target outside display")
+        self.move(x, y)
+        for _ in range(steps):
+            self.xtst.XTestFakeButtonEvent(self.display, 5, True, 0)
+            self.xtst.XTestFakeButtonEvent(self.display, 5, False, 0)
+        self.x11.XSync(self.display, False)
+
     def widget_point(self, widget) -> tuple[int, int]:
         """Find an XTEST target without dispatching any input event."""
         from native_capture import pointer
