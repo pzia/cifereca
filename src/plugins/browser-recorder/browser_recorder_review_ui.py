@@ -111,6 +111,7 @@ class PrivateReviewPanel:
         self._closed = False
         self._generation = 0
         self._index_handle = None
+        self._retention_plan = None
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.widget = box
@@ -189,6 +190,42 @@ class PrivateReviewPanel:
             self.sessions_open.connect("clicked", lambda *_: self.open_session())
             self.sessions_delete.connect(
                 "clicked", lambda *_: self.delete_session(),
+            )
+            box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            box.append(Gtk.Label(
+                label="Rétention privée : uniquement sur demande. Seules les "
+                      "sessions terminées et plus anciennes que le délai "
+                      "sont candidates ; partielles et interrompues protégées.",
+                xalign=0, wrap=True,
+            ))
+            self.retention_age = Gtk.ComboBoxText()
+            for days in (30, 90, 180, 365):
+                self.retention_age.append(str(days), f"Plus de {days} jours")
+            self.retention_age.set_active_id("90")
+            self.retention_preview_button = Gtk.Button(
+                label="Prévisualiser les anciennes sessions, sans supprimer"
+            )
+            self.retention_confirm = Gtk.CheckButton(
+                label="Je confirme la suppression IRRÉVERSIBLE de ces sessions "
+                      "terminées après avoir vérifié le nombre affiché."
+            )
+            self.retention_apply_button = Gtk.Button(
+                label="Supprimer uniquement les sessions prévisualisées"
+            )
+            for widget in (self.retention_age, self.retention_preview_button,
+                           self.retention_confirm, self.retention_apply_button):
+                box.append(widget)
+            self.retention_age.connect(
+                "changed", lambda *_: self._invalidate_retention(),
+            )
+            self.retention_confirm.connect(
+                "toggled", lambda *_: self._refresh(),
+            )
+            self.retention_preview_button.connect(
+                "clicked", lambda *_: self.preview_retention(),
+            )
+            self.retention_apply_button.connect(
+                "clicked", lambda *_: self.apply_retention(),
             )
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
@@ -409,6 +446,18 @@ class PrivateReviewPanel:
             self.sessions_rename.set_sensitive(
                 not self._closed and not busy and not scanning
                 and bool(self.session_list.get_active_id())
+            )
+            self.retention_age.set_sensitive(
+                not self._closed and not busy and not scanning
+            )
+            self.retention_preview_button.set_sensitive(
+                not self._closed and not busy and not scanning
+            )
+            self.retention_apply_button.set_sensitive(
+                not self._closed and not busy and not scanning
+                and self._retention_plan is not None
+                and self._retention_plan.count > 0
+                and self.retention_confirm.get_active()
             )
             self.staging_inspect.set_sensitive(
                 not self._closed and not busy and not scanning
