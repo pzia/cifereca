@@ -282,6 +282,7 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
             }
             explanations = {
                 'stable_inputs': 'Entrées de preuve observées stables.',
+                'unexplained_link_drift': 'Variation de liens inexpliquée malgré des entrées identiques.',
                 'sqlite_proofs_changed': 'Les preuves SQLite ont changé.',
                 'different_observed_cohort': 'La cohorte des fichiers observés a changé.',
                 'file_evidence_changed': 'Des preuves de fichiers observés ont changé.',
@@ -325,6 +326,8 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                         'different_observed_cohort' if not stable_cohort else
                         'file_evidence_changed' if changed else
                         'sqlite_proofs_changed' if not stable_sqlite else
+                        'unexplained_link_drift' if (
+                            drift['lost_confirmed'] or drift['gained_confirmed']) else
                         'stable_inputs'
                     )
                     coherent = (
