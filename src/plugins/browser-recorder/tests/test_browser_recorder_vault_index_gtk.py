@@ -111,6 +111,12 @@ def test_gtk_metadata_stays_opaque_until_unlock_then_reveals_private_labels(tmp_
         assert not panel.sessions_unlock.get_sensitive()
         assert not panel.start.get_sensitive()
         tasks.handle.finish()
+        # The worker is finished, but GTK has not delivered its result yet.
+        # Export/unlock must remain disabled until the idle callback commits.
+        assert tasks.handle.done()
+        assert panel.is_scanning()
+        assert not panel.sessions_unlock.get_sensitive()
+        assert "Déchiffrement local" in panel.status.get_label()
         flush()
         assert not panel.is_scanning()
         assert "2 sessions déverrouillées" in panel.status.get_label()

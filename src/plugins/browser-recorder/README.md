@@ -1,17 +1,21 @@
-# Browser Recorder — outil technique opt-in (0.2.15, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.16, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
-**Parcours recommandé (expérimental, #2527–#2531) :** utiliser
-**« Parcours HTTP privé »**, distinct du HAR historique. Après consentement,
-démarrer Chromium, naviguer manuellement (pause/reprise facultative),
-puis « Arrêter / revoir ». Pour **chaque identifiant**, choisir anonymiser,
-conserver explicitement ou exclure ; préparer ensuite le **ZIP exact en mémoire**,
-inspecter ses membres et confirmer séparément l'export **local**. Aucun upload
-LLM n'est réalisé. Les valeurs non approuvées et les noms de champs suspects
-(identifiants dynamiques, fragments de secrets) peuvent être omis du ZIP ;
-une clé de schéma n'est pas automatiquement publique. Relecture humaine
-impérative avant partage. Le HAR ci-dessous reste une fonction secondaire.
+**Parcours le plus simple pour un LLM :** utiliser « Parcours HTTP privé »,
+consentir à l'archivage dans le coffre chiffré, démarrer Chromium et arrêter
+la capture. L'onglet **Revue** propose alors **« Exporter directement cette
+session privée pour LLM… »**, même si aucun identifiant n'a été anonymisé.
+Saisir la phrase secrète **du coffre**, choisir « Enregistrer sous » : le
+ZIP ordinaire est créé en mode 0600. Il contient les observations privées
+retenues, **en clair** ; choisir volontairement à quel LLM le communiquer.
+Aucun envoi automatique.
+
+**Autre possibilité : le ZIP revu/filtré.** Décider chaque identifiant,
+préparer l'archive exacte en mémoire, examiner ses membres et confirmer son
+export local. Le filtrage peut écarter certaines informations utiles à
+l'analyse ; ses limites sont détaillées dans le rapport de couverture.
+Le HAR historique reste une fonction secondaire.
 
 ## Accès à la fonction principale
 
@@ -26,8 +30,9 @@ Depuis **Configuration → Browser Recorder**, l'écran est organisé en
   **« Exporter cette session pour un LLM… »** permet, après saisie de la
   phrase du coffre, un simple **Enregistrer sous** dans un dossier ordinaire.
   Il produit un `.zip` **en clair**, sans mot de passe ni anonymisation.
-- **4 · Revue et ZIP LLM** : choix individuels, aperçu local, archive exacte
-  consultable membre par membre, confirmation et enregistrement local.
+- **4 · Revue et ZIP LLM** : **export direct en clair de la session en cours
+  de revue** (si elle est archivée), ou revue/anonymisation individuelle,
+  aperçu local, ZIP filtré consultable membre par membre et confirmation.
   Une capture non vide ou une session réouverte mène directement ici.
 
 Le bandeau d'état et la phrase secrète du coffre restent disponibles quel que
@@ -355,12 +360,18 @@ clair** de la session conservée. Ne pas partager un fichier `.cbrv` comme
 s'il s'agissait d'un ZIP ordinaire.
 
 
-## Export direct de session privée pour LLM (0.2.15)
+## Export direct de session privée pour LLM (0.2.16)
 
-1. Dans **Sessions et export privé**, sélectionner une session archivée.
-2. Saisir **la phrase secrète du coffre** (une seule fois).
-3. Cliquer **« Exporter cette session pour un LLM… »**, choisir le nom et
-   l'emplacement par **Enregistrer sous**, puis valider.
+Pour une capture que vous venez de terminer : dans **Revue et ZIP LLM**,
+saisir la phrase secrète du coffre en haut puis cliquer
+**« Exporter directement cette session privée pour LLM… »**. Aucune étape
+dans le catalogue Sessions et aucune décision d'anonymisation n'est requise.
+Le ZIP correspond strictement à la session affichée.
+
+Pour une capture plus ancienne : ouvrir **Sessions et export privé**, choisir
+la session, saisir la phrase secrète du coffre, puis cliquer
+**« Exporter cette session pour un LLM… »**. Dans les deux cas, choisir
+le nom et l'emplacement via **Enregistrer sous**, puis valider.
 
 **Aucune nouvelle phrase secrète de ZIP, aucun dossier 0700 à préparer,
 aucune confirmation supplémentaire.** Le coffre demeure AES-256-GCM avec
@@ -562,7 +573,7 @@ physique sur SSD/backups. Aucun ZIP n'est automatiquement produit ou
 transmis. Les tests fonctionnent uniquement sur des données fictives.
 
 
-## Vérification d'authenticité des noms lors de la rétention (0.2.15)
+## Vérification d'authenticité des noms lors de la rétention (0.2.16)
 
 Une étiquette de session est protégée par AES-256-GCM et associée
 cryptographiquement à un ID de capture précis. La revue de rétention
@@ -574,7 +585,7 @@ Les captures, mêmes anciennes, sont préservées. La confirmation manuelle
 et le délai d'expiration du plan restent obligatoires.
 
 
-## Renommage chiffré et concurrence avec la suppression (0.2.15, #2725)
+## Renommage chiffré et concurrence avec la suppression (0.2.16, #2725)
 
 Le renommage privé authentifie **sous le même verrou exclusif POSIX**
 l'archive source et son nom AES-GCM existant, puis écrit le nouveau sidecar
@@ -592,7 +603,7 @@ et n'est pas une garantie contre un acteur local ayant accès en écriture
 au coffre en dehors de l'application.
 
 
-## Téléchargements Chromium sous décision explicite (0.2.15, #2528)
+## Téléchargements Chromium sous décision explicite (0.2.16, #2528)
 
 Le mode de capture HTTP privé utilise maintenant **`accept_downloads=True`**
 (la capture HAR legacy demeure distincte). Un fichier obtenu par Chromium

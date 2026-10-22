@@ -210,6 +210,7 @@ def test_workspaces_separate_capture_sessions_review_without_export(monkeypatch)
         assert panel.configure_button in panel.capture_box.children
         assert any(panel.start in child.children for child in panel.capture_box.children)
         assert panel.export_button in panel.review_box.children
+        assert panel.current_private_export_button is None
         assert any(panel.preview_button in child.children for child in panel.review_box.children)
         assert any(panel.clear in child.children for child in panel.review_box.children)
         assert not any(panel.preview_button in child.children for child in panel.capture_box.children)
@@ -707,3 +708,69 @@ def test_saved_zip_shows_exact_local_path_and_opens_folder_only_when_clicked(
         assert panel._last_export_path is None
         assert not panel.open_export_folder_button.sensitive
         assert raw.exchanges == []
+
+
+def test_encrypted_capture_remains_exportable_when_identifier_review_fails(
+    monkeypatch, tmp_path,
+):
+    """Private export is the explicit fallback when heuristic review fails."""
+    import pytest
+    from zipfile import ZipFile
+    from browser_recorder_vault import PrivateSessionVault
+
+    pytest.importorskip("cryptography")
+    vault_path = tmp_path / "vault"
+    secret = "FICTIONAL-STRONG-VAULT-PASSPHRASE"
+    raw = PrivateHttpTrace((ORIGIN,))
+    raw.exchanges.append(PrivateExchange(
+        1, "POST", url=ORIGIN + "/api?AccountId=PRIVATE-BOUND-42",
+        status=200, request_body='{"AccountId":"PRIVATE-BOUND-42"}',
+        request_body_state="captured",
+        request_headers={"content-type": "application/json"},
+    ))
+
+    def recorder(_start, stop, **kwargs):
+        assert stop.is_set()
+        writer = kwargs["vault_writer"]
+        writer.save(raw, "completed", force=True)
+        return raw
+
+    def refuse_review(_trace):
+        raise review_ui.RecorderError("review_limit")
+
+    monkeypatch.setattr(review_ui, "record_http", recorder)
+    monkeypatch.setattr(review_ui, "IdentifierReview", refuse_review)
+    tasks = FakeTasks()
+    panel = review_ui.PrivateReviewPanel(
+        Gtk, GLib, tasks, NS(get_text=lambda: ORIGIN + "/catalog"),
+        NS(get_active=lambda: True), legacy_running=lambda: False,
+        vault_directory=vault_path,
+    )
+    destination = tmp_path / "private-llm.zip"
+    try:
+        panel.vault_consent.set_active(True)
+        panel.vault_passphrase.set_text(secret)
+        panel.begin()
+        panel.stop_capture()
+        tasks.handles[-1].finish()
+        assert panel._review is None
+        assert panel._trace is raw
+        assert raw.vault_session_id
+        assert panel.tabs.get_current_page() == 3
+        assert panel.current_private_export_button.sensitive
+        assert "Revue filtrée impossible" in panel.status.label
+        assert (vault_path / (raw.vault_session_id + ".cbrv")).is_file()
+        assert not destination.exists()
+
+        panel._prompt_private_zip_file = lambda callback, cancel: callback(destination)
+        panel.vault_passphrase.set_text(secret)
+        panel.export_private_zip(current=True)
+        assert destination.is_file()
+        assert destination.stat().st_mode & 0o777 == 0o600
+        with ZipFile(destination) as archive:
+            assert "PRIVATE-BOUND-42" in archive.read("trace.json").decode()
+        assert panel.vault_passphrase.get_text() == ""
+        assert len(PrivateSessionVault(vault_path).list_ids()) == 1
+    finally:
+        panel.destroy()
+

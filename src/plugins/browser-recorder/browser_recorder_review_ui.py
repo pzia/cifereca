@@ -96,6 +96,7 @@ class PrivateReviewPanel:
         self.session_list = None
         self.delete_confirm = None
         self.private_export_button = None
+        self.current_private_export_button = None
         self._private_destination_dialog = None
         self._bundle_plan = None
         self._bundle_preview = None
@@ -388,6 +389,23 @@ class PrivateReviewPanel:
             xalign=0, wrap=True,
         ))
         box = self.review_box
+        if self.vault_directory is not None:
+            box.append(Gtk.Label(
+                label="Session archivée dans le coffre : vous pouvez l'exporter "
+                      "directement pour un LLM sans attendre les décisions "
+                      "d'anonymisation. Ce ZIP est NON CHIFFRÉ et contient les "
+                      "observations privées conservées. Saisissez la phrase "
+                      "du coffre en haut, puis choisissez où l'enregistrer.",
+                xalign=0, wrap=True,
+            ))
+            self.current_private_export_button = Gtk.Button(
+                label="Exporter directement cette session privée pour LLM…"
+            )
+            box.append(self.current_private_export_button)
+            self.current_private_export_button.connect(
+                "clicked", lambda *_: self.export_private_zip(current=True),
+            )
+            box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         review_controls = Gtk.FlowBox()
         review_controls.set_selection_mode(Gtk.SelectionMode.NONE)
         review_controls.set_min_children_per_line(1)
@@ -590,6 +608,12 @@ class PrivateReviewPanel:
                 and self._private_destination_dialog is None
                 and bool(self.session_list.get_active_id())
             )
+            if self.current_private_export_button is not None:
+                self.current_private_export_button.set_sensitive(
+                    not self._closed and not busy and not scanning
+                    and self._private_destination_dialog is None
+                    and bool(getattr(self._trace, "vault_session_id", None))
+                )
         self.stop.set_sensitive(not self._closed and busy)
         self.third_party_origins.set_sensitive(
             not self._closed and not busy and self._trace is None
@@ -693,7 +717,10 @@ class PrivateReviewPanel:
             pass
 
     def is_scanning(self):
-        return self._index_handle is not None and not self._index_handle.done()
+        # The worker may finish before its GTK idle delivery runs. Keep
+        # actions locked and report "busy" until the UI has *received* the
+        # result, not merely until the background future is done.
+        return self._index_handle is not None
 
     def _download_status(self, code):
         """Only fixed counters from worker, never URL or output path."""
@@ -895,13 +922,27 @@ class PrivateReviewPanel:
                     try:
                         self._review = IdentifierReview(result)
                     except Exception:
-                        # Never show exception text from a provider response
-                        # or URL that might contain a token.
-                        result.destroy()
-                        self._trace = None
-                        self.status.set_label(
-                            "Limite de revue atteinte : capture effacée, aucun export.",
-                        )
+                        # Identifier heuristics may reject an otherwise valid
+                        # encrypted capture (e.g. candidate limit). Never
+                        # destroy a vaulted trace just because the *filtered*
+                        # ZIP cannot be produced: the operator explicitly
+                        # requested a separate direct LLM export path.
+                        # Do not surface provider exceptions or original URLs.
+                        if getattr(result, "vault_session_id", None):
+                            self.tabs.set_current_page(3)
+                            self.status.set_label(
+                                "Revue filtrée impossible : capture conservée "
+                                "dans le coffre chiffré. Vous pouvez exporter "
+                                "directement cette session privée pour un LLM "
+                                "avec la phrase secrète du coffre. Le ZIP sera "
+                                "en clair et non anonymisé."
+                            )
+                        else:
+                            result.destroy()
+                            self._trace = None
+                            self.status.set_label(
+                                "Limite de revue atteinte : capture effacée, aucun export."
+                            )
                         self._emit_failure("http_review", "review_failed")
                     else:
                         self._show_candidates()
@@ -990,10 +1031,10 @@ class PrivateReviewPanel:
                 plan = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if plan is None or self.retention_age.get_active_id() != str(days):
                     self.status.set_label(
                         "Prévisualisation refusée : clé ou coffre non sûrs."
@@ -1059,10 +1100,10 @@ class PrivateReviewPanel:
                 result = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if result is None:
                     self.status.set_label(
                         "Suppression refusée : clé, session modifiée ou aperçu "
@@ -1141,10 +1182,10 @@ class PrivateReviewPanel:
                 result = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if result is None:
                     self.status.set_label(
                         "Nettoyage refusé : résidu non sûr ou coffre inaccessible."
@@ -1224,10 +1265,10 @@ class PrivateReviewPanel:
                 result = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if result is None:
                     self.status.set_label(
                         "Déverrouillage impossible : clé, quota ou coffre invalide."
@@ -1313,10 +1354,10 @@ class PrivateReviewPanel:
                 ok = False
 
             def deliver():
-                if self._closed or self._generation != generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or self._generation != generation:
+                    return False
                 self.status.set_label(
                     "Nom privé chiffré enregistré ; déverrouillez la liste "
                     "pour afficher le nouveau nom."
@@ -1457,14 +1498,21 @@ class PrivateReviewPanel:
         chooser.connect("response", responded)
         chooser.show()
 
-    def export_private_zip(self):
-        """Explicit session-to-LLM export: vault key, Save As, done."""
+    def export_private_zip(self, *, current=False):
+        """Export chosen session or active review, without forced list refresh.
+
+        The active-session path is intentionally independent of the selected
+        catalogue row; a later selection must not redirect its export.
+        """
         if (self.vault_directory is None or self._closed
                 or self.is_recording() or self.is_scanning()
                 or self._private_destination_dialog is not None):
             return
         started = monotonic()
-        sid = self.session_list.get_active_id()
+        sid = (
+            getattr(self._trace, "vault_session_id", None) if current
+            else self.session_list.get_active_id()
+        )
         passphrase = self.vault_passphrase.get_text()
         self.vault_passphrase.set_text("")
         if not sid or len(passphrase) < 12:
@@ -1486,8 +1534,12 @@ class PrivateReviewPanel:
                 self._emit_private_export("private_zip_export_failed", started)
 
         def selected(destination):
+            active_sid = (
+                getattr(self._trace, "vault_session_id", None) if current
+                else self.session_list.get_active_id()
+            )
             if (self._closed or self._generation != generation
-                    or self.session_list.get_active_id() != sid):
+                    or active_sid != sid):
                 cancelled(True)
                 return
             stored = None
