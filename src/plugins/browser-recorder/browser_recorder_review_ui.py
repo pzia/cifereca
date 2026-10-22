@@ -1555,10 +1555,24 @@ class PrivateReviewPanel:
             return
         self._bundle_plan = plan
         self._bundle_preview = preview
+        coverage = preview["body_coverage"]
+        empty_warning = (
+            "\nATTENTION — ZIP sans aucun corps HTTP : impossible de "
+            "reconstituer les réponses."
+            if coverage["exported_structural_bodies"] == 0 else ""
+        )
         self.bundle_summary.set_label(
             f"ZIP en mémoire : {len(preview['members'])} membres, "
             f"{preview['bytes']} octets, SHA-256 : {preview['sha256']}. "
-            "Sélectionner chaque membre pour inspecter son texte EXACT."
+            "Sélectionner chaque membre pour inspecter son texte EXACT.\n"
+            f"Corps textuels retenus à la capture : {coverage['captured_text_bodies']} ; "
+            f"structures exportées : {coverage['exported_structural_bodies']} ; "
+            f"non retenus dans la trace : {coverage['not_retained_in_trace']} ; "
+            f"exclus par la revue : {coverage['excluded_by_review']} ; "
+            f"omis à la projection : {coverage['omitted_during_projection']} ; "
+            f"routes masquées : {coverage['masked_exchange_routes']}"
+            f"/{coverage['exported_exchange_count']}."
+            + empty_warning
         )
         for item in preview["members"]:
             self.bundle_member.append(item["name"], item["name"])

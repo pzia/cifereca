@@ -1051,3 +1051,87 @@ def test_route_label_limit_and_unapproved_origins_fail_before_mapping(monkeypatc
     with pytest.raises(RecorderError, match="bundle_route_limit"):
         module._safe_url(ORIGIN + "/PRIVATE_SECOND", frozenset(), allowed, labels)
     assert len(labels) == 1
+
+
+def test_zip_preflight_counts_capture_review_and_projection_without_values():
+    """Report only closed aggregate counts, derived from the frozen ZIP."""
+    trace, review = setup()
+    try:
+        plan = prepare_reviewed_zip(review)
+        snapshot = plan.preview()
+        members = {m["name"]: m["text"] for m in snapshot["members"]}
+        manifest = json.loads(members["manifest.json"])
+        coverage = manifest["body_coverage"]
+        assert coverage == snapshot["body_coverage"]
+        assert coverage["captured_text_bodies"] == 4
+        assert coverage["excluded_by_review"] == 1
+        assert coverage["not_retained_in_trace"] == 2
+        assert coverage["exported_structural_bodies"] == sum(
+            name.startswith("bodies/") for name in members
+        )
+        assert coverage["omitted_during_projection"] == (
+            coverage["captured_text_bodies"]
+            - coverage["excluded_by_review"]
+            - coverage["exported_structural_bodies"]
+        )
+        assert all(type(v) is int and v >= 0 for v in coverage.values())
+        assert "ACC77" not in json.dumps(coverage)
+        assert ACCOUNT not in json.dumps(coverage)
+    finally:
+        review.destroy()
+        trace.destroy()
+
+
+def test_preflight_warns_for_structurally_empty_zip_without_blocking_consent(tmp_path):
+    """An HTTP 200 is not evidence that response schemas reached the ZIP."""
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/catalog",
+        status=200, response_headers={"content-type": "application/json"},
+    ))
+    review = IdentifierReview(trace)
+    try:
+        plan = prepare_reviewed_zip(review)
+        snapshot = plan.preview()
+        coverage = snapshot["body_coverage"]
+        assert coverage == {
+            "captured_text_bodies": 0,
+            "exported_structural_bodies": 0,
+            "not_retained_in_trace": 2,
+            "excluded_by_review": 0,
+            "omitted_during_projection": 0,
+            "masked_exchange_routes": 0,
+            "exported_exchange_count": 1,
+        }
+        assert "ZIP sans aucun corps HTTP" in snapshot["warning"]
+        assert all(not m["name"].startswith("bodies/") for m in snapshot["members"])
+        assert not list(tmp_path.iterdir())  # preparing a ZIP writes nothing
+        # Existing explicit export gate remains unchanged.
+        with pytest.raises(RecorderError, match="export_unconfirmed"):
+            plan.save(tmp_path, user_confirmed=False)
+    finally:
+        review.destroy()
+        trace.destroy()
+
+
+def test_preflight_marks_retained_plain_text_as_projection_omission():
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/public",
+        status=200, response_body="UNREVIEWED_PRIVATE_PROSE",
+        response_headers={"content-type": "text/plain"},
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for item in review.candidates():
+            review.decide(item.key, "anonymize")
+        snapshot = prepare_reviewed_zip(review).preview()
+        coverage = snapshot["body_coverage"]
+        assert coverage["captured_text_bodies"] == 1
+        assert coverage["exported_structural_bodies"] == 0
+        assert coverage["omitted_during_projection"] == 1
+        assert "UNREVIEWED_PRIVATE_PROSE" not in json.dumps(snapshot)
+        assert "ZIP sans aucun corps HTTP" in snapshot["warning"]
+    finally:
+        review.destroy()
+        trace.destroy()

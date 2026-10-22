@@ -550,6 +550,15 @@ class ReviewedBundlePlan:
     def preview(self):
         """Reveal the EXACT frozen UTF-8 members, not only a file count."""
         self._viewed = True
+        # This summary comes from the frozen manifest member, not a second
+        # calculation that could disagree with the bytes about to be saved.
+        coverage = json.loads(self._members["manifest.json"]).get("body_coverage", {})
+        warning = "Revue manuelle obligatoire : risque de données résiduelles."
+        if coverage.get("exported_structural_bodies") == 0:
+            warning += (
+                " ZIP sans aucun corps HTTP : impossible de reconstituer "
+                "les réponses."
+            )
         return {
             "schema": ZIP_SCHEMA,
             "members": [
@@ -560,7 +569,8 @@ class ReviewedBundlePlan:
             ],
             "bytes": len(self._blob),
             "sha256": hashlib.sha256(self._blob).hexdigest(),
-            "warning": "Revue manuelle obligatoire : risque de données résiduelles.",
+            "warning": warning,
+            "body_coverage": coverage,
         }
 
     def save(self, directory: Path, *, user_confirmed: bool = False):
@@ -677,6 +687,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
     route_labels: dict[str, str] = {}
     files = {}
     timeline = []
+    masked_exchange_routes = 0
     for entry in preview["exchanges"]:
         eid = entry["exchange_id"]
         if type(eid) is not int or not 1 <= eid <= MAX_EXCHANGES:
@@ -698,6 +709,8 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
             "response_headers": _safe_headers(entry["response_headers"]),
             "bodies": {},
         }
+        if "~route-" in outgoing["url"]:
+            masked_exchange_routes += 1
         for direction in ("request", "response"):
             body, state = _body(entry[direction + "_body"],
                                 (entry[direction + "_headers"].get("content-type")
@@ -728,11 +741,38 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
             raise RecorderError("bundle_invalid_omissions")
         capture_omissions[code] = count
 
+    # Count the *retained* text fields before review, those still present
+    # after explicit review exclusions, and those actually serialized as
+    # structural ZIP members. No provider values are published here.
+    captured = sum(
+        type(getattr(item, direction + "_body")) is str
+        for item in review.trace.exchanges
+        for direction in ("request", "response")
+    )
+    reviewed = sum(
+        type(item[direction + "_body"]) is str
+        for item in preview["exchanges"]
+        for direction in ("request", "response")
+    )
+    exported = sum(name.startswith("bodies/") for name in files)
+    if not 0 <= exported <= reviewed <= captured <= 2 * len(review.trace.exchanges):
+        raise RecorderError("bundle_invalid_coverage")
+    body_coverage = {
+        "captured_text_bodies": captured,
+        "exported_structural_bodies": exported,
+        "not_retained_in_trace": 2 * len(review.trace.exchanges) - captured,
+        "excluded_by_review": captured - reviewed,
+        "omitted_during_projection": reviewed - exported,
+        "masked_exchange_routes": masked_exchange_routes,
+        "exported_exchange_count": len(timeline),
+    }
+
     files["manifest.json"] = _member_bytes({
         "schema": ZIP_SCHEMA, "export": "explicit-only", "contains_raw_session": False,
         "exchange_count": len(timeline),
         "excluded_exchanges": preview["dropped_exchanges"],
         "capture_omissions": capture_omissions,
+        "body_coverage": body_coverage,
         "secret_values_suppressed": preview["secrets_replaced"],
         "coverage": "JSON/XML structures with reviewed scalars and selected HTML selectors; free text omitted",
         "xml_namespaces": "Unknown namespace URIs are opaque labels local to each body; original URIs omitted",
