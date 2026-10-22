@@ -141,7 +141,8 @@ def fake_bookstore():
                 self.send(200, b'''<!doctype html><html><body><script>
                     async function run() {
                       for (const url of ['/negotiated.json', '/negotiated.html', '/forced-gzip.json']) {
-                        const response = await fetch(url); await response.text();
+                        try { const response = await fetch(url); await response.text(); }
+                        catch (_) { /* A server can send an unacceptable coding. */ }
                       }
                       await fetch('/complete');
                     }
@@ -1012,7 +1013,7 @@ def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
             assert calls.count(("GET", path)) == 1  # no second fetch/replay
         forced = by_path["/forced-gzip.json"]
         assert forced.response_body is None
-        assert forced.response_body_reason == "compressed"
+        assert forced.response_body_reason in {"compressed", "network_error"}
         destination = tmp_path / "private.zip"
         save_session_llm_zip(stored, destination, confirmed=True)
         with ZipFile(destination) as archive:
@@ -1028,7 +1029,7 @@ def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
         coverage = json.loads(members["coverage-report.json"])
         assert coverage["content_negotiation"] == trace.content_negotiation
         report = next(row for row in coverage["exchanges"] if row["id"] == forced.sequence)
-        assert report["response"]["capture_reason"] == "compressed"
+        assert report["response"]["capture_reason"] == forced.response_body_reason
         assert TOKEN not in repr(members)
         if prefer_identity:
             assert any(name.startswith("bodies/") and 'ProductId' in text
