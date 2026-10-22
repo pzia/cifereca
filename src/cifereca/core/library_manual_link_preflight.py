@@ -12,6 +12,34 @@ from dataclasses import dataclass
 _REASON_LABELS = {
     "selection_unavailable": "Sélection privée indisponible ou périmée.",
     "audit_incomplete": "La couverture des preuves pertinentes est incomplète ; aucune association définitive n’est possible.",
+    "snapshot_incomplete": (
+        "Instantané SQLite/WAL ou tables de preuves incomplets. "
+        "Relancez l’inspection locale lorsque la base est stable."
+    ),
+    "structure_global_budget": (
+        "Budget global de contrôle EPUB/CRC épuisé ou contrôle interrompu. "
+        "Complétez l’inspection locale avant de confirmer un lien attesté."
+    ),
+    "comparison_incomplete": (
+        "Comparaison des droits, acquisitions et placements non terminée. "
+        "Relancez l’inspection pour compléter ces preuves."
+    ),
+    "path_coverage_incomplete": (
+        "Contrôle des chemins enregistrés incomplet. "
+        "Relancez la vérification locale de ces chemins."
+    ),
+    "inventory_incomplete": (
+        "Parcours des fichiers ou des racines incomplet ou modifié. "
+        "Relancez l’inspection sur les racines autorisées du même profil."
+    ),
+    "audit_scope_incomplete": (
+        "Périmètre ou budget global de l’inspection non validé. "
+        "Relancez une inspection locale dans le contexte courant."
+    ),
+    "coverage_unavailable": (
+        "État de couverture des preuves non vérifiable. "
+        "Relancez l’inspection locale avant une confirmation attestée."
+    ),
     "global_partial_pair_reviewable": (
         "L’analyse générale est partielle, mais les preuves locales de cette "
         "paire sont suffisantes pour demander une revalidation fraîche. "
