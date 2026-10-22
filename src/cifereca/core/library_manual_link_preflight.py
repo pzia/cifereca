@@ -27,7 +27,12 @@ _REASON_LABELS = {
     "artifact_unavailable": "Artefact du reçu absent, ambigu ou non vérifiable.",
     "artifact_mismatch": "Les octets du fichier ne concordent pas avec l’artefact du reçu.",
     "bibliographic_hint_only": "Une notice/ISBN identique est une simple piste, jamais une preuve d’achat.",
-    "transaction_unavailable": "Aucune écriture autorisée : transaction et revalidation à construire séparément.",
+    "transaction_unavailable": (
+        "Ce préflight est seulement un diagnostic : aucun placement n’est "
+        "créé. Si la paire est admissible, utilisez « Vérifier les preuves "
+        "actuelles… » puis confirmez explicitement ; le Core revalidera "
+        "le droit, le reçu et le fichier avant toute écriture."
+    ),
     "kobo_fresh_proof_required": (
         "Kobo : le manifeste personnel, la sauvegarde antérieure, la révision, "
         "le compte, la taille et le SHA doivent encore être revérifiés par "
