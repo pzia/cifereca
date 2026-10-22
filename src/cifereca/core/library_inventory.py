@@ -198,7 +198,8 @@ def scan_identity_roots(
         result.reasons.add('nofollow_unavailable')
         return result
     deadline = time.monotonic() + limits.seconds
-    last_heartbeat = time.monotonic()
+    # Reuse the existing clock sample; do not add a read at startup.
+    last_heartbeat = deadline - limits.seconds
 
     def heartbeat():
         """Bounded progress while a single large file is still unfinished.
