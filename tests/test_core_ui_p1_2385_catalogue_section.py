@@ -99,3 +99,41 @@ def test_catalogue_listing_refreshes_per_identity_not_across_close():
     window._closed = True
     window._refresh_sync_page()
     assert window.runner.tasks == []
+
+
+def test_p0_2882_paris_catalogue_visible_and_unavailable_without_account_card():
+    window, broker, calls, _build, _page = _fixture(sources=[])
+    window.service.catalogue_source_capabilities = lambda *, identity_id: (
+        _cap("paris", scope="authenticated", available=False),
+        _cap("gutenberg", scope="public", available=True),
+    ) if identity_id == "alice" else ()
+    window._refresh_sync_page()
+    disclosure = _disclosure(window)
+    assert disclosure is not None
+    assert "Bibliothèques de Paris non connectées" in disclosure.label
+    assert disclosure.expanded is True
+    rows = {row.title: row for row in disclosure.child.children}
+    assert "Bibliothèques de Paris" in rows
+    assert "Recherche indisponible" in rows["Bibliothèques de Paris"].subtitle
+    assert rows["Bibliothèques de Paris"].suffixes == []
+    assert window.runner.tasks == []
+    assert all(name == "sources" for name, *_ in calls)
+
+    # Identity switching must not retain the other profile's catalogue status.
+    window.service.current_identity.identity_id = "bob"
+    window._refresh_sync_page()
+    assert _disclosure(window) is None
+
+
+def test_p0_2882_paris_ready_catalogue_visible_without_fake_sync():
+    window, broker, calls, _build, _page = _fixture(sources=[])
+    window.service.catalogue_source_capabilities = lambda *, identity_id: (
+        _cap("paris", scope="authenticated", available=True),
+    )
+    window._refresh_sync_page()
+    disclosure = _disclosure(window)
+    assert disclosure is not None
+    assert "Bibliothèques de Paris disponibles" in disclosure.label
+    assert disclosure.expanded is False
+    assert disclosure.child.children[0].title == "Bibliothèques de Paris"
+    assert window.runner.tasks == []
