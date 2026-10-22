@@ -446,12 +446,19 @@ class PrivateReviewPanel:
         self.candidate_page_status = Gtk.Label(
             label="Aucun identifiant à examiner.", xalign=0, wrap=True,
         )
+        self.candidate_next_pending = Gtk.Button(
+            label="Aller au prochain identifiant sans décision"
+        )
         pagination.append(self.candidate_previous)
         pagination.append(self.candidate_page_status)
         pagination.append(self.candidate_next)
+        pagination.append(self.candidate_next_pending)
         box.append(pagination)
         self.candidate_previous.connect("clicked", lambda *_: self.change_candidate_page(-1))
         self.candidate_next.connect("clicked", lambda *_: self.change_candidate_page(1))
+        self.candidate_next_pending.connect(
+            "clicked", lambda *_: self.go_to_next_pending(),
+        )
 
         box.append(Gtk.Label(
             label="L'aperçu est local et peut contenir des identifiants "
@@ -627,6 +634,10 @@ class PrivateReviewPanel:
         self.candidate_next.set_sensitive(
             not self._closed and not busy
             and (self._candidate_page + 1) * _REVIEW_PAGE_SIZE < candidate_count
+        )
+        self.candidate_next_pending.set_sensitive(
+            not self._closed and not busy and self._review is not None
+            and self._review.pending() > 0
         )
         ready = not self._closed and not busy and self._review is not None
         self.plan_button.set_sensitive(ready and not self._review.pending()
@@ -1550,6 +1561,30 @@ class PrivateReviewPanel:
             self._candidate_page = target
             self._show_candidates(update_status=False)
 
+    def go_to_next_pending(self):
+        """Navigate pending identifiers without applying any decisions in bulk."""
+        if (self._closed or self._review is None or self.is_recording()
+                or self.is_scanning()):
+            return
+        rows = self._review.local_rows()
+        if not rows:
+            return
+        start = self._candidate_page * _REVIEW_PAGE_SIZE
+        pending = [
+            i for i, row in enumerate(rows) if row["decision"] is None
+        ]
+        if not pending:
+            self.status.set_label("Toutes les décisions individuelles sont prises.")
+            return
+        target = next((i for i in pending if i >= start), pending[0])
+        self._candidate_page = target // _REVIEW_PAGE_SIZE
+        self._show_candidates(update_status=False)
+        self.status.set_label(
+            f"Identifiant {target + 1}/{len(rows)} encore à décider "
+            f"(page {self._candidate_page + 1}). "
+            "Aucune décision automatique."
+        )
+
     def _show_candidates(self, *, update_status=True):
         self._clear_candidates()
         self._text("")
@@ -1561,7 +1596,8 @@ class PrivateReviewPanel:
         first = self._candidate_page * _REVIEW_PAGE_SIZE
         last = min(total, first + _REVIEW_PAGE_SIZE)
         self.candidate_page_status.set_label(
-            f"Identifiants {first + 1}–{last} sur {total}"
+            f"Identifiants {first + 1}–{last} sur {total} "
+            f"· {self._review.pending()} à décider"
             if total else "Aucun identifiant à examiner."
         )
         if update_status:
@@ -1610,6 +1646,10 @@ class PrivateReviewPanel:
                 self.status.set_label(
                     f"Décisions restantes : {current.pending()}. "
                     "Conserver un identifiant peut révéler des données personnelles."
+                )
+                self.candidate_page_status.set_label(
+                    f"Identifiants {first + 1}–{last} sur {total} "
+                    f"· {current.pending()} à décider"
                 )
             chooser.connect("changed", changed)
             chooser.set_tooltip_text(
