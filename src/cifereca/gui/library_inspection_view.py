@@ -108,6 +108,7 @@ class LocalInspectionController:
         self._activity_started = None
         self._activity_phase = 'Préparation'
         self._activity_files = None
+        self._activity_mode = 'preparing'
 
     def attach_activity_row(self, row):
         """The Maintenance ActionRow owns the nonmodal loading indicator."""
@@ -136,6 +137,7 @@ class LocalInspectionController:
             self._activity_clock = None
         self._activity_started = None
         self._activity_files = None
+        self._activity_mode = 'preparing'
         if self._activity_box is not None:
             self._activity_box.set_visible(False)
 
@@ -145,7 +147,12 @@ class LocalInspectionController:
             return
         elapsed = min(36_000, max(0, int(monotonic() - self._activity_started)))
         minutes, seconds = divmod(elapsed, 60)
-        message = f'Inspection · {self._activity_phase} · {minutes:02}:{seconds:02} écoulées'
+        state = {
+            'preparing': 'préparation : cache valide ou nouvelle lecture',
+            'cached': 'preuves réutilisées (cache privé valide)',
+            'new_scan': 'nouveau scan local hors réseau · couverture inconnue',
+        }.get(self._activity_mode, 'préparation')
+        message = f'Inspection détaillée · {state} · {self._activity_phase} · {minutes:02}:{seconds:02} écoulées'
         if self._activity_files is not None:
             message += f' · {self._activity_files} fichiers observés'
         self._activity_label.set_label(message)
@@ -156,6 +163,23 @@ class LocalInspectionController:
             return False
         self._render_activity()
         return True
+
+    def _mode(self, generation, code):
+        """Only Core's exact local cache decision, never provider prose."""
+        if code not in ('cached', 'new_scan'):
+            return
+        idle_add = getattr(self.GLib, 'idle_add', None)
+        if idle_add is None:
+            return
+
+        def publish():
+            if (generation == self._generation and self.control is not None
+                    and not self.control.cancelled() and self.alive()):
+                self._activity_mode = code
+                self._render_activity()
+            return False
+
+        idle_add(publish)
 
     def _progress(self, generation, current, total, phase):
         if phase not in _INSPECTION_PHASES:
@@ -214,6 +238,7 @@ class LocalInspectionController:
         self._activity_started = monotonic()
         self._activity_phase = 'Préparation'
         self._activity_files = None
+        self._activity_mode = 'preparing'
         self._show_activity()
         timeout = getattr(self.GLib, 'timeout_add_seconds', None)
         if timeout is not None:
@@ -223,7 +248,10 @@ class LocalInspectionController:
 
         def read():
             try:
-                return open_local_inspection(self.parent.service, identity_id=identity.identity_id, control=control)
+                return open_local_inspection(
+                    self.parent.service, identity_id=identity.identity_id,
+                    control=control, on_mode=lambda mode: self._mode(generation, mode),
+                )
             except Exception:
                 raise RuntimeError('Inspection locale indisponible.') from None
 
