@@ -210,6 +210,7 @@ def test_workspaces_separate_capture_sessions_review_without_export(monkeypatch)
         assert panel.configure_button in panel.capture_box.children
         assert any(panel.start in child.children for child in panel.capture_box.children)
         assert panel.export_button in panel.review_box.children
+        assert panel.current_private_export_button is None
         assert any(panel.preview_button in child.children for child in panel.review_box.children)
         assert any(panel.clear in child.children for child in panel.review_box.children)
         assert not any(panel.preview_button in child.children for child in panel.capture_box.children)
