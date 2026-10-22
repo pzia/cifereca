@@ -22,7 +22,7 @@ from .plugins.python_quarantine import (
 
 MANIFEST = "wheelhouse-provenance.json"
 AGE = timedelta(hours=168)
-SHA = re.compile(r"[0-9a-f]{64}\\Z")
+SHA = re.compile(r"[0-9a-f]{64}\Z")
 MAX_WHEELS = 512
 MAX_MANIFEST_BYTES = 1024 * 1024
 
@@ -136,7 +136,7 @@ def attest_wheelhouse(
             "uploaded_at": item["upload_time_iso_8601"],
         })
     payload = {"schema": 1, "wheels": records}
-    encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\\n").encode("utf-8")
+    encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
     if len(encoded) > MAX_MANIFEST_BYTES:
         _reject()
     destination = directory / MANIFEST
