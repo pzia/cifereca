@@ -644,7 +644,17 @@ class LocalInspectionController:
         close = Gtk.Button(label='Fermer')
         for widget in (previous, count, following, close): footer.append(widget)
         box.append(footer)
-        toolbar_view.set_content(box)
+        # The inspection includes multiple independently scrollable lists.
+        # Their scrollbars alone cannot expose controls above/below the panes
+        # when the window is shorter than the combined natural layout.
+        # Keep a window-level vertical viewport so the full workflow,
+        # including its confirmation actions and footer, remains reachable.
+        page_scroll = Gtk.ScrolledWindow()
+        page_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        page_scroll.set_hexpand(True)
+        page_scroll.set_vexpand(True)
+        page_scroll.set_child(box)
+        toolbar_view.set_content(page_scroll)
         window.set_content(toolbar_view)
         offset = [0]
         current_total = [0]
