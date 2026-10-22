@@ -475,12 +475,15 @@ class LocalInspectionController:
         shortcuts.append(show_rights)
         box.append(shortcuts)
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        paned.set_vexpand(True)
+        # Allow the main viewport to reach every comparison action even when
+        # a long candidate column exceeds the available window height.
+        paned.set_vexpand(False)
         listing = Gtk.ListBox()
         listing.set_selection_mode(Gtk.SelectionMode.SINGLE)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_min_content_width(260)
+        scroll.set_min_content_height(160)
         scroll.set_child(listing)
         paned.set_start_child(scroll)
         detail = Gtk.Label(label='Sélectionnez un cas pour consulter ses preuves.', xalign=0, yalign=0)
@@ -490,6 +493,7 @@ class LocalInspectionController:
         detail.set_max_width_chars(72)
         detail_scroll = Gtk.ScrolledWindow()
         detail_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        detail_scroll.set_min_content_height(160)
         detail_scroll.set_child(detail)
         # Read-only, local side-by-side comparison. This second pane is only
         # present for an inspected right. Its candidate files have *no*
@@ -628,6 +632,7 @@ class LocalInspectionController:
         candidate_detail.set_selectable(True)
         candidate_scroll = Gtk.ScrolledWindow()
         candidate_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        candidate_scroll.set_min_content_height(96)
         candidate_scroll.set_child(candidate_detail)
         candidate_scroll.set_vexpand(True)
         candidate_box.append(candidate_scroll)
@@ -643,8 +648,16 @@ class LocalInspectionController:
         count.set_hexpand(True)
         close = Gtk.Button(label='Fermer')
         for widget in (previous, count, following, close): footer.append(widget)
-        box.append(footer)
-        toolbar_view.set_content(box)
+        # Keep navigation/close visible while the long inspection moves under
+        # the header. Inner lists retain their own scrollbars for large sets.
+        toolbar_view.add_bottom_bar(footer)
+        content_scroll = Gtk.ScrolledWindow()
+        content_scroll.set_name('reconciliation-content-scroll')
+        content_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        content_scroll.set_vexpand(True)
+        content_scroll.set_propagate_natural_height(False)
+        content_scroll.set_child(box)
+        toolbar_view.set_content(content_scroll)
         window.set_content(toolbar_view)
         offset = [0]
         current_total = [0]

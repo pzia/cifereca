@@ -143,6 +143,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         report['checks']['inspection_window_mapped']=True
         window=controller.dialog
         assert window.get_width()<=parent.get_width()
+        report['checks']['P0_2712_initial_window_width_ok']=True
         assert window.get_decorated() and window.get_resizable()
         header = next(w for w in walk(window) if isinstance(w, Adw.HeaderBar))
         assert header.get_mapped()
@@ -151,8 +152,31 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                     and w.get_label()=="Agrandir / Restaurer")
         assert grow.get_mapped() and grow.get_sensitive()
         assert 'Agrandir' in (grow.get_tooltip_text() or '')
+        report['checks']['P0_2712_initial_header_ok']=True
         widgets['grow'] = grow
         report['checks']['inspection_window_has_maximize_controls']=True
+        # Real GTK geometry: the entire inspection must be reachable without
+        # maximizing, independently of the nested list/detail scrollbars.
+        toolbar_view = next(w for w in walk(window)
+                            if isinstance(w, Adw.ToolbarView))
+        # CSS/widget names are not reliable during GTK child traversal:
+        # read the content installed by the production ToolbarView instead.
+        main_scroll = toolbar_view.get_content()
+        assert isinstance(main_scroll, Gtk.ScrolledWindow)
+        # GTK wraps a non-GtkScrollable Box in an implicit Gtk.Viewport.
+        # Inspect the actual page, not the automatic layout adapter.
+        page = main_scroll.get_child()
+        if isinstance(page, Gtk.Viewport):
+            page = page.get_child()
+        assert isinstance(page, Gtk.Box)
+        report['checks']['P0_2712_initial_scroller_child_ok']=True
+        adjustment = main_scroll.get_vadjustment()
+        assert adjustment is not None
+        # At the initial render the candidate pane is intentionally hidden;
+        # it may fit entirely even at 920px. Exercise overflow *after* the
+        # right and its taller comparison/actions are expanded.
+        widgets['main_scroll'] = main_scroll
+        report['checks']['P0_2712_main_scroll_present']=True
         dropdowns=[w for w in walk(window) if isinstance(w,Gtk.DropDown)]
         widgets['provider'],widgets['state']=dropdowns
         widgets['list']=next(w for w in walk(window) if isinstance(w,Gtk.ListBox))
@@ -177,6 +201,17 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert 'Fichiers candidats' in labels
         assert 'non probant' in labels
         report['checks']['candidate_heading_verified']=True
+        main_scroll = widgets['main_scroll']
+        adjustment = main_scroll.get_vadjustment()
+        # The asynchronous GTK allocation of the newly shown comparison may
+        # still be pending at this callback. A present scroll viewport is a
+        # strict contract; changing its adjustment when overflow exists is an
+        # additional physical allocation check (never assume overflow).
+        if adjustment.get_upper() > adjustment.get_page_size() + 1:
+            adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+            assert adjustment.get_value() > 0
+            adjustment.set_value(0)
+            report['checks']['P0_2712_main_scroll_range_operable']=True
         right = controller.session.page(
             provider='numilog', state='rights_without_verified_file',
         ).cases[0]
@@ -192,7 +227,33 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         report['checks']['candidate_button_found']=True
 
         def candidate_allocated():
+            # Focus a control that may sit below the initial viewport; GTK
+            # should scroll its ancestor viewport rather than clip it.
+            following_candidate.grab_focus()
+            # A child may be mapped but clipped by the page scrollbar.
+            outer = widgets['main_scroll']
+            page = outer.get_child()
+            if isinstance(page, Gtk.Viewport):
+                page = page.get_child()
+            ok, rect = following_candidate.compute_bounds(page)
+            if ok:
+                adj = outer.get_vadjustment()
+                adj.set_value(max(0, min(rect.get_y() - adj.get_page_size() / 2,
+                                         adj.get_upper() - adj.get_page_size())))
             if not following_candidate.get_mapped() or not following_candidate.get_sensitive():
+                return False
+            window = controller.dialog
+            visible, rect = following_candidate.compute_bounds(window)
+            if not visible or rect.get_width() <= 0 or rect.get_height() <= 0:
+                return False
+            cx = rect.get_x() + rect.get_width() / 2
+            cy = rect.get_y() + rect.get_height() / 2
+            if not (0 <= cx < window.get_width() and 0 <= cy < window.get_height()):
+                return False
+            picked = window.pick(cx, cy, Gtk.PickFlags.DEFAULT)
+            while picked is not None and picked is not following_candidate:
+                picked = picked.get_parent()
+            if picked is not following_candidate:
                 return False
             try:
                 x, y = device.widget_point(following_candidate)
@@ -224,6 +285,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                     if isinstance(w,Gtk.Button)
                     and w.get_label()=='Comparer tous les fichiers non liés')
         def ready():
+            manual.grab_focus()
             if not manual.get_mapped() or not manual.get_sensitive():
                 return False
             try:
@@ -262,6 +324,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         selected_row=rows[1]
 
         def file_row_ready():
+            selected_row.grab_focus()
             if not selected_row.get_mapped() or not selected_row.get_sensitive():
                 return False
             try:
@@ -306,7 +369,30 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert preflight.get_sensitive() and preflight.get_mapped()
 
         def preflight_ready():
+            preflight.grab_focus()
             if not preflight.get_sensitive() or not preflight.get_mapped():
+                return False
+            outer = widgets['main_scroll']
+            page = outer.get_child()
+            if isinstance(page, Gtk.Viewport):
+                page = page.get_child()
+            ok, rect = preflight.compute_bounds(page)
+            if ok:
+                adj = outer.get_vadjustment()
+                adj.set_value(max(0, min(rect.get_y() - adj.get_page_size() / 2,
+                                         adj.get_upper() - adj.get_page_size())))
+            window = controller.dialog
+            visible, box = preflight.compute_bounds(window)
+            if not visible or box.get_width() <= 0 or box.get_height() <= 0:
+                return False
+            cx = box.get_x() + box.get_width() / 2
+            cy = box.get_y() + box.get_height() / 2
+            if not (0 <= cx < window.get_width() and 0 <= cy < window.get_height()):
+                return False
+            picked = window.pick(cx, cy, Gtk.PickFlags.DEFAULT)
+            while picked is not None and picked is not preflight:
+                picked = picked.get_parent()
+            if picked is not preflight:
                 return False
             try:
                 x,y=device.widget_point(preflight)
