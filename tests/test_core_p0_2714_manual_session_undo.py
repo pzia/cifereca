@@ -85,3 +85,60 @@ def test_undo_rejected_when_sql_evidence_changes_but_placement_remains(selected)
     assert result['status'] == 'blocked'
     assert len(_rows(service, 'placements')) == 1
     assert 'PRIVATE' not in json.dumps(result)
+
+
+def _simulate_verified_private_cache_handoff(selected):
+    """Use the exact cache guard on an already-attested same-identity fixture."""
+    from time import monotonic
+    from cifereca.core.library_inspection_cache import (
+        _make_session_stamp_guard, _service_stamp,
+    )
+
+    session, right, file, service = selected
+    stamped = _service_stamp(service)
+    assert stamped is not None
+    session._valid, session._accept_own_core_commit = _make_session_stamp_guard(
+        service,
+        lambda: service.current_identity.identity_id == "default",
+        monotonic() + 300,
+        stamped,
+    )
+    session._from_audit_cache = True
+    assert session.valid()
+    return session, right, file, service
+
+
+def test_cached_inspection_confirmed_commit_keeps_same_session_undo_reachable(
+    selected,
+):
+    """Regression: a legitimate placement changes SQLite/WAL file stamps."""
+    session, right, file, service = _simulate_verified_private_cache_handoff(selected)
+    assert session.preview_manual_attachment(right, file)['status'] == 'preview'
+    confirmed = session.confirm_manual_attachment(
+        right, file, user_confirmed=True,
+    )
+    assert confirmed['status'] == 'applied'
+    assert confirmed['undo_available'] is True
+    assert session.valid() and session._manual_undo is not None
+    plan = session.preview_manual_undo(right, file)
+    assert plan['status'] == 'undo_preview'
+    undone = session.confirm_manual_undo(right, file, user_confirmed=True)
+    assert undone['status'] == 'undone'
+    assert _rows(service, 'placements') == []
+    assert 'PRIVATE' not in json.dumps(confirmed)
+
+
+def test_cached_inspection_revokes_undo_on_followup_foreign_database_change(
+    selected,
+):
+    session, right, file, service = _simulate_verified_private_cache_handoff(selected)
+    assert session.preview_manual_attachment(right, file)['status'] == 'preview'
+    done = session.confirm_manual_attachment(right, file, user_confirmed=True)
+    assert done['status'] == 'applied'
+    assert session.valid()
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute("UPDATE acquisition_ledger SET updated_at=updated_at+1")
+    assert not session.valid()
+    assert session._manual_undo is None
+    assert session.preview_manual_undo(right, file)['status'] == 'unavailable'
+    assert len(_rows(service, 'placements')) == 1
