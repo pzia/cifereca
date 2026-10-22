@@ -510,6 +510,20 @@ class LocalInspectionController:
         )
         fresh_preview.set_visible(False)
         candidate_box.append(fresh_preview)
+        confirm_attach = Gtk.Button(label='Confirmer le rattachement…')
+        confirm_attach.set_visible(False)
+        confirm_attach.set_tooltip_text(
+            'Action explicite sous verrou après revalidation des preuves. '
+            'Aucun nouveau droit ni téléchargement.'
+        )
+        candidate_box.append(confirm_attach)
+        undo_attach = Gtk.Button(label='Annuler ce rattachement…')
+        undo_attach.set_visible(False)
+        undo_attach.set_tooltip_text(
+            'Prévisualiser puis confirmer la suppression du seul placement '
+            'créé par cette session. Ne supprime jamais le fichier.'
+        )
+        candidate_box.append(undo_attach)
         pair_explanation = Gtk.Label(label='', xalign=0)
         pair_explanation.set_wrap(True)
         pair_explanation.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -564,6 +578,10 @@ class LocalInspectionController:
             session.revoke_manual_attachment_preview()
             fresh_preview.set_visible(False)
             fresh_preview.set_sensitive(False)
+            confirm_attach.set_visible(False)
+            confirm_attach.set_sensitive(False)
+            undo_attach.set_visible(False)
+            undo_attach.set_sensitive(False)
             selected_file[0] = file_key
             pair_prepare.set_sensitive(
                 selected_right[0] is not None and file_key is not None
@@ -841,6 +859,9 @@ class LocalInspectionController:
                 }
                 status = result.get('status') if type(result) is dict else None
                 pair_explanation.set_text(states.get(status, states['unavailable']))
+                confirm_attach.set_visible(status == 'preview')
+                confirm_attach.set_sensitive(status == 'preview')
+                undo_attach.set_visible(False)
                 pair_report.set_visible(True)
                 pair_report.set_expanded(True)
                 fresh_preview.set_sensitive(True)
@@ -936,6 +957,8 @@ class LocalInspectionController:
         manual_list.connect('row-selected', select_manual_file)
         pair_prepare.connect('clicked', prepare_pair)
         fresh_preview.connect('clicked', preview_fresh_pair)
+        confirm_attach.connect('clicked', request_attach_confirmation)
+        undo_attach.connect('clicked', request_undo_confirmation)
         for widget in (format_filter, sha_filter, crc_filter, file_sort):
             widget.connect('notify::selected', lambda *_: filter_manual())
         provider.connect('notify::selected', lambda *_: render(reset=True))
