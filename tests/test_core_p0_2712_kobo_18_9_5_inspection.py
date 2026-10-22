@@ -19,10 +19,17 @@ def test_small_kobo_identity_nine_rights_five_hints_never_authorizes_placement(t
     catalogue_isbn = "9780306406157"
     unrelated_isbn = "9780140328721"
     for index in range(18):
+        isbn = catalogue_isbn if index < 5 else unrelated_isbn
+        # A raw dc:identifier without an explicit ISBN scheme is NOT an
+        # admissible bibliographic link. Mirror the real OPF scheme contract.
         epub(
             root / f"synthetic-{index:02d}.epub",
-            title=f"LOCAL-SYNTHETIC-{index:02d}",
-            identifier=catalogue_isbn if index < 5 else unrelated_isbn,
+            xml=(
+                "<package><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'>"
+                f"<dc:title>LOCAL-SYNTHETIC-{index:02d}</dc:title>"
+                f"<dc:identifier scheme='ISBN'>{isbn}</dc:identifier>"
+                "</metadata></package>"
+            ),
         )
     database = tmp_path / "private-test.sqlite"
     fixture_db(database)
