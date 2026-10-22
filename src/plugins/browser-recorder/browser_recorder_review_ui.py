@@ -919,13 +919,27 @@ class PrivateReviewPanel:
                     try:
                         self._review = IdentifierReview(result)
                     except Exception:
-                        # Never show exception text from a provider response
-                        # or URL that might contain a token.
-                        result.destroy()
-                        self._trace = None
-                        self.status.set_label(
-                            "Limite de revue atteinte : capture effacée, aucun export.",
-                        )
+                        # Identifier heuristics may reject an otherwise valid
+                        # encrypted capture (e.g. candidate limit). Never
+                        # destroy a vaulted trace just because the *filtered*
+                        # ZIP cannot be produced: the operator explicitly
+                        # requested a separate direct LLM export path.
+                        # Do not surface provider exceptions or original URLs.
+                        if getattr(result, "vault_session_id", None):
+                            self.tabs.set_current_page(3)
+                            self.status.set_label(
+                                "Revue filtrée impossible : capture conservée "
+                                "dans le coffre chiffré. Vous pouvez exporter "
+                                "directement cette session privée pour un LLM "
+                                "avec la phrase secrète du coffre. Le ZIP sera "
+                                "en clair et non anonymisé."
+                            )
+                        else:
+                            result.destroy()
+                            self._trace = None
+                            self.status.set_label(
+                                "Limite de revue atteinte : capture effacée, aucun export."
+                            )
                         self._emit_failure("http_review", "review_failed")
                     else:
                         self._show_candidates()
