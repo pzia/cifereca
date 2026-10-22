@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.11, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.12, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -125,10 +125,15 @@ déclenché par le collecteur.
 
 Limites fermées par session : 240 échanges, 32 Kio par corps, 768 Kio de corps
 cumulés, 15 minutes, six origines explicites au maximum. Les corps binaires
-et compressés sont omis ; la lecture de corps HTTP exige à la fois une
-longueur déclarée et un compteur de taille réel Playwright disponibles et
-sous les plafonds. Les réponses sans longueur sûre sont omises plutôt que
-copiées par une API qui chargerait une quantité imprévisible en mémoire.
+et compressés sont omis. Pour les **requêtes et réponses non compressées**, la taille
+effective mesurée par Chromium/Playwright doit être disponible, entière,
+strictement positive et sous le budget **avant** toute lecture du corps.
+`Content-Length` peut être absent (HTTP chunked/HTTP2) : cela ne bloque
+plus un petit corps textuel GET ou POST si Chromium fournit cette mesure fiable. En revanche,
+un `Content-Length` présent mais malformé, une taille effective inconnue,
+nulle ou excessive, et toute compression sont refusés avant `body()`.
+Les omissions comptabilisent séparément `unknown_size`, `oversize` et
+`compressed` ; cela n'autorise ni streaming non borné ni relecture réseau.
 Les cookies/Authorization/en-têtes secrets ne sont jamais conservés.
 L'objet privé contient néanmoins des URL et textes **potentiellement
 sensibles** : ne jamais le journaliser ni le transmettre.
@@ -511,7 +516,7 @@ physique sur SSD/backups. Aucun ZIP n'est automatiquement produit ou
 transmis. Les tests fonctionnent uniquement sur des données fictives.
 
 
-## Vérification d'authenticité des noms lors de la rétention (0.2.11)
+## Vérification d'authenticité des noms lors de la rétention (0.2.12)
 
 Une étiquette de session est protégée par AES-256-GCM et associée
 cryptographiquement à un ID de capture précis. La revue de rétention
@@ -523,7 +528,7 @@ Les captures, mêmes anciennes, sont préservées. La confirmation manuelle
 et le délai d'expiration du plan restent obligatoires.
 
 
-## Renommage chiffré et concurrence avec la suppression (0.2.11, #2725)
+## Renommage chiffré et concurrence avec la suppression (0.2.12, #2725)
 
 Le renommage privé authentifie **sous le même verrou exclusif POSIX**
 l'archive source et son nom AES-GCM existant, puis écrit le nouveau sidecar
@@ -541,7 +546,7 @@ et n'est pas une garantie contre un acteur local ayant accès en écriture
 au coffre en dehors de l'application.
 
 
-## Téléchargements Chromium sous décision explicite (0.2.11, #2528)
+## Téléchargements Chromium sous décision explicite (0.2.12, #2528)
 
 Le mode de capture HTTP privé utilise maintenant **`accept_downloads=True`**
 (la capture HAR legacy demeure distincte). Un fichier obtenu par Chromium

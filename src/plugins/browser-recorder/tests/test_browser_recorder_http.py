@@ -115,14 +115,16 @@ def test_content_length_and_actual_byte_count_both_required_before_reading():
     unknown = Response(Request(ORIGIN + "/stream"),
                        content_length=False, data=b"small")
     emit(trace, unknown.request, unknown)
-    assert unknown.body_reads == 0
-    assert trace.exchanges[1].response_body_state == "body_omitted"
+    assert unknown.body_reads == 1
+    assert trace.exchanges[1].response_body_state == "captured"
+    assert trace.exchanges[1].response_body == "small"
 
     compressed = Response(Request(ORIGIN + "/bomb"), data=b"abc",
                           headers={"content-encoding": "gzip"})
     emit(trace, compressed.request, compressed)
     assert compressed.body_reads == 0
     assert trace.exchanges[2].response_body_state == "body_omitted"
+    assert trace.omitted["compressed"] == 1
 
     actual_missing = Request(ORIGIN + "/unknown")
     actual_missing.sizes = lambda: {}
@@ -161,8 +163,9 @@ def test_request_body_requires_declared_and_effective_bounded_size():
         data=b'{"id":1}',
     )
     emit(trace, without_length, Response(without_length))
-    assert without_length.read_post_data == 0
-    assert trace.exchanges[1].request_body_state == "body_omitted"
+    assert without_length.read_post_data == 1
+    assert trace.exchanges[1].request_body_state == "captured"
+    assert trace.exchanges[1].request_body == '{"id":1}'
 
 
 def test_total_budget_and_origin_scope_are_enforced():
@@ -602,5 +605,138 @@ def test_last_window_close_while_paused_never_restores_dropped_bodies():
     assert trace.omitted["paused"] == 1
     assert trace.omitted["unfinished"] == 0
     assert not trace._pending
+    assert trace.exchanges[0].request_body is None
+    trace.destroy()
+
+
+@pytest.mark.parametrize("untrusted_size", [None, -1, True, 2**50, "12"])
+def test_missing_content_length_never_reads_without_bounded_chromium_size(untrusted_size):
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    req = Request(ORIGIN + "/fake-chunk")
+    response = Response(req, data=b'{"BookId":214}', content_length=False)
+    req.sizes = lambda: {"responseBodySize": untrusted_size}
+    emit(trace, req, response)
+    assert response.body_reads == 0
+    assert trace.exchanges[0].response_body is None
+    assert trace.exchanges[0].response_body_state == "body_omitted"
+    assert trace.omitted["unknown_size"] == (0 if untrusted_size == 2**50 else 1)
+    if untrusted_size == 2**50:
+        assert trace.omitted["oversize"] == 1
+    trace.destroy()
+
+
+def test_missing_content_length_small_uncompressed_json_html_xml_are_captured():
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    samples = [
+        ("application/json", b'{"BookId":214}'),
+        ("text/html", b"<html><p>fixture</p></html>"),
+        ("application/xml", b"<books><BookId>214</BookId></books>"),
+    ]
+    for index, (mime, body) in enumerate(samples):
+        req = Request(ORIGIN + "/fixture-" + str(index))
+        response = Response(req, mime=mime, data=body, content_length=False)
+        emit(trace, req, response)
+        assert response.body_reads == 1
+        assert trace.exchanges[index].response_body == body.decode("utf-8")
+        assert trace.exchanges[index].response_body_state == "captured"
+    assert trace.omitted["unknown_size"] == 0
+    trace.destroy()
+
+
+def test_fake_small_content_length_cannot_override_large_actual_body():
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    req = Request(ORIGIN + "/bounded")
+    response = Response(req, data=b"A" * 200, headers={"content-length": "1"})
+    emit(trace, req, response)
+    assert response.body_reads == 0
+    assert trace.exchanges[0].response_body is None
+    assert trace.omitted["oversize"] == 1
+    trace.destroy()
+
+
+def test_compressed_without_content_length_is_omitted_before_body_read():
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    req = Request(ORIGIN + "/compressed")
+    response = Response(
+        req, data=b"tiny-wire-size", content_length=False,
+        headers={"content-encoding": "gzip"},
+    )
+    emit(trace, req, response)
+    assert response.body_reads == 0
+    assert trace.omitted["compressed"] == 1
+    assert trace.exchanges[0].response_body_state == "body_omitted"
+    trace.destroy()
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "gzip\\nunsafe", "", "br, identity", 7])
+def test_malformed_or_filtered_content_encoding_never_allows_body_read(encoding):
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    req = Request(ORIGIN + "/compression")
+    response = Response(req, data=b'{"BookId":214}', content_length=False)
+    response.headers["content-encoding"] = encoding
+    emit(trace, req, response)
+    assert response.body_reads == 0
+    assert trace.omitted["compressed"] == 1
+    assert trace.exchanges[0].response_body is None
+    trace.destroy()
+
+
+@pytest.mark.parametrize("length", ["not-a-number", "1\\nunsafe", "-1", 10**100])
+def test_filtered_invalid_content_length_cannot_masquerade_as_absent(length):
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    req = Request(ORIGIN + "/malformed")
+    response = Response(req, data=b"small")
+    response.headers["content-length"] = length
+    emit(trace, req, response)
+    assert response.body_reads == 0
+    assert trace.omitted["unknown_size"] == 1
+    trace.destroy()
+
+
+@pytest.mark.parametrize("actual", [None, True, -1, "14", 1000])
+def test_chunked_post_untrusted_browser_counter_is_never_read(actual):
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    request = Request(
+        ORIGIN + "/upload", method="POST",
+        headers={"content-type": "application/json"},
+        data=b'{"BookId":214}',
+    )
+    request.sizes = lambda: {"requestBodySize": actual, "responseBodySize": 0}
+    emit(trace, request, Response(request, data=b""))
+    assert request.read_post_data == 0
+    assert trace.exchanges[0].request_body is None
+    assert trace.exchanges[0].request_body_state == "body_omitted"
+    trace.destroy()
+
+
+def test_chunked_post_measured_body_keeps_json_without_automatic_replay():
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    request = Request(
+        ORIGIN + "/upload", method="POST",
+        headers={"content-type": "application/json"},
+        data=b'{"BookId":214}',
+    )
+    emit(trace, request, Response(request, data=b""))
+    assert request.read_post_data == 1
+    assert trace.exchanges[0].request_body == '{"BookId":214}'
+    assert trace.exchanges[0].request_body_state == "captured"
+    trace.destroy()
+
+
+@pytest.mark.parametrize("header_key,raw_value", [
+    ("content-encoding", "gzip"),
+    ("content-encoding", "gzip\\ninjected"),
+    ("content-length", "invalid"),
+    ("content-length", "1\\ninvalid"),
+])
+def test_post_with_unsafe_raw_header_is_never_read(header_key, raw_value):
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    request = Request(
+        ORIGIN + "/unsafe-post", method="POST",
+        headers={"content-type": "application/json", header_key: raw_value},
+        data=b'{"BookId":214}',
+    )
+    emit(trace, request, Response(request, data=b""))
+    assert request.read_post_data == 0
     assert trace.exchanges[0].request_body is None
     trace.destroy()
