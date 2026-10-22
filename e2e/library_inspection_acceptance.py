@@ -557,6 +557,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(lambda:controller.dialog is None,lambda:revoked(session))
 
     def revoked(session):
+        # The 920x620 inspection with long candidate actions MUST overflow.
+        # Never record a green E2E if the wheel branch was silently skipped
+        # at all three desktop resolutions; the gesture itself is the proof.
+        assert report['checks'].get('P0_2712_physical_wheel_scroll_reached') is True
+        assert report['checks'].get('P0_2712_tab_shift_tab_candidate_navigation') is True
         assert not session.valid() and not session.page().cases
         assert sources()==before
         report['checks']['local_inspection_epoch_revokes_window_and_sources_unchanged']=True
