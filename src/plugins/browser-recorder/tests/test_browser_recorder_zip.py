@@ -121,6 +121,43 @@ def test_exact_reviewed_zip_is_bounded_without_auto_write(tmp_path):
     trace.destroy()
 
 
+def test_exported_coverage_report_and_timeline_are_safe_and_correlated(tmp_path):
+    trace, review = setup()
+    plan = prepare_reviewed_zip(review)
+    preview = plan.preview()
+    members = {part["name"]: part["text"] for part in preview["members"]}
+    coverage = json.loads(members["coverage-report.json"])
+    timeline = json.loads(members["timeline.json"])
+    manifest = json.loads(members["manifest.json"])
+    assert coverage["schema"] == "cifereca.browser-recorder.coverage/1"
+    assert coverage["exchange_count"] == manifest["exchange_count"] == 2
+    assert [item["id"] for item in coverage["exchanges"]] == [
+        item["id"] for item in timeline
+    ] == [1, 2]
+    assert timeline[0]["method"] == "POST"
+    assert timeline[0]["is_redirect"] is True
+    assert timeline[0]["status"] == 302
+    assert "page_id" in timeline[0]
+    assert "duration_ms" in timeline[0]
+    assert coverage["body_coverage"] == manifest["body_coverage"]
+    for row in coverage["exchanges"]:
+        details = json.loads(members[f"exchanges/{row['id']:04d}.json"])
+        for direction in ("request", "response"):
+            summary = row[direction]
+            body = details["bodies"][direction]
+            assert summary["capture_state"] == body["capture_state"]
+            assert summary["export_state"] == body["state"]
+            assert summary["has_exported_body"] == (body["file"] is not None)
+    assert "coverage-report.json" in members["README.md"]
+    assert "omitted" in members["LLM_INSTRUCTIONS.md"]
+    for secret in (TOKEN, ACCOUNT, UUID, "PRIVATE_POSSIBLE_SECRET",
+                   "FORM_PRIVATE", "PRIVATE_USER_NAME", "PRIVATE_BOOK_TITLE"):
+        assert secret not in "\\n".join(members.values())
+    plan.save(tmp_path, user_confirmed=True)
+    review.destroy()
+    trace.destroy()
+
+
 def test_unreviewed_candidates_and_duplicate_exchange_ids_fail_closed():
     trace, review = setup()
     review.decide(next(iter(review.candidates())).key, "anonymize")
