@@ -25,6 +25,7 @@ from browser_recorder import RecorderError, SAFE_SEGMENTS, site_origin
 from browser_recorder_review import _SECRETS, _IDS, _JWT, _variants
 from browser_recorder_devkit import core_contract_kit
 from browser_recorder_download import _open_parent_without_symlinks
+from browser_recorder_http import _BODY_REASONS
 
 ZIP_SCHEMA = "cifereca.browser-recorder.approved-zip/1"
 MAX_EXCHANGES = 240
@@ -742,8 +743,14 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
                 raw_state if type(raw_state) is str
                 and raw_state in _CAPTURE_STATES else "unknown"
             )
+            reason = entry.get(direction + "_body_reason")
+            capture_reason = (
+                reason if type(reason) is str and reason in _BODY_REASONS
+                else "unknown"
+            )
             outgoing["bodies"][direction] = {
-                "state": state, "capture_state": capture_state, "file": None,
+                "state": state, "capture_state": capture_state,
+                "capture_reason": capture_reason, "file": None,
             }
             if body is not None:
                 body_path = f"bodies/{eid:04d}-{direction}.txt"
@@ -785,6 +792,14 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
     exported = sum(name.startswith("bodies/") for name in files)
     if not 0 <= exported <= reviewed <= captured <= 2 * len(review.trace.exchanges):
         raise RecorderError("bundle_invalid_coverage")
+    # Closed diagnostic vocabulary: explains why observed exchanges might
+    # have no useful bodies, without leaking an origin, path or payload.
+    capture_reasons = {code: 0 for code in sorted(_BODY_REASONS)}
+    for item in review.trace.exchanges:
+        for direction in ("request", "response"):
+            reason = getattr(item, direction + "_body_reason", "unknown")
+            capture_reasons[reason if type(reason) is str and reason in
+                            _BODY_REASONS else "unknown"] += 1
     body_coverage = {
         "captured_text_bodies": captured,
         "exported_structural_bodies": exported,
@@ -801,6 +816,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         "excluded_exchanges": preview["dropped_exchanges"],
         "capture_omissions": capture_omissions,
         "body_coverage": body_coverage,
+        "body_capture_reasons": capture_reasons,
         "secret_values_suppressed": preview["secrets_replaced"],
         "coverage": "JSON/XML structures with reviewed scalars and selected HTML selectors; free text omitted",
         "xml_namespaces": "Unknown namespace URIs are opaque labels local to each body; original URIs omitted",
