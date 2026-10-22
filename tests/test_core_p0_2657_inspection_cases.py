@@ -84,6 +84,18 @@ def test_six_files_three_confirmed_and_three_rights_unverified_not_a_bijection(
     assert counts['local_without_right'] == 3
     assert counts['unattributed_files'] == 3
     assert counts['unverified_rights'] == 3
+    # These are three distinct evidence populations, not a 1:1 join.
+    assert counts['files'] == (
+        counts['files_attested']
+        + counts['files_without_attested_link']
+        + counts['files_individually_unverified']
+    )
+    assert (counts['files_attested'], counts['files_without_attested_link'],
+            counts['files_individually_unverified']) == (3, 3, 0)
+    assert counts['rights_active'] == 6
+    assert counts['rights_attested'] == 3
+    assert counts['rights_unverified_total'] == 3
+    assert counts['placements_registered'] == 3
     assert counts['roots'] == (str(root),)
     assert session.page(state='confirmed_link').total == 3
     assert session.page(provider='numilog', state='confirmed_link').total == 3
