@@ -94,12 +94,12 @@ SCENARIOS = {
     "maintenance-tools-1280": {
         "plugin": "core", "fixture": "startup",
         "description": "P1 #2565 : Maintenance, résultats locaux et limites en GTK/XTEST 1280.",
-        "runner": "gtk-maintenance", "width": 1280,
+        "runner": "gtk-maintenance", "width": 1280, "height": 800,
     },
     "maintenance-tools-1366": {
         "plugin": "core", "fixture": "startup",
         "description": "P0 #1358: vrai GTK/XTEST Outils, lock sync, preview lente, annulation et plan périmé 1366.",
-        "runner": "gtk-maintenance", "width": 1366,
+        "runner": "gtk-maintenance", "width": 1366, "height": 768,
     },
     "maintenance-tools-1600": {
         "plugin": "core", "fixture": "startup",
@@ -434,6 +434,7 @@ def main() -> int:
                     xvfb, "-a", "-s", f"-screen 0 {width}x{scenario.get('height', 1000 if width == 1600 else 900)}x24",
                     args.python, str(ROOT / "e2e/maintenance_tools_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
+                    "--display-height", str(scenario.get("height", 1000 if width == 1600 else 900)),
                 ]
             elif scenario.get("runner") == "gtk-llm-settings":
                 width = scenario["width"]
