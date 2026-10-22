@@ -72,7 +72,6 @@ def test_1358_maintenance_safety_uses_real_GTK_XTEST_without_destructive_IO():
         'device[0].click_widget(button)',
         "busy_sync_refuses_preview_before_scan_or_delete",
         "P0_2712_window_fits_real_display",
-        "P0_2712_initial_window_height_ok",
         "real_multiline_confirmation_after_async_scan",
         "physical_cancel_never_runs_destructive_tool",
         "stale_plan_rejected_under_lock_without_delete",
@@ -80,6 +79,11 @@ def test_1358_maintenance_safety_uses_real_GTK_XTEST_without_destructive_IO():
         'report["status"] = "PASS"',
     ):
         assert marker in source
+    inspection_acceptance = (
+        ROOT / "e2e/library_inspection_acceptance.py"
+    ).read_text(encoding="utf-8")
+    assert "P0_2712_initial_window_height_ok" in inspection_acceptance
+    assert "assert window.get_height()<=parent.get_height()" in inspection_acceptance
 
 
 def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
