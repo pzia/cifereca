@@ -15,12 +15,32 @@ impérative avant partage. Le HAR ci-dessous reste une fonction secondaire.
 
 ## Accès à la fonction principale
 
-Depuis **Configuration → Browser Recorder**, le premier parcours visible
-est désormais : **Préparer le site et consentir → Démarrer HTTP privé →
-Mettre en pause/Reprendre → Arrêter et revoir → Décider chaque identifiant →
-Préparer et lire les membres exacts du ZIP → Confirmer et exporter localement**.
-Aucun consentement de conservation par lot. Le téléchargement de Chromium
-se fait séparément dans **Plugins** et exige une confirmation dédiée.
+Depuis **Configuration → Browser Recorder**, l'écran est organisé en
+**trois onglets défilants indépendamment** :
+
+- **1 · Capture** : URL HTTPS, consentement, hôtes tiers en métadonnées
+  seulement, autorisation du coffre et capture (démarrer / pause / arrêt).
+- **2 · Sessions et export privé** : sessions chiffrées, consultation,
+  réouverture, renommage, suppression et entretien. L'export de secours
+  `.brzip` est **chiffré, non anonymisé** : ne pas confondre avec le ZIP LLM.
+- **3 · Revue et ZIP LLM** : choix individuels, aperçu local, archive exacte
+  consultable membre par membre, confirmation et enregistrement local.
+  Une capture non vide ou une session réouverte mène directement ici.
+
+Le bandeau d'état et la phrase secrète du coffre restent disponibles quel que
+soit l'onglet. Changer d'onglet n'autorise aucun export. Aucun consentement de
+conservation par lot. Le téléchargement de Chromium se fait séparément dans
+**Plugins** et exige une confirmation dédiée.
+
+**Lecture du ZIP LLM :** `timeline.json` précise les méthodes, onglets/pages,
+statuts, durées, et présence d'une redirection. `coverage-report.json` offre,
+pour chaque échange, l'état de capture de chaque corps (requête/réponse),
+l'état de sa projection dans le ZIP et la présence réelle d'un corps exporté,
+plus les omissions agrégées. `exchanges/NNNN.json` reste la preuve canonique
+des champs et liens exportés ; `bodies/` contient uniquement les projections
+structurelles expurgées. Une omission ne prouve jamais que la donnée n'existait
+pas côté fournisseur. Les valeurs privées, corps bruts ou la table de
+correspondance des pseudonymes ne figurent pas dans le rapport.
 
 Le **HAR expurgé et son rejeu GET** restent disponibles dans le panneau
 **« Fonctions avancées / héritées »**, **replié par défaut**. Ces fonctions
