@@ -153,6 +153,19 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert 'Agrandir' in (grow.get_tooltip_text() or '')
         widgets['grow'] = grow
         report['checks']['inspection_window_has_maximize_controls']=True
+        # Real GTK geometry: the entire inspection must be reachable without
+        # maximizing, independently of the nested list/detail scrollbars.
+        main_scroll = next(w for w in walk(window)
+                           if isinstance(w, Gtk.ScrolledWindow)
+                           and w.get_name() == 'reconciliation-content-scroll')
+        assert isinstance(main_scroll.get_child(), Gtk.Box)
+        adjustment = main_scroll.get_vadjustment()
+        assert adjustment.get_upper() > adjustment.get_page_size() + 1
+        adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+        assert adjustment.get_value() > 0
+        adjustment.set_value(0)
+        widgets['main_scroll'] = main_scroll
+        report['checks']['P0_2712_main_scroll_reaches_full_inspection']=True
         dropdowns=[w for w in walk(window) if isinstance(w,Gtk.DropDown)]
         widgets['provider'],widgets['state']=dropdowns
         widgets['list']=next(w for w in walk(window) if isinstance(w,Gtk.ListBox))
@@ -192,6 +205,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         report['checks']['candidate_button_found']=True
 
         def candidate_allocated():
+            # Focus a control that may sit below the initial viewport; GTK
+            # should scroll its ancestor viewport rather than clip it.
+            following_candidate.grab_focus()
             if not following_candidate.get_mapped() or not following_candidate.get_sensitive():
                 return False
             try:
@@ -224,6 +240,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                     if isinstance(w,Gtk.Button)
                     and w.get_label()=='Comparer tous les fichiers non liés')
         def ready():
+            manual.grab_focus()
             if not manual.get_mapped() or not manual.get_sensitive():
                 return False
             try:
@@ -262,6 +279,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         selected_row=rows[1]
 
         def file_row_ready():
+            selected_row.grab_focus()
             if not selected_row.get_mapped() or not selected_row.get_sensitive():
                 return False
             try:
@@ -306,6 +324,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert preflight.get_sensitive() and preflight.get_mapped()
 
         def preflight_ready():
+            preflight.grab_focus()
             if not preflight.get_sensitive() or not preflight.get_mapped():
                 return False
             try:
