@@ -273,7 +273,7 @@ class FakePlaywright:
         return self
 
     def new_context(self, **kw):
-        assert kw["accept_downloads"] is False
+        assert kw["accept_downloads"] is True
         assert kw["service_workers"] == "block"
         return self.context
 
