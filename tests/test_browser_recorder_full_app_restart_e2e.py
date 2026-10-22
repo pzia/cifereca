@@ -75,8 +75,13 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
         core.plugins.set_enabled(PLUGIN_ID, True)
         assert core.plugins.status(PLUGIN_ID).state == "ready"
         assert core.plugins.service(PLUGIN_ID) is not None
+        # The full-app restart recipe must follow the package being built,
+        # not a previous hard-coded Browser Recorder release.
+        release = json.loads(
+            (PLUGIN_SOURCE / "cifereca-plugin.json").read_text("utf-8")
+        )["package"]
         installed_root = core.plugins.packages.version_root(
-            "org.cifereca.technical.browser-recorder", "0.2.9",
+            release["id"], release["version"],
         )
         assert installed_root.is_dir()
     # Only the *installed* plugin's code supplies fixture serializers; do not
