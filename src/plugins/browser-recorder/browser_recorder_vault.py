@@ -7,7 +7,8 @@ No operations occur at import time or while simply opening the plugin page.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields
-from datetime import datetime, timezone
+from hashlib import sha256
+from datetime import datetime, timezone, timedelta
 import fcntl
 import unicodedata
 import json
@@ -201,6 +202,24 @@ class StoredSession:
     def __repr__(self):
         return (f"StoredSession(state={self.recovery_status!r}, "
                 f"exchanges={len(self.trace.exchanges)})")
+
+
+
+@dataclass(frozen=True, repr=False)
+class RetentionPlan:
+    """Ephemeral authenticated deletion preview; never persisted to disk.
+
+    Fingerprints bind user's consent to *exact* encrypted source and label
+    snapshots. Do not include HTTP contents, origins, or names in this object.
+    """
+    older_than_days: int
+    cutoff_utc: str
+    fingerprints: tuple[tuple[str, str, str | None], ...]
+    total_bytes: int
+
+    @property
+    def count(self) -> int:
+        return len(self.fingerprints)
 
 
 class PrivateSessionVault:
@@ -477,6 +496,168 @@ class PrivateSessionVault:
             entry["saved_at"], entry["id"]
         ), reverse=True)
         return tuple(summaries), unavailable
+
+    @staticmethod
+    def _retention_days(days: int) -> int:
+        # The UI supplies a fixed selection, never a user-controlled path or
+        # an arbitrary date string. Partial/interrupted remain excluded.
+        if type(days) is not int or days not in {30, 90, 180, 365}:
+            raise VaultError("vault_retention_invalid")
+        return days
+
+    @staticmethod
+    def _retention_date(raw: str) -> datetime:
+        try:
+            value = datetime.fromisoformat(raw)
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("naive timestamp")
+            return value.astimezone(timezone.utc)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise VaultError("vault_retention_invalid") from exc
+
+    @staticmethod
+    def _retention_bytes(fd, name: str, max_bytes: int) -> bytes:
+        """Only the exact opaque filename under a trusted directory FD."""
+        try:
+            handle = os.open(
+                name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd,
+            )
+            try:
+                info = os.fstat(handle)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or info.st_uid != os.getuid()
+                        or stat.S_IMODE(info.st_mode) != 0o600
+                        or not 64 <= info.st_size <= max_bytes):
+                    raise VaultError("vault_unsafe_file")
+                with os.fdopen(handle, "rb", closefd=False) as stream:
+                    data = stream.read(max_bytes + 1)
+                if len(data) != info.st_size:
+                    raise VaultError("vault_unsafe_file")
+                return data
+            finally:
+                os.close(handle)
+        except VaultError:
+            raise
+        except OSError as exc:
+            raise VaultError("vault_unsafe_file") from exc
+
+    def _retention_fingerprint(self, fd, sid: str):
+        if type(sid) is not str or not _ID.fullmatch(sid):
+            raise VaultError("vault_invalid")
+        capture = self._retention_bytes(fd, sid + ".cbrv", MAX_FILE)
+        label_name = sid + ".cbrn"
+        try:
+            label = self._retention_bytes(fd, label_name, MAX_LABEL_FILE)
+        except VaultError as exc:
+            # Missing labels are fine; malformed/unsafe links are not.
+            if not isinstance(exc.__cause__, FileNotFoundError):
+                raise
+            label = None
+        return ((sid, sha256(capture).hexdigest(),
+                 sha256(label).hexdigest() if label is not None else None),
+                len(capture) + (len(label) if label is not None else 0))
+
+    def retention_preview(self, passphrase: str, older_than_days: int,
+                          *, now: datetime | None = None) -> RetentionPlan:
+        """Preview only *completed* authenticated older sessions; no writes.
+
+        Wrong keys and partial/interrupted sessions are never candidates.
+        Reject unsafe/corrupt files rather than guessing whether to delete.
+        """
+        days = self._retention_days(older_than_days)
+        if type(passphrase) is not str or not 12 <= len(passphrase) <= 1024:
+            raise VaultError("vault_passphrase_required")
+        now = (now if now is not None else datetime.now(timezone.utc))
+        if not isinstance(now, datetime) or now.tzinfo is None:
+            raise VaultError("vault_retention_invalid")
+        cutoff = now.astimezone(timezone.utc) - timedelta(days=days)
+        fd = self._open_dir(create=False)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH)
+            ids = self.list_ids()
+            if len(ids) > MAX_SESSIONS:
+                raise VaultError("vault_limit")
+            rows, total = [], 0
+            for sid in ids:
+                try:
+                    stored = self.open(sid, passphrase)
+                except VaultError as exc:
+                    if str(exc) == "vault_unlock_failed":
+                        continue  # another passphrase is not authorization
+                    raise
+                try:
+                    if (stored.recovery_status != "completed"
+                            or self._retention_date(stored.saved_at) >= cutoff):
+                        continue
+                    pair, size = self._retention_fingerprint(fd, sid)
+                    rows.append(pair)
+                    total += size
+                finally:
+                    stored.trace.destroy()
+            return RetentionPlan(days, cutoff.isoformat(),
+                                 tuple(sorted(rows)), total)
+        finally:
+            os.close(fd)
+
+    def retention_apply(self, plan: RetentionPlan, passphrase: str, *,
+                        confirmed: bool = False) -> tuple[int, int]:
+        """Apply ONLY the exact preview after explicit independent consent.
+
+        Validate every entry under the writer lock before the first unlink.
+        Any replaced snapshot/label, unsafe link, wrong key or expired
+        preview aborts entirely. No background/automatic retention.
+        """
+        if confirmed is not True:
+            raise VaultError("vault_confirmation_required")
+        if type(plan) is not RetentionPlan:
+            raise VaultError("vault_retention_invalid")
+        days = self._retention_days(plan.older_than_days)
+        cutoff = self._retention_date(plan.cutoff_utc)
+        if (not 0 < len(plan.fingerprints) <= MAX_SESSIONS
+                or type(plan.total_bytes) is not int
+                or plan.total_bytes <= 0):
+            raise VaultError("vault_retention_invalid")
+        utc_now = datetime.now(timezone.utc)
+        # Plans are only valid for 10 minutes after the requested cutoff,
+        # never for a past or future date. No silently evolving candidates.
+        proposed_at = cutoff + timedelta(days=days)
+        if not timedelta(0) <= utc_now - proposed_at <= timedelta(minutes=10):
+            raise VaultError("vault_retention_expired")
+        fd = self._open_dir(create=False)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            seen, total = set(), 0
+            for sid, digest, label_digest in plan.fingerprints:
+                if (sid in seen or type(digest) is not str
+                        or len(digest) != 64):
+                    raise VaultError("vault_retention_invalid")
+                seen.add(sid)
+                actual, size = self._retention_fingerprint(fd, sid)
+                if actual != (sid, digest, label_digest):
+                    raise VaultError("vault_retention_changed")
+                session = self.open(sid, passphrase)
+                try:
+                    if (session.recovery_status != "completed"
+                            or self._retention_date(session.saved_at) >= cutoff):
+                        raise VaultError("vault_retention_changed")
+                finally:
+                    session.trace.destroy()
+                total += size
+            if total != plan.total_bytes:
+                raise VaultError("vault_retention_changed")
+            # Full preflight passed. No page can silently trigger this call.
+            for sid, _digest, label_digest in plan.fingerprints:
+                if label_digest is not None:
+                    os.unlink(sid + ".cbrn", dir_fd=fd)
+                os.unlink(sid + ".cbrv", dir_fd=fd)
+            os.fsync(fd)
+            return len(seen), total
+        except VaultError:
+            raise
+        except OSError as exc:
+            raise VaultError("vault_unsafe_file") from exc
+        finally:
+            os.close(fd)
 
     def begin(self, passphrase: str):
         """Explicit action *before* capture; fail closed before Chromium runs."""
