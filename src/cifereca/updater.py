@@ -212,8 +212,8 @@ def _create_venv(release: Path, python: str) -> Path:
     # The manifest belongs to a trusted, signed release archive; standalone
     # manifests do not independently authenticate publication timestamps.
     wheelhouse = release / "offline-wheels"
-    version = _metadata(release)[1]
     if wheelhouse.is_dir():
+        version = _metadata(release)[1]
         from .wheelhouse_quarantine import verify_wheelhouse
         from .plugins.python_quarantine import QuarantineRejected
         try:
