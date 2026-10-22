@@ -167,3 +167,99 @@ def test_disk_full_on_encrypted_name_does_not_create_sidecar(
     assert source.read_bytes() == old_ciphertext
     assert vault.open(writer.session_id, PASSWORD).recovery_status == "partial"
     trace.destroy()
+
+
+
+def test_directory_fsync_failure_after_rename_keeps_authenticated_snapshot(
+    tmp_path, monkeypatch,
+):
+    """A rename can succeed even when durability fsync fails afterwards.
+
+    Never claim a successful save; on next process open, however, accept only
+    the complete, GCM-authenticated snapshot. Retry must be safe as well.
+    """
+    import stat
+
+    vault = PrivateSessionVault(tmp_path / "vault")
+    trace = _trace()
+    writer = vault.begin(PASSWORD)
+    writer.save(trace, "recording", force=True)
+    original = vault.path / (writer.session_id + ".cbrv")
+    previous = original.read_bytes()
+    trace.exchanges.append(PrivateExchange(
+        2, "POST", ORIGIN + "/fixture/confirmation", status=202,
+        request_body='{"account":"' + ACCOUNT + '"}',
+        request_body_state="captured",
+    ))
+    real_fsync = os.fsync
+    failed = []
+
+    def directory_fsync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            failed.append(True)
+            raise OSError(errno.ENOSPC, "synthetic directory fsync failed")
+        return real_fsync(fd)
+
+    with monkeypatch.context() as m:
+        m.setattr(vault_impl.os, "fsync", directory_fsync)
+        with pytest.raises(VaultError, match="vault_write_failed"):
+            writer.save(trace, "completed", force=True)
+    assert failed
+    assert original.exists()
+    # Never leave a writable staging file after the handled exception.
+    assert not list(vault.path.glob(".*.part"))
+    # The committed rename may expose old OR new ciphertext after a real
+    # crash; assert only authenticated valid snapshots, not fake durability.
+    recovered = PrivateSessionVault(vault.path).open(writer.session_id, PASSWORD)
+    try:
+        assert recovered.recovery_status in ("partial", "completed")
+        assert len(recovered.trace.exchanges) in (1, 2)
+    finally:
+        recovered.trace.destroy()
+    assert ACCOUNT.encode() not in original.read_bytes()
+    # Retrying after an uncertain directory fsync never creates a second ID.
+    writer.save(trace, "completed", force=True)
+    restored = vault.open(writer.session_id, PASSWORD)
+    try:
+        assert restored.recovery_status == "completed"
+        assert len(restored.trace.exchanges) == 2
+    finally:
+        restored.trace.destroy()
+    assert vault.list_ids() == (writer.session_id,)
+    assert original.read_bytes() != previous
+    trace.destroy()
+
+
+def test_directory_fsync_failure_during_private_label_never_leaks_plaintext(
+    tmp_path, monkeypatch,
+):
+    import stat
+
+    vault = PrivateSessionVault(tmp_path / "vault")
+    trace = _trace()
+    writer = vault.begin(PASSWORD)
+    writer.save(trace, "completed", force=True)
+    capture = vault.path / (writer.session_id + ".cbrv")
+    capture_sha = sha256(capture.read_bytes()).hexdigest()
+    original_fsync = os.fsync
+
+    def directory_fsync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(errno.ENOSPC, "synthetic directory fsync failed")
+        return original_fsync(fd)
+
+    with monkeypatch.context() as m:
+        m.setattr(vault_impl.os, "fsync", directory_fsync)
+        with pytest.raises(VaultError, match="vault_write_failed"):
+            vault.set_label(writer.session_id, PASSWORD, "FICTIONAL PRIVATE LABEL")
+    name = vault.path / (writer.session_id + ".cbrn")
+    assert name.exists()
+    assert b"FICTIONAL PRIVATE LABEL" not in name.read_bytes()
+    assert ACCOUNT.encode() not in name.read_bytes()
+    assert vault.get_label(writer.session_id, PASSWORD) == "FICTIONAL PRIVATE LABEL"
+    assert sha256(capture.read_bytes()).hexdigest() == capture_sha
+    assert not list(vault.path.glob(".*.labelpart"))
+    # A subsequent writer can choose a new name after recovery.
+    vault.set_label(writer.session_id, PASSWORD, "FICTIONAL RETRIED NAME")
+    assert vault.get_label(writer.session_id, PASSWORD) == "FICTIONAL RETRIED NAME"
+    trace.destroy()
