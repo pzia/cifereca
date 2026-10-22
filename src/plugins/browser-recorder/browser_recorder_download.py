@@ -126,8 +126,19 @@ _BLOCKED_MIME = frozenset({
 
 
 def is_download_response(response) -> bool:
-    """Observe MIME/disposition transiently; NEVER retain raw values."""
+    """Observe MIME/disposition/path transiently; NEVER retain raw values."""
+    from urllib.parse import urlsplit
+
     try:
+        # Some servers mislabel ACSM as XML or text/plain. A known license
+        # extension always wins over an apparent text MIME.
+        address = getattr(response, "url", None)
+        if not isinstance(address, str):
+            address = getattr(getattr(response, "request", None), "url", "")
+        if isinstance(address, str) and urlsplit(address).path.lower().endswith(
+            (".acsm", ".lcpl", ".epub", ".pdf", ".mobi", ".azw3")
+        ):
+            return True
         headers = response.headers
         if type(headers) is not dict:
             return True
