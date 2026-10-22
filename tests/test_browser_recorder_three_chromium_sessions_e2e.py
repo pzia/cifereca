@@ -154,6 +154,13 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
         _flush()
         panel2 = plugin2.private_panel
         assert panel2 is not panel
+        # The plugin manager unloads and reloads its Python modules. Permit
+        # only the same known random-port localhost fixture in this *new*
+        # module, including when validating decrypted archived origin URLs.
+        network_after_restart = importlib.import_module("browser_recorder_http")
+        monkeypatch.setattr(
+            network_after_restart, "site_origin", fixture_only,
+        )
         panel2.sessions_refresh.emit("clicked")
         assert set(vault.list_ids()) == set(ids)
         assert ACCOUNT not in panel2.status.get_label()
