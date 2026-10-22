@@ -71,6 +71,43 @@ def _length(headers: dict[str, str]) -> int | None:
     return int(value)
 
 
+def _response_body_envelope(response) -> tuple[str, int | None]:
+    """Read only raw wire-size/encoding headers transiently before body().
+
+    Sanitized technical headers are safe to *store* but cannot prove that
+    Content-Encoding or Content-Length was absent: a malformed header may
+    have been discarded by _headers(). Such a response must fail closed.
+    Values are never retained, logged, or serialized.
+    """
+    try:
+        raw = response.headers
+    except (AttributeError, TypeError, ValueError):
+        return "unknown_size", None
+    if type(raw) is not dict:
+        return "unknown_size", None
+    length = None
+    saw_length = False
+    saw_encoding = False
+    for key, value in raw.items():
+        if type(key) is not str:
+            return "unknown_size", None
+        name = key.lower()
+        if name == "content-encoding":
+            if saw_encoding:
+                return "compressed", None
+            saw_encoding = True
+            if type(value) is not str or value.strip().lower() != "identity":
+                return "compressed", None
+        elif name == "content-length":
+            if saw_length or type(value) is not str:
+                return "unknown_size", None
+            saw_length = True
+            length = _length({"content-length": value})
+            if length is None:
+                return "unknown_size", None
+    return "ready", length
+
+
 def _url_origin(url: str) -> str | None:
     try:
         if not isinstance(url, str):
@@ -344,23 +381,17 @@ class PrivateHttpTrace:
             entry.response_body_state = "binary_skipped"
             self.omitted["binary_skipped"] += 1
             return
-        headers = entry.response_headers
-        # Compressed transfer lengths cannot bound the DECODED response,
-        # even when Chromium reports a small responseBodySize. Never read.
-        if headers.get("content-encoding", "").strip().lower() not in ("", "identity"):
+        # Examine original headers transiently: storage sanitization can
+        # drop malformed Content-Encoding/Content-Length. Never mistake that
+        # filtering for a trustworthy 'header absent' condition.
+        gate, expected = _response_body_envelope(resp)
+        if gate != "ready":
             entry.response_body_state = "body_omitted"
-            self.omitted["compressed"] += 1
+            self.omitted["compressed" if gate == "compressed" else "unknown_size"] += 1
             return
-        expected = _length(headers)
-        advertised = headers.get("content-length")
-        # A malformed / untrusted declared length must not authorize reads.
         # An *absent* Content-Length is normal for HTTP/2 and chunked HTTP/1.1:
         # Chromium's already-measured, encoded responseBodySize is an
-        # independent pre-read bound, provided no compression was declared.
-        if advertised is not None and expected is None:
-            entry.response_body_state = "body_omitted"
-            self.omitted["unknown_size"] += 1
-            return
+        # independent pre-read bound when the original transfer is identity.
         actual = sizes.get("responseBodySize")
         if type(actual) is not int or actual <= 0:
             entry.response_body_state = "body_omitted"
