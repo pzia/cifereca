@@ -237,7 +237,7 @@ def test_old_core_without_presentation_capability_keeps_existing_result(tool, mo
 
 @pytest.mark.parametrize("reason,expected", [
     ("metadata_candidate_time_budget",
-     "Durée maximale de recherche bibliographique atteinte"),
+     "Budget temporel de recherche bibliographique atteint"),
     ("metadata_candidate_cancelled", "Recherche bibliographique interrompue"),
     ("metadata_candidate_row_budget", "Plafond de notices du catalogue"),
     ("metadata_candidate_reference_budget", "Plafond de références"),
@@ -323,3 +323,91 @@ def test_invalid_timing_payload_is_never_rendered(tool, monkeypatch, invalid):
     instance.run(prepare(instance), Control())
     assert not any("Durées cumulées" in value for value in captured[0]["details"])
     assert "PRIVATE" not in repr(captured)
+
+
+@pytest.mark.parametrize("match_executed,expected", [
+    (False, "Comparaison bibliographique des fichiers non exécutée"),
+    (True, "Index bibliographique incomplet"),
+])
+def test_bibliographic_coverage_is_not_misreported_as_negative_result(
+    tool, match_executed, expected,
+):
+    instance, broker = tool
+    broker.result["status"] = "incomplete_scan"
+    broker.result["reasons"] = ["metadata_candidate_time_budget"]
+    broker.result["metadata_candidates"].update({
+        "metadata_candidates": 0, "catalog_rows_examined": 7047,
+        "references_examined": 77, "files_examined": 0 if not match_executed else 1,
+        "index_completed": False, "match_phase_executed": match_executed,
+    })
+    outcome = instance.run(prepare(instance), Control())
+    assert not outcome.ok and outcome.changed == 0
+    assert expected in " ".join(outcome.warnings)
+    assert "zéro" in " ".join(outcome.warnings) if not match_executed else True
+    assert "PRIVATE" not in repr(outcome)
+
+
+def test_malformed_candidate_coverage_flag_cannot_inject_public_prose(tool):
+    instance, broker = tool
+    broker.result["status"] = "incomplete_scan"
+    broker.result["metadata_candidates"].update({
+        "match_phase_executed": "PRIVATE SECRET",
+        "index_completed": {"PRIVATE": "account"},
+    })
+    outcome = instance.run(prepare(instance), Control())
+    assert "PRIVATE" not in repr(outcome)
+    assert "non exécutée" not in " ".join(outcome.warnings)
+
+
+def test_missing_sqlite_paths_are_partitioned_without_claiming_lost_books(tool, monkeypatch):
+    import cifereca_library_reconciliation as module
+    captured = []
+    class PresentableResult:
+        details = ()
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setattr(module, 'MaintenanceResult', PresentableResult)
+    instance, broker = tool
+    broker.result['stored_paths']['missing_path_context'] = {
+        'sqlite_present': 0, 'sqlite_missing': 1, 'sqlite_other': 0,
+        'distinct_paths': 1, 'distinct_artifacts_with_id': 1,
+        'distinct_placements_with_id': 1,
+    }
+    instance.run(prepare(instance), Control())
+    detail = ' '.join(captured[0]['details'])
+    assert 'placements encore actifs (état present) : 0' in detail
+    assert 'historique déjà marqué missing : 1' in detail
+    assert '1 artefact(s) avec ID' in detail
+    assert 'ne mesurent pas des livres perdus' in detail
+    assert 'PRIVATE' not in repr(captured)
+
+
+@pytest.mark.parametrize('context', [
+    {'sqlite_present': 1, 'sqlite_missing': 1, 'sqlite_other': 0,
+     'distinct_paths': 1, 'distinct_artifacts_with_id': 1,
+     'distinct_placements_with_id': 1},
+    {'sqlite_present': True, 'sqlite_missing': 0, 'sqlite_other': 0,
+     'distinct_paths': 1, 'distinct_artifacts_with_id': 1,
+     'distinct_placements_with_id': 1},
+    {'sqlite_present': 0, 'sqlite_missing': 1, 'sqlite_other': 0,
+     'distinct_paths': '/PRIVATE/PATH', 'distinct_artifacts_with_id': 1,
+     'distinct_placements_with_id': 1},
+])
+def test_invalid_path_breakdown_never_becomes_public_detail(
+    tool, monkeypatch, context,
+):
+    import cifereca_library_reconciliation as module
+    captured = []
+    class PresentableResult:
+        details = ()
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setattr(module, 'MaintenanceResult', PresentableResult)
+    instance, broker = tool
+    broker.result['stored_paths']['missing_path_context'] = context
+    instance.run(prepare(instance), Control())
+    details = ' '.join(captured[0]['details'])
+    assert 'Chemins enregistrés absents (lignes SQLite contrôlées)' not in details
+    assert 'PRIVATE' not in details
