@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
+from datetime import datetime, timezone
 import os
 import subprocess
 import sys
@@ -14,6 +16,7 @@ from packaging.utils import canonicalize_name
 from cifereca.plugin_api import SystemRequirement
 
 from .errors import PackageInstallError
+from .python_quarantine import QuarantineRejected, check_pip_report
 from .manifest import PluginPackageManifest
 from .requirements import check_system_requirement
 
@@ -192,14 +195,44 @@ class PythonDependencyManager:
     def _pip_install(self, requested: Sequence[str], wheel_dirs: Sequence[Path]) -> None:
         if not requested:
             return
+        # P0 #2770: pip is still the standard resolver. Its dry-run plan
+        # includes transitive dependencies. No venv writes are allowed before
+        # *each exact proposed wheel* has a PyPI release-time + SHA proof.
+        # Disallow an unattested local wheelhouse/index as a silent fallback.
+        if not self.allow_index:
+            raise PythonDependencyError("dependency_provenance_unavailable")
         with tempfile.NamedTemporaryFile(prefix="cifereca-pip-", suffix=".json", delete=False) as report:
             report_path = Path(report.name)
         try:
-            command = self._pip_base(wheel_dirs) + ["--report", str(report_path), *requested]
-            proc = subprocess.run(command, text=True, capture_output=True, timeout=300, check=False)
+            resolver = [
+                sys.executable, "-m", "pip", "--isolated", "install",
+                "--disable-pip-version-check", "--dry-run", "--report",
+                str(report_path), "--no-cache-dir", "--only-binary=:all:",
+                "--index-url", "https://pypi.org/simple", *requested,
+            ]
+            proc = subprocess.run(resolver, text=True, capture_output=True, timeout=300, check=False)
             if proc.returncode != 0:
-                detail = (proc.stderr or proc.stdout or "").strip()
-                raise PythonDependencyError(f"pip could not resolve plugin dependencies: {detail[-1800:]}")
+                raise PythonDependencyError("dependency_not_eligible")
+            try:
+                plan = json.loads(report_path.read_text(encoding="utf-8"))
+                verified = check_pip_report(plan, now=datetime.now(timezone.utc))
+            except (OSError, ValueError, TypeError, QuarantineRejected) as exc:
+                raise PythonDependencyError(
+                    str(exc) if isinstance(exc, QuarantineRejected)
+                    else "dependency_provenance_unavailable"
+                ) from None
+            if not verified:
+                return  # All requested constraints were already satisfied.
+            # SHA-fragment URLs retain the EXACT attested wheel choice, while
+            # --no-deps and --no-index prevent a second unlocked resolution.
+            install = [
+                sys.executable, "-m", "pip", "--isolated", "install",
+                "--disable-pip-version-check", "--no-index", "--no-deps",
+                "--no-cache-dir", *verified,
+            ]
+            proc = subprocess.run(install, text=True, capture_output=True, timeout=300, check=False)
+            if proc.returncode != 0:
+                raise PythonDependencyError("dependency_not_eligible")
         finally:
             report_path.unlink(missing_ok=True)
 
