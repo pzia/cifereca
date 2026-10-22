@@ -119,6 +119,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--width", required=True, type=int, choices=(1024, 1280, 1366, 1600))
+    parser.add_argument("--display-height", required=True, type=int, choices=(768, 800, 900, 1000))
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
@@ -126,6 +127,7 @@ def main():
     report = {
         "status": "RUNNING", "scenario": "maintenance-tools", "width": args.width,
         "scope": "real GTK MainWindow/XTEST; simulated tool with zero destructive IO",
+        "display_height": args.display_height,
         "checks": {}, "screenshots": [], "pointer_actions": [],
     }
     window = [None]
@@ -299,6 +301,11 @@ def main():
             and getattr(b, "_cifereca_action_label", "") == "Prévisualiser…"
         ), None)
         assert preview_button[0] is not None
+        # Check the *real* allocated GTK window against the Xvfb geometry.
+        # Assertions are deliberately independent of EWMH/WM maximize state.
+        assert 0 < w.get_width() <= args.width
+        assert 0 < w.get_height() <= args.display_height
+        report["checks"]["P0_2712_window_fits_real_display"] = True
         report["checks"]["real_tools_route_and_action"] = True
         until(
             lambda: preview_button[0].get_mapped()
@@ -693,11 +700,10 @@ def main():
                     if name == "maintenance.tool" else ()
                 ))
                 w.show_error = lambda message, _title=None: errors.append(str(message))
-                # At 1024×768 the main window itself must fit the real
-                # Xvfb height; do not silently test a clipped 780px window.
-                window_height = (728 if args.width == 1024
-                                 else 880 if args.width == 1600 else 780)
-                w.set_default_size(args.width - 40, window_height)
+                # P0 #2712: test the actual Xvfb height, never a 900px
+                # display while claiming a shorter laptop/desktop geometry.
+                # Leave room for WM chrome without requiring maximize.
+                w.set_default_size(args.width - 40, args.display_height - 40)
                 w.present()
                 gtk_phase_2027("maint_window_shown")
                 device[0] = X11Input()
