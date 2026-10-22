@@ -9,13 +9,25 @@ from threading import Lock
 
 
 class AdmissionLease:
-    __slots__ = ("_owner", "_scope", "_background", "_released")
+    __slots__ = ("_owner", "_scope", "_background", "_released", "_running")
 
     def __init__(self, owner, scope: str, background: bool):
         self._owner = owner
         self._scope = scope
         self._background = background
         self._released = False
+        self._running = False
+
+    def mark_running(self) -> None:
+        """Internal worker transition; repeated/late notifications are inert."""
+        with self._owner._lock:
+            if self._released or self._running:
+                return
+            self._running = True
+            self._owner._running += 1
+            self._owner._peak_running = max(
+                self._owner._peak_running, self._owner._running,
+            )
 
     def release(self) -> None:
         with self._owner._lock:
@@ -24,6 +36,8 @@ class AdmissionLease:
             self._released = True
             owner = self._owner
             owner._inflight -= 1
+            if self._running:
+                owner._running -= 1
             if self._background:
                 owner._background -= 1
             count = owner._scope_inflight[self._scope] - 1
@@ -58,6 +72,10 @@ class SharedTaskAdmission:
         self.max_per_scope = max_per_scope
         self._lock = Lock()
         self._inflight = 0
+        self._running = 0
+        self._peak_inflight = 0
+        self._peak_running = 0
+        self._peak_queued = 0
         self._background = 0
         self._admitted = 0
         self._rejected = 0
@@ -107,6 +125,10 @@ class SharedTaskAdmission:
                     self._rejected_user += 1
                 return None
             self._inflight += 1
+            self._peak_inflight = max(self._peak_inflight, self._inflight)
+            self._peak_queued = max(
+                self._peak_queued, self._inflight - self._running,
+            )
             self._background += int(background)
             self._admitted += 1
             self._scope_inflight[private_scope] = (
@@ -119,6 +141,11 @@ class SharedTaskAdmission:
         with self._lock:
             return {
                 "inflight": self._inflight,
+                "running": self._running,
+                "queued": self._inflight - self._running,
+                "peak_inflight": self._peak_inflight,
+                "peak_running": self._peak_running,
+                "peak_queued": self._peak_queued,
                 "background": self._background,
                 "admitted": self._admitted,
                 "rejected": self._rejected,
