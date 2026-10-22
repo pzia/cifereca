@@ -241,3 +241,46 @@ def test_capture_negotiation_survives_vault_and_legacy_defaults(tmp_path):
     with pytest.raises(VaultError):
         _unrecord(json.dumps(data).encode(), sid)
     trace.destroy()
+
+
+def test_compressed_opt_in_provenance_survives_encrypted_vault_and_reviewed_zip(tmp_path):
+    from browser_recorder_private_zip import save_session_llm_zip
+    from zipfile import ZipFile
+    trace = sample_trace()
+    trace.allow_compressed_responses = True
+    writer = PrivateSessionVault(tmp_path / "vault").begin(PASSPHRASE)
+    writer.save(trace, "completed", force=True)
+    stored = PrivateSessionVault(tmp_path / "vault").open(writer.session_id, PASSPHRASE)
+    try:
+        assert stored.trace.allow_compressed_responses is True
+        target = tmp_path / "private.zip"
+        save_session_llm_zip(stored, target, confirmed=True)
+        with ZipFile(target) as archive:
+            data = json.loads(archive.read("trace.json"))
+            assert data["compressed_responses_accepted"] is True
+        review = IdentifierReview(stored.trace)
+        try:
+            for candidate in review.candidates():
+                review.decide(candidate.key, "anonymize")
+            plan = prepare_reviewed_zip(review)
+            members = {m["name"]: m["text"] for m in plan.preview()["members"]}
+            assert json.loads(members["coverage-report.json"])["compressed_responses_accepted"] is True
+            assert json.loads(members["manifest.json"])["compressed_responses_accepted"] is True
+        finally:
+            review.destroy()
+    finally:
+        stored.trace.destroy()
+        trace.destroy()
+
+
+def test_old_encrypted_session_without_compression_flag_remains_readable(tmp_path):
+    from browser_recorder_vault import _record, _unrecord
+    trace = sample_trace()
+    payload = json.loads(_record(trace, "a" * 32, "completed"))
+    payload.pop("compressed_responses_accepted")
+    restored = _unrecord(json.dumps(payload).encode("utf-8"), "a" * 32)
+    try:
+        assert restored.trace.allow_compressed_responses is False
+    finally:
+        restored.trace.destroy()
+        trace.destroy()

@@ -731,3 +731,32 @@ Les corps des GET statiques partagent aussi un sous-budget de 64 Kio maximum
 aux mêmes preuves de taille et de MIME ; un script omis faute de budget
 porte `response_body_reason=over_budget`. Cette réserve empêche les scripts
 précoces de vider le budget des réponses API tardives.
+
+
+## Mode opt-in : conserver les réponses compressées (#2863)
+
+Dans **Paramètres**, pour une capture seulement, cocher **« Accepter les réponses
+HTTP compressées »** (gzip/Brotli/deflate). Cette option est désactivée par
+défaut et se décoche au démarrage. Elle fonctionne avec ou sans l'option
+« Demander des réponses non compressées » : si le site ignore cette dernière
+et envoie gzip/br, le collecteur peut maintenant essayer de récupérer le
+texte décodé par Chromium. Aucun appel supplémentaire ou rejeu.
+
+**Risque accepté explicitement :** Playwright fournit le corps déjà
+décompressé en mémoire. Mesurer la taille des octets transmis AVANT
+`response.body()` ne limite pas la mémoire nécessaire à la décompression
+Chromium/Playwright. Une compression malveillante peut entraîner un pic de
+mémoire, un ralentissement ou un crash. Ce risque ne vient pas du format ZIP
+de sortie et ne doit jamais être qualifié de nul. Après lecture, le corps
+décodé reste limité à **32 Kio**, au budget textuel global (768 Kio au
+maximum) et au sous-budget statique. Les gros corps ne sont pas conservés ;
+ils portent la raison `over_budget`. Les tailles réseau inconnues, les
+encodages inconnus/empilés, les binaires, licences/téléchargements et les
+origines non autorisées restent exclus. Aucun ZIP n'est produit sans action
+volontaire. Ce mode ne restaure pas les anciennes sessions.
+
+`compressed_responses_accepted` figure en booléen dans la capture chiffrée
+(et le ZIP privé qui la contient), puis dans le rapport de couverture et le
+manifest du ZIP anonymisé ; les anciens coffres sans champ restent lisibles.
+La négociation `content_negotiation` demeure indépendante. Le corps du ZIP
+reste du **texte décodé**, jamais une archive HTTP gzip/br brute.
