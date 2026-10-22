@@ -120,10 +120,19 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, h
         scroller = plugin.private_panel.tabs.get_nth_page(3)
         assert isinstance(scroller, Gtk.ScrolledWindow)
         adj = scroller.get_vadjustment()
-        assert adj.get_upper() > adj.get_page_size()
-        adj.set_value(adj.get_upper() - adj.get_page_size())
-        sleep(.15)
-        _flush()
+        # GTK4 computes notebook-page geometry on a later frame, not in the
+        # same synchronous main-context flush as set_current_page().
+        for _ in range(30):
+            sleep(.05)
+            _flush()
+            if adj.get_page_size() > 0:
+                break
+        assert scroller.get_mapped(), "Review tab must be visible after navigation"
+        assert adj.get_page_size() > 0, "Review tab must receive a viewport"
+        if adj.get_upper() > adj.get_page_size():
+            adj.set_value(adj.get_upper() - adj.get_page_size())
+            sleep(.15)
+            _flush()
         export = plugin.private_panel.export_button
         ok, bounds = export.compute_bounds(scroller)
         assert ok and bounds.get_y() >= -2
