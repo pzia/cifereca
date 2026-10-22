@@ -62,15 +62,15 @@ def rig(tmp_path, monkeypatch):
     from cifereca.core import numilog_manual_link_transaction as engine
     monkeypatch.setattr(engine, "acquisition_lock_file",
                         lambda: tmp_path / "private-acquisition.lock")
-    original = book.read_bytes()
     params = {
         "observation": observation, "identity_id": "default",
         "credential_id": account.credential_id,
         "account_id": account.unique_id, "item_id": "private-item",
     }
-    yield service, book, params
-    assert book.read_bytes() == original or book.is_symlink() or book.read_bytes() != original
-    service.close()
+    try:
+        yield service, book, params
+    finally:
+        service.close()
 
 
 def _rows(service, table):
