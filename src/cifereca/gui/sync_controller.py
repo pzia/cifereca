@@ -270,11 +270,9 @@ def _refresh_sync_page(self) -> None:
         disclosure = Gtk.Expander(
             label=f"Catalogues · recherche ({len(catalogues)}){paris_status}"
         )
-        # A disconnected Paris catalogue must not disappear inside a closed
-        # disclosure. This is metadata only: it never initiates a connection.
-        disclosure.set_expanded(
-            paris is not None and paris.catalog_search_available is not True
-        )
+        # Keep the dense Sources layout accessible at narrow resolutions.
+        # The Paris status stays discoverable in the disclosure *label*.
+        disclosure.set_expanded(False)
         group = Adw.PreferencesGroup()
         group.set_title("Recherche de catalogues — aucune actualisation d’index")
         for item in catalogues:
