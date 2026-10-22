@@ -111,7 +111,7 @@ jobs:
           GDK_BACKEND: x11
         run: |
           set -euo pipefail
-          sudo apt-get install -y --no-install-recommends xdotool dbus-x11 gir1.2-adw-1
+          sudo apt-get install -y --no-install-recommends xdotool dbus-x11 gir1.2-adw-1 openbox
           "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pip install --disable-pip-version-check -e .
           xvfb-run -a "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pytest -q -rs \
             tests/test_browser_recorder_full_app_restart_e2e.py
