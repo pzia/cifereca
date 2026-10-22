@@ -15,6 +15,7 @@ from time import sleep
 from urllib.parse import urlsplit
 from zipfile import ZipFile
 import hashlib
+import gzip
 import json
 import subprocess
 import sys
@@ -136,7 +137,26 @@ def fake_bookstore():
         def do_GET(self):
             target = urlsplit(self.path).path
             calls.append(("GET", target))
-            if target == "/catalog":
+            if target == "/negotiation":
+                self.send(200, b'''<!doctype html><html><body><script>
+                    async function run() {
+                      for (const url of ['/negotiated.json', '/negotiated.html', '/forced-gzip.json']) {
+                        try { const response = await fetch(url); await response.text(); }
+                        catch (_) { /* A server can send an unacceptable coding. */ }
+                      }
+                      await fetch('/complete');
+                    }
+                    window.addEventListener('DOMContentLoaded', run);
+                    </script></body></html>''', "text/html")
+            elif target in {"/negotiated.json", "/negotiated.html", "/forced-gzip.json"}:
+                value = (b'{"ProductId":214,"access_token":"' + TOKEN.encode() + b'"}'
+                         if target.endswith("json") else b'<html><p id="book-214">Book</p></html>')
+                mime = "application/json" if target.endswith("json") else "text/html"
+                if target == "/forced-gzip.json" or self.headers.get("Accept-Encoding") != "identity":
+                    self.send(200, gzip.compress(value), mime, {"Content-Encoding": "gzip"})
+                else:
+                    self.send(200, value, mime)
+            elif target == "/catalog":
                 self.send(200, catalog_page(), "text/html; charset=utf-8")
             elif target == "/welcome":
                 self.send(200, b"<html><body>Welcome FICTIONAL user</body></html>",
@@ -959,3 +979,61 @@ def test_real_chromium_download_is_separate_explicit_save_not_a_trace_body(
             review.destroy()
     finally:
         trace.destroy()
+
+
+@pytest.mark.parametrize("prefer_identity", (False, True))
+def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
+    fake_bookstore, monkeypatch, tmp_path, prefer_identity,
+):
+    from browser_recorder_vault import PrivateSessionVault
+    from browser_recorder_private_zip import save_session_llm_zip
+    server, stop, calls = fake_bookstore
+    origin = f"http://127.0.0.1:{server.server_port}"
+    original = http_recorder.site_origin
+    def local(url):
+        parsed = urlsplit(url)
+        return origin if parsed.scheme == "http" and parsed.netloc == urlsplit(origin).netloc else original(url)
+    import browser_recorder_zip as zip_module
+    monkeypatch.setattr(http_recorder, "site_origin", local)
+    monkeypatch.setattr(zip_module, "site_origin", local)
+    vault = PrivateSessionVault(tmp_path / "vault")
+    writer = vault.begin("SYNTHETIC-IDENTITY-VAULT-PASSWORD")
+    trace = http_recorder.record_http(
+        origin + "/negotiation", stop, max_seconds=25,
+        prefer_identity=prefer_identity, vault_writer=writer,
+    )
+    stored = vault.open(writer.session_id, "SYNTHETIC-IDENTITY-VAULT-PASSWORD")
+    try:
+        assert stored.trace.content_negotiation == trace.content_negotiation
+        by_path = {urlsplit(e.url).path: e for e in stored.trace.exchanges}
+        for path in ("/negotiated.json", "/negotiated.html"):
+            entry = by_path[path]
+            assert (entry.response_body is not None) is prefer_identity
+            assert entry.response_body_reason == ("captured" if prefer_identity else "compressed")
+            assert calls.count(("GET", path)) == 1  # no second fetch/replay
+        forced = by_path["/forced-gzip.json"]
+        assert forced.response_body is None
+        assert forced.response_body_reason in {"compressed", "network_error"}
+        destination = tmp_path / "private.zip"
+        save_session_llm_zip(stored, destination, confirmed=True)
+        with ZipFile(destination) as archive:
+            private = json.loads(archive.read("trace.json"))
+            assert private["content_negotiation"] == trace.content_negotiation
+            if prefer_identity:
+                assert TOKEN in archive.read("trace.json").decode()
+        review = IdentifierReview(stored.trace)
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        plan = prepare_reviewed_zip(review)
+        members = {row["name"]: row["text"] for row in plan.preview()["members"]}
+        coverage = json.loads(members["coverage-report.json"])
+        assert coverage["content_negotiation"] == trace.content_negotiation
+        report = next(row for row in coverage["exchanges"] if row["id"] == forced.sequence)
+        assert report["response"]["capture_reason"] == forced.response_body_reason
+        assert TOKEN not in repr(members)
+        if prefer_identity:
+            assert any(name.startswith("bodies/") and 'ProductId' in text
+                       for name, text in members.items())
+    finally:
+        trace.destroy()
+        stored.trace.destroy()

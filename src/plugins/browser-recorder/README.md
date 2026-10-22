@@ -665,3 +665,20 @@ Une session chiffrée issue d'une version antérieure reste consultable :
 les motifs inexistants sont `unknown`, jamais reconstruits par hypothèse.
 Ces diagnostics n'autorisent pas la lecture d'une réponse compressée ou
 d'une taille inconnue ; les corps rejetés restent absents du ZIP.
+
+## Réponses compressées : option de négociation HTTP (#2863)
+
+Pour une **nouvelle capture**, activez volontairement dans Paramètres
+« Demander des réponses non compressées ». Chromium envoie alors
+`Accept-Encoding: identity` sur les requêtes de ce navigateur, y compris
+ses onglets et les sites tiers. La collecte reste limitée aux origines
+autorisées ; aucun appel supplémentaire, rejeu ni élargissement de capture.
+Le choix est indiqué dans la source privée et `coverage-report.json` par
+`content_negotiation=identity_requested` ; il s'agit d'une demande, pas
+d'une garantie sur la réponse du serveur.
+
+Les réponses effectivement non compressées passent les mêmes limites de
+MIME, taille mesurée par Chromium et budget cumulé. Un serveur qui impose
+encore gzip/Brotli reste refusé (`capture_reason=compressed`), sans lecture
+ni décompression du corps. Les captures antérieures ne peuvent pas être
+réparées et aucune méthode de décompression bornée n'est revendiquée.

@@ -226,3 +226,18 @@ def test_legacy_private_snapshot_without_capture_reasons_reopens_safely():
     with pytest.raises(VaultError, match="vault_invalid"):
         _unrecord(json.dumps(stored).encode("utf-8"), session_id)
     trace.destroy()
+
+
+def test_capture_negotiation_survives_vault_and_legacy_defaults(tmp_path):
+    from browser_recorder_vault import _record, _unrecord
+    trace = sample_trace()
+    trace.content_negotiation = "identity_requested"
+    sid = "a" * 32
+    data = json.loads(_record(trace, sid, "completed"))
+    assert _unrecord(json.dumps(data).encode(), sid).trace.content_negotiation == "identity_requested"
+    del data["content_negotiation"]
+    assert _unrecord(json.dumps(data).encode(), sid).trace.content_negotiation == "browser_default"
+    data["content_negotiation"] = "PRIVATE_VALUE"
+    with pytest.raises(VaultError):
+        _unrecord(json.dumps(data).encode(), sid)
+    trace.destroy()
