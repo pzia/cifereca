@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.13, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.14, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -15,12 +15,33 @@ impérative avant partage. Le HAR ci-dessous reste une fonction secondaire.
 
 ## Accès à la fonction principale
 
-Depuis **Configuration → Browser Recorder**, le premier parcours visible
-est désormais : **Préparer le site et consentir → Démarrer HTTP privé →
-Mettre en pause/Reprendre → Arrêter et revoir → Décider chaque identifiant →
-Préparer et lire les membres exacts du ZIP → Confirmer et exporter localement**.
-Aucun consentement de conservation par lot. Le téléchargement de Chromium
-se fait séparément dans **Plugins** et exige une confirmation dédiée.
+Depuis **Configuration → Browser Recorder**, l'écran est organisé en
+**quatre onglets défilants indépendamment** :
+
+- **1 · Paramètres** : URL HTTPS, consentement de capture, hôtes tiers en
+  métadonnées seulement et autorisation du coffre.
+- **2 · Capture** : démarrer, mettre en pause, reprendre et arrêter Chromium.
+- **3 · Sessions et export privé** : sessions chiffrées, consultation,
+  réouverture, renommage, suppression et entretien. L'export de secours
+  `.brzip` est **chiffré, non anonymisé** : ne pas confondre avec le ZIP LLM.
+- **4 · Revue et ZIP LLM** : choix individuels, aperçu local, archive exacte
+  consultable membre par membre, confirmation et enregistrement local.
+  Une capture non vide ou une session réouverte mène directement ici.
+
+Le bandeau d'état et la phrase secrète du coffre restent disponibles quel que
+soit l'onglet. Changer d'onglet n'autorise aucun export. Aucun consentement de
+conservation par lot. Le téléchargement de Chromium se fait séparément dans
+**Plugins** et exige une confirmation dédiée.
+
+**Lecture du ZIP LLM :** `timeline.json` précise les méthodes, onglets/pages,
+statuts, durées, et présence d'une redirection. `coverage-report.json` offre,
+pour chaque échange, l'état de capture de chaque corps (requête/réponse),
+l'état de sa projection dans le ZIP et la présence réelle d'un corps exporté,
+plus les omissions agrégées. `exchanges/NNNN.json` reste la preuve canonique
+des champs et liens exportés ; `bodies/` contient uniquement les projections
+structurelles expurgées. Une omission ne prouve jamais que la donnée n'existait
+pas côté fournisseur. Les valeurs privées, corps bruts ou la table de
+correspondance des pseudonymes ne figurent pas dans le rapport.
 
 Le **HAR expurgé et son rejeu GET** restent disponibles dans le panneau
 **« Fonctions avancées / héritées »**, **replié par défaut**. Ces fonctions
@@ -47,8 +68,16 @@ ou **3** pour *exclure l'échange*. Les raccourcis agissent sur l'identifiant
 focalisé **uniquement** ; aucune décision n'est appliquée en lot. Les touches
 du pavé numérique sont également prises en charge. Naviguez entre les
 pages de 24 identifiants avec les boutons « Identifiants précédents /
-suivants ». Préparer le ZIP, examiner les membres puis confirmer l'export
-restent des actions séparées et volontaires.
+suivants » ou « Aller au prochain identifiant sans décision » : ce dernier
+n'applique **aucun choix** et parcourt seulement les entrées à examiner.
+Préparer le ZIP, examiner les membres puis confirmer l'export restent des
+actions séparées et volontaires. Dans l'onglet **Revue et ZIP LLM**, la
+recherche filtre uniquement les **noms des membres** du ZIP exact, et le
+bouton « Voir directement le rapport de couverture » ouvre
+`coverage-report.json` ; tous les contenus restent en mémoire, sans
+recherche réseau ni acceptation implicite de l'archive. L'archive est
+**filtrée/revue, pas nécessairement anonymisée** : les identifiants
+conservés explicitement peuvent rester sensibles.
 
 ## Recette d'installation du plugin (synthétique, #2531)
 
@@ -525,7 +554,7 @@ physique sur SSD/backups. Aucun ZIP n'est automatiquement produit ou
 transmis. Les tests fonctionnent uniquement sur des données fictives.
 
 
-## Vérification d'authenticité des noms lors de la rétention (0.2.13)
+## Vérification d'authenticité des noms lors de la rétention (0.2.14)
 
 Une étiquette de session est protégée par AES-256-GCM et associée
 cryptographiquement à un ID de capture précis. La revue de rétention
@@ -537,7 +566,7 @@ Les captures, mêmes anciennes, sont préservées. La confirmation manuelle
 et le délai d'expiration du plan restent obligatoires.
 
 
-## Renommage chiffré et concurrence avec la suppression (0.2.13, #2725)
+## Renommage chiffré et concurrence avec la suppression (0.2.14, #2725)
 
 Le renommage privé authentifie **sous le même verrou exclusif POSIX**
 l'archive source et son nom AES-GCM existant, puis écrit le nouveau sidecar
@@ -555,7 +584,7 @@ et n'est pas une garantie contre un acteur local ayant accès en écriture
 au coffre en dehors de l'application.
 
 
-## Téléchargements Chromium sous décision explicite (0.2.13, #2528)
+## Téléchargements Chromium sous décision explicite (0.2.14, #2528)
 
 Le mode de capture HTTP privé utilise maintenant **`accept_downloads=True`**
 (la capture HAR legacy demeure distincte). Un fichier obtenu par Chromium

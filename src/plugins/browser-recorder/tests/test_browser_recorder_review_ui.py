@@ -57,6 +57,23 @@ class Widget:
         raise AttributeError(key)
 
 
+class Notebook(Widget):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tab_titles = []
+        self.current_page = 0
+
+    def append_page(self, child, label):
+        self.children.append(child)
+        self.tab_titles.append(label.label)
+
+    def set_current_page(self, page):
+        self.current_page = page
+
+    def get_current_page(self):
+        return self.current_page
+
+
 class Combo(Widget):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -97,6 +114,9 @@ class Gtk:
     Orientation = NS(VERTICAL=1, HORIZONTAL=2)
     SelectionMode = NS(NONE=0)
     WrapMode = NS(CHAR=1)
+    PolicyType = NS(NEVER=0, AUTOMATIC=1)
+    Widget = Widget
+    Notebook = Notebook
     Box = Widget
     FlowBox = Widget
     Label = Widget
@@ -177,6 +197,31 @@ def make_panel(monkeypatch, *, allowed=True, busy=False, export_directory=None):
         export_directory=export_directory,
     )
     return panel, tasks, raw
+
+
+def test_workspaces_separate_capture_sessions_review_without_export(monkeypatch):
+    panel, tasks, raw = make_panel(monkeypatch)
+    try:
+        assert panel.tabs.tab_titles == [
+            "1 · Paramètres", "2 · Capture",
+            "3 · Sessions et export privé", "4 · Revue et ZIP LLM",
+        ]
+        assert panel.tabs.current_page == 0
+        assert panel.configure_button in panel.capture_box.children
+        assert any(panel.start in child.children for child in panel.capture_box.children)
+        assert panel.export_button in panel.review_box.children
+        assert any(panel.preview_button in child.children for child in panel.review_box.children)
+        assert any(panel.clear in child.children for child in panel.review_box.children)
+        assert not any(panel.preview_button in child.children for child in panel.capture_box.children)
+        assert panel.status in panel.widget.children
+        assert panel.export_button.sensitive is False
+        panel.begin()
+        panel.stop_capture()
+        tasks.handles[-1].finish()
+        assert panel.tabs.current_page == 3
+        assert not panel.export_button.sensitive
+    finally:
+        panel.destroy()
 
 
 def test_private_http_review_requires_all_choices_and_never_exports(monkeypatch):
@@ -281,6 +326,38 @@ def _capture_and_decide(panel, tasks):
         [r.children[-1] for r in panel.candidates_box.children],
     ):
         combo.set_active_id("anonymize" if row["value"] == "ACC77" else "keep")
+
+
+def test_member_name_filter_and_coverage_shortcut_do_not_change_consent(
+    monkeypatch,
+):
+    panel, tasks, raw = make_panel(monkeypatch)
+    try:
+        _capture_and_decide(panel, tasks)
+        panel.prepare_zip()
+        names = list(panel.bundle_member.options)
+        assert panel.bundle_member.get_active_id() == "manifest.json"
+        assert "coverage-report.json" in names
+        assert panel.coverage_button.sensitive
+        assert not panel.export_button.sensitive
+        panel.member_filter.set_text("coverage")
+        panel._populate_zip_members()  # headless Entry has no changed signal
+        assert list(panel.bundle_member.options) == ["coverage-report.json"]
+        assert "1 membre(s) correspondant" in panel.bundle_progress.label
+        assert panel.bundle_member.get_active_id() == "coverage-report.json"
+        assert '"capture_state"' in panel.bundle_text.text
+        assert not panel.export_confirm.get_active()
+        panel.member_filter.set_text("NOT_FOUND")
+        panel._populate_zip_members()
+        assert list(panel.bundle_member.options) == []
+        assert panel.bundle_text.text == ""
+        panel._select_coverage_report()
+        assert panel.member_filter.get_text() == ""
+        assert panel.bundle_member.get_active_id() == "coverage-report.json"
+        assert not panel.export_confirm.get_active()
+        assert not panel.export_button.sensitive
+    finally:
+        panel.destroy()
 
 
 def test_exact_zip_preview_is_separate_from_explicit_export(tmp_path, monkeypatch):
@@ -472,6 +549,15 @@ def test_large_identifier_review_is_paginated_without_bulk_decisions(monkeypatch
     assert "73–90 sur 90" in panel.candidate_page_status.label
     assert len(panel.candidates_box.children) == 18
     assert not panel.candidate_next.sensitive
+    assert panel.candidate_next_pending.sensitive
+    panel.go_to_next_pending()
+    assert panel._pending_cursor == 72
+    assert "Identifiant 73/90" in panel.status.label
+    assert panel._review.pending() == 88
+    panel.go_to_next_pending()
+    assert panel._pending_cursor == 73
+    assert "Identifiant 74/90" in panel.status.label
+    assert panel._review.pending() == 88
     panel.prepare_zip()
     assert panel._bundle_plan is None
     assert "Toutes les décisions" in panel.status.label

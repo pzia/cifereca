@@ -28,7 +28,7 @@ from browser_recorder_download import _open_parent_without_symlinks
 
 ZIP_SCHEMA = "cifereca.browser-recorder.approved-zip/1"
 MAX_EXCHANGES = 240
-MAX_MEMBERS = 600
+MAX_MEMBERS = 768  # 240 exchanges × (metadata + 2 bodies) + bounded kit/reports
 MAX_UNCOMPRESSED = 4 * 1024 * 1024
 MAX_ZIP_BYTES = 2 * 1024 * 1024
 MAX_BODY_OUT = 16000
@@ -708,6 +708,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
     route_labels: dict[str, str] = {}
     files = {}
     timeline = []
+    projection_audit = []
     masked_exchange_routes = 0
     for entry in preview["exchanges"]:
         eid = entry["exchange_id"]
@@ -750,9 +751,33 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
                 files[body_path] = body.encode("utf-8")
                 outgoing["bodies"][direction]["file"] = body_path
         files[path] = _member_bytes(outgoing)
-        timeline.append({"id": eid, "exchange": path,
-                         "start_ms": outgoing["started_ms"],
-                         "status": outgoing["status"]})
+        # These fields already belong to the approved exchange projection.
+        # Exposing them together makes ordering, tab grouping and blind spots
+        # inspectable without reassembling every member manually.
+        timeline.append({
+            "id": eid, "exchange": path,
+            "start_ms": outgoing["started_ms"],
+            "duration_ms": outgoing["duration_ms"],
+            "page_id": outgoing["page_id"],
+            "method": outgoing["method"],
+            "status": outgoing["status"],
+            "is_redirect": outgoing["redirect_to"] is not None,
+            "network_error": outgoing["network_error"],
+            "metadata_only": outgoing["metadata_only"],
+        })
+        projection_audit.append({
+            "id": eid,
+            "request": {
+                "capture_state": outgoing["bodies"]["request"]["capture_state"],
+                "export_state": outgoing["bodies"]["request"]["state"],
+                "has_exported_body": outgoing["bodies"]["request"]["file"] is not None,
+            },
+            "response": {
+                "capture_state": outgoing["bodies"]["response"]["capture_state"],
+                "export_state": outgoing["bodies"]["response"]["state"],
+                "has_exported_body": outgoing["bodies"]["response"]["file"] is not None,
+            },
+        })
     files["timeline.json"] = _member_bytes(timeline)
     files["identifiers.json"] = _member_bytes(preview["decisions"])
     # Publish counts, never unreviewed URLs, hosts, header values or bodies.
@@ -795,6 +820,23 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         "exported_exchange_count": len(timeline),
     }
 
+    # A neutral coverage report lists observation and projection states for
+    # every exported exchange. It contains no URL, headers, body, provider
+    # labels, unreviewed identifier values or pseudonym correspondence.
+    files["coverage-report.json"] = _member_bytes({
+        "schema": "cifereca.browser-recorder.coverage/1",
+        "exchange_count": len(projection_audit),
+        "body_coverage": body_coverage,
+        "capture_omissions": capture_omissions,
+        "exchanges": projection_audit,
+        "notes": [
+            "Capture state describes what was retained locally, not what the server returned.",
+            "Export state describes the reviewed structural projection, not the original body.",
+            "An absent body is not proof that the HTTP response had no body.",
+            "No recorded request should be replayed with a real account.",
+        ],
+    })
+
     files["manifest.json"] = _member_bytes({
         "schema": ZIP_SCHEMA, "export": "explicit-only", "contains_raw_session": False,
         "exchange_count": len(timeline),
@@ -813,12 +855,18 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         b"All nonapproved values may be omitted; absent fields are not evidence.\n"
         b"Opaque ~route-NNNN~ path segments preserve equality, not original route names.\n"
         b"Route labels are local to this archive; no reverse mapping is included.\n"
+        b"Read coverage-report.json to distinguish capture omissions from export projections.\n"
+        b"Timeline lists method, tab/page, status, duration and redirect presence.\n"
+        b"Presence of a status does not mean the response body was retained.\n"
         b"Never replay captured requests or infer legal rights/DRM from a trace.\n"
     )
     files["LLM_INSTRUCTIONS.md"] = (
         b"Read plugin-dev-kit/manifest.json and plugin-dev-kit/README.md FIRST.\n"
         b"Use plugin-dev-kit/contracts/*.py (actual public Core interfaces)\n"
         b"and plugin-dev-kit/contract-registry.json before proposing code.\n"
+        b"Read timeline.json, coverage-report.json and exchanges/*.json together.\n"
+        b"Differentiate captured, projected, truncated, omitted and masked fields.\n"
+        b"Do not infer a missing endpoint, body or field from an omitted observation.\n"
         b"Produce endpoint evidence/assumption matrix, fake tests and packaging.\n"
         b"Never reconstruct credentials, tokens or attempt authenticated replay.\n"
     )

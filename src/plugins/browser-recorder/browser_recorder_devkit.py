@@ -107,7 +107,9 @@ référentiel de conformité auquel confronter les choix d'un LLM.
 
 ## Adapter la trace anonymisée
 
-- `../timeline.json` : ordre, codes et échanges retenus.
+- `../timeline.json` : ordre, méthodes, onglets/pages, codes, durées et redirections retenues.
+- `../coverage-report.json` : états de capture et de projection par requête/réponse,
+  ainsi que les omissions. Contrôler ce rapport avant toute conclusion négative.
 - `../exchanges/*.json` : méthodes, structures, chemins transformés.
 - `../bodies/*.txt` : corps conservés **après** projection.
 - `../manifest.json` : omissions et limites de couverture.
@@ -139,13 +141,14 @@ pas les vrais endpoints. Un corps omis ne décrit pas un schéma complet.
 
 Ne pas inclure ni restituer de cookies, mots de passe, tokens, identifiants
 privés, DRM, URL d'activation ou données personnelles dans le code proposé.
-Un ZIP anonymisé reste une source **partielle et heuristique**.
+Un ZIP revu et filtré reste une source **partielle et heuristique** ; les
+identifiants expressément conservés peuvent être privés, malgré la revue.
 """
 
 _LLM_GUIDE = """# Instructions à un LLM de génération de plugin
 
-Entrées: `manifest.json`, `timeline.json`, `exchanges/`, `bodies/`,
-`identifiers.json`, puis **ce kit** `plugin-dev-kit/`.
+Entrées: `manifest.json`, `coverage-report.json`, `timeline.json`,
+`exchanges/`, `bodies/`, `identifiers.json`, puis **ce kit** `plugin-dev-kit/`.
 
 1. Vérifier `manifest.json` de ce kit, ses hash SHA-256, la version
    `plugin_api_version` et la compatibilité avec le Core cible.
@@ -158,7 +161,9 @@ Entrées: `manifest.json`, `timeline.json`, `exchanges/`, `bodies/`,
 5. Construire transports et DTO typés, pagination/caches, plugins Python,
    manifeste, tests pytest locaux 100 % fictifs, et notices d'installation.
 6. Expliquer les limites du ZIP : URLs transformées, champs exclus,
-   corps omis, absence de secrets et absence d'authentification rejouable.
+   corps omis et absence d'authentification rejouable. Contrôler les états
+   `capture_state` et `export_state` par échange avant d'inférer un schéma.
+   La revue ne garantit pas l'absence de données personnelles.
 
 Livrables: API/permissions constatées, incertitudes clairement marquées,
 arborescence de plugin, code importable, tests, commandes de validation,
