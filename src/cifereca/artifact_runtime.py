@@ -579,6 +579,10 @@ class LibraryMaintenanceBrokerImpl:
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
             old=Path(str(row.get("path") or "")).resolve(); new=old.with_name(str(plan.facts.get("new_filename") or old.name))
             if new != old:
+                # Never allow a target symlink to redirect the new SQLite
+                # pathname to a different inode/root, even at equal SHA.
+                if new.is_symlink():
+                    raise _LibraryFilenameConflict("Destination symbolique refusée")
                 # Never overwrite or merge a path on SHA equality alone:
                 # a different identity/provider/edition may share those bytes.
                 # Perform this check before os.replace() can change the disk.
