@@ -247,6 +247,14 @@ def test_real_gtk4_large_identifier_list_requires_each_decision_and_scrolls(
         assert not panel.export_button.get_sensitive()
         assert not list(tmp_path.iterdir())
 
+        # Next-pending is navigation only, with a real GTK focus target.
+        panel.go_to_next_pending()
+        flush_glib()
+        focused = panel.candidates_box.get_first_child().get_last_child()
+        assert window.get_focus() is focused
+        assert panel._review.pending() == 80
+        assert not panel.export_button.get_sensitive()
+
         total_reviewed = 0
         last_chooser = None
         for page in range(4):
