@@ -46,7 +46,7 @@ def _scope(service, *, identity_id, credential_id, account_id):
              and type(credential_id) is str and 0 < len(credential_id) <= 1024
              and type(account_id) is str and 0 < len(account_id) <= 1024,
              "invalid_scope")
-    _require(all(not any(c in value for c in ("\\0", "\\n", "\\r"))
+    _require(all(not any(c in value for c in ("\0", "\n", "\r"))
                  for value in (identity_id, credential_id, account_id)), "invalid_scope")
     current = getattr(service, "current_identity", None)
     _require(current is not None and current.identity_id == identity_id,
@@ -217,7 +217,7 @@ def _token(scope, snapshot, observation):
         },
     }, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     return hashlib.sha256(
-        ("numilog-explicit-local-link/1\\0" + serialized).encode("utf-8")
+        ("numilog-explicit-local-link/1\0" + serialized).encode("utf-8")
     ).hexdigest()
 
 
@@ -245,7 +245,7 @@ def reconcile_numilog_manual(
     every account, ledger row, root, pathname and digest is revalidated.
     """
     _require(type(item_id) is str and 0 < len(item_id) <= 1024
-             and not any(c in item_id for c in ("\\0", "\\n", "\\r")),
+             and not any(c in item_id for c in ("\0", "\n", "\r")),
              "invalid_item")
     _require(type(observation) is FileObservation, "invalid_file_observation")
     _require(type(confirmation) is type(None)
