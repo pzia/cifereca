@@ -288,7 +288,8 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                 'both_inputs_changed': 'Cohorte et preuves SQLite ont changé.',
                 'comparison_incomplete': 'Comparaison précédente ou actuelle non exhaustive.',
             }
-            if type(drift) is dict and drift.get('schema') == 1:
+            if (type(drift) is dict and type(drift.get('schema')) is int
+                    and drift['schema'] == 1):
                 numeric = (
                     'previous_observed', 'current_observed', 'files_added',
                     'files_removed', 'files_changed',
@@ -309,8 +310,8 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                         and all(type(name) is str and name in table_labels
                                 for name in table_names)
                         and len(set(table_names)) == len(table_names)
-                        and basis in ('complete', 'observed_only')
-                        and cause in explanations):
+                        and type(basis) is str and basis in ('complete', 'observed_only')
+                        and type(cause) is str and cause in explanations):
                     previous = drift['previous_observed']
                     current = drift['current_observed']
                     added = drift['files_added']
