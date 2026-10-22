@@ -20,9 +20,13 @@ def test_redacted_maintenance_audit_hands_off_one_private_inspection(scoped, tmp
     assert public['status'] == 'complete'
     assert 'PRIVATE' not in json.dumps(public)
     control_state[0] = True  # Completion of Maintenance task is not scope revocation.
+    mode = []
     with patch('cifereca.core.library_audit_broker.read_library_snapshot',
                side_effect=AssertionError('SECOND_SQLITE_READ')):
-        session = open_local_inspection(service, identity_id='alice')
+        session = open_local_inspection(
+            service, identity_id='alice', on_mode=mode.append,
+        )
+    assert mode == ['cached']
     assert isinstance(session, LocalInspection)
     assert session.from_audit_cache() is True
     assert session.page().total == 1
@@ -34,7 +38,11 @@ def test_redacted_maintenance_audit_hands_off_one_private_inspection(scoped, tmp
 
 def test_fresh_read_uses_distinct_closed_origin_and_does_not_export_it(scoped):
     service, _, _ = scoped
-    session = open_local_inspection(service, identity_id='alice')
+    modes = []
+    session = open_local_inspection(
+        service, identity_id='alice', on_mode=modes.append,
+    )
+    assert modes == ['new_scan']
     assert isinstance(session, LocalInspection)
     assert session.from_audit_cache() is False
     assert session.summary().get('status') == 'complete'
@@ -131,3 +139,35 @@ def test_source_stamp_rejects_symlinked_database_sidecar(scoped, tmp_path):
     symlink = path.parent / (path.name + '-shm')
     symlink.symlink_to(target)
     assert cache._service_stamp(service) is None
+
+
+def test_cache_mode_callback_exception_does_not_invalidate_session(scoped):
+    service, _, _ = scoped
+    LibraryReconciliationReadBrokerImpl(service).audit(identity_id='alice')
+    def hostile(_mode):
+        raise ValueError('PRIVATE_SESSION_FAILURE')
+    session = open_local_inspection(
+        service, identity_id='alice', on_mode=hostile,
+    )
+    assert isinstance(session, LocalInspection)
+    assert session.from_audit_cache() is True
+    session.close()
+
+
+def test_cancelled_request_does_not_consume_or_announce_cache_mode(scoped):
+    service, _, _ = scoped
+    LibraryReconciliationReadBrokerImpl(service).audit(identity_id='alice')
+    signals = []
+    blocked = open_local_inspection(
+        service, identity_id='alice',
+        control=NS(cancelled=lambda: True, report=lambda **kw: None),
+        on_mode=signals.append,
+    )
+    assert blocked['reasons'] == ['audit_cancelled']
+    assert signals == []
+    live = open_local_inspection(
+        service, identity_id='alice', on_mode=signals.append,
+    )
+    assert signals == ['cached']
+    assert isinstance(live, LocalInspection)
+    live.close()
