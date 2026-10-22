@@ -143,6 +143,18 @@ def fake_bookstore():
                 self.send(403, b'{"error":"access_denied"}')
             elif target == "/bad-request":
                 self.send(400, b'{"error":"invalid_input"}')
+            elif target == "/download-page":
+                self.send(200, b'''<!doctype html><html><body>
+                    <a href="/fixture.acsm" download>Fictional loan</a>
+                    <script>window.addEventListener("DOMContentLoaded", () =>
+                      setTimeout(() => document.querySelector("a").click(), 250));
+                    </script></body></html>''', "text/html")
+            elif target == "/fixture.acsm":
+                # Real Chromium download with XML MIME; NEVER retain as body.
+                self.send(200, b"<ACSM>FAKE_LICENSE_NEVER_ARCHIVE</ACSM>",
+                          "application/vnd.adobe.adept+xml", {
+                    "Content-Disposition": 'attachment; filename="private-acsm.acsm"'
+                })
             elif target == "/binary.png":
                 self.send(200, b"\x89PNG\r\n\x1a\nFICTIONAL_BINARY", "image/png")
             elif target == "/uuid":
