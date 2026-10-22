@@ -1321,7 +1321,10 @@ class PrivateReviewPanel:
             # Candidate values are shown only to the local operator.
             label = Gtk.Label(
                 label=f"{row['key']} · {row['kind']} · {row['occurrences']}× : "
-                      f"{row['value']}",
+                      f"{row['value']}\n"
+                      "Confiance non évaluée : suggestion heuristique, "
+                      "sensibilité à vérifier.\n"
+                      "Provenance locale : " + ", ".join(row["fields"]),
                 xalign=0, wrap=True,
             )
             label.set_selectable(True)

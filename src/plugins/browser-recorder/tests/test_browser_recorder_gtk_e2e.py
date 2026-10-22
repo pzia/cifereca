@@ -116,6 +116,12 @@ def test_real_gtk4_private_review_zip_export_keyboard_controls(
         child = panel.candidates_box.get_first_child()
         for row in rows:
             assert child is not None
+            label = child.get_first_child()
+            assert isinstance(label, Gtk.Label)
+            assert "Confiance non évaluée" in label.get_text()
+            assert "suggestion heuristique" in label.get_text()
+            assert "Provenance locale : " + ", ".join(row["fields"]) in label.get_text()
+            assert not label.get_use_markup()
             chooser = child.get_last_child()
             assert isinstance(chooser, Gtk.ComboBoxText)
             chooser.set_active_id(
