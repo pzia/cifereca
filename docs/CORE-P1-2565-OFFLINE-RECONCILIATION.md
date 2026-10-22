@@ -1,3 +1,18 @@
+## #2656 — Distinguer cache privé valide et nouvelle inspection (P0)
+
+Lors du clic « Examiner les cas », l'activité intégrée affiche d'abord la
+préparation. Le **Core seul** annonce ensuite `cached` quand il a réellement
+consommé le cache privé de la dernière analyse (usage unique et portée
+revalidée), ou `new_scan` quand une nouvelle inspection hors réseau
+démarre. Dans ce dernier cas, la ligne mentionne explicitement
+« couverture inconnue », la phase bornée et la durée écoulée ; un
+compteur de fichiers *observés* ne devient pas une promesse d'exhaustivité.
+
+Les événements de mode sont **deux constantes**, pas des données de compte,
+chemin, EPUB ou SQLite. Les callbacks en retard sont ignorés après annulation,
+changement de portée ou destruction de la ligne GTK. Le dernier rapport
+Maintenance est indépendant de ce statut et reste consultable sans rescanner.
+
 # Réconciliation de bibliothèque — première tranche Core (#2565)
 
 Cette primitive hors réseau inventorie les EPUB/PDF de racines explicitement
