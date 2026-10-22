@@ -118,8 +118,8 @@ class DummyTool:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1024, 1280, 1366, 1600))
-    parser.add_argument("--display-height", required=True, type=int, choices=(768, 800, 900, 1000))
+    parser.add_argument("--width", required=True, type=int, choices=(920, 1024, 1280, 1366, 1600))
+    parser.add_argument("--display-height", required=True, type=int, choices=(620, 768, 800, 900, 1000))
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
