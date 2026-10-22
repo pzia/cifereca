@@ -199,6 +199,26 @@ def make_panel(monkeypatch, *, allowed=True, busy=False, export_directory=None):
     return panel, tasks, raw
 
 
+def test_workspaces_separate_capture_sessions_review_without_export(monkeypatch):
+    panel, tasks, raw = make_panel(monkeypatch)
+    try:
+        assert panel.tabs.tab_titles == [
+            "1 · Capture", "2 · Sessions et export privé", "3 · Revue et ZIP LLM",
+        ]
+        assert panel.tabs.current_page == 0
+        assert any(panel.start in child.children for child in panel.capture_box.children)
+        assert panel.export_button in panel.review_box.children
+        assert panel.status in panel.widget.children
+        assert panel.export_button.sensitive is False
+        panel.begin()
+        panel.stop_capture()
+        tasks.handles[-1].finish()
+        assert panel.tabs.current_page == 2
+        assert not panel.export_button.sensitive
+    finally:
+        panel.destroy()
+
+
 def test_private_http_review_requires_all_choices_and_never_exports(monkeypatch):
     panel, tasks, raw = make_panel(monkeypatch)
     panel.begin()
