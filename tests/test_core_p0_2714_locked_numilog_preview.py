@@ -54,6 +54,16 @@ def evidence(tmp_path):
     storage.close()
 
 
+def durable_files(root):
+    """SQLite may update its ephemeral -shm reader coordination bytes on BEGIN.
+
+    No data/WAL/EPUB mutation is permitted; -shm bytes are *not* a durable
+    SQLite or library write and cannot be frozen by a read transaction.
+    """
+    return {path: stamp for path, stamp in filesystem(root).items()
+            if not path.endswith("-shm")}
+
+
 def preview(evidence, **overrides):
     storage, root, file = evidence
     args = {"identity_id": "alice", "credential_id": "cred",
@@ -63,13 +73,13 @@ def preview(evidence, **overrides):
 
 
 def test_valid_scoped_receipt_is_reviewable_but_never_authorizes_write(evidence, tmp_path):
-    before = filesystem(tmp_path)
+    before = durable_files(tmp_path)
     result = preview(evidence)
     assert result.status == "reviewable"
     assert result.reason == "fresh_proofs_require_confirmation"
     assert result.read_only and not result.attachment_authorized
     assert result.requires_explicit_confirmation
-    assert filesystem(tmp_path) == before
+    assert durable_files(tmp_path) == before
 
 
 @pytest.mark.parametrize("update,reason", [
@@ -105,10 +115,10 @@ def test_changed_file_and_symlink_are_denied(evidence):
 
 
 def test_no_sqlite_writes_even_when_client_preview_is_repeated(evidence, tmp_path):
-    before = filesystem(tmp_path)
+    before = durable_files(tmp_path)
     for _ in range(3):
         assert preview(evidence).status == "reviewable"
-    assert filesystem(tmp_path) == before
+    assert durable_files(tmp_path) == before
 
 
 def test_second_same_edition_entitlement_is_ambiguous(evidence):
@@ -149,15 +159,14 @@ def test_disabled_connection_cannot_count_as_authenticated_purchase(evidence):
     assert preview(evidence).reason == "source_unavailable"
 
 
-def test_duplicated_connection_across_identities_is_not_a_scoped_binding(evidence):
+def test_rebound_connection_to_foreign_identity_is_not_a_scoped_binding(evidence):
     storage, *_ = evidence
+    # The real SQLite schema has UNIQUE(provider_id, credential_id): a
+    # duplicate connection cannot be inserted. Test a *possible* hostile
+    # state instead: a connection re-bound to a different identity.
     with storage._lock, storage._connect() as db:
-        db.execute(
-            "INSERT INTO provider_connections "
-            "(connection_id,identity_id,provider_id,credential_id,label,enabled,created_at,updated_at) "
-            "VALUES (?,?,?,?,?,1,1,1)",
-            ("foreign-connection", "bob", "numilog", "cred", "Foreign synthetic"),
-        )
+        db.execute("UPDATE provider_connections SET identity_id='bob' "
+                   "WHERE provider_id='numilog' AND credential_id='cred'")
     result = preview(evidence)
     assert result.reason == "source_unavailable"
     assert result.status == "blocked" and not result.attachment_authorized
