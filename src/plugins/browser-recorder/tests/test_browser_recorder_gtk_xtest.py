@@ -59,11 +59,9 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, h
     window = Gtk.Window()
     window.set_title(f"Cifereca XTEST synthetic {width}")
     window.set_default_size(width, height)
-    scroller = plugin.build(None)
-    assert isinstance(scroller, Gtk.ScrolledWindow)
-    assert scroller.get_policy()[1] == Gtk.PolicyType.AUTOMATIC
-    box = scroller.get_child().get_child()
-    window.set_child(scroller)
+    box = plugin.build(None)
+    assert isinstance(box, Gtk.Box)
+    window.set_child(box)
     window.present()
     _flush()
     try:
@@ -77,7 +75,7 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, h
         _xtest("windowfocus", "--sync", hits[0])
         _flush()
 
-        site = box.get_first_child().get_next_sibling()
+        site = plugin.private_panel.site
         assert isinstance(site, Gtk.Entry)
         assert site.grab_focus()
         _flush()
@@ -89,7 +87,8 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, h
         # using a real XTest Space key; no start/capture has been requested.
         _xtest("key", "--clearmodifiers", "Tab")
         _flush()
-        consent = site.get_next_sibling()
+        consent = plugin.private_panel.consent
+        assert site.get_next_sibling() is consent
         focused = window.get_focus()
         assert focused is consent or focused.is_ancestor(consent)
         assert not consent.get_active()
@@ -112,9 +111,12 @@ def test_real_keyboard_tab_and_consent_without_browser_launch(tmp_path, width, h
             pytest.fail("private HTTP start not reachable by real keyboard")
         assert private_start.get_sensitive()
         assert not plugin.private_panel.export_button.get_sensitive()
-        # At reduced heights the ZIP controls are physically outside the
-        # first viewport. Scrolling must make the *real* bottom button visible,
-        # without clicking it, confirming it or creating an archive.
+        # The review owns an independent scroll area. A keyboard operator
+        # reaches it via Notebook tabs, not a giant shared page scroll.
+        plugin.private_panel.tabs.set_current_page(2)
+        _flush()
+        scroller = plugin.private_panel.tabs.get_nth_page(2)
+        assert isinstance(scroller, Gtk.ScrolledWindow)
         adj = scroller.get_vadjustment()
         assert adj.get_upper() > adj.get_page_size()
         adj.set_value(adj.get_upper() - adj.get_page_size())
