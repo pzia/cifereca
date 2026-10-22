@@ -35,11 +35,11 @@ def evidence(tmp_path):
             "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (right, "alice", "numilog", "cred", "account",
              "edition", "active", "owned",
-             json.dumps({"source": "numilog.authenticated_library"})),
+             json.dumps({"source": "numilog.authenticated_library"}), 1, 1),
         )
         db.execute(
-            "INSERT INTO artifacts (artifact_id,sha256,size,media_format) "
-            "VALUES (?,?,?,?)",
+            "INSERT INTO artifacts (artifact_id,sha256,size,media_format,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?)",
             (artifact, observation.sha256, observation.size, "epub", 1, 1),
         )
         db.execute(
