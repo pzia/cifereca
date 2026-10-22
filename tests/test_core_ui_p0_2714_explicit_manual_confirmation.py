@@ -13,6 +13,7 @@ def test_gtk_explicit_placement_requires_dialog_and_private_session_token():
     assert "pair_confirm.connect('clicked', confirm_local_placement)" in source
     assert "dialog.add_response('cancel', 'Annuler')" in source
     assert "dialog.add_response('apply', 'Confirmer le placement')" in source
+    assert "dialog.set_default_response('cancel')" in source
     assert "dialog.set_close_response('cancel')" in source
     assert "if response != 'apply':" in source
     assert "reset_pair(chosen_file)" in source
