@@ -67,10 +67,10 @@ def catalog_page():
         await response.arrayBuffer();
         response = await fetch('/uuid?uuid={UUID}');
         await response.text();
-        for (const address of ['/chunked.json', '/chunked.html', '/chunked.xml']) {
+        for (const address of ['/chunked.json', '/chunked.html', '/chunked.xml']) {{
           response = await fetch(address);
           await response.text();
-        }
+        }}
         await fetch('/complete');
       }}
       window.addEventListener('DOMContentLoaded', exercise);
@@ -111,9 +111,9 @@ def fake_bookstore():
             half = max(1, len(value) // 2)
             for part in (value[:half], value[half:]):
                 if part:
-                    self.wfile.write(f"{len(part):X}\\r\\n".encode("ascii"))
-                    self.wfile.write(part + b"\\r\\n")
-            self.wfile.write(b"0\\r\\n\\r\\n")
+                    self.wfile.write(f"{len(part):X}\r\n".encode("ascii"))
+                    self.wfile.write(part + b"\r\n")
+            self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
 
         def do_POST(self):
