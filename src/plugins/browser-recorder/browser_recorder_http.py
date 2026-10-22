@@ -88,7 +88,9 @@ def _body_envelope(response) -> tuple[str, int | None]:
     length = None
     saw_length = False
     saw_encoding = False
-    for key, value in raw.items():
+    # Inspect *names* first. Access values only for the two technical
+    # headers below; do not even sample Cookie/Authorization in this gate.
+    for key in raw:
         if type(key) is not str:
             return "unknown_size", None
         name = key.lower()
@@ -96,12 +98,16 @@ def _body_envelope(response) -> tuple[str, int | None]:
             if saw_encoding:
                 return "compressed", None
             saw_encoding = True
+            value = raw[key]
             if type(value) is not str or value.strip().lower() != "identity":
                 return "compressed", None
         elif name == "content-length":
-            if saw_length or type(value) is not str:
+            if saw_length:
                 return "unknown_size", None
             saw_length = True
+            value = raw[key]
+            if type(value) is not str:
+                return "unknown_size", None
             length = _length({"content-length": value})
             if length is None:
                 return "unknown_size", None
