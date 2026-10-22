@@ -846,6 +846,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         "exchange_count": len(projection_audit),
         "body_coverage": body_coverage,
         "capture_omissions": capture_omissions,
+        "compressed_responses_accepted": review.trace.allow_compressed_responses,
         "content_negotiation": (
             "identity_requested" if review.trace.content_negotiation == "identity_requested"
             else "browser_default"
