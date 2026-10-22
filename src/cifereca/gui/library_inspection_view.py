@@ -397,7 +397,7 @@ class LocalInspectionController:
                 if overview.get('paris_inactive_loans', 0) else ""
             )
             + (
-                "REPÈRES 599/600 · le scan dénombre des fichiers physiques : "
+                "REPÈRES DE COMPTAGE · le scan dénombre des fichiers physiques : "
                 f"{overview.get('observed_epub_files', 0)} EPUB, "
                 f"{overview.get('observed_pdf_files', 0)} PDF. "
                 "Le bandeau du profil compte des artefacts distincts avec "
