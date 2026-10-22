@@ -41,7 +41,7 @@ def test_full_executable_restart_contract_visible_without_native_gtk():
     reason="full application window oracle requires Xvfb/X11 and DBus session",
 )
 def test_full_executable_terminate_and_restart_with_three_private_sessions(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, request,
 ):
     pytest.importorskip("cryptography")
     from cifereca.core import CiferecaCore
@@ -114,6 +114,16 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
     # storage open, real MainWindow, plugin startup from installed package.
     executable = Path(sys.executable).parent / "cifereca"
     assert executable.exists(), "the isolated test venv must install Cifereca"
+    # Real X11 window manager: Xvfb alone lacks normal Alt+F4 semantics.
+    assert shutil.which("openbox"), "Openbox required for X11 smoke recipe"
+    wm = subprocess.Popen(
+        ["openbox", "--sm-disable"], env=env,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    request.addfinalizer(lambda: wm.terminate() if wm.poll() is None else None)
+    sleep(.65)
+    assert wm.poll() is None, "window manager failed to start"
     launches = []
     for turn in (1, 2):
         app_log = tmp_path / f"app-launch-{turn}.txt"
@@ -143,7 +153,11 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
                 sleep(1.0)
                 assert app.poll() is None
                 subprocess.run(
-                    ["xdotool", "windowclose", window_id],
+                    ["xdotool", "windowactivate", "--sync", window_id],
+                    env=env, capture_output=True, check=True, timeout=5,
+                )
+                subprocess.run(
+                    ["xdotool", "key", "--clearmodifiers", "alt+F4"],
                     env=env, capture_output=True, check=True, timeout=5,
                 )
                 rc = app.wait(timeout=18)
