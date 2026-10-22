@@ -160,7 +160,21 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
                         "traceback": "Traceback" in content,
                         "critical": "CRITICAL" in content,
                     }
-                    pytest.fail(f"full application exit={rc}; probes={probes}")
+                    hints = []
+                    for line in content.splitlines()[-100:]:
+                        if any(word in line for word in (
+                            "Error", "ERROR", "Exception", "exception",
+                            "CRITICAL", "Traceback", "shutdown", "WARNING",
+                            "dbus-run-session",
+                        )):
+                            for secret in (PRIVATE_SENTINEL, PASSWORD, ORIGIN,
+                                           str(tmp_path)):
+                                line = line.replace(secret, "<REDACTED>")
+                            hints.append(line[-260:])
+                    pytest.fail(
+                        f"full application exit={rc}; probes={probes}; "
+                        f"redacted_hints={hints[-10:]}"
+                    )
             finally:
                 if app.poll() is None:
                     app.terminate()
