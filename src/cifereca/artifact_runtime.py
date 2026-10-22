@@ -20,6 +20,11 @@ from .plugin_api import (
 )
 
 
+class _LibraryFilenameConflict(Conflict):
+    """Closed, catchable collision code; no path or identity in the error."""
+    code = "library_filename_conflict"
+
+
 def _media_type(fmt: str, explicit: str | None = None) -> str:
     if explicit:
         return explicit
@@ -589,12 +594,12 @@ class LibraryMaintenanceBrokerImpl:
                         target.get("artifact_id") == row.get("artifact_id"),
                         target.get("source_item_id") == row.get("source_item_id"),
                     )):
-                        raise Conflict("Collision de placement", code="library_filename_conflict")
+                        raise _LibraryFilenameConflict("Collision de placement")
                 if new.exists():
                     if target is None:
-                        raise Conflict("Destination existante non attestée", code="library_filename_conflict")
+                        raise _LibraryFilenameConflict("Destination existante non attestée")
                     if sha256_file(new) != sha256_file(old):
-                        raise Conflict("Collision de nom", code="library_filename_conflict")
+                        raise _LibraryFilenameConflict("Collision de nom")
                 os.replace(old,new)
                 self.service.storage.relocate_local_path(old,new,identity_id=str(row.get("identity_id") or ""),provider_id=str(row.get("provider_id") or "local"))
             placed=self.service.storage.placement_for_path(new)
