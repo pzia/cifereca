@@ -75,7 +75,7 @@ def _rows(db, table, where="1", args=()):
 
 
 @contextmanager
-def _transaction(storage, write, completion):
+def _transaction(storage, write, completion, on_committed=None):
     with storage._lock:
         db = storage._connect()
         _require(not db.in_transaction, "storage_busy")
@@ -91,6 +91,14 @@ def _transaction(storage, write, completion):
                 yield db
                 db.commit()
                 completion["committed"] = True
+                # Allow CoreUI to advance the private snapshot guard only
+                # after a successful write, while still under Storage's lock.
+                if write and callable(on_committed):
+                    try:
+                        on_committed()
+                    except Exception:
+                        # A committed write must never become a false failure.
+                        pass
             except BaseException:
                 db.rollback()
                 raise
@@ -351,7 +359,8 @@ def _receipt(status, *, token=None, operation=None, changed=0):
 
 
 def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expected_sha256,
-                         path=None, confirmation=None, undo_operation=None, identity_id=None):
+                         path=None, confirmation=None, undo_operation=None, identity_id=None,
+                         cancelled=lambda: False, on_committed=None):
     """Preview or explicitly confirm ONE reversible file-link transaction.
 
     A token binds exact DB evidence, file bytes/stat and configured roots.
@@ -364,12 +373,15 @@ def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expecte
     _require(type(expected_sha256) is str and re.fullmatch("[0-9a-f]{64}", expected_sha256), "invalid_sha256")
     _require(confirmation is None or (type(confirmation) is str and re.fullmatch("[0-9a-f]{64}", confirmation)), "invalid_confirmation")
     _require(undo_operation is None or (type(undo_operation) is str and re.fullmatch("[0-9a-f]{64}", undo_operation)), "invalid_operation")
+    _require(callable(cancelled), "invalid_request")
+    _require(not cancelled(), "reconciliation_cancelled")
     write = confirmation is not None
     completion = {}
     committed_receipt = None
     try:
         lock = InterProcessLock(acquisition_lock_file()) if write else nullcontext()
-        with lock, _transaction(service.storage, write, completion) as db:
+        with lock, _transaction(service.storage, write, completion, on_committed) as db:
+            _require(not cancelled(), "reconciliation_cancelled")
             record = _journal(db, undo_operation) if undo_operation else None
             if record:
                 stored = record.get("intent")
@@ -431,6 +443,7 @@ def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expecte
             _require(intent["roots"] == list(map(str, _roots(service, owner))), "source_configuration_changed")
             _require(evidence == _file(path, _roots(service, owner), expected_sha256,
                                       snapshot["rows"]["backup_items"]["size"]), "file_changed")
+            _require(not cancelled(), "reconciliation_cancelled")
             committed_receipt = _receipt("undone" if record else "applied", operation=operation, changed=1)
             return committed_receipt
     except LockBusyError:
