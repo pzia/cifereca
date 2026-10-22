@@ -390,7 +390,13 @@ class LocalInspectionController:
             f"{overview.get('rights_attested', 0)} reliés par preuve · "
             f"{overview.get('rights_unverified_total', 0)} sans fichier vérifié"
             f" (n'implique pas l'absence)\n"
-            f"PLACEMENTS SQLITE · {overview.get('placements_registered', 0)} enregistrés "
+            + (
+                f"PRÊTS PARIS NON ACTIFS · {overview.get('paris_inactive_loans', 0)} "
+                "prêt(s) rendus / expirés / inactifs enregistrés, "
+                "distincts des droits actifs et consultables seulement.\n"
+                if overview.get('paris_inactive_loans', 0) else ""
+            )
+            + f"PLACEMENTS SQLITE · {overview.get('placements_registered', 0)} enregistrés "
             f"pour l'identité · {overview.get('paths', 0)} cas de chemin en anomalie\n"
             f"Indicateurs non additionnables : "
             f"{overview.get('unattributed_files', 0)} fichiers sans provenance attestée · "
@@ -1286,10 +1292,17 @@ class LocalInspectionController:
                 states = ', '.join(STATES[name] for name in case.states)
                 detail.set_text(PROVIDERS[case.provider]+' · '+states+'\n\n'+case.details)
                 selected_right[0] = (
-                    case.key if 'rights_without_verified_file' in case.states
-                    else None
+                    case.key if (
+                        'rights_without_verified_file' in case.states
+                        or (case.provider == 'paris'
+                            and 'loan_inactive' in case.states)
+                    ) else None
                 )
                 selected_provider[0] = case.provider if selected_right[0] else None
+                pair_prepare.set_label(
+                    'Examiner le prêt (lecture seule)' if case.provider == 'paris'
+                    else 'Préparer le rattachement'
+                )
                 reset_pair()
                 if case.key.startswith('right:'):
                     candidate_items[0] = session.candidate_files(case.key)

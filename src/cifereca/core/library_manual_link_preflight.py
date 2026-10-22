@@ -41,6 +41,10 @@ _REASON_LABELS = {
         "et la sauvegarde déjà attestées par le contrat Kobo dédié. "
         "La comparaison bibliographique ne permet aucun placement ici."
     ),
+    "paris_loan_inactive": (
+        "Prêt Paris enregistré comme inactif ou terminé : sa comparaison "
+        "reste consultative. Aucun placement ni changement de licence."
+    ),
     "paris_read_only": (
         "Paris : les prêts et leurs échéances nécessitent un contrat de prêt "
         "spécifique. Cette comparaison est en lecture seule ; aucun placement "
@@ -134,7 +138,7 @@ def review_local_pair(
 
 def review_source_read_only(
     provider: object, *, audit_complete: bool,
-    bibliographic_hint: bool = False,
+    bibliographic_hint: bool = False, loan_inactive: bool = False,
 ) -> ManualLinkPreflight:
     """Closed, non-authorizing review for non-Numilog provider comparisons.
 
@@ -149,6 +153,8 @@ def review_source_read_only(
     reasons = {code}
     if audit_complete is not True:
         reasons.add("audit_incomplete")
+    if provider == "paris" and loan_inactive is True:
+        reasons.add("paris_loan_inactive")
     if bibliographic_hint is True:
         reasons.add("bibliographic_hint_only")
     return ManualLinkPreflight("blocked", tuple(sorted(reasons)))
