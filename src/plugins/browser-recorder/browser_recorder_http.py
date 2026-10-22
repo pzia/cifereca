@@ -22,6 +22,14 @@ MAX_EXCHANGES = 240
 MAX_BODY_BYTES = 32 * 1024
 MAX_TOTAL_BODY_BYTES = 768 * 1024
 MAX_CAPTURE_SECONDS = 900
+# Closed, source-independent codes; safe to persist in the encrypted vault
+# and export as diagnostic provenance without revealing URL/header/body.
+_BODY_REASONS = frozenset((
+    "unknown", "not_applicable", "not_observed", "metadata_only", "pending",
+    "captured", "redirect", "network_error", "unfinished", "compressed",
+    "unsafe_headers", "size_unavailable", "over_budget", "unsupported_mime",
+    "measured_mismatch", "text_invalid_or_limit", "read_failed",
+))
 _ALLOWED_MIME = frozenset((
     "application/json", "application/xml", "text/xml", "text/html",
     "text/plain", "text/json", "application/x-www-form-urlencoded",
@@ -172,6 +180,8 @@ class PrivateExchange:
     response_body: str | None = field(default=None, repr=False)
     request_body_state: str = "body_omitted"
     response_body_state: str = "body_omitted"
+    request_body_reason: str = "unknown"
+    response_body_reason: str = "unknown"
     redirect_to: str | None = field(default=None, repr=False)
     network_error: bool = False
     # Optional third-party context, never a URL, header, MIME or body.
@@ -210,6 +220,7 @@ class PrivateHttpTrace:
         self.exchanges: list[PrivateExchange] = []
         # Closed vocabulary only: no provider value or browser exception.
         self.end_reason = "button"
+        self.content_negotiation = "browser_default"
         self.omitted = {"out_of_scope": 0, "limit": 0, "binary_skipped": 0,
                         "oversize": 0, "unknown_size": 0, "compressed": 0,
                         "network_error": 0, "paused": 0, "unfinished": 0}
@@ -299,6 +310,14 @@ class PrivateHttpTrace:
                 page_id=self._tab(req),
                 request_headers={} if metadata_only else _headers(req),
                 metadata_only=metadata_only,
+                request_body_reason=(
+                    "metadata_only" if metadata_only else
+                    "pending" if method in {"POST", "PUT", "PATCH"}
+                    else "not_applicable"
+                ),
+                response_body_reason=(
+                    "metadata_only" if metadata_only else "not_observed"
+                ),
             )
             self.exchanges.append(entry)
             self._pending[id(req)] = entry
@@ -327,6 +346,9 @@ class PrivateHttpTrace:
             entry.response_body_state = (
                 "body_omitted" if not entry.mime else "pending"
             )
+            entry.response_body_reason = (
+                "unsupported_mime" if not entry.mime else "pending"
+            )
             # Location is private and only retained in the ephemeral trace.
             # It must later pass the same ID/secret review as the request URL.
             if 300 <= entry.status <= 399:
@@ -337,6 +359,7 @@ class PrivateHttpTrace:
                 except (AttributeError, TypeError, ValueError):
                     pass
                 entry.response_body_state = "redirect"
+                entry.response_body_reason = "redirect"
             self._responses[id(req)] = resp
         except (TypeError, AttributeError, ValueError):
             self.omitted["network_error"] += 1
@@ -363,19 +386,25 @@ class PrivateHttpTrace:
             request_gate, request_length = _body_envelope(req)
             if request_gate != "ready":
                 entry.request_body_state = "body_omitted"
+                entry.request_body_reason = (
+                    "compressed" if request_gate == "compressed" else "unsafe_headers"
+                )
                 self.omitted[
                     "compressed" if request_gate == "compressed" else "unknown_size"
                 ] += 1
             elif type(actual_request) is not int or actual_request <= 0:
                 entry.request_body_state = "body_omitted"
+                entry.request_body_reason = "size_unavailable"
                 self.omitted["unknown_size"] += 1
             elif (actual_request > self.max_body
                     or actual_request > self.total_body
                     or (request_length is not None and request_length > self.max_body)):
                 entry.request_body_state = "body_omitted"
+                entry.request_body_reason = "over_budget"
                 self.omitted["oversize"] += 1
             elif not _mime(entry.request_headers):
                 entry.request_body_state = "binary_skipped"
+                entry.request_body_reason = "unsupported_mime"
                 self.omitted["binary_skipped"] += 1
             else:
                 try:
@@ -388,15 +417,22 @@ class PrivateHttpTrace:
                             "captured" if entry.request_body is not None
                             else "body_omitted"
                         )
+                        entry.request_body_reason = (
+                            "captured" if entry.request_body is not None
+                            else "text_invalid_or_limit"
+                        )
                     else:
                         entry.request_body_state = "body_omitted"
+                        entry.request_body_reason = "measured_mismatch"
                         self.omitted["oversize"] += 1
                 except (AttributeError, TypeError, ValueError):
                     entry.request_body_state = "body_omitted"
+                    entry.request_body_reason = "read_failed"
         if resp is None or entry.response_body_state == "redirect":
             return
         if not entry.mime:
             entry.response_body_state = "binary_skipped"
+            entry.response_body_reason = "unsupported_mime"
             self.omitted["binary_skipped"] += 1
             return
         # Examine original headers transiently: storage sanitization can
@@ -405,6 +441,9 @@ class PrivateHttpTrace:
         gate, expected = _body_envelope(resp)
         if gate != "ready":
             entry.response_body_state = "body_omitted"
+            entry.response_body_reason = (
+                "compressed" if gate == "compressed" else "unsafe_headers"
+            )
             self.omitted["compressed" if gate == "compressed" else "unknown_size"] += 1
             return
         # An *absent* Content-Length is normal for HTTP/2 and chunked HTTP/1.1:
@@ -413,11 +452,13 @@ class PrivateHttpTrace:
         actual = sizes.get("responseBodySize")
         if type(actual) is not int or actual <= 0:
             entry.response_body_state = "body_omitted"
+            entry.response_body_reason = "size_unavailable"
             self.omitted["unknown_size"] += 1
             return
         if (actual > self.max_body or actual > self.total_body
                 or (expected is not None and expected > self.max_body)):
             entry.response_body_state = "body_omitted"
+            entry.response_body_reason = "over_budget"
             self.omitted["oversize"] += 1
             return
         try:
@@ -431,11 +472,17 @@ class PrivateHttpTrace:
                 entry.response_body_state = (
                     "captured" if entry.response_body is not None else "body_omitted"
                 )
+                entry.response_body_reason = (
+                    "captured" if entry.response_body is not None
+                    else "text_invalid_or_limit"
+                )
             else:
                 entry.response_body_state = "truncated"
+                entry.response_body_reason = "measured_mismatch"
                 self.omitted["oversize"] += 1
         except (AttributeError, TypeError, ValueError):
             entry.response_body_state = "body_omitted"
+            entry.response_body_reason = "read_failed"
 
     def failed(self, req) -> None:
         if self._is_paused():
@@ -447,6 +494,7 @@ class PrivateHttpTrace:
                                     - entry.started_ms)
             entry.network_error = True
             entry.response_body_state = "network_error"
+            entry.response_body_reason = "network_error"
             self.omitted["network_error"] += 1
 
     def finish_open_requests(self) -> None:
@@ -462,8 +510,10 @@ class PrivateHttpTrace:
             entry.request_body = None
             entry.response_body = None
             entry.request_body_state = "body_omitted"
+            entry.request_body_reason = "unfinished"
             if entry.response_body_state != "redirect":
                 entry.response_body_state = "unfinished"
+                entry.response_body_reason = "unfinished"
         self._pending.clear()
         self._responses.clear()
 
@@ -489,6 +539,7 @@ def record_http(start_url: str, stop: Event, *,
                 metadata_only_origins: tuple[str, ...] = (),
                 vault_writer=None,
                 download_destination=None,
+                prefer_identity: bool = False,
                 ) -> PrivateHttpTrace:
     """Observe a manually controlled Chromium session; return RAM-only trace.
 
@@ -496,6 +547,8 @@ def record_http(start_url: str, stop: Event, *,
     private vault writer may persist AES-GCM-encrypted snapshots, never
     plaintext. No extra requests or replay; LLM ZIP still requires review.
     """
+    if type(prefer_identity) is not bool:
+        raise RecorderError("invalid_capture_strategy")
     origin = site_origin(start_url)
     trace = PrivateHttpTrace(
         origins or (origin,), pause_control=pause_control,
@@ -503,6 +556,7 @@ def record_http(start_url: str, stop: Event, *,
     )
     if origin not in trace.origins:
         raise RecorderError("invalid_origin")
+    trace.content_negotiation = "identity_requested" if prefer_identity else "browser_default"
     try:
         if vault_writer is not None:
             vault_writer.save(trace, "recording", force=True)
@@ -510,9 +564,13 @@ def record_http(start_url: str, stop: Event, *,
         with _playwright(factory) as pw:
             browser = pw.chromium.launch(headless=False)
             try:
-                context = browser.new_context(
-                    accept_downloads=True, service_workers="block",
-                )
+                options = {"accept_downloads": True, "service_workers": "block"}
+                if prefer_identity:
+                    # Explicit representation negotiation, not replay or a
+                    # decoder. Servers may ignore it: the original compressed
+                    # body guard below MUST still reject those responses.
+                    options["extra_http_headers"] = {"Accept-Encoding": "identity"}
+                context = browser.new_context(**options)
                 try:
                     last_page_closed = Event()
                     crashed = Event()

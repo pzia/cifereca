@@ -64,8 +64,9 @@ def flush_glib():
     pytest.fail("GTK callback delivery did not stabilize")
 
 
+@pytest.mark.parametrize("prefer_identity", (False, True))
 def test_real_gtk4_private_review_zip_export_keyboard_controls(
-    monkeypatch, tmp_path,
+    monkeypatch, tmp_path, prefer_identity,
 ):
     import browser_recorder_review_ui as view
 
@@ -86,6 +87,7 @@ def test_real_gtk4_private_review_zip_export_keyboard_controls(
     def fake_http(start, stop, **_kw):
         assert start.startswith(ORIGIN)
         assert stop.is_set()
+        assert _kw.get("prefer_identity", False) is prefer_identity
         return trace
 
     monkeypatch.setattr(view, "record_http", fake_http)
@@ -104,13 +106,17 @@ def test_real_gtk4_private_review_zip_export_keyboard_controls(
     flush_glib()
     try:
         assert panel.start.get_sensitive()
+        assert not panel.prefer_identity.get_active()  # explicit opt-in
+        panel.prefer_identity.set_active(prefer_identity)
         assert not panel.export_button.get_sensitive()
         panel.start.emit("clicked")
+        assert not panel.prefer_identity.get_sensitive()
         assert tasks.handle is not None
         panel.stop.emit("clicked")
         tasks.handle.finish()
         flush_glib()
         assert panel._review is not None
+        assert panel.prefer_identity.get_sensitive()
         rows = panel._review.local_rows()
         assert {r["value"] for r in rows} == {"214", "acct-ABC7"}
         child = panel.candidates_box.get_first_child()

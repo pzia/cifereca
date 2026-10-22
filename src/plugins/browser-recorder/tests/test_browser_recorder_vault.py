@@ -206,3 +206,38 @@ def test_imported_vault_does_not_capture_or_contact_network(tmp_path):
     import browser_recorder_vault
     assert browser_recorder_vault.MAGIC == MAGIC
     assert list(tmp_path.iterdir()) == []
+
+
+def test_legacy_private_snapshot_without_capture_reasons_reopens_safely():
+    from browser_recorder_vault import _record, _unrecord
+    session_id = "a" * 32
+    trace = sample_trace()
+    stored = json.loads(_record(trace, session_id, "completed"))
+    for exchange in stored["exchanges"]:
+        exchange.pop("request_body_reason")
+        exchange.pop("response_body_reason")
+    legacy = json.dumps(stored).encode("utf-8")
+    recovered = _unrecord(legacy, session_id)
+    assert len(recovered.trace.exchanges) == 3
+    assert all(row.request_body_reason == "unknown" for row in recovered.trace.exchanges)
+    assert all(row.response_body_reason == "unknown" for row in recovered.trace.exchanges)
+    recovered.trace.destroy()
+    stored["exchanges"][0]["request_body_reason"] = "PRIVATE_SOURCE_VALUE"
+    with pytest.raises(VaultError, match="vault_invalid"):
+        _unrecord(json.dumps(stored).encode("utf-8"), session_id)
+    trace.destroy()
+
+
+def test_capture_negotiation_survives_vault_and_legacy_defaults(tmp_path):
+    from browser_recorder_vault import _record, _unrecord
+    trace = sample_trace()
+    trace.content_negotiation = "identity_requested"
+    sid = "a" * 32
+    data = json.loads(_record(trace, sid, "completed"))
+    assert _unrecord(json.dumps(data).encode(), sid).trace.content_negotiation == "identity_requested"
+    del data["content_negotiation"]
+    assert _unrecord(json.dumps(data).encode(), sid).trace.content_negotiation == "browser_default"
+    data["content_negotiation"] = "PRIVATE_VALUE"
+    with pytest.raises(VaultError):
+        _unrecord(json.dumps(data).encode(), sid)
+    trace.destroy()

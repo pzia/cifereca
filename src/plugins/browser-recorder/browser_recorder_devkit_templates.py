@@ -163,7 +163,7 @@ def test_denied_ops_and_no_auth_guess():
     assert not hasattr(service, "authenticate")
 '''
 
-REFERENCE_README = """# Provider fixture catalogue — exemple exécutable et isolé
+REFERENCE_README = r"""# Provider fixture catalogue — exemple exécutable et isolé
 
 **Non normatif pour les vraies API fournisseur.** Le registre public
 \`plugin-dev-kit/contracts/\` détermine la compatibilité.

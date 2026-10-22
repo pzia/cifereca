@@ -35,6 +35,18 @@ def test_selection_and_context_change_cancel_in_flight_preview():
     assert "plan_token" not in source
 
 
+def test_gtk_numilog_right_search_by_notice_isbn_then_restores_full_list():
+    probe = E2E.read_text(encoding="utf-8")
+    assert "P0_2714_gtk_numilog_right_search_by_private_isbn" in probe
+    assert "rights_search.set_text('9780306406157')" in probe
+    assert "len([" in probe and "]) == 50" in probe
+    core = (ROOT / "src/cifereca/core/library_local_inspection.py").read_text(
+        encoding="utf-8"
+    )
+    assert "self._case_search.clear()" in core
+    assert "self._case_search[f'right:{index}']" in core
+
+
 def test_gtk_synthetic_missing_receipt_rejects_preview_button():
     probe = E2E.read_text(encoding="utf-8")
     assert "w.get_label()=='Vérifier les preuves actuelles…'" in probe

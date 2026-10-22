@@ -235,6 +235,17 @@ class PrivateReviewPanel:
             "https://identite.exemple.org, https://auth.exemple.org"
         )
         box.append(self.third_party_origins)
+        self.prefer_identity = Gtk.CheckButton(
+            label="Demander des réponses non compressées (Accept-Encoding: identity)."
+        )
+        box.append(self.prefer_identity)
+        box.append(Gtk.Label(
+            label="Option pour une nouvelle capture : modifie la négociation HTTP "
+                  "de tout ce navigateur, sans ajouter de requête. Les limites "
+                  "de capture et les origines restent identiques. Si le serveur "
+                  "impose gzip/Brotli, les corps restent exclus ; les anciennes "
+                  "captures ne sont pas réparées.", xalign=0, wrap=True,
+        ))
         if self.vault_directory is not None:
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
@@ -626,6 +637,7 @@ class PrivateReviewPanel:
                 or self._trace is not None or self._review is not None)
 
     def _refresh(self):
+        self.prefer_identity.set_sensitive(not self._closed and not self.is_recording())
         busy = self.is_recording()
         scanning = self.is_scanning()
         replaceable = self._trace is None or (
@@ -929,6 +941,7 @@ class PrivateReviewPanel:
         self._pause_control = CapturePause()
         pause_control = self._pause_control
         self._download_outcomes = {}
+        prefer_identity = self.prefer_identity.get_active()
         self.status.set_label("Navigateur HTTP privé en cours, sans export…")
 
         def work(_control):
@@ -938,6 +951,8 @@ class PrivateReviewPanel:
                 "download_destination": self._choose_download_from_worker,
                 "status": self._download_status,
             }
+            if prefer_identity:
+                kwargs["prefer_identity"] = True
             if self.vault_directory is not None:
                 writer = PrivateSessionVault(self.vault_directory).begin(passphrase)
                 kwargs["vault_writer"] = writer
