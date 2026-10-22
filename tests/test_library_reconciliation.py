@@ -202,6 +202,42 @@ class InventoryTests(unittest.TestCase):
             result = epub_metadata.inspect_epub(stream, metadata_only=True)
         self.assertEqual(result['epub_status'], 'too_many_entries')
 
+    def test_progress_statistics_revoke_replaced_root_without_retaining_files(self):
+        from cifereca.core import library_inventory as inventory
+
+        alternate = self.root/'PRIVATE_SECOND_ROOT'
+        alternate.mkdir()
+        epub(alternate/'SECOND.epub', title='PRIVATE_SECOND')
+        moved = self.root/'PRIVATE_RENAMED_ROOT'
+        inode = self.book.stat().st_ino
+        original = inventory.inspect_epub
+        replaced = [False]
+
+        def replace_first_root(stream, **kwargs):
+            data = original(stream, **kwargs)
+            if not replaced[0] and os.fstat(stream.fileno()).st_ino == inode:
+                self.library.rename(moved)
+                self.library.mkdir()
+                replaced[0] = True
+            return data
+
+        progress = []
+        with patch.object(inventory, 'inspect_epub', side_effect=replace_first_root):
+            result = scan_identity_roots(
+                {'PRIVATE_IDENTITY': (self.library,),
+                 'PRIVATE_SECOND_IDENTITY': (alternate,)},
+                progress=progress.append,
+            )
+        self.assertTrue(replaced[0])
+        self.assertIn('root_changed', result.reasons)
+        self.assertEqual(len(result.files), 1)
+        self.assertEqual(result.files[0].identity_id, 'PRIVATE_SECOND_IDENTITY')
+        self.assertEqual(progress[-1]['files'], 1)
+        self.assertEqual(progress[-1]['hashed_files'], 1)
+        self.assertEqual(progress[-1]['validation'], {'ok': 1})
+        self.assertEqual(progress[-1], result.redacted())
+        self.assertNotIn('PRIVATE', json.dumps(progress))
+
     def test_more_than_522_books_progress_and_no_writes(self):
         raw = self.book.read_bytes()
         for i in range(523):
@@ -211,6 +247,16 @@ class InventoryTests(unittest.TestCase):
         result = self.scan(progress=progress.append)
         self.assertEqual(len(result.files), 524)
         self.assertEqual(len(progress), 524)
+        # Regression: live redacted counters are exactly equivalent to
+        # re-reading the retained observations, without quadratic rescans.
+        for index, sample in enumerate(progress, 1):
+            self.assertEqual(sample['files'], index)
+            self.assertEqual(sample['hashed_files'], index)
+            self.assertEqual(sample['validation'], {'ok': index})
+            self.assertEqual(sample['structure_validation'],
+                             {'epub_structure_crc_ok': index})
+            self.assertNotIn('PRIVATE', json.dumps(sample))
+        self.assertEqual(progress[-1], result.redacted())
         self.assertFalse(result.reasons)
         self.assertEqual(before, filesystem(self.root))
 
