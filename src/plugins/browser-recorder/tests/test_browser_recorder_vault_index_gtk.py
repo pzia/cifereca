@@ -43,7 +43,7 @@ class Tasks:
 
     def submit(self, fn, *, kind, label):
         assert kind == "browser-recorder"
-        assert label in {"Indexer le coffre privé", "Nommer la session chiffrée", "Nettoyer les résidus chiffrés"}
+        assert label in {"Indexer le coffre privé", "Nommer la session chiffrée", "Nettoyer les résidus chiffrés", "Prévisualiser la rétention du coffre", "Appliquer la rétention consentie"}
         self.handle = Handle(fn)
         return self.handle
 
@@ -210,6 +210,112 @@ def test_gtk_orphan_preview_never_deletes_without_distinct_confirmation(tmp_path
             identity: (vault.path / (identity + ".cbrv")).read_bytes()
             for identity in ids
         }
+    finally:
+        panel.destroy()
+        window.close()
+        flush()
+
+
+
+def test_gtk_retention_never_deletes_without_confirm_and_fresh_unlock(
+    tmp_path, monkeypatch,
+):
+    import browser_recorder_vault as vault_api
+    from datetime import datetime, timedelta, timezone
+
+    panel, tasks, window, vault, original_ids = panel_fixture(tmp_path)
+    # One strictly fictional completed capture is 140 days old.
+    old = datetime.now(timezone.utc) - timedelta(days=140)
+    original_datetime = vault_api.datetime
+
+    class OldDate(original_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return old if tz is not None else old.replace(tzinfo=None)
+
+    writer = vault.begin(KEY)
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", ORIGIN + "/old?account=FICTIONAL_ACCOUNT_44",
+        status=200,
+    ))
+    with monkeypatch.context() as m:
+        m.setattr(vault_api, "datetime", OldDate)
+        writer.save(trace, "completed", force=True)
+    trace.destroy()
+    previous = {x: (vault.path / (x + ".cbrv")).read_bytes()
+                for x in original_ids}
+    try:
+        panel.sessions_refresh.emit("clicked")
+        assert len(vault.list_ids()) == 4
+        assert not panel.retention_apply_button.get_sensitive()
+        panel.retention_age.set_active_id("90")
+        panel.vault_passphrase.set_text(KEY)
+        panel.retention_preview_button.emit("clicked")
+        assert tasks.handle is not None and panel.is_scanning()
+        assert panel.vault_passphrase.get_text() == ""
+        assert not panel.retention_apply_button.get_sensitive()
+        tasks.handle.finish()
+        flush()
+        assert not panel.is_scanning()
+        assert "1 sessions TERMINÉES" in panel.status.get_label()
+        assert writer.session_id in vault.list_ids()
+        panel.apply_retention()  # must refuse without consent.
+        assert writer.session_id in vault.list_ids()
+        panel.retention_confirm.set_active(True)
+        flush()
+        assert panel.retention_apply_button.get_sensitive()
+        panel.vault_passphrase.set_text(KEY)
+        panel.retention_apply_button.emit("clicked")
+        assert panel.is_scanning()
+        assert not panel.retention_confirm.get_active()
+        assert panel.vault_passphrase.get_text() == ""
+        tasks.handle.finish()
+        flush()
+        assert writer.session_id not in vault.list_ids()
+        assert len(vault.list_ids()) == 3
+        assert previous == {x: (vault.path / (x + ".cbrv")).read_bytes()
+                            for x in original_ids}
+        assert not panel.retention_apply_button.get_sensitive()
+        assert not list(tmp_path.rglob("*.zip"))
+    finally:
+        panel.destroy()
+        window.close()
+        flush()
+
+
+def test_gtk_retention_changed_duration_invalidates_preview(tmp_path, monkeypatch):
+    import browser_recorder_vault as vault_api
+    from datetime import datetime, timedelta, timezone
+
+    panel, tasks, window, vault, ids = panel_fixture(tmp_path)
+    old = datetime.now(timezone.utc) - timedelta(days=160)
+    original_datetime = vault_api.datetime
+
+    class OldDate(original_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return old if tz is not None else old.replace(tzinfo=None)
+
+    writer = vault.begin(KEY)
+    trace = PrivateHttpTrace((ORIGIN,))
+    with monkeypatch.context() as m:
+        m.setattr(vault_api, "datetime", OldDate)
+        writer.save(trace, "completed", force=True)
+    trace.destroy()
+    try:
+        panel.vault_passphrase.set_text(KEY)
+        panel.retention_preview_button.emit("clicked")
+        tasks.handle.finish()
+        flush()
+        assert panel._retention_plan.count == 1
+        panel.retention_confirm.set_active(True)
+        assert panel.retention_apply_button.get_sensitive()
+        panel.retention_age.set_active_id("365")
+        assert panel._retention_plan is None
+        assert not panel.retention_confirm.get_active()
+        assert not panel.retention_apply_button.get_sensitive()
+        assert writer.session_id in vault.list_ids()
     finally:
         panel.destroy()
         window.close()

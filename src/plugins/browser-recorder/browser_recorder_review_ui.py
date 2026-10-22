@@ -111,6 +111,7 @@ class PrivateReviewPanel:
         self._closed = False
         self._generation = 0
         self._index_handle = None
+        self._retention_plan = None
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.widget = box
@@ -189,6 +190,42 @@ class PrivateReviewPanel:
             self.sessions_open.connect("clicked", lambda *_: self.open_session())
             self.sessions_delete.connect(
                 "clicked", lambda *_: self.delete_session(),
+            )
+            box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            box.append(Gtk.Label(
+                label="Rétention privée : uniquement sur demande. Seules les "
+                      "sessions terminées et plus anciennes que le délai "
+                      "sont candidates ; partielles et interrompues protégées.",
+                xalign=0, wrap=True,
+            ))
+            self.retention_age = Gtk.ComboBoxText()
+            for days in (30, 90, 180, 365):
+                self.retention_age.append(str(days), f"Plus de {days} jours")
+            self.retention_age.set_active_id("90")
+            self.retention_preview_button = Gtk.Button(
+                label="Prévisualiser les anciennes sessions, sans supprimer"
+            )
+            self.retention_confirm = Gtk.CheckButton(
+                label="Je confirme la suppression IRRÉVERSIBLE de ces sessions "
+                      "terminées après avoir vérifié le nombre affiché."
+            )
+            self.retention_apply_button = Gtk.Button(
+                label="Supprimer uniquement les sessions prévisualisées"
+            )
+            for widget in (self.retention_age, self.retention_preview_button,
+                           self.retention_confirm, self.retention_apply_button):
+                box.append(widget)
+            self.retention_age.connect(
+                "changed", lambda *_: self._invalidate_retention(),
+            )
+            self.retention_confirm.connect(
+                "toggled", lambda *_: self._refresh(),
+            )
+            self.retention_preview_button.connect(
+                "clicked", lambda *_: self.preview_retention(),
+            )
+            self.retention_apply_button.connect(
+                "clicked", lambda *_: self.apply_retention(),
             )
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
@@ -409,6 +446,18 @@ class PrivateReviewPanel:
             self.sessions_rename.set_sensitive(
                 not self._closed and not busy and not scanning
                 and bool(self.session_list.get_active_id())
+            )
+            self.retention_age.set_sensitive(
+                not self._closed and not busy and not scanning
+            )
+            self.retention_preview_button.set_sensitive(
+                not self._closed and not busy and not scanning
+            )
+            self.retention_apply_button.set_sensitive(
+                not self._closed and not busy and not scanning
+                and self._retention_plan is not None
+                and self._retention_plan.count > 0
+                and self.retention_confirm.get_active()
             )
             self.staging_inspect.set_sensitive(
                 not self._closed and not busy and not scanning
@@ -653,6 +702,153 @@ class PrivateReviewPanel:
 
         handle.add_done_callback(finished)
 
+    def _invalidate_retention(self):
+        """UI consent is bound to one preview and one selected duration."""
+        self._retention_plan = None
+        if getattr(self, "retention_confirm", None) is not None:
+            self.retention_confirm.set_active(False)
+        if hasattr(self, "start"):
+            self._refresh()
+
+    def preview_retention(self):
+        """Check authenticated, completed-only sessions off the GTK thread."""
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()):
+            return
+        self._invalidate_retention()
+        try:
+            days = int(self.retention_age.get_active_id())
+        except (TypeError, ValueError):
+            self.status.set_label("Délai de rétention invalide.")
+            return
+        secret = self.vault_passphrase.get_text()
+        self.vault_passphrase.set_text("")
+        if len(secret) < 12:
+            self.status.set_label("Phrase secrète requise pour prévisualiser.")
+            return
+        generation = self._generation
+        directory = self.vault_directory
+
+        def work(_control):
+            return PrivateSessionVault(directory).retention_preview(
+                secret, days,
+            )
+
+        try:
+            handle = self.tasks.submit(
+                work, kind="browser-recorder",
+                label="Prévisualiser la rétention du coffre",
+            )
+        except Exception:
+            self.status.set_label("Prévisualisation indisponible.")
+            return
+        self._index_handle = handle
+        self.status.set_label("Vérification des sessions chiffrées…")
+        self._refresh()
+
+        def finished(done):
+            try:
+                plan = done.result()
+            except Exception:
+                plan = None
+
+            def deliver():
+                if self._closed or generation != self._generation:
+                    return False
+                if self._index_handle is done:
+                    self._index_handle = None
+                if plan is None or self.retention_age.get_active_id() != str(days):
+                    self.status.set_label(
+                        "Prévisualisation refusée : clé ou coffre non sûrs."
+                    )
+                else:
+                    self._retention_plan = plan if plan.count else None
+                    self.status.set_label(
+                        f"{plan.count} sessions TERMINÉES de plus de {days} "
+                        f"jours ({plan.total_bytes} octets chiffrés). "
+                        "Les partielles, interrompues et autres clés sont "
+                        "préservées. Confirmation distincte ; aperçu 10 min."
+                    )
+                self._refresh()
+                return False
+
+            self.GLib.idle_add(deliver)
+
+        handle.add_done_callback(finished)
+
+    def apply_retention(self):
+        """Delete only the checked fingerprint set with a fresh unlock."""
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()
+                or self._retention_plan is None
+                or not self.retention_confirm.get_active()):
+            self.status.set_label(
+                "Suppression refusée : prévisualisation et confirmation requises."
+            )
+            return
+        plan, self._retention_plan = self._retention_plan, None
+        self.retention_confirm.set_active(False)
+        passphrase = self.vault_passphrase.get_text()
+        self.vault_passphrase.set_text("")
+        if len(passphrase) < 12:
+            self.status.set_label(
+                "Saisir de nouveau la clé ; refaire l'aperçu ensuite."
+            )
+            self._refresh()
+            return
+        directory = self.vault_directory
+        generation = self._generation
+
+        def work(_control):
+            return PrivateSessionVault(directory).retention_apply(
+                plan, passphrase, confirmed=True,
+            )
+
+        try:
+            handle = self.tasks.submit(
+                work, kind="browser-recorder",
+                label="Appliquer la rétention consentie",
+            )
+        except Exception:
+            self.status.set_label("Rétention indisponible ; refaire l'aperçu.")
+            return
+        self._index_handle = handle
+        self._refresh()
+
+        def finished(done):
+            try:
+                result = done.result()
+            except Exception:
+                result = None
+
+            def deliver():
+                if self._closed or generation != self._generation:
+                    return False
+                if self._index_handle is done:
+                    self._index_handle = None
+                if result is None:
+                    self.status.set_label(
+                        "Suppression refusée : clé, session modifiée ou aperçu "
+                        "expiré. Refaire l'aperçu ; aucune purge automatique."
+                    )
+                else:
+                    count, size = result
+                    if (self._trace is not None
+                            and getattr(self._trace, "vault_session_id", None)
+                            in {row[0] for row in plan.fingerprints}):
+                        self._discard_private()
+                    self.refresh_sessions()
+                    self.status.set_label(
+                        f"{count} sessions terminées prévisualisées supprimées "
+                        f"({size} octets). Autres sessions intactes."
+                    )
+                self._refresh()
+                return False
+
+            self.GLib.idle_add(deliver)
+
+        handle.add_done_callback(finished)
+
     def inspect_staging(self):
         """Show non-sensitive counts; never touch bytes or expose filenames."""
         if (self.vault_directory is None or self._closed
@@ -733,6 +929,7 @@ class PrivateReviewPanel:
         if (self.vault_directory is None or self._closed
                 or self.is_recording() or self.is_scanning()):
             return
+        self._invalidate_retention()
         try:
             ids = PrivateSessionVault(self.vault_directory).list_ids()
         except VaultError:
@@ -1333,6 +1530,7 @@ class PrivateReviewPanel:
         self._refresh()
 
     def destroy(self):
+        self._retention_plan = None
         if self._private_destination_dialog is not None:
             chooser, self._private_destination_dialog = (
                 self._private_destination_dialog, None

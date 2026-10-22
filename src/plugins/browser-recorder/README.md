@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.7, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.8, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -485,3 +485,27 @@ récupérables avec la dernière portion enregistrée. Si le quota est saturé,
 faire la revue des captures et supprimer explicitement celles choisies, ou
 libérer les seuls résidus temporaires anciens après inspection ; il n'existe
 aucune politique automatique de conservation en fonction de l'âge.
+
+## Rétention manuelle des captures terminées (0.2.8, #2725)
+
+Le coffre garde les archives **indéfiniment par défaut**, dans la limite
+de 128 sessions et 128 Mio ; **aucune purge automatique** n'existe.
+Choisir une durée de 30, 90, 180 ou 365 jours, puis prévisualiser après
+déverrouillage : cette étape ne supprime **aucun** fichier.
+Seules les captures terminées dont la **dernière sauvegarde** dépasse
+le délai choisi sont candidates. Les sessions partielles ou interrompues,
+les clés différentes et les snapshots récents sont conservés.
+
+Pour appliquer, cocher une confirmation spécifique, **ressaisir** la phrase
+secrète du coffre et cliquer sur la suppression des seules sessions
+prévisualisées. L'aperçu expire après dix minutes ; changer le seuil ou
+refermer la page l'invalide. Sous verrou POSIX, le coffre réauthentifie
+chaque archive et compare les empreintes SHA-256 des captures chiffrées
+et de leurs noms chiffrés : toute altération, modification de fichier,
+clé incorrecte ou permission non sûre bloque la purge avant la première
+suppression. Les archives d'une autre clé, les captures partielles et
+les résidus temporaires ne sont jamais concernés.
+
+La suppression est irréversible pour Cifereca sans garantir l'effacement
+physique sur SSD/backups. Aucun ZIP n'est automatiquement produit ou
+transmis. Les tests fonctionnent uniquement sur des données fictives.
