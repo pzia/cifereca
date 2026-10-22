@@ -24,6 +24,7 @@ STATES = {
     'rights_without_verified_file': 'Droit sans fichier vérifié',
     'local_file_without_attested_right': 'Fichier sans droit attesté',
     'unverified_file': 'Fichier non vérifié', 'stored_path_missing': 'Chemin enregistré absent',
+    'loan_inactive': 'Prêt Paris non actif enregistré (lecture seule)',
     'stored_path_unavailable': 'Chemin non inspectable', 'stored_path_out_of_scope': 'Chemin hors périmètre',
 }
 _REASONS = {
@@ -534,10 +535,21 @@ class LocalInspection:
         scope_counts = Counter(
             key for right in rights if (key := right_scope(right)) is not None
         )
-        for index in audit.reconciliation.unverified_rights:
+        # Active unverified rights remain the audit's original universe.
+        # Closed/returned/expired Paris loans are a distinct READ-ONLY
+        # inspection population, never counted as active missing rights.
+        inactive_paris_loans = {
+            index for index, right in enumerate(rights)
+            if right.get('identity_id') == identity_id
+            and right.get('provider_id') == 'paris'
+            and right.get('entitlement_type') == 'loan'
+            and right.get('state') != 'active'
+        }
+        for index in sorted(set(audit.reconciliation.unverified_rights) | inactive_paris_loans):
             if not 0 <= index < len(rights) or rights[index].get('identity_id') != identity_id:
                 continue
             right = rights[index]
+            is_closed_paris_loan = index in inactive_paris_loans
             right_provider, right_item = right.get('provider_id'), right.get('item_id')
             matches = (notices.get((right_provider, right_item), [])
                        if type(right_provider) is str and type(right_item) is str
@@ -664,7 +676,15 @@ class LocalInspection:
                         'Candidats multiples ou notices ambiguës : aucun '
                         'appariement individuel ne peut être conclu.'
                     )
-            detail = ('Droit sans fichier vérifié · ' + right_label + '\n\n'
+            case_heading = (
+                'Prêt Paris non actif (lecture seule)'
+                if is_closed_paris_loan else 'Droit sans fichier vérifié'
+            )
+            case_state = (
+                {'loan_inactive'} if is_closed_paris_loan
+                else {'rights_without_verified_file'}
+            )
+            detail = (case_heading + ' · ' + right_label + '\n\n'
                       + bibliography + '\n\n'
                       + evidence('entitlements', index)
                       + '\n\nPourquoi ce droit n’est-il pas confirmé ?\n' + why
@@ -673,9 +693,9 @@ class LocalInspection:
                           'Acquisition enregistrée :\n' + evidence('acquisition_ledger', li)
                           for li in own_ledger_indices[:20])
                       + '\n\nAbsence de preuve de fichier, pas preuve de livre absent. Aucun téléchargement ni rattachement autorisé.')
-            if not add('right', index, 'Droit sans fichier vérifié · ' + right_label,
+            if not add('right', index, case_heading + ' · ' + right_label,
                        _provider(right.get('provider_id')),
-                       {'rights_without_verified_file'}, detail):
+                       case_state, detail):
                 break
         for index, state in audit.stored_paths.states.items():
             if state not in STATES or not 0 <= index < len(placements) or placements[index].get('identity_id') != identity_id:
@@ -858,7 +878,10 @@ class LocalInspection:
         right = self._cases.get(right_key)
         file = self._cases.get(file_key)
         if (right is None or file is None
-                or 'rights_without_verified_file' not in right.states
+                or not (
+                    'rights_without_verified_file' in right.states
+                    or (right.provider == 'paris' and 'loan_inactive' in right.states)
+                )
                 or 'confirmed_link' in file.states
                 or not right_key.startswith('right:')
                 or not file_key.startswith('file:')):
@@ -899,6 +922,8 @@ class LocalInspection:
             return review_source_read_only(
                 right.provider,
                 audit_complete=self._manual_audit_complete,
+                loan_inactive=(right.provider == 'paris'
+                               and 'loan_inactive' in right.states),
                 bibliographic_hint=(
                     file_key in self._candidate_file_keys.get(right_key, ())
                 ),
