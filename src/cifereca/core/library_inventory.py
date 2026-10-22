@@ -81,11 +81,26 @@ class Inventory:
     })
 
     def redacted(self) -> dict:
+        """Exact public summary, including inventories built by other callers."""
+        return self._redacted_counts(
+            hashed_files=sum(row.sha256 is not None for row in self.files),
+            validation_counts=Counter(row.validation for row in self.files),
+            structure_counts=Counter(row.structure_validation for row in self.files),
+        )
+
+    def _redacted_counts(self, *, hashed_files: int,
+                         validation_counts: Counter,
+                         structure_counts: Counter) -> dict:
+        """Same safe wire shape; scanner may supply incremental counters.
+
+        Never accept paths, file keys, identities or title-bearing metadata in
+        this projection. Normal redacted() remains exact for arbitrary callers.
+        """
         return {
             'schema': 1, 'read_only': True, 'acquisition_authorized': False,
             'status': 'incomplete_scan' if self.reasons else 'complete',
             'reasons': sorted(self.reasons), 'entries': self.entries,
-            'files': len(self.files), 'hashed_files': sum(f.sha256 is not None for f in self.files),
+            'files': len(self.files), 'hashed_files': hashed_files,
             'hash_bytes': self.hash_bytes, 'structure_bytes': self.structure_bytes, 'metadata_bytes': self.metadata_bytes, 'skipped_symlinks': self.skipped_symlinks,
             'skipped_special': self.skipped_special,
             'unavailable_directories': len(self.unavailable_directories),
@@ -95,8 +110,8 @@ class Inventory:
             'phase_ms': {key: max(0, min(600_000_000, ns // 1_000_000))
                          for key, ns in self.phase_ns.items()},
             'phase_calls': dict(self.phase_calls),
-            'validation': dict(sorted(Counter(f.validation for f in self.files).items())),
-            'structure_validation': dict(sorted(Counter(f.structure_validation for f in self.files).items())),
+            'validation': dict(sorted(validation_counts.items())),
+            'structure_validation': dict(sorted(structure_counts.items())),
         }
 
 
@@ -150,6 +165,35 @@ def scan_identity_roots(
                 raise ValueError('overlapping_inventory_roots')
             chosen.append((identity, path))
     result = Inventory()
+    # Worker progress is emitted once per file. Recounting *all* preceding
+    # SHA/OPF/CRC outcomes for each callback made the GUI audit quadratic
+    # (4,096 files => ~8 million redundant row visits). Track closed counts
+    # in the worker only; final Inventory.redacted() remains independent.
+    validated = Counter()
+    structures = Counter()
+    hashed = 0
+
+    def keep(file: FileObservation):
+        nonlocal hashed
+        result.files.append(file)
+        hashed += file.sha256 is not None
+        validated[file.validation] += 1
+        structures[file.structure_validation] += 1
+
+    def revoke_since(start: int):
+        nonlocal hashed
+        # A replaced directory/root invalidates every former file observation.
+        # Its progress counters must follow the exact same rollback.
+        for file in result.files[start:]:
+            hashed -= file.sha256 is not None
+            validated[file.validation] -= 1
+            structures[file.structure_validation] -= 1
+            if not validated[file.validation]:
+                del validated[file.validation]
+            if not structures[file.structure_validation]:
+                del structures[file.structure_validation]
+        del result.files[start:]
+
     if not all(hasattr(os, name) for name in ('O_NOFOLLOW', 'O_DIRECTORY', 'O_NONBLOCK')):
         result.reasons.add('nofollow_unavailable')
         return result
@@ -249,8 +293,8 @@ def scan_identity_roots(
             if _fingerprint(before) != _fingerprint(os.fstat(fd)) or _fingerprint(before) != _fingerprint(current):
                 result.reasons.add('file_changed')
                 return
-        result.files.append(FileObservation(identity, str(path), size, path.suffix.lower()[1:],
-                                            digest, status, metadata, _fingerprint(before), structure))
+        keep(FileObservation(identity, str(path), size, path.suffix.lower()[1:],
+                             digest, status, metadata, _fingerprint(before), structure))
 
     directory_fds = []
 
@@ -282,10 +326,10 @@ def scan_identity_roots(
                                 opened = os.fstat(child)
                                 current = os.stat(entry.name, dir_fd=fd, follow_symlinks=False)
                                 if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
-                                    del result.files[start_index:]
+                                    revoke_since(start_index)
                                     result.reasons.add('directory_changed')
                             except OSError:
-                                del result.files[start_index:]
+                                revoke_since(start_index)
                                 result.reasons.add('directory_changed')
                                 raise
                             finally:
@@ -302,7 +346,11 @@ def scan_identity_roots(
                             finally:
                                 os.close(child)
                             if progress is not None:
-                                progress(result.redacted())
+                                progress(result._redacted_counts(
+                                    hashed_files=hashed,
+                                    validation_counts=validated,
+                                    structure_counts=structures,
+                                ))
                     except OSError:
                         result.reasons.add('entry_unavailable')
                         if is_directory:
@@ -330,12 +378,12 @@ def scan_identity_roots(
                     before = os.fstat(root_fd)
                     after = os.fstat(current_root)
                     if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
-                        del result.files[start_index:]
+                        revoke_since(start_index)
                         result.reasons.add('root_changed')
                 finally:
                     os.close(current_root)
             except OSError:
-                del result.files[start_index:]
+                revoke_since(start_index)
                 result.reasons.add('root_changed')
                 raise
             finally:
