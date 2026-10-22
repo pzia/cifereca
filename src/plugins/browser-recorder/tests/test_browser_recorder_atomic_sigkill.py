@@ -38,7 +38,7 @@ trace.exchanges.append(PrivateExchange(
     status=200, response_body='{"private":"' + private + '"}',
     response_body_state="captured",
 ))
-if case != "first":
+if case == "subsequent":
     writer.save(trace, "recording", force=True)
     trace.exchanges.append(PrivateExchange(
         2, "POST", origin + "/details", status=302,
@@ -93,7 +93,7 @@ def test_sigkill_after_ciphertext_fsync_never_loses_last_commit_or_leaks(
     sidlist = vault.list_ids()
     assert len(sidlist) == (0 if case == "first" else 1)
     summary = vault.staging_summary()
-    assert summary[0] == summary[2] == 1 if False else summary[0] == 1
+    assert summary[0] == 1
     assert summary[1] > 36 and summary[2] == 0  # fresh: no silent cleanup
     for path in files:
         assert PRIVATE not in path.name and ORIGIN not in path.name
