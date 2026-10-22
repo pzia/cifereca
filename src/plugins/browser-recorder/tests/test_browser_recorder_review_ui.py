@@ -557,3 +557,21 @@ def test_actionable_private_capture_failure_labels_never_echo_secrets(monkeypatc
     assert review_ui._capture_failure_message(Hostile()).startswith(
         "Capture privée indisponible."
     )
+
+
+def test_prepared_zip_shows_no_body_warning_in_real_summary_control(monkeypatch, tmp_path):
+    panel, tasks, raw = make_panel(
+        monkeypatch, export_directory=tmp_path / "exports",
+    )
+    raw.exchanges[0].request_body = None
+    try:
+        _capture_and_decide(panel, tasks)
+        panel.prepare_zip()
+        assert panel._bundle_plan is not None
+        assert "ZIP sans aucun corps HTTP" in panel.bundle_summary.label
+        assert "structures exportées : 0" in panel.bundle_summary.label
+        assert "non retenus dans la trace : 2" in panel.bundle_summary.label
+        assert not panel.export_button.sensitive
+        assert not list(tmp_path.iterdir())
+    finally:
+        panel.destroy()
