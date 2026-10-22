@@ -16,14 +16,15 @@ impérative avant partage. Le HAR ci-dessous reste une fonction secondaire.
 ## Accès à la fonction principale
 
 Depuis **Configuration → Browser Recorder**, l'écran est organisé en
-**trois onglets défilants indépendamment** :
+**quatre onglets défilants indépendamment** :
 
-- **1 · Capture** : URL HTTPS, consentement, hôtes tiers en métadonnées
-  seulement, autorisation du coffre et capture (démarrer / pause / arrêt).
-- **2 · Sessions et export privé** : sessions chiffrées, consultation,
+- **1 · Paramètres** : URL HTTPS, consentement de capture, hôtes tiers en
+  métadonnées seulement et autorisation du coffre.
+- **2 · Capture** : démarrer, mettre en pause, reprendre et arrêter Chromium.
+- **3 · Sessions et export privé** : sessions chiffrées, consultation,
   réouverture, renommage, suppression et entretien. L'export de secours
   `.brzip` est **chiffré, non anonymisé** : ne pas confondre avec le ZIP LLM.
-- **3 · Revue et ZIP LLM** : choix individuels, aperçu local, archive exacte
+- **4 · Revue et ZIP LLM** : choix individuels, aperçu local, archive exacte
   consultable membre par membre, confirmation et enregistrement local.
   Une capture non vide ou une session réouverte mène directement ici.
 
