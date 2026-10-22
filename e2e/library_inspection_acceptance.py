@@ -195,7 +195,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
     def numilog():
         rows=list(walk(widgets['list']))
         labels='\n'.join(w.get_text() for w in rows if isinstance(w,Gtk.Label))
-        assert 'Droit sans fichier vérifié' in labels and 'synthetic-' not in labels
+        # Synthetic rights are legitimately displayed as Numilog rights.
+        # Their edition labels may include "synthetic": what must NEVER
+        # appear in this provider-filtered list is the *file* name.
+        assert 'Droit sans fichier vérifié' in labels
+        assert '.epub' not in labels and 'Fichier local :' not in labels
         report['checks']['local_inspection_provider_filter_does_not_attribute_isbn_files']=True
         # The Numilog right must show unlinked EPUB candidates *only* after
         # user selection; no ownership is inferred from a shared valid ISBN.
