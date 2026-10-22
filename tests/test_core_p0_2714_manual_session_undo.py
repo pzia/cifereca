@@ -142,3 +142,62 @@ def test_cached_inspection_revokes_undo_on_followup_foreign_database_change(
     assert session._manual_undo is None
     assert session.preview_manual_undo(right, file)['status'] == 'unavailable'
     assert len(_rows(service, 'placements')) == 1
+
+
+def test_cached_session_never_adopts_a_foreign_commit_between_core_and_ui(
+    selected, monkeypatch,
+):
+    """Inject a second SQLite writer after Core returned but before UI reacts.
+
+    Old behavior advanced the cache stamp in LocalInspection after this write,
+    accidentally treating an unrelated row change as our own placement.
+    """
+    from cifereca.core import numilog_manual_link_transaction as engine
+
+    session, right, file, service = _simulate_verified_private_cache_handoff(selected)
+    assert session.preview_manual_attachment(right, file)["status"] == "preview"
+    original = engine.reconcile_numilog_manual
+    injected = []
+
+    def intervening_writer(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if result["status"] == "applied":
+            # The acquisition lock is already released by the engine; another
+            # service task could update live SQLite before GTK completion.
+            with service.storage._lock, service.storage._connect() as db:
+                db.execute(
+                    "UPDATE acquisition_ledger SET updated_at=updated_at+1"
+                )
+            injected.append(True)
+        return result
+
+    monkeypatch.setattr(engine, "reconcile_numilog_manual", intervening_writer)
+    answer = session.confirm_manual_attachment(
+        right, file, user_confirmed=True,
+    )
+    assert injected == [True]
+    assert answer["status"] == "applied"
+    assert answer["undo_available"] is False
+    assert not session.valid()
+    assert session._manual_undo is None
+    assert len(_rows(service, "placements")) == 1
+
+
+def test_cached_session_failed_post_commit_observer_never_offers_undo(
+    selected,
+):
+    session, right, file, service = _simulate_verified_private_cache_handoff(selected)
+    assert session.preview_manual_attachment(right, file)["status"] == "preview"
+
+    def unavailable():
+        raise RuntimeError("PRIVATE unexpected hook error")
+
+    session._accept_own_core_commit = unavailable
+    answer = session.confirm_manual_attachment(
+        right, file, user_confirmed=True,
+    )
+    assert answer["status"] == "applied"
+    assert answer["undo_available"] is False
+    assert "PRIVATE" not in json.dumps(answer)
+    assert session._manual_undo is None
+    assert len(_rows(service, "placements")) == 1
