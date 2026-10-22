@@ -192,6 +192,33 @@ class PrivateReviewPanel:
             )
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
+                label="Récupération d'espace : après une coupure brutale, des "
+                      "résidus temporaires CHIFFRÉS peuvent rester sur disque. "
+                      "Seuls ceux de plus de 24 h sont nettoyables avec "
+                      "confirmation ; aucune capture ni nom n'est supprimé.",
+                xalign=0, wrap=True,
+            ))
+            self.staging_inspect = Gtk.Button(
+                label="Examiner les résidus chiffrés sans suppression"
+            )
+            self.staging_confirm = Gtk.CheckButton(
+                label="Je confirme le nettoyage des seuls résidus chiffrés "
+                      "temporaires de plus de 24 h."
+            )
+            self.staging_prune = Gtk.Button(
+                label="Nettoyer les résidus chiffrés anciens"
+            )
+            for widget in (self.staging_inspect, self.staging_confirm,
+                           self.staging_prune):
+                box.append(widget)
+            self.staging_inspect.connect(
+                "clicked", lambda *_: self.inspect_staging(),
+            )
+            self.staging_prune.connect(
+                "clicked", lambda *_: self.prune_staging(),
+            )
+            box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+            box.append(Gtk.Label(
                 label="Export DE SECOURS non anonymisé : contient URL, "
                       "identifiants, titres et corps privés observés. "
                       "Ne jamais partager sans une revue spécifique. "
@@ -379,6 +406,13 @@ class PrivateReviewPanel:
             self.sessions_rename.set_sensitive(
                 not self._closed and not busy and not scanning
                 and bool(self.session_list.get_active_id())
+            )
+            self.staging_inspect.set_sensitive(
+                not self._closed and not busy and not scanning
+            )
+            self.staging_prune.set_sensitive(
+                not self._closed and not busy and not scanning
+                and self.staging_confirm.get_active()
             )
             self.private_export_button.set_sensitive(
                 not self._closed and not busy and not scanning
@@ -609,6 +643,82 @@ class PrivateReviewPanel:
                                 f"{self._review.pending()} décisions individuelles "
                                 "restantes ; aucun ZIP automatique."
                             )
+                self._refresh()
+                return False
+
+            self.GLib.idle_add(deliver)
+
+        handle.add_done_callback(finished)
+
+    def inspect_staging(self):
+        """Show non-sensitive counts; never touch bytes or expose filenames."""
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()):
+            return
+        try:
+            count, size, eligible = PrivateSessionVault(
+                self.vault_directory
+            ).staging_summary()
+        except VaultError:
+            self.status.set_label(
+                "Résidus inaccessibles : permissions ou liens non sûrs."
+            )
+            return
+        self.status.set_label(
+            f"{count} résidus chiffrés ({size} octets), "
+            f"dont {eligible} nettoyables après confirmation. "
+            "Aucune session supprimée."
+        )
+
+    def prune_staging(self):
+        """Explicitly and asynchronously remove only aged ciphertext staging."""
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()):
+            return
+        if not self.staging_confirm.get_active():
+            self.status.set_label(
+                "Nettoyage refusé : confirmation distincte requise."
+            )
+            return
+        self.staging_confirm.set_active(False)
+        generation = self._generation
+        directory = self.vault_directory
+
+        def work(_control):
+            return PrivateSessionVault(directory).prune_staging(confirmed=True)
+
+        try:
+            handle = self.tasks.submit(
+                work, kind="browser-recorder",
+                label="Nettoyer les résidus chiffrés",
+            )
+        except Exception:
+            self.status.set_label("Nettoyage indisponible.")
+            return
+        self._index_handle = handle
+        self._refresh()
+
+        def finished(done):
+            try:
+                result = done.result()
+            except Exception:
+                result = None
+
+            def deliver():
+                if self._closed or generation != self._generation:
+                    return False
+                if self._index_handle is done:
+                    self._index_handle = None
+                if result is None:
+                    self.status.set_label(
+                        "Nettoyage refusé : résidu non sûr ou coffre inaccessible."
+                    )
+                else:
+                    count, size = result
+                    self.status.set_label(
+                        f"{count} résidus chiffrés anciens nettoyés "
+                        f"({size} octets). Aucune session supprimée."
+                    )
                 self._refresh()
                 return False
 
