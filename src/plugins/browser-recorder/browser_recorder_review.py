@@ -450,6 +450,8 @@ class IdentifierReview:
                 "response_body": clean(entry.response_body, mime=response_mime),
                 "request_body_state": entry.request_body_state,
                 "response_body_state": entry.response_body_state,
+                "request_body_reason": entry.request_body_reason,
+                "response_body_reason": entry.response_body_reason,
                 "request_headers": {k: clean(v) for k, v in entry.request_headers.items()},
                 "response_headers": {k: clean(v) for k, v in entry.response_headers.items()},
                 "network_error": entry.network_error,
