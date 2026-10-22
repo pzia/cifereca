@@ -520,6 +520,16 @@ class LocalInspectionController:
         pair_confirm.set_visible(False)
         pair_confirm.set_sensitive(False)
         candidate_box.append(pair_confirm)
+        # Undo is eligible ONLY for a placement committed in the same still
+        # live private session. No journal ID or token is given to GTK.
+        pair_undo = Gtk.Button(label='Annuler le dernier placement…')
+        pair_undo.set_tooltip_text(
+            'Vérifier puis annuler uniquement le placement Numilog créé '
+            'pendant cette session, avec une nouvelle confirmation explicite.'
+        )
+        pair_undo.set_visible(False)
+        pair_undo.set_sensitive(False)
+        candidate_box.append(pair_undo)
         pair_explanation = Gtk.Label(label='', xalign=0)
         pair_explanation.set_wrap(True)
         pair_explanation.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -565,6 +575,7 @@ class LocalInspectionController:
         selected_right = [None]
         selected_file = [None]
         pair_version = [0]
+        placement_committed = [False]
 
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
@@ -576,6 +587,8 @@ class LocalInspectionController:
             fresh_preview.set_sensitive(False)
             pair_confirm.set_visible(False)
             pair_confirm.set_sensitive(False)
+            pair_undo.set_visible(False)
+            pair_undo.set_sensitive(False)
             selected_file[0] = file_key
             pair_prepare.set_sensitive(
                 selected_right[0] is not None and file_key is not None
@@ -897,6 +910,7 @@ class LocalInspectionController:
             )
             dialog.add_response('cancel', 'Annuler')
             dialog.add_response('apply', 'Confirmer le placement')
+            dialog.set_default_response('cancel')
             dialog.set_close_response('cancel')
             dialog.set_response_appearance('apply', Adw.ResponseAppearance.DESTRUCTIVE)
 
@@ -931,19 +945,43 @@ class LocalInspectionController:
                             or selected_file[0] != chosen_file):
                         return
                     status = outcome.get('status') if type(outcome) is dict else None
-                    if status in ('applied', 'already_linked'):
+                    if status == 'applied':
+                        # The old observations are NOW stale. Freeze browsing
+                        # immediately, but keep exactly this session open so
+                        # its private, non-exported undo token remains usable.
+                        placement_committed[0] = True
+                        for control in (
+                            listing, provider, state, search, previous, following,
+                            candidate_prev, candidate_next, manual_toggle,
+                            manual_search, manual_list, format_filter, sha_filter,
+                            crc_filter, file_sort, pair_prepare, fresh_preview,
+                            pair_confirm,
+                        ):
+                            control.set_sensitive(False)
+                        pair_confirm.set_visible(False)
+                        can_undo = outcome.get('undo_available') is True
+                        pair_undo.set_visible(can_undo)
+                        pair_undo.set_sensitive(can_undo)
+                        pair_explanation.set_text(
+                            'Placement local Numilog enregistré. '
+                            'Fichier original et droit inchangés. Cette vue '
+                            'des preuves est désormais périmée : '
+                            'aucune autre sélection possible. '
+                            + ('Vous pouvez annuler ce placement une seule '
+                               'fois ici, ou fermer puis relancer la '
+                               'réconciliation.' if can_undo else
+                               'Fermez puis relancez la réconciliation.')
+                        )
+                        pair_report.set_visible(True)
+                        pair_report.set_expanded(True)
+                        return
+                    if status == 'already_linked':
                         self.clear()
-                        message = (
-                            'Un placement local Numilog a été enregistré. '
-                            'Le fichier original est conservé. Relancez '
-                            'la réconciliation pour actualiser les preuves.'
-                            if status == 'applied' else
+                        notice = Adw.MessageDialog.new(
+                            self.parent, 'Réconciliation locale',
                             'Ce fichier possède déjà un placement vérifié. '
                             'Aucune écriture supplémentaire. Relancez la '
-                            'réconciliation pour actualiser les preuves.'
-                        )
-                        notice = Adw.MessageDialog.new(
-                            self.parent, 'Réconciliation locale', message,
+                            'réconciliation pour actualiser les preuves.',
                         )
                         notice.add_response('close', 'Fermer')
                         notice.present()
@@ -978,6 +1016,157 @@ class LocalInspectionController:
 
             dialog.connect('response', on_response)
             dialog.present()
+
+        def undo_local_placement(*_args):
+            if (not valid() or placement_committed[0] is not True
+                    or not pair_undo.get_visible()
+                    or not pair_undo.get_sensitive()
+                    or selected_right[0] is None or selected_file[0] is None):
+                return
+            chosen_right, chosen_file = selected_right[0], selected_file[0]
+            version = pair_version[0]
+            pair_undo.set_sensitive(False)
+            pair_explanation.set_text(
+                'Vérification du placement et du reçu avant annulation…'
+            )
+
+            def preflight():
+                return session.preview_manual_undo(
+                    chosen_right, chosen_file,
+                    cancelled=lambda: (
+                        pair_version[0] != version or not session.valid()
+                    ),
+                )
+
+            def completed(outcome):
+                if (self.session is not session or not self.alive()
+                        or version != pair_version[0]
+                        or selected_right[0] != chosen_right
+                        or selected_file[0] != chosen_file):
+                    return
+                status = outcome.get('status') if type(outcome) is dict else None
+                if status != 'undo_preview':
+                    # A stale or invalid undo must never be described as
+                    # successful. Ask for a new reconciliation instead.
+                    self.clear()
+                    notice = Adw.MessageDialog.new(
+                        self.parent, 'Annulation non effectuée',
+                        'Le placement ne peut pas être annulé avec ces preuves '
+                        'actuelles. Aucune suppression confirmée ; relancez '
+                        'la réconciliation pour vérifier son état.',
+                    )
+                    notice.add_response('close', 'Fermer')
+                    notice.present()
+                    return
+                dialog = Adw.MessageDialog.new(
+                    window, 'Annuler le placement Numilog ?',
+                    'Seul le dernier placement enregistré pendant cette '
+                    'session sera annulé, si ses preuves sont toujours '
+                    'cohérentes. Le fichier EPUB et le droit sont conservés. '
+                    'Annuler ce dialogue laisse le placement en place.',
+                )
+                dialog.add_response('cancel', 'Conserver le placement')
+                dialog.add_response('undo', 'Confirmer l’annulation')
+                dialog.set_default_response('cancel')
+                dialog.set_close_response('cancel')
+                dialog.set_response_appearance(
+                    'undo', Adw.ResponseAppearance.DESTRUCTIVE,
+                )
+
+                def on_response(_dialog, response):
+                    if (self.session is not session or not self.alive()
+                            or version != pair_version[0]
+                            or selected_right[0] != chosen_right
+                            or selected_file[0] != chosen_file):
+                        return
+                    if response != 'undo':
+                        session.revoke_manual_attachment_preview()
+                        pair_undo.set_sensitive(True)
+                        pair_explanation.set_text(
+                            'Le placement reste enregistré. '
+                            'Vous pouvez réexaminer son annulation '
+                            'ou fermer puis relancer la réconciliation.'
+                        )
+                        return
+                    pair_explanation.set_text(
+                        'Confirmation reçue · annulation sous verrou en cours…'
+                    )
+
+                    def commit():
+                        return session.confirm_manual_undo(
+                            chosen_right, chosen_file, user_confirmed=True,
+                            cancelled=lambda: (
+                                pair_version[0] != version
+                                or not session.valid()
+                            ),
+                        )
+
+                    def committed(result):
+                        if (self.session is not session or not self.alive()
+                                or version != pair_version[0]
+                                or selected_right[0] != chosen_right
+                                or selected_file[0] != chosen_file):
+                            return
+                        outcome_status = (
+                            result.get('status') if type(result) is dict else None
+                        )
+                        self.clear()
+                        text = (
+                            'Annulation du placement confirmée. '
+                            'Le fichier et le droit sont conservés. '
+                            'Relancez la réconciliation pour vérifier '
+                            'les preuves actuelles.'
+                            if outcome_status in ('undone', 'already_undone') else
+                            'Annulation non confirmée. '
+                            'Vérifiez les preuves via une nouvelle '
+                            'réconciliation avant tout autre essai.'
+                        )
+                        notification = Adw.MessageDialog.new(
+                            self.parent, 'Réconciliation locale', text,
+                        )
+                        notification.add_response('close', 'Fermer')
+                        notification.present()
+
+                    def failed(_error):
+                        if (self.session is session and self.alive()
+                                and version == pair_version[0]):
+                            self.clear()
+                            notification = Adw.MessageDialog.new(
+                                self.parent, 'Annulation non confirmée',
+                                'Relancez la réconciliation pour vérifier '
+                                'le placement actuel.',
+                            )
+                            notification.add_response('close', 'Fermer')
+                            notification.present()
+
+                    self.parent.runner.submit(
+                        'Confirmation de l’annulation locale',
+                        commit, committed, failed,
+                        priority=TaskPriority.MAINTENANCE,
+                        kind='maintenance-inspection',
+                    )
+
+                dialog.connect('response', on_response)
+                dialog.present()
+
+            def failed(_error):
+                if (self.session is session and self.alive()
+                        and version == pair_version[0]):
+                    self.clear()
+                    notification = Adw.MessageDialog.new(
+                        self.parent, 'Annulation indisponible',
+                        'Relancez la réconciliation pour vérifier '
+                        'le placement actuel.',
+                    )
+                    notification.add_response('close', 'Fermer')
+                    notification.present()
+
+            self.parent.runner.submit(
+                'Vérification préalable à l’annulation',
+                preflight, completed, failed,
+                priority=TaskPriority.MAINTENANCE,
+                kind='maintenance-inspection',
+            )
 
         def select(_listing, row):
             if row is None or not valid():
@@ -1057,6 +1246,7 @@ class LocalInspectionController:
         pair_prepare.connect('clicked', prepare_pair)
         fresh_preview.connect('clicked', preview_fresh_pair)
         pair_confirm.connect('clicked', confirm_local_placement)
+        pair_undo.connect('clicked', undo_local_placement)
         for widget in (format_filter, sha_filter, crc_filter, file_sort):
             widget.connect('notify::selected', lambda *_: filter_manual())
         provider.connect('notify::selected', lambda *_: render(reset=True))
