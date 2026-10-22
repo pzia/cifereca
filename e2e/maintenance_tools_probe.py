@@ -118,7 +118,7 @@ class DummyTool:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1280, 1366, 1600))
+    parser.add_argument("--width", required=True, type=int, choices=(1024, 1280, 1366, 1600))
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
@@ -224,7 +224,7 @@ def main():
         if button.get_root() is window[0] and button in tuple(walk(window[0]._tools_box)):
             # The GTK4 ActionRow reports unreliable native transformations
             # under our rootless Xvfb runner (its computed click landed on the
-            # title bar). This isolated screen is fixed at 1280/1366/1600, window
+            # title bar). This isolated screen is fixed at 1024/1280/1366/1600, window
             # starts at 0,0 and the trailing action is top-right at y=144.
             # Explicit screen coordinates still send genuine XTEST events.
             assert window[0].get_width() > 800, "Unexpected GTK window geometry"
@@ -693,7 +693,11 @@ def main():
                     if name == "maintenance.tool" else ()
                 ))
                 w.show_error = lambda message, _title=None: errors.append(str(message))
-                w.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
+                # At 1024×768 the main window itself must fit the real
+                # Xvfb height; do not silently test a clipped 780px window.
+                window_height = (728 if args.width == 1024
+                                 else 880 if args.width == 1600 else 780)
+                w.set_default_size(args.width - 40, window_height)
                 w.present()
                 gtk_phase_2027("maint_window_shown")
                 device[0] = X11Input()
