@@ -310,6 +310,23 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
             with pytest.raises(Exception, match="export_unconfirmed"):
                 plan.save(tmp_path / "out", user_confirmed=True)
             preview = plan.preview()
+            # The original response being captured is not sufficient:
+            # prove that each bounded chunked body survives individual
+            # review as an actual *structural* member of the frozen ZIP.
+            members = {row["name"]: row["text"] for row in preview["members"]}
+            for suffix, state in (
+                ("/chunked.json", "captured_json_structure"),
+                ("/chunked.html", "captured_markup_structure"),
+                ("/chunked.xml", "captured_xml_structure"),
+            ):
+                captured = next(e for e in trace.exchanges if e.url.endswith(suffix))
+                exchange = json.loads(members[
+                    f"exchanges/{captured.sequence:04d}.json"
+                ])
+                body = exchange["bodies"]["response"]
+                assert body["state"] == state
+                assert body["file"] in members
+                assert members[body["file"]]
             joined = json.dumps(preview, ensure_ascii=True)
             for secret in (TOKEN, COOKIE, ACCOUNT, UUID,
                            "PRIVATE_FAKE_TITLE", "FICTIONAL_PASSWORD"):
