@@ -614,6 +614,7 @@ class LibraryMaintenanceBrokerImpl:
                     except FileExistsError:
                         raise _LibraryFilenameConflict("Collision de nom")
                     created_target = True
+                expected_old = os.stat(old, follow_symlinks=False)
                 expected_new = os.stat(new, follow_symlinks=False)
                 try:
                     self.service.storage.relocate_local_path(
@@ -656,7 +657,15 @@ class LibraryMaintenanceBrokerImpl:
                         (old_stat.st_dev, old_stat.st_ino)
                         == (new_stat.st_dev, new_stat.st_ino)
                     )
-                    if not new_unchanged or (created_target and not same_inode):
+                    old_unchanged = all(
+                        getattr(old_stat, attr) == getattr(expected_old, attr)
+                        for attr in (
+                            'st_dev', 'st_ino', 'st_size',
+                            'st_mtime_ns', 'st_ctime_ns',
+                        )
+                    )
+                    if (not old_unchanged or not new_unchanged
+                            or (created_target and not same_inode)):
                         cleanup_pending = True
                     else:
                         old.unlink()
