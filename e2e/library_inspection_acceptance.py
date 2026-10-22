@@ -334,6 +334,12 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         # This fixture has no authenticated receipt or linked artifact.
         # The read-only explanation must NOT expose an executable preview.
         assert not fresh.get_visible() and not fresh.get_mapped()
+        confirm=next(w for w in walk(controller.dialog)
+                     if isinstance(w,Gtk.Button)
+                     and w.get_label()=='Confirmer le placement local…')
+        # A bibliographic-only synthetic candidate must never expose even
+        # the second-step SQLite confirmation button.
+        assert not confirm.get_visible() and not confirm.get_sensitive()
         report['checks']['P0_2714_pair_preflight_no_write_click']=True
         switch=next(w for w in walk(controller.dialog)
                     if isinstance(w,Gtk.Button) and w.get_label()=='Voir les candidats exacts')
