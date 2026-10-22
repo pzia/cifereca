@@ -59,7 +59,7 @@ def test_inline_activity_has_no_modal_and_only_closed_progress(scoped):
     control.report(message='Inventaire local', current=517)
     assert len(pending) == 1
     assert pending.pop(0)() is False
-    assert label.text.startswith('Inspection · Inventaire local · ')
+    assert label.text.startswith('Inspection détaillée · préparation : cache valide ou nouvelle lecture · Inventaire local · ')
     assert '517 fichiers observés' in label.text
     assert '00:00 écoulées' in label.text
     control.report(message='/PRIVATE/ACCOUNT/SECRET', current=100, total=100)
@@ -193,3 +193,57 @@ def test_elapsed_counter_and_phase_reject_private_plugin_prose(monkeypatch, scop
     assert '00:31 écoulées' in label.text
     assert 'fichiers observés' not in label.text
     owner.clear()
+
+
+def test_real_cache_scan_mode_is_visible_and_stale_mode_cannot_reappear(scoped):
+    service, _, _ = scoped
+    callbacks, rows, jobs = [], [], []
+    parent = NS(
+        service=service,
+        runner=NS(submit=lambda *args, **kwargs: jobs.append(args)),
+        show_error=lambda *_args: None,
+    )
+    owner = LocalInspectionController(
+        parent=parent, Gtk=NS(Box=FakeBox, Label=FakeLabel, Button=FakeButton,
+                              Orientation=NS(HORIZONTAL=0)),
+        Adw=NS(), Pango=NS(),
+        GLib=NS(idle_add=callbacks.append, source_remove=lambda *_a: None),
+        alive=lambda: True,
+    )
+    owner.attach_activity_row(NS(add_suffix=rows.append))
+    owner.start()
+    generation = owner._generation
+    label = rows[0].children[0]
+    assert owner._activity_mode == "preparing"
+    assert owner._mode(generation, "../../PRIVATE_BOOK") is None
+    assert not callbacks
+    owner._mode(generation, "new_scan")
+    assert len(callbacks) == 1 and callbacks.pop(0)() is False
+    assert owner._activity_mode == "new_scan"
+    assert "nouveau scan local hors réseau" in label.text
+    assert "couverture inconnue" in label.text
+
+    owner._mode(generation, "cached")
+    assert callbacks.pop(0)() is False
+    assert "preuves réutilisées (cache privé valide)" in label.text
+    assert "couverture inconnue" not in label.text
+    owner._mode(generation, "new_scan")
+    late = callbacks.pop(0)
+    owner.clear()
+    assert late() is False
+    assert owner._activity_mode == "preparing"
+    assert not rows[0].visible
+    assert "PRIVATE_BOOK" not in label.text
+
+
+def test_actual_fresh_mode_emitted_before_running_second_scan(scoped):
+    from cifereca.core.library_local_inspection import open_local_inspection
+
+    service, _, _ = scoped
+    signals = []
+    session = open_local_inspection(
+        service, identity_id="alice", on_mode=signals.append,
+    )
+    assert signals == ["new_scan"]
+    assert session is not None
+    session.close()
