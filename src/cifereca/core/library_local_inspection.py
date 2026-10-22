@@ -12,7 +12,7 @@ import unicodedata
 
 from .library_audit_broker import _run_scoped_audit, _unavailable
 from .library_inspection_cache import take_inspection_cache
-from .library_manual_link_preflight import review_local_pair
+from .library_manual_link_preflight import review_local_pair, review_source_read_only
 
 PROVIDERS = {'all': 'Tous les fournisseurs', 'kobo': 'Kobo', 'numilog': 'Numilog',
              'paris': 'Paris', 'local': 'Local (origine attestée)',
@@ -591,7 +591,7 @@ class LocalInspection:
             suggestions = [
                 'Fichiers à comparer (même identifiant bibliographique explicite '
                 'qu’une notice de cette édition ; candidat non probant, sans '
-                'attribution Numilog ni lien de propriété) :',
+                'attribution à un fournisseur ni lien de propriété) :',
             ]
             if not candidate_indices:
                 suggestions.append(
@@ -792,7 +792,7 @@ class LocalInspection:
                          offset, self._limited)
 
     def preflight_manual_link(self, right_key, file_key):
-        """Explain a selected Numilog right/file pair without IO or authority.
+        """Explain a selected provider right/file pair without IO or authority.
 
         Only the already scoped, same-session, *unlinked* cases can enter this
         local assessment. No preflight object permits a subsequent SQLite
@@ -810,6 +810,19 @@ class LocalInspection:
                 or not right_key.startswith('right:')
                 or not file_key.startswith('file:')):
             return review_local_pair(None, None, audit_complete=False)
+
+        # Shared browsing is available for Kobo and Paris, but neither can
+        # accidentally enter Numilog's purchase-only transaction from here.
+        # An explicit reason is safer than reporting a real Kobo/Paris right
+        # as a missing Numilog entitlement.
+        if right.provider != 'numilog':
+            return review_source_read_only(
+                right.provider,
+                audit_complete=self._manual_audit_complete,
+                bibliographic_hint=(
+                    file_key in self._candidate_file_keys.get(right_key, ())
+                ),
+            )
         return review_local_pair(
             self._manual_right_proofs.get(right_key),
             self._manual_file_proofs.get(file_key),

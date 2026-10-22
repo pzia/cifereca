@@ -23,6 +23,19 @@ _REASON_LABELS = {
     "artifact_mismatch": "Les octets du fichier ne concordent pas avec l’artefact du reçu.",
     "bibliographic_hint_only": "Une notice/ISBN identique est une simple piste, jamais une preuve d’achat.",
     "transaction_unavailable": "Aucune écriture autorisée : transaction et revalidation à construire séparément.",
+    "kobo_separate_recovery": (
+        "Kobo : une restauration de lien exige les preuves personnelles "
+        "et la sauvegarde déjà attestées par le contrat Kobo dédié. "
+        "La comparaison bibliographique ne permet aucun placement ici."
+    ),
+    "paris_read_only": (
+        "Paris : les prêts et leurs échéances nécessitent un contrat de prêt "
+        "spécifique. Cette comparaison est en lecture seule ; aucun placement "
+        "ni restitution ne sont autorisés."
+    ),
+    "source_not_supported": (
+        "Aucune transaction de rattachement n’est autorisée pour cette source."
+    ),
 }
 
 
@@ -104,3 +117,25 @@ def review_local_pair(
         status = "eligible_for_fresh_validation"
     reasons = tuple(sorted(blockers | missing | {"transaction_unavailable"}))
     return ManualLinkPreflight(status, reasons)
+
+
+def review_source_read_only(
+    provider: object, *, audit_complete: bool,
+    bibliographic_hint: bool = False,
+) -> ManualLinkPreflight:
+    """Closed, non-authorizing review for non-Numilog provider comparisons.
+
+    Only provider IDs from the already-scoped private case enter this function.
+    This is not a substitute for Kobo's existing specific restore transaction,
+    and Paris loans have no writable attachment handler in this workflow.
+    """
+    code = {
+        "kobo": "kobo_separate_recovery",
+        "paris": "paris_read_only",
+    }.get(provider if type(provider) is str else None, "source_not_supported")
+    reasons = {code}
+    if audit_complete is not True:
+        reasons.add("audit_incomplete")
+    if bibliographic_hint is True:
+        reasons.add("bibliographic_hint_only")
+    return ManualLinkPreflight("blocked", tuple(sorted(reasons)))
