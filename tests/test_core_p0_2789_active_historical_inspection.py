@@ -50,6 +50,20 @@ def test_273_historical_missing_and_zero_active_do_not_look_like_273_failures(tm
     assert overview["paths_active_missing"] == 1
     assert overview["paths_other_missing"] == 1
     assert session.page(state="stored_path_missing").total == 275
+    assert session.page(state="stored_path_missing_historical").total == 273
+    assert session.page(state="stored_path_missing_active").total == 1
+    assert session.page(state="stored_path_missing_other").total == 1
+    assert session.page(state="all").total == 275
+    # The GTK checkbox is only a view filter: active problem cases remain
+    # visible, archives are still recoverable immediately by unchecking.
+    visible = session.page(state="all", hide_historical_paths=True)
+    assert visible.total == 2
+    assert all("stored_path_missing_historical" not in case.states for case in visible.cases)
+    assert session.page(state="all", hide_historical_paths=False).total == 275
+    assert session.page(state="stored_path_missing", hide_historical_paths=True).total == 2
+    import pytest
+    with pytest.raises(ValueError, match="invalid_inspection_page"):
+        session.page(hide_historical_paths=1)
     # Historical path rows are not necessarily missing books. No scanning
     # side-effect, no DB cleanup and no guessed reconnection is permitted.
     assert filesystem(tmp_path) == original

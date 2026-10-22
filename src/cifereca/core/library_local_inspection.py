@@ -24,6 +24,9 @@ STATES = {
     'rights_without_verified_file': 'Droit sans fichier vérifié',
     'local_file_without_attested_right': 'Fichier sans droit attesté',
     'unverified_file': 'Fichier non vérifié', 'stored_path_missing': 'Chemin enregistré absent',
+    'stored_path_missing_active': 'Chemin absent, placement encore actif',
+    'stored_path_missing_historical': 'Ancien emplacement déjà marqué manquant',
+    'stored_path_missing_other': 'Chemin absent, état SQLite atypique',
     'loan_inactive': 'Prêt Paris non actif enregistré (lecture seule)',
     'stored_path_unavailable': 'Chemin non inspectable', 'stored_path_out_of_scope': 'Chemin hors périmètre',
 }
@@ -731,13 +734,25 @@ class LocalInspection:
         for index, state in audit.stored_paths.states.items():
             if state not in STATES or not 0 <= index < len(placements) or placements[index].get('identity_id') != identity_id:
                 continue
-            # An unverified recorded path cannot attribute a file to a provider.
-            if not add('path', index, STATES[state]+' · '+_text(placements[index].get('placement_id')),
-                       'unattributed', {state}, evidence('placements', index)):
+            # An old SQLite location is not an active broken link just
+            # because its original pathname is absent. Expose the historic
+            # state to a private filter, not to any automatic cleanup.
+            case_states = {state}
+            label = STATES[state]
+            sqlite_state = placements[index].get('state')
+            if state == 'stored_path_missing':
+                bucket = sqlite_state if sqlite_state in ('present', 'missing') else 'other'
+                variant = {
+                    'present': 'stored_path_missing_active',
+                    'missing': 'stored_path_missing_historical',
+                    'other': 'stored_path_missing_other',
+                }[bucket]
+                case_states.add(variant)
+                label = STATES[variant]
+            if not add('path', index, label+' · '+_text(placements[index].get('placement_id')),
+                       'unattributed', case_states, evidence('placements', index)):
                 break
             if state == 'stored_path_missing':
-                sqlite_state = placements[index].get('state')
-                bucket = sqlite_state if sqlite_state in ('present', 'missing') else 'other'
                 self._path_missing_by_sqlite_state[bucket] += 1
         if not self.valid():
             self.close()
@@ -842,8 +857,10 @@ class LocalInspection:
                 'skipped_symlinks': self._skipped_symlinks,
                 'skipped_special': self._skipped_special}
 
-    def page(self, *, provider='all', state='all', offset=0, limit=50, query=''):
+    def page(self, *, provider='all', state='all', offset=0, limit=50, query='',
+             hide_historical_paths=False):
         if (provider not in PROVIDERS or state not in STATES or
+                type(hide_historical_paths) is not bool or
                 type(offset) is not int or offset < 0 or type(limit) is not int or
                 not 1 <= limit <= 50 or type(query) is not str or len(query) > 160):
             raise ValueError('invalid_inspection_page')
@@ -853,6 +870,8 @@ class LocalInspection:
         rows = [case for case in self._cases.values()
                 if (provider == 'all' or case.provider == provider)
                 and (state == 'all' or state in case.states)
+                and (not hide_historical_paths
+                     or 'stored_path_missing_historical' not in case.states)
                 and (not terms or all(word in _searchable(case.label)
                                       for word in terms))]
         return LocalPage(tuple(rows[offset:offset+limit]), len(rows), offset, self._limited)
