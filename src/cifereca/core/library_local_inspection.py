@@ -92,6 +92,62 @@ def _searchable(text):
 
 
 
+# #2841: only these codes are strictly PER-OBSERVATION failures. They
+# may originate from *other* EPUBs, without invalidating exact, independently
+# verified selected-file bytes or the full SQLite proof graph. Never add
+# traversal, file/row/byte budgets, root changes or cancellation here.
+_PAIR_LOCAL_FILE_REASONS = frozenset({
+    'epub_parser_limit_or_invalid',
+    'structure_limit_or_invalid',
+    'file_byte_budget',  # per-file cap only, not hash/structure global cap
+})
+# The structure umbrella reason also covers an exhausted shared byte budget.
+# A bounded individual invalid ZIP/CRC is non-authoritative for OTHER files,
+# but an exhausted global budget MUST NOT become a pair-write permit.
+_PAIR_STRUCTURE_BUDGET_STATES = frozenset({
+    'structure_byte_or_time_budget',
+    'structure_byte_or_entry_budget',
+    'structure_cancelled',
+})
+
+
+def _pair_evidence_complete(audit):
+    """Strict read-only permission to attempt fresh per-pair validation.
+
+    NOT a write authority: Numilog/Kobo engines independently revalidate the
+    entire right/receipt/backup, identity, conflict set and local bytes under
+    the Core transaction lock. Metadata suggestion coverage is not ownership
+    evidence. Uncertain traversal, incomplete SQLite/WAL, an unfinished proof
+    comparison, or unverified path coverage must still block all pairs.
+    """
+    try:
+        inventory = audit.inventory
+        snapshot = audit.snapshot
+        reconciliation = audit.reconciliation
+        if (type(inventory.reasons) is not set
+                or type(snapshot.reasons) is not set
+                or type(reconciliation.reasons) is not set
+                or type(audit.reasons) is not set
+                or type(audit.stored_paths.reasons) is not set):
+            return False
+        if (audit.reasons or snapshot.reasons or audit.stored_paths.reasons
+                or not inventory.reasons <= _PAIR_LOCAL_FILE_REASONS
+                or reconciliation.reasons - inventory.reasons):
+            return False
+        if (type(inventory.files_started) is not int
+                or inventory.files_started != len(inventory.files)
+                or any(file.structure_validation in _PAIR_STRUCTURE_BUDGET_STATES
+                       for file in inventory.files)):
+            return False
+        required = (
+            'entitlements', 'acquisition_ledger', 'artifacts',
+            'placements', 'backup_items', 'catalog_entries',
+        )
+        return all(type(snapshot.tables.get(table)) is list for table in required)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def _right_bibliography(right, matches):
     """Private, descriptive only. Identity/provider/edition was matched above.
 
@@ -317,6 +373,7 @@ class LocalInspection:
         self._manual_right_scopes = {}
         self._manual_file_observations = {}
         self._manual_audit_complete = audit.redacted().get('status') == 'complete'
+        self._manual_pair_evidence_complete = _pair_evidence_complete(audit)
         # Private, same-identity facets for the direct-selection file browser.
         # No file metadata or query is ever exported through summary()/logs.
         self._file_facets = {}
@@ -788,6 +845,7 @@ class LocalInspection:
         self._manual_service = None
         self._manual_identity = None
         self._manual_audit_complete = False
+        self._manual_pair_evidence_complete = False
         self._summary = {}
         self._path_missing_by_sqlite_state.clear()
         self._roots = ()
@@ -975,7 +1033,8 @@ class LocalInspection:
                 {'verified': verified,
                  'signature': (observation.sha256, observation.size)
                               if observation is not None else None},
-                audit_complete=self._manual_audit_complete,
+                audit_complete=self._manual_pair_evidence_complete,
+                global_audit_partial=not self._manual_audit_complete,
                 bibliographic_hint=(
                     file_key in self._candidate_file_keys.get(right_key, ())
                 ),
@@ -993,7 +1052,8 @@ class LocalInspection:
         return review_local_pair(
             self._manual_right_proofs.get(right_key),
             self._manual_file_proofs.get(file_key),
-            audit_complete=self._manual_audit_complete,
+            audit_complete=self._manual_pair_evidence_complete,
+            global_audit_partial=not self._manual_audit_complete,
             bibliographic_hint=(
                 file_key in self._candidate_file_keys.get(right_key, ())
             ),
