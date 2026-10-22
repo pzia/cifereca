@@ -796,7 +796,7 @@ class LocalInspection:
             # Search the same-identity notice identifiers even if the UI
             # label contains only title/author. ISBN is non-probative and
             # never used by the attachment preflight or transaction writers.
-            search_parts = [right_label, _text(right_item)[:256]]
+            search_parts = [case_heading, right_label, _text(right_item)[:256]]
             for _notice_index, notice in matches[:8]:
                 ids = notice.get('bibliographic_identifiers', ())
                 if type(ids) not in (list, tuple):
