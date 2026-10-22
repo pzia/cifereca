@@ -272,6 +272,20 @@ class PrivateReviewPanel:
                   "impose gzip/Brotli, les corps restent exclus ; les anciennes "
                   "captures ne sont pas réparées.", xalign=0, wrap=True,
         ))
+        self.accept_compressed = Gtk.CheckButton(
+            label="Accepter les réponses HTTP compressées (gzip/Brotli/deflate) pour cette capture."
+        )
+        box.append(self.accept_compressed)
+        box.append(Gtk.Label(
+            label="Option avancée, désactivée par défaut : Chromium décompresse "
+                  "avant que Cifereca puisse limiter la taille décodée. Une "
+                  "réponse malveillante peut provoquer un pic de mémoire ou "
+                  "un blocage malgré les plafonds de conservation (32 Kio/corps). "
+                  "Les réponses trop grandes, binaires, licences et domaines "
+                  "non autorisés restent exclus. Aucun ZIP n'est exporté "
+                  "automatiquement. Choix réinitialisé après Démarrer.",
+            xalign=0, wrap=True,
+        ))
         self.diagnose_origins = Gtk.CheckButton(
             label="Pour cette capture, afficher localement les domaines exclus (RAM uniquement)."
         )
@@ -716,6 +730,7 @@ class PrivateReviewPanel:
 
     def _refresh(self):
         self.prefer_identity.set_sensitive(not self._closed and not self.is_recording())
+        self.accept_compressed.set_sensitive(not self._closed and not self.is_recording())
         busy = self.is_recording()
         self.diagnose_origins.set_sensitive(not self._closed and not busy)
         scanning = self.is_scanning()
@@ -1023,6 +1038,8 @@ class PrivateReviewPanel:
         pause_control = self._pause_control
         self._download_outcomes = {}
         prefer_identity = self.prefer_identity.get_active()
+        accept_compressed = self.accept_compressed.get_active()
+        self.accept_compressed.set_active(False)
         diagnose_origins = self.diagnose_origins.get_active()
         self.diagnose_origins.set_active(False)
         self.status.set_label("Navigateur HTTP privé en cours, sans export…")
@@ -1044,6 +1061,8 @@ class PrivateReviewPanel:
                 "status": self._download_status,
                 "coverage_callback": progress,
             }
+            if accept_compressed:
+                kwargs["allow_compressed_responses"] = True
             if diagnose_origins:
                 kwargs["diagnose_origins"] = True
             if prefer_identity:

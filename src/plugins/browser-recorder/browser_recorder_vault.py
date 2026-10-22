@@ -86,6 +86,7 @@ def _record(trace: PrivateHttpTrace, session_id: str, state: str) -> bytes:
         "origins": list(trace.origins),
         "metadata_only_origins": list(trace.metadata_only_origins),
         "content_negotiation": trace.content_negotiation,
+        "compressed_responses_accepted": trace.allow_compressed_responses,
         "limit": trace.limit,
         "max_body": trace.max_body,
         "total_body_remaining": trace.total_body,
@@ -123,6 +124,10 @@ def _unrecord(blob: bytes, session_id: str):
         if type(strategy) is not str or strategy not in {"browser_default", "identity_requested"}:
             raise ValueError("invalid capture strategy")
         trace.content_negotiation = strategy
+        accepted = data.get("compressed_responses_accepted", False)
+        if type(accepted) is not bool:
+            raise ValueError("invalid capture strategy")
+        trace.allow_compressed_responses = accepted
         if type(rows) is not list or len(rows) > MAX_EXCHANGES:
             raise ValueError("invalid entries")
         for index, row in enumerate(rows):

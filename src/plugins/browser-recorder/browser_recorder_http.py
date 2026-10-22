@@ -80,7 +80,7 @@ def _length(headers: dict[str, str]) -> int | None:
     return int(value)
 
 
-def _body_envelope(response) -> tuple[str, int | None]:
+def _body_envelope(response, *, allow_compressed: bool = False) -> tuple[str, int | None]:
     """Read only raw wire-size/encoding headers transiently before body().
 
     Sanitized technical headers are safe to *store* but cannot prove that
@@ -97,6 +97,7 @@ def _body_envelope(response) -> tuple[str, int | None]:
     length = None
     saw_length = False
     saw_encoding = False
+    compressed = False
     # Inspect *names* first. Access values only for the two technical
     # headers below; do not even sample Cookie/Authorization in this gate.
     for key in raw:
@@ -108,8 +109,15 @@ def _body_envelope(response) -> tuple[str, int | None]:
                 return "compressed", None
             saw_encoding = True
             value = raw[key]
-            if type(value) is not str or value.strip().lower() != "identity":
+            if type(value) is not str:
                 return "compressed", None
+            coding = value.strip().lower()
+            if coding != "identity":
+                # No stacked/unknown encodings, no accidental opt-in via a
+                # malformed header. Chromium returns decoded response.body().
+                if not allow_compressed or coding not in {"gzip", "br", "deflate"}:
+                    return "compressed", None
+                compressed = True
         elif name == "content-length":
             if saw_length:
                 return "unknown_size", None
@@ -120,7 +128,7 @@ def _body_envelope(response) -> tuple[str, int | None]:
             length = _length({"content-length": value})
             if length is None:
                 return "unknown_size", None
-    return "ready", length
+    return ("compressed_ready" if compressed else "ready"), length
 
 
 def _url_origin(url: str) -> str | None:
@@ -205,7 +213,11 @@ class PrivateHttpTrace:
                  total_body: int = MAX_TOTAL_BODY_BYTES,
                  pause_control: CapturePause | None = None,
                  metadata_only_origins: tuple[str, ...] = (),
-                 diagnose_origins: bool = False):
+                 diagnose_origins: bool = False,
+                 allow_compressed_responses: bool = False):
+        if type(allow_compressed_responses) is not bool:
+            raise RecorderError("invalid_capture_strategy")
+        self.allow_compressed_responses = allow_compressed_responses
         if type(diagnose_origins) is not bool:
             raise RecorderError("invalid_origin")
         self._diagnose_origins = diagnose_origins
@@ -484,8 +496,11 @@ class PrivateHttpTrace:
         # Examine original headers transiently: storage sanitization can
         # drop malformed Content-Encoding/Content-Length. Never mistake that
         # filtering for a trustworthy 'header absent' condition.
-        gate, expected = _body_envelope(resp)
-        if gate != "ready":
+        gate, expected = _body_envelope(
+            resp, allow_compressed=self.allow_compressed_responses,
+        )
+        compressed = gate == "compressed_ready"
+        if gate not in {"ready", "compressed_ready"}:
             entry.response_body_state = "body_omitted"
             entry.response_body_reason = (
                 "compressed" if gate == "compressed" else "unsafe_headers"
@@ -511,12 +526,27 @@ class PrivateHttpTrace:
             self.omitted["oversize"] += 1
             return
         try:
-            # Exactly one passive body read, only after the Chromium-owned
-            # measurement proves a small, uncompressed payload. No retries,
-            # no request replay and no content-based size speculation.
+            # The opt-in permits Chromium's decompressed body() after a
+            # measured *encoded* transfer-size preflight. This is NOT a bound
+            # on peak decoded memory: users explicitly accept that residual
+            # risk. Never retain more than the normal decoded budgets.
+            # No retries, replay, other origins, or binary/license reads.
             raw = resp.body()
-            if (type(raw) is bytes and len(raw) <= actual
-                    and (expected is None or len(raw) <= expected)):
+            if type(raw) is not bytes:
+                entry.response_body_state = "body_omitted"
+                entry.response_body_reason = "measured_mismatch"
+                self.omitted["oversize"] += 1
+            elif (len(raw) > self.max_body or len(raw) > self.total_body
+                  or (static and len(raw) > self._static_body_remaining)):
+                entry.response_body_state = "body_omitted"
+                entry.response_body_reason = "over_budget"
+                self.omitted["oversize"] += 1
+            elif not compressed and (len(raw) > actual
+                    or (expected is not None and len(raw) > expected)):
+                entry.response_body_state = "truncated"
+                entry.response_body_reason = "measured_mismatch"
+                self.omitted["oversize"] += 1
+            else:
                 entry.response_body = self._take_text(raw)
                 if static and entry.response_body is not None:
                     self._static_body_remaining -= len(raw)
@@ -527,10 +557,6 @@ class PrivateHttpTrace:
                     "captured" if entry.response_body is not None
                     else "text_invalid_or_limit"
                 )
-            else:
-                entry.response_body_state = "truncated"
-                entry.response_body_reason = "measured_mismatch"
-                self.omitted["oversize"] += 1
         except (AttributeError, TypeError, ValueError):
             entry.response_body_state = "body_omitted"
             entry.response_body_reason = "read_failed"
@@ -595,6 +621,7 @@ def record_http(start_url: str, stop: Event, *,
                 coverage_callback=None,
                 prefer_identity: bool = False,
                 diagnose_origins: bool = False,
+                allow_compressed_responses: bool = False,
                 ) -> PrivateHttpTrace:
     """Observe a manually controlled Chromium session; return RAM-only trace.
 
@@ -602,13 +629,14 @@ def record_http(start_url: str, stop: Event, *,
     private vault writer may persist AES-GCM-encrypted snapshots, never
     plaintext. No extra requests or replay; LLM ZIP still requires review.
     """
-    if type(prefer_identity) is not bool:
+    if type(prefer_identity) is not bool or type(allow_compressed_responses) is not bool:
         raise RecorderError("invalid_capture_strategy")
     origin = site_origin(start_url)
     trace = PrivateHttpTrace(
         origins or (origin,), pause_control=pause_control,
         metadata_only_origins=metadata_only_origins,
         diagnose_origins=diagnose_origins,
+        allow_compressed_responses=allow_compressed_responses,
     )
     if origin not in trace.origins:
         raise RecorderError("invalid_origin")
