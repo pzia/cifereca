@@ -28,6 +28,10 @@ _REASON_LABELS = {
         "le compte, la taille et le SHA doivent encore être revérifiés par "
         "le contrat Kobo dédié avant toute confirmation."
     ),
+    "kobo_backup_signature_mismatch": (
+        "Le SHA et la taille du fichier ne correspondent pas à la "
+        "sauvegarde Kobo antérieure attestée ; aucun placement autorisé."
+    ),
     "kobo_personal_right_unverified": (
         "Le droit Kobo personnel et son compte unique ne sont pas attestés "
         "dans cette inspection ; aucune restauration n’est possible."
@@ -165,8 +169,13 @@ def review_kobo_candidate(
         blockers.add("audit_incomplete")
     if type(right) is not dict or right.get("attested") is not True or right.get("ambiguous") is True:
         blockers.add("kobo_personal_right_unverified")
-    if type(file) is not dict or file.get("verified") is not True or _strict_signature(file.get("signature")) is None:
+    signature = _strict_signature(file.get("signature")) if type(file) is dict else None
+    if type(file) is not dict or file.get("verified") is not True or signature is None:
         blockers.add("file_unverified")
+    if (type(right) is dict and right.get("attested") is True
+            and signature is not None
+            and _strict_signature(right.get("signature")) != signature):
+        blockers.add("kobo_backup_signature_mismatch")
     reasons = blockers | {"kobo_fresh_proof_required"}
     if bibliographic_hint is True:
         reasons.add("bibliographic_hint_only")
