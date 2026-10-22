@@ -199,6 +199,19 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         # right and its taller comparison/actions are expanded.
         widgets['main_scroll'] = main_scroll
         report['checks']['P0_2712_main_scroll_present']=True
+        # The audit's long counters/roots must NOT monopolize the 920px
+        # reconciliation viewport before the user elects to expand them.
+        synopsis_panel = next(
+            w for w in walk(window)
+            if isinstance(w, Gtk.Expander)
+            and (w.get_label() or '').startswith(
+                'Afficher les statistiques et le périmètre'
+            )
+        )
+        assert not synopsis_panel.get_expanded()
+        assert synopsis_panel.get_mapped()
+        widgets['overview_panel'] = synopsis_panel
+        report['checks']['P0_2712_inspection_overview_collapsed_initially'] = True
         dropdowns=[w for w in walk(window) if isinstance(w,Gtk.DropDown)]
         widgets['provider'],widgets['state']=dropdowns
         widgets['list']=next(w for w in walk(window) if isinstance(w,Gtk.ListBox))
@@ -253,6 +266,10 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         # user selection; no ownership is inferred from a shared valid ISBN.
         row = widgets['list'].get_first_child()
         device.click_widget(row)
+        # A collapsed synopsis makes the physical right selection accessible
+        # at 920px. Expand only AFTER the real XTEST click, then require
+        # the full summary to remain reachable by actual wheel scrolling.
+        widgets['overview_panel'].set_expanded(True)
         until(lambda:any(isinstance(w,Gtk.Label) and '1 / 20' in w.get_text()
                          for w in walk(controller.dialog)), compare_right)
 
@@ -336,6 +353,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         # A genuine mouse wheel must scroll the OUTER window without
         # faking GtkAdjustment movement; the nested ListBoxes are separate.
         def wheel_target():
+            # Deliberately reopen the long history to verify that the
+            # physically scrollable full explanation remains accessible.
+            widgets['overview_panel'].set_expanded(True)
             if adjustment.get_value() > 0.5:
                 return False
             summary = next(
@@ -345,6 +365,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             )
             if not summary.get_mapped():
                 return False
+            report['checks']['P0_2712_inspection_overview_reexpandable'] = True
             window = controller.dialog
             ok, rect = summary.compute_bounds(window)
             if not ok or rect.get_width() <= 0 or rect.get_height() <= 0:

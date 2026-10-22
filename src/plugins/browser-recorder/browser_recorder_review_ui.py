@@ -261,6 +261,23 @@ class PrivateReviewPanel:
                   "impose gzip/Brotli, les corps restent exclus ; les anciennes "
                   "captures ne sont pas réparées.", xalign=0, wrap=True,
         ))
+        self.diagnose_origins = Gtk.CheckButton(
+            label="Pour cette capture, afficher localement les domaines exclus (RAM uniquement)."
+        )
+        box.append(self.diagnose_origins)
+        box.append(Gtk.Label(
+            label="Opt-in privé : 16 origines HTTPS maximum, sans chemin ni corps. "
+                  "Aucun ajout automatique au périmètre, aucun domaine dans "
+                  "le coffre, les ZIP ou Diagnostics. Liste effacée à la fermeture.",
+            xalign=0, wrap=True,
+        ))
+        self.excluded_domains = Gtk.Label(label="", xalign=0, wrap=True)
+        self.excluded_domains.set_selectable(True)
+        domain_scroll = Gtk.ScrolledWindow()
+        domain_scroll.set_max_content_height(160)
+        domain_scroll.set_propagate_natural_height(True)
+        domain_scroll.set_child(self.excluded_domains)
+        self.sessions_box.append(domain_scroll)
         if self.vault_directory is not None:
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
@@ -684,6 +701,19 @@ class PrivateReviewPanel:
             label += " Attention : capacité de capture presque atteinte."
         self.coverage_status.set_label(label)
 
+    def _show_origin_diagnostics(self, trace):
+        origins, overflow = trace.origin_diagnostics()
+        if not origins and not overflow:
+            self.excluded_domains.set_label("")
+            return
+        lines = ["Domaines exclus observés (ne prouve pas leur utilité). "
+                 "Pour les examiner, démarrer une nouvelle capture avec son "
+                 "URL et consentement, ou les autoriser en métadonnées seulement."]
+        lines.extend(f"{origin} : {count} requête(s)" for origin, count in sorted(origins.items()))
+        if overflow:
+            lines.append(f"{overflow} requête(s) supplémentaires hors inventaire (limite 16 domaines).")
+        self.excluded_domains.set_label("\n".join(lines))
+
     def is_recording(self):
         return self._handle is not None and not self._handle.done()
 
@@ -694,6 +724,7 @@ class PrivateReviewPanel:
     def _refresh(self):
         self.prefer_identity.set_sensitive(not self._closed and not self.is_recording())
         busy = self.is_recording()
+        self.diagnose_origins.set_sensitive(not self._closed and not busy)
         self.active_controls.set_visible(not self._closed and busy)
         scanning = self.is_scanning()
         replaceable = self._trace is None or (
@@ -835,6 +866,7 @@ class PrivateReviewPanel:
 
     def _discard_private(self):
         self.coverage_status.set_label("")
+        self.excluded_domains.set_label("")
         self._candidate_page = 0
         self._pending_cursor = -1
         self._invalidate_bundle()
@@ -999,6 +1031,8 @@ class PrivateReviewPanel:
         pause_control = self._pause_control
         self._download_outcomes = {}
         prefer_identity = self.prefer_identity.get_active()
+        diagnose_origins = self.diagnose_origins.get_active()
+        self.diagnose_origins.set_active(False)
         self.status.set_label("Navigateur HTTP privé en cours, sans export…")
 
         def progress(metrics):
@@ -1018,6 +1052,8 @@ class PrivateReviewPanel:
                 "status": self._download_status,
                 "coverage_callback": progress,
             }
+            if diagnose_origins:
+                kwargs["diagnose_origins"] = True
             if prefer_identity:
                 kwargs["prefer_identity"] = True
             if self.vault_directory is not None:
@@ -1085,6 +1121,7 @@ class PrivateReviewPanel:
                         return False
                     self._trace = result
                     self._show_coverage(result.coverage())
+                    self._show_origin_diagnostics(result)
                     try:
                         self._review = IdentifierReview(result)
                     except Exception:

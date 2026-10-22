@@ -96,7 +96,7 @@ def _scope(service, scope):
 
 
 @contextmanager
-def _transaction(storage, write):
+def _transaction(storage, write, after_commit=None):
     with storage._lock:
         db = storage._connect()
         _require(not db.in_transaction, 'storage_busy')
@@ -113,6 +113,13 @@ def _transaction(storage, write):
             yield db
             if write:
                 db.commit()
+                if after_commit is not None:
+                    # Observe this exact durable image while both writer
+                    # locks are held. Presentation failure cannot undo it.
+                    try:
+                        after_commit()
+                    except Exception:
+                        pass
             else:
                 db.rollback()
         except BaseException:
@@ -262,7 +269,7 @@ class DeclarationResult:
 def declare_local_link(service, *, observation: FileObservation, identity_id: str,
                        provider_id: str, credential_id: str, account_id: str,
                        item_id: str, confirmation=None, revoke=None,
-                       cancelled=lambda: False):
+                       cancelled=lambda: False, on_committed=None):
     """Private preview/confirm, or preview/confirm revoking our own declaration.
 
     ``confirmation`` is the exact token of the private diff shown to the user.
@@ -278,13 +285,20 @@ def declare_local_link(service, *, observation: FileObservation, identity_id: st
         _require(revoke is None or (type(revoke) is str
                  and re.fullmatch('[0-9a-f]{32}', revoke) is not None), 'invalid_relation')
         _require(callable(cancelled), 'invalid_cancellation')
+        _require(on_committed is None or callable(on_committed), 'invalid_commit_hook')
         scope = dict(zip(_SCOPE_FIELDS, (identity_id, provider_id, credential_id,
                                         account_id, item_id)))
         roots, valid, epoch = _scope(service, scope)
         _require(observation.identity_id == identity_id, 'file_scope_changed')
         write = confirmation is not None
         lock = InterProcessLock(acquisition_lock_file()) if write else nullcontext()
-        with lock, _transaction(service.storage, write) as db:
+        committed = []
+
+        def notify_commit():
+            if committed and on_committed is not None:
+                on_committed()
+
+        with lock, _transaction(service.storage, write, notify_commit) as db:
             _require(valid() and not cancelled(), 'source_scope_changed')
             # Revocation withdraws a statement only. A removed right or a
             # missing/replaced book must not trap an obsolete declaration.
@@ -342,6 +356,7 @@ def declare_local_link(service, *, observation: FileObservation, identity_id: st
                                                  cancelled=lambda: cancelled() or not valid())
                 _require(final.verified, 'file_changed_before_commit')
             _require(valid() and not cancelled(), 'source_scope_changed')
+            committed.append(True)
             return DeclarationResult('declared' if revoke is None else 'revoked',
                                      relation_id=record['relation_id'], changed=1)
     except DeclarationRejected:
@@ -354,29 +369,35 @@ def declare_local_link(service, *, observation: FileObservation, identity_id: st
         raise DeclarationRejected('invalid_local_context') from None
 
 
-def inspect_declared_link(service, *, relation_id, observation, identity_id,
-                          provider_id, credential_id, account_id, item_id):
+def inspect_declared_link(service, *, relation_id=None, observation, identity_id,
+                          provider_id, credential_id, account_id, item_id,
+                          cancelled=lambda: False):
     """Private read-only review after sync; never promote or silently erase.
 
     The original declaration is returned only to its exact active context.
     No receipt or relationship here can be consumed by the attested writers.
     """
     try:
-        _require(type(relation_id) is str and re.fullmatch('[0-9a-f]{32}', relation_id)
-                 is not None, 'invalid_relation')
+        _require(relation_id is None or (type(relation_id) is str
+                 and re.fullmatch('[0-9a-f]{32}', relation_id) is not None), 'invalid_relation')
         _require(type(observation) is FileObservation, 'invalid_observation')
+        _require(callable(cancelled), 'invalid_cancellation')
         scope = dict(zip(_SCOPE_FIELDS, (identity_id, provider_id, credential_id,
                                         account_id, item_id)))
         roots, valid, _epoch = _scope(service, scope)
         with _transaction(service.storage, False) as db:
-            records = [r for r in _records(db) if r['relation_id'] == relation_id]
+            records = [r for r in _records(db) if (
+                r['relation_id'] == relation_id if relation_id is not None else
+                r['state'] == 'active' and r['scope'] == scope
+                and r['file']['path'] == observation.path)]
             _require(len(records) == 1 and records[0]['scope'] == scope,
                      'relation_scope_changed')
             record = records[0]
+            relation_id = record['relation_id']
             context = _context(db, scope)
             fresh = revalidate_observed_file(observation, roots, identity_id=identity_id,
-                                             cancelled=lambda: not valid())
-            _require(valid(), 'source_scope_changed')
+                                             cancelled=lambda: cancelled() or not valid())
+            _require(valid() and not cancelled(), 'source_scope_changed')
             matches = record['file'] == _file(observation) and fresh.verified
             try:
                 _collisions(db, scope, observation, _records(db))

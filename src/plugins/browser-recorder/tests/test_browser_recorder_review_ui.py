@@ -869,3 +869,33 @@ def test_coverage_reports_empty_responses_and_near_limit_without_private_values(
         assert panel.coverage_status.label == ""
     finally:
         panel.destroy()
+
+
+def test_domain_inventory_requires_fresh_opt_in_and_clears_with_private_data(monkeypatch):
+    panel, tasks, _raw = make_panel(monkeypatch)
+    foreign = "https://diagnostic.example.org"
+    trace = PrivateHttpTrace((ORIGIN,), diagnose_origins=True)
+    trace.request(NS(url=foreign + "/private?token=PRIVATE-QUERY"))
+    trace.exchanges.append(PrivateExchange(1, "GET", url=ORIGIN + "/catalog", status=200))
+    seen = []
+    def recorder(_start, stop, **kwargs):
+        assert stop.is_set()
+        seen.append(kwargs.get("diagnose_origins"))
+        return trace
+    monkeypatch.setattr(review_ui, "record_http", recorder)
+    try:
+        assert not panel.diagnose_origins.get_active()
+        panel.diagnose_origins.set_active(True)
+        panel.begin()
+        assert not panel.diagnose_origins.get_active()  # next capture requires fresh consent
+        assert not panel.diagnose_origins.sensitive
+        panel.stop_capture()
+        tasks.handles[-1].finish()
+        assert seen == [True]
+        assert foreign in panel.excluded_domains.label
+        assert "PRIVATE-QUERY" not in panel.excluded_domains.label
+        panel.discard()
+        assert panel.excluded_domains.label == ""
+        assert trace.origin_diagnostics() == ({}, 0)
+    finally:
+        panel.destroy()

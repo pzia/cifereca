@@ -204,7 +204,13 @@ class PrivateHttpTrace:
                  max_body: int = MAX_BODY_BYTES,
                  total_body: int = MAX_TOTAL_BODY_BYTES,
                  pause_control: CapturePause | None = None,
-                 metadata_only_origins: tuple[str, ...] = ()):
+                 metadata_only_origins: tuple[str, ...] = (),
+                 diagnose_origins: bool = False):
+        if type(diagnose_origins) is not bool:
+            raise RecorderError("invalid_origin")
+        self._diagnose_origins = diagnose_origins
+        self._excluded_origins = {}
+        self._excluded_origin_overflow = 0
         if not origins or len(origins) > 6:
             raise RecorderError("invalid_origin")
         self.origins = tuple(dict.fromkeys(site_origin(item) for item in origins))
@@ -218,6 +224,7 @@ class PrivateHttpTrace:
         self.limit = min(MAX_EXCHANGES, max(1, int(limit)))
         self.max_body = min(MAX_BODY_BYTES, max(1, int(max_body)))
         self.total_body = min(MAX_TOTAL_BODY_BYTES, max(0, int(total_body)))
+        self._static_body_remaining = min(64 * 1024, self.total_body // 4)
         self.exchanges: list[PrivateExchange] = []
         # Closed vocabulary only: no provider value or browser exception.
         self.end_reason = "button"
@@ -238,6 +245,14 @@ class PrivateHttpTrace:
     def __repr__(self):
         return (f"PrivateHttpTrace(exchanges={len(self.exchanges)}, "
                 f"omissions={sum(self.omitted.values())})")
+
+    def origin_diagnostics(self):
+        """Private opt-in inventory, RAM only; not evidence of API necessity.
+
+        The vault/ZIP serializers intentionally never consume this inventory.
+        Only normalized origins, at most 16, with no path/query/header/body.
+        """
+        return dict(self._excluded_origins), self._excluded_origin_overflow
 
     def coverage(self):
         """Closed numeric summary; never a URL, MIME or provider payload."""
@@ -308,12 +323,19 @@ class PrivateHttpTrace:
             metadata_only = origin in self.metadata_only_origins
             if origin not in self.origins and not metadata_only:
                 self.omitted["out_of_scope"] += 1
+                if self._diagnose_origins and origin is not None:
+                    if origin in self._excluded_origins:
+                        self._excluded_origins[origin] = min(1_000_000, self._excluded_origins[origin] + 1)
+                    elif len(self._excluded_origins) < 16:
+                        self._excluded_origins[origin] = 1
+                    else:
+                        self._excluded_origin_overflow = min(1_000_000, self._excluded_origin_overflow + 1)
                 return
             # Browser-declared request intent, not a claim about final MIME.
             # Keep a bounded sample of static-resource chronology. Never
-            # discard POSTs or classify xhr/fetch/document/scripts as assets.
+            # discard POSTs or classify xhr/fetch/documents as static assets.
             static = (req.method == "GET" and getattr(req, "resource_type", None)
-                      in {"image", "font", "media", "stylesheet"})
+                      in {"image", "font", "media", "stylesheet", "script"})
             if static and self._static_metadata >= min(MAX_STATIC_METADATA, self.limit // 3):
                 self.omitted["static_metadata_budget"] += 1
                 return
@@ -479,7 +501,10 @@ class PrivateHttpTrace:
             entry.response_body_reason = "size_unavailable"
             self.omitted["unknown_size"] += 1
             return
+        static = (entry.method == "GET" and getattr(req, "resource_type", None)
+                  in {"image", "font", "media", "stylesheet", "script"})
         if (actual > self.max_body or actual > self.total_body
+                or (static and actual > self._static_body_remaining)
                 or (expected is not None and expected > self.max_body)):
             entry.response_body_state = "body_omitted"
             entry.response_body_reason = "over_budget"
@@ -493,6 +518,8 @@ class PrivateHttpTrace:
             if (type(raw) is bytes and len(raw) <= actual
                     and (expected is None or len(raw) <= expected)):
                 entry.response_body = self._take_text(raw)
+                if static and entry.response_body is not None:
+                    self._static_body_remaining -= len(raw)
                 entry.response_body_state = (
                     "captured" if entry.response_body is not None else "body_omitted"
                 )
@@ -554,6 +581,8 @@ class PrivateHttpTrace:
         self._pending.clear()
         self._responses.clear()
         self._tab_numbers.clear()
+        self._excluded_origins.clear()
+        self._excluded_origin_overflow = 0
 
 
 def record_http(start_url: str, stop: Event, *,
@@ -565,6 +594,7 @@ def record_http(start_url: str, stop: Event, *,
                 download_destination=None,
                 coverage_callback=None,
                 prefer_identity: bool = False,
+                diagnose_origins: bool = False,
                 ) -> PrivateHttpTrace:
     """Observe a manually controlled Chromium session; return RAM-only trace.
 
@@ -578,6 +608,7 @@ def record_http(start_url: str, stop: Event, *,
     trace = PrivateHttpTrace(
         origins or (origin,), pause_control=pause_control,
         metadata_only_origins=metadata_only_origins,
+        diagnose_origins=diagnose_origins,
     )
     if origin not in trace.origins:
         raise RecorderError("invalid_origin")

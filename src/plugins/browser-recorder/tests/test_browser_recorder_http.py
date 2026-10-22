@@ -850,3 +850,101 @@ def test_static_resource_flood_cannot_starve_late_json_or_post(assets_first):
     assert coverage["binary_skipped"] == 64
     assert "api" not in repr(coverage) and ORIGIN not in repr(coverage)
     trace.destroy()
+
+
+def test_excluded_origin_diagnostic_is_opt_in_bounded_and_never_reads_payload():
+    class Excluded:
+        url = FOREIGN + '/private-route?token=PRIVATE-QUERY'
+        def __getattr__(self, _name):
+            raise AssertionError('Excluded payload must never be read')
+
+    default = PrivateHttpTrace((ORIGIN,))
+    default.request(Excluded())
+    assert default.origin_diagnostics() == ({}, 0)
+    trace = PrivateHttpTrace((ORIGIN,), diagnose_origins=True)
+    trace.request(Excluded())
+    trace.request(Excluded())
+    assert trace.origin_diagnostics() == ({FOREIGN: 2}, 0)
+    assert not trace.exchanges
+    for index in range(30):
+        req = Excluded()
+        req.url = f'https://cdn{index}.example.org/image?private=yes'
+        trace.request(req)
+    origins, overflow = trace.origin_diagnostics()
+    assert len(origins) == 16 and overflow == 15
+    assert trace.omitted['out_of_scope'] == 32
+    assert 'PRIVATE-QUERY' not in repr(origins) and 'private-route' not in repr(origins)
+    assert FOREIGN not in repr(trace) and FOREIGN not in repr(trace.coverage())
+    origins.clear()  # the caller never mutates the source inventory
+    assert len(trace.origin_diagnostics()[0]) == 16
+    trace.paused = True
+    trace.request(Excluded())
+    assert trace.origin_diagnostics()[0][FOREIGN] == 2
+    trace.destroy()
+    assert trace.origin_diagnostics() == ({}, 0)
+
+
+def test_scripts_share_static_budget_without_discarding_fetch_or_post():
+    trace = PrivateHttpTrace((ORIGIN,))
+    for index in range(1000):
+        req = Request(ORIGIN + '/script/' + str(index))
+        req.resource_type = 'script'
+        emit(trace, req, Response(req, mime='application/javascript', data=b'void 0;'))
+    for index in range(10):
+        req = Request(ORIGIN + '/api/' + str(index))
+        req.resource_type = 'fetch'
+        emit(trace, req, Response(req))
+    post = Request(ORIGIN + '/submit', method='POST')
+    post.resource_type = 'script'
+    emit(trace, post, Response(post))
+    assert len(trace.exchanges) == 75
+    assert trace.omitted['static_metadata_budget'] == 936
+    assert trace.omitted['limit'] == 0
+    assert trace.exchanges[-1].method == 'POST'
+    assert all(e.response_body is not None for e in trace.exchanges)
+    trace.destroy()
+
+
+def test_origin_inventory_is_absent_from_vault_and_private_zip(tmp_path):
+    from browser_recorder_vault import PrivateSessionVault
+    from browser_recorder_private_zip import save_session_llm_zip
+    from zipfile import ZipFile
+    from io import BytesIO
+    pytest.importorskip('cryptography')
+    trace = PrivateHttpTrace((ORIGIN,), diagnose_origins=True)
+    trace.request(Request(FOREIGN + '/private?token=PRIVATE-QUERY'))
+    req = Request(ORIGIN + '/api')
+    emit(trace, req, Response(req))
+    vault = PrivateSessionVault(tmp_path / 'vault')
+    writer = vault.begin('FICTIONAL-VAULT-PASSPHRASE')
+    writer.save(trace, 'completed', force=True)
+    stored = vault.open(trace.vault_session_id, 'FICTIONAL-VAULT-PASSPHRASE')
+    assert stored.trace.origin_diagnostics() == ({}, 0)
+    destination = tmp_path / 'private.zip'
+    save_session_llm_zip(stored, destination, confirmed=True)
+    with ZipFile(destination) as zipped:
+        assert all(FOREIGN.encode() not in zipped.read(name) for name in zipped.namelist())
+    from browser_recorder_review import IdentifierReview
+    from browser_recorder_zip import prepare_reviewed_zip
+    plan = prepare_reviewed_zip(IdentifierReview(trace))
+    assert FOREIGN not in repr(plan.preview())
+    stored.trace.destroy()
+    trace.destroy()
+
+
+def test_static_scripts_cannot_exhaust_body_budget_before_api_responses():
+    trace = PrivateHttpTrace((ORIGIN,))
+    reads = 0
+    for index in range(64):
+        req = Request(ORIGIN + '/script/' + str(index))
+        req.resource_type = 'script'
+        response = Response(req, mime='application/javascript', data=b'x' * MAX_BODY_BYTES)
+        emit(trace, req, response)
+        reads += response.body_reads
+    assert reads == 2  # static bodies use at most 64 KiB / one quarter
+    assert trace.omitted['oversize'] == 62
+    req = Request(ORIGIN + '/api/late')
+    req.resource_type = 'fetch'
+    emit(trace, req, Response(req, data=b'{"ok":true}'))
+    assert trace.exchanges[-1].response_body == '{"ok":true}'
+    trace.destroy()
