@@ -111,7 +111,7 @@ def test_p0_2882_paris_catalogue_visible_and_unavailable_without_account_card():
     disclosure = _disclosure(window)
     assert disclosure is not None
     assert "Bibliothèques de Paris non connectées" in disclosure.label
-    assert disclosure.expanded is True
+    assert disclosure.expanded is False
     rows = {row.title: row for row in disclosure.child.children}
     assert "Bibliothèques de Paris" in rows
     assert "Recherche indisponible" in rows["Bibliothèques de Paris"].subtitle
