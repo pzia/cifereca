@@ -86,6 +86,11 @@ SCENARIOS = {
         "runner": "gtk-llm-settings",
         "width": 1600,
     },
+    "maintenance-tools-1024": {
+        "plugin": "core", "fixture": "startup",
+        "description": "P0 #2712 : inspection à 1024×768, navigation physique, molette et clavier.",
+        "runner": "gtk-maintenance", "width": 1024, "height": 768,
+    },
     "maintenance-tools-1280": {
         "plugin": "core", "fixture": "startup",
         "description": "P1 #2565 : Maintenance, résultats locaux et limites en GTK/XTEST 1280.",
@@ -426,7 +431,7 @@ def main() -> int:
             elif scenario.get("runner") == "gtk-maintenance":
                 width = scenario["width"]
                 command = [
-                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{scenario.get('height', 1000 if width == 1600 else 900)}x24",
                     args.python, str(ROOT / "e2e/maintenance_tools_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                 ]
