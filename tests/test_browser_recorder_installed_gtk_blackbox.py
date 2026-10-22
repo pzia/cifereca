@@ -130,13 +130,17 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
         window.set_child(root)
         window.present()
         _flush()
-        description, site, consent, workflow, private, advanced = _children(root.get_child().get_child())
+        description, private, advanced = _children(root)
+        site = service.private_panel.site
+        consent = service.private_panel.consent
         assert isinstance(site, Gtk.Entry)
         assert isinstance(consent, Gtk.CheckButton)
         assert isinstance(advanced, Gtk.Expander)
         assert not advanced.get_expanded()
         assert "HTTP" in description.get_label()
-        assert "ZIP" in workflow.get_label()
+        assert service.private_panel.tabs.get_n_pages() == 3
+        assert "Revue" in service.private_panel.tabs.get_tab_label_text(
+            service.private_panel.tabs.get_nth_page(2))
         assert "HAR" in advanced.get_label()
         assert not advanced.get_child().get_mapped()
 
@@ -263,8 +267,8 @@ def test_installed_zip_full_review_and_independent_archive_oracle(
         window.set_child(root)
         window.present()
         _flush()
-        site = _children(root.get_child().get_child())[1]
-        consent = _children(root.get_child().get_child())[2]
+        site = plugin.private_panel.site
+        consent = plugin.private_panel.consent
         site.set_text(origin + "/catalog")
         consent.set_active(True)
         plugin.private_panel.vault_consent.set_active(True)
@@ -455,8 +459,8 @@ def test_installed_zip_browser_failure_reaches_core_diagnostics_without_private_
             x for x in collector.snapshot()
             if x.get("verified_browser_recorder")
         ]
-        site = _children(root.get_child().get_child())[1]
-        consent = _children(root.get_child().get_child())[2]
+        site = plugin.private_panel.site
+        consent = plugin.private_panel.consent
         site.set_text("https://books.example.org/catalog")
         # No browser or diagnostic merely because a disabled/optional plugin
         # was installed or the page was opened.
