@@ -65,6 +65,9 @@ def transport(handler):
 
 def test_real_epub_package_through_two_same_origin_redirects(tmp_path):
     called = []
+    # Compare the exact served bytes, not a newly generated ZIP whose DOS
+    # timestamps can differ when the request crosses a two-second boundary.
+    served_epub = valid_epub()
     def handler(request):
         called.append(str(request.url))
         if str(request.url) == START:
@@ -75,7 +78,7 @@ def test_real_epub_package_through_two_same_origin_redirects(tmp_path):
             return httpx.Response(307, headers={"Location": TARGET}, request=request)
         assert str(request.url) == TARGET
         return httpx.Response(
-            200, content=valid_epub(),
+            200, content=served_epub,
             headers={"Content-Type": "application/epub+zip"},
             request=request,
         )
@@ -83,7 +86,7 @@ def test_real_epub_package_through_two_same_origin_redirects(tmp_path):
     try:
         file = tmp_path / "Livre public.epub"
         assert x.fetch(request_source(), file) == file
-        assert file.read_bytes() == valid_epub()
+        assert file.read_bytes() == served_epub
         assert called == [START, HOST + "/index.php/fetch/42-intermediate.epub", TARGET]
     finally:
         x.close()

@@ -10,7 +10,7 @@ par flèche**, sans filtres structurés ni choix direct : impossible de
 retrouver efficacement un EPUB parmi les centaines de fichiers.
 Une suggestion ISBN/SHA absente ne prouve pas qu'un livre est absent.
 
-## Nouveau parcours — uniquement privé / lecture seule
+## Navigation — uniquement privée / lecture seule
 
 Sous un droit non lié :
 - si des `metadata_only` exacts sont trouvés, leur vue existante
@@ -48,11 +48,11 @@ si le scan est incomplet.
 La sélection manuelle est une **intention de comparaison**, pas une
 preuve de droit, ni la preuve d'acquisition par le fournisseur.
 Une concordance ISBN, nom, titre, taille ou octets SHA ne suffit
-pas à garantir `confirmed_link`. **Aucun bouton de rattachement
-irréversible** n'est créé : le préflight transactionnel avec preuve
-d'identité/compte/entitlement/ledger/acquisition/placement,
-nouvelle validation SHA/CRC et confirmation explicite reste un
-lot distinct bloqué tant que l'inventaire réel n'est pas complet.
+pas à garantir `confirmed_link`. Le bouton de vérification
+**ne rattache aucun fichier**. Seule l'opération Numilog explicite,
+lorsque toutes les preuves sont présentes, peut proposer une
+confirmation supplémentaire ; une analyse incomplète ne permet
+pas de rendre le placement éligible.
 La recette utilisateur doit vérifier la recherche parmi les 200
 fichiers, les 3 droits Numilog non vérifiés et le résultat d'un
 éventuel scan complet, sans imposer un appariement 1:1.
@@ -63,3 +63,34 @@ source et identité conservées, validation d'arguments et preuve
 de lecture seule. L'interface fonctionne avec la fenêtre
 agrandissable de #2723 et l'onglet « Résultats » amélioré par
 #2724/#2729.
+
+
+## Placement Numilog explicite, double confirmation (#2714-C3)
+
+Ce parcours ne s'applique qu'à un **droit Numilog `owned/active`**
+associé de façon unique à l'identité, au compte et à l'édition courants,
+et à un EPUB local dont les octets SHA/CRC et le reçu d'acquisition
+complet concordent. Aucun résultat bibliographique ne vaut preuve.
+
+1. Le bouton **« Préparer le rattachement »** ne fait que lire
+   l'inspection privée ; il affiche ce qui manque et n'écrit rien.
+2. **« Vérifier les preuves actuelles… »** relit, dans une tâche de
+   fond, les preuves SQLite et les octets locaux sans suivre de lien
+   symbolique ; un jeton de prévisualisation demeure exclusivement
+   dans la session Core et est révoqué quand la sélection change.
+3. **« Confirmer le placement local… »** n'est visible qu'après
+   un contrôle Core réussi. Il ouvre un *nouveau* dialogue avec
+   **« Annuler »** comme réponse par défaut. Seul un clic explicite
+   sur **« Confirmer le placement »** lance l'opération SQLite sous
+   verrou et revalidation. Les données source, droits et octets
+   du fichier ne sont pas modifiés.
+4. Une réussite retire immédiatement la vue d'inspection devenue
+   potentiellement périmée et demande une nouvelle réconciliation.
+   Refus, annulation ou changement d'identité/sélection n'autorisent
+   aucune écriture.
+
+Le droit et le reçu existants ne sont jamais créés à partir d'un titre,
+d'un ISBN ou d'une URL publique. **L'interface n'accepte pas de jeton
+de transaction en entrée** ; elle ne présente ni token, ni compte,
+ni SHA dans les données Diagnostics. L'undo transactionnel est un
+lot distinct et n'est pas exposé par ce bouton.
