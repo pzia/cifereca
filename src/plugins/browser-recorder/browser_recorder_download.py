@@ -18,6 +18,23 @@ MAX_MANUAL_DOWNLOAD_BYTES = 128 * 1024 * 1024
 MAX_MANUAL_DOWNLOADS = 8
 
 
+def _open_parent_without_symlinks(directory: Path) -> int:
+    """Resolve every absolute path component using dirfd + O_NOFOLLOW."""
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for component in directory.parts[1:]:
+            child = os.open(
+                component, os.O_RDONLY | os.O_DIRECTORY
+                | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd,
+            )
+            os.close(fd)
+            fd = child
+        return fd
+    except OSError:
+        os.close(fd)
+        raise
+
+
 def save_chosen_download(download, destination: Path) -> None:
     """Explicit save via exclusive 0600 destination and private staging.
 
@@ -29,15 +46,12 @@ def save_chosen_download(download, destination: Path) -> None:
     name = destination.name
     if (not destination.is_absolute()
             or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", name) is None
-            or ".." in name):
+            or ".." in name or ".." in destination.parts):
         raise RecorderError("download_destination_invalid")
     fd = None
     created = False
     try:
-        fd = os.open(
-            destination.parent, os.O_RDONLY | os.O_DIRECTORY
-            | getattr(os, "O_NOFOLLOW", 0),
-        )
+        fd = _open_parent_without_symlinks(destination.parent)
         folder = os.fstat(fd)
         if (not stat.S_ISDIR(folder.st_mode)
                 or folder.st_uid != os.getuid()
