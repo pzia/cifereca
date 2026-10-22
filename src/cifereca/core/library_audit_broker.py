@@ -10,6 +10,7 @@ from .library_inventory import InventoryLimits
 from .library_audit_roots import configured_identity_roots
 from .library_inspection_cache import begin_inspection_cache, remember_inspection_cache
 from .library_inventory_checkpoint import begin_inventory_resume, remember_inventory_resume
+from .library_audit_stability import begin_audit_stability, finish_audit_stability
 from .library_reconciliation import read_library_snapshot
 
 _ROOT_ERRORS = frozenset({
@@ -161,6 +162,9 @@ def _execute_scoped_audit(service, identity_id, control, finish):
         generation, observations = begin_inventory_resume(
             service, identity_id, scope_key,
         )
+        stability_generation, stability_previous = begin_audit_stability(
+            service, identity_id, scope_key,
+        )
         result = audit_library(
             database, roots, limits=InventoryLimits(seconds=_SCOPED_AUDIT_SECONDS),
             seconds=_SCOPED_AUDIT_SECONDS,
@@ -182,7 +186,17 @@ def _execute_scoped_audit(service, identity_id, control, finish):
             return aggregate_snapshot_timing(_unavailable({'reconciliation_scope_changed'}))
         if stopped:
             return aggregate_snapshot_timing(_unavailable({'audit_cancelled'}))
-        return aggregate_snapshot_timing(finish(result, same_scope))
+        outcome = finish(result, same_scope)
+        comparison = finish_audit_stability(
+            service, identity_id, scope_key, stability_generation,
+            stability_previous, result, same_scope,
+        )
+        # A LocalInspection session is private and is NEVER decorated with
+        # a plugin-facing diagnostic. Public broker output carries only closed
+        # aggregate counters/booleans, never process-local digest material.
+        if type(outcome) is dict and comparison is not None:
+            outcome = {**outcome, 'audit_stability': comparison}
+        return aggregate_snapshot_timing(outcome)
     except ValueError as exc:
         reason = str(exc)
         return _unavailable({reason if reason in _ROOT_ERRORS else 'reconciliation_unavailable'})
