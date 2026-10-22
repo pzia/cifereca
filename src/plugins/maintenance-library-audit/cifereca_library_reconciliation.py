@@ -27,7 +27,7 @@ _LIMITS = {
     'metadata_byte_budget': 'Budget mémoire des métadonnées atteint.',
     'comparison_budget': 'Budget de comparaison des preuves atteint.',
     'metadata_candidate_budget_or_cancelled': 'La recherche de correspondances bibliographiques reste incomplète.',
-    'metadata_candidate_time_budget': 'Durée maximale de recherche bibliographique atteinte (10 s par défaut).',
+    'metadata_candidate_time_budget': 'Budget temporel de recherche bibliographique atteint ; les correspondances peuvent rester non examinées.',
     'metadata_candidate_cancelled': 'Recherche bibliographique interrompue.',
     'metadata_candidate_row_budget': 'Plafond de notices du catalogue pour la comparaison atteint.',
     'metadata_candidate_reference_budget': 'Plafond de références bibliographiques examinables atteint.',
@@ -189,6 +189,22 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                 'La cause de certaines limites n’est pas disponible.',
             ))
             warnings.append('Certaines preuves restent non vérifiées ; un droit non vérifié ne signifie pas un livre absent.')
+        # 0 candidates after an incomplete index, or when file matching never
+        # ran, is NOT negative bibliographic evidence. Only strict Core booleans
+        # may change presentation; keep compatibility with earlier Core builds.
+        if (type(candidates.get('match_phase_executed')) is bool
+                and candidates['match_phase_executed'] is False
+                and counts['observed_files'] > 0):
+            warnings.append(
+                'Comparaison bibliographique des fichiers non exécutée : '
+                'zéro candidat ne signifie pas zéro correspondance.'
+            )
+        elif (candidates.get('index_completed') is False
+              and counts['observed_files'] > 0):
+            warnings.append(
+                'Index bibliographique incomplet : les suggestions restent '
+                'partielles et ne prouvent aucun droit.'
+            )
         warnings.append('Un SHA ou un ISBN ne prouve pas un droit. Aucun rattachement ni téléchargement.')
         control.report(message='Réconciliation locale terminée' if complete else 'Réconciliation locale incomplète')
         control.check_cancelled()
