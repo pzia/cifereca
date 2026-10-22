@@ -717,7 +717,10 @@ class PrivateReviewPanel:
             pass
 
     def is_scanning(self):
-        return self._index_handle is not None and not self._index_handle.done()
+        # The worker may finish before its GTK idle delivery runs. Keep
+        # actions locked and report "busy" until the UI has *received* the
+        # result, not merely until the background future is done.
+        return self._index_handle is not None
 
     def _download_status(self, code):
         """Only fixed counters from worker, never URL or output path."""
@@ -1028,10 +1031,10 @@ class PrivateReviewPanel:
                 plan = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if plan is None or self.retention_age.get_active_id() != str(days):
                     self.status.set_label(
                         "Prévisualisation refusée : clé ou coffre non sûrs."
@@ -1097,10 +1100,10 @@ class PrivateReviewPanel:
                 result = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if result is None:
                     self.status.set_label(
                         "Suppression refusée : clé, session modifiée ou aperçu "
@@ -1179,10 +1182,10 @@ class PrivateReviewPanel:
                 result = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if result is None:
                     self.status.set_label(
                         "Nettoyage refusé : résidu non sûr ou coffre inaccessible."
@@ -1262,10 +1265,10 @@ class PrivateReviewPanel:
                 result = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if result is None:
                     self.status.set_label(
                         "Déverrouillage impossible : clé, quota ou coffre invalide."
@@ -1351,10 +1354,10 @@ class PrivateReviewPanel:
                 ok = False
 
             def deliver():
-                if self._closed or self._generation != generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or self._generation != generation:
+                    return False
                 self.status.set_label(
                     "Nom privé chiffré enregistré ; déverrouillez la liste "
                     "pour afficher le nouveau nom."
