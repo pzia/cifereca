@@ -32,6 +32,24 @@ class X11Input:
         self.xtst.XTestFakeButtonEvent(self.display, 1, False, 0)
         self.x11.XSync(self.display, False)
 
+    def wheel(self, x: int, y: int, *, down: bool = True, ticks: int = 1) -> None:
+        """Dispatch real XTEST mouse-wheel notches (button 4/5) at a GTK point.
+
+        An invalid request must never produce pointer or wheel events. GTK
+        decides whether the outer reconciliation viewport or a nested scroller
+        consumes the physical event; this helper cannot fake adjustment changes.
+        """
+        if (type(x) is not int or type(y) is not int
+                or x < 0 or y < 0 or type(down) is not bool
+                or type(ticks) is not int or not 1 <= ticks <= 20):
+            raise ValueError("invalid_xtest_wheel_target")
+        self.move(x, y)
+        button = 5 if down else 4
+        for _ in range(ticks):
+            self.xtst.XTestFakeButtonEvent(self.display, button, True, 0)
+            self.xtst.XTestFakeButtonEvent(self.display, button, False, 0)
+        self.x11.XSync(self.display, False)
+
     def widget_point(self, widget) -> tuple[int, int]:
         """Find an XTEST target without dispatching any input event."""
         from native_capture import pointer
