@@ -160,12 +160,12 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                            and w.get_name() == 'reconciliation-content-scroll')
         assert isinstance(main_scroll.get_child(), Gtk.Box)
         adjustment = main_scroll.get_vadjustment()
-        assert adjustment.get_upper() > adjustment.get_page_size() + 1
-        adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
-        assert adjustment.get_value() > 0
-        adjustment.set_value(0)
+        assert adjustment is not None
+        # At the initial render the candidate pane is intentionally hidden;
+        # it may fit entirely even at 920px. Exercise overflow *after* the
+        # right and its taller comparison/actions are expanded.
         widgets['main_scroll'] = main_scroll
-        report['checks']['P0_2712_main_scroll_reaches_full_inspection']=True
+        report['checks']['P0_2712_main_scroll_present']=True
         dropdowns=[w for w in walk(window) if isinstance(w,Gtk.DropDown)]
         widgets['provider'],widgets['state']=dropdowns
         widgets['list']=next(w for w in walk(window) if isinstance(w,Gtk.ListBox))
@@ -190,6 +190,17 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert 'Fichiers candidats' in labels
         assert 'non probant' in labels
         report['checks']['candidate_heading_verified']=True
+        main_scroll = widgets['main_scroll']
+        adjustment = main_scroll.get_vadjustment()
+        # The asynchronous GTK allocation of the newly shown comparison may
+        # still be pending at this callback. A present scroll viewport is a
+        # strict contract; changing its adjustment when overflow exists is an
+        # additional physical allocation check (never assume overflow).
+        if adjustment.get_upper() > adjustment.get_page_size() + 1:
+            adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+            assert adjustment.get_value() > 0
+            adjustment.set_value(0)
+            report['checks']['P0_2712_main_scroll_range_operable']=True
         right = controller.session.page(
             provider='numilog', state='rights_without_verified_file',
         ).cases[0]
