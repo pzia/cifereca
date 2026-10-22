@@ -15,6 +15,7 @@ import pytest
 from cifereca.core.library_audit import audit_library
 from cifereca.core.library_local_inspection import LocalInspection
 from tests.test_core_p0_2714_numilog_manual_transaction import rig, _rows
+from tests.test_core_1345_confirmed_local_reconciliation import case as kobo_case
 from tests.test_core_p0_2797_kobo_shared_link import selected as kobo_selected
 from tests.test_library_reconciliation import epub, filesystem
 
