@@ -363,7 +363,7 @@ class PrivateReviewPanel:
             )
             box.append(self.private_export_passphrase)
             self.private_export_confirm = Gtk.CheckButton(
-                label="Je confirme cet export privé distinct du ZIP anonymisé."
+                label="Je confirme cet export privé distinct du ZIP revu pour LLM."
             )
             box.append(self.private_export_confirm)
             self.private_export_button = Gtk.Button(
@@ -505,12 +505,13 @@ class PrivateReviewPanel:
         box.append(member_scroll)
         self.export_confirm = Gtk.CheckButton()
         self.export_confirm.set_child(Gtk.Label(
-            label="J'ai revu les membres accessibles ci-dessus et j'accepte "
-                  "de créer localement cette archive pour un partage volontaire.",
+            label="J'ai examiné le ZIP revu. Il peut contenir des identifiants "
+                  "expressément conservés et des données sensibles. "
+                  "J'accepte de créer localement cette archive, sans envoi.",
             xalign=0, wrap=True,
         ))
         box.append(self.export_confirm)
-        self.export_button = Gtk.Button(label="Enregistrer sous… le ZIP anonymisé")
+        self.export_button = Gtk.Button(label="Enregistrer sous… le ZIP revu pour LLM")
         box.append(self.export_button)
         self.open_export_folder_button = Gtk.Button(
             label="Ouvrir le dossier du ZIP enregistré"
@@ -1767,7 +1768,7 @@ class PrivateReviewPanel:
         root = self.widget.get_root()
         parent = root if isinstance(root, Gtk.Window) else None
         chooser = Gtk.FileChooserNative.new(
-            "Enregistrer le ZIP anonymisé", parent,
+            "Enregistrer le ZIP revu (données sensibles possibles)", parent,
             Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
         chooser.set_current_name("cifereca-revue.zip")
@@ -1842,7 +1843,7 @@ class PrivateReviewPanel:
             # This GTK label is private UI only: never send the pathname
             # through Diagnostics, callbacks, telemetry or logs.
             self.status.set_label(
-                "ZIP anonymisé enregistré (mode privé 0600) : "
+                "ZIP revu/filtré enregistré (mode privé 0600) : "
                 + str(path) + " — aucun téléversement."
             )
             self._refresh()
