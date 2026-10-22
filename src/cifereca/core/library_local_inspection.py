@@ -789,6 +789,7 @@ class LocalInspection:
                                           and case.provider == 'unattributed'
                                           for case in self._cases.values()),
                 'unverified_rights': by_state['rights_without_verified_file'],
+                'paris_inactive_loans': by_state['loan_inactive'],
                 'local_without_right': by_state['local_file_without_attested_right'],
                 'unverified_files': by_state['unverified_file'],
                 'inspection_limited': self._limited,
