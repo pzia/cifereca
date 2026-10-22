@@ -866,6 +866,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         "capture_omissions": capture_omissions,
         "body_coverage": body_coverage,
         "body_capture_reasons": capture_reasons,
+        "compressed_responses_accepted": review.trace.allow_compressed_responses,
         "secret_values_suppressed": preview["secrets_replaced"],
         "coverage": "JSON/XML structures with reviewed scalars and selected HTML selectors; free text omitted",
         "xml_namespaces": "Unknown namespace URIs are opaque labels local to each body; original URIs omitted",

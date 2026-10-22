@@ -948,3 +948,79 @@ def test_static_scripts_cannot_exhaust_body_budget_before_api_responses():
     emit(trace, req, Response(req, data=b'{"ok":true}'))
     assert trace.exchanges[-1].response_body == '{"ok":true}'
     trace.destroy()
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "br", "deflate"])
+def test_compressed_opt_in_keeps_small_decoded_response_with_wire_size_guard(encoding):
+    decoded = b'{"ProductId":214,"accountId":"FICTIONAL_77"}'
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64,
+                             allow_compressed_responses=True)
+    req = Request(ORIGIN + "/api/books")
+    resp = Response(req, data=decoded, headers={
+        "content-encoding": encoding, "content-length": "18",
+    })
+    # Playwright reports transfer bytes in request.sizes(), but body()
+    # returns Chromium-decoded bytes. The fake models both independently.
+    req._response_size = 18
+    emit(trace, req, resp)
+    assert resp.body_reads == 1
+    assert trace.exchanges[0].response_body == decoded.decode()
+    assert trace.exchanges[0].response_body_reason == "captured"
+    assert trace.omitted["compressed"] == 0
+    trace.destroy()
+
+
+def test_compressed_opt_in_still_blocks_binary_untrusted_headers_and_large_wire():
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64,
+                             allow_compressed_responses=True)
+    for encoding in ("gzip, br", "invalid", ""):
+        req = Request(ORIGIN + "/unsupported")
+        resp = Response(req, data=b"{}", headers={"content-encoding": encoding})
+        emit(trace, req, resp)
+        assert resp.body_reads == 0
+        assert trace.exchanges[-1].response_body_reason == "compressed"
+    req = Request(ORIGIN + "/binary")
+    resp = Response(req, mime="application/pdf", data=b"PRIVATE_LICENSE",
+                    headers={"content-encoding": "gzip"})
+    emit(trace, req, resp)
+    assert resp.body_reads == 0
+    assert trace.exchanges[-1].response_body_state == "binary_skipped"
+    req = Request(ORIGIN + "/large-encoded")
+    resp = Response(req, data=b"small", headers={
+        "content-encoding": "gzip", "content-length": "999",
+    })
+    req._response_size = 999
+    emit(trace, req, resp)
+    assert resp.body_reads == 0
+    assert trace.exchanges[-1].response_body_reason == "over_budget"
+    trace.destroy()
+
+
+def test_compressed_opt_in_decoded_size_excess_is_not_persisted():
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64,
+                             allow_compressed_responses=True)
+    req = Request(ORIGIN + "/gzip-bomb")
+    resp = Response(req, data=b"x" * 128, headers={
+        "content-encoding": "gzip", "content-length": "12",
+    })
+    req._response_size = 12
+    emit(trace, req, resp)
+    assert resp.body_reads == 1  # opt-in accepts pre-retention memory risk
+    assert trace.exchanges[0].response_body is None
+    assert trace.exchanges[0].response_body_reason == "over_budget"
+    assert trace.omitted["oversize"] == 1
+    assert trace.total_body == 768 * 1024
+    trace.destroy()
+
+
+def test_compressed_opt_in_cannot_skip_measured_byte_guard():
+    trace = PrivateHttpTrace((ORIGIN,), allow_compressed_responses=True)
+    req = Request(ORIGIN + "/unknown")
+    req.sizes = lambda: {}
+    resp = Response(req, headers={"content-encoding": "br"})
+    emit(trace, req, resp)
+    assert resp.body_reads == 0
+    assert trace.exchanges[0].response_body_reason == "size_unavailable"
+    with pytest.raises(RecorderError, match="invalid_capture_strategy"):
+        PrivateHttpTrace((ORIGIN,), allow_compressed_responses="yes")
+    trace.destroy()

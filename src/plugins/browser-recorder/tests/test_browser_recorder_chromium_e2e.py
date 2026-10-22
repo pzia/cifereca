@@ -1010,8 +1010,9 @@ def test_real_chromium_download_is_separate_explicit_save_not_a_trace_body(
 
 
 @pytest.mark.parametrize("prefer_identity", (False, True))
+@pytest.mark.parametrize("accept_compressed", (False, True))
 def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
-    fake_bookstore, monkeypatch, tmp_path, prefer_identity,
+    fake_bookstore, monkeypatch, tmp_path, prefer_identity, accept_compressed,
 ):
     from browser_recorder_vault import PrivateSessionVault
     from browser_recorder_private_zip import save_session_llm_zip
@@ -1029,25 +1030,32 @@ def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
     trace = http_recorder.record_http(
         origin + "/negotiation", stop, max_seconds=25,
         prefer_identity=prefer_identity, vault_writer=writer,
+        allow_compressed_responses=accept_compressed,
     )
     stored = vault.open(writer.session_id, "SYNTHETIC-IDENTITY-VAULT-PASSWORD")
     try:
         assert stored.trace.content_negotiation == trace.content_negotiation
+        assert stored.trace.allow_compressed_responses is accept_compressed
         by_path = {urlsplit(e.url).path: e for e in stored.trace.exchanges}
         for path in ("/negotiated.json", "/negotiated.html"):
             entry = by_path[path]
-            assert (entry.response_body is not None) is prefer_identity
-            assert entry.response_body_reason == ("captured" if prefer_identity else "compressed")
+            captured = prefer_identity or accept_compressed
+            assert (entry.response_body is not None) is captured
+            assert entry.response_body_reason == ("captured" if captured else "compressed")
             assert calls.count(("GET", path)) == 1  # no second fetch/replay
         forced = by_path["/forced-gzip.json"]
-        assert forced.response_body is None
-        assert forced.response_body_reason in {"compressed", "network_error"}
+        if not prefer_identity and accept_compressed:
+            assert forced.response_body and "ProductId" in forced.response_body
+        else:
+            assert forced.response_body is None
+            assert forced.response_body_reason in {"compressed", "network_error"}
         destination = tmp_path / "private.zip"
         save_session_llm_zip(stored, destination, confirmed=True)
         with ZipFile(destination) as archive:
             private = json.loads(archive.read("trace.json"))
             assert private["content_negotiation"] == trace.content_negotiation
-            if prefer_identity:
+            assert private["compressed_responses_accepted"] is accept_compressed
+            if prefer_identity or accept_compressed:
                 assert TOKEN in archive.read("trace.json").decode()
         review = IdentifierReview(stored.trace)
         for candidate in review.candidates():
@@ -1056,10 +1064,12 @@ def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
         members = {row["name"]: row["text"] for row in plan.preview()["members"]}
         coverage = json.loads(members["coverage-report.json"])
         assert coverage["content_negotiation"] == trace.content_negotiation
+        assert coverage["compressed_responses_accepted"] is accept_compressed
+        assert json.loads(members["manifest.json"])["compressed_responses_accepted"] is accept_compressed
         report = next(row for row in coverage["exchanges"] if row["id"] == forced.sequence)
         assert report["response"]["capture_reason"] == forced.response_body_reason
         assert TOKEN not in repr(members)
-        if prefer_identity:
+        if prefer_identity or accept_compressed:
             assert any(name.startswith("bodies/") and 'ProductId' in text
                        for name, text in members.items())
     finally:
