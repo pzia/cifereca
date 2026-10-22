@@ -8,6 +8,7 @@ metadata are PRIVATE local evidence, never proof of provider ownership.
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 import hashlib
@@ -73,6 +74,11 @@ class Inventory:
     # or path/SHA labels. A started file may not produce a FileObservation if
     # cancelled halfway through SHA/OPF/CRC.
     files_started: int = 0
+    # Purely aggregate cache coverage, never cached names, SHA or metadata.
+    reused_files: int = 0
+    newly_observed_files: int = 0
+    revalidated_files: int = 0
+    stale_files: int = 0
     phase_ns: dict[str, int] = field(default_factory=lambda: {
         'sha256': 0, 'epub_opf': 0, 'structure': 0, 'pdf_signature': 0,
     })
@@ -105,6 +111,10 @@ class Inventory:
             'skipped_special': self.skipped_special,
             'unavailable_directories': len(self.unavailable_directories),
             'files_started': self.files_started,
+            'reused_files': self.reused_files,
+            'newly_observed_files': self.newly_observed_files,
+            'revalidated_files': self.revalidated_files,
+            'stale_files': self.stale_files,
             # Accumulate nanoseconds internally before rounding: 500 tiny
             # OPF inspections must not all be reported as 0 ms.
             'phase_ms': {key: max(0, min(600_000_000, ns // 1_000_000))
@@ -138,6 +148,7 @@ def scan_identity_roots(
     roots: dict[str, tuple[Path, ...]], *, limits: InventoryLimits | None = None,
     cancelled: Callable[[], bool] = lambda: False,
     progress: Callable[[dict], None] | None = None,
+    _reuse: dict[tuple[str, str], FileObservation] | None = None,
 ) -> Inventory:
     """Recursively inspect ONLY explicit, disjoint, absolute identity roots.
 
@@ -172,10 +183,24 @@ def scan_identity_roots(
     validated = Counter()
     structures = Counter()
     hashed = 0
+    # Private per-run sets solely to make subtree invalidation exact.
+    reused_keys = set()
+    stale_keys = set()
+    reuse = _reuse if type(_reuse) is dict else {}
 
-    def keep(file: FileObservation):
+    def keep(file: FileObservation, *, reused=False, stale=False):
         nonlocal hashed
         result.files.append(file)
+        key = (file.identity_id, file.path)
+        if reused:
+            reused_keys.add(key)
+            result.reused_files += 1
+        else:
+            result.newly_observed_files += 1
+        if stale:
+            stale_keys.add(key)
+            result.stale_files += 1
+            result.revalidated_files += 1
         hashed += file.sha256 is not None
         validated[file.validation] += 1
         structures[file.structure_validation] += 1
@@ -185,6 +210,16 @@ def scan_identity_roots(
         # A replaced directory/root invalidates every former file observation.
         # Its progress counters must follow the exact same rollback.
         for file in result.files[start:]:
+            key = (file.identity_id, file.path)
+            if key in reused_keys:
+                reused_keys.remove(key)
+                result.reused_files -= 1
+            else:
+                result.newly_observed_files -= 1
+            if key in stale_keys:
+                stale_keys.remove(key)
+                result.stale_files -= 1
+                result.revalidated_files -= 1
             hashed -= file.sha256 is not None
             validated[file.validation] -= 1
             structures[file.structure_validation] -= 1
@@ -249,6 +284,35 @@ def scan_identity_roots(
             return
         result.files_started += 1
         size = before.st_size
+        # An old positive observation is useful only when its pathname AND
+        # descriptor still name the same isolated regular inode. Never reuse
+        # hardlinks, incomplete parses, invalid structures or a changed stat.
+        # The normal walk still reopens every ancestor O_NOFOLLOW and checks
+        # directory/root replacement after traversal.
+        key = (identity, str(path))
+        previous = reuse.get(key)
+        stale = previous is not None
+        if (type(previous) is FileObservation
+                and previous.identity_id == identity
+                and previous.path == str(path)
+                and previous.fingerprint == _fingerprint(before)
+                and before.st_nlink == 1
+                and size <= limits.file_bytes
+                and size <= limits.hash_bytes
+                and previous.sha256 is not None
+                and previous.validation in {'ok', 'pdf_signature_only'}
+                and previous.structure_validation in {
+                    'epub_structure_crc_ok', 'pdf_structure_minimal',
+                }
+                and previous.media_format == path.suffix.lower()[1:]):
+            metadata_size = len(json.dumps(previous.metadata, ensure_ascii=True).encode('utf-8'))
+            if metadata_size <= limits.metadata_bytes - result.metadata_bytes:
+                current = os.stat(name, dir_fd=directory_fds[-1], follow_symlinks=False)
+                if (_fingerprint(before) == _fingerprint(os.fstat(fd))
+                        == _fingerprint(current)):
+                    result.metadata_bytes += metadata_size
+                    keep(deepcopy(previous), reused=True)
+                    return
         status = 'uninspected'
         digest = None
         metadata = {}
@@ -318,7 +382,8 @@ def scan_identity_roots(
                 result.reasons.add('file_changed')
                 return
         keep(FileObservation(identity, str(path), size, path.suffix.lower()[1:],
-                             digest, status, metadata, _fingerprint(before), structure))
+                             digest, status, metadata, _fingerprint(before), structure),
+             stale=stale)
 
     directory_fds = []
 
