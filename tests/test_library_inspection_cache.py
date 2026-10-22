@@ -24,10 +24,23 @@ def test_redacted_maintenance_audit_hands_off_one_private_inspection(scoped, tmp
                side_effect=AssertionError('SECOND_SQLITE_READ')):
         session = open_local_inspection(service, identity_id='alice')
     assert isinstance(session, LocalInspection)
+    assert session.from_audit_cache() is True
     assert session.page().total == 1
     assert 'PRIVATE_TITLE' in session.page().cases[0].details
     assert filesystem(tmp_path) == before
     session.close()
+    assert session.from_audit_cache() is False
+
+
+def test_fresh_read_uses_distinct_closed_origin_and_does_not_export_it(scoped):
+    service, _, _ = scoped
+    session = open_local_inspection(service, identity_id='alice')
+    assert isinstance(session, LocalInspection)
+    assert session.from_audit_cache() is False
+    assert session.summary().get('status') == 'complete'
+    assert 'from_audit_cache' not in session.summary()
+    session.close()
+    assert session.from_audit_cache() is False
 
 
 def test_private_handoff_is_single_use(scoped):

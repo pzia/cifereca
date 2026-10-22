@@ -283,6 +283,20 @@ class LocalInspectionController:
         notice = Gtk.Label(label='Identité active uniquement · détails privés locaux · aucun rattachement ni téléchargement', xalign=0)
         notice.set_wrap(True)
         box.append(notice)
+        # This is a private provenance hint only, not a declaration that the
+        # filesystem is still unchanged or a right/file link is proven.
+        if session.from_audit_cache():
+            origin = (
+                'Source de l’inspection : résultats privés réutilisés du dernier '
+                'audit de réconciliation (cache à usage unique, portée revérifiée).'
+            )
+        else:
+            origin = (
+                'Source de l’inspection : nouvelle lecture locale des preuves.'
+            )
+        origin_note = Gtk.Label(label=origin, xalign=0)
+        origin_note.set_wrap(True)
+        box.append(origin_note)
         summary = session.summary()
         if summary.get('status') != 'complete' or summary.get('inspection_limited'):
             warning = Gtk.Label(label='Analyse ou affichage incomplet : certaines preuves restent non vérifiées. Un livre non vérifié n’est pas réputé absent.', xalign=0)
