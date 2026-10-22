@@ -203,6 +203,42 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert 'Droit sans fichier vérifié' in labels
         assert '.epub' not in labels and 'Fichier local :' not in labels
         report['checks']['local_inspection_provider_filter_does_not_attribute_isbn_files']=True
+        # P0 #2714: this ISBN appears in a SAME-IDENTITY Numilog notice,
+        # but NOT in its right's visible title. Filter the real GTK rights
+        # list and verify that no second-identity right is attributed.
+        rights_search = next(w for w in walk(controller.dialog)
+                             if isinstance(w, Gtk.SearchEntry)
+                             and w.get_placeholder_text()
+                             == 'Filtrer par titre, auteur, nom ou identifiant…')
+        widgets['rights_search'] = rights_search
+        rights_search.set_text('9780306406157')
+        until(
+            lambda: (
+                controller.session.page(
+                    provider='numilog', query='9780306406157',
+                    state='rights_without_verified_file',
+                ).total == 1
+                and len([
+                    child for child in walk(widgets['list'])
+                    if isinstance(child, Gtk.ListBoxRow)
+                ]) == 1
+            ),
+            filtered_numilog_right,
+        )
+
+    def filtered_numilog_right():
+        report['checks']['P0_2714_gtk_numilog_right_search_by_private_isbn']=True
+        assert widgets['rights_search'].get_text() == '9780306406157'
+        widgets['rights_search'].set_text('')
+        until(
+            lambda: len([
+                child for child in walk(widgets['list'])
+                if isinstance(child, Gtk.ListBoxRow)
+            ]) == 50,
+            select_numilog_right,
+        )
+
+    def select_numilog_right():
         # The Numilog right must show unlinked EPUB candidates *only* after
         # user selection; no ownership is inferred from a shared valid ISBN.
         row = widgets['list'].get_first_child()
