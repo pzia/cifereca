@@ -372,6 +372,28 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             preflight.grab_focus()
             if not preflight.get_sensitive() or not preflight.get_mapped():
                 return False
+            outer = widgets['main_scroll']
+            page = outer.get_child()
+            if isinstance(page, Gtk.Viewport):
+                page = page.get_child()
+            ok, rect = preflight.compute_bounds(page)
+            if ok:
+                adj = outer.get_vadjustment()
+                adj.set_value(max(0, min(rect.get_y() - adj.get_page_size() / 2,
+                                         adj.get_upper() - adj.get_page_size())))
+            window = controller.dialog
+            visible, box = preflight.compute_bounds(window)
+            if not visible or box.get_width() <= 0 or box.get_height() <= 0:
+                return False
+            cx = box.get_x() + box.get_width() / 2
+            cy = box.get_y() + box.get_height() / 2
+            if not (0 <= cx < window.get_width() and 0 <= cy < window.get_height()):
+                return False
+            picked = window.pick(cx, cy, Gtk.PickFlags.DEFAULT)
+            while picked is not None and picked is not preflight:
+                picked = picked.get_parent()
+            if picked is not preflight:
+                return False
             try:
                 x,y=device.widget_point(preflight)
                 return x>=0 and y>=0
