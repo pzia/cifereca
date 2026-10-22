@@ -191,6 +191,10 @@ def _evidence(db, *, identity_id, credential_id, account_id, item_id,
     # Never hijack an old catalog reference to the proposed deterministic ID,
     # even if the placement row has not yet been published.
     catalog = _rows(db, "catalog_entries", "placement_id=?", (target_id,))
+    # _rows returns at most three rows. At that limit, additional catalogue
+    # references may be hidden, including foreign identity/edition links.
+    # Never attest an existing placement or an undo from truncated evidence.
+    _require(len(catalog) < 3, "catalogue_evidence_ambiguous")
     if not current:
         _require(not catalog, "catalogue_conflict")
     else:

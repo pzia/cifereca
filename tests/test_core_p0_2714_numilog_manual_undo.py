@@ -159,3 +159,19 @@ def test_undo_cannot_replay_earlier_account_context_epoch(rig, stage):
     assert _rows(service, "placements") == before
     assert _rows(service, "metadata") == original_metadata
     assert book.read_bytes() == original_file
+
+
+def test_undo_refuses_catalogue_reference_overflow_before_any_delete(rig):
+    """A hidden fourth catalogue reference cannot be orphaned by an undo."""
+    from tests.test_core_p0_2714_numilog_manual_transaction import _insert_catalogue_refs
+
+    done = _attach(rig)
+    service, book, _ = rig
+    placement_id = service.storage.placement_for_path(book)["placement_id"]
+    _insert_catalogue_refs(service, placement_id, 4, foreign_last=True)
+    before = _rows(service, "placements")
+    journal_before = _rows(service, "metadata")
+    with pytest.raises(ManualAttachmentRejected, match="^catalogue_evidence_ambiguous$"):
+        _undo(rig, done)
+    assert _rows(service, "placements") == before
+    assert _rows(service, "metadata") == journal_before
