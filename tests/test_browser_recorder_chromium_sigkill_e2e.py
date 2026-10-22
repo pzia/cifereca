@@ -1,12 +1,15 @@
 """Crash recovery with *real headed Chromium*, fake local bookstore only.
 
 The test deliberately SIGKILLs the Playwright/Python process group while HTTP
-capture is active. Only the last AES-GCM snapshot may be recovered. No tokens
-are collected from a real person/site and no private ZIP is exported.
+capture is active. Only the last AES-GCM snapshot may be recovered. A separate
+explicit encrypted diagnostic export is checked by an independent reader.
+No real provider, person, account, upload or plaintext ZIP is involved.
 """
 from __future__ import annotations
 
 from hashlib import sha256
+from dataclasses import asdict
+import json
 import os
 from pathlib import Path
 import signal
@@ -140,5 +143,44 @@ capture.record_http(
         }
         assert sha256(path.read_bytes()).digest() == sha256(before).digest()
         assert not list(folder.glob("*.zip"))
+        # #2698: recovery is also usable if public review/projection fails.
+        # Export only on this explicit synthetic user decision, to a separate
+        # 0700 folder, with a distinct passphrase. Never write plaintext ZIP.
+        from browser_recorder_private_zip import save_private_zip
+        destination = tmp_path / "chosen-private-export"
+        destination.mkdir(mode=0o700)
+        export_key = "FICTIONAL-RECOVERED-SESSION-EXPORT-KEY-2026"
+        name = save_private_zip(restored, destination, export_key, confirmed=True)
+        output = destination / name
+        assert output.stat().st_mode & 0o777 == 0o600
+        reader = r'''
+import sys, json
+from io import BytesIO
+from pathlib import Path
+from zipfile import ZipFile
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+expected = json.load(sys.stdin)
+data = Path(sys.argv[1]).read_bytes()
+assert data[:8] == b"CFRZIP01"
+key = Scrypt(salt=data[8:24], length=32, n=2**15, r=8, p=1).derive(expected["key"].encode())
+plain = AESGCM(key).decrypt(data[24:36], data[36:], data[:36])
+with ZipFile(BytesIO(plain)) as archive:
+    assert archive.testzip() is None
+    observed = json.loads(archive.read("trace.json"))
+assert observed["state"] == "recording"
+assert observed["end_reason"] is None
+assert observed["exchanges"] == expected["exchanges"]
+'''
+        child = subprocess.run(
+            [sys.executable, "-I", "-c", reader, str(output)],
+            input=json.dumps({"key": export_key, "exchanges": [
+                asdict(entry) for entry in restored.trace.exchanges
+            ]}), text=True, capture_output=True, timeout=15,
+        )
+        assert child.returncode == 0, "Independent private export verification failed"
+        assert not child.stdout and not child.stderr
+        assert path.read_bytes() == before
+        assert not list(destination.glob("*.zip"))
     finally:
         restored.trace.destroy()

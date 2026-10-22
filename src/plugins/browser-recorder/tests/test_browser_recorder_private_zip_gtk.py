@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from io import BytesIO
 import json
+from types import SimpleNamespace as NS
 from zipfile import ZipFile
 import pytest
 
@@ -15,6 +16,10 @@ import browser_recorder_review_ui as ui
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
 from browser_recorder_private_zip import decrypt_private_zip
 from browser_recorder_vault import PrivateSessionVault
+from browser_recorder_page import BrowserRecorderPage
+from cifereca.diagnostics import Diagnostics
+from cifereca.plugins.manager import PluginManager
+from cifereca.core.diagnostic_event_feed import query_diagnostic_events
 
 ORIGIN = "https://fictional-books.example.org"
 PASSWORD = "FICTIONAL-CIFERECA-VAULT-2026"
@@ -88,10 +93,26 @@ def test_real_gtk_private_zip_requires_its_own_confirmation(tmp_path, monkeypatc
     consent = Gtk.CheckButton()
     consent.set_active(True)
     tasks = Tasks()
+    outcomes = []
+    collector = Diagnostics()
+    plugin_id = "ui.page.browser-recorder"
+    manager = NS(diagnostics=collector, _records={plugin_id: NS(
+        descriptor=NS(id=plugin_id), package=NS(manifest=NS(package=NS(
+            id="org.cifereca.technical.browser-recorder",
+        ))),
+    )})
+    page = BrowserRecorderPage()
+    page.context = NS(report_diagnostic=lambda message, status, **kw: PluginManager._plugin_diag(
+        manager, plugin_id, message, status, kw["detail"], kw["level"],
+    ))
+    def report(op, code, **metrics):
+        outcomes.append((op, code, metrics))
+        page._report_http_outcome(op, code, **metrics)
     panel = ui.PrivateReviewPanel(
         Gtk, GLib, tasks, site, consent, lambda: False,
         export_directory=tmp_path / "public",
         vault_directory=tmp_path / "vault",
+        diagnostic=report,
     )
     window = Gtk.Window()
     window.set_default_size(1024, 768)
@@ -126,6 +147,7 @@ def test_real_gtk_private_zip_requires_its_own_confirmation(tmp_path, monkeypatc
         panel.private_export_passphrase.set_text(EXPORT_PASSWORD)
         panel.private_export_button.emit("clicked")
         assert not list(folder.iterdir())
+        assert outcomes == []
         assert not panel.private_export_button.get_sensitive()
         panel.private_export_confirm.set_active(True)
         flush()
@@ -135,6 +157,11 @@ def test_real_gtk_private_zip_requires_its_own_confirmation(tmp_path, monkeypatc
         files = list(folder.glob("*.brzip"))
         assert len(files) == 1
         assert files[0].stat().st_mode & 0o777 == 0o600
+        assert len(outcomes) == 1
+        assert outcomes[0][:2] == ("private_zip_export", "private_zip_exported")
+        assert outcomes[0][2]["output_bytes"] == files[0].stat().st_size
+        assert type(outcomes[0][2]["duration_ms"]) is int
+        assert ACCOUNT not in repr(outcomes) and TOKEN not in repr(outcomes)
         with ZipFile(BytesIO(decrypt_private_zip(files[0].read_bytes(), EXPORT_PASSWORD))) as zipped:
             data = json.loads(zipped.read("trace.json"))
             assert data["exchanges"][0]["url"].endswith(ACCOUNT)
@@ -154,3 +181,11 @@ def test_real_gtk_private_zip_requires_its_own_confirmation(tmp_path, monkeypatc
         panel.destroy()
         window.close()
         flush()
+    # The terminal result remains visible after the private GTK page closes.
+    result = query_diagnostic_events(collector, source="core_events", log_path=tmp_path / "absent")
+    assert result["total"] == 1
+    assert result["events"][0]["detail"]["code"] == "private_zip_exported"
+    assert result["events"][0]["detail"]["output_bytes"] == files[0].stat().st_size
+    assert query_diagnostic_events(collector, source="core_events", severity="error",
+                                   log_path=tmp_path / "absent")["total"] == 0
+    assert ACCOUNT not in repr(result) and TOKEN not in repr(result)
