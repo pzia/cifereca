@@ -93,7 +93,7 @@ def remember_inspection_cache(service, identity_id, audit, scope_valid, generati
         from .library_audit_roots import configured_identity_roots
         roots = configured_identity_roots(service.config, identity_id)
         session = LocalInspection(audit, scope_valid, identity_id,
-                                  roots=roots.get(identity_id, ()))
+                                  roots=roots.get(identity_id, ()), service=service)
         expires = monotonic() + _TTL_SECONDS
         session._valid = lambda: (scope_valid() and monotonic() < expires
                                   and _service_stamp(service) == stamp)
