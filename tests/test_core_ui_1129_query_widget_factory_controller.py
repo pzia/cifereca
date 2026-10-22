@@ -302,3 +302,64 @@ def test_refresh_does_nothing_after_close():
     window.search_controls = NS(set_provider_choices=Mock())
     refresh_query_providers(window)
     window.search_controls.set_provider_choices.assert_not_called()
+
+
+def test_p0_2882_disconnected_paris_is_visible_as_status_not_searchable():
+    from cifereca.gui.query_widget_factory_controller import _paris_catalogue_hint
+    window, events, _calls, _changed, _activate, _caps, create = _setup(manager=False)
+    window.service.current_identity = NS(identity_id="alice")
+    snapshots = []
+    window.service.catalogue_source_capabilities = lambda *, identity_id: (
+        snapshots.append(identity_id) or [NS(
+            provider_id="paris", catalog_search_supported=True,
+            catalog_search_available=False,
+        )]
+    )
+    assert "Bibliothèques de Paris" in _paris_catalogue_hint(window)
+    assert "paris" not in dict(create().providers)
+    assert snapshots == ["alice"]
+
+
+def test_p0_2882_query_hint_refreshed_on_reconnection_and_cleared_on_profile_change():
+    from cifereca.gui.query_widget_factory_controller import _paris_catalogue_hint
+    window, _events, _calls, _changed, _activate, _caps, create = _setup(manager=False)
+    window.service.current_identity = NS(identity_id="alice")
+    connected = [False]
+    window.service.catalogue_source_capabilities = lambda *, identity_id: (
+        [NS(provider_id="paris", catalog_search_supported=True,
+            catalog_search_available=connected[0])]
+        if identity_id == "alice" else []
+    )
+    window.search_controls = NS(
+        set_provider_choices=Mock(), set_provider_search_capabilities=Mock(),
+        set_provider_availability_hint=Mock(),
+    )
+    assert _paris_catalogue_hint(window)
+    refresh_query_providers(window)
+    hint = window.search_controls.set_provider_availability_hint
+    assert "Bibliothèques de Paris" in hint.call_args.args[0]
+    connected[0] = True
+    refresh_query_providers(window)
+    hint.assert_called_with("")
+    window.service.current_identity.identity_id = "bob"
+    connected[0] = False
+    refresh_query_providers(window)
+    hint.assert_called_with("")
+    assert "paris" not in dict(window.search_controls.set_provider_choices.call_args.args[0])
+
+
+def test_p0_2882_missing_or_disabled_paris_never_invents_a_catalogue():
+    from cifereca.gui.query_widget_factory_controller import _paris_catalogue_hint
+    window, _events, _calls, _changed, _activate, _caps, _create = _setup()
+    window.service.current_identity = NS(identity_id="alice")
+    window.service.catalogue_source_capabilities = lambda *, identity_id: []
+    assert _paris_catalogue_hint(window) == ""
+    window.service.catalogue_source_capabilities = lambda *, identity_id: (
+        [NS(provider_id="paris", catalog_search_supported=False,
+            catalog_search_available=False)]
+    )
+    assert _paris_catalogue_hint(window) == ""
+    window.service.catalogue_source_capabilities = lambda *, identity_id: (
+        (_ for _ in ()).throw(ValueError("private credentials"))
+    )
+    assert _paris_catalogue_hint(window) == ""
