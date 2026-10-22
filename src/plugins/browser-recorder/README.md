@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.6, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.7, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -459,3 +459,29 @@ Les noms contenant des caractères de contrôle, échappements ou caractères
 de direction Unicode sont refusés, tout comme une étiquette altérée ou un
 lien symbolique. Les sessions existantes n'ont aucun nom par défaut et
 restent compatibles sans migration destructrice.
+
+
+## Résidus temporaires après crash et quota conservateur (0.2.7, #2725)
+
+Le coffre 0700 conserve au maximum 128 sessions et 128 Mio d'archives.
+**Tout** le chiffrement local consomme désormais ce quota : snapshots
+`.cbrv`, noms privés `.cbrn`, ainsi que les fichiers d'écriture
+atomique `.part` et `.labelpart` qui pourraient subsister après un crash.
+Aucune donnée privée ne passe en clair dans ces fichiers.
+
+**Aucune purge automatique** : dans la page privée, « Examiner les résidus
+chiffrés sans suppression » affiche uniquement un nombre et une taille,
+sans identifiant ni origine. La case de confirmation distincte autorise
+ensuite à nettoyer seulement les fichiers temporaires reconnus du Recorder
+âgés de **plus de 24 h**. Une capture source `.cbrv` ou un nom `.cbrn`
+n'est **jamais** concerné. Les liens symboliques/hardlinks, modes et
+propriétaires suspects entraînent un refus sans purge partielle. La suppression
+est explicite, irréversible sur les fichiers concernés et ne garantit pas
+l'effacement forensique des sauvegardes disque.
+
+Un verrou POSIX coopératif synchronise les snapshots, les renommages,
+les suppressions et ce nettoyage. Les sessions interrompues restent
+récupérables avec la dernière portion enregistrée. Si le quota est saturé,
+faire la revue des captures et supprimer explicitement celles choisies, ou
+libérer les seuls résidus temporaires anciens après inspection ; il n'existe
+aucune politique automatique de conservation en fonction de l'âge.
