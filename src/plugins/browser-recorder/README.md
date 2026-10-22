@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.14, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.15, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -22,8 +22,10 @@ Depuis **Configuration → Browser Recorder**, l'écran est organisé en
   métadonnées seulement et autorisation du coffre.
 - **2 · Capture** : démarrer, mettre en pause, reprendre et arrêter Chromium.
 - **3 · Sessions et export privé** : sessions chiffrées, consultation,
-  réouverture, renommage, suppression et entretien. L'export de secours
-  `.brzip` est **chiffré, non anonymisé** : ne pas confondre avec le ZIP LLM.
+  réouverture, renommage, suppression et entretien. Le bouton
+  **« Exporter cette session pour un LLM… »** permet, après saisie de la
+  phrase du coffre, un simple **Enregistrer sous** dans un dossier ordinaire.
+  Il produit un `.zip` **en clair**, sans mot de passe ni anonymisation.
 - **4 · Revue et ZIP LLM** : choix individuels, aperçu local, archive exacte
   consultable membre par membre, confirmation et enregistrement local.
   Une capture non vide ou une session réouverte mène directement ici.
@@ -312,8 +314,9 @@ avec clé dérivée de la phrase secrète par **scrypt**, sel/nonce aléatoires
 propres à la session et authentification du nom de fichier. Le répertoire
 privé doit appartenir à l'utilisateur et être en mode 0700 ; fichiers
 0600, sans symlink/hardlink, snapshots atomiques/fdatasync/fsync et bornes
-128 sessions / 128 Mio / 3 Mio par session. Le nouveau ZIP pour LLM est
-toujours distinct, expurgé et soumis aux décisions unitaires + confirmation.
+128 sessions / 128 Mio / 3 Mio par session. Deux exports sont distincts : le ZIP **revu/filtré** requiert les décisions
+individuelles, alors que le ZIP **session pour LLM** restitue les observations
+conservées depuis le coffre chiffré, sans décisions d'anonymisation.
 
 Pendant la capture, le collecteur écrit au plus une projection chiffrée
 par seconde ; il finalise un état `completed` lors du Stop ou de la fermeture
@@ -347,31 +350,37 @@ les cookies/Authorization/Set-Cookie exclus en amont, les fichiers binaires,
 les échanges hors périmètre, les corps refusés ni un profil navigateur.
 La suppression du fichier ne garantit pas un effacement forensique des
 snapshots SSD/sauvegardes. Ne pas synchroniser `private-sessions/` vers
-un cloud par défaut. Le ZIP **non anonymisé de diagnostic** est une action
-distincte à ajouter sous #2698 ; ne jamais partager un fichier `.cbrv`
-comme s'il était un ZIP sans donnée privée.
+un cloud par défaut. L'export privé pour LLM est une action explicite : il crée une **copie en
+clair** de la session conservée. Ne pas partager un fichier `.cbrv` comme
+s'il s'agissait d'un ZIP ordinaire.
 
 
-## Export de diagnostic privé chiffré (#2698) — action séparée
+## Export direct de session privée pour LLM (0.2.15)
 
-Depuis **Lister les sessions archivées**, sélectionnez un ID, saisissez votre
-phrase secrète du coffre pour déverrouiller la session, puis choisissez une
-**NOUVELLE phrase secrète dédiée au ZIP privé, différente de celle du coffre**.
-Choisissez un **dossier existant que vous possédez, en mode 0700**, avec
-chemin absolu explicite. Ne communiquez jamais la phrase secrète du coffre
-à un destinataire de l'archive. La case « Je confirme cet export privé »
-est **distincte** du consentement de capture et du ZIP anonymisé pour LLM.
-L'export n'est jamais automatique ni téléversé. Le nom aléatoire finit par
-`.brzip` et le fichier est créé en mode 0600 sans écraser de fichier.
+1. Dans **Sessions et export privé**, sélectionner une session archivée.
+2. Saisir **la phrase secrète du coffre** (une seule fois).
+3. Cliquer **« Exporter cette session pour un LLM… »**, choisir le nom et
+   l'emplacement par **Enregistrer sous**, puis valider.
 
-**ATTENTION — ce ZIP n'est PAS anonymisé** : toutes les URL/query, redirections,
-corps JSON/HTML/XML/formulaires et valeurs effectivement retenus sont dans
-`trace.json` à l'intérieur de l'enveloppe chiffrée. Ce n'est pas une capture
-« wire » complète : aucun cookie/Authorization supprimé au collecteur,
-aucun binaire, DRM, profil navigateur ni corps hors budget ne peut réapparaître.
-Ne jamais attacher une archive `.brzip` à un ticket ni la transmettre à un
-LLM sans déchiffrement et revue personnelle. Un ZIP public demeure soumis
-aux choix individuels, à l'inspection exacte et à sa confirmation dédiée.
+**Aucune nouvelle phrase secrète de ZIP, aucun dossier 0700 à préparer,
+aucune confirmation supplémentaire.** Le coffre demeure AES-256-GCM avec
+ses permissions restrictives. Le ZIP de destination est un fichier standard
+**non chiffré**, créé en `0600`, jamais écrasé, dans un dossier existant
+choisi par l'utilisateur (par ex. Documents ou Téléchargements). Une annulation
+ne crée aucun fichier. Aucun envoi à un LLM n'est automatique.
+
+Ce ZIP comprend `README.txt` et `trace.json` avec **les URL d'origine, les
+identifiants et les corps textuels effectivement conservés** ; il peut contenir
+des données sensibles. Pour travailler avec un LLM, vérifier ses conditions de
+confidentialité, lui transmettre explicitement l'archive et supprimer ensuite
+la copie claire locale si elle n'est plus utile. Les secrets, réponses binaires,
+cookies ou autres éléments rejetés *pendant la capture* ne peuvent pas être
+restaurés. Le ZIP revu/anonymisé de l'onglet 4 reste disponible en parallèle.
+
+### Compatibilité des anciennes archives chiffrées `.brzip`
+
+Le lecteur historique `CFRZIP01` reste disponible pour les anciennes
+archives. Le nouvel export pour LLM **n'utilise plus ce format**.
 
 **Format ouvert documenté `CFRZIP01`** : octets [0:8] = magic ASCII
 `CFRZIP01`, [8:24] = sel scrypt aléatoire (16 octets), [24:36] = nonce
@@ -401,9 +410,9 @@ with ZipFile(BytesIO(raw)) as archive:
     print(archive.namelist())  # ni fichier clair ni partage implicite
 ```
 
-Le ZIP interne n'est jamais écrit en clair par Cifereca. Le fichier
-`.brzip` n'est donc **pas** directement ouvert par l'explorateur ZIP :
-le déchiffrement en mémoire est une étape volontaire distincte.
+Le lecteur des anciennes enveloppes `.brzip` déchiffre en mémoire.
+Pour les nouveaux exports de session, le ZIP est directement lisible
+par les outils habituels et n'exige aucune étape de déchiffrement.
 
 
 ## Choix de la destination ZIP (0.2.6)
@@ -416,11 +425,10 @@ relative/symbolique, un nom hors format, un dossier inexistant ou un fichier
 déjà présent n'écrivent rien et ne remplacent aucun ZIP. L'archive est créée
 en mode 0600, et les permissions du dossier sont vérifiées.
 
-La destination privée `.brzip` est choisie indépendamment à l'aide du bouton
-**« Choisir un dossier privé… »** (sélection native) ou d'un chemin absolu
-préexistant : le dossier doit appartenir à l'utilisateur avec permissions
-0700. Le chiffrement, la phrase d'export distincte et la confirmation restent
-obligatoires. Le contenu privé n'est jamais enregistré en ZIP non chiffré.
+Le nouveau bouton de l'onglet 3 ouvre **Enregistrer sous** avec nom
+`cifereca-session-privee.zip`. Aucun mode 0700 n'est imposé sur le dossier
+choisi et aucun mot de passe ZIP n'est demandé. La copie créée est **en clair
+et réservée à l'utilisateur (0600)** ; ne pas la confondre avec le coffre chiffré.
 
 
 ## Kit de création de plugin inclus dans le ZIP anonymisé (0.2.6, #2740)
@@ -554,7 +562,7 @@ physique sur SSD/backups. Aucun ZIP n'est automatiquement produit ou
 transmis. Les tests fonctionnent uniquement sur des données fictives.
 
 
-## Vérification d'authenticité des noms lors de la rétention (0.2.14)
+## Vérification d'authenticité des noms lors de la rétention (0.2.15)
 
 Une étiquette de session est protégée par AES-256-GCM et associée
 cryptographiquement à un ID de capture précis. La revue de rétention
@@ -566,7 +574,7 @@ Les captures, mêmes anciennes, sont préservées. La confirmation manuelle
 et le délai d'expiration du plan restent obligatoires.
 
 
-## Renommage chiffré et concurrence avec la suppression (0.2.14, #2725)
+## Renommage chiffré et concurrence avec la suppression (0.2.15, #2725)
 
 Le renommage privé authentifie **sous le même verrou exclusif POSIX**
 l'archive source et son nom AES-GCM existant, puis écrit le nouveau sidecar
@@ -584,7 +592,7 @@ et n'est pas une garantie contre un acteur local ayant accès en écriture
 au coffre en dehors de l'application.
 
 
-## Téléchargements Chromium sous décision explicite (0.2.14, #2528)
+## Téléchargements Chromium sous décision explicite (0.2.15, #2528)
 
 Le mode de capture HTTP privé utilise maintenant **`accept_downloads=True`**
 (la capture HAR legacy demeure distincte). Un fichier obtenu par Chromium
