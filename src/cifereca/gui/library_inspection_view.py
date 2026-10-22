@@ -381,12 +381,20 @@ class LocalInspectionController:
         # between owned rights and local files. States can overlap.
         overview = session.overview()
         synopsis = Gtk.Label(xalign=0, label=(
-            f"Fichiers inspectés : {overview.get('files', 0)} · "
-            f"Liens confirmés : {overview.get('confirmed_files', 0)} · "
-            f"Sans droit attesté : {overview.get('local_without_right', 0)}\n"
-            f"Droits sans fichier vérifié : {overview.get('unverified_rights', 0)} · "
-            f"Fichiers sans provenance attestée : {overview.get('unattributed_files', 0)} · "
-            f"Chemins en anomalie : {overview.get('paths', 0)}"
+            f"FICHIERS LOCAUX · {overview.get('files', 0)} cas visibles : "
+            f"{overview.get('files_attested', 0)} avec lien attesté · "
+            f"{overview.get('files_without_attested_link', 0)} sans lien attesté · "
+            f"{overview.get('files_individually_unverified', 0)} non vérifiables"
+            f" (partition exclusive)\n"
+            f"DROITS ACTIFS · {overview.get('rights_active', 0)} droits du snapshot : "
+            f"{overview.get('rights_attested', 0)} reliés par preuve · "
+            f"{overview.get('rights_unverified_total', 0)} sans fichier vérifié"
+            f" (n'implique pas l'absence)\n"
+            f"PLACEMENTS SQLITE · {overview.get('placements_registered', 0)} enregistrés "
+            f"pour l'identité · {overview.get('paths', 0)} cas de chemin en anomalie\n"
+            f"Indicateurs non additionnables : "
+            f"{overview.get('unattributed_files', 0)} fichiers sans provenance attestée · "
+            f"{overview.get('local_without_right', 0)} fichiers sans droit attesté."
         ))
         synopsis.set_wrap(True)
         box.append(synopsis)
