@@ -134,20 +134,23 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         assert trace.vault_session_id
         assert not panel.export_button.get_sensitive()
         assert (tmp_path / "vault" / (trace.vault_session_id + ".cbrv")).is_file()
-        panel.sessions_refresh.emit("clicked")
-        flush()
-        assert panel.session_list.get_active_id() == trace.vault_session_id
+        # Immediate direct export: no catalogue refresh, no identifier
+        # decisions, no switch away from the review tab.
+        assert panel.tabs.get_current_page() == 3
+        assert panel.session_list.get_active_id() is None
+        assert panel.current_private_export_button.get_sensitive()
+        assert panel._review.pending() > 0
         folder = tmp_path / "private-destination"
         folder.mkdir(mode=0o755)
         panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(
             folder / "session-for-llm.zip"
         )
-        panel.private_export_button.emit("clicked")
+        panel.current_private_export_button.emit("clicked")
         assert not list(folder.iterdir())
         assert outcomes == []
-        assert panel.private_export_button.get_sensitive()
+        assert panel.current_private_export_button.get_sensitive()
         panel.vault_passphrase.set_text(PASSWORD)
-        panel.private_export_button.emit("clicked")
+        panel.current_private_export_button.emit("clicked")
         flush()
         files = list(folder.glob("*.zip"))
         assert len(files) == 1
@@ -163,8 +166,13 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
             assert TOKEN in data["exchanges"][0]["request_body"]
         if (tmp_path / "public").exists():
             assert not list((tmp_path / "public").glob("*.zip"))
-        assert panel.private_export_button.get_sensitive()
+        assert panel.current_private_export_button.get_sensitive()
         assert panel.vault_passphrase.get_text() == ""
+        # The archived-list workflow remains independent and still works.
+        panel.sessions_refresh.emit("clicked")
+        flush()
+        assert panel.session_list.get_active_id() == trace.vault_session_id
+        assert panel.private_export_button.get_sensitive()
         # A second explicit selection + unlock restores a fresh review offline.
         panel.vault_passphrase.set_text(PASSWORD)
         panel.sessions_open.emit("clicked")
