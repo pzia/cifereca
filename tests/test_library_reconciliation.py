@@ -402,10 +402,12 @@ class GraphTests(unittest.TestCase):
     def test_29_confirmed_links_are_repeatable_with_unchanged_evidence(self):
         # #2796: identical cohorts and proof snapshots must not drift 256 -> 227.
         from copy import deepcopy
+        from dataclasses import replace
         original = self.inventory.files[0]
-        self.inventory.files = [deepcopy(original) for _ in range(29)]
-        for i, file in enumerate(self.inventory.files):
-            file.path = str(self.root / f'PRIVATE_{i:03d}.epub')
+        self.inventory.files = [
+            replace(original, path=str(self.root / f'PRIVATE_{i:03d}.epub'))
+            for i in range(29)
+        ]
         self.snapshot.tables['entitlements'] = []
         self.snapshot.tables['acquisition_ledger'] = []
         self.snapshot.tables['placements'] = []
