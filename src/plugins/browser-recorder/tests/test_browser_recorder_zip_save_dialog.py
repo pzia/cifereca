@@ -48,7 +48,9 @@ def test_native_chosen_name_exact_file_with_no_overwrite(tmp_path):
     "../relative.zip",
     "unsafe.txt",
     ".hidden.zip",
-    "bad name.zip",
+    "bad?.zip",
+    "double..dot.zip",
+    "direction\u202e.zip",
     "a" * 103 + ".zip",
 ])
 def test_unsafe_filename_or_non_absolute_destination_never_writes(tmp_path, unsafe):
@@ -108,3 +110,48 @@ def test_cancelled_chooser_does_not_consume_or_export(tmp_path, monkeypatch):
     assert not list(tmp_path.iterdir())
     panel.destroy()
     assert raw.exchanges == []
+
+
+@pytest.mark.parametrize("filename", [
+    "Catalogue été 2026.zip",
+    "mes livres.zip",
+    "fiction-équipe.zip",
+])
+def test_native_save_as_accepts_user_chosen_space_and_accent(tmp_path, filename):
+    """The GTK choice of filename is honored without weakening no-overwrite."""
+    folder = tmp_path / "Dossier privé"
+    folder.mkdir(mode=0o700)
+    chosen = folder / filename
+    p = plan()
+    p.preview()
+    assert p.save_as(chosen, user_confirmed=True) == filename
+    assert chosen.read_bytes() == b"FAKE_ZIP_BYTES_NO_SOURCE_SECRETS"
+    assert chosen.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(RecorderError, match="save_failed"):
+        p.save_as(chosen, user_confirmed=True)
+    assert chosen.read_bytes() == b"FAKE_ZIP_BYTES_NO_SOURCE_SECRETS"
+
+
+def test_save_as_rejects_intermediate_symlink_and_unsafe_writable_parent(tmp_path):
+    """A valid last component cannot make a symlink ancestor safe."""
+    p = plan()
+    p.preview()
+    actual = tmp_path / "actual"
+    nested = actual / "nested"
+    actual.mkdir(mode=0o700)
+    nested.mkdir(mode=0o700)
+    alias = tmp_path / "alias"
+    alias.symlink_to(actual, target_is_directory=True)
+    with pytest.raises(RecorderError, match="save_failed"):
+        p.save_as(alias / "nested" / "reviewed.zip", user_confirmed=True)
+    assert list(nested.iterdir()) == []
+
+    writable = tmp_path / "group-world-writable"
+    writable.mkdir(mode=0o700)
+    writable.chmod(0o777)
+    try:
+        with pytest.raises(RecorderError, match="unsafe_directory"):
+            p.save_as(writable / "reviewed.zip", user_confirmed=True)
+        assert list(writable.iterdir()) == []
+    finally:
+        writable.chmod(0o700)
