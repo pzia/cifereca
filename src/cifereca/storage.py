@@ -1351,17 +1351,46 @@ class Storage:
         with self._lock, self._connect() as db:
             db.execute("SAVEPOINT relocate_local_path")
             try:
+                # A matching path or SHA is not evidence that a placement
+                # belongs to the same identity, provider and logical source.
+                # Validate *before* changing any backup or catalog references.
+                placement_columns = (
+                    "SELECT placement_id,metadata_json,identity_id,provider_id,"
+                    "artifact_id,source_item_id FROM placements WHERE path=?"
+                )
+                old_row = db.execute(placement_columns, (old_text,)).fetchone()
+                target_row = db.execute(placement_columns, (new_text,)).fetchone()
+                if old_row and (
+                    not identity_id or not provider_id
+                    or old_row[2] != identity_id or old_row[3] != provider_id
+                ):
+                    raise ValueError("relocate_scope_conflict")
+                if target_row and (
+                    not identity_id or not provider_id
+                    or target_row[2] != identity_id
+                    or target_row[3] != provider_id
+                ):
+                    raise ValueError("relocate_scope_conflict")
+                if old_row and target_row and old_row[0] != target_row[0]:
+                    if (
+                        not old_row[4] or old_row[4] != target_row[4]
+                        or not old_row[5] or old_row[5] != target_row[5]
+                    ):
+                        raise ValueError("relocate_scope_conflict")
+                if any(
+                    row[0] not in (None, "", identity_id)
+                    for row in db.execute(
+                        "SELECT identity_id FROM backup_items "
+                        "WHERE local_path=? AND provider_id=?",
+                        (old_text, provider_id),
+                    )
+                ):
+                    raise ValueError("relocate_scope_conflict")
                 db.execute(
                     "UPDATE backup_items SET local_path=?,identity_id=COALESCE(identity_id,?) "
                     "WHERE local_path=? AND provider_id=?",
                     (new_text, identity_id, old_text, provider_id),
                 )
-                old_row = db.execute(
-                    "SELECT placement_id,metadata_json FROM placements WHERE path=?", (old_text,)
-                ).fetchone()
-                target_row = db.execute(
-                    "SELECT placement_id,metadata_json FROM placements WHERE path=?", (new_text,)
-                ).fetchone()
                 if old_row:
                     old_placement_id = str(old_row[0])
                     placement_id = old_placement_id
