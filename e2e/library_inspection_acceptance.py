@@ -340,6 +340,12 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         # A bibliographic-only synthetic candidate must never expose even
         # the second-step SQLite confirmation button.
         assert not confirm.get_visible() and not confirm.get_sensitive()
+        undo=next(w for w in walk(controller.dialog)
+                  if isinstance(w,Gtk.Button)
+                  and w.get_label()=='Annuler le dernier placement…')
+        # No operation was committed in this synthetic browse-only flow:
+        # undo cannot be offered or used on an arbitrary existing placement.
+        assert not undo.get_visible() and not undo.get_sensitive()
         report['checks']['P0_2714_pair_preflight_no_write_click']=True
         switch=next(w for w in walk(controller.dialog)
                     if isinstance(w,Gtk.Button) and w.get_label()=='Voir les candidats exacts')
