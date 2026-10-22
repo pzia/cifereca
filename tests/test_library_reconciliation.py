@@ -238,6 +238,38 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(progress[-1], result.redacted())
         self.assertNotIn('PRIVATE', json.dumps(progress))
 
+    def test_long_single_file_emits_private_heartbeat_before_hash_finishes(self):
+        """No 10-second apparent freeze while one EPUB is being hashed."""
+        import time as real_time
+        from types import SimpleNamespace
+        from cifereca.core import library_inventory as inventory
+
+        # Six 1 MiB hash chunks; the ZIP member is synthetic and never sent
+        # over a network. Track snapshots without exposing the file name.
+        with zipfile.ZipFile(self.book, 'a') as archive:
+            archive.writestr('payload.dat', b'x' * (6 * 1024 * 1024))
+        tick = [0.0]
+        def monotonic():
+            tick[0] += 0.3
+            return tick[0]
+
+        events = []
+        with patch.object(
+            inventory, 'time',
+            SimpleNamespace(monotonic=monotonic,
+                            perf_counter_ns=real_time.perf_counter_ns),
+        ):
+            result = self.scan(progress=events.append)
+
+        self.assertEqual(len(result.files), 1)
+        self.assertGreater(len(events), 1)
+        in_flight = [e for e in events if e['files'] == 0]
+        self.assertTrue(in_flight)
+        self.assertTrue(any(e['hash_bytes'] > 0 for e in in_flight))
+        self.assertEqual(events[-1], result.redacted())
+        self.assertNotIn('PRIVATE', json.dumps(events))
+        self.assertNotIn(result.files[0].sha256, json.dumps(events))
+
     def test_more_than_522_books_progress_and_no_writes(self):
         raw = self.book.read_bytes()
         for i in range(523):
