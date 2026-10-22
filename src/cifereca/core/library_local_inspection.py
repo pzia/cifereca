@@ -302,6 +302,7 @@ class LocalInspection:
         # It never changes scan freshness or grants a file/right link.
         self._from_audit_cache = False
         self._cases = {}
+        self._path_missing_by_sqlite_state = Counter()
         # These references exist solely inside this revocable Core UI session.
         # They never enter an audit payload or a future repair capability.
         self._candidate_file_keys = {}
@@ -734,6 +735,10 @@ class LocalInspection:
             if not add('path', index, STATES[state]+' · '+_text(placements[index].get('placement_id')),
                        'unattributed', {state}, evidence('placements', index)):
                 break
+            if state == 'stored_path_missing':
+                sqlite_state = placements[index].get('state')
+                bucket = sqlite_state if sqlite_state in ('present', 'missing') else 'other'
+                self._path_missing_by_sqlite_state[bucket] += 1
         if not self.valid():
             self.close()
 
@@ -769,6 +774,7 @@ class LocalInspection:
         self._manual_identity = None
         self._manual_audit_complete = False
         self._summary = {}
+        self._path_missing_by_sqlite_state.clear()
         self._roots = ()
         self._unavailable_directories = ()
         self._unavailable_count = 0
@@ -814,6 +820,12 @@ class LocalInspection:
                 'rights_unverified_total': self._rights_unverified_count,
                 'placements_registered': self._placements_registered_count,
                 'paths': by_kind['path'],
+                # Checked, identity-scoped and only within the bounded
+                # inspection display. Historical missing entries are NOT
+                # active broken paths and are NEVER deleted automatically.
+                'paths_active_missing': self._path_missing_by_sqlite_state['present'],
+                'paths_historical_missing': self._path_missing_by_sqlite_state['missing'],
+                'paths_other_missing': self._path_missing_by_sqlite_state['other'],
                 'confirmed_files': by_state['confirmed_link'],
                 'unattributed_files': sum(case.key.startswith('file:')
                                           and case.provider == 'unattributed'
