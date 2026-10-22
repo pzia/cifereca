@@ -784,6 +784,18 @@ class PrivateReviewPanel:
                                 f"{self._review.pending()} décisions individuelles "
                                 "restantes ; aucun ZIP automatique."
                             )
+                observed = self._download_outcomes.get("download_started", 0)
+                if observed:
+                    saved = self._download_outcomes.get("download_saved_by_user", 0)
+                    skipped = self._download_outcomes.get("download_cancelled", 0)
+                    failed = self._download_outcomes.get("download_failed", 0)
+                    self.status.set_label(
+                        self.status.get_label()
+                        + f" · Téléchargements : {observed} observés, "
+                        + f"{saved} enregistrés explicitement, "
+                        + f"{skipped} annulés, {failed} en échec. "
+                        + "Aucun binaire dans le ZIP."
+                    )
                 self._refresh()
                 return False
 
