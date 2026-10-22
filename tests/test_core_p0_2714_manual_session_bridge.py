@@ -49,7 +49,11 @@ def test_private_previews_hide_plan_tokens_and_require_second_explicit_action(se
     assert session.preview_manual_attachment(right, file)["status"] == "preview"
     applied = session.confirm_manual_attachment(right, file, user_confirmed=True)
     assert applied["status"] == "applied"
-    assert len(applied["operation_id"]) == 64
+    # The opaque journal reference is retained inside Core for undo, not
+    # returned through the CoreUI/GTK response.
+    assert applied["undo_available"] is True
+    assert "operation_id" not in applied
+    assert session._manual_undo is not None
     assert "PRIVATE" not in json.dumps(applied)
     assert len(_rows(service, "placements")) == 1
     assert session.confirm_manual_attachment(right, file,
