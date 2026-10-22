@@ -262,8 +262,13 @@ class LocalPage:
 class LocalInspection:
     """One active identity, bounded private projection, revocation on every read."""
 
-    def __init__(self, audit, valid, identity_id, roots=()):
+    def __init__(self, audit, valid, identity_id, roots=(), service=None):
         self._valid = valid
+        # Core session only; never serialised or exposed through a plugin.
+        self._manual_service = service
+        self._manual_identity = identity_id
+        self._manual_pending = None
+        self._manual_preview_generation = 0
         # Only Core sets this once when reusing the last completed audit.
         # It never changes scan freshness or grants a file/right link.
         self._from_audit_cache = False
@@ -274,6 +279,8 @@ class LocalInspection:
         # Revocable, private evidence summaries; no raw account/path exported.
         self._manual_right_proofs = {}
         self._manual_file_proofs = {}
+        self._manual_right_scopes = {}
+        self._manual_file_observations = {}
         self._manual_audit_complete = audit.redacted().get('status') == 'complete'
         # Private, same-identity facets for the direct-selection file browser.
         # No file metadata or query is ever exported through summary()/logs.
@@ -446,6 +453,9 @@ class LocalInspection:
                     ),
                     'signature': (observation.sha256, observation.size),
                 }
+                # This FileObservation is a private, scanned capability; a
+                # later preview still performs its own fresh nofollow SHA.
+                self._manual_file_observations[f'file:{index}'] = observation
         placements = audit.snapshot.tables.get('placements', [])
         artifacts = audit.snapshot.tables.get('artifacts', [])
         own_files = [f for f in audit.inventory.files if f.identity_id == identity_id]
@@ -526,6 +536,8 @@ class LocalInspection:
                         matching_artifacts[0].get('size'),
                     )
             scope = right_scope(right)
+            if scope is not None and right.get('provider_id') == 'numilog':
+                self._manual_right_scopes[f'right:{index}'] = scope
             self._manual_right_proofs[f'right:{index}'] = {
                 'attested': (
                     right.get('provider_id') == 'numilog'
@@ -621,6 +633,12 @@ class LocalInspection:
         self._file_facets.clear()
         self._manual_right_proofs.clear()
         self._manual_file_proofs.clear()
+        self._manual_right_scopes.clear()
+        self._manual_file_observations.clear()
+        self._manual_pending = None
+        self._manual_preview_generation += 1
+        self._manual_service = None
+        self._manual_identity = None
         self._manual_audit_complete = False
         self._summary = {}
         self._roots = ()
@@ -759,6 +777,105 @@ class LocalInspection:
             ),
         )
 
+    def revoke_manual_attachment_preview(self):
+        """A changed selection invalidates pending and in-flight previews."""
+        self._manual_preview_generation += 1
+        self._manual_pending = None
+
+    def _transaction_inputs(self, right_key, file_key):
+        if (not self.valid() or self._manual_service is None
+                or type(right_key) is not str or type(file_key) is not str):
+            return None
+        preliminary = self.preflight_manual_link(right_key, file_key)
+        if preliminary.status != 'eligible_for_fresh_validation':
+            return None
+        right = self._manual_right_scopes.get(right_key)
+        file = self._manual_file_observations.get(file_key)
+        if right is None or file is None or len(right) != 5:
+            return None
+        identity_id, provider, credential, account, edition = right
+        if (provider != 'numilog' or identity_id != self._manual_identity
+                or not all(type(value) is str and value
+                           for value in (credential, account, edition))):
+            return None
+        return {
+            'observation': file,
+            'identity_id': identity_id,
+            'credential_id': credential,
+            'account_id': account,
+            'item_id': edition,
+        }
+
+    def preview_manual_attachment(self, right_key, file_key, *, cancelled=lambda: False):
+        """Fresh SQL/no-follow SHA preview, kept exclusively inside CoreUI.
+
+        No token is exposed in the return or public audit. A later explicit
+        GUI confirmation must call confirm_manual_attachment on this exact
+        active session; the token is single-use and held in private memory.
+        """
+        self.revoke_manual_attachment_preview()
+        generation = self._manual_preview_generation
+        options = self._transaction_inputs(right_key, file_key)
+        if options is None:
+            return {'status': 'unavailable', 'read_only': True}
+        from .numilog_manual_link_transaction import (
+            ManualAttachmentRejected, reconcile_numilog_manual,
+        )
+        try:
+            result = reconcile_numilog_manual(
+                self._manual_service, **options,
+                cancelled=lambda: (cancelled() or not self.valid()
+                                   or self._manual_preview_generation != generation),
+            )
+        except ManualAttachmentRejected:
+            return {'status': 'blocked', 'read_only': True}
+        if (not self.valid() or cancelled()
+                or self._manual_preview_generation != generation):
+            return {'status': 'unavailable', 'read_only': True}
+        token = result.get('plan_token')
+        if (result.get('status') == 'preview'
+                and type(token) is str and len(token) == 64):
+            self._manual_pending = (right_key, file_key, token)
+            return {
+                'status': 'preview', 'read_only': True,
+                'requires_explicit_confirmation': True,
+            }
+        return {'status': 'already_linked', 'read_only': True} if (
+            result.get('status') == 'already_linked'
+        ) else {'status': 'unavailable', 'read_only': True}
+
+    def confirm_manual_attachment(self, right_key, file_key, *,
+                                  user_confirmed=False, cancelled=lambda: False):
+        """One explicit action; still rechecks all Core evidence under lock."""
+        pending, self._manual_pending = self._manual_pending, None
+        generation = self._manual_preview_generation
+        if (user_confirmed is not True or pending is None
+                or pending[:2] != (right_key, file_key)):
+            return {'status': 'unavailable', 'read_only': True}
+        options = self._transaction_inputs(right_key, file_key)
+        if options is None:
+            return {'status': 'unavailable', 'read_only': True}
+        from .numilog_manual_link_transaction import (
+            ManualAttachmentRejected, reconcile_numilog_manual,
+        )
+        try:
+            result = reconcile_numilog_manual(
+                self._manual_service, **options, confirmation=pending[2],
+                cancelled=lambda: (cancelled() or not self.valid()
+                                   or self._manual_preview_generation != generation),
+            )
+        except ManualAttachmentRejected:
+            return {'status': 'blocked', 'read_only': True}
+        # A committed write must not be reported as a failure merely because
+        # GTK detached a moment AFTER SQLite commit. The Core transaction
+        # checked generation/cancellation before its own final commit.
+        if result.get('status') in ('applied', 'already_linked'):
+            return {
+                'status': result['status'], 'read_only': result['status'] != 'applied',
+                'operation_id': result.get('operation_id'),
+            }
+        return {'status': 'unavailable', 'read_only': True}
+
     def candidate_files(self, right_key):
         """Only local, metadata_only cross-reference hints; never an action plan.
 
@@ -798,6 +915,6 @@ def open_local_inspection(service, *, identity_id, control=None):
     def finish(audit, valid):
         roots = configured_identity_roots(service.config, identity_id)
         return LocalInspection(audit, valid, identity_id,
-                               roots=roots.get(identity_id, ()))
+                               roots=roots.get(identity_id, ()), service=service)
 
     return _run_scoped_audit(service, identity_id, control, finish)
