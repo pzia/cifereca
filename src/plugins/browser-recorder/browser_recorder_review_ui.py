@@ -1582,14 +1582,14 @@ class PrivateReviewPanel:
         target = next((i for i in pending if i >= start), pending[0])
         self._candidate_page = target // _REVIEW_PAGE_SIZE
         self._pending_cursor = target
-        self._show_candidates(update_status=False)
+        self._show_candidates(update_status=False, focus_index=target)
         self.status.set_label(
             f"Identifiant {target + 1}/{len(rows)} encore à décider "
             f"(page {self._candidate_page + 1}). "
             "Aucune décision automatique."
         )
 
-    def _show_candidates(self, *, update_status=True):
+    def _show_candidates(self, *, update_status=True, focus_index=None):
         self._clear_candidates()
         self._text("")
         rows = self._review.local_rows()
@@ -1616,7 +1616,7 @@ class PrivateReviewPanel:
                 label="Aucun identifiant proposé : vérifier quand même les contenus.",
                 xalign=0, wrap=True,
             ))
-        for row in rows[first:last]:
+        for row_index, row in enumerate(rows[first:last], first):
             line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             # Candidate values are shown only to the local operator.
             label = Gtk.Label(
@@ -1691,6 +1691,17 @@ class PrivateReviewPanel:
                 line.add_controller(shortcuts)
             line.append(chooser)
             self.candidates_box.append(line)
+            if row_index == focus_index and hasattr(chooser, "grab_focus"):
+                # Focus causes GTK's containing ScrolledWindow to reveal the
+                # choice. Defer until the replacement page is laid out.
+                captured_review = self._review
+
+                def focus_choice(widget=chooser, current=captured_review):
+                    if not self._closed and self._review is current:
+                        widget.grab_focus()
+                    return False
+
+                self.GLib.idle_add(focus_choice)
         self._refresh()
 
     def preview(self):
