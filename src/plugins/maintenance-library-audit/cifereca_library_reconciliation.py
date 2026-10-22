@@ -27,7 +27,7 @@ _LIMITS = {
     'metadata_byte_budget': 'Budget mémoire des métadonnées atteint.',
     'comparison_budget': 'Budget de comparaison des preuves atteint.',
     'metadata_candidate_budget_or_cancelled': 'La recherche de correspondances bibliographiques reste incomplète.',
-    'metadata_candidate_time_budget': 'Durée maximale de recherche bibliographique atteinte (10 s par défaut).',
+    'metadata_candidate_time_budget': 'Budget temporel de recherche bibliographique atteint ; les correspondances peuvent rester non examinées.',
     'metadata_candidate_cancelled': 'Recherche bibliographique interrompue.',
     'metadata_candidate_row_budget': 'Plafond de notices du catalogue pour la comparaison atteint.',
     'metadata_candidate_reference_budget': 'Plafond de références bibliographiques examinables atteint.',
@@ -189,6 +189,22 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                 'La cause de certaines limites n’est pas disponible.',
             ))
             warnings.append('Certaines preuves restent non vérifiées ; un droit non vérifié ne signifie pas un livre absent.')
+        # 0 candidates after an incomplete index, or when file matching never
+        # ran, is NOT negative bibliographic evidence. Only strict Core booleans
+        # may change presentation; keep compatibility with earlier Core builds.
+        if (type(candidates.get('match_phase_executed')) is bool
+                and candidates['match_phase_executed'] is False
+                and counts['observed_files'] > 0):
+            warnings.append(
+                'Comparaison bibliographique des fichiers non exécutée : '
+                'zéro candidat ne signifie pas zéro correspondance.'
+            )
+        elif (candidates.get('index_completed') is False
+              and counts['observed_files'] > 0):
+            warnings.append(
+                'Index bibliographique incomplet : les suggestions restent '
+                'partielles et ne prouvent aucun droit.'
+            )
         warnings.append('Un SHA ou un ISBN ne prouve pas un droit. Aucun rattachement ni téléchargement.')
         control.report(message='Réconciliation locale terminée' if complete else 'Réconciliation locale incomplète')
         control.check_cancelled()
@@ -248,7 +264,34 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                     f'index : {candidates["index_ms"]} ms, '
                     f'rapprochement : {candidates["match_ms"]} ms.',
                 )
-            presentation['details'] = stages + coverage + candidate_metrics + tuple(
+            missing_context_lines = ()
+            context = result['stored_paths'].get('missing_path_context')
+            missing_count = paths.get('stored_path_missing', 0)
+            context_keys = (
+                'sqlite_present', 'sqlite_missing', 'sqlite_other',
+                'distinct_paths', 'distinct_artifacts_with_id',
+                'distinct_placements_with_id',
+            )
+            if (type(context) is dict and type(missing_count) is int
+                    and 0 <= missing_count <= 1_000_000
+                    and all(type(context.get(key)) is int
+                            and 0 <= context[key] <= missing_count
+                            for key in context_keys)
+                    and sum(context[key] for key in context_keys[:3]) == missing_count):
+                missing_context_lines = (
+                    'Chemins enregistrés absents (lignes SQLite contrôlées) : '
+                    f'{missing_count} ligne(s) · placements encore actifs '
+                    f'(état present) : {context["sqlite_present"]} · '
+                    f'historique déjà marqué missing : {context["sqlite_missing"]} · '
+                    f'autre état : {context["sqlite_other"]}.',
+                    'Références distinctes parmi ces absences : '
+                    f'{context["distinct_paths"]} chemin(s) · '
+                    f'{context["distinct_artifacts_with_id"]} artefact(s) avec ID · '
+                    f'{context["distinct_placements_with_id"]} placement(s) avec ID. '
+                    'Ces compteurs ne mesurent pas des livres perdus ; '
+                    'le parcours peut rester partiel.',
+                )
+            presentation['details'] = stages + coverage + candidate_metrics + missing_context_lines + tuple(
                 f'{label} : {counts[name]}' for name, label in _COUNTER_LABELS.items()
             ) + ('Les catégories peuvent se recouper ; ne pas additionner ces compteurs.',)
         return MaintenanceResult(ok=complete, changed=0, summary=summary,
