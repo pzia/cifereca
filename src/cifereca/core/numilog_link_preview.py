@@ -26,12 +26,17 @@ class NumilogLinkEvidencePreview:
     requires_explicit_confirmation: bool = True
 
 
+def _rows(db, query, values):
+    # Storage's thread-local SQLite connection deliberately has tuple rows;
+    # never change its shared row_factory while other Core paths use it.
+    cursor = db.execute(query, values)
+    fields = tuple(item[0] for item in cursor.description)
+    return [dict(zip(fields, row)) for row in cursor.fetchmany(3)]
+
+
 def _single(db, table, where, values):
-    # All identifiers and SQL fragments are fixed source literals, and every
-    # query is bounded. Ambiguity must never pick an arbitrary right/receipt.
-    rows = db.execute(
-        f"SELECT * FROM {table} WHERE {where} LIMIT 3", values,
-    ).fetchall()
+    # Table/where literals only, parametrized values, bounded evidence.
+    rows = _rows(db, f"SELECT * FROM {table} WHERE {where} LIMIT 3", values)
     return rows[0] if len(rows) == 1 else None, len(rows)
 
 
@@ -77,13 +82,13 @@ def preview_numilog_link(storage: Storage, observation: FileObservation,
                 )
                 if n != 1 or source is None:
                     return stop("source_unavailable")
-                rights = db.execute(
+                rights = _rows(db,
                     "SELECT entitlement_id, identity_id, provider_id, credential_id, "
                     "account_id, item_id, state, entitlement_type, loan_id, "
                     "expires_at, metadata_json FROM entitlements "
                     "WHERE provider_id=? AND credential_id=? AND item_id=? LIMIT 3",
                     ("numilog", credential_id, item_id),
-                ).fetchall()
+                )
                 if len(rights) != 1:
                     return stop("right_ambiguous_or_missing")
                 right = rights[0]
@@ -100,14 +105,14 @@ def preview_numilog_link(storage: Storage, observation: FileObservation,
                 if (type(metadata) is not dict
                         or metadata.get("source") != "numilog.authenticated_library"):
                     return stop("right_not_attested")
-                acquisitions = db.execute(
+                acquisitions = _rows(db,
                     "SELECT entitlement_id, identity_id, provider_id, credential_id, "
                     "account_id, item_id, status, artifact_id "
                     "FROM acquisition_ledger "
                     "WHERE entitlement_id=? OR (provider_id=? AND credential_id=? AND item_id=?) "
                     "LIMIT 3",
                     (right["entitlement_id"], "numilog", credential_id, item_id),
-                ).fetchall()
+                )
                 if len(acquisitions) != 1:
                     return stop("acquisition_ambiguous_or_missing")
                 receipt = acquisitions[0]
@@ -131,12 +136,12 @@ def preview_numilog_link(storage: Storage, observation: FileObservation,
                         or artifact["media_format"] != "epub"):
                     return stop("artifact_mismatch")
                 path, owner = observation.path, identity_id
-                placements = db.execute(
+                placements = _rows(db,
                     "SELECT identity_id, provider_id, source_item_id, artifact_id "
                     "FROM placements WHERE path=? OR "
                     "(identity_id=? AND provider_id=? AND source_item_id=?) LIMIT 3",
                     (path, owner, "numilog", item_id),
-                ).fetchall()
+                )
                 # This step only considers *unlinked* files. Existing links,
                 # even matching ones, require a separate idempotence review.
                 if placements:
