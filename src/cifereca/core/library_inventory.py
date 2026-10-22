@@ -198,6 +198,27 @@ def scan_identity_roots(
         result.reasons.add('nofollow_unavailable')
         return result
     deadline = time.monotonic() + limits.seconds
+    last_heartbeat = time.monotonic()
+
+    def heartbeat():
+        """Bounded progress while a single large file is still unfinished.
+
+        No guessed percentage, source identity, file path or SHA is emitted.
+        Throttle worker callbacks to at most one per second inside long SHA or
+        CRC loops; files counts mean *completed observations* only.
+        """
+        nonlocal last_heartbeat
+        if progress is None:
+            return
+        now = time.monotonic()
+        if now - last_heartbeat < 1.0:
+            return
+        last_heartbeat = now
+        progress(result._redacted_counts(
+            hashed_files=hashed,
+            validation_counts=validated,
+            structure_counts=structures,
+        ))
 
     def stopped():
         if cancelled():
@@ -251,6 +272,7 @@ def scan_identity_roots(
                         result.hash_bytes += len(data)
                         consumed += len(data)
                         hasher.update(data)
+                        heartbeat()
                     if consumed != size:
                         result.reasons.add('file_changed')
                         return
@@ -276,6 +298,7 @@ def scan_identity_roots(
                 remaining = limits.hash_bytes-result.structure_bytes
                 def count_structure(size):
                     result.structure_bytes += size
+                    heartbeat()
                 if remaining > 0 and not stopped():
                     with measured('structure'):
                         structure = inspect_stream_structure(
