@@ -31,8 +31,8 @@ def evidence(tmp_path):
         db.execute(
             "INSERT INTO entitlements "
             "(entitlement_id,identity_id,provider_id,credential_id,account_id,"
-            "item_id,state,entitlement_type,metadata_json) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
+            "item_id,state,entitlement_type,metadata_json,discovered_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (right, "alice", "numilog", "cred", "account",
              "edition", "active", "owned",
              json.dumps({"source": "numilog.authenticated_library"})),
@@ -40,15 +40,15 @@ def evidence(tmp_path):
         db.execute(
             "INSERT INTO artifacts (artifact_id,sha256,size,media_format) "
             "VALUES (?,?,?,?)",
-            (artifact, observation.sha256, observation.size, "epub"),
+            (artifact, observation.sha256, observation.size, "epub", 1, 1),
         )
         db.execute(
             "INSERT INTO acquisition_ledger "
             "(acquisition_id,entitlement_id,identity_id,provider_id,credential_id,"
-            "account_id,item_id,status,artifact_id) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
+            "account_id,item_id,status,artifact_id,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             ("receipt", right, "alice", "numilog", "cred", "account",
-             "edition", "complete", artifact),
+             "edition", "complete", artifact, 1, 1),
         )
     yield storage, root, observation
     storage.close()
@@ -77,8 +77,8 @@ def test_valid_scoped_receipt_is_reviewable_but_never_authorizes_write(evidence,
     ("UPDATE acquisition_ledger SET account_id='foreign'", "acquisition_conflict"),
     ("UPDATE acquisition_ledger SET status='pending'", "acquisition_conflict"),
     ("UPDATE artifacts SET size=1", "artifact_mismatch"),
-    ("INSERT INTO placements (placement_id,path,identity_id,provider_id,source_item_id,state) "
-     "VALUES ('other','/tmp/conflict','alice','numilog','edition','present')", "placement_conflict"),
+    ("INSERT INTO placements (placement_id,path,identity_id,provider_id,source_item_id,state,created_at,updated_at) "
+     "VALUES ('other','/tmp/conflict','alice','numilog','edition','present',1,1)", "placement_conflict"),
 ])
 def test_mutated_evidence_fails_closed(evidence, update, reason):
     storage, *_ = evidence
@@ -116,11 +116,11 @@ def test_second_same_edition_entitlement_is_ambiguous(evidence):
     with storage._lock, storage._connect() as db:
         db.execute(
             "INSERT INTO entitlements (entitlement_id,identity_id,provider_id,"
-            "credential_id,account_id,item_id,state,entitlement_type,metadata_json)"
-            "VALUES (?,?,?,?,?,?,?,?,?)",
+            "credential_id,account_id,item_id,state,entitlement_type,metadata_json,discovered_at,updated_at)"
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             ("duplicate", "alice", "numilog", "cred", "another_account",
              "edition", "active", "owned",
-             json.dumps({"source": "numilog.authenticated_library"})),
+             json.dumps({"source": "numilog.authenticated_library"}), 1, 1),
         )
     result = preview(evidence)
     assert result.reason == "right_ambiguous_or_missing"
@@ -133,9 +133,9 @@ def test_second_acquisition_for_same_edition_is_ambiguous(evidence):
         db.execute(
             "INSERT INTO acquisition_ledger "
             "(acquisition_id,entitlement_id,identity_id,provider_id,credential_id,"
-            "account_id,item_id,status) VALUES (?,?,?,?,?,?,?,?)",
+            "account_id,item_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             ("other-receipt", "other-right", "alice", "numilog", "cred",
-             "account", "edition", "complete"),
+             "account", "edition", "complete", 1, 1),
         )
     result = preview(evidence)
     assert result.reason == "acquisition_ambiguous_or_missing"
