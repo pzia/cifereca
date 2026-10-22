@@ -95,7 +95,12 @@ def _project(audit) -> _Projection | None:
             files, rows,
             not inventory.reasons,
             not snapshot.reasons,
-            not reconciliation.reasons,
+            not bool(set(reconciliation.reasons) & {
+                'comparison_budget', 'cancelled', 'time_budget',
+                'audit_time_budget', 'snapshot_row_budget',
+                'snapshot_time_budget', 'snapshot_unavailable',
+                'snapshot_changed', 'snapshot_cancelled',
+            }),
         )
     except (AttributeError, KeyError, TypeError, ValueError,
             OverflowError, UnicodeError, RecursionError):
