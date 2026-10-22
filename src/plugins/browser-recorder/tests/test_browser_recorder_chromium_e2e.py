@@ -15,6 +15,7 @@ from time import sleep
 from urllib.parse import urlsplit
 from zipfile import ZipFile
 import hashlib
+import gzip
 import json
 import subprocess
 import sys
@@ -136,8 +137,43 @@ def fake_bookstore():
         def do_GET(self):
             target = urlsplit(self.path).path
             calls.append(("GET", target))
-            if target == "/catalog":
+            if target == "/negotiation":
+                self.send(200, b'''<!doctype html><html><body><script>
+                    async function run() {
+                      for (const url of ['/negotiated.json', '/negotiated.html', '/forced-gzip.json']) {
+                        try { const response = await fetch(url); await response.text(); }
+                        catch (_) { /* A server can send an unacceptable coding. */ }
+                      }
+                      await fetch('/complete');
+                    }
+                    window.addEventListener('DOMContentLoaded', run);
+                    </script></body></html>''', "text/html")
+            elif target in {"/negotiated.json", "/negotiated.html", "/forced-gzip.json"}:
+                value = (b'{"ProductId":214,"access_token":"' + TOKEN.encode() + b'"}'
+                         if target.endswith("json") else b'<html><p id="book-214">Book</p></html>')
+                mime = "application/json" if target.endswith("json") else "text/html"
+                if target == "/forced-gzip.json" or self.headers.get("Accept-Encoding") != "identity":
+                    self.send(200, gzip.compress(value), mime, {"Content-Encoding": "gzip"})
+                else:
+                    self.send(200, value, mime)
+            elif target == "/catalog":
                 self.send(200, catalog_page(), "text/html; charset=utf-8")
+            elif target == "/asset-flood":
+                self.send(200, b'''<!doctype html><html><body><script>
+                  async function run() {
+                    await Promise.all(Array.from({length:1000}, (_, i) => new Promise(resolve => {
+                      const image = new Image(); image.onload = image.onerror = resolve;
+                      image.src = '/binary.png?n=' + i;
+                    })));
+                    for (let i=0; i<10; i++) {
+                      const r = await fetch('/api/books?page=' + i); await r.text();
+                    }
+                    const r = await fetch('/post-target', {method:'POST',
+                      headers:{'Content-Type':'application/json'}, body:'{"page":2}'});
+                    await r.text(); await fetch('/complete');
+                  }
+                  window.addEventListener('DOMContentLoaded', run);
+                  </script></body></html>''', "text/html")
             elif target == "/welcome":
                 self.send(200, b"<html><body>Welcome FICTIONAL user</body></html>",
                           "text/html")
@@ -271,6 +307,7 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
             assert entry.response_headers.get("content-length") is None
             assert entry.mime == expected_mime
             assert entry.response_body_state == "captured"
+            assert entry.response_body_reason == "captured"
             assert entry.response_body
         # The binary fetch can still be in-flight when the page's final
         # /complete endpoint signals Stop. In either terminal or pending
@@ -325,8 +362,13 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
                 ])
                 body = exchange["bodies"]["response"]
                 assert body["state"] == state
+                assert body["capture_state"] == "captured"
+                assert body["capture_reason"] == "captured"
                 assert body["file"] in members
                 assert members[body["file"]]
+            manifest = json.loads(members["manifest.json"])
+            assert manifest["body_capture_reasons"]["captured"] >= 3
+            assert sum(manifest["body_capture_reasons"].values()) == 2 * len(trace.exchanges)
             joined = json.dumps(preview, ensure_ascii=True)
             for secret in (TOKEN, COOKIE, ACCOUNT, UUID,
                            "PRIVATE_FAKE_TITLE", "FICTIONAL_PASSWORD"):
@@ -952,4 +994,108 @@ def test_real_chromium_download_is_separate_explicit_save_not_a_trace_body(
         finally:
             review.destroy()
     finally:
+        trace.destroy()
+
+
+@pytest.mark.parametrize("prefer_identity", (False, True))
+def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
+    fake_bookstore, monkeypatch, tmp_path, prefer_identity,
+):
+    from browser_recorder_vault import PrivateSessionVault
+    from browser_recorder_private_zip import save_session_llm_zip
+    server, stop, calls = fake_bookstore
+    origin = f"http://127.0.0.1:{server.server_port}"
+    original = http_recorder.site_origin
+    def local(url):
+        parsed = urlsplit(url)
+        return origin if parsed.scheme == "http" and parsed.netloc == urlsplit(origin).netloc else original(url)
+    import browser_recorder_zip as zip_module
+    monkeypatch.setattr(http_recorder, "site_origin", local)
+    monkeypatch.setattr(zip_module, "site_origin", local)
+    vault = PrivateSessionVault(tmp_path / "vault")
+    writer = vault.begin("SYNTHETIC-IDENTITY-VAULT-PASSWORD")
+    trace = http_recorder.record_http(
+        origin + "/negotiation", stop, max_seconds=25,
+        prefer_identity=prefer_identity, vault_writer=writer,
+    )
+    stored = vault.open(writer.session_id, "SYNTHETIC-IDENTITY-VAULT-PASSWORD")
+    try:
+        assert stored.trace.content_negotiation == trace.content_negotiation
+        by_path = {urlsplit(e.url).path: e for e in stored.trace.exchanges}
+        for path in ("/negotiated.json", "/negotiated.html"):
+            entry = by_path[path]
+            assert (entry.response_body is not None) is prefer_identity
+            assert entry.response_body_reason == ("captured" if prefer_identity else "compressed")
+            assert calls.count(("GET", path)) == 1  # no second fetch/replay
+        forced = by_path["/forced-gzip.json"]
+        assert forced.response_body is None
+        assert forced.response_body_reason in {"compressed", "network_error"}
+        destination = tmp_path / "private.zip"
+        save_session_llm_zip(stored, destination, confirmed=True)
+        with ZipFile(destination) as archive:
+            private = json.loads(archive.read("trace.json"))
+            assert private["content_negotiation"] == trace.content_negotiation
+            if prefer_identity:
+                assert TOKEN in archive.read("trace.json").decode()
+        review = IdentifierReview(stored.trace)
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        plan = prepare_reviewed_zip(review)
+        members = {row["name"]: row["text"] for row in plan.preview()["members"]}
+        coverage = json.loads(members["coverage-report.json"])
+        assert coverage["content_negotiation"] == trace.content_negotiation
+        report = next(row for row in coverage["exchanges"] if row["id"] == forced.sequence)
+        assert report["response"]["capture_reason"] == forced.response_body_reason
+        assert TOKEN not in repr(members)
+        if prefer_identity:
+            assert any(name.startswith("bodies/") and 'ProductId' in text
+                       for name, text in members.items())
+    finally:
+        trace.destroy()
+        stored.trace.destroy()
+
+
+def test_real_chromium_static_flood_retains_ten_json_and_late_post(
+    fake_bookstore, monkeypatch, tmp_path,
+):
+    from browser_recorder_vault import PrivateSessionVault
+    server, stop, calls = fake_bookstore
+    origin = f"http://127.0.0.1:{server.server_port}"
+    original = http_recorder.site_origin
+    def local(url):
+        parsed = urlsplit(url)
+        return origin if parsed.scheme == "http" and parsed.netloc == urlsplit(origin).netloc else original(url)
+    import browser_recorder_zip as zipped
+    monkeypatch.setattr(http_recorder, "site_origin", local)
+    monkeypatch.setattr(zipped, "site_origin", local)
+    vault = PrivateSessionVault(tmp_path / "vault")
+    writer = vault.begin("FICTIONAL-ASSET-FLOOD-PASSWORD")
+    summaries = []
+    trace = http_recorder.record_http(
+        origin + "/asset-flood", stop, max_seconds=60,
+        vault_writer=writer, coverage_callback=summaries.append,
+    )
+    stored = vault.open(writer.session_id, "FICTIONAL-ASSET-FLOOD-PASSWORD")
+    try:
+        assert len(trace.exchanges) < 100
+        assert trace.omitted["limit"] == 0
+        assert trace.omitted["static_metadata_budget"] >= 936
+        assert calls.count(("GET", "/binary.png")) == 1000
+        assert calls.count(("GET", "/api/books")) == 10
+        assert calls.count(("POST", "/post-target")) == 1
+        assert sum(urlsplit(e.url).path == "/api/books" and e.response_body is not None
+                   for e in stored.trace.exchanges) == 10
+        assert any(e.method == "POST" and e.request_body == '{"page":2}'
+                   for e in stored.trace.exchanges)
+        assert all(e.response_body is None for e in trace.exchanges if e.url.find('/binary.png') >= 0)
+        assert summaries and all(type(v) is int for row in summaries for v in row.values())
+        review = IdentifierReview(stored.trace)
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        plan = prepare_reviewed_zip(review)
+        manifest = json.loads(next(row["text"] for row in plan.preview()["members"]
+                                   if row["name"] == "manifest.json"))
+        assert manifest["capture_omissions"]["static_metadata_budget"] >= 936
+    finally:
+        stored.trace.destroy()
         trace.destroy()

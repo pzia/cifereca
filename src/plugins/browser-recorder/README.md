@@ -649,3 +649,56 @@ fichier volontairement téléchargé ne constitue pas un déchiffrement DRM.
 
 Les tests utilisent uniquement un faux portail local et un faux fichier
 ACSM, sans compte fournisseur, titre réel ou licence réelle.
+
+
+## Provenance des omissions HTTP (0.2.14, #2528)
+
+Chaque échange du ZIP anonymisé expose maintenant un code fermé
+`bodies.request/response.capture_reason` (taille Chromium non fiable,
+en-têtes refusés, compression, contenu binaire, budget, erreur de lecture,
+réponse absente ou capture réussie). Le manifeste publie uniquement les
+compteurs agrégés `body_capture_reasons` et les anciens états
+`capture_state` restent inchangés. Ces codes n'intègrent aucune URL,
+identité, valeur d'en-tête ni contenu privé.
+
+Une session chiffrée issue d'une version antérieure reste consultable :
+les motifs inexistants sont `unknown`, jamais reconstruits par hypothèse.
+Ces diagnostics n'autorisent pas la lecture d'une réponse compressée ou
+d'une taille inconnue ; les corps rejetés restent absents du ZIP.
+
+## Budget des ressources statiques (#2864)
+
+Le collecteur réserve au plus 64 des 240 emplacements aux requêtes GET
+que Chromium classe image, police, média ou feuille de style (un tiers du
+plafond si celui-ci est réduit). Les suivantes sont comptées comme
+`static_metadata_budget`, sans conserver leurs URLs ou corps. Ce classement
+porte sur l'intention de la requête, pas sur le MIME de la réponse absente.
+Aucune éviction ni renumérotation des observations déjà conservées.
+
+Les requêtes document, XHR/fetch, scripts et toutes les mutations restent
+soumises au budget général ; les origines, refus des binaires et limites
+des corps restent inchangés. Le compteur de ressources hors budget ne doit
+pas être interprété comme autant de binaires observés.
+
+Un bandeau commun donne en direct les échanges conservés/plafond, réponses
+textuelles réellement conservées, binaires et compression exclus, ressources
+statiques hors budget et hors périmètre. Il avertit à 80 % du plafond et
+quand aucune réponse n'est disponible pour l'analyse. Le même bilan est
+recalculé lors de l'ouverture d'une session privée.
+
+## Réponses compressées : option de négociation HTTP (#2863)
+
+Pour une **nouvelle capture**, activez volontairement dans Paramètres
+« Demander des réponses non compressées ». Chromium envoie alors
+`Accept-Encoding: identity` sur les requêtes de ce navigateur, y compris
+ses onglets et les sites tiers. La collecte reste limitée aux origines
+autorisées ; aucun appel supplémentaire, rejeu ni élargissement de capture.
+Le choix est indiqué dans la source privée et `coverage-report.json` par
+`content_negotiation=identity_requested` ; il s'agit d'une demande, pas
+d'une garantie sur la réponse du serveur.
+
+Les réponses effectivement non compressées passent les mêmes limites de
+MIME, taille mesurée par Chromium et budget cumulé. Un serveur qui impose
+encore gzip/Brotli reste refusé (`capture_reason=compressed`), sans lecture
+ni décompression du corps. Les captures antérieures ne peuvent pas être
+réparées et aucune méthode de décompression bornée n'est revendiquée.

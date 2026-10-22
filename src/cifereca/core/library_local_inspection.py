@@ -361,6 +361,9 @@ class LocalInspection:
         # It never changes scan freshness or grants a file/right link.
         self._from_audit_cache = False
         self._cases = {}
+        # Bounded, identity-scoped search-only terms: private until close().
+        # ISBN/OPF matches aid human navigation, NEVER attest provenance.
+        self._case_search = {}
         self._path_missing_by_sqlite_state = Counter()
         # These references exist solely inside this revocable Core UI session.
         # They never enter an audit payload or a future repair capability.
@@ -518,6 +521,7 @@ class LocalInspection:
             self._cases[key] = LocalCase(key, _text(label), provider,
                                         tuple(sorted(set(states) & (STATES.keys() - {'all'}))),
                                         details)
+            self._case_search[key] = _searchable(_text(label))[:3200]
             return True
 
         for index, observation in enumerate(audit.inventory.files):
@@ -590,6 +594,7 @@ class LocalInspection:
                 'search': search_text,
                 'name': _searchable(Path(observation.path).name[:260]),
             }
+            self._case_search[f'file:{index}'] = search_text
             if 'confirmed_link' not in states:
                 self._manual_file_proofs[f'file:{index}'] = {
                     'verified': (
@@ -816,6 +821,21 @@ class LocalInspection:
                        _provider(right.get('provider_id')),
                        case_state, detail):
                 break
+            # Search the same-identity notice identifiers even if the UI
+            # label contains only title/author. ISBN is non-probative and
+            # never used by the attachment preflight or transaction writers.
+            search_parts = [case_heading, right_label, _text(right_item)[:256]]
+            for _notice_index, notice in matches[:8]:
+                ids = notice.get('bibliographic_identifiers', ())
+                if type(ids) not in (list, tuple):
+                    continue
+                for pair in ids[:16]:
+                    if (type(pair) in (list, tuple) and len(pair) == 2
+                            and type(pair[1]) is str):
+                        search_parts.append(pair[1][:128])
+            self._case_search[f'right:{index}'] = _searchable(
+                ' '.join(search_parts)
+            )[:3200]
         for index, state in audit.stored_paths.states.items():
             if state not in STATES or not 0 <= index < len(placements) or placements[index].get('identity_id') != identity_id:
                 continue
@@ -837,6 +857,10 @@ class LocalInspection:
             if not add('path', index, label+' · '+_text(placements[index].get('placement_id')),
                        'unattributed', case_states, evidence('placements', index)):
                 break
+            self._case_search[f'path:{index}'] = _searchable(
+                label + ' ' + _text(placements[index].get('placement_id'))[:128]
+                + ' ' + _text(placements[index].get('path'))[-256:]
+            )[:3200]
             if state == 'stored_path_missing':
                 self._path_missing_by_sqlite_state[bucket] += 1
         if not self.valid():
@@ -856,6 +880,7 @@ class LocalInspection:
 
     def close(self):
         self._cases.clear()
+        self._case_search.clear()
         self._from_audit_cache = False
         self._candidate_file_keys.clear()
         self._file_facets.clear()
@@ -968,8 +993,10 @@ class LocalInspection:
                 and (state == 'all' or state in case.states)
                 and (not hide_historical_paths
                      or 'stored_path_missing_historical' not in case.states)
-                and (not terms or all(word in _searchable(case.label)
-                                      for word in terms))]
+                and (not terms or all(
+                    word in self._case_search.get(case.key, '')
+                    for word in terms
+                ))]
         return LocalPage(tuple(rows[offset:offset+limit]), len(rows), offset, self._limited)
 
     def unconfirmed_files(self, *, offset=0, limit=1, query='',

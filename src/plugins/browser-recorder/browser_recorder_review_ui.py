@@ -159,6 +159,8 @@ class PrivateReviewPanel:
         )
         self.status.set_selectable(True)
         root.append(self.status)
+        self.coverage_status = Gtk.Label(label="", xalign=0, wrap=True)
+        root.append(self.coverage_status)
         if self.vault_directory is not None:
             self.vault_state = Gtk.Label(
                 label="Coffre fermé · saisir la phrase secrète une fois pour l'ouvrir.",
@@ -259,6 +261,17 @@ class PrivateReviewPanel:
             "https://identite.exemple.org, https://auth.exemple.org"
         )
         box.append(self.third_party_origins)
+        self.prefer_identity = Gtk.CheckButton(
+            label="Demander des réponses non compressées (Accept-Encoding: identity)."
+        )
+        box.append(self.prefer_identity)
+        box.append(Gtk.Label(
+            label="Option pour une nouvelle capture : modifie la négociation HTTP "
+                  "de tout ce navigateur, sans ajouter de requête. Les limites "
+                  "de capture et les origines restent identiques. Si le serveur "
+                  "impose gzip/Brotli, les corps restent exclus ; les anciennes "
+                  "captures ne sont pas réparées.", xalign=0, wrap=True,
+        ))
         if self.vault_directory is not None:
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
@@ -642,6 +655,28 @@ class PrivateReviewPanel:
         )
         self._refresh()
 
+    def _show_coverage(self, metrics):
+        if type(metrics) is not dict:
+            return
+        names = ("exchanges", "limit", "text_responses", "binary_skipped",
+                 "compressed", "out_of_scope", "static_metadata_budget")
+        if any(type(metrics.get(key)) is not int or not 0 <= metrics[key] <= 1_000_000
+               for key in names):
+            return
+        label = (
+            f"{metrics['exchanges']}/{metrics['limit']} échanges · "
+            f"{metrics['text_responses']} réponses textuelles conservées · "
+            f"{metrics['binary_skipped']} binaires exclus · "
+            f"{metrics['compressed']} corps compressés exclus · "
+            f"{metrics['static_metadata_budget']} ressources statiques hors budget · "
+            f"{metrics['out_of_scope']} hors périmètre."
+        )
+        if metrics["text_responses"] == 0:
+            label += " Aucune réponse conservée : analyse des réponses impossible."
+        if metrics["limit"] and metrics["exchanges"] * 5 >= metrics["limit"] * 4:
+            label += " Attention : capacité de capture presque atteinte."
+        self.coverage_status.set_label(label)
+
     def is_recording(self):
         return self._handle is not None and not self._handle.done()
 
@@ -650,6 +685,7 @@ class PrivateReviewPanel:
                 or self._trace is not None or self._review is not None)
 
     def _refresh(self):
+        self.prefer_identity.set_sensitive(not self._closed and not self.is_recording())
         busy = self.is_recording()
         scanning = self.is_scanning()
         replaceable = self._trace is None or (
@@ -790,6 +826,7 @@ class PrivateReviewPanel:
         self._refresh()
 
     def _discard_private(self):
+        self.coverage_status.set_label("")
         self._candidate_page = 0
         self._pending_cursor = -1
         self._invalidate_bundle()
@@ -953,7 +990,17 @@ class PrivateReviewPanel:
         self._pause_control = CapturePause()
         pause_control = self._pause_control
         self._download_outcomes = {}
+        prefer_identity = self.prefer_identity.get_active()
         self.status.set_label("Navigateur HTTP privé en cours, sans export…")
+
+        def progress(metrics):
+            # Worker passes only numeric counts. Late callbacks cannot restore
+            # another session after discard, close or a new capture.
+            def deliver():
+                if not self._closed and self._generation == generation:
+                    self._show_coverage(metrics)
+                return False
+            self.GLib.idle_add(deliver)
 
         def work(_control):
             kwargs = {
@@ -961,7 +1008,10 @@ class PrivateReviewPanel:
                 "metadata_only_origins": metadata_only_origins,
                 "download_destination": self._choose_download_from_worker,
                 "status": self._download_status,
+                "coverage_callback": progress,
             }
+            if prefer_identity:
+                kwargs["prefer_identity"] = True
             if self.vault_directory is not None:
                 writer = PrivateSessionVault(self.vault_directory).begin(passphrase)
                 kwargs["vault_writer"] = writer
@@ -1026,6 +1076,7 @@ class PrivateReviewPanel:
                         self._refresh()
                         return False
                     self._trace = result
+                    self._show_coverage(result.coverage())
                     try:
                         self._review = IdentifierReview(result)
                     except Exception:
@@ -1522,6 +1573,7 @@ class PrivateReviewPanel:
             return
         self._discard_private()
         self._trace = stored.trace
+        self._show_coverage(stored.trace.coverage())
         try:
             self._review = IdentifierReview(stored.trace)
         except Exception:
