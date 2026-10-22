@@ -196,6 +196,7 @@ def test_xtest_81_choices_exact_zip_and_confirmed_export(
             assert panel.candidate_page_status.get_label() == (
                 f"Identifiants {page * 24 + 1}–"
                 f"{min(81, (page + 1) * 24)} sur 81"
+                f" · {81 - decided} à décider"
             )
             if page < 3:
                 assert panel.candidate_next.get_sensitive()
