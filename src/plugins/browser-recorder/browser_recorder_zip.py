@@ -28,7 +28,7 @@ from browser_recorder_download import _open_parent_without_symlinks
 
 ZIP_SCHEMA = "cifereca.browser-recorder.approved-zip/1"
 MAX_EXCHANGES = 240
-MAX_MEMBERS = 600
+MAX_MEMBERS = 768  # 240 exchanges × (metadata + 2 bodies) + bounded kit/reports
 MAX_UNCOMPRESSED = 4 * 1024 * 1024
 MAX_ZIP_BYTES = 2 * 1024 * 1024
 MAX_BODY_OUT = 16000
