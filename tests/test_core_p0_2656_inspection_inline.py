@@ -247,3 +247,70 @@ def test_actual_fresh_mode_emitted_before_running_second_scan(scoped):
     assert signals == ["new_scan"]
     assert session is not None
     session.close()
+
+
+def test_independent_inspection_row_tracks_ongoing_then_completed_without_rescan(scoped):
+    service, _, _ = scoped
+    calls, pending, states, suffixes = [], [], [], []
+    inspection = NS(
+        add_suffix=suffixes.append, set_subtitle=states.append,
+    )
+    parent = NS(
+        service=service,
+        runner=NS(submit=lambda *args, **kw: calls.append(args)),
+        show_error=lambda *_a: None,
+    )
+    owner = LocalInspectionController(
+        parent=parent, Gtk=NS(Box=FakeBox, Label=FakeLabel, Button=FakeButton,
+                              Orientation=NS(HORIZONTAL=0)),
+        Adw=NS(), Pango=NS(),
+        GLib=NS(idle_add=pending.append, source_remove=lambda *_a: None),
+        alive=lambda: True,
+    )
+    owner.attach_activity_row(inspection)
+    owner.start()
+    assert states[-1] == 'Inspection en cours · lecture seule · couverture inconnue.'
+    owner._mode(owner._generation, 'new_scan')
+    assert pending.pop(0)() is False
+    assert states[-1] == 'Nouvelle inspection locale hors réseau · couverture inconnue.'
+    read, completed = calls[0][1], calls[0][2]
+    inspected = read()
+    owner.present = lambda: None
+    completed(inspected)
+    assert states[-1] == 'Inspection terminée · cas locaux consultables.'
+    assert not suffixes[0].visible
+    old = states[-1]
+    owner.clear()  # Closing the private consultation is not an audit failure.
+    assert states[-1] == old
+
+
+def test_independent_inspection_row_preserves_partial_failure_and_cancel(scoped):
+    service, _, _ = scoped
+    calls, statuses, errors = [], [], []
+    owner = LocalInspectionController(
+        parent=NS(
+            service=service, runner=NS(submit=lambda *args, **kw: calls.append(args)),
+            show_error=lambda *args: errors.append(args),
+        ),
+        Gtk=NS(Box=FakeBox, Label=FakeLabel, Button=FakeButton,
+               Orientation=NS(HORIZONTAL=0)),
+        Adw=NS(), Pango=NS(),
+        GLib=NS(idle_add=lambda _fn: None, source_remove=lambda *_a: None),
+        alive=lambda: True,
+    )
+    owner.attach_activity_row(NS(
+        add_suffix=lambda *_a: None, set_subtitle=statuses.append,
+    ))
+    owner.start()
+    assert statuses[-1].startswith('Inspection en cours')
+    owner.clear()
+    assert statuses[-1] == 'Inspection interrompue · aucun constat d’absence de livre.'
+    owner.start()
+    calls[-1][2]({
+        'schema': 1, 'read_only': True, 'acquisition_authorized': False,
+        'repair_authorized': False, 'status': 'incomplete_scan',
+        'reasons': ['snapshot_time_budget'],
+    })
+    assert statuses[-1] == 'Inspection impossible · aucune absence de livre établie.'
+    assert len(errors) == 1 and 'SQLite' in errors[0][0]
+    owner.clear()
