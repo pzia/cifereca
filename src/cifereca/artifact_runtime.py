@@ -608,12 +608,13 @@ class LibraryMaintenanceBrokerImpl:
                 # preserve its inode: it already satisfies the new DB path.
                 # Never replace an existing unrelated or symlinked target.
                 created_target = False
-                if target is None:
+                if not new.exists():
                     try:
                         os.link(old, new, follow_symlinks=False)
                     except FileExistsError:
                         raise _LibraryFilenameConflict("Collision de nom")
                     created_target = True
+                expected_new = os.stat(new, follow_symlinks=False)
                 try:
                     self.service.storage.relocate_local_path(
                         old, new,
@@ -641,9 +642,21 @@ class LibraryMaintenanceBrokerImpl:
                 try:
                     old_stat = os.stat(old, follow_symlinks=False)
                     new_stat = os.stat(new, follow_symlinks=False)
-                    if (created_target
-                            and (old_stat.st_dev, old_stat.st_ino)
-                            != (new_stat.st_dev, new_stat.st_ino)):
+                    # Even an attested existing destination can be replaced
+                    # externally during the SQLite transaction. In that case
+                    # keep the original file as an inert, recoverable duplicate.
+                    new_unchanged = all(
+                        getattr(new_stat, attr) == getattr(expected_new, attr)
+                        for attr in (
+                            'st_dev', 'st_ino', 'st_size',
+                            'st_mtime_ns', 'st_ctime_ns',
+                        )
+                    )
+                    same_inode = (
+                        (old_stat.st_dev, old_stat.st_ino)
+                        == (new_stat.st_dev, new_stat.st_ino)
+                    )
+                    if not new_unchanged or (created_target and not same_inode):
                         cleanup_pending = True
                     else:
                         old.unlink()
