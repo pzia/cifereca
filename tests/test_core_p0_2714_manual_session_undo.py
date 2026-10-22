@@ -6,7 +6,7 @@ import json
 import pytest
 
 from tests.test_core_p0_2714_manual_session_bridge import selected
-from tests.test_core_p0_2714_numilog_manual_transaction import _rows
+from tests.test_core_p0_2714_numilog_manual_transaction import rig, _rows
 
 
 def _attach(selected):
