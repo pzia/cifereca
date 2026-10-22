@@ -138,9 +138,9 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
         assert isinstance(advanced, Gtk.Expander)
         assert not advanced.get_expanded()
         assert "HTTP" in description.get_label()
-        assert service.private_panel.tabs.get_n_pages() == 3
+        assert service.private_panel.tabs.get_n_pages() == 4
         assert "Revue" in service.private_panel.tabs.get_tab_label_text(
-            service.private_panel.tabs.get_nth_page(2))
+            service.private_panel.tabs.get_nth_page(3))
         assert "HAR" in advanced.get_label()
         assert not advanced.get_child().get_mapped()
 
