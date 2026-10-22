@@ -26,7 +26,10 @@ class Entry:
 
 
 @pytest.mark.parametrize("bad_key", [False, True])
-def test_private_export_crosses_public_context_to_attested_feed(tmp_path, monkeypatch, bad_key):
+@pytest.mark.parametrize("current", [False, True])
+def test_private_export_crosses_public_context_to_attested_feed(
+    tmp_path, monkeypatch, bad_key, current,
+):
     monkeypatch.syspath_prepend(str(SOURCE))
     from browser_recorder_http import PrivateExchange, PrivateHttpTrace
     from browser_recorder_vault import PrivateSessionVault
@@ -71,13 +74,18 @@ def test_private_export_crosses_public_context_to_attested_feed(tmp_path, monkey
     panel._private_destination_dialog = None
     panel.is_scanning = lambda: False
     panel.vault_directory = vault.path
-    panel.session_list = NS(get_active_id=lambda: writer.session_id)
+    # Deliberately select an unrelated catalogue ID when exporting the
+    # active review. Never let an old list selection redirect its contents.
+    other_sid = "0" * 32
+    assert other_sid != writer.session_id
+    panel.session_list = NS(get_active_id=lambda: other_sid if current else writer.session_id)
+    panel._trace = NS(vault_session_id=writer.session_id) if current else None
     panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(chosen / "session.zip")
     panel.vault_passphrase = Entry(password if not bad_key else "FICTIONAL-WRONG-VAULT-KEY")
     panel._diagnostic = page._report_http_outcome
     panel._refresh = lambda: None
     panel.status = NS(set_label=lambda _: None)
-    panel.export_private_zip()
+    panel.export_private_zip(current=current)
     # Removing the view/context cannot erase an already published result.
     page.context = None
     panel._closed = True
