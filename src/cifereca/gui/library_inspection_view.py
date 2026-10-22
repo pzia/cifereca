@@ -410,7 +410,7 @@ class LocalInspectionController:
                     else "indisponible : preuves SQLite incomplètes."
                 )
                 + " Ce ne sont ni la même mesure ni forcément le même instant ; "
-                "leur écart ne désigne aucun fichier perdu ou PDF fautif.\\n"
+                "leur écart ne désigne aucun fichier perdu ou PDF fautif.\n"
             )
             + f"PLACEMENTS SQLITE · {overview.get('placements_registered', 0)} enregistrés "
             f"pour l'identité · "
