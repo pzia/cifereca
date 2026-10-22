@@ -76,6 +76,36 @@ def begin_inspection_cache(service):
     return generation, _service_stamp(service)
 
 
+def _make_session_stamp_guard(service, scope_valid, expires, stamp):
+    """Guard live cache reads; acknowledge at most ONE owned Core DB commit.
+
+    The refresh callback is not a cache invalidation bypass for arbitrary
+    database changes. Only a successfully committed private Core transaction
+    may invoke it, once, to preserve its same-session undo capability.
+    All subsequent external SQLite/WAL changes revoke the entire session.
+    """
+    expected = [stamp]
+    acknowledged = [False]
+
+    def valid():
+        return (scope_valid() and monotonic() < expires
+                and _service_stamp(service) == expected[0])
+
+    def accept_core_commit():
+        if (acknowledged[0] or not scope_valid() or monotonic() >= expires):
+            return False
+        current = _service_stamp(service)
+        if current is None:
+            return False
+        # A successful Core transaction may change the database/WAL stamp,
+        # but it never grants a new account, identity, root or file right.
+        expected[0] = current
+        acknowledged[0] = True
+        return valid()
+
+    return valid, accept_core_commit
+
+
 def remember_inspection_cache(service, identity_id, audit, scope_valid, generation, stamp):
     """Keep *only* a bounded local projection; never retain raw audit graphs.
 
@@ -95,8 +125,9 @@ def remember_inspection_cache(service, identity_id, audit, scope_valid, generati
         session = LocalInspection(audit, scope_valid, identity_id,
                                   roots=roots.get(identity_id, ()), service=service)
         expires = monotonic() + _TTL_SECONDS
-        session._valid = lambda: (scope_valid() and monotonic() < expires
-                                  and _service_stamp(service) == stamp)
+        session._valid, session._accept_own_core_commit = _make_session_stamp_guard(
+            service, scope_valid, expires, stamp,
+        )
         if not session.valid():
             return
         with _LOCK:
