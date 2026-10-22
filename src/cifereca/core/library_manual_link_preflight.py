@@ -11,7 +11,12 @@ from dataclasses import dataclass
 
 _REASON_LABELS = {
     "selection_unavailable": "Sélection privée indisponible ou périmée.",
-    "audit_incomplete": "L’analyse locale est incomplète ; aucune association définitive n’est possible.",
+    "audit_incomplete": "La couverture des preuves pertinentes est incomplète ; aucune association définitive n’est possible.",
+    "global_partial_pair_reviewable": (
+        "L’analyse générale est partielle, mais les preuves locales de cette "
+        "paire sont suffisantes pour demander une revalidation fraîche. "
+        "Aucun rattachement n’est encore autorisé."
+    ),
     "right_not_attested": "Droit Numilog actif et authentifié non établi pour cette identité.",
     "right_scope_ambiguous": "Plusieurs droits ou coordonnées de compte incompatibles pour cette édition.",
     "file_unverified": "SHA, structure ou CRC du fichier local non vérifié.",
@@ -22,7 +27,42 @@ _REASON_LABELS = {
     "artifact_unavailable": "Artefact du reçu absent, ambigu ou non vérifiable.",
     "artifact_mismatch": "Les octets du fichier ne concordent pas avec l’artefact du reçu.",
     "bibliographic_hint_only": "Une notice/ISBN identique est une simple piste, jamais une preuve d’achat.",
-    "transaction_unavailable": "Aucune écriture autorisée : transaction et revalidation à construire séparément.",
+    "transaction_unavailable": (
+        "Ce préflight est seulement un diagnostic : aucun placement n’est "
+        "créé. Si la paire est admissible, utilisez « Vérifier les preuves "
+        "actuelles… » puis confirmez explicitement ; le Core revalidera "
+        "le droit, le reçu et le fichier avant toute écriture."
+    ),
+    "kobo_fresh_proof_required": (
+        "Kobo : le manifeste personnel, la sauvegarde antérieure, la révision, "
+        "le compte, la taille et le SHA doivent encore être revérifiés par "
+        "le contrat Kobo dédié avant toute confirmation."
+    ),
+    "kobo_backup_signature_mismatch": (
+        "Le SHA et la taille du fichier ne correspondent pas à la "
+        "sauvegarde Kobo antérieure attestée ; aucun placement autorisé."
+    ),
+    "kobo_personal_right_unverified": (
+        "Le droit Kobo personnel et son compte unique ne sont pas attestés "
+        "dans cette inspection ; aucune restauration n’est possible."
+    ),
+    "kobo_separate_recovery": (
+        "Kobo : une restauration de lien exige les preuves personnelles "
+        "et la sauvegarde déjà attestées par le contrat Kobo dédié. "
+        "La comparaison bibliographique ne permet aucun placement ici."
+    ),
+    "paris_loan_inactive": (
+        "Prêt Paris enregistré comme inactif ou terminé : sa comparaison "
+        "reste consultative. Aucun placement ni changement de licence."
+    ),
+    "paris_read_only": (
+        "Paris : les prêts et leurs échéances nécessitent un contrat de prêt "
+        "spécifique. Cette comparaison est en lecture seule ; aucun placement "
+        "ni restitution ne sont autorisés."
+    ),
+    "source_not_supported": (
+        "Aucune transaction de rattachement n’est autorisée pour cette source."
+    ),
 }
 
 
@@ -54,7 +94,7 @@ def _strict_signature(value: object) -> tuple[str, int] | None:
 
 def review_local_pair(
     right: object, file: object, *, audit_complete: bool,
-    bibliographic_hint: bool = False,
+    bibliographic_hint: bool = False, global_audit_partial: bool = False,
 ) -> ManualLinkPreflight:
     """Pure closed report. All inputs are bounded session-local summaries.
 
@@ -102,5 +142,64 @@ def review_local_pair(
         status = "insufficient_evidence"
     else:
         status = "eligible_for_fresh_validation"
-    reasons = tuple(sorted(blockers | missing | {"transaction_unavailable"}))
-    return ManualLinkPreflight(status, reasons)
+    reasons = blockers | missing | {"transaction_unavailable"}
+    if status == "eligible_for_fresh_validation" and global_audit_partial is True:
+        reasons.add("global_partial_pair_reviewable")
+    return ManualLinkPreflight(status, tuple(sorted(reasons)))
+
+
+def review_source_read_only(
+    provider: object, *, audit_complete: bool,
+    bibliographic_hint: bool = False, loan_inactive: bool = False,
+) -> ManualLinkPreflight:
+    """Closed, non-authorizing review for non-Numilog provider comparisons.
+
+    Only provider IDs from the already-scoped private case enter this function.
+    This is not a substitute for Kobo's existing specific restore transaction,
+    and Paris loans have no writable attachment handler in this workflow.
+    """
+    code = {
+        "kobo": "kobo_separate_recovery",
+        "paris": "paris_read_only",
+    }.get(provider if type(provider) is str else None, "source_not_supported")
+    reasons = {code}
+    if audit_complete is not True:
+        reasons.add("audit_incomplete")
+    if provider == "paris" and loan_inactive is True:
+        reasons.add("paris_loan_inactive")
+    if bibliographic_hint is True:
+        reasons.add("bibliographic_hint_only")
+    return ManualLinkPreflight("blocked", tuple(sorted(reasons)))
+
+
+def review_kobo_candidate(
+    right: object, file: object, *, audit_complete: bool,
+    bibliographic_hint: bool = False, global_audit_partial: bool = False,
+) -> ManualLinkPreflight:
+    """Review only whether to INVOKE Kobo's separate fresh offline preview.
+
+    This is not evidence of a backup, revision or an authorization to write.
+    The Kobo transaction must independently validate all historical proofs
+    against live SQLite and freshly hashed file bytes under its own lock.
+    """
+    blockers = set()
+    if audit_complete is not True:
+        blockers.add("audit_incomplete")
+    if type(right) is not dict or right.get("attested") is not True or right.get("ambiguous") is True:
+        blockers.add("kobo_personal_right_unverified")
+    signature = _strict_signature(file.get("signature")) if type(file) is dict else None
+    if type(file) is not dict or file.get("verified") is not True or signature is None:
+        blockers.add("file_unverified")
+    if (type(right) is dict and right.get("attested") is True
+            and signature is not None
+            and _strict_signature(right.get("signature")) != signature):
+        blockers.add("kobo_backup_signature_mismatch")
+    reasons = blockers | {"kobo_fresh_proof_required"}
+    if bibliographic_hint is True:
+        reasons.add("bibliographic_hint_only")
+    if not blockers and global_audit_partial is True:
+        reasons.add("global_partial_pair_reviewable")
+    return ManualLinkPreflight(
+        "blocked" if blockers else "eligible_for_fresh_validation",
+        tuple(sorted(reasons)),
+    )

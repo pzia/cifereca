@@ -26,7 +26,10 @@ class Entry:
 
 
 @pytest.mark.parametrize("bad_key", [False, True])
-def test_private_export_crosses_public_context_to_attested_feed(tmp_path, monkeypatch, bad_key):
+@pytest.mark.parametrize("current", [False, True])
+def test_private_export_crosses_public_context_to_attested_feed(
+    tmp_path, monkeypatch, bad_key, current,
+):
     monkeypatch.syspath_prepend(str(SOURCE))
     from browser_recorder_http import PrivateExchange, PrivateHttpTrace
     from browser_recorder_vault import PrivateSessionVault
@@ -49,7 +52,7 @@ def test_private_export_crosses_public_context_to_attested_feed(tmp_path, monkey
     source = vault.path / (writer.session_id + ".cbrv")
     before = source.read_bytes()
     chosen = tmp_path / "chosen"
-    chosen.mkdir(mode=0o700)
+    chosen.mkdir(mode=0o755)
 
     collector = Diagnostics()
     plugin_id = "ui.page.browser-recorder"
@@ -67,21 +70,26 @@ def test_private_export_crosses_public_context_to_attested_feed(tmp_path, monkey
     page.context = context
     panel = object.__new__(PrivateReviewPanel)
     panel._closed, panel._handle = False, None
+    panel._generation = 0
+    panel._private_destination_dialog = None
+    panel.is_scanning = lambda: False
     panel.vault_directory = vault.path
-    panel.private_export_confirm = NS(get_active=lambda: True, set_active=lambda _: None)
-    panel.session_list = NS(get_active_id=lambda: writer.session_id)
-    panel.private_export_directory = Entry(str(chosen))
+    # Deliberately select an unrelated catalogue ID when exporting the
+    # active review. Never let an old list selection redirect its contents.
+    other_sid = "0" * 32
+    assert other_sid != writer.session_id
+    panel.session_list = NS(get_active_id=lambda: other_sid if current else writer.session_id)
+    panel._trace = NS(vault_session_id=writer.session_id) if current else None
+    panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(chosen / "session.zip")
     panel.vault_passphrase = Entry(password if not bad_key else "FICTIONAL-WRONG-VAULT-KEY")
-    panel.private_export_passphrase = Entry("FICTIONAL-SEPARATE-EXPORT-KEY-2026")
     panel._diagnostic = page._report_http_outcome
     panel._refresh = lambda: None
     panel.status = NS(set_label=lambda _: None)
-    panel.export_private_zip()
+    panel.export_private_zip(current=current)
     # Removing the view/context cannot erase an already published result.
     page.context = None
     panel._closed = True
     assert panel.vault_passphrase.get_text() == ""
-    assert panel.private_export_passphrase.get_text() == ""
     assert source.read_bytes() == before
     result = query_diagnostic_events(collector, source="core_events", log_path=tmp_path / "absent")
     assert result["total"] == 1
@@ -92,7 +100,7 @@ def test_private_export_crosses_public_context_to_attested_feed(tmp_path, monkey
     if bad_key:
         assert not files and detail["output_bytes"] == 0
     else:
-        assert len(files) == 1 and files[0].suffix == ".brzip"
+        assert len(files) == 1 and files[0].suffix == ".zip"
         assert files[0].stat().st_mode & 0o777 == 0o600
         assert detail["output_bytes"] == files[0].stat().st_size
     errors = query_diagnostic_events(collector, source="core_events", severity="error", log_path=tmp_path / "absent")
@@ -100,3 +108,41 @@ def test_private_export_crosses_public_context_to_attested_feed(tmp_path, monkey
     for rendered in (repr(result), repr(collector.snapshot()), collector.text("test")):
         assert secret not in rendered and password not in rendered
         assert str(chosen) not in rendered
+
+
+def test_current_private_export_is_cancelled_if_active_review_changes_during_save_as(
+    tmp_path, monkeypatch,
+):
+    """Changing reviewed session while chooser is open never redirects export."""
+    monkeypatch.syspath_prepend(str(SOURCE))
+    from browser_recorder_review_ui import PrivateReviewPanel
+
+    panel = object.__new__(PrivateReviewPanel)
+    panel._closed = False
+    panel._handle = None
+    panel._generation = 12
+    panel._private_destination_dialog = None
+    panel.vault_directory = tmp_path / "vault"
+    panel._trace = NS(vault_session_id="a" * 32)
+    panel.session_list = NS(get_active_id=lambda: "b" * 32)
+    panel.is_recording = lambda: False
+    panel.is_scanning = lambda: False
+    panel.vault_passphrase = Entry("FICTIONAL-VALID-VAULT-KEY")
+    messages, events, callbacks = [], [], []
+    panel.status = NS(set_label=messages.append)
+    panel._diagnostic = lambda op, code, **metrics: events.append((op, code, metrics))
+    panel._prompt_private_zip_file = lambda accepted, cancelled: callbacks.append(
+        (accepted, cancelled)
+    )
+
+    panel.export_private_zip(current=True)
+    assert panel.vault_passphrase.get_text() == ""
+    assert len(callbacks) == 1
+    panel._trace = NS(vault_session_id="c" * 32)
+    callbacks[0][0](tmp_path / "must-not-exist.zip")
+    assert not (tmp_path / "must-not-exist.zip").exists()
+    assert len(events) == 1
+    assert events[0][:2] == ("private_zip_export", "private_zip_export_cancelled")
+    assert events[0][2]["output_bytes"] == 0
+    assert "FICTIONAL-VALID-VAULT-KEY" not in repr((messages, events))
+

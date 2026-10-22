@@ -258,7 +258,7 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         plugin = manager.service(PLUGIN_ID)
         assert plugin is not None
         assert Path(sys.modules["browser_recorder_page"].__file__).resolve().is_relative_to(
-            store.version_root(PACKAGE_ID, "0.2.14").resolve()
+            store.version_root(PACKAGE_ID, "0.2.17").resolve()
         )
         root = plugin.pages()[0].factory(None)
 
@@ -269,7 +269,7 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         zipped = importlib.import_module("browser_recorder_zip")
         for module in (ui, network, zipped):
             assert Path(module.__file__).resolve().is_relative_to(
-                store.version_root(PACKAGE_ID, "0.2.14").resolve()
+                store.version_root(PACKAGE_ID, "0.2.17").resolve()
             )
         original = network.site_origin
 
@@ -287,7 +287,7 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         window.set_child(root)
         window.present()
         _flush()
-        site, consent = _children(root.get_child().get_child())[1:3]
+        site, consent = [plugin.private_panel.site, plugin.private_panel.consent]
         site.set_text(origin + "/catalog")
         consent.set_active(True)
         panel = plugin.private_panel

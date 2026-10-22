@@ -154,3 +154,36 @@ def test_xtest_move_sends_only_motion_and_synchronizes_before_button_press():
         "motion", "sync", "button", "button", "sync",
     ]
     assert [args[2] for name, args in calls if name == "button"] == [True, False]
+
+
+@pytest.mark.parametrize(("down", "button"), [(True, 5), (False, 4)])
+def test_wheel_dispatches_only_bounded_real_xtest_notches(down, button):
+    device = object.__new__(_x11_class())
+    calls = []
+    device.display = 123
+    device.move = lambda x, y: calls.append(("move", x, y))
+    device.xtst = NS(XTestFakeButtonEvent=lambda *args: calls.append(("button", args)))
+    device.x11 = NS(XSync=lambda *args: calls.append(("sync", args)))
+    device.wheel(300, 400, down=down, ticks=2)
+    assert calls[0] == ("move", 300, 400)
+    assert [args[1][1:3] for args in calls if args[0] == "button"] == [
+        (button, True), (button, False),
+        (button, True), (button, False),
+    ]
+    assert calls[-1][0] == "sync"
+
+
+@pytest.mark.parametrize("args", [
+    {"x": -1, "y": 100},
+    {"x": 100, "y": -1},
+    {"x": True, "y": 100},
+    {"x": 100, "y": 100, "ticks": 0},
+    {"x": 100, "y": 100, "ticks": 21},
+    {"x": 100, "y": 100, "ticks": True},
+    {"x": 100, "y": 100, "down": "yes"},
+])
+def test_invalid_wheel_target_never_dispatches_xtest(args):
+    device = object.__new__(_x11_class())
+    device.move = lambda *_: pytest.fail("invalid wheel should not move mouse")
+    with pytest.raises(ValueError, match="invalid_xtest_wheel_target"):
+        device.wheel(**args)

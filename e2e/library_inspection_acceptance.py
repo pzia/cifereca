@@ -26,7 +26,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
     root = Path(tmp.name)
     library = root/'library'
     for name in ('a','b'): (library/name).mkdir(parents=True)
-    for index in range(61):
+    # Stress the real inspection at the reported 600-file scale, not only
+    # the earlier 61-file fixture, while keeping all I/O local and synthetic.
+    for index in range(600):
         with zipfile.ZipFile(library/'a'/f'synthetic-{index:02d}.epub','w') as book:
             book.writestr('mimetype','application/epub+zip')
             book.writestr('META-INF/container.xml',"<container><rootfile full-path='content.opf'/></container>")
@@ -36,6 +38,14 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         for name,columns in _COLUMNS.items():
             db.execute(f"CREATE TABLE {name} ({','.join(c+' TEXT' for c in columns.split())})")
         db.execute("INSERT INTO entitlements(entitlement_id,identity_id,provider_id,item_id,state) VALUES('right-a','a','numilog','edition-a','active')")
+        # 272 local unverified Numilog rights, without placements or
+        # acquisition authority; keep the candidate right first.
+        db.executemany(
+            "INSERT INTO entitlements(entitlement_id,identity_id,provider_id,item_id,state) VALUES(?,?,?,?,?)",
+            [(f'right-synthetic-{index:03d}', 'a', 'numilog',
+              f'edition-synthetic-{index:03d}', 'active')
+             for index in range(271)],
+        )
         db.execute("INSERT INTO entitlements(entitlement_id,identity_id,provider_id,account_id,state) VALUES('right-b','b','kobo','FOREIGN_SECRET','active')")
         db.execute("INSERT INTO catalog_entries(catalog_entry_id,identity_id,provider_id,metadata_json) VALUES(?,?,?,?)",('notice-a','a','kobo',json.dumps({'identifiers':[{'scheme':'ISBN','value':'9780306406157'}]})))
         db.execute("INSERT INTO catalog_entries(catalog_entry_id,identity_id,provider_id,item_id,metadata_json) VALUES(?,?,?,?,?)",
@@ -143,7 +153,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         report['checks']['inspection_window_mapped']=True
         window=controller.dialog
         assert window.get_width()<=parent.get_width()
+        assert window.get_height()<=parent.get_height()
         report['checks']['P0_2712_initial_window_width_ok']=True
+        report['checks']['P0_2712_initial_window_height_ok']=True
         assert window.get_decorated() and window.get_resizable()
         header = next(w for w in walk(window) if isinstance(w, Adw.HeaderBar))
         assert header.get_mapped()
@@ -185,7 +197,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
     def numilog():
         rows=list(walk(widgets['list']))
         labels='\n'.join(w.get_text() for w in rows if isinstance(w,Gtk.Label))
-        assert 'Droit sans fichier vérifié' in labels and 'synthetic-' not in labels
+        # Synthetic rights are legitimately displayed as Numilog rights.
+        # Their edition labels may include "synthetic": what must NEVER
+        # appear in this provider-filtered list is the *file* name.
+        assert 'Droit sans fichier vérifié' in labels
+        assert '.epub' not in labels and 'Fichier local :' not in labels
         report['checks']['local_inspection_provider_filter_does_not_attribute_isbn_files']=True
         # The Numilog right must show unlinked EPUB candidates *only* after
         # user selection; no ownership is inferred from a shared valid ISBN.
@@ -212,9 +228,12 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             assert adjustment.get_value() > 0
             adjustment.set_value(0)
             report['checks']['P0_2712_main_scroll_range_operable']=True
-        right = controller.session.page(
+        rights_page = controller.session.page(
             provider='numilog', state='rights_without_verified_file',
-        ).cases[0]
+        )
+        assert rights_page.total == 272
+        report['checks']['P0_2712_272_unverified_rights_fixture']=True
+        right = rights_page.cases[0]
         candidate_cases = controller.session.candidate_files(right.key)
         assert len(candidate_cases) == 20
         report['checks']['candidate_count_verified']=True
@@ -268,7 +287,53 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             until(lambda:any(isinstance(w,Gtk.Label) and '2 / 20' in w.get_text()
                              for w in walk(controller.dialog)), compare_next)
 
-        until(candidate_allocated, candidate_click)
+        # A genuine mouse wheel must scroll the OUTER window without
+        # faking GtkAdjustment movement; the nested ListBoxes are separate.
+        def wheel_target():
+            if adjustment.get_value() > 0.5:
+                return False
+            summary = next(
+                w for w in walk(controller.dialog)
+                if isinstance(w, Gtk.Label)
+                and w.get_text().startswith('Périmètre local ·')
+            )
+            if not summary.get_mapped():
+                return False
+            window = controller.dialog
+            ok, rect = summary.compute_bounds(window)
+            if not ok or rect.get_width() <= 0 or rect.get_height() <= 0:
+                return False
+            cx = rect.get_x() + rect.get_width() / 2
+            cy = rect.get_y() + rect.get_height() / 2
+            if not (0 <= cx < window.get_width() and 0 <= cy < window.get_height()):
+                return False
+            picked = window.pick(cx, cy, Gtk.PickFlags.DEFAULT)
+            while picked is not None and picked is not summary:
+                picked = picked.get_parent()
+            return picked is summary
+
+        def send_wheel():
+            summary = next(
+                w for w in walk(controller.dialog)
+                if isinstance(w, Gtk.Label)
+                and w.get_text().startswith('Périmètre local ·')
+            )
+            x, y = device.widget_point(summary)
+            device.wheel(x, y, down=True, ticks=4)
+            until(lambda: adjustment.get_value() > 0.5, wheel_reached)
+
+        def wheel_reached():
+            report['checks']['P0_2712_physical_wheel_scroll_reached']=True
+            adjustment.set_value(0)
+            until(candidate_allocated, candidate_click)
+
+        if adjustment.get_upper() > adjustment.get_page_size() + 1:
+            adjustment.set_value(0)
+            until(wheel_target, send_wheel)
+        else:
+            # No scroll range means no wheel gesture is needed to reach
+            # these controls, and should not be counted as a wheel PASS.
+            until(candidate_allocated, candidate_click)
 
     def compare_next():
         report['checks']['inspection_candidate_navigation_reached']=True
@@ -295,7 +360,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                 return False
         def click():
             device.click_widget(manual)
-            until(lambda:any(isinstance(w,Gtk.Label) and '1 / 61' in w.get_text()
+            until(lambda:any(isinstance(w,Gtk.Label) and '1 / 600' in w.get_text()
                              for w in walk(controller.dialog)),manual_first)
         until(ready,click)
 
@@ -305,13 +370,13 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert 'Fichiers non liés · comparaison manuelle' in texts
         assert 'Aucun n’est attribué' in texts
         assert 'FOREIGN_SECRET' not in texts
-        assert controller.session.unconfirmed_files().total == 61
+        assert controller.session.unconfirmed_files().total == 600
         search=next(w for w in walk(controller.dialog)
                     if isinstance(w,Gtk.SearchEntry)
                     and w.get_placeholder_text()=='Filtrer les fichiers non liés…')
         assert search.get_visible()
         # Direct physical selection from the NEW bounded list, not merely
-        # next/previous navigation. The first page contains 25 of 61 files.
+        # next/previous navigation. The first page contains 25 of 600 files.
         file_list = next(w for w in walk(controller.dialog)
                          if isinstance(w, Gtk.ListBox)
                          and w is not widgets['list'])
@@ -336,7 +401,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         def click_file():
             device.click_widget(selected_row)
             until(lambda:any(isinstance(w,Gtk.Label)
-                             and '2 / 61 · exploration non probante' in w.get_text()
+                             and '2 / 600 · exploration non probante' in w.get_text()
                              for w in walk(controller.dialog)),
                   manual_direct_selected)
 
@@ -351,7 +416,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         search=next(w for w in walk(controller.dialog)
                     if isinstance(w,Gtk.SearchEntry)
                     and w.get_placeholder_text()=='Filtrer les fichiers non liés…')
-        search.set_text('synthetic-59')
+        search.set_text('synthetic-599')
         until(lambda:any(isinstance(w,Gtk.Label)
                          and '1 / 1 · exploration non probante' in w.get_text()
                          for w in walk(controller.dialog)),manual_filtered)
@@ -359,7 +424,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
     def manual_filtered():
         texts='\\n'.join(w.get_text() for w in walk(controller.dialog)
                         if isinstance(w,Gtk.Label))
-        assert 'synthetic-59.epub' in texts
+        assert 'synthetic-599.epub' in texts
         assert 'FOREIGN_SECRET' not in texts
         assert 'Droit sans fichier vérifié' in texts
         report['checks']['local_inspection_manual_unlinked_filter_same_identity']=True
@@ -452,16 +517,39 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         texts='\\n'.join(w.get_text() for w in walk(controller.dialog)
                         if isinstance(w,Gtk.Label))
         assert 'Fichiers candidats' in texts
-        assert 'synthetic-59.epub' not in texts
+        assert 'synthetic-599.epub' not in texts
         report['checks']['local_inspection_manual_does_not_change_candidate_set']=True
-        choose(widgets['provider'],0,lambda:choose(widgets['state'],3,candidates))
+        # Both real candidate buttons are enabled at 2 / 20. Verify actual
+        # XTEST Tab and Shift+Tab focus traversal rather than setting focus
+        # directly on the expected destination after each keypress.
+        previous = next(w for w in walk(controller.dialog)
+                        if isinstance(w, Gtk.Button)
+                        and w.get_label() == '◀ Candidat')
+        following = next(w for w in walk(controller.dialog)
+                         if isinstance(w, Gtk.Button)
+                         and w.get_label() == 'Candidat ▶')
+        assert previous.get_sensitive() and following.get_sensitive()
+        previous.grab_focus()
+        press('Tab')
+
+        def shift_back():
+            device.key('Shift_L', True)
+            press('Tab')
+            device.key('Shift_L', False)
+            until(lambda: previous.has_focus(), keyboard_reached)
+
+        def keyboard_reached():
+            report['checks']['P0_2712_tab_shift_tab_candidate_navigation']=True
+            choose(widgets['provider'],0,lambda:choose(widgets['state'],3,candidates))
+
+        until(lambda: following.has_focus(), shift_back)
 
     def candidates():
-        assert controller.session.page(state='metadata_candidate').total==61
+        assert controller.session.page(state='metadata_candidate').total==600
         following=next(w for w in walk(controller.dialog) if isinstance(w,Gtk.Button) and w.get_label()=='Suivant')
         assert following.get_sensitive()
         device.click_widget(following)
-        until(lambda:any(isinstance(w,Gtk.Label) and w.get_text()=='51–61 / 61' for w in walk(controller.dialog)),detail)
+        until(lambda:any(isinstance(w,Gtk.Label) and w.get_text()=='51–100 / 600' for w in walk(controller.dialog)),detail)
 
     def detail():
         row=widgets['list'].get_first_child()
@@ -486,6 +574,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(lambda:controller.dialog is None,lambda:revoked(session))
 
     def revoked(session):
+        # The 920x620 inspection with long candidate actions MUST overflow.
+        # Never record a green E2E if the wheel branch was silently skipped
+        # at all three desktop resolutions; the gesture itself is the proof.
+        assert report['checks'].get('P0_2712_physical_wheel_scroll_reached') is True
+        assert report['checks'].get('P0_2712_tab_shift_tab_candidate_navigation') is True
         assert not session.valid() and not session.page().cases
         assert sources()==before
         report['checks']['local_inspection_epoch_revokes_window_and_sources_unchanged']=True

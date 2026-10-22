@@ -268,6 +268,138 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                     f'dont {inventory["stale_files"]} ancien(s) résultat(s) périmé(s). '
                     'Les droits SQLite sont vérifiés à chaque audit.',
                 )
+            # #2796: a prior audit's private snapshot is NEVER available
+            # to plugins. Accept only a strictly coherent, closed numerical
+            # summary and table labels from the Core's same-scope comparison.
+            stability_lines = ()
+            drift = result.get('audit_stability')
+            table_labels = {
+                'entitlements': 'droits',
+                'acquisition_ledger': 'acquisitions',
+                'placements': 'placements',
+                'artifacts': 'artefacts',
+                'backup_items': 'sauvegardes',
+            }
+            explanations = {
+                'stable_inputs': 'Entrées de preuve observées stables.',
+                'unexplained_link_drift': 'Variation de liens inexpliquée malgré des entrées identiques.',
+                'sqlite_proofs_changed': 'Les preuves SQLite ont changé.',
+                'different_observed_cohort': 'La cohorte des fichiers observés a changé.',
+                'file_evidence_changed': 'Des preuves de fichiers observés ont changé.',
+                'both_inputs_changed': 'Cohorte et preuves SQLite ont changé.',
+                'comparison_incomplete': 'Comparaison précédente ou actuelle non exhaustive.',
+            }
+            if (type(drift) is dict and type(drift.get('schema')) is int
+                    and drift['schema'] == 1):
+                numeric = (
+                    'previous_observed', 'current_observed', 'files_added',
+                    'files_removed', 'files_changed',
+                    'lost_confirmed', 'gained_confirmed',
+                )
+                flags = (
+                    'same_observed_cohort', 'same_file_evidence',
+                    'same_sqlite_proofs',
+                )
+                table_names = drift.get('changed_sqlite_tables')
+                # Optional forward-compatible Core P0 #2796 row counts. Never
+                # render arbitrary nested payloads, table names or raw proofs.
+                row_deltas = drift.get('sqlite_proof_row_deltas')
+                safe_row_deltas = (
+                    row_deltas is None or (
+                        type(row_deltas) is dict
+                        and type(table_names) is list
+                        and set(row_deltas) == set(
+                            key for key in table_names if type(key) is str
+                        )
+                        and all(
+                            name in table_labels
+                            and type(delta) is dict
+                            and set(delta) == {'removed', 'added'}
+                            and all(type(delta[key]) is int
+                                    and 0 <= delta[key] <= 100_000
+                                    for key in ('removed', 'added'))
+                            and (delta['removed'] or delta['added'])
+                            for name, delta in row_deltas.items()
+                        )
+                    )
+                )
+                cause = drift.get('interpretation')
+                basis = drift.get('basis')
+                if (all(type(drift.get(key)) is int and 0 <= drift[key] <= 4096
+                        for key in numeric)
+                        and all(type(drift.get(key)) is bool for key in flags)
+                        and type(table_names) is list
+                        and len(table_names) <= len(table_labels)
+                        and all(type(name) is str and name in table_labels
+                                for name in table_names)
+                        and len(set(table_names)) == len(table_names)
+                        and safe_row_deltas
+                        and type(basis) is str and basis in ('complete', 'observed_only')
+                        and type(cause) is str and cause in explanations):
+                    previous = drift['previous_observed']
+                    current = drift['current_observed']
+                    added = drift['files_added']
+                    removed = drift['files_removed']
+                    changed = drift['files_changed']
+                    stable_cohort = added == 0 and removed == 0
+                    stable_files = stable_cohort and changed == 0
+                    stable_sqlite = len(table_names) == 0
+                    expected = (
+                        'both_inputs_changed' if not stable_files and not stable_sqlite else
+                        'different_observed_cohort' if not stable_cohort else
+                        'file_evidence_changed' if changed else
+                        'sqlite_proofs_changed' if not stable_sqlite else
+                        'unexplained_link_drift' if (
+                            drift['lost_confirmed'] or drift['gained_confirmed']) else
+                        'stable_inputs'
+                    )
+                    coherent = (
+                        current == counts['observed_files']
+                        and added <= current and removed <= previous
+                        and previous - removed == current - added
+                        and changed <= previous - removed
+                        and drift['lost_confirmed'] <= previous
+                        and drift['gained_confirmed'] <= current
+                        and drift['same_observed_cohort'] is stable_cohort
+                        and drift['same_file_evidence'] is stable_files
+                        and drift['same_sqlite_proofs'] is stable_sqlite
+                        and (cause == expected or
+                             (cause == 'comparison_incomplete'
+                              and basis == 'observed_only'))
+                    )
+                    if coherent:
+                        source_note = (
+                            'cohortes observées seulement, analyses possiblement partielles'
+                            if basis == 'observed_only'
+                            else 'comparaison des preuves de droits achevée'
+                        )
+                        sqlite_names = (
+                            ', '.join(table_labels[name] for name in table_names)
+                            if table_names else 'aucune des cinq tables de preuve'
+                        )
+                        row_delta_lines = (
+                            ('Évolution des lignes de preuve SQLite (retirées / '
+                             'apparues ; une ligne modifiée compte dans les deux) : '
+                             + ' · '.join(
+                                 f'{table_labels[table]} '
+                                 f'{row_deltas[table]["removed"]} / '
+                                 f'{row_deltas[table]["added"]}'
+                                 for table in table_names
+                             ) + '.'),
+                        ) if row_deltas else ()
+                        stability_lines = (
+                            'Évolution entre deux audits de même portée (' + source_note
+                            + f') : {previous} puis {current} fichier(s) observé(s).',
+                            f'Fichiers de cohorte ajoutés : {added} ; '
+                            f'non retrouvés : {removed} ; '
+                            f'preuve de fichier changée : {changed}.',
+                            f'Preuves SQLite modifiées : {sqlite_names}. '
+                            + explanations[cause],
+                            f'Statuts de liens confirmés non retrouvés : '
+                            f'{drift["lost_confirmed"]} ; nouveaux : '
+                            f'{drift["gained_confirmed"]}. '
+                            'Ces nombres ne prouvent aucune perte de livre ou de droit.',
+                        ) + row_delta_lines
             candidate_metrics = ()
             keys = (
                 ('catalog_rows_examined', 'notices'),
@@ -313,7 +445,7 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                     'Ces compteurs ne mesurent pas des livres perdus ; '
                     'le parcours peut rester partiel.',
                 )
-            presentation['details'] = stages + coverage + resume_metrics + candidate_metrics + missing_context_lines + tuple(
+            presentation['details'] = stages + coverage + resume_metrics + stability_lines + candidate_metrics + missing_context_lines + tuple(
                 f'{label} : {counts[name]}' for name, label in _COUNTER_LABELS.items()
             ) + ('Les catégories peuvent se recouper ; ne pas additionner ces compteurs.',)
         return MaintenanceResult(ok=complete, changed=0, summary=summary,

@@ -1,7 +1,6 @@
-"""Native GTK4 opt-in diagnostic .brzip end-to-end on fictional local RAM data."""
+"""Native GTK4 session-to-LLM Save As end-to-end with fictional RAM data."""
 from __future__ import annotations
 
-from io import BytesIO
 import json
 from types import SimpleNamespace as NS
 from zipfile import ZipFile
@@ -14,7 +13,6 @@ from gi.repository import Gtk, GLib  # noqa: E402
 
 import browser_recorder_review_ui as ui
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
-from browser_recorder_private_zip import decrypt_private_zip
 from browser_recorder_vault import PrivateSessionVault
 from browser_recorder_page import BrowserRecorderPage
 from cifereca.diagnostics import Diagnostics
@@ -23,7 +21,6 @@ from cifereca.core.diagnostic_event_feed import query_diagnostic_events
 
 ORIGIN = "https://fictional-books.example.org"
 PASSWORD = "FICTIONAL-CIFERECA-VAULT-2026"
-EXPORT_PASSWORD = "FICTIONAL-SEPARATE-EXPORT-KEY-2026"
 ACCOUNT = "acct-FICTIONAL-300"
 TOKEN = "FAKE_PRIVATE_BODY_TOKEN_TEST"
 
@@ -66,7 +63,7 @@ def flush():
         ctx.iteration(False)
 
 
-def test_real_gtk_private_zip_requires_its_own_confirmation(tmp_path, monkeypatch):
+def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monkeypatch):
     Gtk.init()
     trace = PrivateHttpTrace((ORIGIN,))
     trace.exchanges.append(PrivateExchange(
@@ -127,8 +124,14 @@ def test_real_gtk_private_zip_requires_its_own_confirmation(tmp_path, monkeypatc
         assert not panel.private_export_button.get_sensitive()
         panel.start.emit("clicked")
         assert tasks.handle is None  # storage consent required
-        panel.vault_consent.set_active(True)
         panel.vault_passphrase.set_text(PASSWORD)
+        panel.vault_open_button.emit("clicked")
+        assert tasks.handle is not None
+        tasks.handle.finish()
+        flush()
+        assert panel._vault_secret is not None
+        assert panel.vault_passphrase.get_text() == ""
+        panel.vault_consent.set_active(True)
         panel.start.emit("clicked")
         assert tasks.handle is not None
         panel.stop.emit("clicked")
@@ -137,24 +140,26 @@ def test_real_gtk_private_zip_requires_its_own_confirmation(tmp_path, monkeypatc
         assert trace.vault_session_id
         assert not panel.export_button.get_sensitive()
         assert (tmp_path / "vault" / (trace.vault_session_id + ".cbrv")).is_file()
-        panel.sessions_refresh.emit("clicked")
-        flush()
-        assert panel.session_list.get_active_id() == trace.vault_session_id
+        # Immediate direct export: no catalogue refresh, no identifier
+        # decisions, no switch away from the review tab.
+        assert panel.tabs.get_current_page() == 3
+        assert panel.session_list.get_active_id() is None
+        assert panel.current_private_export_button.get_sensitive()
+        assert panel._review.pending() > 0
         folder = tmp_path / "private-destination"
-        folder.mkdir(mode=0o700)
-        panel.private_export_directory.set_text(str(folder))
-        panel.vault_passphrase.set_text(PASSWORD)
-        panel.private_export_passphrase.set_text(EXPORT_PASSWORD)
-        panel.private_export_button.emit("clicked")
+        folder.mkdir(mode=0o755)
+        panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(
+            folder / "session-for-llm.zip"
+        )
         assert not list(folder.iterdir())
         assert outcomes == []
-        assert not panel.private_export_button.get_sensitive()
-        panel.private_export_confirm.set_active(True)
+        # Once the vault was explicitly opened, the very first click exports.
+        # No additional master-password entry or ZIP confirmation is needed.
+        assert panel.vault_passphrase.get_text() == ""
+        assert panel.current_private_export_button.get_sensitive()
+        panel.current_private_export_button.emit("clicked")
         flush()
-        assert panel.private_export_button.get_sensitive()
-        panel.private_export_button.emit("clicked")
-        flush()
-        files = list(folder.glob("*.brzip"))
+        files = list(folder.glob("*.zip"))
         assert len(files) == 1
         assert files[0].stat().st_mode & 0o777 == 0o600
         assert len(outcomes) == 1
@@ -162,20 +167,27 @@ def test_real_gtk_private_zip_requires_its_own_confirmation(tmp_path, monkeypatc
         assert outcomes[0][2]["output_bytes"] == files[0].stat().st_size
         assert type(outcomes[0][2]["duration_ms"]) is int
         assert ACCOUNT not in repr(outcomes) and TOKEN not in repr(outcomes)
-        with ZipFile(BytesIO(decrypt_private_zip(files[0].read_bytes(), EXPORT_PASSWORD))) as zipped:
+        with ZipFile(files[0]) as zipped:
             data = json.loads(zipped.read("trace.json"))
             assert data["exchanges"][0]["url"].endswith(ACCOUNT)
             assert TOKEN in data["exchanges"][0]["request_body"]
         if (tmp_path / "public").exists():
             assert not list((tmp_path / "public").glob("*.zip"))
-        assert not panel.private_export_confirm.get_active()
-        assert not panel.private_export_button.get_sensitive()
-        # A second explicit selection + unlock restores a fresh review offline.
-        panel.vault_passphrase.set_text(PASSWORD)
+        assert panel.current_private_export_button.get_sensitive()
+        assert panel.vault_passphrase.get_text() == ""
+        # The archived-list workflow remains independent and still works.
+        panel.sessions_refresh.emit("clicked")
+        flush()
+        assert panel.session_list.get_active_id() == trace.vault_session_id
+        assert panel.private_export_button.get_sensitive()
+        # Reopen the encrypted session offline with the *same* open vault.
+        assert panel.vault_passphrase.get_text() == ""
         panel.sessions_open.emit("clicked")
         flush()
         assert panel._review is not None and panel._review.pending() > 0
         assert panel._trace.vault_session_id == trace.vault_session_id
+        assert panel.tabs.get_current_page() == 3
+        assert panel.current_private_export_button.get_sensitive()
         assert len(PrivateSessionVault(tmp_path / "vault").list_ids()) == 1
     finally:
         panel.destroy()

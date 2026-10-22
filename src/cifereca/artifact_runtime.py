@@ -20,6 +20,11 @@ from .plugin_api import (
 )
 
 
+class _LibraryFilenameConflict(Conflict):
+    """Closed, catchable collision code; no path or identity in the error."""
+    code = "library_filename_conflict"
+
+
 def _media_type(fmt: str, explicit: str | None = None) -> str:
     if explicit:
         return explicit
@@ -574,11 +579,111 @@ class LibraryMaintenanceBrokerImpl:
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
             old=Path(str(row.get("path") or "")).resolve(); new=old.with_name(str(plan.facts.get("new_filename") or old.name))
             if new != old:
-                if new.exists() and sha256_file(new) != sha256_file(old): raise Conflict("Collision de nom", code="library_filename_conflict")
-                os.replace(old,new)
-                self.service.storage.relocate_local_path(old,new,identity_id=str(row.get("identity_id") or ""),provider_id=str(row.get("provider_id") or "local"))
+                # Never allow a target symlink to redirect the new SQLite
+                # pathname to a different inode/root, even at equal SHA.
+                if new.is_symlink():
+                    raise _LibraryFilenameConflict("Destination symbolique refusée")
+                # Never overwrite or merge a path on SHA equality alone:
+                # a different identity/provider/edition may share those bytes.
+                # Perform this check before os.replace() can change the disk.
+                target = self.service.storage.placement_for_path(new)
+                if target and str(target.get("placement_id")) != str(row.get("placement_id")):
+                    if not all((
+                        row.get("identity_id"),
+                        row.get("provider_id"),
+                        row.get("artifact_id"),
+                        row.get("source_item_id"),
+                        target.get("identity_id") == row.get("identity_id"),
+                        target.get("provider_id") == row.get("provider_id"),
+                        target.get("artifact_id") == row.get("artifact_id"),
+                        target.get("source_item_id") == row.get("source_item_id"),
+                    )):
+                        raise _LibraryFilenameConflict("Collision de placement")
+                if new.exists():
+                    if target is None:
+                        raise _LibraryFilenameConflict("Destination existante non attestée")
+                    if sha256_file(new) != sha256_file(old):
+                        raise _LibraryFilenameConflict("Collision de nom")
+                # Keep at least one path named by SQLite at every crash
+                # boundary. A hardlink in the same directory creates the
+                # destination atomically while the old DB path still exists;
+                # then commit SQLite, and only finally unlink the old name.
+                # If the destination is already attested with identical bytes,
+                # preserve its inode: it already satisfies the new DB path.
+                # Never replace an existing unrelated or symlinked target.
+                created_target = False
+                if not new.exists():
+                    try:
+                        os.link(old, new, follow_symlinks=False)
+                    except FileExistsError:
+                        raise _LibraryFilenameConflict("Collision de nom")
+                    created_target = True
+                expected_old = os.stat(old, follow_symlinks=False)
+                expected_new = os.stat(new, follow_symlinks=False)
+                try:
+                    self.service.storage.relocate_local_path(
+                        old, new,
+                        identity_id=str(row.get("identity_id") or ""),
+                        provider_id=str(row.get("provider_id") or "local"),
+                    )
+                except Exception:
+                    # A failed DB transaction leaves the original path valid.
+                    # Remove only OUR new hardlink and only if it still points
+                    # at that original inode. Never delete someone else's file.
+                    if created_target:
+                        try:
+                            old_stat = os.stat(old, follow_symlinks=False)
+                            new_stat = os.stat(new, follow_symlinks=False)
+                            if ((old_stat.st_dev, old_stat.st_ino)
+                                    == (new_stat.st_dev, new_stat.st_ino)):
+                                new.unlink()
+                        except OSError:
+                            pass
+                    raise
+                # A crash at this point leaves a valid, extra old hardlink;
+                # SQLite already points at the durable destination. Refuse to
+                # unlink a replaced source path or any unexpected new inode.
+                cleanup_pending = False
+                try:
+                    old_stat = os.stat(old, follow_symlinks=False)
+                    new_stat = os.stat(new, follow_symlinks=False)
+                    # Even an attested existing destination can be replaced
+                    # externally during the SQLite transaction. In that case
+                    # keep the original file as an inert, recoverable duplicate.
+                    new_unchanged = all(
+                        getattr(new_stat, attr) == getattr(expected_new, attr)
+                        for attr in (
+                            'st_dev', 'st_ino', 'st_size',
+                            'st_mtime_ns', 'st_ctime_ns',
+                        )
+                    )
+                    same_inode = (
+                        (old_stat.st_dev, old_stat.st_ino)
+                        == (new_stat.st_dev, new_stat.st_ino)
+                    )
+                    old_unchanged = all(
+                        getattr(old_stat, attr) == getattr(expected_old, attr)
+                        for attr in (
+                            'st_dev', 'st_ino', 'st_size',
+                            'st_mtime_ns', 'st_ctime_ns',
+                        )
+                    )
+                    if (not old_unchanged or not new_unchanged
+                            or (created_target and not same_inode)):
+                        cleanup_pending = True
+                    else:
+                        old.unlink()
+                except OSError:
+                    cleanup_pending = True
+            else:
+                cleanup_pending = False
             placed=self.service.storage.placement_for_path(new)
-            return LibraryMutationResult(True, 1 if new != old else 0, plan.summary, (_placement_ref(placed),) if placed else ())
+            return LibraryMutationResult(
+                True, 1 if new != old else 0, plan.summary,
+                (_placement_ref(placed),) if placed else (),
+                warnings=(("Ancien nom conservé : nettoyage local à vérifier.",)
+                          if cleanup_pending else ()),
+            )
         if request.operation == "move_placement":
             result=self.service.materialize_to_identity(request.placement_id,str(request.target_identity_id))
             row=self.service.storage.placement_get(str(result.get("placement_id") or ""))

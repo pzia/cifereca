@@ -143,8 +143,7 @@ def test_xtest_81_choices_exact_zip_and_confirmed_export(
         export_directory=tmp_path / "exports",
     )
     root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-    root.append(site)
-    root.append(consent)
+    # Site and consent are now owned by the Capture tab of the panel.
     root.append(panel.widget)
     scroller = Gtk.ScrolledWindow()
     scroller.set_child(root)
@@ -197,6 +196,7 @@ def test_xtest_81_choices_exact_zip_and_confirmed_export(
             assert panel.candidate_page_status.get_label() == (
                 f"Identifiants {page * 24 + 1}–"
                 f"{min(81, (page + 1) * 24)} sur 81"
+                f" · {81 - decided} à décider"
             )
             if page < 3:
                 assert panel.candidate_next.get_sensitive()

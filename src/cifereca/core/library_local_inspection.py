@@ -12,7 +12,7 @@ import unicodedata
 
 from .library_audit_broker import _run_scoped_audit, _unavailable
 from .library_inspection_cache import take_inspection_cache
-from .library_manual_link_preflight import review_local_pair
+from .library_manual_link_preflight import review_local_pair, review_source_read_only, review_kobo_candidate
 
 PROVIDERS = {'all': 'Tous les fournisseurs', 'kobo': 'Kobo', 'numilog': 'Numilog',
              'paris': 'Paris', 'local': 'Local (origine attestée)',
@@ -24,6 +24,10 @@ STATES = {
     'rights_without_verified_file': 'Droit sans fichier vérifié',
     'local_file_without_attested_right': 'Fichier sans droit attesté',
     'unverified_file': 'Fichier non vérifié', 'stored_path_missing': 'Chemin enregistré absent',
+    'stored_path_missing_active': 'Chemin absent, placement encore actif',
+    'stored_path_missing_historical': 'Ancien emplacement déjà marqué manquant',
+    'stored_path_missing_other': 'Chemin absent, état SQLite atypique',
+    'loan_inactive': 'Prêt Paris non actif enregistré (lecture seule)',
     'stored_path_unavailable': 'Chemin non inspectable', 'stored_path_out_of_scope': 'Chemin hors périmètre',
 }
 _REASONS = {
@@ -88,6 +92,62 @@ def _searchable(text):
 
 
 
+# #2841: only these codes are strictly PER-OBSERVATION failures. They
+# may originate from *other* EPUBs, without invalidating exact, independently
+# verified selected-file bytes or the full SQLite proof graph. Never add
+# traversal, file/row/byte budgets, root changes or cancellation here.
+_PAIR_LOCAL_FILE_REASONS = frozenset({
+    'epub_parser_limit_or_invalid',
+    'structure_limit_or_invalid',
+    'file_byte_budget',  # per-file cap only, not hash/structure global cap
+})
+# The structure umbrella reason also covers an exhausted shared byte budget.
+# A bounded individual invalid ZIP/CRC is non-authoritative for OTHER files,
+# but an exhausted global budget MUST NOT become a pair-write permit.
+_PAIR_STRUCTURE_BUDGET_STATES = frozenset({
+    'structure_byte_or_time_budget',
+    'structure_byte_or_entry_budget',
+    'structure_cancelled',
+})
+
+
+def _pair_evidence_complete(audit):
+    """Strict read-only permission to attempt fresh per-pair validation.
+
+    NOT a write authority: Numilog/Kobo engines independently revalidate the
+    entire right/receipt/backup, identity, conflict set and local bytes under
+    the Core transaction lock. Metadata suggestion coverage is not ownership
+    evidence. Uncertain traversal, incomplete SQLite/WAL, an unfinished proof
+    comparison, or unverified path coverage must still block all pairs.
+    """
+    try:
+        inventory = audit.inventory
+        snapshot = audit.snapshot
+        reconciliation = audit.reconciliation
+        if (type(inventory.reasons) is not set
+                or type(snapshot.reasons) is not set
+                or type(reconciliation.reasons) is not set
+                or type(audit.reasons) is not set
+                or type(audit.stored_paths.reasons) is not set):
+            return False
+        if (audit.reasons or snapshot.reasons or audit.stored_paths.reasons
+                or not inventory.reasons <= _PAIR_LOCAL_FILE_REASONS
+                or reconciliation.reasons - inventory.reasons):
+            return False
+        if (type(inventory.files_started) is not int
+                or inventory.files_started != len(inventory.files)
+                or any(file.structure_validation in _PAIR_STRUCTURE_BUDGET_STATES
+                       for file in inventory.files)):
+            return False
+        required = (
+            'entitlements', 'acquisition_ledger', 'artifacts',
+            'placements', 'backup_items', 'catalog_entries',
+        )
+        return all(type(snapshot.tables.get(table)) is list for table in required)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def _right_bibliography(right, matches):
     """Private, descriptive only. Identity/provider/edition was matched above.
 
@@ -139,14 +199,36 @@ def _right_bibliography(right, matches):
     media = right.get('display_media_format')
     media = (media if type(media) is str
              and media in {'epub', 'kepub', 'pdf', 'acsm'} else 'Non renseigné')
+    # Provider-private right kind matters for temporary library loans.
+    # Neither state="active" nor an expiry string confirms that a Paris
+    # loan is currently valid. No ADEPT/license/remote read is performed.
+    is_paris_loan = (right.get('provider_id') == 'paris'
+                     and right.get('entitlement_type') == 'loan')
+    kind = (
+        'Prêt temporaire (consultation uniquement)' if is_paris_loan
+        else 'Achat / possession enregistrée'
+        if right.get('entitlement_type') == 'owned'
+        else 'Nature non attestée (consultation uniquement)'
+    )
+    expiry = _text(right.get('expires_at'))[:96].strip()
+    loan_notes = (
+        '• Échéance déclarée dans SQLite : ' + (expiry or 'Non renseignée'),
+        '• Validité actuelle du prêt / identité ADEPT : non démontrée '
+        'par cet enregistrement local. Aucune prolongation, restitution '
+        'ou association permanente autorisée.',
+    ) if is_paris_loan else ()
     lines = (
-        'Bibliographie de l’achat / droit (description, pas preuve de fichier) :',
+        ('Bibliographie du prêt (description, pas preuve de fichier) :'
+         if is_paris_loan else
+         'Bibliographie de l’achat / droit (description, pas preuve de fichier) :'),
+        '• Nature du droit : ' + kind,
         '• Titre : ' + title,
         '• Auteur(s) : ' + authors,
         '• Format déclaré : ' + media,
         '• Fournisseur déclaré : ' + _text(right.get('provider_id')),
         '• Édition fournisseur : ' + (_text(right.get('item_id')) or 'Non renseignée'),
-        '• Statut de droit : ' + (_text(right.get('state')) or 'Indéterminé'),
+        '• Statut de droit enregistré : ' + (_text(right.get('state')) or 'Indéterminé'),
+        *loan_notes,
         '• Origine du titre : ' + title_source,
         '• Origine des auteurs : ' + authors_source,
         '• Catalogue : ' + catalogue_status,
@@ -279,15 +361,19 @@ class LocalInspection:
         # It never changes scan freshness or grants a file/right link.
         self._from_audit_cache = False
         self._cases = {}
+        self._path_missing_by_sqlite_state = Counter()
         # These references exist solely inside this revocable Core UI session.
         # They never enter an audit payload or a future repair capability.
         self._candidate_file_keys = {}
         # Revocable, private evidence summaries; no raw account/path exported.
         self._manual_right_proofs = {}
+        self._kobo_right_proofs = {}
+        self._kobo_right_scopes = {}
         self._manual_file_proofs = {}
         self._manual_right_scopes = {}
         self._manual_file_observations = {}
         self._manual_audit_complete = audit.redacted().get('status') == 'complete'
+        self._manual_pair_evidence_complete = _pair_evidence_complete(audit)
         # Private, same-identity facets for the direct-selection file browser.
         # No file metadata or query is ever exported through summary()/logs.
         self._file_facets = {}
@@ -308,6 +394,34 @@ class LocalInspection:
             placement.get('identity_id') == identity_id
             for placement in audit.snapshot.tables.get('placements', ())
         )
+        # #2734: the main profile counter is NOT a filesystem-file count:
+        # it counts distinct existing artifact IDs linked by present SQLite
+        # placements. Never infer which EPUB/PDF caused any difference.
+        # An incomplete SQLite image gives UNKNOWN, not a misleading zero.
+        self._scanned_formats = Counter(
+            file.media_format for file in audit.inventory.files
+            if file.identity_id == identity_id
+        )
+        self._sqlite_present_artifact_books = None
+        self._sqlite_present_placement_count = None
+        if (not audit.snapshot.reasons
+                and type(audit.snapshot.tables.get('placements')) is list
+                and type(audit.snapshot.tables.get('artifacts')) is list):
+            artifact_ids = {
+                row.get('artifact_id')
+                for row in audit.snapshot.tables['artifacts']
+                if type(row.get('artifact_id')) is str and row['artifact_id']
+            }
+            present = [
+                row for row in audit.snapshot.tables['placements']
+                if row.get('identity_id') == identity_id
+                and row.get('state') == 'present'
+            ]
+            self._sqlite_present_placement_count = len(present)
+            self._sqlite_present_artifact_books = len({
+                row.get('artifact_id') for row in present
+                if row.get('artifact_id') in artifact_ids
+            })
         # Private-only coverage: configured roots are not proof that they were
         # traversed successfully. Never mix these paths into audit.redacted().
         self._roots = tuple(str(path) for path in roots)[:128]
@@ -336,6 +450,16 @@ class LocalInspection:
         edges, candidates, ledgers = defaultdict(list), defaultdict(list), defaultdict(list)
         rights = audit.snapshot.tables.get('entitlements', [])
         catalog = audit.snapshot.tables.get('catalog_entries', [])
+        # The older Kobo mirror intentionally omits manifest provenance and
+        # revision from the generic snapshot. It DOES contain a previously
+        # recorded backup SHA/size. Use this only to gate a fresh Kobo preview;
+        # the dedicated writer checks the missing account/revision/connection.
+        kobo_backups = defaultdict(list)
+        for backup in audit.snapshot.tables.get('backup_items', ()):
+            if backup.get('provider_id') == 'kobo':
+                kobo_backups[(
+                    backup.get('credential_id'), backup.get('item_id'),
+                )].append(backup)
         # Invert the already bounded, exact, same-identity, metadata_only
         # candidates from the shared auditor. There is deliberately NO
         # title/author/path/provider inference at the file level.
@@ -522,10 +646,29 @@ class LocalInspection:
         scope_counts = Counter(
             key for right in rights if (key := right_scope(right)) is not None
         )
-        for index in audit.reconciliation.unverified_rights:
+        # Active unverified rights remain the audit's original universe.
+        # Closed/returned/expired Paris loans are a distinct READ-ONLY
+        # inspection population, never counted as active missing rights.
+        inactive_paris_loans = {
+            index for index, right in enumerate(rights)
+            if right.get('identity_id') == identity_id
+            and right.get('provider_id') == 'paris'
+            and right.get('entitlement_type') == 'loan'
+            and right.get('state') != 'active'
+        }
+        # Preserve active-right priority at the 10,000-case UI memory cap.
+        # Historical closed loans cannot hide actionable active rights.
+        active_unverified = tuple(dict.fromkeys(audit.reconciliation.unverified_rights))
+        active_indices = set(active_unverified)
+        displayed_rights = active_unverified + tuple(
+            index for index in sorted(inactive_paris_loans)
+            if index not in active_indices
+        )
+        for index in displayed_rights:
             if not 0 <= index < len(rights) or rights[index].get('identity_id') != identity_id:
                 continue
             right = rights[index]
+            is_closed_paris_loan = index in inactive_paris_loans
             right_provider, right_item = right.get('provider_id'), right.get('item_id')
             matches = (notices.get((right_provider, right_item), [])
                        if type(right_provider) is str and type(right_item) is str
@@ -560,6 +703,45 @@ class LocalInspection:
             scope = right_scope(right)
             if scope is not None and right.get('provider_id') == 'numilog':
                 self._manual_right_scopes[f'right:{index}'] = scope
+            # The shared audit does not project backup revision or provider
+            # connections. These are deliberately NOT inferred from metadata:
+            # the independent Kobo transaction recollects them freshly.
+            if right.get('provider_id') == 'kobo':
+                backup_rows = (
+                    kobo_backups.get((scope[2], scope[4]), ())
+                    if scope is not None else ()
+                )
+                backup = backup_rows[0] if len(backup_rows) == 1 else {}
+                backup_sha = backup.get('sha256')
+                backup_signature = (
+                    (backup_sha.lower(), backup.get('size'))
+                    if type(backup_sha) is str else None
+                )
+                kobo_attested = (
+                    scope is not None
+                    and len(backup_rows) == 1
+                    and backup.get('identity_id') == scope[0]
+                    and type(backup_sha) is str and len(backup_sha) == 64
+                    and all(ch in '0123456789abcdef' for ch in backup_sha.lower())
+                    and type(backup.get('size')) is int and backup['size'] > 0
+                    # Legacy backup_items compatibility rights have no
+                    # attested_source marker. This gate only permits a fresh
+                    # read-only preview, NEVER a write. The Kobo engine
+                    # independently requires the personal backup, revision,
+                    # active owned entitlement and exact account/SHA.
+                    and right.get('state') == 'active'
+                    and right.get('entitlement_type') == 'owned'
+                    and not right.get('loan_id') and not right.get('expires_at')
+                    and scope_counts[scope] == 1
+                )
+                self._kobo_right_proofs[f'right:{index}'] = {
+                    'attested': kobo_attested,
+                    'ambiguous': (scope is None or scope_counts[scope] != 1
+                                  or len(backup_rows) != 1),
+                    'signature': backup_signature,
+                }
+                if kobo_attested:
+                    self._kobo_right_scopes[f'right:{index}'] = scope
             self._manual_right_proofs[f'right:{index}'] = {
                 'attested': (
                     right.get('provider_id') == 'numilog'
@@ -591,7 +773,7 @@ class LocalInspection:
             suggestions = [
                 'Fichiers à comparer (même identifiant bibliographique explicite '
                 'qu’une notice de cette édition ; candidat non probant, sans '
-                'attribution Numilog ni lien de propriété) :',
+                'attribution à un fournisseur ni lien de propriété) :',
             ]
             if not candidate_indices:
                 suggestions.append(
@@ -613,7 +795,15 @@ class LocalInspection:
                         'Candidats multiples ou notices ambiguës : aucun '
                         'appariement individuel ne peut être conclu.'
                     )
-            detail = ('Droit sans fichier vérifié · ' + right_label + '\n\n'
+            case_heading = (
+                'Prêt Paris non actif (lecture seule)'
+                if is_closed_paris_loan else 'Droit sans fichier vérifié'
+            )
+            case_state = (
+                {'loan_inactive'} if is_closed_paris_loan
+                else {'rights_without_verified_file'}
+            )
+            detail = (case_heading + ' · ' + right_label + '\n\n'
                       + bibliography + '\n\n'
                       + evidence('entitlements', index)
                       + '\n\nPourquoi ce droit n’est-il pas confirmé ?\n' + why
@@ -622,17 +812,33 @@ class LocalInspection:
                           'Acquisition enregistrée :\n' + evidence('acquisition_ledger', li)
                           for li in own_ledger_indices[:20])
                       + '\n\nAbsence de preuve de fichier, pas preuve de livre absent. Aucun téléchargement ni rattachement autorisé.')
-            if not add('right', index, 'Droit sans fichier vérifié · ' + right_label,
+            if not add('right', index, case_heading + ' · ' + right_label,
                        _provider(right.get('provider_id')),
-                       {'rights_without_verified_file'}, detail):
+                       case_state, detail):
                 break
         for index, state in audit.stored_paths.states.items():
             if state not in STATES or not 0 <= index < len(placements) or placements[index].get('identity_id') != identity_id:
                 continue
-            # An unverified recorded path cannot attribute a file to a provider.
-            if not add('path', index, STATES[state]+' · '+_text(placements[index].get('placement_id')),
-                       'unattributed', {state}, evidence('placements', index)):
+            # An old SQLite location is not an active broken link just
+            # because its original pathname is absent. Expose the historic
+            # state to a private filter, not to any automatic cleanup.
+            case_states = {state}
+            label = STATES[state]
+            sqlite_state = placements[index].get('state')
+            if state == 'stored_path_missing':
+                bucket = sqlite_state if sqlite_state in ('present', 'missing') else 'other'
+                variant = {
+                    'present': 'stored_path_missing_active',
+                    'missing': 'stored_path_missing_historical',
+                    'other': 'stored_path_missing_other',
+                }[bucket]
+                case_states.add(variant)
+                label = STATES[variant]
+            if not add('path', index, label+' · '+_text(placements[index].get('placement_id')),
+                       'unattributed', case_states, evidence('placements', index)):
                 break
+            if state == 'stored_path_missing':
+                self._path_missing_by_sqlite_state[bucket] += 1
         if not self.valid():
             self.close()
 
@@ -654,6 +860,8 @@ class LocalInspection:
         self._candidate_file_keys.clear()
         self._file_facets.clear()
         self._manual_right_proofs.clear()
+        self._kobo_right_proofs.clear()
+        self._kobo_right_scopes.clear()
         self._manual_file_proofs.clear()
         self._manual_right_scopes.clear()
         self._manual_file_observations.clear()
@@ -665,7 +873,12 @@ class LocalInspection:
         self._manual_service = None
         self._manual_identity = None
         self._manual_audit_complete = False
+        self._manual_pair_evidence_complete = False
         self._summary = {}
+        self._path_missing_by_sqlite_state.clear()
+        self._scanned_formats.clear()
+        self._sqlite_present_artifact_books = None
+        self._sqlite_present_placement_count = None
         self._roots = ()
         self._unavailable_directories = ()
         self._unavailable_count = 0
@@ -703,6 +916,13 @@ class LocalInspection:
             for case in file_cases
         )
         return {'files': by_kind['file'], 'rights': by_kind['right'],
+                # These are non-additive identity-scoped summaries: disk
+                # observations and persisted artifact references have
+                # different scopes, freshness and cardinalities.
+                'observed_epub_files': self._scanned_formats['epub'],
+                'observed_pdf_files': self._scanned_formats['pdf'],
+                'sqlite_present_artifact_books': self._sqlite_present_artifact_books,
+                'sqlite_present_placements': self._sqlite_present_placement_count,
                 'files_attested': file_partition['attested'],
                 'files_individually_unverified': file_partition['unverified'],
                 'files_without_attested_link': file_partition['without_attested_link'],
@@ -711,11 +931,18 @@ class LocalInspection:
                 'rights_unverified_total': self._rights_unverified_count,
                 'placements_registered': self._placements_registered_count,
                 'paths': by_kind['path'],
+                # Checked, identity-scoped and only within the bounded
+                # inspection display. Historical missing entries are NOT
+                # active broken paths and are NEVER deleted automatically.
+                'paths_active_missing': self._path_missing_by_sqlite_state['present'],
+                'paths_historical_missing': self._path_missing_by_sqlite_state['missing'],
+                'paths_other_missing': self._path_missing_by_sqlite_state['other'],
                 'confirmed_files': by_state['confirmed_link'],
                 'unattributed_files': sum(case.key.startswith('file:')
                                           and case.provider == 'unattributed'
                                           for case in self._cases.values()),
                 'unverified_rights': by_state['rights_without_verified_file'],
+                'paris_inactive_loans': by_state['loan_inactive'],
                 'local_without_right': by_state['local_file_without_attested_right'],
                 'unverified_files': by_state['unverified_file'],
                 'inspection_limited': self._limited,
@@ -726,8 +953,10 @@ class LocalInspection:
                 'skipped_symlinks': self._skipped_symlinks,
                 'skipped_special': self._skipped_special}
 
-    def page(self, *, provider='all', state='all', offset=0, limit=50, query=''):
+    def page(self, *, provider='all', state='all', offset=0, limit=50, query='',
+             hide_historical_paths=False):
         if (provider not in PROVIDERS or state not in STATES or
+                type(hide_historical_paths) is not bool or
                 type(offset) is not int or offset < 0 or type(limit) is not int or
                 not 1 <= limit <= 50 or type(query) is not str or len(query) > 160):
             raise ValueError('invalid_inspection_page')
@@ -737,6 +966,8 @@ class LocalInspection:
         rows = [case for case in self._cases.values()
                 if (provider == 'all' or case.provider == provider)
                 and (state == 'all' or state in case.states)
+                and (not hide_historical_paths
+                     or 'stored_path_missing_historical' not in case.states)
                 and (not terms or all(word in _searchable(case.label)
                                       for word in terms))]
         return LocalPage(tuple(rows[offset:offset+limit]), len(rows), offset, self._limited)
@@ -792,7 +1023,7 @@ class LocalInspection:
                          offset, self._limited)
 
     def preflight_manual_link(self, right_key, file_key):
-        """Explain a selected Numilog right/file pair without IO or authority.
+        """Explain a selected provider right/file pair without IO or authority.
 
         Only the already scoped, same-session, *unlinked* cases can enter this
         local assessment. No preflight object permits a subsequent SQLite
@@ -805,15 +1036,62 @@ class LocalInspection:
         right = self._cases.get(right_key)
         file = self._cases.get(file_key)
         if (right is None or file is None
-                or 'rights_without_verified_file' not in right.states
+                or not (
+                    'rights_without_verified_file' in right.states
+                    or (right.provider == 'paris' and 'loan_inactive' in right.states)
+                )
                 or 'confirmed_link' in file.states
                 or not right_key.startswith('right:')
                 or not file_key.startswith('file:')):
             return review_local_pair(None, None, audit_complete=False)
+
+        # Shared browsing is available for Kobo and Paris, but neither can
+        # accidentally enter Numilog's purchase-only transaction from here.
+        # An explicit reason is safer than reporting a real Kobo/Paris right
+        # as a missing Numilog entitlement.
+        if right.provider == 'kobo':
+            proof = self._kobo_right_proofs.get(right_key)
+            if not proof or proof.get('attested') is not True:
+                return review_source_read_only(
+                    'kobo', audit_complete=self._manual_audit_complete,
+                    bibliographic_hint=(
+                        file_key in self._candidate_file_keys.get(right_key, ())
+                    ),
+                )
+            observation = self._manual_file_observations.get(file_key)
+            verified = (
+                observation is not None
+                and observation.validation == 'ok'
+                and observation.media_format in ('epub', 'pdf')
+                and (observation.media_format == 'pdf'
+                     or observation.structure_validation == 'epub_structure_crc_ok')
+            )
+            return review_kobo_candidate(
+                proof,
+                {'verified': verified,
+                 'signature': (observation.sha256, observation.size)
+                              if observation is not None else None},
+                audit_complete=self._manual_pair_evidence_complete,
+                global_audit_partial=not self._manual_audit_complete,
+                bibliographic_hint=(
+                    file_key in self._candidate_file_keys.get(right_key, ())
+                ),
+            )
+        if right.provider != 'numilog':
+            return review_source_read_only(
+                right.provider,
+                audit_complete=self._manual_audit_complete,
+                loan_inactive=(right.provider == 'paris'
+                               and 'loan_inactive' in right.states),
+                bibliographic_hint=(
+                    file_key in self._candidate_file_keys.get(right_key, ())
+                ),
+            )
         return review_local_pair(
             self._manual_right_proofs.get(right_key),
             self._manual_file_proofs.get(file_key),
-            audit_complete=self._manual_audit_complete,
+            audit_complete=self._manual_pair_evidence_complete,
+            global_audit_partial=not self._manual_audit_complete,
             bibliographic_hint=(
                 file_key in self._candidate_file_keys.get(right_key, ())
             ),
@@ -849,6 +1127,35 @@ class LocalInspection:
             'item_id': edition,
         }
 
+    def _kobo_transaction_inputs(self, right_key, file_key):
+        """Private exact identifiers only; never an authorization by title/ISBN."""
+        if (not self.valid() or self._manual_service is None
+                or type(right_key) is not str or type(file_key) is not str
+                or self._cases.get(right_key) is None
+                or self._cases[right_key].provider != 'kobo'
+                or self.preflight_manual_link(right_key, file_key).status
+                   != 'eligible_for_fresh_validation'):
+            return None
+        scope = self._kobo_right_scopes.get(right_key)
+        observation = self._manual_file_observations.get(file_key)
+        if (scope is None or observation is None or len(scope) != 5
+                or scope[0] != self._manual_identity or scope[1] != 'kobo'
+                or not all(type(value) is str and value for value in scope)
+                or type(observation.sha256) is not str
+                or len(observation.sha256) != 64
+                or any(ch not in '0123456789abcdef' for ch in observation.sha256)
+                or type(observation.path) is not str
+                or not observation.path.startswith('/')):
+            return None
+        return {
+            'identity_id': scope[0],
+            'credential_id': scope[2],
+            'account_id': scope[3],
+            'item_id': scope[4],
+            'expected_sha256': observation.sha256,
+            'path': observation.path,
+        }
+
     def preview_manual_attachment(self, right_key, file_key, *, cancelled=lambda: False):
         """Fresh SQL/no-follow SHA preview, kept exclusively inside CoreUI.
 
@@ -858,6 +1165,35 @@ class LocalInspection:
         """
         self.revoke_manual_attachment_preview()
         generation = self._manual_preview_generation
+        case = self._cases.get(right_key) if self.valid() else None
+        if case is not None and case.provider == 'kobo':
+            options = self._kobo_transaction_inputs(right_key, file_key)
+            if options is None:
+                return {'status': 'unavailable', 'read_only': True}
+            from .kobo_local_reconciliation import (
+                ReconciliationRejected, reconcile_kobo_local,
+            )
+            try:
+                result = reconcile_kobo_local(
+                    self._manual_service, **options,
+                    cancelled=lambda: (
+                        cancelled() or not self.valid()
+                        or self._manual_preview_generation != generation
+                    ),
+                )
+            except ReconciliationRejected:
+                return {'status': 'blocked', 'read_only': True}
+            if (not self.valid() or cancelled()
+                    or self._manual_preview_generation != generation):
+                return {'status': 'unavailable', 'read_only': True}
+            token = result.get('plan_token')
+            if result.get('status') == 'preview' and type(token) is str and len(token) == 64:
+                self._manual_pending = (right_key, file_key, token)
+                return {'status': 'preview', 'read_only': True,
+                        'requires_explicit_confirmation': True}
+            return {'status': 'already_linked', 'read_only': True} if (
+                result.get('status') == 'already_linked'
+            ) else {'status': 'unavailable', 'read_only': True}
         options = self._transaction_inputs(right_key, file_key)
         if options is None:
             return {'status': 'unavailable', 'read_only': True}
@@ -894,6 +1230,46 @@ class LocalInspection:
         generation = self._manual_preview_generation
         if (user_confirmed is not True or pending is None
                 or pending[:2] != (right_key, file_key)):
+            return {'status': 'unavailable', 'read_only': True}
+        case = self._cases.get(right_key) if self.valid() else None
+        if case is not None and case.provider == 'kobo':
+            options = self._kobo_transaction_inputs(right_key, file_key)
+            if options is None:
+                return {'status': 'unavailable', 'read_only': True}
+            from .kobo_local_reconciliation import (
+                ReconciliationRejected, reconcile_kobo_local,
+            )
+            cache_stamp_accepted = [None]
+
+            def committed_under_lock():
+                callback = self._accept_own_core_commit
+                if callable(callback):
+                    cache_stamp_accepted[0] = callback() is True
+
+            try:
+                result = reconcile_kobo_local(
+                    self._manual_service, **options, confirmation=pending[2],
+                    cancelled=lambda: (
+                        cancelled() or not self.valid()
+                        or self._manual_preview_generation != generation
+                    ), on_committed=committed_under_lock,
+                )
+            except ReconciliationRejected:
+                return {'status': 'blocked', 'read_only': True}
+            status = result.get('status')
+            if status in ('applied', 'already_linked'):
+                operation = result.get('operation_id')
+                if (status == 'applied' and type(operation) is str
+                        and len(operation) == 64
+                        and (self._accept_own_core_commit is None
+                             or cache_stamp_accepted[0] is True)
+                        and self.valid()):
+                    self._manual_undo = (right_key, file_key, operation)
+                return {
+                    'status': status, 'read_only': status != 'applied',
+                    'undo_available': status == 'applied'
+                                      and self._manual_undo is not None,
+                }
             return {'status': 'unavailable', 'read_only': True}
         options = self._transaction_inputs(right_key, file_key)
         if options is None:
@@ -955,6 +1331,37 @@ class LocalInspection:
         if (previous is None or previous[:2] != (right_key, file_key)
                 or self._manual_service is None):
             return {'status': 'unavailable', 'read_only': True}
+        case = self._cases.get(right_key) if self.valid() else None
+        if case is not None and case.provider == 'kobo':
+            options = self._kobo_transaction_inputs(right_key, file_key)
+            if options is None:
+                return {'status': 'unavailable', 'read_only': True}
+            from .kobo_local_reconciliation import (
+                ReconciliationRejected, reconcile_kobo_local,
+            )
+            try:
+                result = reconcile_kobo_local(
+                    self._manual_service, **options,
+                    undo_operation=previous[2],
+                    cancelled=lambda: (
+                        cancelled() or not self.valid()
+                        or self._manual_preview_generation != generation
+                    ),
+                )
+            except ReconciliationRejected:
+                return {'status': 'blocked', 'read_only': True}
+            if (not self.valid() or cancelled()
+                    or self._manual_preview_generation != generation):
+                return {'status': 'unavailable', 'read_only': True}
+            token = result.get('plan_token')
+            if result.get('status') == 'preview' and type(token) is str and len(token) == 64:
+                self._manual_undo_pending = (right_key, file_key, previous[2], token)
+                return {'status': 'undo_preview', 'read_only': True,
+                        'requires_explicit_confirmation': True}
+            if result.get('status') == 'already_undone':
+                self._manual_undo = None
+                return {'status': 'already_undone', 'read_only': True}
+            return {'status': 'unavailable', 'read_only': True}
         options = self._transaction_inputs(right_key, file_key)
         if options is None:
             return {'status': 'unavailable', 'read_only': True}
@@ -993,6 +1400,30 @@ class LocalInspection:
         if (user_confirmed is not True or pending is None
                 or pending[:2] != (right_key, file_key)
                 or self._manual_undo != pending[:3]):
+            return {'status': 'unavailable', 'read_only': True}
+        case = self._cases.get(right_key) if self.valid() else None
+        if case is not None and case.provider == 'kobo':
+            options = self._kobo_transaction_inputs(right_key, file_key)
+            if options is None:
+                return {'status': 'unavailable', 'read_only': True}
+            from .kobo_local_reconciliation import (
+                ReconciliationRejected, reconcile_kobo_local,
+            )
+            try:
+                result = reconcile_kobo_local(
+                    self._manual_service, **options,
+                    undo_operation=pending[2], confirmation=pending[3],
+                    cancelled=lambda: (
+                        cancelled() or not self.valid()
+                        or self._manual_preview_generation != generation
+                    ),
+                )
+            except ReconciliationRejected:
+                return {'status': 'blocked', 'read_only': True}
+            if result.get('status') in ('undone', 'already_undone'):
+                self._manual_undo = None
+                return {'status': result['status'],
+                        'read_only': result['status'] != 'undone'}
             return {'status': 'unavailable', 'read_only': True}
         options = self._transaction_inputs(right_key, file_key)
         if options is None:

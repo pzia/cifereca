@@ -1,4 +1,4 @@
-"""Private inspection with separate, explicitly confirmed local Numilog placement."""
+"""Private multi-source inspection, provider-specific confirmed local placement."""
 from __future__ import annotations
 
 from time import monotonic
@@ -335,7 +335,15 @@ class LocalInspectionController:
         Gtk, Adw, Pango = self.Gtk, self.Adw, self.Pango
         session = self.session
         window = Adw.Window(transient_for=self.parent, modal=True, title='Réconciliation · cas locaux')
-        window.set_default_size(920, 620)
+        # A nominal 920×620 dialogue must *fit* smaller real display
+        # geometries, not rely on an Xvfb with surplus vertical pixels.
+        # Keep the controls and comparisons scrollable rather than clipped.
+        parent_width = self.parent.get_width()
+        parent_height = self.parent.get_height()
+        window.set_default_size(
+            min(920, max(540, parent_width - 24)) if parent_width > 0 else 920,
+            min(620, max(420, parent_height - 24)) if parent_height > 0 else 620,
+        )
         # Adw.Window does not add an application header by itself: without
         # one, a private comparison window has no discoverable maximize/close
         # controls on client-side decorated desktops. Always keep it resizable.
@@ -390,8 +398,36 @@ class LocalInspectionController:
             f"{overview.get('rights_attested', 0)} reliés par preuve · "
             f"{overview.get('rights_unverified_total', 0)} sans fichier vérifié"
             f" (n'implique pas l'absence)\n"
-            f"PLACEMENTS SQLITE · {overview.get('placements_registered', 0)} enregistrés "
-            f"pour l'identité · {overview.get('paths', 0)} cas de chemin en anomalie\n"
+            + (
+                f"PRÊTS PARIS NON ACTIFS · {overview.get('paris_inactive_loans', 0)} "
+                "prêt(s) rendus / expirés / inactifs enregistrés, "
+                "distincts des droits actifs et consultables seulement.\n"
+                if overview.get('paris_inactive_loans', 0) else ""
+            )
+            + (
+                "REPÈRES DE COMPTAGE · le scan dénombre des fichiers physiques : "
+                f"{overview.get('observed_epub_files', 0)} EPUB, "
+                f"{overview.get('observed_pdf_files', 0)} PDF. "
+                "Le bandeau du profil compte des artefacts distincts avec "
+                "placement SQLite present : "
+                + (
+                    f"{overview['sqlite_present_artifact_books']} artefact(s) "
+                    f"sur {overview['sqlite_present_placements']} placement(s) "
+                    "dans le snapshot de cette inspection."
+                    if overview.get('sqlite_present_artifact_books') is not None
+                    else "indisponible : preuves SQLite incomplètes."
+                )
+                + " Ce ne sont ni la même mesure ni forcément le même instant ; "
+                "leur écart ne désigne aucun fichier perdu ou PDF fautif.\n"
+            )
+            + f"PLACEMENTS SQLITE · {overview.get('placements_registered', 0)} enregistrés "
+            f"pour l'identité · "
+            f"{overview.get('paths_active_missing', 0)} chemin(s) absents encore marqués present "
+            f"(à investiguer) · "
+            f"{overview.get('paths_historical_missing', 0)} ancien(s) emplacement(s) "
+            f"déjà marqués missing (historique, pas anomalie active) · "
+            f"{overview.get('paths_other_missing', 0)} chemin(s) absents d'autre état · "
+            f"{overview.get('paths', 0)} cas de chemin consultables au total.\n"
             f"Indicateurs non additionnables : "
             f"{overview.get('unattributed_files', 0)} fichiers sans provenance attestée · "
             f"{overview.get('local_without_right', 0)} fichiers sans droit attesté."
@@ -474,6 +510,22 @@ class LocalInspectionController:
         shortcuts.append(show_files)
         shortcuts.append(show_rights)
         box.append(shortcuts)
+        history_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        hide_history = Gtk.CheckButton(label='Masquer les anciens emplacements')
+        hide_history.set_active(True)
+        hide_history.set_tooltip_text(
+            'Ne masque que les placements SQLite déjà marqués missing ; '
+            'aucune modification de la bibliothèque.'
+        )
+        show_history = Gtk.Button(label='Examiner les anciens emplacements')
+        show_history.set_tooltip_text(
+            'Afficher les anciens chemins absents, pour consultation privée '
+            'uniquement. Ne répare et ne supprime aucun placement.'
+        )
+        history_controls.append(hide_history)
+        history_controls.append(show_history)
+        history_controls.set_visible(overview.get('paths_historical_missing', 0) > 0)
+        box.append(history_controls)
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         # Allow the main viewport to reach every comparison action even when
         # a long candidate column exceeds the available window height.
@@ -611,7 +663,7 @@ class LocalInspectionController:
         # live private session. No journal ID or token is given to GTK.
         pair_undo = Gtk.Button(label='Annuler le dernier placement…')
         pair_undo.set_tooltip_text(
-            'Vérifier puis annuler uniquement le placement Numilog créé '
+            'Vérifier puis annuler uniquement le placement local créé '
             'pendant cette session, avec une nouvelle confirmation explicite.'
         )
         pair_undo.set_visible(False)
@@ -670,6 +722,7 @@ class LocalInspectionController:
         manual_page_size = 25
         selected_right = [None]
         selected_file = [None]
+        selected_provider = [None]
         pair_version = [0]
         placement_committed = [False]
 
@@ -997,11 +1050,20 @@ class LocalInspectionController:
             pair_confirm.set_sensitive(False)
             fresh_preview.set_sensitive(False)
             pair_prepare.set_sensitive(False)
-            dialog = Adw.MessageDialog.new(
-                window, 'Confirmer ce placement local ?',
+            # Provider-specific proof, never a shared ISBN or inferred right.
+            # The Core will replay the exact transaction under its own lock.
+            proof_notice = (
+                'Le Core vérifiera à nouveau le droit Kobo personnel, '
+                'la sauvegarde antérieure, la révision, le compte et le SHA '
+                'du fichier sous verrou avant de restaurer le lien dans SQLite. '
+                if selected_provider[0] == 'kobo' else
                 'Le Core vérifiera à nouveau la preuve d’achat Numilog et '
                 'le fichier EPUB sous verrou avant de créer un seul placement '
-                'dans SQLite. Le livre original est conservé. '
+                'dans SQLite. '
+            )
+            dialog = Adw.MessageDialog.new(
+                window, 'Confirmer ce placement local ?',
+                proof_notice + 'Le livre original est conservé. '
                 'Annuler ne modifie rien.',
             )
             dialog.add_response('cancel', 'Annuler')
@@ -1059,8 +1121,10 @@ class LocalInspectionController:
                         pair_undo.set_visible(can_undo)
                         pair_undo.set_sensitive(can_undo)
                         pair_explanation.set_text(
-                            'Placement local Numilog enregistré. '
-                            'Fichier original et droit inchangés. Cette vue '
+                            ('Placement local Kobo enregistré. '
+                             if selected_provider[0] == 'kobo' else
+                             'Placement local Numilog enregistré. ')
+                            + 'Fichier original et droit inchangés. Cette vue '
                             'des preuves est désormais périmée : '
                             'aucune autre sélection possible. '
                             + ('Vous pouvez annuler ce placement une seule '
@@ -1155,7 +1219,9 @@ class LocalInspectionController:
                     notice.present()
                     return
                 dialog = Adw.MessageDialog.new(
-                    window, 'Annuler le placement Numilog ?',
+                    window, ('Annuler le placement Kobo ?'
+                             if selected_provider[0] == 'kobo'
+                             else 'Annuler le placement Numilog ?'),
                     'Seul le dernier placement enregistré pendant cette '
                     'session sera annulé, si ses preuves sont toujours '
                     'cohérentes. Le fichier EPUB et le droit sont conservés. '
@@ -1272,8 +1338,16 @@ class LocalInspectionController:
                 states = ', '.join(STATES[name] for name in case.states)
                 detail.set_text(PROVIDERS[case.provider]+' · '+states+'\n\n'+case.details)
                 selected_right[0] = (
-                    case.key if 'rights_without_verified_file' in case.states
-                    else None
+                    case.key if (
+                        'rights_without_verified_file' in case.states
+                        or (case.provider == 'paris'
+                            and 'loan_inactive' in case.states)
+                    ) else None
+                )
+                selected_provider[0] = case.provider if selected_right[0] else None
+                pair_prepare.set_label(
+                    'Examiner le prêt (lecture seule)' if case.provider == 'paris'
+                    else 'Préparer le rattachement'
                 )
                 reset_pair()
                 if case.key.startswith('right:'):
@@ -1305,7 +1379,8 @@ class LocalInspectionController:
             if reset: offset[0] = 0
             page = session.page(provider=list(PROVIDERS)[provider.get_selected()],
                                 state=list(STATES)[state.get_selected()], offset=offset[0],
-                                query=search.get_text()[:160])
+                                query=search.get_text()[:160],
+                                hide_historical_paths=hide_history.get_active())
             current_total[0] = page.total
             child = listing.get_first_child()
             while child is not None:
@@ -1314,6 +1389,7 @@ class LocalInspectionController:
             detail.set_text('Sélectionnez un cas pour consulter ses preuves.' if page.total else 'Aucun cas dans ces filtres. Ce résultat ne prouve pas l’absence d’un livre.')
             candidate_items[0] = ()
             selected_right[0] = None
+            selected_provider[0] = None
             reset_pair()
             candidate_box.set_visible(False)
             for case in page.cases:
@@ -1347,6 +1423,7 @@ class LocalInspectionController:
             widget.connect('notify::selected', lambda *_: filter_manual())
         provider.connect('notify::selected', lambda *_: render(reset=True))
         state.connect('notify::selected', lambda *_: render(reset=True))
+        hide_history.connect('toggled', lambda *_: render(reset=True))
         search.connect('search-changed', lambda *_: render(reset=True))
 
         def choose(prov, status):
@@ -1362,6 +1439,15 @@ class LocalInspectionController:
             'unattributed', 'local_file_without_attested_right'))
         show_rights.connect('clicked', lambda *_: choose(
             'all', 'rights_without_verified_file'))
+
+        def inspect_history():
+            if not valid():
+                return
+            # The toggle is purely presentational and cannot alter SQLite.
+            hide_history.set_active(False)
+            choose('all', 'stored_path_missing_historical')
+
+        show_history.connect('clicked', lambda *_: inspect_history())
         previous.connect('clicked', lambda *_: move(-50))
         following.connect('clicked', lambda *_: move(50))
         close.connect('clicked', lambda *_: self.clear())

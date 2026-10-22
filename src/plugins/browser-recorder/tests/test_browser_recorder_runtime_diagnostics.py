@@ -106,14 +106,16 @@ def _private_export_panel(tmp_path):
     events = []
     panel._diagnostic = lambda op, code, **metrics: events.append((op, code, metrics))
     panel.vault_directory = vault.path
-    panel.private_export_confirm = SimpleNamespace(get_active=lambda: True, set_active=lambda _: None)
     panel.session_list = SimpleNamespace(get_active_id=lambda: source.session_id)
+    panel._private_destination_dialog = None
+    panel.is_scanning = lambda: False
     destination = tmp_path / "private-export"
-    destination.mkdir(mode=0o700)
-    panel.private_export_directory = SimpleNamespace(get_text=lambda: str(destination))
-    panel.vault_passphrase = SimpleNamespace(get_text=lambda: PASSPHRASE, set_text=lambda _: None)
-    panel.private_export_passphrase = SimpleNamespace(
-        get_text=lambda: "FICTIONAL-SEPARATE-DIAGNOSTIC-EXPORT", set_text=lambda _: None,
+    destination.mkdir(mode=0o755)
+    panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(
+        destination / "session-for-llm.zip",
+    )
+    panel.vault_passphrase = SimpleNamespace(
+        get_text=lambda: PASSPHRASE, set_text=lambda _: None,
     )
     panel._refresh = lambda: None
     return panel, events, messages, destination, source
@@ -122,19 +124,15 @@ def _private_export_panel(tmp_path):
 def test_private_export_reports_size_and_duration_only_after_explicit_success(tmp_path):
     panel, events, messages, folder, source = _private_export_panel(tmp_path)
     try:
-        panel.private_export_confirm.get_active = lambda: False
-        panel.export_private_zip()
-        assert not events and not list(folder.iterdir())
-        panel.private_export_confirm.get_active = lambda: True
         panel.export_private_zip()
         assert len(events) == 1
         op, code, metrics = events[0]
         assert (op, code) == ("private_zip_export", "private_zip_exported")
         assert set(metrics) == {"duration_ms", "output_bytes"}
         assert type(metrics["duration_ms"]) is int and metrics["duration_ms"] >= 0
-        assert metrics["output_bytes"] == next(folder.glob("*.brzip")).stat().st_size
+        assert metrics["output_bytes"] == next(folder.glob("*.zip")).stat().st_size
         assert str(folder) not in repr(events)
-        assert "FICTIONAL-SEPARATE" not in repr((events, messages))
+        assert "FICTIONAL-ARCHIVE-SECRET" not in repr((events, messages))
     finally:
         source.trace.destroy()
 
@@ -143,7 +141,7 @@ def test_private_export_failure_reports_one_fixed_terminal_without_exception(tmp
     panel, events, messages, folder, source = _private_export_panel(tmp_path)
     def fail(*_a, **_kw):
         raise OSError(PRIVATE)
-    monkeypatch.setattr("browser_recorder_review_ui.save_private_zip", fail)
+    monkeypatch.setattr("browser_recorder_review_ui.save_session_llm_zip", fail)
     try:
         panel.export_private_zip()
         assert len(events) == 1
@@ -155,7 +153,7 @@ def test_private_export_failure_reports_one_fixed_terminal_without_exception(tmp
         source.trace.destroy()
 
 
-def test_cancelled_private_folder_dialog_has_one_safe_event_without_export():
+def test_cancelled_private_save_as_dialog_has_one_safe_event_without_export():
     panel, _, messages = panel_fixture()
     events = []
     panel._diagnostic = lambda op, code, **metrics: events.append((op, code, metrics))
@@ -170,12 +168,20 @@ def test_cancelled_private_folder_dialog_has_one_safe_event_without_export():
     panel.Gtk = SimpleNamespace(
         Window=type("Window", (), {}),
         FileChooserNative=SimpleNamespace(new=lambda *_: dialog),
-        FileChooserAction=SimpleNamespace(SELECT_FOLDER=1),
+        FileChooserAction=SimpleNamespace(SAVE=1),
         ResponseType=SimpleNamespace(ACCEPT=1),
     )
     panel.widget = SimpleNamespace(get_root=lambda: None)
     panel._private_destination_dialog = None
-    panel._prompt_private_folder()
+    dialog.set_current_name = lambda name: None
+    panel._refresh = lambda: None
+    panel._prompt_private_zip_file(
+        lambda _: (_ for _ in ()).throw(AssertionError("save on cancel")),
+        lambda user_cancelled: panel._emit_private_export(
+            "private_zip_export_cancelled" if user_cancelled
+            else "private_zip_export_failed", 0.0,
+        ),
+    )
     dialog.callback(dialog, 0)
     assert panel._private_destination_dialog is None
     assert len(events) == 1

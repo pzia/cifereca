@@ -16,7 +16,7 @@ from browser_recorder_http import CapturePause, record_http
 from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
 from browser_recorder_vault import PrivateSessionVault, VaultError
-from browser_recorder_private_zip import save_private_zip
+from browser_recorder_private_zip import save_session_llm_zip
 
 
 _REVIEW_PAGE_SIZE = 24  # Bound GTK widgets even for 256 distinct private IDs.
@@ -93,13 +93,17 @@ class PrivateReviewPanel:
         self.vault_directory = Path(vault_directory) if vault_directory else None
         self.vault_consent = None
         self.vault_passphrase = None
+        # Unlocked only by an explicit open action. Transient bytearray is
+        # wiped on lock/destroy; never persisted, logged, or sent to plugins.
+        self._vault_secret = None
+        self.vault_state = None
+        self.vault_open_button = None
+        self.vault_close_button = None
         self.session_list = None
         self.delete_confirm = None
-        self.private_export_confirm = None
         self.private_export_button = None
-        self.private_export_directory = None
+        self.current_private_export_button = None
         self._private_destination_dialog = None
-        self.private_export_passphrase = None
         self._bundle_plan = None
         self._bundle_preview = None
         self._export_dialog = None
@@ -113,13 +117,84 @@ class PrivateReviewPanel:
         self._trace = None
         self._review = None
         self._candidate_page = 0
+        self._pending_cursor = -1
         self._closed = False
         self._generation = 0
         self._index_handle = None
         self._retention_plan = None
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.widget = box
+        # Workspaces have independent scroll positions. The vault lock
+        # controls remain reachable regardless of the selected tab.
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        root.set_hexpand(True)
+        root.set_vexpand(True)
+        self.widget = root
+        self.status = Gtk.Label(
+            label="Aucune observation HTTP privée en mémoire.",
+            xalign=0, wrap=True,
+        )
+        self.status.set_selectable(True)
+        root.append(self.status)
+        if self.vault_directory is not None:
+            self.vault_state = Gtk.Label(
+                label="Coffre fermé · saisir la phrase secrète une fois pour l'ouvrir.",
+                xalign=0, wrap=True,
+            )
+            root.append(self.vault_state)
+            vault_controls = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
+            )
+            self.vault_passphrase = Gtk.Entry()
+            self.vault_passphrase.set_visibility(False)
+            self.vault_passphrase.set_hexpand(True)
+            self.vault_passphrase.set_placeholder_text(
+                "Phrase secrète du coffre (12 caractères minimum)"
+            )
+            vault_controls.append(self.vault_passphrase)
+            self.vault_open_button = Gtk.Button(label="Ouvrir le coffre")
+            self.vault_close_button = Gtk.Button(label="Fermer le coffre")
+            vault_controls.append(self.vault_open_button)
+            vault_controls.append(self.vault_close_button)
+            root.append(vault_controls)
+            self.vault_open_button.connect(
+                "clicked", lambda *_: self.unlock_sessions(),
+            )
+            self.vault_close_button.connect(
+                "clicked", lambda *_: self.lock_vault(),
+            )
+
+        self.tabs = Gtk.Notebook()
+        self.tabs.set_scrollable(True)
+        self.tabs.set_vexpand(True)
+        self.tabs.set_hexpand(True)
+        self.settings_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=10,
+        )
+        self.capture_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=10,
+        )
+        self.sessions_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=10,
+        )
+        self.review_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=10,
+        )
+        for section, title in (
+            (self.settings_box, "1 · Paramètres"),
+            (self.capture_box, "2 · Capture"),
+            (self.sessions_box, "3 · Sessions et export privé"),
+            (self.review_box, "4 · Revue et ZIP LLM"),
+        ):
+            for side in ("top", "bottom", "start", "end"):
+                getattr(section, "set_margin_" + side)(12)
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroller.set_hexpand(True)
+            scroller.set_vexpand(True)
+            scroller.set_child(section)
+            self.tabs.append_page(scroller, Gtk.Label(label=title))
+        root.append(self.tabs)
+        box = self.settings_box
         box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         box.append(Gtk.Label(
             label="Parcours HTTP privé (P0) — revue et ZIP volontaire",
@@ -139,6 +214,16 @@ class PrivateReviewPanel:
                   "téléchargement (8 maximum). Annuler = aucune conservation.",
             xalign=0, wrap=True,
         ))
+        # Page host supplies real Gtk widgets; standalone headless tests use
+        # immutable site/consent proxies, which have no GTK parent.
+        if isinstance(site, getattr(Gtk, "Widget", ())):
+            box.append(Gtk.Label(
+                label="Adresse HTTPS du site à parcourir",
+                xalign=0, wrap=True,
+            ))
+            box.append(site)
+        if isinstance(consent, getattr(Gtk, "Widget", ())):
+            box.append(consent)
         box.append(Gtk.Label(
             label="Hôtes tiers facultatifs (HTTPS, séparés par des virgules) : "
                   "métadonnées de requête seulement, jamais URL ni corps. "
@@ -153,27 +238,31 @@ class PrivateReviewPanel:
         if self.vault_directory is not None:
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
-                label="Coffre chiffré : chaque capture consentie est archivée "
-                      "pour être revue plus tard, sans export ZIP. Entrez une "
-                      "phrase secrète d'au moins 12 caractères et conservez-la. "
-                      "Une panne peut ne laisser qu'une capture partielle.",
+                label="Coffre chiffré : cliquez « Ouvrir le coffre » une seule "
+                      "fois pour réutiliser la phrase secrète en mémoire "
+                      "pendant cette ouverture de page. « Fermer le coffre » "
+                      "efface l'accès en mémoire sans supprimer les sessions. "
+                      "Chaque capture exige toujours son consentement.",
                 xalign=0, wrap=True,
             ))
             self.vault_consent = Gtk.CheckButton(
                 label="J'autorise le stockage local chiffré de cette capture."
             )
             box.append(self.vault_consent)
-            self.vault_passphrase = Gtk.Entry()
-            self.vault_passphrase.set_visibility(False)
-            self.vault_passphrase.set_placeholder_text(
-                "Phrase secrète du coffre (capture, ouverture ou suppression)"
-            )
-            box.append(self.vault_passphrase)
+            box = self.sessions_box
+            box.append(Gtk.Label(
+                label="Sessions archivées : consultez les captures chiffrées "
+                      "sans contacter les sites. Une session sélectionnée peut "
+                      "être exportée telle que capturée pour un LLM. L'archive "
+                      "est alors en clair et contient des données personnelles.",
+                xalign=0, wrap=True,
+            ))
             self.sessions_refresh = Gtk.Button(label="Lister les sessions archivées")
             self.sessions_unlock = Gtk.Button(
                 label="Déverrouiller les métadonnées des sessions…"
             )
             self.session_list = Gtk.ComboBoxText()
+            self.session_list.connect("changed", lambda *_: self._refresh())
             self.session_name = Gtk.Entry()
             self.session_name.set_max_length(80)
             self.session_name.set_placeholder_text(
@@ -271,44 +360,34 @@ class PrivateReviewPanel:
             )
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
-                label="Export DE SECOURS non anonymisé : contient URL, "
-                      "identifiants, titres et corps privés observés. "
-                      "Ne jamais partager sans une revue spécifique. "
-                      "Le résultat est un .brzip CHIFFRÉ, pas le ZIP LLM.",
+                label="Exporter une session pour un LLM : ouvrez le coffre "
+                      "une fois, sélectionnez une session, puis choisissez où "
+                      "enregistrer le fichier ZIP. Pas de second mot de passe ni "
+                      "de permissions de dossier à configurer. Le coffre reste "
+                      "chiffré ; le ZIP exporté est EN CLAIR (URL, identifiants "
+                      "et corps conservés) : à partager uniquement volontairement "
+                      "avec le LLM de votre choix. Aucun envoi automatique.",
                 xalign=0, wrap=True,
             ))
-            self.private_export_directory = Gtk.Entry()
-            self.private_export_directory.set_placeholder_text(
-                "Dossier privé préexistant (absolu, permissions 0700)"
-            )
-            box.append(self.private_export_directory)
-            self.private_export_choose = Gtk.Button(
-                label="Choisir un dossier privé…"
-            )
-            box.append(self.private_export_choose)
-            self.private_export_choose.connect(
-                "clicked", lambda *_: self._prompt_private_folder(),
-            )
-            self.private_export_passphrase = Gtk.Entry()
-            self.private_export_passphrase.set_visibility(False)
-            self.private_export_passphrase.set_placeholder_text(
-                "NOUVELLE phrase secrète réservée à ce ZIP privé chiffré"
-            )
-            box.append(self.private_export_passphrase)
-            self.private_export_confirm = Gtk.CheckButton(
-                label="Je confirme cet export privé distinct du ZIP anonymisé."
-            )
-            box.append(self.private_export_confirm)
             self.private_export_button = Gtk.Button(
-                label="Exporter le ZIP privé chiffré de cette session"
+                label="Exporter cette session pour un LLM…"
             )
             box.append(self.private_export_button)
-            self.private_export_confirm.connect(
-                "toggled", lambda *_: self._refresh(),
-            )
             self.private_export_button.connect(
                 "clicked", lambda *_: self.export_private_zip(),
             )
+        box = self.capture_box
+        box.append(Gtk.Label(
+            label="Capture du parcours — configurez d'abord le site HTTPS, "
+                  "les autorisations et le coffre dans Paramètres. "
+                  "Seul un démarrage volontaire ouvre Chromium.",
+            xalign=0, wrap=True,
+        ))
+        self.configure_button = Gtk.Button(label="Modifier les paramètres…")
+        box.append(self.configure_button)
+        self.configure_button.connect(
+            "clicked", lambda *_: self.tabs.set_current_page(0),
+        )
         # FlowBox wraps the five capture/review buttons at sidebar/mobile
         # widths; a single horizontal Box could push Stop/Clear off-screen.
         controls = Gtk.FlowBox()
@@ -322,14 +401,41 @@ class PrivateReviewPanel:
         self.pause_button = Gtk.Button(label="Mettre en pause")
         self.preview_button = Gtk.Button(label="Prévisualiser les choix")
         self.clear = Gtk.Button(label="Effacer les données privées")
-        for button in (self.start, self.stop, self.pause_button,
-                       self.preview_button, self.clear):
+        for button in (self.start, self.stop, self.pause_button):
             controls.append(button)
         box.append(controls)
-        self.status = Gtk.Label(label="Aucune observation HTTP privée en mémoire.",
-                                xalign=0, wrap=True)
-        self.status.set_selectable(True)
-        box.append(self.status)
+        box.append(Gtk.Label(
+            label="Après l'arrêt, la revue s'ouvre dans l'onglet 4. "
+                  "Aucun export ni envoi externe n'est automatique.",
+            xalign=0, wrap=True,
+        ))
+        box = self.review_box
+        if self.vault_directory is not None:
+            box.append(Gtk.Label(
+                label="Session archivée dans le coffre : vous pouvez l'exporter "
+                      "directement pour un LLM sans attendre les décisions "
+                      "d'anonymisation. Ce ZIP est NON CHIFFRÉ et contient les "
+                      "observations privées conservées. Ouvrez le coffre "
+                      "une fois en haut, puis choisissez où l'enregistrer.",
+                xalign=0, wrap=True,
+            ))
+            self.current_private_export_button = Gtk.Button(
+                label="Exporter directement cette session privée pour LLM…"
+            )
+            box.append(self.current_private_export_button)
+            self.current_private_export_button.connect(
+                "clicked", lambda *_: self.export_private_zip(current=True),
+            )
+            box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        review_controls = Gtk.FlowBox()
+        review_controls.set_selection_mode(Gtk.SelectionMode.NONE)
+        review_controls.set_min_children_per_line(1)
+        review_controls.set_max_children_per_line(2)
+        review_controls.set_row_spacing(6)
+        review_controls.set_column_spacing(8)
+        for button in (self.preview_button, self.clear):
+            review_controls.append(button)
+        box.append(review_controls)
         box.append(Gtk.Label(
             label="Revue clavier : Tab pour cibler un identifiant ; "
                   "1 = anonymiser, 2 = conserver, 3 = exclure. "
@@ -357,12 +463,19 @@ class PrivateReviewPanel:
         self.candidate_page_status = Gtk.Label(
             label="Aucun identifiant à examiner.", xalign=0, wrap=True,
         )
+        self.candidate_next_pending = Gtk.Button(
+            label="Aller au prochain identifiant sans décision"
+        )
         pagination.append(self.candidate_previous)
         pagination.append(self.candidate_page_status)
         pagination.append(self.candidate_next)
+        pagination.append(self.candidate_next_pending)
         box.append(pagination)
         self.candidate_previous.connect("clicked", lambda *_: self.change_candidate_page(-1))
         self.candidate_next.connect("clicked", lambda *_: self.change_candidate_page(1))
+        self.candidate_next_pending.connect(
+            "clicked", lambda *_: self.go_to_next_pending(),
+        )
 
         box.append(Gtk.Label(
             label="L'aperçu est local et peut contenir des identifiants "
@@ -391,8 +504,27 @@ class PrivateReviewPanel:
         )
         self.bundle_summary.set_selectable(True)
         box.append(self.bundle_summary)
+        box.append(Gtk.Label(
+            label="Membres du ZIP exact — la recherche filtre seulement les "
+                  "NOMS des fichiers, jamais leurs valeurs. Sélectionnez "
+                  "un fichier pour consulter les octets UTF-8 approuvés.",
+            xalign=0, wrap=True,
+        ))
+        self.member_filter = Gtk.Entry()
+        self.member_filter.set_placeholder_text(
+            "Rechercher un nom : manifest, coverage, timeline, exchanges, bodies…"
+        )
+        box.append(self.member_filter)
         self.bundle_member = Gtk.ComboBoxText()
         box.append(self.bundle_member)
+        self.bundle_progress = Gtk.Label(
+            label="Aucun ZIP à parcourir.", xalign=0, wrap=True,
+        )
+        box.append(self.bundle_progress)
+        self.coverage_button = Gtk.Button(
+            label="Voir directement le rapport de couverture"
+        )
+        box.append(self.coverage_button)
         member_scroll = Gtk.ScrolledWindow()
         member_scroll.set_min_content_height(140)
         member_scroll.set_max_content_height(300)
@@ -405,12 +537,13 @@ class PrivateReviewPanel:
         box.append(member_scroll)
         self.export_confirm = Gtk.CheckButton()
         self.export_confirm.set_child(Gtk.Label(
-            label="J'ai revu les membres accessibles ci-dessus et j'accepte "
-                  "de créer localement cette archive pour un partage volontaire.",
+            label="J'ai examiné le ZIP revu. Il peut contenir des identifiants "
+                  "expressément conservés et des données sensibles. "
+                  "J'accepte de créer localement cette archive, sans envoi.",
             xalign=0, wrap=True,
         ))
         box.append(self.export_confirm)
-        self.export_button = Gtk.Button(label="Enregistrer sous… le ZIP anonymisé")
+        self.export_button = Gtk.Button(label="Enregistrer sous… le ZIP revu pour LLM")
         box.append(self.export_button)
         self.open_export_folder_button = Gtk.Button(
             label="Ouvrir le dossier du ZIP enregistré"
@@ -421,6 +554,12 @@ class PrivateReviewPanel:
         )
         self.plan_button.connect("clicked", lambda *_: self.prepare_zip())
         self.bundle_member.connect("changed", lambda *_: self._show_zip_member())
+        self.member_filter.connect(
+            "changed", lambda *_: self._populate_zip_members(),
+        )
+        self.coverage_button.connect(
+            "clicked", lambda *_: self._select_coverage_report(),
+        )
         self.export_confirm.connect("toggled", lambda *_: self._refresh())
         self.export_button.connect("clicked", lambda *_: self.export_zip())
 
@@ -429,6 +568,54 @@ class PrivateReviewPanel:
         self.pause_button.connect("clicked", lambda *_: self.toggle_pause())
         self.preview_button.connect("clicked", lambda *_: self.preview())
         self.clear.connect("clicked", lambda *_: self.discard())
+        self._refresh()
+
+    def _vault_password(self):
+        """Read the unlocked in-process key, or one explicitly typed fallback.
+
+        Legacy per-action typing remains possible while closed. The opened
+        vault never writes its master phrase to files, settings or logs.
+        """
+        cached = getattr(self, "_vault_secret", None)
+        entered = self.vault_passphrase.get_text()
+        self.vault_passphrase.set_text("")
+        return cached.decode("utf-8") if cached is not None else entered
+
+    def _wipe_vault_password(self):
+        """Best-effort overwrite of the sole retained mutable password buffer."""
+        cached = getattr(self, "_vault_secret", None)
+        if cached is not None:
+            for index in range(len(cached)):
+                cached[index] = 0
+            self._vault_secret = None
+
+    def lock_vault(self):
+        """Explicitly forget key and decrypted UI, never delete vault files."""
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()):
+            return
+        # Invalidate deferred Save-As callbacks, even if a chooser was opened
+        # while the vault was unlocked; a stale dialog cannot publish a ZIP.
+        self._generation += 1
+        if self._private_destination_dialog is not None:
+            chooser, self._private_destination_dialog = (
+                self._private_destination_dialog, None,
+            )
+            chooser.destroy()
+        if self._export_dialog is not None:
+            chooser, self._export_dialog = self._export_dialog, None
+            chooser.destroy()
+        self._wipe_vault_password()
+        self.vault_passphrase.set_text("")
+        self._retention_plan = None
+        self._last_export_path = None
+        self.session_list.remove_all()
+        self.session_name.set_text("")
+        self._discard_private()
+        self.status.set_label(
+            "Coffre fermé : phrase secrète effacée de la session, aperçus "
+            "privés masqués. Archives chiffrées conservées sur disque."
+        )
         self._refresh()
 
     def is_recording(self):
@@ -450,6 +637,21 @@ class PrivateReviewPanel:
             and not self.legacy_running()
         )
         if self.vault_directory is not None:
+            unlocked = self._vault_secret is not None
+            self.vault_state.set_label(
+                "Coffre OUVERT · clé en mémoire uniquement · Fermer pour verrouiller."
+                if unlocked else
+                "Coffre FERMÉ · phrase secrète requise pour l'ouvrir."
+            )
+            self.vault_passphrase.set_sensitive(
+                not self._closed and not busy and not scanning and not unlocked
+            )
+            self.vault_open_button.set_sensitive(
+                not self._closed and not busy and not scanning and not unlocked
+            )
+            self.vault_close_button.set_sensitive(
+                not self._closed and not busy and not scanning and unlocked
+            )
             self.sessions_refresh.set_sensitive(
                 not self._closed and not busy and not scanning
             )
@@ -487,9 +689,15 @@ class PrivateReviewPanel:
             )
             self.private_export_button.set_sensitive(
                 not self._closed and not busy and not scanning
-                and self.private_export_confirm.get_active()
+                and self._private_destination_dialog is None
                 and bool(self.session_list.get_active_id())
             )
+            if self.current_private_export_button is not None:
+                self.current_private_export_button.set_sensitive(
+                    not self._closed and not busy and not scanning
+                    and self._private_destination_dialog is None
+                    and bool(getattr(self._trace, "vault_session_id", None))
+                )
         self.stop.set_sensitive(not self._closed and busy)
         self.third_party_origins.set_sensitive(
             not self._closed and not busy and self._trace is None
@@ -513,6 +721,10 @@ class PrivateReviewPanel:
             not self._closed and not busy
             and (self._candidate_page + 1) * _REVIEW_PAGE_SIZE < candidate_count
         )
+        self.candidate_next_pending.set_sensitive(
+            not self._closed and not busy and self._review is not None
+            and self._review.pending() > 0
+        )
         ready = not self._closed and not busy and self._review is not None
         self.plan_button.set_sensitive(ready and not self._review.pending()
                                        if ready else False)
@@ -525,6 +737,9 @@ class PrivateReviewPanel:
         )
         self.open_export_folder_button.set_sensitive(
             not self._closed and self._last_export_path is not None
+        )
+        self.coverage_button.set_sensitive(
+            not self._closed and self._bundle_preview is not None
         )
 
     def _text(self, value):
@@ -542,6 +757,9 @@ class PrivateReviewPanel:
         self._bundle_plan = None
         self._bundle_preview = None
         self.bundle_member.remove_all()
+        self.member_filter.set_text("")
+        self.bundle_progress.set_label("Aucun ZIP à parcourir.")
+        self.coverage_button.set_sensitive(False)
         self.bundle_text.get_buffer().set_text("")
         self.bundle_summary.set_label("Aucune archive préparée.")
         self.export_confirm.set_active(False)
@@ -549,6 +767,7 @@ class PrivateReviewPanel:
 
     def _discard_private(self):
         self._candidate_page = 0
+        self._pending_cursor = -1
         self._invalidate_bundle()
         self._text("")
         self._clear_candidates()
@@ -582,7 +801,10 @@ class PrivateReviewPanel:
             pass
 
     def is_scanning(self):
-        return self._index_handle is not None and not self._index_handle.done()
+        # The worker may finish before its GTK idle delivery runs. Keep
+        # actions locked and report "busy" until the UI has *received* the
+        # result, not merely until the background future is done.
+        return self._index_handle is not None
 
     def _download_status(self, code):
         """Only fixed counters from worker, never URL or output path."""
@@ -692,13 +914,12 @@ class PrivateReviewPanel:
                     "Consentement au stockage local chiffré requis avant capture."
                 )
                 return
-            passphrase = self.vault_passphrase.get_text()
+            passphrase = self._vault_password()
             if len(passphrase) < 12:
                 self.status.set_label(
                     "Phrase secrète d'au moins 12 caractères requise."
                 )
                 return
-            self.vault_passphrase.set_text("")
             self.vault_consent.set_active(False)
         self._discard_private()
         self._generation += 1
@@ -784,16 +1005,31 @@ class PrivateReviewPanel:
                     try:
                         self._review = IdentifierReview(result)
                     except Exception:
-                        # Never show exception text from a provider response
-                        # or URL that might contain a token.
-                        result.destroy()
-                        self._trace = None
-                        self.status.set_label(
-                            "Limite de revue atteinte : capture effacée, aucun export.",
-                        )
+                        # Identifier heuristics may reject an otherwise valid
+                        # encrypted capture (e.g. candidate limit). Never
+                        # destroy a vaulted trace just because the *filtered*
+                        # ZIP cannot be produced: the operator explicitly
+                        # requested a separate direct LLM export path.
+                        # Do not surface provider exceptions or original URLs.
+                        if getattr(result, "vault_session_id", None):
+                            self.tabs.set_current_page(3)
+                            self.status.set_label(
+                                "Revue filtrée impossible : capture conservée "
+                                "dans le coffre chiffré. Vous pouvez exporter "
+                                "directement cette session privée pour un LLM "
+                                "avec la phrase secrète du coffre. Le ZIP sera "
+                                "en clair et non anonymisé."
+                            )
+                        else:
+                            result.destroy()
+                            self._trace = None
+                            self.status.set_label(
+                                "Limite de revue atteinte : capture effacée, aucun export."
+                            )
                         self._emit_failure("http_review", "review_failed")
                     else:
                         self._show_candidates()
+                        self.tabs.set_current_page(3)
                         if getattr(result, "vault_session_id", None):
                             self.status.set_label(
                                 f"Session archivée en coffre chiffré : "
@@ -846,8 +1082,7 @@ class PrivateReviewPanel:
         except (TypeError, ValueError):
             self.status.set_label("Délai de rétention invalide.")
             return
-        secret = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        secret = self._vault_password()
         if len(secret) < 12:
             self.status.set_label("Phrase secrète requise pour prévisualiser.")
             return
@@ -878,10 +1113,10 @@ class PrivateReviewPanel:
                 plan = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if plan is None or self.retention_age.get_active_id() != str(days):
                     self.status.set_label(
                         "Prévisualisation refusée : clé ou coffre non sûrs."
@@ -913,8 +1148,7 @@ class PrivateReviewPanel:
             return
         plan, self._retention_plan = self._retention_plan, None
         self.retention_confirm.set_active(False)
-        passphrase = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        passphrase = self._vault_password()
         if len(passphrase) < 12:
             self.status.set_label(
                 "Saisir de nouveau la clé ; refaire l'aperçu ensuite."
@@ -947,10 +1181,10 @@ class PrivateReviewPanel:
                 result = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if result is None:
                     self.status.set_label(
                         "Suppression refusée : clé, session modifiée ou aperçu "
@@ -1029,10 +1263,10 @@ class PrivateReviewPanel:
                 result = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if result is None:
                     self.status.set_label(
                         "Nettoyage refusé : résidu non sûr ou coffre inaccessible."
@@ -1068,6 +1302,7 @@ class PrivateReviewPanel:
         self.status.set_label(
             f"{len(ids)} sessions chiffrées trouvées ; aucun site contacté."
         )
+        self._refresh()
 
     def unlock_sessions(self):
         """Build the sensitive catalogue only on explicit local unlock.
@@ -1078,8 +1313,7 @@ class PrivateReviewPanel:
         if (self.vault_directory is None or self._closed
                 or self.is_recording() or self.is_scanning()):
             return
-        passphrase = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        passphrase = self._vault_password()
         if len(passphrase) < 12:
             self.status.set_label(
                 "Phrase secrète de 12 caractères minimum requise."
@@ -1111,10 +1345,10 @@ class PrivateReviewPanel:
                 result = None
 
             def deliver():
-                if self._closed or generation != self._generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or generation != self._generation:
+                    return False
                 if result is None:
                     self.status.set_label(
                         "Déverrouillage impossible : clé, quota ou coffre invalide."
@@ -1127,6 +1361,25 @@ class PrivateReviewPanel:
                         self.status.set_label("Index local inaccessible.")
                         self._refresh()
                         return False
+                    # First opening of an empty vault is permitted. For a
+                    # nonempty vault, the master phrase must authenticate at
+                    # least one existing session before being retained.
+                    if ids and not entries:
+                        self.status.set_label(
+                            "Ouverture refusée : phrase secrète incorrecte "
+                            "ou toutes les sessions sont indisponibles."
+                        )
+                        self._refresh()
+                        return False
+                    if self._vault_secret is None:
+                        try:
+                            self._vault_secret = bytearray(
+                                passphrase.encode("utf-8")
+                            )
+                        except UnicodeError:
+                            self.status.set_label("Phrase secrète invalide.")
+                            self._refresh()
+                            return False
                     known = {entry["id"]: entry for entry in entries}
                     old_selected = self.session_list.get_active_id()
                     self.session_list.remove_all()
@@ -1150,7 +1403,7 @@ class PrivateReviewPanel:
                             old_selected if old_selected in ordered else ordered[0]
                         )
                     self.status.set_label(
-                        f"{len(entries)} sessions déverrouillées et "
+                        f"Coffre ouvert · {len(entries)} sessions déverrouillées et "
                         f"{inaccessible} indisponibles ; aucun contact fournisseur."
                     )
                 self._refresh()
@@ -1167,8 +1420,7 @@ class PrivateReviewPanel:
             return
         sid = self.session_list.get_active_id()
         label = self.session_name.get_text().strip()
-        secret = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        secret = self._vault_password()
         self.session_name.set_text("")
         if not sid or not label or len(secret) < 12:
             self.status.set_label(
@@ -1200,10 +1452,10 @@ class PrivateReviewPanel:
                 ok = False
 
             def deliver():
-                if self._closed or self._generation != generation:
-                    return False
                 if self._index_handle is done:
                     self._index_handle = None
+                if self._closed or self._generation != generation:
+                    return False
                 self.status.set_label(
                     "Nom privé chiffré enregistré ; déverrouillez la liste "
                     "pour afficher le nouveau nom."
@@ -1233,8 +1485,7 @@ class PrivateReviewPanel:
         if not session_id:
             self.status.set_label("Choisir d'abord une session locale.")
             return
-        passphrase = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        passphrase = self._vault_password()
         try:
             stored = PrivateSessionVault(self.vault_directory).open(
                 session_id, passphrase,
@@ -1256,6 +1507,7 @@ class PrivateReviewPanel:
             )
             return
         self._show_candidates(update_status=False)
+        self.tabs.set_current_page(3)
         private = stored.private_summary()
         # This is the user's private, unlocked GTK panel: origin and time
         # never travel through diagnostics, public broker, or ZIP manifest.
@@ -1286,8 +1538,7 @@ class PrivateReviewPanel:
             return
         self.delete_confirm.set_active(False)
         session_id = self.session_list.get_active_id()
-        passphrase = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        passphrase = self._vault_password()
         try:
             PrivateSessionVault(self.vault_directory).delete(
                 session_id, passphrase, confirmed=True,
@@ -1302,23 +1553,24 @@ class PrivateReviewPanel:
         self.status.set_label("Session locale supprimée du coffre.")
         self._refresh()
 
-    def _prompt_private_folder(self):
-        """Native opt-in directory picker; only private 0700 is accepted on save."""
-        if (self._closed or self._private_destination_dialog is not None
-                or self.is_recording()):
+    def _prompt_private_zip_file(self, callback, cancelled):
+        """Single native Save As approval; never requires a 0700 folder."""
+        if self._closed or self._private_destination_dialog is not None:
             return
         Gtk = self.Gtk
         if not hasattr(Gtk, "FileChooserNative"):
-            self.status.set_label("Sélection de dossier indisponible.")
+            self.status.set_label("Dialogue d'enregistrement indisponible.")
+            cancelled(False)
             return
         root = self.widget.get_root()
         parent = root if isinstance(root, Gtk.Window) else None
         chooser = Gtk.FileChooserNative.new(
-            "Choisir un dossier privé pour le ZIP chiffré", parent,
-            Gtk.FileChooserAction.SELECT_FOLDER, "Choisir", "Annuler",
+            "Exporter la session privée pour LLM (ZIP en clair)", parent,
+            Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
+        chooser.set_current_name("cifereca-session-privee.zip")
         self._private_destination_dialog = chooser
-        started = monotonic()
+        self._refresh()
 
         def responded(dialog, response):
             if dialog is not self._private_destination_dialog:
@@ -1328,75 +1580,91 @@ class PrivateReviewPanel:
             try:
                 if response == Gtk.ResponseType.ACCEPT and not self._closed:
                     selected = dialog.get_file()
-                    path = selected.get_path() if selected else None
-                    if path:
-                        self.private_export_directory.set_text(path)
+                    filename = selected.get_path() if selected else None
+                    if filename:
+                        callback(Path(filename))
+                    else:
+                        cancelled(False)
                 elif not self._closed:
-                    self._emit_private_export("private_zip_export_cancelled", started)
+                    cancelled(True)
             finally:
                 dialog.destroy()
+                self._refresh()
 
         chooser.connect("response", responded)
         chooser.show()
 
-    def export_private_zip(self):
-        if self.vault_directory is None or self._closed or self.is_recording():
-            return
-        if not self.private_export_confirm.get_active():
-            self.status.set_label(
-                "Export privé refusé : confirmation spécifique requise."
-            )
+    def export_private_zip(self, *, current=False):
+        """Export chosen session or active review, without forced list refresh.
+
+        The active-session path is intentionally independent of the selected
+        catalogue row; a later selection must not redirect its export.
+        """
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()
+                or self._private_destination_dialog is not None):
             return
         started = monotonic()
-        self.private_export_confirm.set_active(False)
-        sid = self.session_list.get_active_id()
-        path = self.private_export_directory.get_text().strip()
-        passphrase = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
-        export_passphrase = self.private_export_passphrase.get_text()
-        self.private_export_passphrase.set_text("")
-        if not sid or not path or len(export_passphrase) < 12:
-            self.status.set_label(
-                "Choisir une session, un dossier privé et une nouvelle phrase "
-                "secrète d'export distincte (12 caractères minimum)."
-            )
-            self._emit_private_export("private_zip_export_failed", started)
-            return
-        if passphrase == export_passphrase:
-            self.status.set_label(
-                "Utiliser une phrase d'export différente de celle du coffre."
-            )
-            self._emit_private_export("private_zip_export_failed", started)
-            return
-        stored = None
-        try:
-            stored = PrivateSessionVault(self.vault_directory).open(
-                sid, passphrase,
-            )
-            filename = save_private_zip(
-                stored, Path(path), export_passphrase, confirmed=True,
-            )
-        except Exception:
-            # Never emit path, provider data or cryptography exception text.
-            self.status.set_label(
-                "ZIP privé refusé : déverrouillage, répertoire 0700 ou "
-                "limite de sécurité incorrecte. Aucun export non chiffré."
-            )
-            self._emit_private_export("private_zip_export_failed", started)
-            return
-        finally:
-            if stored is not None:
-                stored.trace.destroy()
-        try:
-            output_bytes = (Path(path) / filename).stat(follow_symlinks=False).st_size
-        except OSError:
-            output_bytes = None  # Export succeeded; metric unavailable.
-        self._emit_private_export("private_zip_exported", started, output_bytes)
-        self.status.set_label(
-            "ZIP PRIVÉ CHIFFRÉ enregistré : " + filename
-            + " — ne pas partager sans revue ; aucun téléversement."
+        sid = (
+            getattr(self._trace, "vault_session_id", None) if current
+            else self.session_list.get_active_id()
         )
-        self._refresh()
+        passphrase = self._vault_password()
+        if not sid or len(passphrase) < 12:
+            self.status.set_label(
+                "Sélectionner une session et saisir sa phrase secrète "
+                "du coffre (12 caractères minimum)."
+            )
+            return
+        generation = self._generation
+
+        def cancelled(user_cancelled):
+            if self._closed:
+                return
+            if user_cancelled:
+                self.status.set_label("Export privé annulé ; aucun ZIP créé.")
+                self._emit_private_export("private_zip_export_cancelled", started)
+            else:
+                self.status.set_label("Destination ZIP indisponible ; aucun fichier créé.")
+                self._emit_private_export("private_zip_export_failed", started)
+
+        def selected(destination):
+            active_sid = (
+                getattr(self._trace, "vault_session_id", None) if current
+                else self.session_list.get_active_id()
+            )
+            if (self._closed or self._generation != generation
+                    or active_sid != sid):
+                cancelled(True)
+                return
+            stored = None
+            try:
+                stored = PrivateSessionVault(self.vault_directory).open(
+                    sid, passphrase,
+                )
+                size = save_session_llm_zip(
+                    stored, Path(destination), confirmed=True,
+                )
+            except Exception:
+                # Never include chosen pathname or decrypted provider text.
+                self.status.set_label(
+                    "Export impossible : clé/coffre/destination invalide, "
+                    "limite atteinte ou fichier existant. Aucun écrasement."
+                )
+                self._emit_private_export("private_zip_export_failed", started)
+                return
+            finally:
+                if stored is not None:
+                    stored.trace.destroy()
+            self._emit_private_export("private_zip_exported", started, size)
+            # Do not put a sensitive local path in diagnostics.
+            self.status.set_label(
+                "Session exportée en ZIP privé NON CHIFFRÉ (fichier 0600). "
+                "Aucun envoi automatique. Conservez ou supprimez ce ZIP "
+                "après l'avoir transmis volontairement à votre LLM."
+            )
+
+        self._prompt_private_zip_file(selected, cancelled)
 
     def toggle_pause(self):
         if (self._closed or not self.is_recording() or self._pause_control is None
@@ -1425,9 +1693,35 @@ class PrivateReviewPanel:
         target = min(last, max(0, self._candidate_page + offset))
         if target != self._candidate_page:
             self._candidate_page = target
+            self._pending_cursor = target * _REVIEW_PAGE_SIZE - 1
             self._show_candidates(update_status=False)
 
-    def _show_candidates(self, *, update_status=True):
+    def go_to_next_pending(self):
+        """Navigate pending identifiers without applying any decisions in bulk."""
+        if (self._closed or self._review is None or self.is_recording()
+                or self.is_scanning()):
+            return
+        rows = self._review.local_rows()
+        if not rows:
+            return
+        start = max(self._candidate_page * _REVIEW_PAGE_SIZE, self._pending_cursor + 1)
+        pending = [
+            i for i, row in enumerate(rows) if row["decision"] is None
+        ]
+        if not pending:
+            self.status.set_label("Toutes les décisions individuelles sont prises.")
+            return
+        target = next((i for i in pending if i >= start), pending[0])
+        self._candidate_page = target // _REVIEW_PAGE_SIZE
+        self._pending_cursor = target
+        self._show_candidates(update_status=False, focus_index=target)
+        self.status.set_label(
+            f"Identifiant {target + 1}/{len(rows)} encore à décider "
+            f"(page {self._candidate_page + 1}). "
+            "Aucune décision automatique."
+        )
+
+    def _show_candidates(self, *, update_status=True, focus_index=None):
         self._clear_candidates()
         self._text("")
         rows = self._review.local_rows()
@@ -1438,7 +1732,8 @@ class PrivateReviewPanel:
         first = self._candidate_page * _REVIEW_PAGE_SIZE
         last = min(total, first + _REVIEW_PAGE_SIZE)
         self.candidate_page_status.set_label(
-            f"Identifiants {first + 1}–{last} sur {total}"
+            f"Identifiants {first + 1}–{last} sur {total} "
+            f"· {self._review.pending()} à décider"
             if total else "Aucun identifiant à examiner."
         )
         if update_status:
@@ -1453,7 +1748,7 @@ class PrivateReviewPanel:
                 label="Aucun identifiant proposé : vérifier quand même les contenus.",
                 xalign=0, wrap=True,
             ))
-        for row in rows[first:last]:
+        for row_index, row in enumerate(rows[first:last], first):
             line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             # Candidate values are shown only to the local operator.
             label = Gtk.Label(
@@ -1487,6 +1782,10 @@ class PrivateReviewPanel:
                 self.status.set_label(
                     f"Décisions restantes : {current.pending()}. "
                     "Conserver un identifiant peut révéler des données personnelles."
+                )
+                self.candidate_page_status.set_label(
+                    f"Identifiants {first + 1}–{last} sur {total} "
+                    f"· {current.pending()} à décider"
                 )
             chooser.connect("changed", changed)
             chooser.set_tooltip_text(
@@ -1524,6 +1823,17 @@ class PrivateReviewPanel:
                 line.add_controller(shortcuts)
             line.append(chooser)
             self.candidates_box.append(line)
+            if row_index == focus_index and hasattr(chooser, "grab_focus"):
+                # Focus causes GTK's containing ScrolledWindow to reveal the
+                # choice. Defer until the replacement page is laid out.
+                captured_review = self._review
+
+                def focus_choice(widget=chooser, current=captured_review):
+                    if not self._closed and self._review is current:
+                        widget.grab_focus()
+                    return False
+
+                self.GLib.idle_add(focus_choice)
         self._refresh()
 
     def preview(self):
@@ -1585,15 +1895,53 @@ class PrivateReviewPanel:
             f"/{coverage['exported_exchange_count']}."
             + empty_warning
         )
-        for item in preview["members"]:
-            self.bundle_member.append(item["name"], item["name"])
-        if preview["members"]:
-            self.bundle_member.set_active_id(preview["members"][0]["name"])
+        self._populate_zip_members()
         self.status.set_label(
             "ZIP préparé en mémoire uniquement. Relire les membres, "
             "cocher la confirmation puis exporter volontairement."
         )
         self._refresh()
+
+    def _populate_zip_members(self):
+        """Filter only approved archive member names; never search raw bytes."""
+        if self._bundle_preview is None or self._closed:
+            return
+        previous = self.bundle_member.get_active_id()
+        query = self.member_filter.get_text().strip().casefold()
+        names = [member["name"] for member in self._bundle_preview["members"]]
+        preferred = (
+            "manifest.json", "coverage-report.json", "timeline.json",
+            "identifiers.json", "README.md", "LLM_INSTRUCTIONS.md",
+        )
+        ranked = sorted(names, key=lambda name: (
+            preferred.index(name) if name in preferred else len(preferred),
+            name,
+        ))
+        visible = [name for name in ranked if query in name.casefold()]
+        self.bundle_member.remove_all()
+        for name in visible:
+            self.bundle_member.append(name, name)
+        if visible:
+            self.bundle_member.set_active_id(
+                previous if previous in visible else visible[0],
+            )
+        else:
+            self.bundle_text.get_buffer().set_text("")
+        self.bundle_progress.set_label(
+            f"{len(visible)} membre(s) correspondant sur {len(names)}. "
+            "Recherche locale dans les noms uniquement."
+            if query else
+            f"{len(names)} membres disponibles ; premier aperçu : manifest.json."
+        )
+
+    def _select_coverage_report(self):
+        if self._closed or self._bundle_preview is None:
+            return
+        # Clearing a filter must never approve the archive or change choices.
+        self.member_filter.set_text("")
+        if hasattr(self.member_filter, "get_text"):
+            self._populate_zip_members()
+        self.bundle_member.set_active_id("coverage-report.json")
 
     def _show_zip_member(self):
         if self._bundle_preview is None:
@@ -1615,7 +1963,7 @@ class PrivateReviewPanel:
         root = self.widget.get_root()
         parent = root if isinstance(root, Gtk.Window) else None
         chooser = Gtk.FileChooserNative.new(
-            "Enregistrer le ZIP anonymisé", parent,
+            "Enregistrer le ZIP revu (données sensibles possibles)", parent,
             Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
         chooser.set_current_name("cifereca-revue.zip")
@@ -1690,7 +2038,7 @@ class PrivateReviewPanel:
             # This GTK label is private UI only: never send the pathname
             # through Diagnostics, callbacks, telemetry or logs.
             self.status.set_label(
-                "ZIP anonymisé enregistré (mode privé 0600) : "
+                "ZIP revu/filtré enregistré (mode privé 0600) : "
                 + str(path) + " — aucun téléversement."
             )
             self._refresh()
@@ -1732,8 +2080,7 @@ class PrivateReviewPanel:
         # Never leave typed vault/export secrets in a detached GTK page.
         if self.vault_passphrase is not None:
             self.vault_passphrase.set_text("")
-        if self.private_export_passphrase is not None:
-            self.private_export_passphrase.set_text("")
+        self._wipe_vault_password()
         self._discard_private()
         self._stop = None
         self._handle = None

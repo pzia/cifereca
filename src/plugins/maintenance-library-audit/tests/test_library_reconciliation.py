@@ -489,3 +489,116 @@ def test_older_core_without_resume_metrics_keeps_unchanged_details(tool, monkeyp
         "Reprise d’inventaire en mémoire" in line
         for line in captured[0]["details"]
     )
+
+
+def _capture_drift(tool, monkeypatch, drift):
+    import cifereca_library_reconciliation as module
+    captured = []
+
+    class PresentableResult:
+        details = ()
+
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setattr(module, 'MaintenanceResult', PresentableResult)
+    instance, broker = tool
+    if drift is not None:
+        broker.result['audit_stability'] = drift
+    instance.run(prepare(instance), Control())
+    return captured[0]
+
+
+def _drift():
+    return {
+        'schema': 1, 'basis': 'observed_only',
+        'previous_observed': 524, 'current_observed': 524,
+        'files_added': 0, 'files_removed': 0, 'files_changed': 0,
+        'same_observed_cohort': True, 'same_file_evidence': True,
+        'same_sqlite_proofs': False, 'changed_sqlite_tables': ['placements'],
+        'lost_confirmed': 29, 'gained_confirmed': 0,
+        'interpretation': 'sqlite_proofs_changed',
+    }
+
+
+def test_changed_sqlite_proof_and_twenty_nine_links_are_safe_user_details(tool, monkeypatch):
+    displayed = _capture_drift(tool, monkeypatch, _drift())
+    details = ' '.join(displayed['details'])
+    assert '524 puis 524 fichier(s) observé(s)' in details
+    assert 'cohortes observées seulement' in details
+    assert 'Preuves SQLite modifiées : placements' in details
+    assert 'Les preuves SQLite ont changé.' in details
+    assert 'Statuts de liens confirmés non retrouvés : 29' in details
+    assert 'ne prouvent aucune perte de livre ou de droit' in details
+    assert 'audit_stability' not in displayed['facts']
+    assert 'PRIVATE' not in repr(displayed)
+
+
+def test_aggregate_sqlite_proof_row_deltas_are_private_and_accounted(tool, monkeypatch):
+    drift = _drift()
+    drift['sqlite_proof_row_deltas'] = {
+        'placements': {'removed': 29, 'added': 29},
+    }
+    displayed = _capture_drift(tool, monkeypatch, drift)
+    rendered = ' '.join(displayed['details'])
+    assert ('Évolution des lignes de preuve SQLite '
+            '(retirées / apparues' in rendered)
+    assert 'placements 29 / 29' in rendered
+    assert 'PRIVATE' not in repr(displayed)
+
+
+@pytest.mark.parametrize('invalid', [
+    {'/PRIVATE/secret': {'removed': 1, 'added': 2}},
+    {'placements': {'removed': '/PRIVATE/secret', 'added': 2}},
+    {'placements': {'removed': True, 'added': 0}},
+    {'placements': {'removed': -1, 'added': 1}},
+    {'placements': {'removed': 0, 'added': 0}},
+    {'placements': {'removed': 100001, 'added': 0}},
+    {'placements': {'removed': 1, 'added': 1, 'path': '/PRIVATE'}},
+    {},
+])
+def test_sqlite_row_count_detail_rejects_untrusted_nested_payloads(tool, monkeypatch, invalid):
+    drift = _drift()
+    drift['sqlite_proof_row_deltas'] = invalid
+    displayed = _capture_drift(tool, monkeypatch, drift)
+    assert 'Évolution entre deux audits de même portée' not in ' '.join(displayed['details'])
+    assert 'PRIVATE' not in repr(displayed)
+
+
+def test_unexplained_link_drift_is_not_presented_as_stable(tool, monkeypatch):
+    drift = _drift()
+    drift['same_sqlite_proofs'] = True
+    drift['changed_sqlite_tables'] = []
+    drift['interpretation'] = 'unexplained_link_drift'
+    displayed = _capture_drift(tool, monkeypatch, drift)
+    details = ' '.join(displayed['details'])
+    assert 'Variation de liens inexpliquée malgré des entrées identiques.' in details
+    assert 'PRIVATE' not in repr(displayed)
+
+
+@pytest.mark.parametrize('update', [
+    {'schema': True},
+    {'basis': {'PRIVATE': 'secret'}},
+    {'interpretation': {'PRIVATE': 'secret'}},
+    {'changed_sqlite_tables': ['placements', '/PRIVATE/raw-path']},
+    {'same_sqlite_proofs': True},
+    {'files_added': 30},
+    {'lost_confirmed': 525},
+    {'same_file_evidence': False},
+    {'current_observed': '/PRIVATE/secret'},
+    {'previous_observed': 525, 'current_observed': 525},
+    {'changed_sqlite_tables': ['placements', 'placements']},
+])
+def test_untrusted_inconsistent_drift_payload_is_not_rendered(tool, monkeypatch, update):
+    drift = _drift()
+    drift.update(update)
+    displayed = _capture_drift(tool, monkeypatch, drift)
+    details = ' '.join(displayed['details'])
+    assert 'Évolution entre deux audits de même portée' not in details
+    assert 'PRIVATE' not in repr(displayed)
+
+
+def test_old_core_without_drift_evidence_keeps_existing_presentation(tool, monkeypatch):
+    displayed = _capture_drift(tool, monkeypatch, None)
+    assert not any('Évolution entre deux audits de même portée' in line
+                   for line in displayed['details'])

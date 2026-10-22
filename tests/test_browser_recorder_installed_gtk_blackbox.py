@@ -52,7 +52,7 @@ def _real_package_zip(path):
     archive = build_plugin_zip(SOURCE, path.parent)
     verified = validate_plugin_zip(archive)
     assert verified["package"]["id"] == PACKAGE_ID
-    assert verified["package"]["version"] == "0.2.14"
+    assert verified["package"]["version"] == "0.2.17"
     with zipfile.ZipFile(archive) as bundle:
         assert "browser_recorder_page.py" in bundle.namelist()
         assert "browser_recorder_review_ui.py" in bundle.namelist()
@@ -101,10 +101,10 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
         # avoid PluginManager.install(... activate=True) here: its Core-owned
         # pip resolver is tested elsewhere and may download dependencies.
         package = manager.installer.install(archive, activate=True)
-        assert package.root == store.version_root(PACKAGE_ID, "0.2.14")
+        assert package.root == store.version_root(PACKAGE_ID, "0.2.17")
         assert package.root.is_dir()
         assert package.sha256
-        assert manager.packages.active_version(PACKAGE_ID) == "0.2.14"
+        assert manager.packages.active_version(PACKAGE_ID) == "0.2.17"
         manager.activate()
         assert manager.status(PLUGIN_ID).enabled is False
         assert manager.service(PLUGIN_ID) is None
@@ -130,13 +130,17 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
         window.set_child(root)
         window.present()
         _flush()
-        description, site, consent, workflow, private, advanced = _children(root.get_child().get_child())
+        description, private, advanced = _children(root)
+        site = service.private_panel.site
+        consent = service.private_panel.consent
         assert isinstance(site, Gtk.Entry)
         assert isinstance(consent, Gtk.CheckButton)
         assert isinstance(advanced, Gtk.Expander)
         assert not advanced.get_expanded()
         assert "HTTP" in description.get_label()
-        assert "ZIP" in workflow.get_label()
+        assert service.private_panel.tabs.get_n_pages() == 4
+        assert "Revue" in service.private_panel.tabs.get_tab_label_text(
+            service.private_panel.tabs.get_nth_page(3))
         assert "HAR" in advanced.get_label()
         assert not advanced.get_child().get_mapped()
 
@@ -238,7 +242,7 @@ def test_installed_zip_full_review_and_independent_archive_oracle(
         http_module = importlib.import_module("browser_recorder_http")
         for module in (review_module, http_module):
             assert Path(module.__file__).resolve().is_relative_to(
-                store.version_root(PACKAGE_ID, "0.2.14").resolve()
+                store.version_root(PACKAGE_ID, "0.2.17").resolve()
             )
         origin = "https://books.example.org"
         ids = tuple(str(2000 + n) for n in range(81))
@@ -263,8 +267,8 @@ def test_installed_zip_full_review_and_independent_archive_oracle(
         window.set_child(root)
         window.present()
         _flush()
-        site = _children(root.get_child().get_child())[1]
-        consent = _children(root.get_child().get_child())[2]
+        site = plugin.private_panel.site
+        consent = plugin.private_panel.consent
         site.set_text(origin + "/catalog")
         consent.set_active(True)
         plugin.private_panel.vault_consent.set_active(True)
@@ -427,7 +431,7 @@ def test_installed_zip_browser_failure_reaches_core_diagnostics_without_private_
     try:
         archive = _real_package_zip(tmp_path / "browser-recorder.zip")
         package = manager.installer.install(archive, activate=True)
-        assert package.root.is_relative_to(store.version_root(PACKAGE_ID, "0.2.14"))
+        assert package.root.is_relative_to(store.version_root(PACKAGE_ID, "0.2.17"))
         manager.activate()
         assert manager.status(PLUGIN_ID).enabled is False
         assert manager.service(PLUGIN_ID) is None
@@ -455,8 +459,8 @@ def test_installed_zip_browser_failure_reaches_core_diagnostics_without_private_
             x for x in collector.snapshot()
             if x.get("verified_browser_recorder")
         ]
-        site = _children(root.get_child().get_child())[1]
-        consent = _children(root.get_child().get_child())[2]
+        site = plugin.private_panel.site
+        consent = plugin.private_panel.consent
         site.set_text("https://books.example.org/catalog")
         # No browser or diagnostic merely because a disabled/optional plugin
         # was installed or the page was opened.

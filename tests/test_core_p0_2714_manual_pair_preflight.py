@@ -189,6 +189,35 @@ def test_invalid_or_confirmed_or_foreign_selection_and_revocation_return_no_auth
     assert not stale.attachment_authorized
 
 
+def test_action_guidance_is_current_but_never_authorizes_a_write():
+    # A fully attested review is STILL non-authorizing. The Core already
+    # implements a separate transaction; telling users to build one is stale.
+    signature = ("a" * 64, 123)
+    proof = {
+        "attested": True, "ambiguous": False,
+        "ledger_conflict": False, "ledger_count": 1,
+        "ledger_complete": True, "signature": signature,
+    }
+    selected = {"verified": True, "signature": signature}
+    eligible = review_local_pair(proof, selected, audit_complete=True)
+    assert eligible.status == "eligible_for_fresh_validation"
+    assert "transaction_unavailable" in eligible.codes
+    assert "Vérifier les preuves actuelles" in eligible.explanation
+    assert "confirmez explicitement" in eligible.explanation
+    assert "à construire" not in eligible.explanation
+    assert eligible.read_only is True
+    assert eligible.attachment_authorized is False
+
+    missing = review_local_pair(
+        {**proof, "ledger_count": 0, "ledger_complete": False},
+        selected, audit_complete=True,
+    )
+    assert missing.status == "insufficient_evidence"
+    assert "acquisition_missing" in missing.codes
+    assert "si la paire est admissible".casefold() in missing.explanation.casefold()
+    assert missing.attachment_authorized is False
+
+
 def test_hostile_preflight_inputs_do_not_echo_values_or_raise():
     secret = "PRIVATE_PATH /home/secret 9780306406157"
     result = review_local_pair(

@@ -119,7 +119,7 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
         window.set_child(root)
         window.present()
         _flush()
-        site, consent = _children(root.get_child().get_child())[1:3]
+        site, consent = [plugin.private_panel.site, plugin.private_panel.consent]
         site.set_text(origin + "/catalog")
         consent.set_active(True)
         panel = plugin.private_panel
