@@ -270,6 +270,10 @@ class LocalInspection:
         self._manual_pending = None
         self._manual_undo = None
         self._manual_undo_pending = None
+        # Optional, one-time private cache guard installed only on a verified
+        # handoff. A confirmed Core commit may advance its SQLite stamp ONCE
+        # so the same-session undo remains reachable.
+        self._accept_own_core_commit = None
         self._manual_preview_generation = 0
         # Only Core sets this once when reusing the last completed audit.
         # It never changes scan freshness or grants a file/right link.
@@ -640,6 +644,7 @@ class LocalInspection:
         self._manual_pending = None
         self._manual_undo = None
         self._manual_undo_pending = None
+        self._accept_own_core_commit = None
         self._manual_preview_generation += 1
         self._manual_service = None
         self._manual_identity = None
@@ -878,7 +883,20 @@ class LocalInspection:
             operation = result.get('operation_id')
             if (result['status'] == 'applied'
                     and type(operation) is str and len(operation) == 64):
-                self._manual_undo = (right_key, file_key, operation)
+                # A cache-sourced inspection guards the old SQLite/WAL
+                # stamp. Our OWN confirmed placement changes that stamp;
+                # without this one-time acknowledgement the next valid()
+                # would revoke the private undo token before the user can
+                # use it. Never acknowledge a rejected/preview-only write.
+                allowed = True
+                callback = self._accept_own_core_commit
+                if callable(callback):
+                    try:
+                        allowed = callback() is True
+                    except Exception:
+                        allowed = False
+                if allowed:
+                    self._manual_undo = (right_key, file_key, operation)
             return {
                 'status': result['status'],
                 'read_only': result['status'] != 'applied',
