@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.11, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.12, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -516,7 +516,7 @@ physique sur SSD/backups. Aucun ZIP n'est automatiquement produit ou
 transmis. Les tests fonctionnent uniquement sur des données fictives.
 
 
-## Vérification d'authenticité des noms lors de la rétention (0.2.11)
+## Vérification d'authenticité des noms lors de la rétention (0.2.12)
 
 Une étiquette de session est protégée par AES-256-GCM et associée
 cryptographiquement à un ID de capture précis. La revue de rétention
@@ -528,7 +528,7 @@ Les captures, mêmes anciennes, sont préservées. La confirmation manuelle
 et le délai d'expiration du plan restent obligatoires.
 
 
-## Renommage chiffré et concurrence avec la suppression (0.2.11, #2725)
+## Renommage chiffré et concurrence avec la suppression (0.2.12, #2725)
 
 Le renommage privé authentifie **sous le même verrou exclusif POSIX**
 l'archive source et son nom AES-GCM existant, puis écrit le nouveau sidecar
@@ -546,7 +546,7 @@ et n'est pas une garantie contre un acteur local ayant accès en écriture
 au coffre en dehors de l'application.
 
 
-## Téléchargements Chromium sous décision explicite (0.2.11, #2528)
+## Téléchargements Chromium sous décision explicite (0.2.12, #2528)
 
 Le mode de capture HTTP privé utilise maintenant **`accept_downloads=True`**
 (la capture HAR legacy demeure distincte). Un fichier obtenu par Chromium
