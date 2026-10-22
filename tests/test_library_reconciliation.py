@@ -399,6 +399,40 @@ class GraphTests(unittest.TestCase):
         self.assertNotIn('PRIVATE', json.dumps(report.redacted()))
         self.assertNotIn(self.inventory.files[0].sha256, json.dumps(report.redacted()))
 
+    def test_29_confirmed_links_are_repeatable_with_unchanged_evidence(self):
+        # #2796: identical cohorts and proof snapshots must not drift 256 -> 227.
+        from copy import deepcopy
+        original = self.inventory.files[0]
+        self.inventory.files = [deepcopy(original) for _ in range(29)]
+        for i, file in enumerate(self.inventory.files):
+            file.path = str(self.root / f'PRIVATE_{i:03d}.epub')
+        self.snapshot.tables['entitlements'] = []
+        self.snapshot.tables['acquisition_ledger'] = []
+        self.snapshot.tables['placements'] = []
+        for i, file in enumerate(self.inventory.files):
+            right = dict(self.right, entitlement_id=f'r{i}', item_id=f'item{i}')
+            ledger = dict(self.ledger, entitlement_id=f'r{i}', item_id=f'item{i}')
+            placement = dict(self.placement, placement_id=f'p{i}',
+                             source_item_id=f'item{i}', path=file.path)
+            self.snapshot.tables['entitlements'].append(right)
+            self.snapshot.tables['acquisition_ledger'].append(ledger)
+            self.snapshot.tables['placements'].append(placement)
+        before = deepcopy(self.snapshot.tables)
+        a = reconcile(self.inventory, self.snapshot, seconds=30)
+        b = reconcile(self.inventory, self.snapshot, seconds=30)
+        self.assertEqual(a.redacted(), b.redacted())
+        self.assertEqual(a.redacted()['counts']['confirmed_link'], 29)
+        self.assertEqual(len(a.unverified_rights), 0)
+        self.assertEqual(before, self.snapshot.tables)
+        # Remove exactly 29 attested proofs: no fabricated rights remain.
+        for right in self.snapshot.tables['entitlements']:
+            right['attested_source'] = None
+        c = reconcile(self.inventory, self.snapshot, seconds=30)
+        self.assertEqual(c.redacted()['counts'].get('confirmed_link', 0), 0)
+        self.assertEqual(c.redacted()['counts']['local_file_without_attested_right'], 29)
+        self.assertEqual(len(c.unverified_rights), 29)
+        self.assertNotIn('PRIVATE', json.dumps(c.redacted()))
+
     def test_identical_bytes_and_isbn_do_not_prove_account_or_right(self):
         self.placement['identity_id'] = 'bob'
         report = reconcile(self.inventory, self.snapshot)
