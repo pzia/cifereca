@@ -148,6 +148,9 @@ class PrivateReviewPanel:
         self.tabs.set_scrollable(True)
         self.tabs.set_vexpand(True)
         self.tabs.set_hexpand(True)
+        self.settings_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=10,
+        )
         self.capture_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, spacing=10,
         )
@@ -158,9 +161,10 @@ class PrivateReviewPanel:
             orientation=Gtk.Orientation.VERTICAL, spacing=10,
         )
         for section, title in (
-            (self.capture_box, "1 · Capture"),
-            (self.sessions_box, "2 · Sessions et export privé"),
-            (self.review_box, "3 · Revue et ZIP LLM"),
+            (self.settings_box, "1 · Paramètres"),
+            (self.capture_box, "2 · Capture"),
+            (self.sessions_box, "3 · Sessions et export privé"),
+            (self.review_box, "4 · Revue et ZIP LLM"),
         ):
             for side in ("top", "bottom", "start", "end"):
                 getattr(section, "set_margin_" + side)(12)
@@ -171,7 +175,7 @@ class PrivateReviewPanel:
             scroller.set_child(section)
             self.tabs.append_page(scroller, Gtk.Label(label=title))
         root.append(self.tabs)
-        box = self.capture_box
+        box = self.settings_box
         box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         box.append(Gtk.Label(
             label="Parcours HTTP privé (P0) — revue et ZIP volontaire",
@@ -373,6 +377,17 @@ class PrivateReviewPanel:
                 "clicked", lambda *_: self.export_private_zip(),
             )
         box = self.capture_box
+        box.append(Gtk.Label(
+            label="Capture du parcours — configurez d'abord le site HTTPS, "
+                  "les autorisations et le coffre dans Paramètres. "
+                  "Seul un démarrage volontaire ouvre Chromium.",
+            xalign=0, wrap=True,
+        ))
+        self.configure_button = Gtk.Button(label="Modifier les paramètres…")
+        box.append(self.configure_button)
+        self.configure_button.connect(
+            "clicked", lambda *_: self.tabs.set_current_page(0),
+        )
         # FlowBox wraps the five capture/review buttons at sidebar/mobile
         # widths; a single horizontal Box could push Stop/Clear off-screen.
         controls = Gtk.FlowBox()
@@ -391,7 +406,7 @@ class PrivateReviewPanel:
             controls.append(button)
         box.append(controls)
         box.append(Gtk.Label(
-            label="Après l'arrêt, passer à l'onglet 3 · Revue et ZIP LLM. "
+            label="Après l'arrêt, passer à l'onglet 4 · Revue et ZIP LLM. "
                   "Aucun envoi externe n'est effectué.",
             xalign=0, wrap=True,
         ))
@@ -860,7 +875,7 @@ class PrivateReviewPanel:
                         self._emit_failure("http_review", "review_failed")
                     else:
                         self._show_candidates()
-                        self.tabs.set_current_page(2)
+                        self.tabs.set_current_page(3)
                         if getattr(result, "vault_session_id", None):
                             self.status.set_label(
                                 f"Session archivée en coffre chiffré : "
@@ -1323,7 +1338,7 @@ class PrivateReviewPanel:
             )
             return
         self._show_candidates(update_status=False)
-        self.tabs.set_current_page(2)
+        self.tabs.set_current_page(3)
         private = stored.private_summary()
         # This is the user's private, unlocked GTK panel: origin and time
         # never travel through diagnostics, public broker, or ZIP manifest.
