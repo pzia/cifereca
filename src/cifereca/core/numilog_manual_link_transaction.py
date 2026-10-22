@@ -234,7 +234,7 @@ def _journal_id(record):
     # 'state' changes from applied to undone, without changing its ID.
     fixed = {key: value for key, value in record.items() if key != "state"}
     raw = json.dumps(fixed, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(("numilog-local-journal/1\\0" + raw).encode()).hexdigest()
+    return hashlib.sha256(("numilog-local-journal/1\0" + raw).encode()).hexdigest()
 
 
 def _journal_read(db, operation_id):
@@ -268,14 +268,14 @@ def _undo_token(record, evidence_token):
          "state": record["state"]},
         sort_keys=True, ensure_ascii=True, separators=(",", ":"),
     )
-    return hashlib.sha256(("numilog-local-undo/1\\0" + raw).encode()).hexdigest()
+    return hashlib.sha256(("numilog-local-undo/1\0" + raw).encode()).hexdigest()
 
 
 def _receipt(status, *, token=None, changed=0, operation=None):
     pending = status in {"preview", "undo_preview"}
     return {
         "schema": _SCHEMA, "status": status, "ok": True,
-        "offline": True, "read_only": pending,
+        "offline": True, "read_only": changed == 0,
         "dry_run": pending, "changed": changed,
         "plan_token": token if pending else None,
         "operation_id": operation,
@@ -400,7 +400,7 @@ def undo_numilog_manual(
              and re.fullmatch(r"[0-9a-f]{64}", operation_id) is not None,
              "invalid_operation")
     _require(type(item_id) is str and 0 < len(item_id) <= 1024
-             and not any(c in item_id for c in ("\\0", "\\n", "\\r")),
+             and not any(c in item_id for c in ("\0", "\n", "\r")),
              "invalid_item")
     _require(type(observation) is FileObservation, "invalid_file_observation")
     _require(confirmation is None or (
