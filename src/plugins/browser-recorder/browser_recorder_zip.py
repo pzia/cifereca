@@ -552,9 +552,9 @@ class ReviewedBundlePlan:
         self._viewed = True
         # This summary comes from the frozen manifest member, not a second
         # calculation that could disagree with the bytes about to be saved.
-        coverage = json.loads(self._members["manifest.json"])["body_coverage"]
+        coverage = json.loads(self._members["manifest.json"]).get("body_coverage", {})
         warning = "Revue manuelle obligatoire : risque de données résiduelles."
-        if coverage["exported_structural_bodies"] == 0:
+        if coverage.get("exported_structural_bodies") == 0:
             warning += (
                 " ZIP sans aucun corps HTTP : impossible de reconstituer "
                 "les réponses."
