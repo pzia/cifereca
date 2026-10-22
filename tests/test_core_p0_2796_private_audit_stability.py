@@ -189,3 +189,16 @@ def test_broker_exposes_only_aggregate_comparison_and_rechecks_sqlite(scoped):
     assert diff['same_sqlite_proofs'] is False
     assert diff['changed_sqlite_tables'] == ['entitlements']
     assert 'PRIVATE' not in json.dumps(third)
+
+def test_identical_inputs_but_changed_link_result_is_flagged_not_marked_stable():
+    inventory, tables = _base(3)
+    original = _audit(inventory, tables)
+    different = _audit(deepcopy(inventory), deepcopy(tables))
+    different.reconciliation.files[0] = {'local_file_without_attested_right'}
+    result = _pair(original, different)
+    assert result['same_observed_cohort'] is True
+    assert result['same_file_evidence'] is True
+    assert result['same_sqlite_proofs'] is True
+    assert result['lost_confirmed'] == 1
+    assert result['interpretation'] == 'unexplained_link_drift'
+    assert 'PRIVATE' not in json.dumps(result)
