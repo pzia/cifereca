@@ -189,6 +189,19 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         # right and its taller comparison/actions are expanded.
         widgets['main_scroll'] = main_scroll
         report['checks']['P0_2712_main_scroll_present']=True
+        # The audit's long counters/roots must NOT monopolize the 920px
+        # reconciliation viewport before the user elects to expand them.
+        synopsis_panel = next(
+            w for w in walk(window)
+            if isinstance(w, Gtk.Expander)
+            and (w.get_label() or '').startswith(
+                'Afficher les statistiques et le périmètre'
+            )
+        )
+        assert not synopsis_panel.get_expanded()
+        assert synopsis_panel.get_mapped()
+        widgets['overview_panel'] = synopsis_panel
+        report['checks']['P0_2712_inspection_overview_collapsed_initially'] = True
         dropdowns=[w for w in walk(window) if isinstance(w,Gtk.DropDown)]
         widgets['provider'],widgets['state']=dropdowns
         widgets['list']=next(w for w in walk(window) if isinstance(w,Gtk.ListBox))
@@ -290,6 +303,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         # A genuine mouse wheel must scroll the OUTER window without
         # faking GtkAdjustment movement; the nested ListBoxes are separate.
         def wheel_target():
+            # Deliberately reopen the long history to verify that the
+            # physically scrollable full explanation remains accessible.
+            widgets['overview_panel'].set_expanded(True)
             if adjustment.get_value() > 0.5:
                 return False
             summary = next(
@@ -299,6 +315,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             )
             if not summary.get_mapped():
                 return False
+            report['checks']['P0_2712_inspection_overview_reexpandable'] = True
             window = controller.dialog
             ok, rect = summary.compute_bounds(window)
             if not ok or rect.get_width() <= 0 or rect.get_height() <= 0:
