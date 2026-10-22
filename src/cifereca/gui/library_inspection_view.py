@@ -1,6 +1,8 @@
 """Private local inspection UI. No export, provider call or repair action."""
 from __future__ import annotations
 
+from time import monotonic
+
 from ..core.library_local_inspection import LocalInspection, PROVIDERS, STATES, open_local_inspection
 from ..task_queue import TaskPriority
 from .maintenance_tools import MaintenanceCancelControl
@@ -102,6 +104,10 @@ class LocalInspectionController:
         self._watch = None
         self._activity_row = None
         self._activity_box = self._activity_label = None
+        self._activity_clock = None
+        self._activity_started = None
+        self._activity_phase = 'Préparation'
+        self._activity_files = None
 
     def attach_activity_row(self, row):
         """The Maintenance ActionRow owns the nonmodal loading indicator."""
@@ -125,10 +131,33 @@ class LocalInspectionController:
         self._activity_box.set_visible(True)
 
     def _hide_activity(self):
+        if self._activity_clock is not None:
+            self.GLib.source_remove(self._activity_clock)
+            self._activity_clock = None
+        self._activity_started = None
+        self._activity_files = None
         if self._activity_box is not None:
             self._activity_box.set_visible(False)
 
-    def _progress(self, generation, phase):
+    def _render_activity(self):
+        """Only closed phase and measured local counts/timer enter GTK."""
+        if self._activity_started is None or self._activity_label is None:
+            return
+        elapsed = min(36_000, max(0, int(monotonic() - self._activity_started)))
+        minutes, seconds = divmod(elapsed, 60)
+        message = f'Inspection · {self._activity_phase} · {minutes:02}:{seconds:02} écoulées'
+        if self._activity_files is not None:
+            message += f' · {self._activity_files} fichiers observés'
+        self._activity_label.set_label(message)
+
+    def _tick_activity(self, generation):
+        if (generation != self._generation or self.control is None
+                or self.control.cancelled() or not self.alive()):
+            return False
+        self._render_activity()
+        return True
+
+    def _progress(self, generation, current, total, phase):
         if phase not in _INSPECTION_PHASES:
             return
         idle_add = getattr(self.GLib, 'idle_add', None)
@@ -139,7 +168,15 @@ class LocalInspectionController:
             if (generation == self._generation and self.control is not None
                     and not self.control.cancelled() and self.alive()
                     and self._activity_label is not None):
-                self._activity_label.set_label('Inspection · ' + phase)
+                self._activity_phase = phase
+                # The broker reports the number of *observed* local files,
+                # never an exhaustive total. Reject booleans, strings,
+                # unbounded or decreasing counters from hostile producers.
+                if type(current) is int and 0 <= current <= 100_000:
+                    self._activity_files = max(
+                        self._activity_files or 0, current,
+                    )
+                self._render_activity()
             return False
 
         idle_add(publish)
@@ -169,11 +206,20 @@ class LocalInspectionController:
             return
         generation = self._generation
         control = self.control = MaintenanceCancelControl(
-            on_progress=lambda _current, _total, message: self._progress(generation, message),
+            on_progress=lambda current, total, message:
+                self._progress(generation, current, total, message),
         )
         # A valid one-shot private session may return immediately. Show only
         # unobtrusive inline activity, never a modal or fabricated percentage.
+        self._activity_started = monotonic()
+        self._activity_phase = 'Préparation'
+        self._activity_files = None
         self._show_activity()
+        timeout = getattr(self.GLib, 'timeout_add_seconds', None)
+        if timeout is not None:
+            self._activity_clock = timeout(
+                1, lambda: self._tick_activity(generation),
+            )
 
         def read():
             try:
