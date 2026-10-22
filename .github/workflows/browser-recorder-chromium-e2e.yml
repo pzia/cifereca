@@ -11,6 +11,7 @@ on:
       - 'tests/test_browser_recorder_installed_chromium_e2e.py'
       - 'tests/test_browser_recorder_chromium_sigkill_e2e.py'
       - 'tests/test_browser_recorder_three_chromium_sessions_e2e.py'
+      - 'tests/test_browser_recorder_full_app_restart_e2e.py'
       - 'tests/test_core_p0_2628_real_gtk_optin_chromium_e2e.py'
       # Every real Chromium provisioning recipe must run in the dedicated
       # browser runtime, not only the generic PR CI (which cannot prove CDN).
@@ -104,6 +105,16 @@ jobs:
           # New pytest interpreter, no previously loaded installed plugin.
           xvfb-run -a "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pytest -q -rs \
             tests/test_browser_recorder_three_chromium_sessions_e2e.py
+      - name: Full Cifereca executable twice + local vault (no real user data)
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          GDK_BACKEND: x11
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends xdotool dbus-x11 gir1.2-adw-1
+          "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pip install --disable-pip-version-check -e .
+          xvfb-run -a "$RUNNER_TEMP/installed-browser-venv/bin/python" -m pytest -q -rs \
+            tests/test_browser_recorder_full_app_restart_e2e.py
       - name: Publish no private artifacts
         if: always()
         run: |
