@@ -16,7 +16,7 @@ from browser_recorder_http import CapturePause, record_http
 from browser_recorder_review import IdentifierReview
 from browser_recorder_zip import prepare_reviewed_zip
 from browser_recorder_vault import PrivateSessionVault, VaultError
-from browser_recorder_private_zip import save_private_zip
+from browser_recorder_private_zip import save_session_llm_zip
 
 
 _REVIEW_PAGE_SIZE = 24  # Bound GTK widgets even for 256 distinct private IDs.
@@ -95,11 +95,8 @@ class PrivateReviewPanel:
         self.vault_passphrase = None
         self.session_list = None
         self.delete_confirm = None
-        self.private_export_confirm = None
         self.private_export_button = None
-        self.private_export_directory = None
         self._private_destination_dialog = None
-        self.private_export_passphrase = None
         self._bundle_plan = None
         self._bundle_preview = None
         self._export_dialog = None
@@ -233,8 +230,9 @@ class PrivateReviewPanel:
             box = self.sessions_box
             box.append(Gtk.Label(
                 label="Sessions archivées : consultez les captures chiffrées "
-                      "sans contacter les sites. Le ZIP de secours est privé, "
-                      "distinct du ZIP anonymisé de l'onglet Revue.",
+                      "sans contacter les sites. Une session sélectionnée peut "
+                      "être exportée telle que capturée pour un LLM. L'archive "
+                      "est alors en clair et contient des données personnelles.",
                 xalign=0, wrap=True,
             ))
             self.sessions_refresh = Gtk.Button(label="Lister les sessions archivées")
@@ -339,41 +337,19 @@ class PrivateReviewPanel:
             )
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
-                label="Export DE SECOURS non anonymisé : contient URL, "
-                      "identifiants, titres et corps privés observés. "
-                      "Ne jamais partager sans une revue spécifique. "
-                      "Le résultat est un .brzip CHIFFRÉ, pas le ZIP LLM.",
+                label="Exporter une session pour un LLM : sélectionnez une session, "
+                      "saisissez la phrase secrète du coffre, puis choisissez où "
+                      "enregistrer le fichier ZIP. Pas de second mot de passe ni "
+                      "de permissions de dossier à configurer. Le coffre reste "
+                      "chiffré ; le ZIP exporté est EN CLAIR (URL, identifiants "
+                      "et corps conservés) : à partager uniquement volontairement "
+                      "avec le LLM de votre choix. Aucun envoi automatique.",
                 xalign=0, wrap=True,
             ))
-            self.private_export_directory = Gtk.Entry()
-            self.private_export_directory.set_placeholder_text(
-                "Dossier privé préexistant (absolu, permissions 0700)"
-            )
-            box.append(self.private_export_directory)
-            self.private_export_choose = Gtk.Button(
-                label="Choisir un dossier privé…"
-            )
-            box.append(self.private_export_choose)
-            self.private_export_choose.connect(
-                "clicked", lambda *_: self._prompt_private_folder(),
-            )
-            self.private_export_passphrase = Gtk.Entry()
-            self.private_export_passphrase.set_visibility(False)
-            self.private_export_passphrase.set_placeholder_text(
-                "NOUVELLE phrase secrète réservée à ce ZIP privé chiffré"
-            )
-            box.append(self.private_export_passphrase)
-            self.private_export_confirm = Gtk.CheckButton(
-                label="Je confirme cet export privé distinct du ZIP revu pour LLM."
-            )
-            box.append(self.private_export_confirm)
             self.private_export_button = Gtk.Button(
-                label="Exporter le ZIP privé chiffré de cette session"
+                label="Exporter cette session pour un LLM…"
             )
             box.append(self.private_export_button)
-            self.private_export_confirm.connect(
-                "toggled", lambda *_: self._refresh(),
-            )
             self.private_export_button.connect(
                 "clicked", lambda *_: self.export_private_zip(),
             )
@@ -610,7 +586,7 @@ class PrivateReviewPanel:
             )
             self.private_export_button.set_sensitive(
                 not self._closed and not busy and not scanning
-                and self.private_export_confirm.get_active()
+                and self._private_destination_dialog is None
                 and bool(self.session_list.get_active_id())
             )
         self.stop.set_sensitive(not self._closed and busy)
@@ -1438,23 +1414,24 @@ class PrivateReviewPanel:
         self.status.set_label("Session locale supprimée du coffre.")
         self._refresh()
 
-    def _prompt_private_folder(self):
-        """Native opt-in directory picker; only private 0700 is accepted on save."""
-        if (self._closed or self._private_destination_dialog is not None
-                or self.is_recording()):
+    def _prompt_private_zip_file(self, callback, cancelled):
+        """Single native Save As approval; never requires a 0700 folder."""
+        if self._closed or self._private_destination_dialog is not None:
             return
         Gtk = self.Gtk
         if not hasattr(Gtk, "FileChooserNative"):
-            self.status.set_label("Sélection de dossier indisponible.")
+            self.status.set_label("Dialogue d'enregistrement indisponible.")
+            cancelled(False)
             return
         root = self.widget.get_root()
         parent = root if isinstance(root, Gtk.Window) else None
         chooser = Gtk.FileChooserNative.new(
-            "Choisir un dossier privé pour le ZIP chiffré", parent,
-            Gtk.FileChooserAction.SELECT_FOLDER, "Choisir", "Annuler",
+            "Exporter la session privée pour LLM (ZIP en clair)", parent,
+            Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
+        chooser.set_current_name("cifereca-session-privee.zip")
         self._private_destination_dialog = chooser
-        started = monotonic()
+        self._refresh()
 
         def responded(dialog, response):
             if dialog is not self._private_destination_dialog:
@@ -1464,75 +1441,81 @@ class PrivateReviewPanel:
             try:
                 if response == Gtk.ResponseType.ACCEPT and not self._closed:
                     selected = dialog.get_file()
-                    path = selected.get_path() if selected else None
-                    if path:
-                        self.private_export_directory.set_text(path)
+                    filename = selected.get_path() if selected else None
+                    if filename:
+                        callback(Path(filename))
+                    else:
+                        cancelled(False)
                 elif not self._closed:
-                    self._emit_private_export("private_zip_export_cancelled", started)
+                    cancelled(True)
             finally:
                 dialog.destroy()
+                self._refresh()
 
         chooser.connect("response", responded)
         chooser.show()
 
     def export_private_zip(self):
-        if self.vault_directory is None or self._closed or self.is_recording():
-            return
-        if not self.private_export_confirm.get_active():
-            self.status.set_label(
-                "Export privé refusé : confirmation spécifique requise."
-            )
+        """Explicit session-to-LLM export: vault key, Save As, done."""
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()
+                or self._private_destination_dialog is not None):
             return
         started = monotonic()
-        self.private_export_confirm.set_active(False)
         sid = self.session_list.get_active_id()
-        path = self.private_export_directory.get_text().strip()
         passphrase = self.vault_passphrase.get_text()
         self.vault_passphrase.set_text("")
-        export_passphrase = self.private_export_passphrase.get_text()
-        self.private_export_passphrase.set_text("")
-        if not sid or not path or len(export_passphrase) < 12:
+        if not sid or len(passphrase) < 12:
             self.status.set_label(
-                "Choisir une session, un dossier privé et une nouvelle phrase "
-                "secrète d'export distincte (12 caractères minimum)."
+                "Sélectionner une session et saisir sa phrase secrète "
+                "du coffre (12 caractères minimum)."
             )
-            self._emit_private_export("private_zip_export_failed", started)
             return
-        if passphrase == export_passphrase:
+        generation = self._generation
+
+        def cancelled(user_cancelled):
+            if self._closed:
+                return
+            if user_cancelled:
+                self.status.set_label("Export privé annulé ; aucun ZIP créé.")
+                self._emit_private_export("private_zip_export_cancelled", started)
+            else:
+                self.status.set_label("Destination ZIP indisponible ; aucun fichier créé.")
+                self._emit_private_export("private_zip_export_failed", started)
+
+        def selected(destination):
+            if (self._closed or self._generation != generation
+                    or self.session_list.get_active_id() != sid):
+                cancelled(True)
+                return
+            stored = None
+            try:
+                stored = PrivateSessionVault(self.vault_directory).open(
+                    sid, passphrase,
+                )
+                size = save_session_llm_zip(
+                    stored, Path(destination), confirmed=True,
+                )
+            except Exception:
+                # Never include chosen pathname or decrypted provider text.
+                self.status.set_label(
+                    "Export impossible : clé/coffre/destination invalide, "
+                    "limite atteinte ou fichier existant. Aucun écrasement."
+                )
+                self._emit_private_export("private_zip_export_failed", started)
+                return
+            finally:
+                if stored is not None:
+                    stored.trace.destroy()
+            self._emit_private_export("private_zip_exported", started, size)
+            # Do not put a sensitive local path in diagnostics.
             self.status.set_label(
-                "Utiliser une phrase d'export différente de celle du coffre."
+                "Session exportée en ZIP privé NON CHIFFRÉ (fichier 0600). "
+                "Aucun envoi automatique. Conservez ou supprimez ce ZIP "
+                "après l'avoir transmis volontairement à votre LLM."
             )
-            self._emit_private_export("private_zip_export_failed", started)
-            return
-        stored = None
-        try:
-            stored = PrivateSessionVault(self.vault_directory).open(
-                sid, passphrase,
-            )
-            filename = save_private_zip(
-                stored, Path(path), export_passphrase, confirmed=True,
-            )
-        except Exception:
-            # Never emit path, provider data or cryptography exception text.
-            self.status.set_label(
-                "ZIP privé refusé : déverrouillage, répertoire 0700 ou "
-                "limite de sécurité incorrecte. Aucun export non chiffré."
-            )
-            self._emit_private_export("private_zip_export_failed", started)
-            return
-        finally:
-            if stored is not None:
-                stored.trace.destroy()
-        try:
-            output_bytes = (Path(path) / filename).stat(follow_symlinks=False).st_size
-        except OSError:
-            output_bytes = None  # Export succeeded; metric unavailable.
-        self._emit_private_export("private_zip_exported", started, output_bytes)
-        self.status.set_label(
-            "ZIP PRIVÉ CHIFFRÉ enregistré : " + filename
-            + " — ne pas partager sans revue ; aucun téléversement."
-        )
-        self._refresh()
+
+        self._prompt_private_zip_file(selected, cancelled)
 
     def toggle_pause(self):
         if (self._closed or not self.is_recording() or self._pause_control is None
@@ -1948,8 +1931,6 @@ class PrivateReviewPanel:
         # Never leave typed vault/export secrets in a detached GTK page.
         if self.vault_passphrase is not None:
             self.vault_passphrase.set_text("")
-        if self.private_export_passphrase is not None:
-            self.private_export_passphrase.set_text("")
         self._discard_private()
         self._stop = None
         self._handle = None
