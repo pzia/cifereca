@@ -150,6 +150,11 @@ class QueryControls(Gtk.Box):
         self.capability_hint.add_css_class('dim-label')
         self.capability_hint.set_visible(False)
         self.append(self.capability_hint)
+        self.availability_hint = Gtk.Label(xalign=0)
+        self.availability_hint.set_wrap(True)
+        self.availability_hint.add_css_class('caption')
+        self.availability_hint.set_visible(False)
+        self.append(self.availability_hint)
         self._last_notified_state = self.state()
 
     def set_provider_choices(self, choices):
@@ -158,6 +163,11 @@ class QueryControls(Gtk.Box):
     def set_provider_search_capabilities(self, capabilities):
         self._provider_search_capabilities = dict(capabilities or {})
         self._update_search_capability_hint()
+
+    def set_provider_availability_hint(self, text):
+        # Read-only known catalogue state, not part of the source selector.
+        self.availability_hint.set_label(str(text or ''))
+        self.availability_hint.set_visible(bool(text))
 
     def _update_search_capability_hint(self):
         summary = provider_search_summary(
