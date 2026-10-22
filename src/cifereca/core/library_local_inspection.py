@@ -96,6 +96,15 @@ def _searchable(text):
 _PAIR_LOCAL_FILE_REASONS = frozenset({
     'epub_parser_limit_or_invalid',
     'structure_limit_or_invalid',
+    'file_byte_budget',  # per-file cap only, not hash/structure global cap
+})
+# The structure umbrella reason also covers an exhausted shared byte budget.
+# A bounded individual invalid ZIP/CRC is non-authoritative for OTHER files,
+# but an exhausted global budget MUST NOT become a pair-write permit.
+_PAIR_STRUCTURE_BUDGET_STATES = frozenset({
+    'structure_byte_or_time_budget',
+    'structure_byte_or_entry_budget',
+    'structure_cancelled',
 })
 
 
@@ -123,7 +132,9 @@ def _pair_evidence_complete(audit):
                 or reconciliation.reasons - inventory.reasons):
             return False
         if (type(inventory.files_started) is not int
-                or inventory.files_started != len(inventory.files)):
+                or inventory.files_started != len(inventory.files)
+                or any(file.structure_validation in _PAIR_STRUCTURE_BUDGET_STATES
+                       for file in inventory.files)):
             return False
         required = (
             'entitlements', 'acquisition_ledger', 'artifacts',
