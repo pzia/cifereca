@@ -29,6 +29,56 @@ class StoredPathsTests(unittest.TestCase):
         self.assertNotIn('PRIVATE', json.dumps(result.redacted()))
         self.assertNotIn(str(self.root), json.dumps(result.redacted()))
 
+    def test_missing_rows_are_partitioned_by_sqlite_state_not_called_lost_books(self):
+        path_a = str(self.library/'PRIVATE-OLD-A.epub')
+        path_b = str(self.library/'PRIVATE-OLD-B.epub')
+        rows = [
+            dict(identity_id='PRIVATE_OWNER', path=path_a,
+                 state='present', placement_id='PRIVATE-P1',
+                 artifact_id='sha256:PRIVATE-A'),
+            dict(identity_id='PRIVATE_OWNER', path=path_b,
+                 state='missing', placement_id='PRIVATE-P2',
+                 artifact_id='sha256:PRIVATE-A'),
+            dict(identity_id='PRIVATE_OWNER', path=path_b,
+                 state='missing', placement_id='PRIVATE-P3',
+                 artifact_id='sha256:PRIVATE-A'),
+            dict(identity_id='PRIVATE_OWNER', path=path_b,
+                 state='legacy', placement_id=None, artifact_id=None),
+        ]
+        snapshot = EvidenceSnapshot({'placements': rows})
+        report = inspect_stored_paths(snapshot, {'PRIVATE_OWNER': (self.library,)})
+        safe = report.redacted()
+        self.assertEqual(safe['counts']['stored_path_missing'], 4)
+        self.assertEqual(safe['missing_path_context'], {
+            'sqlite_present': 1, 'sqlite_missing': 2,
+            'sqlite_other': 1, 'distinct_paths': 2,
+            'distinct_artifacts_with_id': 1,
+            'distinct_placements_with_id': 3,
+        })
+        self.assertEqual(safe['status'], 'complete')
+        self.assertNotIn('PRIVATE', json.dumps(safe))
+        self.assertNotIn('PRIVATE', repr(report))
+
+    def test_missing_row_context_is_only_the_observed_prefix_on_budget(self):
+        absent = str(self.library/'PRIVATE-ABSENT.epub')
+        snapshot = EvidenceSnapshot({'placements': [
+            dict(identity_id='PRIVATE_OWNER', path=absent,
+                 state='missing', placement_id='private-1',
+                 artifact_id='private-artifact'),
+            dict(identity_id='PRIVATE_OWNER', path=absent,
+                 state='present', placement_id='private-2',
+                 artifact_id='another-private-artifact'),
+        ]})
+        report = inspect_stored_paths(
+            snapshot, {'PRIVATE_OWNER': (self.library,)}, max_paths=1,
+        )
+        self.assertEqual(report.redacted()['status'], 'incomplete_scan')
+        self.assertEqual(report.redacted()['reasons'], ['stored_path_budget'])
+        self.assertEqual(report.redacted()['missing_path_context']['sqlite_missing'], 1)
+        self.assertEqual(report.redacted()['missing_path_context']['sqlite_present'], 0)
+        self.assertEqual(report.redacted()['missing_path_context']['distinct_paths'], 1)
+        self.assertNotIn('PRIVATE', json.dumps(report.redacted()))
+
     def test_missing_root_is_unavailable_not_missing_books(self):
         self.library.rename(self.root/'moved')
         result = self.inspect([self.library/'PRIVATE_BOOK.epub'])
