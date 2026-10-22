@@ -978,7 +978,7 @@ class LocalInspection:
         return self._cases.get(key)
 
 
-def open_local_inspection(service, *, identity_id, control=None):
+def open_local_inspection(service, *, identity_id, control=None, on_mode=None):
     """Core UI only: consume a fresh scoped projection, otherwise audit again.
 
     The private projection is never obtained from plugin/public payloads. It
@@ -988,9 +988,22 @@ def open_local_inspection(service, *, identity_id, control=None):
     if control is not None and control.cancelled():
         return _unavailable({'audit_cancelled'})
     cached = take_inspection_cache(service, identity_id)
+
+    def publish_mode(code):
+        # Core-only, fixed vocabulary; never disclose the identity, cache
+        # source stamp, paths, SQLite records or private book information.
+        if on_mode is not None:
+            try:
+                on_mode(code)
+            except Exception:
+                # Presentation callback cannot make a valid cache unusable.
+                pass
+
     if cached is not None:
         cached._from_audit_cache = True
+        publish_mode('cached')
         return cached
+    publish_mode('new_scan')
     from .library_audit_roots import configured_identity_roots
 
     def finish(audit, valid):
