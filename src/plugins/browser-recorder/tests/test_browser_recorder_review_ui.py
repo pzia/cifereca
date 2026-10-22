@@ -325,6 +325,38 @@ def _capture_and_decide(panel, tasks):
         combo.set_active_id("anonymize" if row["value"] == "ACC77" else "keep")
 
 
+def test_member_name_filter_and_coverage_shortcut_do_not_change_consent(
+    monkeypatch,
+):
+    panel, tasks, raw = make_panel(monkeypatch)
+    try:
+        _capture_and_decide(panel, tasks)
+        panel.prepare_zip()
+        names = list(panel.bundle_member.options)
+        assert panel.bundle_member.get_active_id() == "manifest.json"
+        assert "coverage-report.json" in names
+        assert panel.coverage_button.sensitive
+        assert not panel.export_button.sensitive
+        panel.member_filter.set_text("coverage")
+        panel._populate_zip_members()  # headless Entry has no changed signal
+        assert list(panel.bundle_member.options) == ["coverage-report.json"]
+        assert "1 membre(s) correspondant" in panel.bundle_progress.label
+        assert panel.bundle_member.get_active_id() == "coverage-report.json"
+        assert '"capture_state"' in panel.bundle_text.text
+        assert not panel.export_confirm.get_active()
+        panel.member_filter.set_text("NOT_FOUND")
+        panel._populate_zip_members()
+        assert list(panel.bundle_member.options) == []
+        assert panel.bundle_text.text == ""
+        panel._select_coverage_report()
+        assert panel.member_filter.get_text() == ""
+        assert panel.bundle_member.get_active_id() == "coverage-report.json"
+        assert not panel.export_confirm.get_active()
+        assert not panel.export_button.sensitive
+    finally:
+        panel.destroy()
+
+
 def test_exact_zip_preview_is_separate_from_explicit_export(tmp_path, monkeypatch):
     from hashlib import sha256
     from zipfile import ZipFile
