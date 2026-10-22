@@ -127,3 +127,97 @@ def test_label_stays_out_of_the_anonymized_and_private_zip(tmp_path):
             assert LABEL.encode() not in zipped.read("trace.json")
     finally:
         stored.trace.destroy()
+
+
+
+def test_delete_wins_blocked_rename_never_resurrects_orphan_label(
+    tmp_path, monkeypatch,
+):
+    """A deleting session cannot gain a stale new label after deletion.
+
+    The worker is parked exactly before flock(LOCK_EX), while the real
+    vault.delete() completes first. The old pre-lock get_label() would have
+    passed, permitting an orphan .cbrn to be written for the deleted ID.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event, current_thread
+    import fcntl
+    import browser_recorder_vault as vault_api
+
+    vault, sid = vault_with_session(tmp_path)
+    vault.set_label(sid, KEY, "Original fictional encrypted title")
+    entered, release = Event(), Event()
+    true_flock = fcntl.flock
+
+    def controlled_flock(fd, operation):
+        if (current_thread().name.startswith("test-rename-worker")
+                and operation == fcntl.LOCK_EX):
+            entered.set()
+            if not release.wait(timeout=15):
+                raise TimeoutError("fictional rename gate timed out")
+        return true_flock(fd, operation)
+
+    monkeypatch.setattr(vault_api.fcntl, "flock", controlled_flock)
+    try:
+        with ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="test-rename-worker"
+        ) as pool:
+            result = pool.submit(vault.set_label, sid, KEY, "Stale rename")
+            assert entered.wait(timeout=15)
+            # The actual API deletes BOTH ciphertexts under an exclusive
+            # directory lock before allowing the rename to proceed.
+            vault.delete(sid, KEY, confirmed=True)
+            release.set()
+            with pytest.raises(VaultError, match="vault_unsafe_file"):
+                result.result(timeout=15)
+    finally:
+        release.set()
+    assert sid not in vault.list_ids()
+    assert not (vault.path / (sid + ".cbrn")).exists()
+    assert not list(vault.path.glob(".*.labelpart"))
+    assert not list(vault.path.glob(".*.part"))
+
+
+def test_corrupted_prior_label_is_rejected_after_acquiring_write_lock(
+    tmp_path, monkeypatch,
+):
+    """A name replaced while the rename waits must be authenticated anew."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event, current_thread
+    import fcntl
+    import browser_recorder_vault as vault_api
+
+    vault, sid = vault_with_session(tmp_path)
+    vault.set_label(sid, KEY, "Safe fictional title")
+    capture = vault.path / (sid + ".cbrv")
+    digest = sha256(capture.read_bytes()).hexdigest()
+    label_path = vault.path / (sid + ".cbrn")
+    ready, advance = Event(), Event()
+    real_flock = fcntl.flock
+
+    def controlled(fd, operation):
+        if (current_thread().name.startswith("label-crypto-check")
+                and operation == fcntl.LOCK_EX):
+            ready.set()
+            if not advance.wait(timeout=15):
+                raise TimeoutError("fixture concurrency rendezvous timeout")
+        return real_flock(fd, operation)
+
+    monkeypatch.setattr(vault_api.fcntl, "flock", controlled)
+    try:
+        with ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="label-crypto-check"
+        ) as pool:
+            future = pool.submit(vault.set_label, sid, KEY, "Stale replacement")
+            assert ready.wait(timeout=15)
+            raw = label_path.read_bytes()
+            label_path.write_bytes(raw[:-1] + bytes([raw[-1] ^ 0x20]))
+            tampered = label_path.read_bytes()
+            advance.set()
+            with pytest.raises(VaultError, match="vault_label_invalid"):
+                future.result(timeout=15)
+    finally:
+        advance.set()
+    assert label_path.read_bytes() == tampered
+    assert sha256(capture.read_bytes()).hexdigest() == digest
+    assert not list(vault.path.glob(".*.labelpart"))
