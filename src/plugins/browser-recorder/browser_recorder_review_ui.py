@@ -113,6 +113,7 @@ class PrivateReviewPanel:
         self._trace = None
         self._review = None
         self._candidate_page = 0
+        self._pending_cursor = -1
         self._closed = False
         self._generation = 0
         self._index_handle = None
@@ -681,6 +682,7 @@ class PrivateReviewPanel:
 
     def _discard_private(self):
         self._candidate_page = 0
+        self._pending_cursor = -1
         self._invalidate_bundle()
         self._text("")
         self._clear_candidates()
@@ -1559,6 +1561,7 @@ class PrivateReviewPanel:
         target = min(last, max(0, self._candidate_page + offset))
         if target != self._candidate_page:
             self._candidate_page = target
+            self._pending_cursor = target * _REVIEW_PAGE_SIZE - 1
             self._show_candidates(update_status=False)
 
     def go_to_next_pending(self):
@@ -1569,7 +1572,7 @@ class PrivateReviewPanel:
         rows = self._review.local_rows()
         if not rows:
             return
-        start = self._candidate_page * _REVIEW_PAGE_SIZE
+        start = max(self._candidate_page * _REVIEW_PAGE_SIZE, self._pending_cursor + 1)
         pending = [
             i for i, row in enumerate(rows) if row["decision"] is None
         ]
@@ -1578,6 +1581,7 @@ class PrivateReviewPanel:
             return
         target = next((i for i in pending if i >= start), pending[0])
         self._candidate_page = target // _REVIEW_PAGE_SIZE
+        self._pending_cursor = target
         self._show_candidates(update_status=False)
         self.status.set_label(
             f"Identifiant {target + 1}/{len(rows)} encore à décider "
