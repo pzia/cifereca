@@ -577,7 +577,8 @@ class PrivateReviewPanel:
         vault never writes its master phrase to files, settings or logs.
         """
         cached = getattr(self, "_vault_secret", None)
-        entered = self._vault_password()
+        entered = self.vault_passphrase.get_text()
+        self.vault_passphrase.set_text("")
         return cached.decode("utf-8") if cached is not None else entered
 
     def _wipe_vault_password(self):
@@ -1360,6 +1361,25 @@ class PrivateReviewPanel:
                         self.status.set_label("Index local inaccessible.")
                         self._refresh()
                         return False
+                    # First opening of an empty vault is permitted. For a
+                    # nonempty vault, the master phrase must authenticate at
+                    # least one existing session before being retained.
+                    if ids and not entries:
+                        self.status.set_label(
+                            "Ouverture refusée : phrase secrète incorrecte "
+                            "ou toutes les sessions sont indisponibles."
+                        )
+                        self._refresh()
+                        return False
+                    if self._vault_secret is None:
+                        try:
+                            self._vault_secret = bytearray(
+                                passphrase.encode("utf-8")
+                            )
+                        except UnicodeError:
+                            self.status.set_label("Phrase secrète invalide.")
+                            self._refresh()
+                            return False
                     known = {entry["id"]: entry for entry in entries}
                     old_selected = self.session_list.get_active_id()
                     self.session_list.remove_all()
@@ -1383,7 +1403,7 @@ class PrivateReviewPanel:
                             old_selected if old_selected in ordered else ordered[0]
                         )
                     self.status.set_label(
-                        f"{len(entries)} sessions déverrouillées et "
+                        f"Coffre ouvert · {len(entries)} sessions déverrouillées et "
                         f"{inaccessible} indisponibles ; aucun contact fournisseur."
                     )
                 self._refresh()
