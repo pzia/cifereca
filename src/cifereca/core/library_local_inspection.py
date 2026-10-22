@@ -264,6 +264,9 @@ class LocalInspection:
 
     def __init__(self, audit, valid, identity_id, roots=()):
         self._valid = valid
+        # Only Core sets this once when reusing the last completed audit.
+        # It never changes scan freshness or grants a file/right link.
+        self._from_audit_cache = False
         self._cases = {}
         # These references exist solely inside this revocable Core UI session.
         # They never enter an audit payload or a future repair capability.
@@ -613,6 +616,7 @@ class LocalInspection:
 
     def close(self):
         self._cases.clear()
+        self._from_audit_cache = False
         self._candidate_file_keys.clear()
         self._file_facets.clear()
         self._manual_right_proofs.clear()
@@ -625,6 +629,10 @@ class LocalInspection:
         self._inventory_notes = ()
         self._skipped_symlinks = self._skipped_special = 0
         self._valid = lambda: False
+
+    def from_audit_cache(self) -> bool:
+        """Closed, private origin label; never expose a source path or stamp."""
+        return self.valid() and self._from_audit_cache is True
 
     def summary(self):
         if not self.valid():
@@ -783,6 +791,7 @@ def open_local_inspection(service, *, identity_id, control=None):
         return _unavailable({'audit_cancelled'})
     cached = take_inspection_cache(service, identity_id)
     if cached is not None:
+        cached._from_audit_cache = True
         return cached
     from .library_audit_roots import configured_identity_roots
 
