@@ -555,6 +555,7 @@ def test_unexplained_link_drift_is_not_presented_as_stable(tool, monkeypatch):
     {'lost_confirmed': 525},
     {'same_file_evidence': False},
     {'current_observed': '/PRIVATE/secret'},
+    {'previous_observed': 525, 'current_observed': 525},
     {'changed_sqlite_tables': ['placements', 'placements']},
 ])
 def test_untrusted_inconsistent_drift_payload_is_not_rendered(tool, monkeypatch, update):
