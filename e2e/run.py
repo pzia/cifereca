@@ -86,6 +86,11 @@ SCENARIOS = {
         "runner": "gtk-llm-settings",
         "width": 1600,
     },
+    "maintenance-tools-920": {
+        "plugin": "core", "fixture": "startup",
+        "description": "P0 #2712/#2841 : vrai écran 920×620, parcours Numilog GTK/XTEST et scroll.",
+        "runner": "gtk-maintenance", "width": 920, "height": 620,
+    },
     "maintenance-tools-1024": {
         "plugin": "core", "fixture": "startup",
         "description": "P0 #2712 : inspection à 1024×768, navigation physique, molette et clavier.",
