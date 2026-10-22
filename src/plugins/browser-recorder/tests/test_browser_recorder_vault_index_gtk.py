@@ -320,3 +320,150 @@ def test_gtk_retention_changed_duration_invalidates_preview(tmp_path, monkeypatc
         panel.destroy()
         window.close()
         flush()
+
+
+
+def test_gtk_manual_download_chooser_requires_actual_operator_selection(
+    tmp_path, monkeypatch,
+):
+    """Real GTK event loop; fake native chooser response (no OS chooser automation).
+
+    Browser-controlled URL/suggested filename is never used to populate UI.
+    No file is saved until a distinct explicit Save-As selection is returned.
+    """
+    from threading import Thread
+    from time import monotonic, sleep
+    from types import SimpleNamespace as NS
+
+    panel, tasks, window, vault, ids = panel_fixture(tmp_path)
+    dialogs = []
+
+    class Dialog:
+        def __init__(self, label):
+            self.title = label
+            self.name = None
+            self.callback = None
+            self.destroyed = False
+
+        def set_current_name(self, name):
+            self.name = name
+
+        def connect(self, event, callback):
+            assert event == "response"
+            self.callback = callback
+
+        def show(self):
+            assert self.callback is not None
+            dialogs.append(self)
+
+        def get_file(self):
+            return NS(get_path=lambda: str(tmp_path / "chosen-fictional.acsm"))
+
+        def destroy(self):
+            self.destroyed = True
+
+        def reply(self, action):
+            self.callback(self, action)
+
+    facade = NS(
+        Window=Gtk.Window,
+        FileChooserAction=Gtk.FileChooserAction,
+        ResponseType=Gtk.ResponseType,
+        FileChooserNative=NS(new=lambda label, *_args: Dialog(label)),
+    )
+    monkeypatch.setattr(panel, "Gtk", facade)
+    responses = []
+    def choose():
+        responses.append(panel._choose_download_from_worker(1))
+
+    try:
+        thread = Thread(target=choose, daemon=True)
+        thread.start()
+        limit = monotonic() + 5
+        while not dialogs and monotonic() < limit:
+            flush()
+            sleep(.01)
+        assert len(dialogs) == 1
+        one = dialogs.pop()
+        assert one.name == "cifereca-telechargement-01.bin"
+        assert "fictional" not in one.title.lower()
+        assert thread.is_alive()
+        assert not list(tmp_path.glob("*.acsm"))
+        one.reply(Gtk.ResponseType.CANCEL)
+        thread.join(timeout=5)
+        assert not thread.is_alive() and responses == [None]
+        assert one.destroyed and not list(tmp_path.glob("*.acsm"))
+        responses.clear()
+
+        thread2 = Thread(target=choose, daemon=True)
+        thread2.start()
+        limit = monotonic() + 5
+        while not dialogs and monotonic() < limit:
+            flush()
+            sleep(.01)
+        assert len(dialogs) == 1
+        two = dialogs.pop()
+        two.reply(Gtk.ResponseType.ACCEPT)
+        thread2.join(timeout=5)
+        assert not thread2.is_alive()
+        assert responses == [tmp_path / "chosen-fictional.acsm"]
+        assert two.destroyed
+        assert not list(tmp_path.glob("*.acsm"))  # chooser ≠ write
+    finally:
+        panel.destroy()
+        window.close()
+        flush()
+
+
+def test_gtk_closing_page_cancels_pending_manual_download_chooser(
+    tmp_path, monkeypatch,
+):
+    from threading import Thread
+    from time import monotonic, sleep
+    from types import SimpleNamespace as NS
+
+    panel, tasks, window, vault, ids = panel_fixture(tmp_path)
+    dialogs = []
+
+    class Dialog:
+        def set_current_name(self, name):
+            assert name == "cifereca-telechargement-01.bin"
+
+        def connect(self, event, callback):
+            self.respond = callback
+
+        def show(self):
+            dialogs.append(self)
+
+        def destroy(self):
+            self.destroyed = True
+
+    facade = NS(
+        Window=Gtk.Window,
+        FileChooserAction=Gtk.FileChooserAction,
+        ResponseType=Gtk.ResponseType,
+        FileChooserNative=NS(new=lambda *_args: Dialog()),
+    )
+    monkeypatch.setattr(panel, "Gtk", facade)
+    results = []
+    thread = Thread(
+        target=lambda: results.append(panel._choose_download_from_worker(1)),
+        daemon=True,
+    )
+    try:
+        thread.start()
+        stop_at = monotonic() + 5
+        while not dialogs and monotonic() < stop_at:
+            flush()
+            sleep(.01)
+        assert len(dialogs) == 1 and thread.is_alive()
+        panel.destroy()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert results == [None]
+        assert dialogs[0].destroyed
+        assert not list(tmp_path.glob("*.acsm"))
+    finally:
+        panel.destroy()
+        window.close()
+        flush()
