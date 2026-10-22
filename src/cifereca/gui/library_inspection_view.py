@@ -306,10 +306,15 @@ class LocalInspectionController:
                 )
                 return
             self.session = session
+            # Persist actual provenance after a fast cache hit: the transient
+            # progress line may close before its idle notification is drawn.
+            origin = ('cache privé réutilisé'
+                      if session.from_audit_cache()
+                      else 'nouvelle inspection locale')
             self._set_activity_state(
-                'Inspection terminée · cas locaux consultables.'
-                if session.summary().get('status') == 'complete' else
-                'Inspection partielle · preuves non exhaustives.'
+                ('Inspection terminée · ' if session.summary().get('status') == 'complete'
+                 else 'Inspection partielle · preuves non exhaustives · ')
+                + origin + '.'
             )
             self.present()
 
