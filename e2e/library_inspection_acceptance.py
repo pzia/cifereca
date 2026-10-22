@@ -38,6 +38,14 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         for name,columns in _COLUMNS.items():
             db.execute(f"CREATE TABLE {name} ({','.join(c+' TEXT' for c in columns.split())})")
         db.execute("INSERT INTO entitlements(entitlement_id,identity_id,provider_id,item_id,state) VALUES('right-a','a','numilog','edition-a','active')")
+        # 272 local unverified Numilog rights, without placements or
+        # acquisition authority; keep the candidate right first.
+        db.executemany(
+            "INSERT INTO entitlements(entitlement_id,identity_id,provider_id,item_id,state) VALUES(?,?,?,?,?)",
+            [(f'right-synthetic-{index:03d}', 'a', 'numilog',
+              f'edition-synthetic-{index:03d}', 'active')
+             for index in range(271)],
+        )
         db.execute("INSERT INTO entitlements(entitlement_id,identity_id,provider_id,account_id,state) VALUES('right-b','b','kobo','FOREIGN_SECRET','active')")
         db.execute("INSERT INTO catalog_entries(catalog_entry_id,identity_id,provider_id,metadata_json) VALUES(?,?,?,?)",('notice-a','a','kobo',json.dumps({'identifiers':[{'scheme':'ISBN','value':'9780306406157'}]})))
         db.execute("INSERT INTO catalog_entries(catalog_entry_id,identity_id,provider_id,item_id,metadata_json) VALUES(?,?,?,?,?)",
@@ -187,7 +195,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
     def numilog():
         rows=list(walk(widgets['list']))
         labels='\n'.join(w.get_text() for w in rows if isinstance(w,Gtk.Label))
-        assert 'Droit sans fichier vérifié' in labels and 'synthetic-' not in labels
+        # Synthetic rights are legitimately displayed as Numilog rights.
+        # Their edition labels may include "synthetic": what must NEVER
+        # appear in this provider-filtered list is the *file* name.
+        assert 'Droit sans fichier vérifié' in labels
+        assert '.epub' not in labels and 'Fichier local :' not in labels
         report['checks']['local_inspection_provider_filter_does_not_attribute_isbn_files']=True
         # The Numilog right must show unlinked EPUB candidates *only* after
         # user selection; no ownership is inferred from a shared valid ISBN.
@@ -214,9 +226,12 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             assert adjustment.get_value() > 0
             adjustment.set_value(0)
             report['checks']['P0_2712_main_scroll_range_operable']=True
-        right = controller.session.page(
+        rights_page = controller.session.page(
             provider='numilog', state='rights_without_verified_file',
-        ).cases[0]
+        )
+        assert rights_page.total == 272
+        report['checks']['P0_2712_272_unverified_rights_fixture']=True
+        right = rights_page.cases[0]
         candidate_cases = controller.session.candidate_files(right.key)
         assert len(candidate_cases) == 20
         report['checks']['candidate_count_verified']=True
