@@ -510,6 +510,16 @@ class LocalInspectionController:
         )
         fresh_preview.set_visible(False)
         candidate_box.append(fresh_preview)
+        # The Core-only token never reaches GTK, and a separate explicit
+        # consent dialog is required before any placement can be written.
+        pair_confirm = Gtk.Button(label='Confirmer le placement local…')
+        pair_confirm.set_tooltip_text(
+            'Confirmation explicite : une ligne de placement SQLite pourra '
+            'être écrite après une nouvelle validation des preuves.'
+        )
+        pair_confirm.set_visible(False)
+        pair_confirm.set_sensitive(False)
+        candidate_box.append(pair_confirm)
         pair_explanation = Gtk.Label(label='', xalign=0)
         pair_explanation.set_wrap(True)
         pair_explanation.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -564,6 +574,8 @@ class LocalInspectionController:
             session.revoke_manual_attachment_preview()
             fresh_preview.set_visible(False)
             fresh_preview.set_sensitive(False)
+            pair_confirm.set_visible(False)
+            pair_confirm.set_sensitive(False)
             selected_file[0] = file_key
             pair_prepare.set_sensitive(
                 selected_right[0] is not None and file_key is not None
@@ -800,6 +812,8 @@ class LocalInspectionController:
             chosen_right, chosen_file = selected_right[0], selected_file[0]
             version = pair_version[0]
             fresh_preview.set_sensitive(False)
+            pair_confirm.set_visible(False)
+            pair_confirm.set_sensitive(False)
             pair_explanation.set_text(
                 'Vérification locale des preuves actuelles… '
                 'Aucun rattachement ne sera effectué.'
@@ -822,9 +836,10 @@ class LocalInspectionController:
                 # presented to GTK. Confirmation requires a separate UI lot.
                 states = {
                     'preview': (
-                        'Preuves actuelles cohérentes. La confirmation explicite '
-                        'du rattachement n’est pas encore disponible dans cette '
-                        'interface. Aucun fichier n’a été rattaché.'
+                        'Preuves actuelles cohérentes. La confirmation humaine '
+                        'du placement est disponible : le Core vérifiera une '
+                        'nouvelle fois compte, reçu et octets juste avant '
+                        'l’écriture SQLite. Aucun fichier n’a été rattaché.'
                     ),
                     'already_linked': (
                         'Ce fichier possède déjà un placement explicite vérifié. '
@@ -843,6 +858,8 @@ class LocalInspectionController:
                 pair_explanation.set_text(states.get(status, states['unavailable']))
                 pair_report.set_visible(True)
                 pair_report.set_expanded(True)
+                pair_confirm.set_visible(status == 'preview')
+                pair_confirm.set_sensitive(status == 'preview')
                 fresh_preview.set_sensitive(True)
 
             def failed(_error):
@@ -858,6 +875,109 @@ class LocalInspectionController:
                 'Vérification locale avant rattachement', read, completed, failed,
                 priority=TaskPriority.MAINTENANCE, kind='maintenance-inspection',
             )
+
+        def confirm_local_placement(*_args):
+            # GTK never sees a token. The private session consumes its single
+            # preview only after the person explicitly confirms this dialog.
+            if (not valid() or not pair_confirm.get_visible()
+                    or not pair_confirm.get_sensitive()
+                    or selected_right[0] is None or selected_file[0] is None):
+                return
+            chosen_right, chosen_file = selected_right[0], selected_file[0]
+            version = pair_version[0]
+            pair_confirm.set_sensitive(False)
+            fresh_preview.set_sensitive(False)
+            pair_prepare.set_sensitive(False)
+            dialog = Adw.MessageDialog.new(
+                window, 'Confirmer ce placement local ?',
+                'Le Core vérifiera à nouveau la preuve d’achat Numilog et '
+                'le fichier EPUB sous verrou avant de créer un seul placement '
+                'dans SQLite. Le livre original est conservé. '
+                'Annuler ne modifie rien.',
+            )
+            dialog.add_response('cancel', 'Annuler')
+            dialog.add_response('apply', 'Confirmer le placement')
+            dialog.set_close_response('cancel')
+            dialog.set_response_appearance('apply', Adw.ResponseAppearance.DESTRUCTIVE)
+
+            def on_response(_dialog, response):
+                if (self.session is not session or not self.alive()
+                        or version != pair_version[0]
+                        or selected_right[0] != chosen_right
+                        or selected_file[0] != chosen_file):
+                    return
+                if response != 'apply':
+                    reset_pair(chosen_file)
+                    return
+                pair_confirm.set_visible(False)
+                pair_explanation.set_text(
+                    'Confirmation reçue · vérification transactionnelle en cours…'
+                )
+
+                def commit():
+                    return session.confirm_manual_attachment(
+                        chosen_right, chosen_file, user_confirmed=True,
+                        cancelled=lambda: (
+                            pair_version[0] != version or not session.valid()
+                        ),
+                    )
+
+                def completed(outcome):
+                    # SQLite may invalidate the old read-only session on a
+                    # successful commit. Don't misreport that as a failed write.
+                    if (self.session is not session or not self.alive()
+                            or version != pair_version[0]
+                            or selected_right[0] != chosen_right
+                            or selected_file[0] != chosen_file):
+                        return
+                    status = outcome.get('status') if type(outcome) is dict else None
+                    if status in ('applied', 'already_linked'):
+                        self.clear()
+                        message = (
+                            'Un placement local Numilog a été enregistré. '
+                            'Le fichier original est conservé. Relancez '
+                            'la réconciliation pour actualiser les preuves.'
+                            if status == 'applied' else
+                            'Ce fichier possède déjà un placement vérifié. '
+                            'Aucune écriture supplémentaire. Relancez la '
+                            'réconciliation pour actualiser les preuves.'
+                        )
+                        notice = Adw.MessageDialog.new(
+                            self.parent, 'Réconciliation locale', message,
+                        )
+                        notice.add_response('close', 'Fermer')
+                        notice.present()
+                        return
+                    reset_pair(chosen_file)
+                    if valid():
+                        pair_explanation.set_text(
+                            'Placement refusé ou indisponible : preuves ou '
+                            'périmètre modifiés. Aucune écriture confirmée.'
+                        )
+                        pair_report.set_visible(True)
+                        pair_report.set_expanded(True)
+
+                def failed(_error):
+                    if (self.session is session and self.alive()
+                            and version == pair_version[0]
+                            and selected_right[0] == chosen_right
+                            and selected_file[0] == chosen_file):
+                        reset_pair(chosen_file)
+                        if valid():
+                            pair_explanation.set_text(
+                                'Placement indisponible : relancez la '
+                                'réconciliation avant un autre essai.'
+                            )
+                            pair_report.set_visible(True)
+                            pair_report.set_expanded(True)
+
+                self.parent.runner.submit(
+                    'Confirmation du placement local', commit, completed, failed,
+                    priority=TaskPriority.MAINTENANCE, kind='maintenance-inspection',
+                )
+
+            dialog.connect('response', on_response)
+            dialog.present()
 
         def select(_listing, row):
             if row is None or not valid():
@@ -936,6 +1056,7 @@ class LocalInspectionController:
         manual_list.connect('row-selected', select_manual_file)
         pair_prepare.connect('clicked', prepare_pair)
         fresh_preview.connect('clicked', preview_fresh_pair)
+        pair_confirm.connect('clicked', confirm_local_placement)
         for widget in (format_filter, sha_filter, crc_filter, file_sort):
             widget.connect('notify::selected', lambda *_: filter_manual())
         provider.connect('notify::selected', lambda *_: render(reset=True))
