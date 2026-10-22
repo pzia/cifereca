@@ -111,7 +111,10 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
 
     def result_ready():
         report['checks']['inspection_host_mapped']=True
-        result_view.publish(MaintenanceResult(True,summary='Lecture seule ; détails privés accessibles localement.'))
+        result_view.publish(MaintenanceResult(
+            True, summary='Lecture seule ; détails privés accessibles localement.',
+            details=('600 fichiers observés', '256 liens confirmés'),
+        ))
         until(lambda:result_view.button.get_mapped(),open_result)
 
     def open_result():
@@ -135,6 +138,13 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                         and w.get_label() == "Agrandir / Restaurer")
         assert maximize.get_mapped() and maximize.get_sensitive()
         report['checks']['inspection_results_large_window_maximizable'] = True
+        appendix = next(
+            w for w in walk(results)
+            if isinstance(w, Gtk.Expander)
+            and (w.get_label() or '').startswith('Afficher les statistiques détaillées')
+        )
+        assert not appendix.get_expanded() and appendix.get_mapped()
+        report['checks']['P0_2712_results_statistics_collapsed'] = True
         response=next(w for w in walk(result_view.dialog) if isinstance(w,Gtk.Button) and 'Examiner les cas' in str(w.get_label()))
         def allocated():
             if not response.get_mapped():return False
