@@ -15,8 +15,12 @@ def test_fresh_preview_is_a_distinct_explicit_button_never_automatic():
     assert "session.preview_manual_attachment(" in source
     assert "self.parent.runner.submit(" in source
     assert "'Vérification locale avant rattachement', read, completed, failed" in source
-    # No confirmation inside GTK; a local preview must stay no-write.
-    assert "session.confirm_manual_attachment(" not in source
+    # Preview itself stays no-write. The separate confirm path must require
+    # a human click, a consent response, and the private Core session token.
+    assert "pair_confirm.connect('clicked', confirm_local_placement)" in source
+    assert "if response != 'apply':" in source
+    assert "session.confirm_manual_attachment(" in source
+    assert "user_confirmed=True" in source
     assert "reconcile_numilog_manual(" not in source
 
 
