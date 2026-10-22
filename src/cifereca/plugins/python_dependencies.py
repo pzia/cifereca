@@ -219,7 +219,7 @@ class PythonDependencyManager:
                 if constraints:
                     constraint_path = report_path.with_suffix(".constraints.txt")
                     constraint_path.write_text(
-                        "".join(f"{name}<{version}\\n" for name, version in sorted(constraints.items())),
+                        "".join(f"{name}<{version}\n" for name, version in sorted(constraints.items())),
                         encoding="utf-8",
                     )
                     resolver += ["--constraint", str(constraint_path)]
