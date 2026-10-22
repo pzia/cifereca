@@ -153,6 +153,11 @@ def _execute_scoped_audit(service, identity_id, control, finish):
         result = audit_library(
             database, roots, limits=InventoryLimits(seconds=_SCOPED_AUDIT_SECONDS),
             seconds=_SCOPED_AUDIT_SECONDS,
+            # The 600-second whole-audit ceiling remains authoritative.
+            # Distinct budgets: 30 s proof comparison, 30 s catalogue index,
+            # then a reserved 30 s of metadata-only file matching.
+            comparison_seconds=30, candidate_seconds=60,
+            candidate_index_seconds=30,
             cancelled=cancelled, progress=progress, _snapshot=snapshot,
         )
         stopped = cancelled()
