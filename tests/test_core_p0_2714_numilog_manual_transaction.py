@@ -242,3 +242,45 @@ def test_attack_fields_never_echo_private_data(rig):
     with pytest.raises(ManualAttachmentRejected, match="^source_scope_changed$"):
         _review(rig, observation=replace(options["observation"], identity_id="alex"))
     assert not _rows(service, "placements")
+
+
+def _insert_catalogue_refs(service, placement_id, count, *, foreign_last=False):
+    """Synthetic references to the same placement; no private names enter errors."""
+    with service.storage._lock, service.storage._connect() as db:
+        for index in range(count):
+            foreign = foreign_last and index == count - 1
+            db.execute(
+                "INSERT INTO catalog_entries "
+                "(catalog_entry_id,placement_id,title,identity_id,provider_id,item_id,"
+                "local_state,metadata_json,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,'present','{}',1,1)",
+                (f"catalog-reference-{index}", placement_id, "Synthetic edition",
+                 "other" if foreign else "default",
+                 "kobo" if foreign else "numilog",
+                 "another-edition" if foreign else "private-item"),
+            )
+
+
+def test_existing_link_with_two_matching_catalogue_references_remains_idempotent(rig):
+    service, book, _params = rig
+    plan = _stage(rig)
+    assert _review(rig, confirmation=plan["plan_token"])["status"] == "applied"
+    placement_id = service.storage.placement_for_path(book)["placement_id"]
+    _insert_catalogue_refs(service, placement_id, 2)
+    assert _review(rig)["status"] == "already_linked"
+    assert len(_rows(service, "placements")) == 1
+
+
+def test_catalogue_reference_overflow_cannot_hide_foreign_edition_on_existing_link(rig):
+    """The fourth row is outside the LIMIT 3 projection, never silently ignored."""
+    service, book, _params = rig
+    plan = _stage(rig)
+    assert _review(rig, confirmation=plan["plan_token"])["status"] == "applied"
+    placement_id = service.storage.placement_for_path(book)["placement_id"]
+    _insert_catalogue_refs(service, placement_id, 4, foreign_last=True)
+    before = _rows(service, "placements")
+    with pytest.raises(ManualAttachmentRejected, match="^catalogue_evidence_ambiguous$"):
+        _review(rig)
+    with pytest.raises(ManualAttachmentRejected, match="^catalogue_evidence_ambiguous$"):
+        _review(rig, confirmation=plan["plan_token"])
+    assert _rows(service, "placements") == before
