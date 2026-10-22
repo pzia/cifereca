@@ -11,7 +11,12 @@ from dataclasses import dataclass
 
 _REASON_LABELS = {
     "selection_unavailable": "Sélection privée indisponible ou périmée.",
-    "audit_incomplete": "L’analyse locale est incomplète ; aucune association définitive n’est possible.",
+    "audit_incomplete": "La couverture des preuves pertinentes est incomplète ; aucune association définitive n’est possible.",
+    "global_partial_pair_reviewable": (
+        "L’analyse générale est partielle, mais les preuves locales de cette "
+        "paire sont suffisantes pour demander une revalidation fraîche. "
+        "Aucun rattachement n’est encore autorisé."
+    ),
     "right_not_attested": "Droit Numilog actif et authentifié non établi pour cette identité.",
     "right_scope_ambiguous": "Plusieurs droits ou coordonnées de compte incompatibles pour cette édition.",
     "file_unverified": "SHA, structure ou CRC du fichier local non vérifié.",
@@ -84,7 +89,7 @@ def _strict_signature(value: object) -> tuple[str, int] | None:
 
 def review_local_pair(
     right: object, file: object, *, audit_complete: bool,
-    bibliographic_hint: bool = False,
+    bibliographic_hint: bool = False, global_audit_partial: bool = False,
 ) -> ManualLinkPreflight:
     """Pure closed report. All inputs are bounded session-local summaries.
 
@@ -132,8 +137,10 @@ def review_local_pair(
         status = "insufficient_evidence"
     else:
         status = "eligible_for_fresh_validation"
-    reasons = tuple(sorted(blockers | missing | {"transaction_unavailable"}))
-    return ManualLinkPreflight(status, reasons)
+    reasons = blockers | missing | {"transaction_unavailable"}
+    if status == "eligible_for_fresh_validation" and global_audit_partial is True:
+        reasons.add("global_partial_pair_reviewable")
+    return ManualLinkPreflight(status, tuple(sorted(reasons)))
 
 
 def review_source_read_only(
@@ -162,7 +169,7 @@ def review_source_read_only(
 
 def review_kobo_candidate(
     right: object, file: object, *, audit_complete: bool,
-    bibliographic_hint: bool = False,
+    bibliographic_hint: bool = False, global_audit_partial: bool = False,
 ) -> ManualLinkPreflight:
     """Review only whether to INVOKE Kobo's separate fresh offline preview.
 
@@ -185,6 +192,8 @@ def review_kobo_candidate(
     reasons = blockers | {"kobo_fresh_proof_required"}
     if bibliographic_hint is True:
         reasons.add("bibliographic_hint_only")
+    if not blockers and global_audit_partial is True:
+        reasons.add("global_partial_pair_reviewable")
     return ManualLinkPreflight(
         "blocked" if blockers else "eligible_for_fresh_validation",
         tuple(sorted(reasons)),
