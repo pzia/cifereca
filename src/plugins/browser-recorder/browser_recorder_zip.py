@@ -24,6 +24,7 @@ from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 from browser_recorder import RecorderError, SAFE_SEGMENTS, site_origin
 from browser_recorder_review import _SECRETS, _IDS, _JWT, _variants
 from browser_recorder_devkit import core_contract_kit
+from browser_recorder_download import _open_parent_without_symlinks
 
 ZIP_SCHEMA = "cifereca.browser-recorder.approved-zip/1"
 MAX_EXCHANGES = 240
@@ -627,24 +628,23 @@ class ReviewedBundlePlan:
         path = Path(path)
         name = path.name
         if (not path.is_absolute()
-                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,98}\.zip", name)
-                   is None
+                or re.fullmatch(r"[\w][\w .-]{0,98}\.zip", name) is None
+                or ".." in name or ".." in path.parts
                 or path.parent.is_symlink()):
             raise RecorderError("bundle_invalid_filename")
-        folder_flags = (
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
-        )
         flags = (
             os.O_WRONLY | os.O_CREAT | os.O_EXCL
             | getattr(os, "O_NOFOLLOW", 0)
         )
         try:
-            folder = os.open(path.parent, folder_flags)
+            # Reject symlinks in *every* chosen parent component, not only
+            # the final directory. This helper never visits network sites.
+            folder = _open_parent_without_symlinks(path.parent)
             try:
                 info = os.fstat(folder)
                 if (not stat.S_ISDIR(info.st_mode)
-                        or info.st_uid != os.getuid()):
+                        or info.st_uid != os.getuid()
+                        or stat.S_IMODE(info.st_mode) & 0o022):
                     raise RecorderError("unsafe_directory")
                 output = os.open(name, flags, 0o600, dir_fd=folder)
                 try:
