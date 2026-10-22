@@ -118,8 +118,60 @@ class PrivateReviewPanel:
         self._index_handle = None
         self._retention_plan = None
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        self.widget = box
+        # Three independent workspaces replace the former long, mixed form.
+        # Each tab has its own scroll position; status and the shared vault
+        # passphrase remain reachable regardless of the selected workspace.
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        root.set_hexpand(True)
+        root.set_vexpand(True)
+        self.widget = root
+        self.status = Gtk.Label(
+            label="Aucune observation HTTP privée en mémoire.",
+            xalign=0, wrap=True,
+        )
+        self.status.set_selectable(True)
+        root.append(self.status)
+        if self.vault_directory is not None:
+            root.append(Gtk.Label(
+                label="Phrase secrète du coffre — requise pour capturer, "
+                      "ouvrir ou gérer une session chiffrée ; jamais exportée.",
+                xalign=0, wrap=True,
+            ))
+            self.vault_passphrase = Gtk.Entry()
+            self.vault_passphrase.set_visibility(False)
+            self.vault_passphrase.set_placeholder_text(
+                "Phrase secrète du coffre (12 caractères minimum)"
+            )
+            root.append(self.vault_passphrase)
+
+        self.tabs = Gtk.Notebook()
+        self.tabs.set_scrollable(True)
+        self.tabs.set_vexpand(True)
+        self.tabs.set_hexpand(True)
+        self.capture_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=10,
+        )
+        self.sessions_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=10,
+        )
+        self.review_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=10,
+        )
+        for section, title in (
+            (self.capture_box, "1 · Capture"),
+            (self.sessions_box, "2 · Sessions et export privé"),
+            (self.review_box, "3 · Revue et ZIP LLM"),
+        ):
+            for side in ("top", "bottom", "start", "end"):
+                getattr(section, "set_margin_" + side)(12)
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroller.set_hexpand(True)
+            scroller.set_vexpand(True)
+            scroller.set_child(section)
+            self.tabs.append_page(scroller, Gtk.Label(label=title))
+        root.append(self.tabs)
+        box = self.capture_box
         box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         box.append(Gtk.Label(
             label="Parcours HTTP privé (P0) — revue et ZIP volontaire",
@@ -139,6 +191,16 @@ class PrivateReviewPanel:
                   "téléchargement (8 maximum). Annuler = aucune conservation.",
             xalign=0, wrap=True,
         ))
+        # Page host supplies real Gtk widgets; standalone headless tests use
+        # immutable site/consent proxies, which have no GTK parent.
+        if isinstance(site, getattr(Gtk, "Widget", ())):
+            box.append(Gtk.Label(
+                label="Adresse HTTPS du site à parcourir",
+                xalign=0, wrap=True,
+            ))
+            box.append(site)
+        if isinstance(consent, getattr(Gtk, "Widget", ())):
+            box.append(consent)
         box.append(Gtk.Label(
             label="Hôtes tiers facultatifs (HTTPS, séparés par des virgules) : "
                   "métadonnées de requête seulement, jamais URL ni corps. "
@@ -163,12 +225,13 @@ class PrivateReviewPanel:
                 label="J'autorise le stockage local chiffré de cette capture."
             )
             box.append(self.vault_consent)
-            self.vault_passphrase = Gtk.Entry()
-            self.vault_passphrase.set_visibility(False)
-            self.vault_passphrase.set_placeholder_text(
-                "Phrase secrète du coffre (capture, ouverture ou suppression)"
-            )
-            box.append(self.vault_passphrase)
+            box = self.sessions_box
+            box.append(Gtk.Label(
+                label="Sessions archivées : consultez les captures chiffrées "
+                      "sans contacter les sites. Le ZIP de secours est privé, "
+                      "distinct du ZIP anonymisé de l'onglet Revue.",
+                xalign=0, wrap=True,
+            ))
             self.sessions_refresh = Gtk.Button(label="Lister les sessions archivées")
             self.sessions_unlock = Gtk.Button(
                 label="Déverrouiller les métadonnées des sessions…"
@@ -309,6 +372,7 @@ class PrivateReviewPanel:
             self.private_export_button.connect(
                 "clicked", lambda *_: self.export_private_zip(),
             )
+        box = self.capture_box
         # FlowBox wraps the five capture/review buttons at sidebar/mobile
         # widths; a single horizontal Box could push Stop/Clear off-screen.
         controls = Gtk.FlowBox()
@@ -326,10 +390,12 @@ class PrivateReviewPanel:
                        self.preview_button, self.clear):
             controls.append(button)
         box.append(controls)
-        self.status = Gtk.Label(label="Aucune observation HTTP privée en mémoire.",
-                                xalign=0, wrap=True)
-        self.status.set_selectable(True)
-        box.append(self.status)
+        box.append(Gtk.Label(
+            label="Après l'arrêt, passer à l'onglet 3 · Revue et ZIP LLM. "
+                  "Aucun envoi externe n'est effectué.",
+            xalign=0, wrap=True,
+        ))
+        box = self.review_box
         box.append(Gtk.Label(
             label="Revue clavier : Tab pour cibler un identifiant ; "
                   "1 = anonymiser, 2 = conserver, 3 = exclure. "
@@ -794,6 +860,7 @@ class PrivateReviewPanel:
                         self._emit_failure("http_review", "review_failed")
                     else:
                         self._show_candidates()
+                        self.tabs.set_current_page(2)
                         if getattr(result, "vault_session_id", None):
                             self.status.set_label(
                                 f"Session archivée en coffre chiffré : "
@@ -1256,6 +1323,7 @@ class PrivateReviewPanel:
             )
             return
         self._show_candidates(update_status=False)
+        self.tabs.set_current_page(2)
         private = stored.private_summary()
         # This is the user's private, unlocked GTK panel: origin and time
         # never travel through diagnostics, public broker, or ZIP manifest.
