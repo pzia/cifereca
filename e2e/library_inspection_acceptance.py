@@ -163,7 +163,12 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         # read the content installed by the production ToolbarView instead.
         main_scroll = toolbar_view.get_content()
         assert isinstance(main_scroll, Gtk.ScrolledWindow)
-        assert isinstance(main_scroll.get_child(), Gtk.Box)
+        # GTK wraps a non-GtkScrollable Box in an implicit Gtk.Viewport.
+        # Inspect the actual page, not the automatic layout adapter.
+        page = main_scroll.get_child()
+        if isinstance(page, Gtk.Viewport):
+            page = page.get_child()
+        assert isinstance(page, Gtk.Box)
         report['checks']['P0_2712_initial_scroller_child_ok']=True
         adjustment = main_scroll.get_vadjustment()
         assert adjustment is not None
