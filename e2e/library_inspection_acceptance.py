@@ -242,6 +242,19 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                                          adj.get_upper() - adj.get_page_size())))
             if not following_candidate.get_mapped() or not following_candidate.get_sensitive():
                 return False
+            window = controller.dialog
+            visible, rect = following_candidate.compute_bounds(window)
+            if not visible or rect.get_width() <= 0 or rect.get_height() <= 0:
+                return False
+            cx = rect.get_x() + rect.get_width() / 2
+            cy = rect.get_y() + rect.get_height() / 2
+            if not (0 <= cx < window.get_width() and 0 <= cy < window.get_height()):
+                return False
+            picked = window.pick(cx, cy, Gtk.PickFlags.DEFAULT)
+            while picked is not None and picked is not following_candidate:
+                picked = picked.get_parent()
+            if picked is not following_candidate:
+                return False
             try:
                 x, y = device.widget_point(following_candidate)
                 return x >= 0 and y >= 0
