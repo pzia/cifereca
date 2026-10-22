@@ -486,6 +486,22 @@ class LocalInspectionController:
         shortcuts.append(show_files)
         shortcuts.append(show_rights)
         box.append(shortcuts)
+        history_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        hide_history = Gtk.CheckButton(label='Masquer les anciens emplacements')
+        hide_history.set_active(True)
+        hide_history.set_tooltip_text(
+            'Ne masque que les placements SQLite déjà marqués missing ; '
+            'aucune modification de la bibliothèque.'
+        )
+        show_history = Gtk.Button(label='Examiner les anciens emplacements')
+        show_history.set_tooltip_text(
+            'Afficher les anciens chemins absents, pour consultation privée '
+            'uniquement. Ne répare et ne supprime aucun placement.'
+        )
+        history_controls.append(hide_history)
+        history_controls.append(show_history)
+        history_controls.set_visible(overview.get('paths_historical_missing', 0) > 0)
+        box.append(history_controls)
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         # Allow the main viewport to reach every comparison action even when
         # a long candidate column exceeds the available window height.
@@ -1339,7 +1355,8 @@ class LocalInspectionController:
             if reset: offset[0] = 0
             page = session.page(provider=list(PROVIDERS)[provider.get_selected()],
                                 state=list(STATES)[state.get_selected()], offset=offset[0],
-                                query=search.get_text()[:160])
+                                query=search.get_text()[:160],
+                                hide_historical_paths=hide_history.get_active())
             current_total[0] = page.total
             child = listing.get_first_child()
             while child is not None:
@@ -1382,6 +1399,7 @@ class LocalInspectionController:
             widget.connect('notify::selected', lambda *_: filter_manual())
         provider.connect('notify::selected', lambda *_: render(reset=True))
         state.connect('notify::selected', lambda *_: render(reset=True))
+        hide_history.connect('toggled', lambda *_: render(reset=True))
         search.connect('search-changed', lambda *_: render(reset=True))
 
         def choose(prov, status):
@@ -1397,6 +1415,15 @@ class LocalInspectionController:
             'unattributed', 'local_file_without_attested_right'))
         show_rights.connect('clicked', lambda *_: choose(
             'all', 'rights_without_verified_file'))
+
+        def inspect_history():
+            if not valid():
+                return
+            # The toggle is purely presentational and cannot alter SQLite.
+            hide_history.set_active(False)
+            choose('all', 'stored_path_missing_historical')
+
+        show_history.connect('clicked', lambda *_: inspect_history())
         previous.connect('clicked', lambda *_: move(-50))
         following.connect('clicked', lambda *_: move(50))
         close.connect('clicked', lambda *_: self.clear())
