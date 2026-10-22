@@ -103,7 +103,7 @@ def test_600_epubs_bad_unrelated_and_three_crc_only_incidents_keep_local_scope(r
         for i, observation in enumerate(audit.inventory.files):
             if observation.path.endswith('.epub') and 'other-' in observation.path:
                 audit.inventory.files[i] = replace(
-                    observation, structure_validation='structure_limit_or_invalid',
+                    observation, structure_validation='structure_invalid',
                 )
                 seen += 1
                 if seen == 3:
@@ -120,6 +120,54 @@ def test_600_epubs_bad_unrelated_and_three_crc_only_incidents_keep_local_scope(r
         assert session.preview_manual_attachment(right, file)['status'] == 'preview'
         assert session.confirm_manual_attachment(right, file, user_confirmed=False)['status'] == 'unavailable'
         assert not _rows(_service, 'placements')
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize('structure_state', [
+    'structure_byte_or_time_budget',
+    'structure_byte_or_entry_budget',
+    'structure_cancelled',
+])
+def test_ambiguous_structure_budget_on_another_file_fails_closed(
+    rig, structure_state,
+):
+    _bad_files(rig[1].parent)
+    epub(rig[1].parent / 'synthetic-other.epub', title='Other case')
+    def add_structure_budget(audit):
+        from cifereca.core.library_reconciliation import reconcile
+        for i, observation in enumerate(audit.inventory.files):
+            if observation.path.endswith('synthetic-other.epub'):
+                audit.inventory.files[i] = replace(
+                    observation, structure_validation=structure_state,
+                )
+                break
+        else:
+            raise AssertionError('expected other EPUB')
+        audit.inventory.reasons.add('structure_limit_or_invalid')
+        audit.reconciliation = reconcile(audit.inventory, audit.snapshot)
+    _audit, session, right, file = _numilog(rig, altered=add_structure_budget)
+    try:
+        report = session.preflight_manual_link(right, file)
+        assert report.status == 'blocked'
+        assert 'audit_incomplete' in report.codes
+        assert session.preview_manual_attachment(right, file)['status'] == 'unavailable'
+        assert not _rows(rig[0], 'placements')
+    finally:
+        session.close()
+
+
+def test_oversized_other_epub_does_not_override_own_full_sha_crc_receipt(rig):
+    _bad_files(rig[1].parent)
+    def add_per_file_size_limit(audit):
+        audit.inventory.reasons.add('file_byte_budget')
+        audit.reconciliation.reasons.add('file_byte_budget')
+    _audit, session, right, file = _numilog(rig, altered=add_per_file_size_limit)
+    try:
+        report = session.preflight_manual_link(right, file)
+        assert report.status == 'eligible_for_fresh_validation'
+        assert report.read_only and not report.attachment_authorized
+        assert 'global_partial_pair_reviewable' in report.codes
     finally:
         session.close()
 
