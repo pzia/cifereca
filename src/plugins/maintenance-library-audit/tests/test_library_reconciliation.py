@@ -357,3 +357,57 @@ def test_malformed_candidate_coverage_flag_cannot_inject_public_prose(tool):
     outcome = instance.run(prepare(instance), Control())
     assert "PRIVATE" not in repr(outcome)
     assert "non exécutée" not in " ".join(outcome.warnings)
+
+
+def test_missing_sqlite_paths_are_partitioned_without_claiming_lost_books(tool, monkeypatch):
+    import cifereca_library_reconciliation as module
+    captured = []
+    class PresentableResult:
+        details = ()
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setattr(module, 'MaintenanceResult', PresentableResult)
+    instance, broker = tool
+    broker.result['stored_paths']['missing_path_context'] = {
+        'sqlite_present': 0, 'sqlite_missing': 1, 'sqlite_other': 0,
+        'distinct_paths': 1, 'distinct_artifacts_with_id': 1,
+        'distinct_placements_with_id': 1,
+    }
+    instance.run(prepare(instance), Control())
+    detail = ' '.join(captured[0]['details'])
+    assert 'placements encore actifs (état present) : 0' in detail
+    assert 'historique déjà marqué missing : 1' in detail
+    assert '1 artefact(s) avec ID' in detail
+    assert 'ne mesurent pas des livres perdus' in detail
+    assert 'PRIVATE' not in repr(captured)
+
+
+@pytest.mark.parametrize('context', [
+    {'sqlite_present': 1, 'sqlite_missing': 1, 'sqlite_other': 0,
+     'distinct_paths': 1, 'distinct_artifacts_with_id': 1,
+     'distinct_placements_with_id': 1},
+    {'sqlite_present': True, 'sqlite_missing': 0, 'sqlite_other': 0,
+     'distinct_paths': 1, 'distinct_artifacts_with_id': 1,
+     'distinct_placements_with_id': 1},
+    {'sqlite_present': 0, 'sqlite_missing': 1, 'sqlite_other': 0,
+     'distinct_paths': '/PRIVATE/PATH', 'distinct_artifacts_with_id': 1,
+     'distinct_placements_with_id': 1},
+])
+def test_invalid_path_breakdown_never_becomes_public_detail(
+    tool, monkeypatch, context,
+):
+    import cifereca_library_reconciliation as module
+    captured = []
+    class PresentableResult:
+        details = ()
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setattr(module, 'MaintenanceResult', PresentableResult)
+    instance, broker = tool
+    broker.result['stored_paths']['missing_path_context'] = context
+    instance.run(prepare(instance), Control())
+    details = ' '.join(captured[0]['details'])
+    assert 'Chemins enregistrés absents (lignes SQLite contrôlées)' not in details
+    assert 'PRIVATE' not in details
