@@ -163,6 +163,17 @@ def finish_audit_stability(service, identity_id: str, scope: tuple,
     changed_tables = [
         table for table in _TABLES if previous.rows[table] != current.rows[table]
     ]
+    # Only a bounded count of removed/added SQL proof ROWS crosses Core's
+    # diagnostic boundary. The row-level keyed digests are NEVER returned.
+    # A modified row contributes one removal and one addition, not one
+    # claimed changed book or lost right. Duplicates retain multiplicity.
+    sqlite_row_deltas = {
+        table: {
+            'removed': sum((previous.rows[table] - current.rows[table]).values()),
+            'added': sum((current.rows[table] - previous.rows[table]).values()),
+        }
+        for table in changed_tables
+    }
     same_cohort = not (added or removed)
     same_files = same_cohort and changed == 0
     same_sqlite = not changed_tables
@@ -195,6 +206,7 @@ def finish_audit_stability(service, identity_id: str, scope: tuple,
         'same_file_evidence': same_files,
         'same_sqlite_proofs': same_sqlite,
         'changed_sqlite_tables': changed_tables,
+        'sqlite_proof_row_deltas': sqlite_row_deltas,
         'lost_confirmed': len(old_confirmed - new_confirmed),
         'gained_confirmed': len(new_confirmed - old_confirmed),
         'interpretation': interpretation,
