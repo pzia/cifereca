@@ -162,3 +162,18 @@ def test_cleanup_failure_is_reported_without_losing_sqlite_named_file(
     )
     assert old.is_file() and new.is_file()
     assert service.storage.placement_get(old_id)["path"] == str(new)
+
+
+def test_symlink_destination_is_never_followed_or_committed(tmp_path):
+    from cifereca.plugin_api import Conflict
+
+    service, old_id, broker, plan, old, new, _ = _case(tmp_path)
+    outside = tmp_path / "PRIVATE_OUTSIDE.epub"
+    outside.write_bytes(old.read_bytes())
+    new.symlink_to(outside)
+    before = outside.read_bytes()
+    with pytest.raises(Conflict):
+        broker.run(plan, Control())
+    assert old.read_bytes() == b"book-data"
+    assert new.is_symlink() and outside.read_bytes() == before
+    assert service.storage.placement_get(old_id)["path"] == str(old)
