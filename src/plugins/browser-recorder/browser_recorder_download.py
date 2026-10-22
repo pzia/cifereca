@@ -36,12 +36,15 @@ def _open_parent_without_symlinks(directory: Path) -> int:
 
 
 def save_chosen_download(download, destination: Path) -> None:
-    """Explicit save via exclusive 0600 destination and private staging.
+    """Explicitly publish a *complete* download with no overwrite.
 
-    The output directory must be owned by the operator and not group/world
-    writable. Never overwrite, follow symlinks, create directories, log
-    paths, or place downloaded content in the recorder's archival vault.
+    Download.save_as first writes only into an ephemeral mode-0700 directory.
+    Bounded copy to a 0600 staging file is fsynced before a hardlink exposes
+    the final name. Hardlink fails atomically if the target already exists;
+    no partial/empty filename can masquerade as a successful download.
     """
+    import secrets
+
     destination = Path(destination)
     name = destination.name
     if (not destination.is_absolute()
@@ -49,7 +52,9 @@ def save_chosen_download(download, destination: Path) -> None:
             or ".." in name or ".." in destination.parts):
         raise RecorderError("download_destination_invalid")
     fd = None
-    created = False
+    staged = False
+    published = False
+    temp_name = "." + secrets.token_hex(16) + ".cifereca-download-part"
     try:
         fd = _open_parent_without_symlinks(destination.parent)
         folder = os.fstat(fd)
@@ -57,44 +62,45 @@ def save_chosen_download(download, destination: Path) -> None:
                 or folder.st_uid != os.getuid()
                 or stat.S_IMODE(folder.st_mode) & 0o022):
             raise RecorderError("download_destination_invalid")
-        flags = (os.O_CREAT | os.O_EXCL | os.O_WRONLY
-                 | getattr(os, "O_NOFOLLOW", 0))
-        handle = os.open(name, flags, 0o600, dir_fd=fd)
-        created = True
-        try:
-            with tempfile.TemporaryDirectory(
-                prefix="cifereca-explicit-download-"
-            ) as staging:
-                temporary = Path(staging) / "private-transfer"
-                # Download.save_as waits until the *browser* finishes writing
-                # its own temporary file. There is no HTTP retry/replay.
-                download.save_as(str(temporary))
-                size = 0
-                with os.fdopen(handle, "wb") as output, temporary.open("rb") as source:
-                    handle = None
-                    while True:
-                        data = source.read(64 * 1024)
-                        if not data:
-                            break
-                        size += len(data)
-                        if size > MAX_MANUAL_DOWNLOAD_BYTES:
-                            raise RecorderError("download_limit")
-                        output.write(data)
-                    output.flush()
-                    os.fsync(output.fileno())
-            os.fsync(fd)
-        finally:
-            if handle is not None:
-                os.close(handle)
+        with tempfile.TemporaryDirectory(
+            prefix="cifereca-explicit-download-"
+        ) as staging:
+            temporary = Path(staging) / "private-transfer"
+            download.save_as(str(temporary))
+            if temporary.stat().st_size > MAX_MANUAL_DOWNLOAD_BYTES:
+                raise RecorderError("download_limit")
+            handle = os.open(
+                temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=fd,
+            )
+            staged = True
+            with os.fdopen(handle, "wb") as output, temporary.open("rb") as source:
+                total = 0
+                while True:
+                    data = source.read(64 * 1024)
+                    if not data:
+                        break
+                    total += len(data)
+                    if total > MAX_MANUAL_DOWNLOAD_BYTES:
+                        raise RecorderError("download_limit")
+                    output.write(data)
+                output.flush()
+                os.fsync(output.fileno())
+        os.link(temp_name, name, src_dir_fd=fd, dst_dir_fd=fd,
+                follow_symlinks=False)
+        published = True
+        os.unlink(temp_name, dir_fd=fd)
+        staged = False
+        os.fsync(fd)
     except RecorderError:
-        if created:
+        if published:
             try:
                 os.unlink(name, dir_fd=fd)
             except OSError:
                 pass
         raise
     except Exception:
-        if created:
+        if published:
             try:
                 os.unlink(name, dir_fd=fd)
             except OSError:
@@ -102,8 +108,12 @@ def save_chosen_download(download, destination: Path) -> None:
         raise RecorderError("download_save_failed") from None
     finally:
         if fd is not None:
+            if staged:
+                try:
+                    os.unlink(temp_name, dir_fd=fd)
+                except OSError:
+                    pass
             os.close(fd)
-
 
 _BLOCKED_MIME = frozenset({
     "application/vnd.adobe.adept+xml",
