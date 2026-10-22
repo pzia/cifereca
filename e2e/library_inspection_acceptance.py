@@ -408,7 +408,58 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                              and 'Aucun fichier n’a été rattaché.' in w.get_text()
                              for w in walk(controller.dialog)), manual_preflight)
 
-        until(preflight_ready, run_preflight)
+        # P0 #2712: real X11 wheel input over a label *outside* the three
+        # nested scrollbars must move the page's own Gtk.Adjustment. Setting
+        # that adjustment directly would only prove the model, not input.
+        outer = widgets['main_scroll']
+        adjustment = outer.get_vadjustment()
+        notice = next(w for w in walk(controller.dialog)
+                      if isinstance(w, Gtk.Label)
+                      and w.get_text().startswith('Identité active ·'))
+
+        def wheel_target_ready():
+            if not notice.get_mapped():
+                return False
+            if adjustment.get_upper() <= adjustment.get_page_size() + 1:
+                return False
+            adjustment.set_value(0)
+            try:
+                x, y = device.widget_point(notice)
+                return x >= 0 and y >= 0
+            except RuntimeError:
+                return False
+
+        def send_wheel():
+            device.wheel_widget(notice, steps=5)
+            until(lambda: adjustment.get_value() > 0, keyboard_focus)
+
+        def keyboard_focus():
+            report['checks']['P0_2712_real_xtest_wheel_moves_outer_page'] = True
+            # Real Tab / Shift-Tab must return to the same actionable control
+            # even when that control starts below the visible page boundary.
+            preflight.grab_focus()
+            until(lambda: controller.dialog.get_focus() is preflight, send_tab)
+
+        def send_tab():
+            press('Tab')
+            until(lambda: controller.dialog.get_focus() is not None
+                  and controller.dialog.get_focus() is not preflight,
+                  send_shift_tab)
+
+        def send_shift_tab():
+            # press() itself cannot hold Shift; dispatch explicit XTEST key
+            # down/up for a genuine reverse keyboard traversal.
+            device.key('Shift_L', True)
+            press('Tab')
+            device.key('Shift_L', False)
+            until(lambda: controller.dialog.get_focus() is preflight,
+                  after_keyboard)
+
+        def after_keyboard():
+            report['checks']['P0_2712_real_xtest_tab_shift_tab_reach_preflight'] = True
+            until(preflight_ready, run_preflight)
+
+        until(wheel_target_ready, send_wheel)
 
     def manual_preflight():
         text='\\n'.join(w.get_text() for w in walk(controller.dialog)
