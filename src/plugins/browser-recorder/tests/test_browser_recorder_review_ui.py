@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -10,6 +11,70 @@ import browser_recorder_review_ui as review_ui
 
 
 ORIGIN = "https://books.example.org"
+
+
+@pytest.mark.parametrize("code,fragment", [
+    ("vault_unlock_failed", "bonne phrase"),
+    ("vault_crypto_unavailable", "Installer les dépendances"),
+    ("vault_unsafe_directory", "0700"),
+    ("vault_unsafe_file", "actualisez"),
+    ("vault_invalid", "incompatible"),
+    ("private_zip_limit", "taille"),
+    ("private_zip_destination", ".zip"),
+    ("private_zip_exists", "autre nom"),
+    ("private_zip_write_failed", "espace libre"),
+])
+def test_private_export_failures_are_actionable_and_retryable(monkeypatch, tmp_path, code, fragment):
+    secret = "PRIVATE-PASSPHRASE-DO-NOT-PRINT"
+    destroyed, outcomes = [], []
+    panel = review_ui.PrivateReviewPanel(
+        Gtk, GLib, FakeTasks(), NS(get_text=lambda: ORIGIN),
+        NS(get_active=lambda: True), lambda: False,
+        vault_directory=tmp_path / "vault",
+        diagnostic=lambda *a, **kw: outcomes.append((a, kw)),
+    )
+    panel.session_list.append("synthetic", "synthetic")
+    panel.session_list.set_active_id("synthetic")
+    panel._vault_secret = bytearray(secret.encode())
+    panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(tmp_path / "private.zip")
+    stored = NS(trace=NS(destroy=lambda: destroyed.append(True)))
+    class Vault:
+        def __init__(self, path):
+            pass
+        def open(self, sid, password):
+            assert password == secret
+            return stored
+    monkeypatch.setattr(review_ui, "PrivateSessionVault", Vault)
+    def fail(*a, **kw):
+        raise review_ui.VaultError(code)
+    monkeypatch.setattr(review_ui, "save_session_llm_zip", fail)
+    try:
+        panel.export_private_zip()
+        assert fragment in panel.status.label
+        assert destroyed == [True]
+        assert secret not in panel.status.label + repr(outcomes)
+        assert outcomes[-1][0] == ("private_zip_export", "private_zip_export_failed")
+        assert panel._vault_secret.decode() == secret
+        monkeypatch.setattr(review_ui, "save_session_llm_zip", lambda *a, **kw: 42)
+        panel.export_private_zip()
+        assert destroyed == [True, True]
+        assert outcomes[-1][0] == ("private_zip_export", "private_zip_exported")
+        assert panel.vault_passphrase.get_text() == ""
+    finally:
+        panel.destroy()
+
+
+def test_private_export_unknown_error_is_never_rendered():
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("private argument rendered")
+        __repr__ = __str__
+    for error in (review_ui.VaultError(Hostile()),
+                  review_ui.VaultError("https://private.invalid/?token=SECRET"),
+                  RuntimeError("PRIVATE-PASSWORD")):
+        message = review_ui._private_export_failure_message(error)
+        assert "réessayez" in message
+        assert "SECRET" not in message and "private.invalid" not in message
 
 
 class Widget:
