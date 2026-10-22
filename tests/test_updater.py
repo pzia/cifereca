@@ -69,6 +69,8 @@ def test_create_venv_prefers_offline_core_wheelhouse(tmp_path, monkeypatch):
     wheelhouse = release / "offline-wheels"
     wheelhouse.mkdir()
     (wheelhouse / "cifereca-9.9.9-py3-none-any.whl").write_bytes(b"wheel")
+    from cifereca.wheelhouse_quarantine import attest_wheelhouse
+    attest_wheelhouse(wheelhouse, core_version="9.9.9")
 
     commands: list[list[str]] = []
 
