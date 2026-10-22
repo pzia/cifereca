@@ -549,6 +549,15 @@ def test_large_identifier_review_is_paginated_without_bulk_decisions(monkeypatch
     assert "73–90 sur 90" in panel.candidate_page_status.label
     assert len(panel.candidates_box.children) == 18
     assert not panel.candidate_next.sensitive
+    assert panel.candidate_next_pending.sensitive
+    panel.go_to_next_pending()
+    assert panel._pending_cursor == 72
+    assert "Identifiant 73/90" in panel.status.label
+    assert panel._review.pending() == 88
+    panel.go_to_next_pending()
+    assert panel._pending_cursor == 73
+    assert "Identifiant 74/90" in panel.status.label
+    assert panel._review.pending() == 88
     panel.prepare_zip()
     assert panel._bundle_plan is None
     assert "Toutes les décisions" in panel.status.label
