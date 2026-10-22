@@ -665,3 +665,28 @@ def test_compressed_without_content_length_is_omitted_before_body_read():
     assert trace.omitted["compressed"] == 1
     assert trace.exchanges[0].response_body_state == "body_omitted"
     trace.destroy()
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "gzip\\nunsafe", "", "br, identity", 7])
+def test_malformed_or_filtered_content_encoding_never_allows_body_read(encoding):
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    req = Request(ORIGIN + "/compression")
+    response = Response(req, data=b'{"BookId":214}', content_length=False)
+    response.headers["content-encoding"] = encoding
+    emit(trace, req, response)
+    assert response.body_reads == 0
+    assert trace.omitted["compressed"] == 1
+    assert trace.exchanges[0].response_body is None
+    trace.destroy()
+
+
+@pytest.mark.parametrize("length", ["not-a-number", "1\\nunsafe", "-1", 10**100])
+def test_filtered_invalid_content_length_cannot_masquerade_as_absent(length):
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    req = Request(ORIGIN + "/malformed")
+    response = Response(req, data=b"small")
+    response.headers["content-length"] = length
+    emit(trace, req, response)
+    assert response.body_reads == 0
+    assert trace.omitted["unknown_size"] == 1
+    trace.destroy()
