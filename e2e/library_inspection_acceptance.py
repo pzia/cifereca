@@ -143,6 +143,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         report['checks']['inspection_window_mapped']=True
         window=controller.dialog
         assert window.get_width()<=parent.get_width()
+        report['checks']['P0_2712_initial_window_width_ok']=True
         assert window.get_decorated() and window.get_resizable()
         header = next(w for w in walk(window) if isinstance(w, Adw.HeaderBar))
         assert header.get_mapped()
@@ -151,6 +152,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                     and w.get_label()=="Agrandir / Restaurer")
         assert grow.get_mapped() and grow.get_sensitive()
         assert 'Agrandir' in (grow.get_tooltip_text() or '')
+        report['checks']['P0_2712_initial_header_ok']=True
         widgets['grow'] = grow
         report['checks']['inspection_window_has_maximize_controls']=True
         # Real GTK geometry: the entire inspection must be reachable without
@@ -159,6 +161,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                            if isinstance(w, Gtk.ScrolledWindow)
                            and w.get_name() == 'reconciliation-content-scroll')
         assert isinstance(main_scroll.get_child(), Gtk.Box)
+        report['checks']['P0_2712_initial_scroller_child_ok']=True
         adjustment = main_scroll.get_vadjustment()
         assert adjustment is not None
         # At the initial render the candidate pane is intentionally hidden;
