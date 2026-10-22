@@ -59,7 +59,7 @@ def test_inline_activity_has_no_modal_and_only_closed_progress(scoped):
     control.report(message='Inventaire local', current=517)
     assert len(pending) == 1
     assert pending.pop(0)() is False
-    assert label.text.startswith('Inspection détaillée · préparation : cache valide ou nouvelle lecture · Inventaire local · ')
+    assert label.text.startswith('Inspection détaillée · préparation : cache privé ou nouveau scan (jusqu’à 600 s) · Inventaire local · ')
     assert '517 fichiers observés' in label.text
     assert '00:00 écoulées' in label.text
     control.report(message='/PRIVATE/ACCOUNT/SECRET', current=100, total=100)
@@ -220,7 +220,7 @@ def test_real_cache_scan_mode_is_visible_and_stale_mode_cannot_reappear(scoped):
     owner._mode(generation, "new_scan")
     assert len(callbacks) == 1 and callbacks.pop(0)() is False
     assert owner._activity_mode == "new_scan"
-    assert "nouveau scan local hors réseau" in label.text
+    assert "nouveau scan local hors réseau (jusqu’à 600 s)" in label.text
     assert "couverture inconnue" in label.text
 
     owner._mode(generation, "cached")
@@ -269,10 +269,12 @@ def test_independent_inspection_row_tracks_ongoing_then_completed_without_rescan
     )
     owner.attach_activity_row(inspection)
     owner.start()
-    assert states[-1] == 'Inspection en cours · lecture seule · couverture inconnue.'
+    assert states[-1] == ('Préparation des cas : cache privé ou nouvelle inspection locale '
+                          '(jusqu’à 600 s) · lecture seule · couverture inconnue.')
     owner._mode(owner._generation, 'new_scan')
     assert pending.pop(0)() is False
-    assert states[-1] == 'Nouvelle inspection locale hors réseau · couverture inconnue.'
+    assert states[-1] == ('Nouvelle inspection locale hors réseau (jusqu’à 600 s) · '
+                          'lecture seule · couverture inconnue.')
     read, completed = calls[0][1], calls[0][2]
     inspected = read()
     owner.present = lambda: None
@@ -302,7 +304,7 @@ def test_independent_inspection_row_preserves_partial_failure_and_cancel(scoped)
         add_suffix=lambda *_a: None, set_subtitle=statuses.append,
     ))
     owner.start()
-    assert statuses[-1].startswith('Inspection en cours')
+    assert statuses[-1].startswith('Préparation des cas : cache privé ou nouvelle inspection locale')
     owner.clear()
     assert statuses[-1] == 'Inspection interrompue · aucun constat d’absence de livre.'
     owner.start()
@@ -343,3 +345,35 @@ def test_fast_private_cache_hit_remains_explained_after_completion(scoped):
     assert states[-1] == 'Inspection terminée · cache privé réutilisé.'
     owner.clear()
     assert states[-1] == 'Inspection terminée · cache privé réutilisé.'
+
+
+def test_600s_warning_precedes_worker_and_changes_only_after_core_mode(scoped):
+    """A possibly slow rescan is disclosed before the runner can touch files."""
+    service, _, _ = scoped
+    updates, callbacks, jobs = [], [], []
+    owner = LocalInspectionController(
+        parent=NS(
+            service=service,
+            runner=NS(submit=lambda *args, **kwargs: jobs.append(args)),
+            show_error=lambda *_args: None,
+        ),
+        Gtk=NS(Box=FakeBox, Label=FakeLabel, Button=FakeButton,
+               Orientation=NS(HORIZONTAL=0)),
+        Adw=NS(), Pango=NS(),
+        GLib=NS(idle_add=callbacks.append, source_remove=lambda *_: None),
+        alive=lambda: True,
+    )
+    owner.attach_activity_row(NS(
+        add_suffix=lambda *_args: None, set_subtitle=updates.append,
+    ))
+    owner.start()
+    assert len(jobs) == 1
+    assert 'jusqu’à 600 s' in updates[-1]
+    assert 'cache privé ou nouvelle inspection' in updates[-1]
+    assert 'couverture inconnue' in updates[-1]
+    owner._mode(owner._generation, 'new_scan')
+    assert callbacks.pop(0)() is False
+    assert 'jusqu’à 600 s' in updates[-1]
+    assert 'Nouvelle inspection locale' in updates[-1]
+    assert 'lecture seule' in updates[-1]
+    owner.clear()
