@@ -63,6 +63,7 @@ def _digest(category: str, data: object) -> bytes:
 
 def _project(audit) -> _Projection | None:
     try:
+        deadline = monotonic() + 2.0  # diagnostic must never dominate an audit
         inventory, snapshot, reconciliation = (
             audit.inventory, audit.snapshot, audit.reconciliation,
         )
@@ -71,6 +72,8 @@ def _project(audit) -> _Projection | None:
             return None
         files = {}
         for fi, row in enumerate(observations):
+            if fi % 128 == 0 and monotonic() >= deadline:
+                return None
             path_key = _digest('file-key', (row.identity_id, row.path))
             if path_key in files:
                 return None
@@ -86,11 +89,16 @@ def _project(audit) -> _Projection | None:
         if not all(type(tables.get(name)) is list for name in _TABLES):
             return None
         rows = {}
+        total_rows = 0
         for table in _TABLES:
-            if len(tables[table]) > 100000:
+            total_rows += len(tables[table])
+            if total_rows > 100000:
                 return None
-            rows[table] = Counter(_digest('sqlite-' + table, row)
-                                  for row in tables[table])
+            rows[table] = Counter()
+            for index, row in enumerate(tables[table]):
+                if index % 128 == 0 and monotonic() >= deadline:
+                    return None
+                rows[table][_digest('sqlite-' + table, row)] += 1
         return _Projection(
             files, rows,
             not inventory.reasons,
