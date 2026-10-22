@@ -268,6 +268,8 @@ class LocalInspection:
         self._manual_service = service
         self._manual_identity = identity_id
         self._manual_pending = None
+        self._manual_undo = None
+        self._manual_undo_pending = None
         self._manual_preview_generation = 0
         # Only Core sets this once when reusing the last completed audit.
         # It never changes scan freshness or grants a file/right link.
@@ -636,6 +638,8 @@ class LocalInspection:
         self._manual_right_scopes.clear()
         self._manual_file_observations.clear()
         self._manual_pending = None
+        self._manual_undo = None
+        self._manual_undo_pending = None
         self._manual_preview_generation += 1
         self._manual_service = None
         self._manual_identity = None
@@ -781,6 +785,7 @@ class LocalInspection:
         """A changed selection invalidates pending and in-flight previews."""
         self._manual_preview_generation += 1
         self._manual_pending = None
+        self._manual_undo_pending = None
 
     def _transaction_inputs(self, right_key, file_key):
         if (not self.valid() or self._manual_service is None
@@ -870,9 +875,85 @@ class LocalInspection:
         # GTK detached a moment AFTER SQLite commit. The Core transaction
         # checked generation/cancellation before its own final commit.
         if result.get('status') in ('applied', 'already_linked'):
+            operation = result.get('operation_id')
+            if (result['status'] == 'applied'
+                    and type(operation) is str and len(operation) == 64):
+                self._manual_undo = (right_key, file_key, operation)
             return {
-                'status': result['status'], 'read_only': result['status'] != 'applied',
-                'operation_id': result.get('operation_id'),
+                'status': result['status'],
+                'read_only': result['status'] != 'applied',
+                # Operation reference is kept in private Core session.
+                'undo_available': result['status'] == 'applied'
+                                  and self._manual_undo is not None,
+            }
+        return {'status': 'unavailable', 'read_only': True}
+
+    def preview_manual_undo(self, right_key, file_key, *, cancelled=lambda: False):
+        """Review undo only for the last operation of THIS live session."""
+        self.revoke_manual_attachment_preview()
+        generation = self._manual_preview_generation
+        previous = self._manual_undo
+        if (previous is None or previous[:2] != (right_key, file_key)
+                or self._manual_service is None):
+            return {'status': 'unavailable', 'read_only': True}
+        options = self._transaction_inputs(right_key, file_key)
+        if options is None:
+            return {'status': 'unavailable', 'read_only': True}
+        from .numilog_manual_link_transaction import (
+            ManualAttachmentRejected, undo_numilog_manual,
+        )
+        try:
+            result = undo_numilog_manual(
+                self._manual_service, **options, operation_id=previous[2],
+                cancelled=lambda: cancelled() or not self.valid()
+                          or self._manual_preview_generation != generation,
+            )
+        except ManualAttachmentRejected:
+            return {'status': 'blocked', 'read_only': True}
+        if (not self.valid() or cancelled()
+                or self._manual_preview_generation != generation):
+            return {'status': 'unavailable', 'read_only': True}
+        token = result.get('plan_token')
+        if (result.get('status') == 'undo_preview'
+                and type(token) is str and len(token) == 64):
+            self._manual_undo_pending = (right_key, file_key, previous[2], token)
+            return {
+                'status': 'undo_preview', 'read_only': True,
+                'requires_explicit_confirmation': True,
+            }
+        if result.get('status') == 'already_undone':
+            self._manual_undo = None
+            return {'status': 'already_undone', 'read_only': True}
+        return {'status': 'unavailable', 'read_only': True}
+
+    def confirm_manual_undo(self, right_key, file_key, *,
+                            user_confirmed=False, cancelled=lambda: False):
+        """Consume the second token once; Core independently checks the journal."""
+        pending, self._manual_undo_pending = self._manual_undo_pending, None
+        generation = self._manual_preview_generation
+        if (user_confirmed is not True or pending is None
+                or pending[:2] != (right_key, file_key)
+                or self._manual_undo != pending[:3]):
+            return {'status': 'unavailable', 'read_only': True}
+        options = self._transaction_inputs(right_key, file_key)
+        if options is None:
+            return {'status': 'unavailable', 'read_only': True}
+        from .numilog_manual_link_transaction import (
+            ManualAttachmentRejected, undo_numilog_manual,
+        )
+        try:
+            result = undo_numilog_manual(
+                self._manual_service, **options,
+                operation_id=pending[2], confirmation=pending[3],
+                cancelled=lambda: cancelled() or not self.valid()
+                          or self._manual_preview_generation != generation,
+            )
+        except ManualAttachmentRejected:
+            return {'status': 'blocked', 'read_only': True}
+        if result.get('status') in ('undone', 'already_undone'):
+            self._manual_undo = None
+            return {
+                'status': result['status'], 'read_only': result['status'] != 'undone',
             }
         return {'status': 'unavailable', 'read_only': True}
 
