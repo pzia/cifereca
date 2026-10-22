@@ -18,21 +18,48 @@ from urllib.parse import urlsplit
 from zipfile import ZipFile
 
 import pytest
-gi = pytest.importorskip("gi")
-gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk  # noqa: E402
-pytest.importorskip("playwright.sync_api")
-
 from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
 from cifereca.plugins.configuration import PluginConfigStore
-from tests.test_browser_recorder_installed_chromium_e2e import (
-    local_bookstore, TaskBroker, _pump_until, ACCOUNT, PRODUCT, UUID, TOKEN, COOKIE,
-)
-from tests.test_browser_recorder_installed_gtk_blackbox import (
-    _real_package_zip, _children, _flush, PACKAGE_ID, PLUGIN_ID,
-)
+
+# A standalone PR CI may select only this file while gi/Playwright are not
+# installed. Keep the Core manifest test collectable; the real GTK test is
+# still run in the dedicated Chromium job with both native dependencies.
+if (importlib.util.find_spec("gi") is not None
+        and importlib.util.find_spec("playwright") is not None):
+    import gi
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gtk
+    from tests.test_browser_recorder_installed_chromium_e2e import (
+        local_bookstore, TaskBroker, _pump_until,
+        ACCOUNT, PRODUCT, UUID, TOKEN, COOKIE,
+    )
+    from tests.test_browser_recorder_installed_gtk_blackbox import (
+        _real_package_zip, _children, _flush, PACKAGE_ID, PLUGIN_ID,
+    )
+else:
+    Gtk = None
+
+    @pytest.fixture
+    def local_bookstore():
+        pytest.skip("real GTK/Chromium tests run in the dedicated E2E job")
+
 
 PASSPHRASE = "FICTIONAL-THREE-CAPTURES-VAULT-2026"
+
+
+def test_three_session_fixture_opt_in_manifest_without_gtk():
+    import json
+    manifest = json.loads((
+        Path(__file__).resolve().parents[1]
+        / "src/plugins/browser-recorder/cifereca-plugin.json"
+    ).read_text(encoding="utf-8"))
+    assert manifest["package"]["plugin_api"].startswith(">=1.")
+    descriptor = manifest["plugins"][0]
+    assert descriptor["type"] == "ui.page"
+    assert descriptor["enabled_by_default"] is False
+    assert "playwright" in " ".join(descriptor["system_requires"])
+    assert PASSPHRASE.startswith("FICTIONAL-")
+
 
 
 def make_manager(tmp_path, tasks):
