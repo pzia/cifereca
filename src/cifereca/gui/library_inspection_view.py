@@ -503,6 +503,13 @@ class LocalInspectionController:
         )
         pair_prepare.set_sensitive(False)
         candidate_box.append(pair_prepare)
+        fresh_preview = Gtk.Button(label='Vérifier les preuves actuelles…')
+        fresh_preview.set_tooltip_text(
+            'Revalider le reçu d’achat et le SHA du fichier en tâche de fond. '
+            'Prévisualisation uniquement, sans écriture ni rattachement.'
+        )
+        fresh_preview.set_visible(False)
+        candidate_box.append(fresh_preview)
         pair_explanation = Gtk.Label(label='', xalign=0)
         pair_explanation.set_wrap(True)
         pair_explanation.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -547,10 +554,16 @@ class LocalInspectionController:
         manual_page_size = 25
         selected_right = [None]
         selected_file = [None]
+        pair_version = [0]
 
         def reset_pair(file_key=None):
-            # Invalidate any previous review whenever right, file or mode
-            # changes. A previous receipt is NOT authority for a new pair.
+            # Invalidate even a still-running SQLite/SHA preview when the
+            # user changes files, filters, identity or the inspection window.
+            # Never let a late callback reinstate its permission token.
+            pair_version[0] += 1
+            session.revoke_manual_attachment_preview()
+            fresh_preview.set_visible(False)
+            fresh_preview.set_sensitive(False)
             selected_file[0] = file_key
             pair_prepare.set_sensitive(
                 selected_right[0] is not None and file_key is not None
@@ -766,6 +779,12 @@ class LocalInspectionController:
                     heading + '\n' + explanation
                     + '\nAucun fichier n’a été rattaché.'
                 )
+                fresh_preview.set_visible(
+                    result.status == 'eligible_for_fresh_validation'
+                    and result.read_only is True
+                    and result.attachment_authorized is False
+                )
+                fresh_preview.set_sensitive(fresh_preview.get_visible())
             except Exception:
                 # No raw exception, user metadata or path may cross GTK.
                 pair_explanation.set_text(
@@ -773,6 +792,72 @@ class LocalInspectionController:
                 )
             pair_report.set_visible(True)
             pair_report.set_expanded(True)
+
+        def preview_fresh_pair(*_args):
+            if (not valid() or selected_right[0] is None
+                    or selected_file[0] is None or not fresh_preview.get_visible()):
+                return
+            chosen_right, chosen_file = selected_right[0], selected_file[0]
+            version = pair_version[0]
+            fresh_preview.set_sensitive(False)
+            pair_explanation.set_text(
+                'Vérification locale des preuves actuelles… '
+                'Aucun rattachement ne sera effectué.'
+            )
+
+            def read():
+                return session.preview_manual_attachment(
+                    chosen_right, chosen_file,
+                    cancelled=lambda: (
+                        pair_version[0] != version or not session.valid()
+                    ),
+                )
+
+            def completed(result):
+                if (not valid() or version != pair_version[0]
+                        or selected_right[0] != chosen_right
+                        or selected_file[0] != chosen_file):
+                    return
+                # Only a closed status, not a private token or exception, is
+                # presented to GTK. Confirmation requires a separate UI lot.
+                states = {
+                    'preview': (
+                        'Preuves actuelles cohérentes. La confirmation explicite '
+                        'du rattachement n’est pas encore disponible dans cette '
+                        'interface. Aucun fichier n’a été rattaché.'
+                    ),
+                    'already_linked': (
+                        'Ce fichier possède déjà un placement explicite vérifié. '
+                        'Aucune nouvelle écriture.'
+                    ),
+                    'blocked': (
+                        'Contrôle refusé : preuve, fichier ou périmètre changé '
+                        'pendant la vérification. Aucun rattachement.'
+                    ),
+                    'unavailable': (
+                        'Vérification indisponible : relancez une analyse locale. '
+                        'Aucun rattachement.'
+                    ),
+                }
+                status = result.get('status') if type(result) is dict else None
+                pair_explanation.set_text(states.get(status, states['unavailable']))
+                pair_report.set_visible(True)
+                pair_report.set_expanded(True)
+                fresh_preview.set_sensitive(True)
+
+            def failed(_error):
+                if (valid() and version == pair_version[0]
+                        and selected_right[0] == chosen_right
+                        and selected_file[0] == chosen_file):
+                    pair_explanation.set_text(
+                        'Vérification indisponible. Aucun rattachement.'
+                    )
+                    fresh_preview.set_sensitive(True)
+
+            self.parent.runner.submit(
+                'Vérification locale avant rattachement', read, completed, failed,
+                priority=TaskPriority.MAINTENANCE, kind='maintenance-inspection',
+            )
 
         def select(_listing, row):
             if row is None or not valid():
@@ -850,6 +935,7 @@ class LocalInspectionController:
         manual_search.connect('search-changed', lambda *_: filter_manual())
         manual_list.connect('row-selected', select_manual_file)
         pair_prepare.connect('clicked', prepare_pair)
+        fresh_preview.connect('clicked', preview_fresh_pair)
         for widget in (format_filter, sha_filter, crc_filter, file_sort):
             widget.connect('notify::selected', lambda *_: filter_manual())
         provider.connect('notify::selected', lambda *_: render(reset=True))
