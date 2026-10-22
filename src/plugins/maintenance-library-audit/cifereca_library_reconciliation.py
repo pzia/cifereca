@@ -331,7 +331,8 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                         'stable_inputs'
                     )
                     coherent = (
-                        added <= current and removed <= previous
+                        current == counts['observed_files']
+                        and added <= current and removed <= previous
                         and previous - removed == current - added
                         and changed <= previous - removed
                         and drift['lost_confirmed'] <= previous
