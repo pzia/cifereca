@@ -1172,3 +1172,56 @@ def test_zip_preserves_closed_collector_state_separately_from_projection():
     finally:
         review.destroy()
         trace.destroy()
+
+
+def test_mislabeled_json_plain_text_keeps_reviewed_structure_only():
+    from browser_recorder_zip import _body
+
+    raw = json.dumps({
+        "books": [{"bookId": "214", "title": "PRIVATE_TITLE",
+                   "availability": "ready", "password": "PRIVATE_PASSWORD"}],
+        "accountId": "PRIVATE_ACCOUNT",
+    })
+    projected, state = _body(raw, "text/plain", frozenset(("214",)))
+    assert state == "captured_json_structure"
+    body = json.loads(projected)
+    assert body["books"][0]["bookId"] == "214"
+    assert body["books"][0]["title"] == "[TEXT]"
+    assert body["books"][0]["availability"] == "ready"
+    assert body["books"][0]["password"] == "[SECRET]"
+    assert body["accountId"] == "[UNREVIEWED_ID]"
+    assert "PRIVATE_" not in projected
+
+    for unsafe in ("PRIVATE_PROSE", "password=PRIVATE_PASSWORD",
+                   "{malformed JSON}", "<license>PRIVATE_LICENSE</license>"):
+        assert _body(unsafe, "text/plain", frozenset())[0] is None
+
+
+def test_html_text_nodes_preserve_only_complete_reviewed_values():
+    from browser_recorder_zip import _body
+
+    raw = ('<div class="book-card"><span> 214 </span>'
+           '<span>214 PRIVATE_PERSON</span><span>PRIVATE_TITLE</span>'
+           '<span>PSEUDO_BOOK_001</span></div>')
+    projected, state = _body(
+        raw, "text/html", frozenset(("214", "PSEUDO_BOOK_001")),
+    )
+    assert state == "captured_markup_structure"
+    assert '<div class="book-card">' in projected
+    assert "<span>214</span>" in projected
+    assert "<span>PSEUDO_BOOK_001</span>" in projected
+    assert projected.count("<span>[TEXT]</span>") == 2
+    assert "PRIVATE_" not in projected
+
+
+def test_html_reviewed_value_is_escaped_not_interpreted_as_markup():
+    from browser_recorder_zip import _body
+
+    projected, state = _body(
+        "<span>AT&amp;T</span><span>AT&amp;T plus PRIVATE_TEXT</span>",
+        "text/html", frozenset(("AT&T",)),
+    )
+    assert state == "captured_markup_structure"
+    assert "<span>AT&amp;T</span>" in projected
+    assert "<span>[TEXT]</span>" in projected
+    assert "PRIVATE_TEXT" not in projected
