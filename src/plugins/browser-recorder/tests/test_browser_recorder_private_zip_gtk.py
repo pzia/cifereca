@@ -179,6 +179,8 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         flush()
         assert panel._review is not None and panel._review.pending() > 0
         assert panel._trace.vault_session_id == trace.vault_session_id
+        assert panel.tabs.get_current_page() == 3
+        assert panel.current_private_export_button.get_sensitive()
         assert len(PrivateSessionVault(tmp_path / "vault").list_ids()) == 1
     finally:
         panel.destroy()
