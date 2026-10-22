@@ -141,3 +141,12 @@ def test_reference_plugin_pytest_passes_without_browser_or_github(tmp_path):
         "Offline fixture tests failed (only pytest status shown)"
     )
     assert "3 passed" in child.stdout
+
+
+def test_templates_compile_with_syntax_warnings_as_errors():
+    import warnings
+    import browser_recorder_devkit_templates as templates
+    source = Path(templates.__file__).read_text()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", SyntaxWarning)
+        compile(source, "browser_recorder_devkit_templates.py", "exec")

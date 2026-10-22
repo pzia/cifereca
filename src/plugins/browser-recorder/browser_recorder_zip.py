@@ -776,11 +776,13 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
             "id": eid,
             "request": {
                 "capture_state": outgoing["bodies"]["request"]["capture_state"],
+                "capture_reason": outgoing["bodies"]["request"]["capture_reason"],
                 "export_state": outgoing["bodies"]["request"]["state"],
                 "has_exported_body": outgoing["bodies"]["request"]["file"] is not None,
             },
             "response": {
                 "capture_state": outgoing["bodies"]["response"]["capture_state"],
+                "capture_reason": outgoing["bodies"]["response"]["capture_reason"],
                 "export_state": outgoing["bodies"]["response"]["state"],
                 "has_exported_body": outgoing["bodies"]["response"]["file"] is not None,
             },
@@ -844,6 +846,10 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         "exchange_count": len(projection_audit),
         "body_coverage": body_coverage,
         "capture_omissions": capture_omissions,
+        "content_negotiation": (
+            "identity_requested" if review.trace.content_negotiation == "identity_requested"
+            else "browser_default"
+        ),
         "exchanges": projection_audit,
         "notes": [
             "Capture state describes what was retained locally, not what the server returned.",

@@ -685,3 +685,20 @@ textuelles réellement conservées, binaires et compression exclus, ressources
 statiques hors budget et hors périmètre. Il avertit à 80 % du plafond et
 quand aucune réponse n'est disponible pour l'analyse. Le même bilan est
 recalculé lors de l'ouverture d'une session privée.
+
+## Réponses compressées : option de négociation HTTP (#2863)
+
+Pour une **nouvelle capture**, activez volontairement dans Paramètres
+« Demander des réponses non compressées ». Chromium envoie alors
+`Accept-Encoding: identity` sur les requêtes de ce navigateur, y compris
+ses onglets et les sites tiers. La collecte reste limitée aux origines
+autorisées ; aucun appel supplémentaire, rejeu ni élargissement de capture.
+Le choix est indiqué dans la source privée et `coverage-report.json` par
+`content_negotiation=identity_requested` ; il s'agit d'une demande, pas
+d'une garantie sur la réponse du serveur.
+
+Les réponses effectivement non compressées passent les mêmes limites de
+MIME, taille mesurée par Chromium et budget cumulé. Un serveur qui impose
+encore gzip/Brotli reste refusé (`capture_reason=compressed`), sans lecture
+ni décompression du corps. Les captures antérieures ne peuvent pas être
+réparées et aucune méthode de décompression bornée n'est revendiquée.

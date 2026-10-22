@@ -276,6 +276,7 @@ class FakePlaywright:
         return self
 
     def new_context(self, **kw):
+        self.context_options = kw
         assert kw["accept_downloads"] is True
         assert kw["service_workers"] == "block"
         return self.context
@@ -305,6 +306,34 @@ def test_origin_mismatch_is_rejected_before_browser_opening():
     with pytest.raises(RecorderError, match="invalid_origin"):
         record_http(ORIGIN + "/catalog", stop, origins=(FOREIGN,),
                     factory=lambda: pytest.fail("Browser must not start"))
+
+
+@pytest.mark.parametrize("enabled", (False, True))
+def test_identity_negotiation_is_explicit_and_does_not_relax_body_guards(enabled):
+    stopped = Event()
+    ctx = FakeContext(stopped)
+    runtime = FakePlaywright(ctx)
+    trace = record_http(ORIGIN + "/catalog", stopped,
+                        prefer_identity=enabled, factory=lambda: runtime)
+    try:
+        assert trace.content_negotiation == ("identity_requested" if enabled else "browser_default")
+        assert runtime.context_options.get("extra_http_headers") == (
+            {"Accept-Encoding": "identity"} if enabled else None
+        )
+        # A server can ignore Accept-Encoding: identity. Never decompress it.
+        response = Response(Request(ORIGIN + "/forced"), data=b"compressed",
+                            headers={"content-encoding": "gzip"})
+        emit(trace, response.request, response)
+        assert response.body_reads == 0
+        assert trace.exchanges[-1].response_body_reason == "compressed"
+    finally:
+        trace.destroy()
+
+
+def test_invalid_strategy_rejected_before_browser_launch():
+    with pytest.raises(RecorderError, match="invalid_capture_strategy"):
+        record_http(ORIGIN, Event(), prefer_identity="true",
+                    factory=lambda: pytest.fail("no browser"))
 
 
 def test_pause_resume_and_multiple_tabs_keep_private_correlations():
