@@ -99,6 +99,19 @@ def test_create_venv_prefers_offline_core_wheelhouse(tmp_path, monkeypatch):
     assert str(release) not in pip
 
 
+def test_create_venv_refuses_missing_wheelhouse_before_any_mutation(tmp_path, monkeypatch):
+    """No managed source install may bypass the 168h third-party wheel gate."""
+    release = _mini_project(tmp_path / "release")
+
+    def unexpected_run(*args, **kwargs):
+        pytest.fail("missing wheelhouse reached venv creation or pip")
+
+    monkeypatch.setattr(updater.subprocess, "run", unexpected_run)
+    with pytest.raises(updater.UpdateError, match="dependency_provenance_unavailable"):
+        updater._create_venv(release, os.sys.executable)
+    assert not (release / ".venv").exists()
+
+
 def test_create_venv_refuses_unattested_wheelhouse_before_venv_mutation(tmp_path, monkeypatch):
     release = _mini_project(tmp_path / "release")
     wheelhouse = release / "offline-wheels"
