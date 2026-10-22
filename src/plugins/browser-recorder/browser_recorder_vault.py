@@ -413,6 +413,10 @@ class PrivateSessionVault:
                 or stat.S_IMODE(old.st_mode) != 0o600
             ):
                 raise VaultError("vault_unsafe_file")
+            _count, total = self._entries(fd)
+            previous_size = old.st_size if old is not None else 0
+            if total - previous_size + len(data) > MAX_VAULT_BYTES:
+                raise VaultError("vault_limit")
             handle = os.open(
                 temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                 | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=fd,
