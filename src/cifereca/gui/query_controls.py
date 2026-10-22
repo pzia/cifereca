@@ -150,10 +150,22 @@ class QueryControls(Gtk.Box):
         self.capability_hint.add_css_class('dim-label')
         self.capability_hint.set_visible(False)
         self.append(self.capability_hint)
+        # A read-only provider status is distinct from selectable, live sources.
+        self.provider_status_notice = Gtk.Label(xalign=0)
+        self.provider_status_notice.set_wrap(True)
+        self.provider_status_notice.add_css_class('caption')
+        self.provider_status_notice.add_css_class('dim-label')
+        self.provider_status_notice.set_visible(False)
+        self.append(self.provider_status_notice)
         self._last_notified_state = self.state()
 
     def set_provider_choices(self, choices):
         self.provider.set_choices(choices)
+
+    def set_provider_status_notice(self, message):
+        message = str(message or '')
+        self.provider_status_notice.set_label(message)
+        self.provider_status_notice.set_visible(bool(message))
 
     def set_provider_search_capabilities(self, capabilities):
         self._provider_search_capabilities = dict(capabilities or {})
