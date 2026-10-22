@@ -240,6 +240,7 @@ class PrivateReviewPanel:
                 label="Déverrouiller les métadonnées des sessions…"
             )
             self.session_list = Gtk.ComboBoxText()
+            self.session_list.connect("changed", lambda *_: self._refresh())
             self.session_name = Gtk.Entry()
             self.session_name.set_max_length(80)
             self.session_name.set_placeholder_text(
@@ -1179,6 +1180,7 @@ class PrivateReviewPanel:
         self.status.set_label(
             f"{len(ids)} sessions chiffrées trouvées ; aucun site contacté."
         )
+        self._refresh()
 
     def unlock_sessions(self):
         """Build the sensitive catalogue only on explicit local unlock.
