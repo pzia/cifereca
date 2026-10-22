@@ -144,7 +144,6 @@ def test_symlink_or_hardlinked_label_blocks_all_deletion(tmp_path, monkeypatch):
     vault.set_label(first, PASSWORD, "new label")
     other = tmp_path / "hardlink"
     os.link(vault.path / (first + ".cbrn"), other)
-    plan2 = vault.retention_preview(PASSWORD, 90) if False else None
     # Hardlinks are rejected even during authenticated preview.
     with pytest.raises(VaultError, match="vault_unsafe_file"):
         vault.retention_preview(PASSWORD, 90)
