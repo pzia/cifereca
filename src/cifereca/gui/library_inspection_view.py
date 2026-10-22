@@ -143,7 +143,8 @@ class LocalInspectionController:
             self._activity_box, self._activity_label = line, label
         self._activity_label.set_label('Préparation des cas locaux…')
         self._set_activity_state(
-            'Inspection en cours · lecture seule · couverture inconnue.'
+            'Préparation des cas : cache privé ou nouvelle inspection locale '
+            '(jusqu’à 600 s) · lecture seule · couverture inconnue.'
         )
         self._activity_box.set_visible(True)
 
@@ -164,9 +165,9 @@ class LocalInspectionController:
         elapsed = min(36_000, max(0, int(monotonic() - self._activity_started)))
         minutes, seconds = divmod(elapsed, 60)
         state = {
-            'preparing': 'préparation : cache valide ou nouvelle lecture',
+            'preparing': 'préparation : cache privé ou nouveau scan (jusqu’à 600 s)',
             'cached': 'preuves réutilisées (cache privé valide)',
-            'new_scan': 'nouveau scan local hors réseau · couverture inconnue',
+            'new_scan': 'nouveau scan local hors réseau (jusqu’à 600 s) · couverture inconnue',
         }.get(self._activity_mode, 'préparation')
         message = f'Inspection détaillée · {state} · {self._activity_phase} · {minutes:02}:{seconds:02} écoulées'
         if self._activity_files is not None:
@@ -195,7 +196,8 @@ class LocalInspectionController:
                 self._set_activity_state(
                     'Réutilisation du cache privé validé.'
                     if code == 'cached' else
-                    'Nouvelle inspection locale hors réseau · couverture inconnue.'
+                    'Nouvelle inspection locale hors réseau (jusqu’à 600 s) · '
+                    'lecture seule · couverture inconnue.'
                 )
                 self._render_activity()
             return False
