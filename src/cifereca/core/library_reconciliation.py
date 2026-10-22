@@ -345,7 +345,8 @@ class ReconciliationReport:
                 'edge_counts': dict(sorted(Counter(e.reason for e in self.edges).items()))}
 
 
-def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lambda: False) -> ReconciliationReport:
+def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lambda: False,
+              seconds: float = 10) -> ReconciliationReport:
     """Compare file/placement/artifact/right evidence without inferring ownership.
 
     Confirm only full entitlement -> successful ledger -> artifact -> explicit
@@ -354,6 +355,8 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
     asserted only for completely scanned owning identities; otherwise unknown.
     OPF is retained in Inventory for private inspection, not title matching.
     """
+    if type(seconds) not in (int, float) or not 0 < seconds <= 60:
+        raise ValueError('invalid_comparison_limits')
     result = ReconciliationReport(reasons=set(inventory.reasons) | set(snapshot.reasons))
     # No ADEPT runtime is contacted by this offline tranche.
     tables = snapshot.tables
@@ -378,7 +381,7 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
         if row.get('sha256') and row.get('size'):
             backup_hashes[(row['identity_id'], row['sha256'], row['size'])].append((bi, row))
     verified = set()
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + seconds
     comparisons = 0
     for fi, observation in enumerate(inventory.files):
         if cancelled():
