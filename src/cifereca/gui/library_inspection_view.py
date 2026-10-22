@@ -404,6 +404,22 @@ class LocalInspectionController:
                 "distincts des droits actifs et consultables seulement.\n"
                 if overview.get('paris_inactive_loans', 0) else ""
             )
+            + (
+                "REPÈRES DE COMPTAGE · le scan dénombre des fichiers physiques : "
+                f"{overview.get('observed_epub_files', 0)} EPUB, "
+                f"{overview.get('observed_pdf_files', 0)} PDF. "
+                "Le bandeau du profil compte des artefacts distincts avec "
+                "placement SQLite present : "
+                + (
+                    f"{overview['sqlite_present_artifact_books']} artefact(s) "
+                    f"sur {overview['sqlite_present_placements']} placement(s) "
+                    "dans le snapshot de cette inspection."
+                    if overview.get('sqlite_present_artifact_books') is not None
+                    else "indisponible : preuves SQLite incomplètes."
+                )
+                + " Ce ne sont ni la même mesure ni forcément le même instant ; "
+                "leur écart ne désigne aucun fichier perdu ou PDF fautif.\n"
+            )
             + f"PLACEMENTS SQLITE · {overview.get('placements_registered', 0)} enregistrés "
             f"pour l'identité · "
             f"{overview.get('paths_active_missing', 0)} chemin(s) absents encore marqués present "

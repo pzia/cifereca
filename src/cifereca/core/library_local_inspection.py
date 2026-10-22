@@ -394,6 +394,34 @@ class LocalInspection:
             placement.get('identity_id') == identity_id
             for placement in audit.snapshot.tables.get('placements', ())
         )
+        # #2734: the main profile counter is NOT a filesystem-file count:
+        # it counts distinct existing artifact IDs linked by present SQLite
+        # placements. Never infer which EPUB/PDF caused any difference.
+        # An incomplete SQLite image gives UNKNOWN, not a misleading zero.
+        self._scanned_formats = Counter(
+            file.media_format for file in audit.inventory.files
+            if file.identity_id == identity_id
+        )
+        self._sqlite_present_artifact_books = None
+        self._sqlite_present_placement_count = None
+        if (not audit.snapshot.reasons
+                and type(audit.snapshot.tables.get('placements')) is list
+                and type(audit.snapshot.tables.get('artifacts')) is list):
+            artifact_ids = {
+                row.get('artifact_id')
+                for row in audit.snapshot.tables['artifacts']
+                if type(row.get('artifact_id')) is str and row['artifact_id']
+            }
+            present = [
+                row for row in audit.snapshot.tables['placements']
+                if row.get('identity_id') == identity_id
+                and row.get('state') == 'present'
+            ]
+            self._sqlite_present_placement_count = len(present)
+            self._sqlite_present_artifact_books = len({
+                row.get('artifact_id') for row in present
+                if row.get('artifact_id') in artifact_ids
+            })
         # Private-only coverage: configured roots are not proof that they were
         # traversed successfully. Never mix these paths into audit.redacted().
         self._roots = tuple(str(path) for path in roots)[:128]
@@ -848,6 +876,9 @@ class LocalInspection:
         self._manual_pair_evidence_complete = False
         self._summary = {}
         self._path_missing_by_sqlite_state.clear()
+        self._scanned_formats.clear()
+        self._sqlite_present_artifact_books = None
+        self._sqlite_present_placement_count = None
         self._roots = ()
         self._unavailable_directories = ()
         self._unavailable_count = 0
@@ -885,6 +916,13 @@ class LocalInspection:
             for case in file_cases
         )
         return {'files': by_kind['file'], 'rights': by_kind['right'],
+                # These are non-additive identity-scoped summaries: disk
+                # observations and persisted artifact references have
+                # different scopes, freshness and cardinalities.
+                'observed_epub_files': self._scanned_formats['epub'],
+                'observed_pdf_files': self._scanned_formats['pdf'],
+                'sqlite_present_artifact_books': self._sqlite_present_artifact_books,
+                'sqlite_present_placements': self._sqlite_present_placement_count,
                 'files_attested': file_partition['attested'],
                 'files_individually_unverified': file_partition['unverified'],
                 'files_without_attested_link': file_partition['without_attested_link'],
