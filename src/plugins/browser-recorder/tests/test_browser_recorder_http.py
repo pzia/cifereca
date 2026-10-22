@@ -163,8 +163,9 @@ def test_request_body_requires_declared_and_effective_bounded_size():
         data=b'{"id":1}',
     )
     emit(trace, without_length, Response(without_length))
-    assert without_length.read_post_data == 0
-    assert trace.exchanges[1].request_body_state == "body_omitted"
+    assert without_length.read_post_data == 1
+    assert trace.exchanges[1].request_body_state == "captured"
+    assert trace.exchanges[1].request_body == '{"id":1}'
 
 
 def test_total_budget_and_origin_scope_are_enforced():
@@ -689,4 +690,53 @@ def test_filtered_invalid_content_length_cannot_masquerade_as_absent(length):
     emit(trace, req, response)
     assert response.body_reads == 0
     assert trace.omitted["unknown_size"] == 1
+    trace.destroy()
+
+
+@pytest.mark.parametrize("actual", [None, True, -1, "14", 1000])
+def test_chunked_post_untrusted_browser_counter_is_never_read(actual):
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    request = Request(
+        ORIGIN + "/upload", method="POST",
+        headers={"content-type": "application/json"},
+        data=b'{"BookId":214}',
+    )
+    request.sizes = lambda: {"requestBodySize": actual, "responseBodySize": 0}
+    emit(trace, request, Response(request, data=b""))
+    assert request.read_post_data == 0
+    assert trace.exchanges[0].request_body is None
+    assert trace.exchanges[0].request_body_state == "body_omitted"
+    trace.destroy()
+
+
+def test_chunked_post_measured_body_keeps_json_without_automatic_replay():
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    request = Request(
+        ORIGIN + "/upload", method="POST",
+        headers={"content-type": "application/json"},
+        data=b'{"BookId":214}',
+    )
+    emit(trace, request, Response(request, data=b""))
+    assert request.read_post_data == 1
+    assert trace.exchanges[0].request_body == '{"BookId":214}'
+    assert trace.exchanges[0].request_body_state == "captured"
+    trace.destroy()
+
+
+@pytest.mark.parametrize("header_key,raw_value", [
+    ("content-encoding", "gzip"),
+    ("content-encoding", "gzip\\ninjected"),
+    ("content-length", "invalid"),
+    ("content-length", "1\\ninvalid"),
+])
+def test_post_with_unsafe_raw_header_is_never_read(header_key, raw_value):
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    request = Request(
+        ORIGIN + "/unsafe-post", method="POST",
+        headers={"content-type": "application/json", header_key: raw_value},
+        data=b'{"BookId":214}',
+    )
+    emit(trace, request, Response(request, data=b""))
+    assert request.read_post_data == 0
+    assert trace.exchanges[0].request_body is None
     trace.destroy()

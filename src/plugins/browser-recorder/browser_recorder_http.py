@@ -71,7 +71,7 @@ def _length(headers: dict[str, str]) -> int | None:
     return int(value)
 
 
-def _response_body_envelope(response) -> tuple[str, int | None]:
+def _body_envelope(response) -> tuple[str, int | None]:
     """Read only raw wire-size/encoding headers transiently before body().
 
     Sanitized technical headers are safe to *store* but cannot prove that
@@ -348,24 +348,35 @@ class PrivateHttpTrace:
         if entry.metadata_only:
             return
         sizes = _sizes(req)
-        request_length = _length(entry.request_headers)
         actual_request = sizes.get("requestBodySize")
         if entry.method in {"POST", "PUT", "PATCH"}:
-            if (request_length is None or not isinstance(actual_request, int)
-                    or request_length > self.max_body
-                    or not 0 <= actual_request <= self.max_body
-                    or self.total_body < actual_request):
+            # Request post_data_buffer may hold private data. Just like a
+            # response, its raw encoding/declared length MUST be validated
+            # before it is read; Chromium's measured payload size is the
+            # controlling upper bound for chunked or ordinary POST bodies.
+            request_gate, request_length = _body_envelope(req)
+            if request_gate != "ready":
+                entry.request_body_state = "body_omitted"
+                self.omitted[
+                    "compressed" if request_gate == "compressed" else "unknown_size"
+                ] += 1
+            elif type(actual_request) is not int or actual_request <= 0:
                 entry.request_body_state = "body_omitted"
                 self.omitted["unknown_size"] += 1
+            elif (actual_request > self.max_body
+                    or actual_request > self.total_body
+                    or (request_length is not None and request_length > self.max_body)):
+                entry.request_body_state = "body_omitted"
+                self.omitted["oversize"] += 1
             elif not _mime(entry.request_headers):
                 entry.request_body_state = "binary_skipped"
                 self.omitted["binary_skipped"] += 1
             else:
                 try:
-                    # Reading post_data_buffer is allowed only after *both*
-                    # declared and actual byte-size checks.
                     raw = req.post_data_buffer
-                    if type(raw) is bytes and len(raw) == actual_request:
+                    if (type(raw) is bytes and len(raw) == actual_request
+                            and (request_length is None
+                                 or len(raw) <= request_length)):
                         entry.request_body = self._take_text(raw)
                         entry.request_body_state = (
                             "captured" if entry.request_body is not None
@@ -373,6 +384,7 @@ class PrivateHttpTrace:
                         )
                     else:
                         entry.request_body_state = "body_omitted"
+                        self.omitted["oversize"] += 1
                 except (AttributeError, TypeError, ValueError):
                     entry.request_body_state = "body_omitted"
         if resp is None or entry.response_body_state == "redirect":
@@ -384,7 +396,7 @@ class PrivateHttpTrace:
         # Examine original headers transiently: storage sanitization can
         # drop malformed Content-Encoding/Content-Length. Never mistake that
         # filtering for a trustworthy 'header absent' condition.
-        gate, expected = _response_body_envelope(resp)
+        gate, expected = _body_envelope(resp)
         if gate != "ready":
             entry.response_body_state = "body_omitted"
             self.omitted["compressed" if gate == "compressed" else "unknown_size"] += 1

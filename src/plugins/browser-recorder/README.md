@@ -125,11 +125,11 @@ déclenché par le collecteur.
 
 Limites fermées par session : 240 échanges, 32 Kio par corps, 768 Kio de corps
 cumulés, 15 minutes, six origines explicites au maximum. Les corps binaires
-et compressés sont omis. Pour les **réponses non compressées**, la taille
+et compressés sont omis. Pour les **requêtes et réponses non compressées**, la taille
 effective mesurée par Chromium/Playwright doit être disponible, entière,
 strictement positive et sous le budget **avant** toute lecture du corps.
 `Content-Length` peut être absent (HTTP chunked/HTTP2) : cela ne bloque
-plus un petit corps si Chromium fournit cette mesure fiable. En revanche,
+plus un petit corps textuel GET ou POST si Chromium fournit cette mesure fiable. En revanche,
 un `Content-Length` présent mais malformé, une taille effective inconnue,
 nulle ou excessive, et toute compression sont refusés avant `body()`.
 Les omissions comptabilisent séparément `unknown_size`, `oversize` et
