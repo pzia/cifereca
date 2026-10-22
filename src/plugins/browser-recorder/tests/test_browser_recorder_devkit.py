@@ -108,3 +108,78 @@ def test_reviewed_zip_contains_sdk_in_exact_preview():
         assert entry["path"] in lookup
         assert sha256(lookup[entry["path"]]["text"].encode()).hexdigest() == entry["sha256"]
     raw.destroy()
+
+
+
+@pytest.mark.parametrize("exchange_count", (0, 1, 32))
+def test_zip_offline_sdk_handles_zero_one_many_requests_and_missing_bodies(
+    exchange_count, tmp_path, monkeypatch,
+):
+    """#2740: LLM-ready contracts even when pages expose no JSON/DOM at all.
+
+    Only observed exchanges are evidence. Zero capture does NOT imply a
+    provider is unreachable or lacks an API. Zero network calls during
+    preparation/review/export (except test's local filesystem writes).
+    """
+    from io import BytesIO
+    from zipfile import ZipFile
+    import socket
+
+    origin = "https://fictional-llm-fixture.example.org"
+    trace = PrivateHttpTrace((origin,))
+    for number in range(1, exchange_count + 1):
+        # Deliberately omit request/response text and DOM evidence. Each
+        # observation still has a deterministic exchange ID and status.
+        trace.exchanges.append(PrivateExchange(
+            number, "GET", origin + "/catalog?page=2&limit=20",
+            status=200 if number % 2 else 304,
+            mime="application/json" if number % 3 else "text/html",
+            response_body=None,
+            response_body_state="not_captured",
+        ))
+    review = IdentifierReview(trace)
+    for candidate in review.candidates():
+        review.decide(candidate.key, "anonymize")
+    def forbid(*_args, **_kwargs):
+        raise AssertionError("offline SDK zip must not open sockets")
+    monkeypatch.setattr(socket, "socket", forbid)
+    plan = prepare_reviewed_zip(review)
+    preview = plan.preview()
+    names = {row["name"] for row in preview["members"]}
+    assert "plugin-dev-kit/manifest.json" in names
+    assert "plugin-dev-kit/LLM_GUIDE.md" in names
+    assert "plugin-dev-kit/examples/provider-fixture-example/cifereca-plugin.json" in names
+    assert "timeline.json" in names
+    assert "manifest.json" in names
+    assert {
+        f"exchanges/{i:04d}.json" for i in range(1, exchange_count + 1)
+    } == {name for name in names if name.startswith("exchanges/")}
+    assert not any(name.startswith("bodies/") for name in names)
+
+    payload = dict(plan._members)
+    manifest = json.loads(payload["manifest.json"])
+    assert manifest["exchange_count"] == exchange_count
+    assert len(json.loads(payload["timeline.json"])) == exchange_count
+    assert manifest["coverage"]
+    kit_manifest = json.loads(payload["plugin-dev-kit/manifest.json"])
+    assert kit_manifest["plugin_api_version"] == PLUGIN_API_VERSION
+    for source in _PUBLIC_SOURCES:
+        target = "plugin-dev-kit/contracts/" + source
+        assert payload[target] == resources.files(
+            "cifereca.plugin_api"
+        ).joinpath(source).read_bytes()
+    for item in preview["members"]:
+        assert item["bytes"] == len(payload[item["name"]])
+        assert item["sha256"] == sha256(payload[item["name"]]).hexdigest()
+    output = tmp_path / f"fictional-offline-{exchange_count}.zip"
+    plan.save_as(output, user_confirmed=True)
+    with ZipFile(output) as archive:
+        assert archive.testzip() is None
+        assert set(archive.namelist()) == names
+        for item in preview["members"]:
+            assert archive.read(item["name"]) == payload[item["name"]]
+        assert archive.read("timeline.json") == payload["timeline.json"]
+    assert not any(name.endswith(".har") for name in names)
+    assert not any(name.startswith("storage_state") for name in names)
+    assert not any("cookie" in name for name in names)
+    trace.destroy()
