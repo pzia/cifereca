@@ -168,8 +168,8 @@ class PrivateHttpTrace:
         # Closed vocabulary only: no provider value or browser exception.
         self.end_reason = "button"
         self.omitted = {"out_of_scope": 0, "limit": 0, "binary_skipped": 0,
-                        "oversize": 0, "unknown_size": 0, "network_error": 0,
-                        "paused": 0, "unfinished": 0}
+                        "oversize": 0, "unknown_size": 0, "compressed": 0,
+                        "network_error": 0, "paused": 0, "unfinished": 0}
         self._pending: dict[int, PrivateExchange] = {}
         self._responses: dict[int, object] = {}
         self._begin = monotonic()
@@ -345,23 +345,39 @@ class PrivateHttpTrace:
             self.omitted["binary_skipped"] += 1
             return
         headers = entry.response_headers
-        # No compressed responses: Content-Length may describe only *wire*
-        # bytes and a malicious compressed body could inflate unboundedly.
-        if headers.get("content-encoding", "").lower() not in ("", "identity"):
+        # Compressed transfer lengths cannot bound the DECODED response,
+        # even when Chromium reports a small responseBodySize. Never read.
+        if headers.get("content-encoding", "").strip().lower() not in ("", "identity"):
             entry.response_body_state = "body_omitted"
-            self.omitted["unknown_size"] += 1
+            self.omitted["compressed"] += 1
             return
         expected = _length(headers)
-        actual = sizes.get("responseBodySize")
-        if (expected is None or type(actual) is not int or
-                not 0 <= actual <= self.max_body or
-                expected > self.max_body or actual > self.total_body):
+        advertised = headers.get("content-length")
+        # A malformed / untrusted declared length must not authorize reads.
+        # An *absent* Content-Length is normal for HTTP/2 and chunked HTTP/1.1:
+        # Chromium's already-measured, encoded responseBodySize is an
+        # independent pre-read bound, provided no compression was declared.
+        if advertised is not None and expected is None:
             entry.response_body_state = "body_omitted"
             self.omitted["unknown_size"] += 1
             return
+        actual = sizes.get("responseBodySize")
+        if type(actual) is not int or actual <= 0:
+            entry.response_body_state = "body_omitted"
+            self.omitted["unknown_size"] += 1
+            return
+        if (actual > self.max_body or actual > self.total_body
+                or (expected is not None and expected > self.max_body)):
+            entry.response_body_state = "body_omitted"
+            self.omitted["oversize"] += 1
+            return
         try:
+            # Exactly one passive body read, only after the Chromium-owned
+            # measurement proves a small, uncompressed payload. No retries,
+            # no request replay and no content-based size speculation.
             raw = resp.body()
-            if type(raw) is bytes and len(raw) <= actual and len(raw) <= expected:
+            if (type(raw) is bytes and len(raw) <= actual
+                    and (expected is None or len(raw) <= expected)):
                 entry.response_body = self._take_text(raw)
                 entry.response_body_state = (
                     "captured" if entry.response_body is not None else "body_omitted"

@@ -125,10 +125,15 @@ déclenché par le collecteur.
 
 Limites fermées par session : 240 échanges, 32 Kio par corps, 768 Kio de corps
 cumulés, 15 minutes, six origines explicites au maximum. Les corps binaires
-et compressés sont omis ; la lecture de corps HTTP exige à la fois une
-longueur déclarée et un compteur de taille réel Playwright disponibles et
-sous les plafonds. Les réponses sans longueur sûre sont omises plutôt que
-copiées par une API qui chargerait une quantité imprévisible en mémoire.
+et compressés sont omis. Pour les **réponses non compressées**, la taille
+effective mesurée par Chromium/Playwright doit être disponible, entière,
+strictement positive et sous le budget **avant** toute lecture du corps.
+`Content-Length` peut être absent (HTTP chunked/HTTP2) : cela ne bloque
+plus un petit corps si Chromium fournit cette mesure fiable. En revanche,
+un `Content-Length` présent mais malformé, une taille effective inconnue,
+nulle ou excessive, et toute compression sont refusés avant `body()`.
+Les omissions comptabilisent séparément `unknown_size`, `oversize` et
+`compressed` ; cela n'autorise ni streaming non borné ni relecture réseau.
 Les cookies/Authorization/en-têtes secrets ne sont jamais conservés.
 L'objet privé contient néanmoins des URL et textes **potentiellement
 sensibles** : ne jamais le journaliser ni le transmettre.

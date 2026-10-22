@@ -732,7 +732,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
     # can distinguish "observed none" from "unknown/unreported".
     omission_codes = (
         "out_of_scope", "limit", "binary_skipped", "oversize",
-        "unknown_size", "network_error", "paused",
+        "unknown_size", "compressed", "network_error", "paused",
     )
     capture_omissions = {}
     for code in omission_codes:

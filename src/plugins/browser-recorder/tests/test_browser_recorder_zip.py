@@ -364,7 +364,8 @@ def test_manifest_reports_bounded_capture_omissions_without_private_values():
                                    if member["name"] == "manifest.json"))
         assert manifest["capture_omissions"] == {
             "out_of_scope": 3, "limit": 0, "binary_skipped": 2,
-            "oversize": 0, "unknown_size": 1, "network_error": 0,
+            "oversize": 0, "unknown_size": 1, "compressed": 0,
+            "network_error": 0,
             "paused": 5,
         }
         assert manifest["excluded_exchanges"] == 1

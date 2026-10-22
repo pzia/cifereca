@@ -67,6 +67,10 @@ def catalog_page():
         await response.arrayBuffer();
         response = await fetch('/uuid?uuid={UUID}');
         await response.text();
+        for (const address of ['/chunked.json', '/chunked.html', '/chunked.xml']) {
+          response = await fetch(address);
+          await response.text();
+        }
         await fetch('/complete');
       }}
       window.addEventListener('DOMContentLoaded', exercise);
@@ -95,6 +99,21 @@ def fake_bookstore():
             self.end_headers()
             if value:
                 self.wfile.write(value)
+            self.wfile.flush()
+
+        def send_chunked(self, code, value, mime):
+            # Test-only truthful streaming HTTP/1.1 without Content-Length.
+            self.send_response(code)
+            self.send_header("Content-Type", mime)
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            half = max(1, len(value) // 2)
+            for part in (value[:half], value[half:]):
+                if part:
+                    self.wfile.write(f"{len(part):X}\\r\\n".encode("ascii"))
+                    self.wfile.write(part + b"\\r\\n")
+            self.wfile.write(b"0\\r\\n\\r\\n")
             self.wfile.flush()
 
         def do_POST(self):
@@ -131,6 +150,12 @@ def fake_bookstore():
                 }).encode(), "application/json")
             elif target == "/meta.xml":
                 self.send(200, b"<books><BookId>214</BookId></books>", "application/xml")
+            elif target == "/chunked.json":
+                self.send_chunked(200, b'{"BookId":214}', "application/json")
+            elif target == "/chunked.html":
+                self.send_chunked(200, b"<html><p>Catalog</p></html>", "text/html")
+            elif target == "/chunked.xml":
+                self.send_chunked(200, b"<books><BookId>214</BookId></books>", "application/xml")
             elif target == "/ratelimit":
                 self.send(429, b'{"error":"rate_limited","retryAfter":5}',
                           "application/json", {"Retry-After": "5"})
@@ -233,6 +258,20 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
         assert any(e.status == 429 and e.mime == "application/json"
                    for e in trace.exchanges)
         assert any(e.mime == "application/xml" for e in trace.exchanges)
+        # Actual headed Chromium on identity transfer-encoded chunks: no
+        # Content-Length; its measured body size is the independent bound.
+        for suffix, expected_mime in (
+            ("/chunked.json", "application/json"),
+            ("/chunked.html", "text/html"),
+            ("/chunked.xml", "application/xml"),
+        ):
+            matching = [e for e in trace.exchanges if e.url.endswith(suffix)]
+            assert len(matching) == 1
+            entry = matching[0]
+            assert entry.response_headers.get("content-length") is None
+            assert entry.mime == expected_mime
+            assert entry.response_body_state == "captured"
+            assert entry.response_body
         # The binary fetch can still be in-flight when the page's final
         # /complete endpoint signals Stop. In either terminal or pending
         # state its opaque bytes must never be observed.
