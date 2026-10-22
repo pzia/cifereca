@@ -246,6 +246,28 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                     + (' Analyse incomplète : couverture non exhaustive.'
                        if not complete else ''),
                 )
+            # #2734: Only a complete, internally coherent quartet from a
+            # current Core may describe in-memory inventory reuse. Older
+            # brokers have no such fields and retain their prior presentation.
+            resume_metrics = ()
+            resume_keys = (
+                'reused_files', 'newly_observed_files',
+                'revalidated_files', 'stale_files',
+            )
+            if (all(type(inventory.get(key)) is int
+                    and 0 <= inventory[key] <= 4096 for key in resume_keys)
+                    and inventory['reused_files'] + inventory['newly_observed_files']
+                    == counts['observed_files']
+                    and inventory['stale_files'] <= inventory['revalidated_files']
+                    <= inventory['newly_observed_files']):
+                resume_metrics = (
+                    'Reprise d’inventaire en mémoire (après contrôle des fichiers) : '
+                    f'{inventory["reused_files"]} fichier(s) réutilisé(s) · '
+                    f'{inventory["newly_observed_files"]} inspecté(s) dans cet audit · '
+                    f'{inventory["revalidated_files"]} recontrôlé(s) intégralement '
+                    f'dont {inventory["stale_files"]} ancien(s) résultat(s) périmé(s). '
+                    'Les droits SQLite sont vérifiés à chaque audit.',
+                )
             candidate_metrics = ()
             keys = (
                 ('catalog_rows_examined', 'notices'),
@@ -291,7 +313,7 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                     'Ces compteurs ne mesurent pas des livres perdus ; '
                     'le parcours peut rester partiel.',
                 )
-            presentation['details'] = stages + coverage + candidate_metrics + missing_context_lines + tuple(
+            presentation['details'] = stages + coverage + resume_metrics + candidate_metrics + missing_context_lines + tuple(
                 f'{label} : {counts[name]}' for name, label in _COUNTER_LABELS.items()
             ) + ('Les catégories peuvent se recouper ; ne pas additionner ces compteurs.',)
         return MaintenanceResult(ok=complete, changed=0, summary=summary,

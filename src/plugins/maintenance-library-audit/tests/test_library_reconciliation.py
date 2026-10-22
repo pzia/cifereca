@@ -411,3 +411,81 @@ def test_invalid_path_breakdown_never_becomes_public_detail(
     details = ' '.join(captured[0]['details'])
     assert 'Chemins enregistrés absents (lignes SQLite contrôlées)' not in details
     assert 'PRIVATE' not in details
+
+
+def test_scoped_memory_resume_counts_are_visible_only_as_closed_aggregates(tool, monkeypatch):
+    import cifereca_library_reconciliation as module
+    captured = []
+
+    class PresentableResult:
+        details = ()
+
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setattr(module, "MaintenanceResult", PresentableResult)
+    instance, broker = tool
+    broker.result["inventory"].update({
+        "reused_files": 400, "newly_observed_files": 124,
+        "revalidated_files": 2, "stale_files": 2,
+        "PRIVATE_filename": "/PRIVATE/BOOK.epub",
+    })
+    instance.run(prepare(instance), Control())
+    details = " ".join(captured[0]["details"])
+    assert "Reprise d’inventaire en mémoire" in details
+    assert "400 fichier(s) réutilisé(s)" in details
+    assert "124 inspecté(s) dans cet audit" in details
+    assert "2 ancien(s) résultat(s) périmé(s)" in details
+    assert "Les droits SQLite sont vérifiés à chaque audit." in details
+    assert "PRIVATE" not in repr(captured)
+    assert "reused_files" not in captured[0]["facts"]
+
+
+@pytest.mark.parametrize("metrics", [
+    {"reused_files": 400, "newly_observed_files": 123,
+     "revalidated_files": 2, "stale_files": 2},  # bad total
+    {"reused_files": True, "newly_observed_files": 523,
+     "revalidated_files": 0, "stale_files": 0},
+    {"reused_files": 400, "newly_observed_files": 124,
+     "revalidated_files": 1, "stale_files": 2},
+    {"reused_files": 400, "newly_observed_files": 124,
+     "revalidated_files": "/PRIVATE", "stale_files": 2},
+    {"reused_files": 4097, "newly_observed_files": 0,
+     "revalidated_files": 0, "stale_files": 0},
+])
+def test_invalid_resume_metrics_never_become_visible(tool, monkeypatch, metrics):
+    import cifereca_library_reconciliation as module
+    captured = []
+
+    class PresentableResult:
+        details = ()
+
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setattr(module, "MaintenanceResult", PresentableResult)
+    instance, broker = tool
+    broker.result["inventory"].update(metrics)
+    instance.run(prepare(instance), Control())
+    details = " ".join(captured[0]["details"])
+    assert "Reprise d’inventaire en mémoire" not in details
+    assert "PRIVATE" not in repr(captured)
+
+
+def test_older_core_without_resume_metrics_keeps_unchanged_details(tool, monkeypatch):
+    import cifereca_library_reconciliation as module
+    captured = []
+
+    class PresentableResult:
+        details = ()
+
+        def __init__(self, **kwargs):
+            captured.append(kwargs)
+
+    monkeypatch.setattr(module, "MaintenanceResult", PresentableResult)
+    instance, _ = tool
+    instance.run(prepare(instance), Control())
+    assert not any(
+        "Reprise d’inventaire en mémoire" in line
+        for line in captured[0]["details"]
+    )
