@@ -124,8 +124,14 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         assert not panel.private_export_button.get_sensitive()
         panel.start.emit("clicked")
         assert tasks.handle is None  # storage consent required
-        panel.vault_consent.set_active(True)
         panel.vault_passphrase.set_text(PASSWORD)
+        panel.vault_open_button.emit("clicked")
+        assert tasks.handle is not None
+        tasks.handle.finish()
+        flush()
+        assert panel._vault_secret is not None
+        assert panel.vault_passphrase.get_text() == ""
+        panel.vault_consent.set_active(True)
         panel.start.emit("clicked")
         assert tasks.handle is not None
         panel.stop.emit("clicked")
@@ -149,7 +155,8 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         assert not list(folder.iterdir())
         assert outcomes == []
         assert panel.current_private_export_button.get_sensitive()
-        panel.vault_passphrase.set_text(PASSWORD)
+        # No second master prompt after explicitly opening the vault.
+        assert panel.vault_passphrase.get_text() == ""
         panel.current_private_export_button.emit("clicked")
         flush()
         files = list(folder.glob("*.zip"))
@@ -173,8 +180,8 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         flush()
         assert panel.session_list.get_active_id() == trace.vault_session_id
         assert panel.private_export_button.get_sensitive()
-        # A second explicit selection + unlock restores a fresh review offline.
-        panel.vault_passphrase.set_text(PASSWORD)
+        # Reopen the encrypted session offline with the *same* open vault.
+        assert panel.vault_passphrase.get_text() == ""
         panel.sessions_open.emit("clicked")
         flush()
         assert panel._review is not None and panel._review.pending() > 0
