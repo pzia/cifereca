@@ -472,8 +472,27 @@ class PrivateReviewPanel:
         )
         self.bundle_summary.set_selectable(True)
         box.append(self.bundle_summary)
+        box.append(Gtk.Label(
+            label="Membres du ZIP exact — la recherche filtre seulement les "
+                  "NOMS des fichiers, jamais leurs valeurs. Sélectionnez "
+                  "un fichier pour consulter les octets UTF-8 approuvés.",
+            xalign=0, wrap=True,
+        ))
+        self.member_filter = Gtk.Entry()
+        self.member_filter.set_placeholder_text(
+            "Rechercher un nom : manifest, coverage, timeline, exchanges, bodies…"
+        )
+        box.append(self.member_filter)
         self.bundle_member = Gtk.ComboBoxText()
         box.append(self.bundle_member)
+        self.bundle_progress = Gtk.Label(
+            label="Aucun ZIP à parcourir.", xalign=0, wrap=True,
+        )
+        box.append(self.bundle_progress)
+        self.coverage_button = Gtk.Button(
+            label="Voir directement le rapport de couverture"
+        )
+        box.append(self.coverage_button)
         member_scroll = Gtk.ScrolledWindow()
         member_scroll.set_min_content_height(140)
         member_scroll.set_max_content_height(300)
@@ -502,6 +521,12 @@ class PrivateReviewPanel:
         )
         self.plan_button.connect("clicked", lambda *_: self.prepare_zip())
         self.bundle_member.connect("changed", lambda *_: self._show_zip_member())
+        self.member_filter.connect(
+            "changed", lambda *_: self._populate_zip_members(),
+        )
+        self.coverage_button.connect(
+            "clicked", lambda *_: self._select_coverage_report(),
+        )
         self.export_confirm.connect("toggled", lambda *_: self._refresh())
         self.export_button.connect("clicked", lambda *_: self.export_zip())
 
@@ -607,6 +632,9 @@ class PrivateReviewPanel:
         self.open_export_folder_button.set_sensitive(
             not self._closed and self._last_export_path is not None
         )
+        self.coverage_button.set_sensitive(
+            not self._closed and self._bundle_preview is not None
+        )
 
     def _text(self, value):
         # Gtk.TextBuffer is local process memory. Never persist to GSettings,
@@ -623,6 +651,9 @@ class PrivateReviewPanel:
         self._bundle_plan = None
         self._bundle_preview = None
         self.bundle_member.remove_all()
+        self.member_filter.set_text("")
+        self.bundle_progress.set_label("Aucun ZIP à parcourir.")
+        self.coverage_button.set_sensitive(False)
         self.bundle_text.get_buffer().set_text("")
         self.bundle_summary.set_label("Aucune archive préparée.")
         self.export_confirm.set_active(False)
@@ -1668,15 +1699,53 @@ class PrivateReviewPanel:
             f"/{coverage['exported_exchange_count']}."
             + empty_warning
         )
-        for item in preview["members"]:
-            self.bundle_member.append(item["name"], item["name"])
-        if preview["members"]:
-            self.bundle_member.set_active_id(preview["members"][0]["name"])
+        self._populate_zip_members()
         self.status.set_label(
             "ZIP préparé en mémoire uniquement. Relire les membres, "
             "cocher la confirmation puis exporter volontairement."
         )
         self._refresh()
+
+    def _populate_zip_members(self):
+        """Filter only approved archive member names; never search raw bytes."""
+        if self._bundle_preview is None or self._closed:
+            return
+        previous = self.bundle_member.get_active_id()
+        query = self.member_filter.get_text().strip().casefold()
+        names = [member["name"] for member in self._bundle_preview["members"]]
+        preferred = (
+            "manifest.json", "coverage-report.json", "timeline.json",
+            "identifiers.json", "README.md", "LLM_INSTRUCTIONS.md",
+        )
+        ranked = sorted(names, key=lambda name: (
+            preferred.index(name) if name in preferred else len(preferred),
+            name,
+        ))
+        visible = [name for name in ranked if query in name.casefold()]
+        self.bundle_member.remove_all()
+        for name in visible:
+            self.bundle_member.append(name, name)
+        if visible:
+            self.bundle_member.set_active_id(
+                previous if previous in visible else visible[0],
+            )
+        else:
+            self.bundle_text.get_buffer().set_text("")
+        self.bundle_progress.set_label(
+            f"{len(visible)} membre(s) correspondant sur {len(names)}. "
+            "Recherche locale dans les noms uniquement."
+            if query else
+            f"{len(names)} membres disponibles ; premier aperçu : manifest.json."
+        )
+
+    def _select_coverage_report(self):
+        if self._closed or self._bundle_preview is None:
+            return
+        # Clearing a filter must never approve the archive or change choices.
+        self.member_filter.set_text("")
+        if hasattr(self.member_filter, "get_text"):
+            self._populate_zip_members()
+        self.bundle_member.set_active_id("coverage-report.json")
 
     def _show_zip_member(self):
         if self._bundle_preview is None:
