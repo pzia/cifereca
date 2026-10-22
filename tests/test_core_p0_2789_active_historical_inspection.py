@@ -45,11 +45,11 @@ def test_273_historical_missing_and_zero_active_do_not_look_like_273_failures(tm
     assert audit.redacted()["status"] == "complete", audit.redacted()["reasons"]
     session = LocalInspection(audit, lambda: True, "reader", roots=(root,))
     overview = session.overview()
-    assert overview["paths"] == 276
+    assert overview["paths"] == 275
     assert overview["paths_historical_missing"] == 273
     assert overview["paths_active_missing"] == 1
     assert overview["paths_other_missing"] == 1
-    assert session.page(state="stored_path_missing").total == 276
+    assert session.page(state="stored_path_missing").total == 275
     # Historical path rows are not necessarily missing books. No scanning
     # side-effect, no DB cleanup and no guessed reconnection is permitted.
     assert filesystem(tmp_path) == original
