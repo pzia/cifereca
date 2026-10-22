@@ -204,7 +204,7 @@ def test_private_zip_reopened_in_isolated_external_python_with_no_plugin_import(
         return subprocess.run(
             [sys.executable, "-I", "-c", _EXTERNAL_READER, str(path)],
             input=(secret + "\n").encode("utf-8"),
-            cwd=tmp_path, env=env, stdin=subprocess.PIPE,
+            cwd=tmp_path, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25,
             check=False,
         )
