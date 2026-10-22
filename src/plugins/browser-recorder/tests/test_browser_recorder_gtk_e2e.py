@@ -250,8 +250,10 @@ def test_real_gtk4_large_identifier_list_requires_each_decision_and_scrolls(
         # Next-pending is navigation only, with a real GTK focus target.
         panel.go_to_next_pending()
         flush_glib()
-        focused = panel.candidates_box.get_first_child().get_last_child()
-        assert window.get_focus() is focused
+        target_combo = panel.candidates_box.get_first_child().get_last_child()
+        focused = window.get_focus()
+        # GtkComboBoxText delegates actual focus to its internal ToggleButton.
+        assert focused is target_combo or focused.is_ancestor(target_combo)
         assert panel._review.pending() == 80
         assert not panel.export_button.get_sensitive()
 
