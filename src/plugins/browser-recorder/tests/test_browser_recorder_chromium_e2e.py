@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 from zipfile import ZipFile
 import hashlib
 import gzip
+import base64
 import json
 import subprocess
 import sys
@@ -140,7 +141,7 @@ def fake_bookstore():
             if target == "/negotiation":
                 self.send(200, b'''<!doctype html><html><body><script>
                     async function run() {
-                      for (const url of ['/negotiated.json', '/negotiated.html', '/forced-gzip.json']) {
+                      for (const url of ['/negotiated.json', '/negotiated.html', '/forced-gzip.json', '/forced-br.json']) {
                         try { const response = await fetch(url); await response.text(); }
                         catch (_) { /* A server can send an unacceptable coding. */ }
                       }
@@ -148,11 +149,18 @@ def fake_bookstore():
                     }
                     window.addEventListener('DOMContentLoaded', run);
                     </script></body></html>''', "text/html")
-            elif target in {"/negotiated.json", "/negotiated.html", "/forced-gzip.json"}:
+            elif target in {"/negotiated.json", "/negotiated.html", "/forced-gzip.json", "/forced-br.json"}:
                 value = (b'{"ProductId":214,"access_token":"' + TOKEN.encode() + b'"}'
                          if target.endswith("json") else b'<html><p id="book-214">Book</p></html>')
                 mime = "application/json" if target.endswith("json") else "text/html"
-                if target == "/forced-gzip.json" or self.headers.get("Accept-Encoding") != "identity":
+                if target == "/forced-br.json":
+                    # Stable offline Brotli fixture; no additional package
+                    # needed in isolated CI. Exact payload uses fake TOKEN.
+                    br = base64.b64decode(
+                        "G0MA0K2Ot4Vh2RiWIxdrGN+XIjJ7NcSUOjF9zULzRKZaglIk6Qs24MD91nnwediAA/J0HCX+rOk3JQBOK/xiuwmGVLxmO7ga"
+                    )
+                    self.send(200, br, mime, {"Content-Encoding": "br"})
+                elif target == "/forced-gzip.json" or self.headers.get("Accept-Encoding") != "identity":
                     self.send(200, gzip.compress(value), mime, {"Content-Encoding": "gzip"})
                 else:
                     self.send(200, value, mime)
@@ -1049,6 +1057,13 @@ def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
         else:
             assert forced.response_body is None
             assert forced.response_body_reason in {"compressed", "network_error"}
+        forced_br = by_path["/forced-br.json"]
+        if not prefer_identity and accept_compressed:
+            assert forced_br.response_body and "ProductId" in forced_br.response_body
+        else:
+            assert forced_br.response_body is None
+            assert forced_br.response_body_reason in {"compressed", "network_error"}
+        assert calls.count(("GET", "/forced-br.json")) == 1
         destination = tmp_path / "private.zip"
         save_session_llm_zip(stored, destination, confirmed=True)
         with ZipFile(destination) as archive:
