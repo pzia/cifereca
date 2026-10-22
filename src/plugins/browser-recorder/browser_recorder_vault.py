@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
+import fcntl
 import unicodedata
 import json
 import os
@@ -15,7 +16,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
-from time import monotonic
+from time import monotonic, time
 
 from browser_recorder_http import (
     MAX_BODY_BYTES, MAX_EXCHANGES, MAX_TOTAL_BODY_BYTES,
@@ -30,6 +31,8 @@ MAX_FILE = 3 * 1024 * 1024
 MAX_SESSIONS = 128
 MAX_VAULT_BYTES = 128 * 1024 * 1024
 _ID = re.compile(r"^[0-9a-f]{32}$")
+_STAGE = re.compile(r"^\.[0-9a-f]{32}-[0-9a-f]{16}\.(?:part|labelpart)$")
+MIN_STAGING_AGE_SECONDS = 24 * 60 * 60
 _STATES = frozenset(("recording", "completed", "interrupted"))
 _FIELD_NAMES = frozenset(field.name for field in fields(PrivateExchange))
 
@@ -225,23 +228,93 @@ class PrivateSessionVault:
             raise VaultError("vault_unsafe_directory") from exc
 
     @staticmethod
-    def _entries(fd):
-        total = 0
-        count = 0
-        try:
-            for filename in os.listdir(fd):
-                if not filename.endswith(".cbrv") or not _ID.fullmatch(
-                    filename[:-5]
-                ):
-                    continue
-                info = os.stat(filename, dir_fd=fd, follow_symlinks=False)
-                if not stat.S_ISREG(info.st_mode):
+    def _staging(fd):
+        """Recognize only our opaque write staging files, without following links."""
+        found = []
+        for name in os.listdir(fd):
+            if _STAGE.fullmatch(name):
+                info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or info.st_uid != os.getuid()
+                        or stat.S_IMODE(info.st_mode) != 0o600
+                        or not 0 <= info.st_size <= MAX_FILE):
                     raise VaultError("vault_unsafe_file")
-                count += 1
+                found.append((name, info))
+        return tuple(found)
+
+    @staticmethod
+    def _entries(fd):
+        """Count encrypted archives, labels AND orphan writes toward the quota."""
+        total = count = 0
+        try:
+            staging = dict(PrivateSessionVault._staging(fd))
+            for filename in os.listdir(fd):
+                if filename in staging:
+                    info = staging[filename]
+                elif (filename.endswith(".cbrv") or filename.endswith(".cbrn")):
+                    if not _ID.fullmatch(filename[:-5]):
+                        continue
+                    info = os.stat(filename, dir_fd=fd, follow_symlinks=False)
+                    max_size = MAX_FILE if filename.endswith(".cbrv") else MAX_LABEL_FILE
+                    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                            or info.st_uid != os.getuid()
+                            or stat.S_IMODE(info.st_mode) != 0o600
+                            or not 0 <= info.st_size <= max_size):
+                        raise VaultError("vault_unsafe_file")
+                    if filename.endswith(".cbrv"):
+                        count += 1
+                else:
+                    continue
                 total += info.st_size
             return count, total
+        except VaultError:
+            raise
         except OSError as exc:
             raise VaultError("vault_unsafe_file") from exc
+
+    def staging_summary(self) -> tuple[int, int, int]:
+        """Opaque (count, bytes, age-eligible count); never write or decrypt."""
+        if not self.path.exists() and not self.path.is_symlink():
+            return (0, 0, 0)
+        fd = self._open_dir(create=False)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH)
+            rows = self._staging(fd)
+            now = time()
+            return (len(rows), sum(info.st_size for _, info in rows),
+                    sum(now - info.st_mtime >= MIN_STAGING_AGE_SECONDS
+                        for _, info in rows))
+        except OSError as exc:
+            raise VaultError("vault_unsafe_file") from exc
+        finally:
+            os.close(fd)
+
+    def prune_staging(self, *, confirmed: bool = False) -> tuple[int, int]:
+        """Only manually delete stale encrypted .part/.labelpart, never sessions.
+
+        Minimum age 24 h; directory-wide lock coordinates with writers and
+        deletion. Any unsafe file aborts before the first mutation.
+        """
+        if confirmed is not True:
+            raise VaultError("vault_confirmation_required")
+        fd = self._open_dir(create=False)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            rows = self._staging(fd)
+            now = time()
+            eligible = [(name, info) for name, info in rows
+                        if now - info.st_mtime >= MIN_STAGING_AGE_SECONDS]
+            for name, _ in eligible:
+                os.unlink(name, dir_fd=fd)
+            if eligible:
+                os.fsync(fd)
+            return len(eligible), sum(info.st_size for _, info in eligible)
+        except VaultError:
+            raise
+        except OSError as exc:
+            raise VaultError("vault_unsafe_file") from exc
+        finally:
+            os.close(fd)
 
     def list_ids(self) -> tuple[str, ...]:
         """Opaque random IDs only; never leak site, book or account metadata."""
@@ -329,6 +402,7 @@ class PrivateSessionVault:
         temp = "." + session_id + "-" + secrets.token_hex(8) + ".labelpart"
         dest = session_id + ".cbrn"
         try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
             try:
                 old = os.stat(dest, dir_fd=fd, follow_symlinks=False)
             except FileNotFoundError:
@@ -457,10 +531,11 @@ class PrivateSessionVault:
     def delete(self, session_id: str, passphrase: str, *, confirmed=False):
         if confirmed is not True:
             raise VaultError("vault_confirmation_required")
-        session = self.open(session_id, passphrase)
-        session.trace.destroy()
         fd = self._open_dir(create=False)
         try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            session = self.open(session_id, passphrase)
+            session.trace.destroy()
             try:
                 sidecar = os.stat(
                     session_id + ".cbrn", dir_fd=fd, follow_symlinks=False,
@@ -513,6 +588,7 @@ class SessionWriter:
         tmp = "." + self.session_id + "-" + secrets.token_hex(8) + ".part"
         dest = self.session_id + ".cbrv"
         try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
             count, total = self.vault._entries(fd)
             try:
                 old = os.stat(dest, dir_fd=fd, follow_symlinks=False)
