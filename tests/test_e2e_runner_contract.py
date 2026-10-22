@@ -61,12 +61,15 @@ def test_1358_maintenance_safety_uses_real_GTK_XTEST_without_destructive_IO():
         assert scenario["fixture"] == "startup"
         assert scenario["runner"] == "gtk-maintenance"
         assert scenario["width"] == width
-        if width == 1024:
+        if width in (1024, 1366):
             assert scenario["height"] == 768
+        elif width == 1280:
+            assert scenario["height"] == 800
     for marker in (
         'w.navigate("tools")',
         'device[0].click_widget(button)',
         "busy_sync_refuses_preview_before_scan_or_delete",
+        "P0_2712_window_fits_real_display",
         "real_multiline_confirmation_after_async_scan",
         "physical_cancel_never_runs_destructive_tool",
         "stale_plan_rejected_under_lock_without_delete",
