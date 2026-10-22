@@ -108,10 +108,17 @@ class LocalInspectionController:
         self._activity_started = None
         self._activity_phase = 'Préparation'
         self._activity_files = None
+        self._activity_mode = 'preparing'
 
     def attach_activity_row(self, row):
         """The Maintenance ActionRow owns the nonmodal loading indicator."""
         self._activity_row = row
+
+    def _set_activity_state(self, message):
+        """One fixed local inspection status, independent of last audit."""
+        if (self._activity_row is not None
+                and hasattr(self._activity_row, 'set_subtitle') and self.alive()):
+            self._activity_row.set_subtitle(message)
 
     def _show_activity(self):
         if self._activity_row is None or not hasattr(self.Gtk, 'Box'):
@@ -120,6 +127,13 @@ class LocalInspectionController:
             Gtk = self.Gtk
             line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
             label = Gtk.Label(label='Préparation des cas locaux…', xalign=0)
+            # Long phase + mode + elapsed counters must not enlarge the
+            # Maintenance action beyond a narrow GTK window.
+            if hasattr(label, 'set_wrap'):
+                label.set_wrap(True)
+                label.set_max_width_chars(48)
+            if hasattr(label, 'set_hexpand'):
+                label.set_hexpand(True)
             cancel = Gtk.Button(label='Annuler')
             cancel.set_tooltip_text('Interrompre l’inspection locale en lecture seule')
             cancel.connect('clicked', lambda *_: self.clear())
@@ -128,6 +142,9 @@ class LocalInspectionController:
             self._activity_row.add_suffix(line)
             self._activity_box, self._activity_label = line, label
         self._activity_label.set_label('Préparation des cas locaux…')
+        self._set_activity_state(
+            'Inspection en cours · lecture seule · couverture inconnue.'
+        )
         self._activity_box.set_visible(True)
 
     def _hide_activity(self):
@@ -136,6 +153,7 @@ class LocalInspectionController:
             self._activity_clock = None
         self._activity_started = None
         self._activity_files = None
+        self._activity_mode = 'preparing'
         if self._activity_box is not None:
             self._activity_box.set_visible(False)
 
@@ -145,7 +163,12 @@ class LocalInspectionController:
             return
         elapsed = min(36_000, max(0, int(monotonic() - self._activity_started)))
         minutes, seconds = divmod(elapsed, 60)
-        message = f'Inspection · {self._activity_phase} · {minutes:02}:{seconds:02} écoulées'
+        state = {
+            'preparing': 'préparation : cache valide ou nouvelle lecture',
+            'cached': 'preuves réutilisées (cache privé valide)',
+            'new_scan': 'nouveau scan local hors réseau · couverture inconnue',
+        }.get(self._activity_mode, 'préparation')
+        message = f'Inspection détaillée · {state} · {self._activity_phase} · {minutes:02}:{seconds:02} écoulées'
         if self._activity_files is not None:
             message += f' · {self._activity_files} fichiers observés'
         self._activity_label.set_label(message)
@@ -156,6 +179,28 @@ class LocalInspectionController:
             return False
         self._render_activity()
         return True
+
+    def _mode(self, generation, code):
+        """Only Core's exact local cache decision, never provider prose."""
+        if code not in ('cached', 'new_scan'):
+            return
+        idle_add = getattr(self.GLib, 'idle_add', None)
+        if idle_add is None:
+            return
+
+        def publish():
+            if (generation == self._generation and self.control is not None
+                    and not self.control.cancelled() and self.alive()):
+                self._activity_mode = code
+                self._set_activity_state(
+                    'Réutilisation du cache privé validé.'
+                    if code == 'cached' else
+                    'Nouvelle inspection locale hors réseau · couverture inconnue.'
+                )
+                self._render_activity()
+            return False
+
+        idle_add(publish)
 
     def _progress(self, generation, current, total, phase):
         if phase not in _INSPECTION_PHASES:
@@ -182,6 +227,7 @@ class LocalInspectionController:
         idle_add(publish)
 
     def clear(self):
+        running = self.control is not None and self._activity_started is not None
         self._generation += 1
         if self.control is not None:
             self.control.cancel()
@@ -196,6 +242,10 @@ class LocalInspectionController:
             dialog, self.dialog = self.dialog, None
             dialog.destroy()
         self._hide_activity()
+        if running:
+            self._set_activity_state(
+                'Inspection interrompue · aucun constat d’absence de livre.'
+            )
 
     def start(self):
         self.clear()
@@ -214,6 +264,7 @@ class LocalInspectionController:
         self._activity_started = monotonic()
         self._activity_phase = 'Préparation'
         self._activity_files = None
+        self._activity_mode = 'preparing'
         self._show_activity()
         timeout = getattr(self.GLib, 'timeout_add_seconds', None)
         if timeout is not None:
@@ -223,7 +274,10 @@ class LocalInspectionController:
 
         def read():
             try:
-                return open_local_inspection(self.parent.service, identity_id=identity.identity_id, control=control)
+                return open_local_inspection(
+                    self.parent.service, identity_id=identity.identity_id,
+                    control=control, on_mode=lambda mode: self._mode(generation, mode),
+                )
             except Exception:
                 raise RuntimeError('Inspection locale indisponible.') from None
 
@@ -235,9 +289,15 @@ class LocalInspectionController:
             self.control = None
             self._hide_activity()
             if not isinstance(session, LocalInspection):
+                self._set_activity_state(
+                    'Inspection impossible · aucune absence de livre établie.'
+                )
                 self.parent.show_error(_inspection_failure_message(session), 'Inspection locale')
                 return
             if not session.valid():
+                self._set_activity_state(
+                    'Inspection interrompue : périmètre ou identité modifiés.'
+                )
                 # Unlike a failed snapshot envelope, an established private
                 # session can really be invalidated by the active scope guard.
                 self.parent.show_error(
@@ -246,11 +306,24 @@ class LocalInspectionController:
                 )
                 return
             self.session = session
+            # Persist actual provenance after a fast cache hit: the transient
+            # progress line may close before its idle notification is drawn.
+            origin = ('cache privé réutilisé'
+                      if session.from_audit_cache()
+                      else 'nouvelle inspection locale')
+            self._set_activity_state(
+                ('Inspection terminée · ' if session.summary().get('status') == 'complete'
+                 else 'Inspection partielle · preuves non exhaustives · ')
+                + origin + '.'
+            )
             self.present()
 
         def failed(_error):
             if generation == self._generation and self.alive():
                 self.clear()
+                self._set_activity_state(
+                    'Inspection impossible · aucune absence de livre établie.'
+                )
                 self.parent.show_error('Inspection locale indisponible. Relancez la réconciliation.', 'Inspection locale')
 
         self.parent.runner.submit('Inspection locale de bibliothèque', read, completed, failed,
