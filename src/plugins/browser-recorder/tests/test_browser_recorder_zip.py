@@ -1225,3 +1225,39 @@ def test_html_reviewed_value_is_escaped_not_interpreted_as_markup():
     assert "<span>AT&amp;T</span>" in projected
     assert "<span>[TEXT]</span>" in projected
     assert "PRIVATE_TEXT" not in projected
+
+
+def test_zip_capture_reason_provenance_is_closed_and_counted_without_payloads():
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges = [
+        PrivateExchange(
+            1, "GET", url=ORIGIN + "/public", status=200,
+            response_body_state="body_omitted",
+            response_body_reason="size_unavailable",
+            request_body_reason="not_applicable",
+        ),
+        PrivateExchange(
+            2, "GET", url=ORIGIN + "/private", status=200,
+            response_body_state="body_omitted",
+            response_body_reason="PRIVATE_SOURCE_VALUE",
+            request_body_reason="not_applicable",
+        ),
+    ]
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        plan = prepare_reviewed_zip(review)
+        with ZipFile(__import__("io").BytesIO(plan._blob)) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            safe = json.loads(archive.read("exchanges/0001.json"))
+            hostile = json.loads(archive.read("exchanges/0002.json"))
+            assert safe["bodies"]["response"]["capture_reason"] == "size_unavailable"
+            assert hostile["bodies"]["response"]["capture_reason"] == "unknown"
+            assert manifest["body_capture_reasons"]["size_unavailable"] == 1
+            assert manifest["body_capture_reasons"]["unknown"] == 1
+            assert sum(manifest["body_capture_reasons"].values()) == 4
+            assert "PRIVATE_SOURCE_VALUE" not in archive.read("exchanges/0002.json").decode()
+    finally:
+        review.destroy()
+        trace.destroy()
