@@ -93,6 +93,12 @@ class PrivateReviewPanel:
         self.vault_directory = Path(vault_directory) if vault_directory else None
         self.vault_consent = None
         self.vault_passphrase = None
+        # Unlocked only by an explicit open action. Transient bytearray is
+        # wiped on lock/destroy; never persisted, logged, or sent to plugins.
+        self._vault_secret = None
+        self.vault_state = None
+        self.vault_open_button = None
+        self.vault_close_button = None
         self.session_list = None
         self.delete_confirm = None
         self.private_export_button = None
@@ -117,9 +123,8 @@ class PrivateReviewPanel:
         self._index_handle = None
         self._retention_plan = None
 
-        # Three independent workspaces replace the former long, mixed form.
-        # Each tab has its own scroll position; status and the shared vault
-        # passphrase remain reachable regardless of the selected workspace.
+        # Workspaces have independent scroll positions. The vault lock
+        # controls remain reachable regardless of the selected tab.
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         root.set_hexpand(True)
         root.set_vexpand(True)
@@ -131,17 +136,32 @@ class PrivateReviewPanel:
         self.status.set_selectable(True)
         root.append(self.status)
         if self.vault_directory is not None:
-            root.append(Gtk.Label(
-                label="Phrase secrète du coffre — requise pour capturer, "
-                      "ouvrir ou gérer une session chiffrée ; jamais exportée.",
+            self.vault_state = Gtk.Label(
+                label="Coffre fermé · saisir la phrase secrète une fois pour l'ouvrir.",
                 xalign=0, wrap=True,
-            ))
+            )
+            root.append(self.vault_state)
+            vault_controls = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
+            )
             self.vault_passphrase = Gtk.Entry()
             self.vault_passphrase.set_visibility(False)
+            self.vault_passphrase.set_hexpand(True)
             self.vault_passphrase.set_placeholder_text(
                 "Phrase secrète du coffre (12 caractères minimum)"
             )
-            root.append(self.vault_passphrase)
+            vault_controls.append(self.vault_passphrase)
+            self.vault_open_button = Gtk.Button(label="Ouvrir le coffre")
+            self.vault_close_button = Gtk.Button(label="Fermer le coffre")
+            vault_controls.append(self.vault_open_button)
+            vault_controls.append(self.vault_close_button)
+            root.append(vault_controls)
+            self.vault_open_button.connect(
+                "clicked", lambda *_: self.unlock_sessions(),
+            )
+            self.vault_close_button.connect(
+                "clicked", lambda *_: self.lock_vault(),
+            )
 
         self.tabs = Gtk.Notebook()
         self.tabs.set_scrollable(True)
@@ -218,10 +238,11 @@ class PrivateReviewPanel:
         if self.vault_directory is not None:
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
-                label="Coffre chiffré : chaque capture consentie est archivée "
-                      "pour être revue plus tard, sans export ZIP. Entrez une "
-                      "phrase secrète d'au moins 12 caractères et conservez-la. "
-                      "Une panne peut ne laisser qu'une capture partielle.",
+                label="Coffre chiffré : cliquez « Ouvrir le coffre » une seule "
+                      "fois pour réutiliser la phrase secrète en mémoire "
+                      "pendant cette ouverture de page. « Fermer le coffre » "
+                      "efface l'accès en mémoire sans supprimer les sessions. "
+                      "Chaque capture exige toujours son consentement.",
                 xalign=0, wrap=True,
             ))
             self.vault_consent = Gtk.CheckButton(
@@ -339,8 +360,8 @@ class PrivateReviewPanel:
             )
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
-                label="Exporter une session pour un LLM : sélectionnez une session, "
-                      "saisissez la phrase secrète du coffre, puis choisissez où "
+                label="Exporter une session pour un LLM : ouvrez le coffre "
+                      "une fois, sélectionnez une session, puis choisissez où "
                       "enregistrer le fichier ZIP. Pas de second mot de passe ni "
                       "de permissions de dossier à configurer. Le coffre reste "
                       "chiffré ; le ZIP exporté est EN CLAIR (URL, identifiants "
@@ -394,8 +415,8 @@ class PrivateReviewPanel:
                 label="Session archivée dans le coffre : vous pouvez l'exporter "
                       "directement pour un LLM sans attendre les décisions "
                       "d'anonymisation. Ce ZIP est NON CHIFFRÉ et contient les "
-                      "observations privées conservées. Saisissez la phrase "
-                      "du coffre en haut, puis choisissez où l'enregistrer.",
+                      "observations privées conservées. Ouvrez le coffre "
+                      "une fois en haut, puis choisissez où l'enregistrer.",
                 xalign=0, wrap=True,
             ))
             self.current_private_export_button = Gtk.Button(
@@ -549,6 +570,54 @@ class PrivateReviewPanel:
         self.clear.connect("clicked", lambda *_: self.discard())
         self._refresh()
 
+    def _vault_password(self):
+        """Read the unlocked in-process key, or one explicitly typed fallback.
+
+        Legacy per-action typing remains possible while closed. The opened
+        vault never writes its master phrase to files, settings or logs.
+        """
+        cached = getattr(self, "_vault_secret", None)
+        entered = self.vault_passphrase.get_text()
+        self.vault_passphrase.set_text("")
+        return cached.decode("utf-8") if cached is not None else entered
+
+    def _wipe_vault_password(self):
+        """Best-effort overwrite of the sole retained mutable password buffer."""
+        cached = getattr(self, "_vault_secret", None)
+        if cached is not None:
+            for index in range(len(cached)):
+                cached[index] = 0
+            self._vault_secret = None
+
+    def lock_vault(self):
+        """Explicitly forget key and decrypted UI, never delete vault files."""
+        if (self.vault_directory is None or self._closed
+                or self.is_recording() or self.is_scanning()):
+            return
+        # Invalidate deferred Save-As callbacks, even if a chooser was opened
+        # while the vault was unlocked; a stale dialog cannot publish a ZIP.
+        self._generation += 1
+        if self._private_destination_dialog is not None:
+            chooser, self._private_destination_dialog = (
+                self._private_destination_dialog, None,
+            )
+            chooser.destroy()
+        if self._export_dialog is not None:
+            chooser, self._export_dialog = self._export_dialog, None
+            chooser.destroy()
+        self._wipe_vault_password()
+        self.vault_passphrase.set_text("")
+        self._retention_plan = None
+        self._last_export_path = None
+        self.session_list.remove_all()
+        self.session_name.set_text("")
+        self._discard_private()
+        self.status.set_label(
+            "Coffre fermé : phrase secrète effacée de la session, aperçus "
+            "privés masqués. Archives chiffrées conservées sur disque."
+        )
+        self._refresh()
+
     def is_recording(self):
         return self._handle is not None and not self._handle.done()
 
@@ -568,6 +637,21 @@ class PrivateReviewPanel:
             and not self.legacy_running()
         )
         if self.vault_directory is not None:
+            unlocked = self._vault_secret is not None
+            self.vault_state.set_label(
+                "Coffre OUVERT · clé en mémoire uniquement · Fermer pour verrouiller."
+                if unlocked else
+                "Coffre FERMÉ · phrase secrète requise pour l'ouvrir."
+            )
+            self.vault_passphrase.set_sensitive(
+                not self._closed and not busy and not scanning and not unlocked
+            )
+            self.vault_open_button.set_sensitive(
+                not self._closed and not busy and not scanning and not unlocked
+            )
+            self.vault_close_button.set_sensitive(
+                not self._closed and not busy and not scanning and unlocked
+            )
             self.sessions_refresh.set_sensitive(
                 not self._closed and not busy and not scanning
             )
@@ -830,13 +914,12 @@ class PrivateReviewPanel:
                     "Consentement au stockage local chiffré requis avant capture."
                 )
                 return
-            passphrase = self.vault_passphrase.get_text()
+            passphrase = self._vault_password()
             if len(passphrase) < 12:
                 self.status.set_label(
                     "Phrase secrète d'au moins 12 caractères requise."
                 )
                 return
-            self.vault_passphrase.set_text("")
             self.vault_consent.set_active(False)
         self._discard_private()
         self._generation += 1
@@ -999,8 +1082,7 @@ class PrivateReviewPanel:
         except (TypeError, ValueError):
             self.status.set_label("Délai de rétention invalide.")
             return
-        secret = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        secret = self._vault_password()
         if len(secret) < 12:
             self.status.set_label("Phrase secrète requise pour prévisualiser.")
             return
@@ -1066,8 +1148,7 @@ class PrivateReviewPanel:
             return
         plan, self._retention_plan = self._retention_plan, None
         self.retention_confirm.set_active(False)
-        passphrase = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        passphrase = self._vault_password()
         if len(passphrase) < 12:
             self.status.set_label(
                 "Saisir de nouveau la clé ; refaire l'aperçu ensuite."
@@ -1232,8 +1313,7 @@ class PrivateReviewPanel:
         if (self.vault_directory is None or self._closed
                 or self.is_recording() or self.is_scanning()):
             return
-        passphrase = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        passphrase = self._vault_password()
         if len(passphrase) < 12:
             self.status.set_label(
                 "Phrase secrète de 12 caractères minimum requise."
@@ -1281,6 +1361,25 @@ class PrivateReviewPanel:
                         self.status.set_label("Index local inaccessible.")
                         self._refresh()
                         return False
+                    # First opening of an empty vault is permitted. For a
+                    # nonempty vault, the master phrase must authenticate at
+                    # least one existing session before being retained.
+                    if ids and not entries:
+                        self.status.set_label(
+                            "Ouverture refusée : phrase secrète incorrecte "
+                            "ou toutes les sessions sont indisponibles."
+                        )
+                        self._refresh()
+                        return False
+                    if self._vault_secret is None:
+                        try:
+                            self._vault_secret = bytearray(
+                                passphrase.encode("utf-8")
+                            )
+                        except UnicodeError:
+                            self.status.set_label("Phrase secrète invalide.")
+                            self._refresh()
+                            return False
                     known = {entry["id"]: entry for entry in entries}
                     old_selected = self.session_list.get_active_id()
                     self.session_list.remove_all()
@@ -1304,7 +1403,7 @@ class PrivateReviewPanel:
                             old_selected if old_selected in ordered else ordered[0]
                         )
                     self.status.set_label(
-                        f"{len(entries)} sessions déverrouillées et "
+                        f"Coffre ouvert · {len(entries)} sessions déverrouillées et "
                         f"{inaccessible} indisponibles ; aucun contact fournisseur."
                     )
                 self._refresh()
@@ -1321,8 +1420,7 @@ class PrivateReviewPanel:
             return
         sid = self.session_list.get_active_id()
         label = self.session_name.get_text().strip()
-        secret = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        secret = self._vault_password()
         self.session_name.set_text("")
         if not sid or not label or len(secret) < 12:
             self.status.set_label(
@@ -1387,8 +1485,7 @@ class PrivateReviewPanel:
         if not session_id:
             self.status.set_label("Choisir d'abord une session locale.")
             return
-        passphrase = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        passphrase = self._vault_password()
         try:
             stored = PrivateSessionVault(self.vault_directory).open(
                 session_id, passphrase,
@@ -1441,8 +1538,7 @@ class PrivateReviewPanel:
             return
         self.delete_confirm.set_active(False)
         session_id = self.session_list.get_active_id()
-        passphrase = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        passphrase = self._vault_password()
         try:
             PrivateSessionVault(self.vault_directory).delete(
                 session_id, passphrase, confirmed=True,
@@ -1513,8 +1609,7 @@ class PrivateReviewPanel:
             getattr(self._trace, "vault_session_id", None) if current
             else self.session_list.get_active_id()
         )
-        passphrase = self.vault_passphrase.get_text()
-        self.vault_passphrase.set_text("")
+        passphrase = self._vault_password()
         if not sid or len(passphrase) < 12:
             self.status.set_label(
                 "Sélectionner une session et saisir sa phrase secrète "
@@ -1985,6 +2080,7 @@ class PrivateReviewPanel:
         # Never leave typed vault/export secrets in a detached GTK page.
         if self.vault_passphrase is not None:
             self.vault_passphrase.set_text("")
+        self._wipe_vault_password()
         self._discard_private()
         self._stop = None
         self._handle = None

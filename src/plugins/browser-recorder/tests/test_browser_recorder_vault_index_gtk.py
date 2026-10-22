@@ -161,6 +161,91 @@ def test_gtk_metadata_stays_opaque_until_unlock_then_reveals_private_labels(tmp_
         flush()
 
 
+def test_open_close_vault_reuses_one_master_and_wipes_private_review(tmp_path):
+    """Native GTK4: explicit unlock once, multiple operations, explicit lock.
+
+    No real provider, browser or upload. Wrong passwords never open the vault;
+    locking cannot delete existing encrypted sessions.
+    """
+    panel, tasks, window, vault, ids = panel_fixture(tmp_path)
+    try:
+        panel.sessions_refresh.emit("clicked")
+        assert panel._vault_secret is None
+        assert panel.vault_open_button.get_sensitive()
+        assert not panel.vault_close_button.get_sensitive()
+        before = {
+            sid: (vault.path / (sid + ".cbrv")).read_bytes() for sid in ids
+        }
+
+        panel.vault_passphrase.set_text("WRONG-FICTIONAL-VAULT-SECRET")
+        panel.vault_open_button.emit("clicked")
+        assert panel.is_scanning()
+        tasks.handle.finish()
+        flush()
+        assert panel._vault_secret is None
+        assert "Ouverture refusée" in panel.status.get_label()
+        assert not panel.vault_close_button.get_sensitive()
+        assert panel.vault_passphrase.get_text() == ""
+
+        panel.vault_passphrase.set_text(KEY)
+        panel.vault_open_button.emit("clicked")
+        assert panel.is_scanning()
+        tasks.handle.finish()
+        flush()
+        assert panel._vault_secret is not None
+        master_buffer = panel._vault_secret
+        assert panel.vault_passphrase.get_text() == ""
+        assert "OUVERT" in panel.vault_state.get_label()
+        assert panel.vault_close_button.get_sensitive()
+        assert not panel.vault_open_button.get_sensitive()
+        assert not panel.vault_passphrase.get_sensitive()
+
+        # Reopen two distinct archives and rename the first without ever
+        # typing the password again.
+        for sid in ids[:2]:
+            panel.session_list.set_active_id(sid)
+            panel.sessions_open.emit("clicked")
+            flush()
+            assert panel._trace.vault_session_id == sid
+            assert panel.vault_passphrase.get_text() == ""
+        panel.session_list.set_active_id(ids[0])
+        panel.session_name.set_text("Session coffre ouvert")
+        panel.sessions_rename.emit("clicked")
+        assert panel.is_scanning()
+        tasks.handle.finish()
+        flush()
+        assert vault.get_label(ids[0], KEY) == "Session coffre ouvert"
+        assert panel.vault_passphrase.get_text() == ""
+
+        panel.vault_close_button.emit("clicked")
+        flush()
+        assert panel._vault_secret is None
+        assert all(value == 0 for value in master_buffer)
+        assert "FERMÉ" in panel.vault_state.get_label()
+        assert not panel.vault_close_button.get_sensitive()
+        assert panel.vault_open_button.get_sensitive()
+        assert panel._trace is None and panel._review is None
+        assert panel.session_list.get_active_id() is None
+        assert panel.vault_passphrase.get_text() == ""
+        assert not panel.current_private_export_button.get_sensitive()
+        assert before == {
+            sid: (vault.path / (sid + ".cbrv")).read_bytes() for sid in ids
+        }
+
+        # Opening again requires the password; no file re-encryption.
+        panel.vault_passphrase.set_text(KEY)
+        panel.vault_open_button.emit("clicked")
+        tasks.handle.finish()
+        flush()
+        assert panel._vault_secret is not None
+        assert "OUVERT" in panel.vault_state.get_label()
+    finally:
+        panel.destroy()
+        window.close()
+        flush()
+    assert panel._vault_secret is None
+
+
 def test_scanning_completion_after_page_destroy_cannot_reveal_session(tmp_path):
     panel, tasks, window, vault, ids = panel_fixture(tmp_path)
     panel.sessions_refresh.emit("clicked")
