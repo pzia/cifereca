@@ -591,6 +591,12 @@ class PrivateSessionVault:
                             or self._retention_date(stored.saved_at) >= cutoff):
                         continue
                     pair, size = self._retention_fingerprint(fd, sid)
+                    # A label is user-private AEAD metadata, not an arbitrary
+                    # encrypted blob that the retention planner may discard.
+                    # Even a size/mode-valid sidecar with a different key,
+                    # corrupt tag or swapped session AAD must fail closed.
+                    if pair[2] is not None:
+                        self.get_label(sid, passphrase)
                     rows.append(pair)
                     total += size
                 finally:
@@ -636,6 +642,8 @@ class PrivateSessionVault:
                 actual, size = self._retention_fingerprint(fd, sid)
                 if actual != (sid, digest, label_digest):
                     raise VaultError("vault_retention_changed")
+                if label_digest is not None:
+                    self.get_label(sid, passphrase)
                 session = self.open(sid, passphrase)
                 try:
                     if (session.recovery_status != "completed"
