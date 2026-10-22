@@ -141,6 +141,20 @@ def test_real_gtk4_private_review_zip_export_keyboard_controls(
                      if x["name"] == member_name)
         buf = panel.bundle_text.get_buffer()
         assert buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True) == entry["text"]
+        assert member_name == "manifest.json"
+        panel.member_filter.set_text("coverage")
+        flush_glib()
+        assert panel.bundle_member.get_active_id() == "coverage-report.json"
+        assert "1 membre(s) correspondant" in panel.bundle_progress.get_label()
+        panel.member_filter.set_text("NO_MATCH")
+        flush_glib()
+        assert panel.bundle_member.get_active_id() is None
+        panel.coverage_button.emit("clicked")
+        flush_glib()
+        assert panel.member_filter.get_text() == ""
+        assert panel.bundle_member.get_active_id() == "coverage-report.json"
+        assert not panel.export_confirm.get_active()
+        assert not panel.export_button.get_sensitive()
         panel.export_button.emit("clicked")  # UI also verifies on click
         assert not list(tmp_path.iterdir())
         panel.export_confirm.set_active(True)
