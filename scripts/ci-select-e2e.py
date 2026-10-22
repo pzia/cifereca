@@ -104,6 +104,10 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
         return ALL  # empty diff is not a silent pass
     selected: set[str] = set()
     for path in changed:
+        # Explicit standalone synthetic load tool: no application/GTK imports,
+        # provider calls or runtime configuration. Its tests run in Core CI.
+        if path == "scripts/benchmark_task_admission.py":
+            continue
         # Only explicit release packaging reads this version snapshot. A
         # routine plugin bump must not expand GTK validation to unrelated pages.
         if path.endswith((".md", ".rst", ".txt")) or path == "src/cifereca/plugin-release.json":

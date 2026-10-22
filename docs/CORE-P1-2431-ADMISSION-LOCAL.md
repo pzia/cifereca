@@ -47,3 +47,33 @@ sans traces de la requête et ne forment pas un quota réseau inter-processus.
 Leur observation n'attribue pas à elle seule une attente ou un gain de
 performance ; le diagnostic p50/p95, CPU/RSS et l'activation globale restent
 à étudier dans #1741.
+
+## Comparaison synthétique explicite des pools
+
+Depuis la racine du dépôt :
+
+```sh
+PYTHONPATH=src python scripts/benchmark_task_admission.py --rounds 5 --jobs-per-pool 64 --io-ms 2
+```
+
+Le JSON compare trois `PriorityExecutor` de **3/3/8 workers**, avec et sans
+un budget partagé expérimental **12 en vol / 2 réservés / 4 par portée**.
+Ces tailles modélisent les pools GTK/Plugins/Search ; **leurs véritables
+intégrations ne sont pas exécutées**. Les tâches attendent un délai synthétique
+sans réseau. Les refus restent dans le coordinateur externe et sont retentés
+explicitement, jamais depuis un worker qui détient une réservation.
+Le même nombre de tâches doit finir dans chaque mode et toutes les leases
+être libérées, sinon le banc échoue. Cela ne définit pas une politique de retry
+applicable aux actions utilisateur ou aux fournisseurs.
+
+Une paire de chauffe est exclue puis l'ordre des modes alterne. Chaque passe
+publie p50/p95 de fin depuis la création du lot (attente de réadmission comprise),
+les timings file/worker bornés de chaque pool, CPU processus, RSS courante
+avant/après et pics de file **échantillonnés**, ainsi que les refus par cause.
+Les durées incluent le coût de la sonde et du coordinateur. Les RSS d'un même
+processus dépendent des passes précédentes, ne sont ni des pics ni une preuve
+d'absence de fuite. L'attente synthétique n'est pas un profil CPU/métier réel.
+
+Ce banc reproductible **ne qualifie aucun gain**, ni famine sous arrivée continue,
+ni latence GTK, ni identité/annulation d'opérations métier ; ces preuves et
+l'activation contrôlée restent à #2431/#1741. Aucun quota produit n'est activé.
