@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.8, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.9, ZIP privé en revue)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
@@ -509,3 +509,15 @@ les résidus temporaires ne sont jamais concernés.
 La suppression est irréversible pour Cifereca sans garantir l'effacement
 physique sur SSD/backups. Aucun ZIP n'est automatiquement produit ou
 transmis. Les tests fonctionnent uniquement sur des données fictives.
+
+
+## Vérification d'authenticité des noms lors de la rétention (0.2.9)
+
+Une étiquette de session est protégée par AES-256-GCM et associée
+cryptographiquement à un ID de capture précis. La revue de rétention
+réauthentifie désormais le contenu du nom privé, **sans l'afficher**, avant
+de proposer ou d'exécuter une suppression. Si un nom est altéré,
+transplanté depuis une autre session ou chiffré avec une autre clé,
+l'aperçu est refusé et **aucune suppression groupée n'est autorisée**.
+Les captures, mêmes anciennes, sont préservées. La confirmation manuelle
+et le délai d'expiration du plan restent obligatoires.

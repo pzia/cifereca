@@ -76,7 +76,7 @@ def test_full_executable_terminate_and_restart_with_three_private_sessions(
         assert core.plugins.status(PLUGIN_ID).state == "ready"
         assert core.plugins.service(PLUGIN_ID) is not None
         installed_root = core.plugins.packages.version_root(
-            "org.cifereca.technical.browser-recorder", "0.2.8",
+            "org.cifereca.technical.browser-recorder", "0.2.9",
         )
         assert installed_root.is_dir()
     # Only the *installed* plugin's code supplies fixture serializers; do not
