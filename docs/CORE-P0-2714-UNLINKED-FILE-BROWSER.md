@@ -92,5 +92,25 @@ complet concordent. Aucun résultat bibliographique ne vaut preuve.
 Le droit et le reçu existants ne sont jamais créés à partir d'un titre,
 d'un ISBN ou d'une URL publique. **L'interface n'accepte pas de jeton
 de transaction en entrée** ; elle ne présente ni token, ni compte,
-ni SHA dans les données Diagnostics. L'undo transactionnel est un
-lot distinct et n'est pas exposé par ce bouton.
+ni SHA dans les données Diagnostics. ### Annuler le dernier placement créé pendant cette session
+
+Après une confirmation effectivement appliquée, la liste et les filtres
+d'inspection deviennent **inactifs** : leurs preuves datent d'avant
+l'écriture SQLite. La session reste ouverte uniquement pour proposer
+**« Annuler le dernier placement… »** si le Core dispose d'un journal
+de cette opération précise.
+
+L'annulation exige une **nouvelle relecture sous verrou des preuves**
+du même droit, de la même édition et du même fichier. Une
+**nouvelle confirmation explicite**, distincte du premier placement,
+est requise pour supprimer uniquement cette liaison créée pendant la
+session. Fermer le dialogue conserve le placement et révoque le
+jeton d'annulation. Fermer la fenêtre révoque la session et l'accès à
+cette annulation contextuelle.
+
+Une annulation refusée n'est jamais annoncée comme réussie :
+l'interface demande de relancer la réconciliation. Les octets EPUB
+et les droits d'achat restent inchangés, y compris pendant l'undo.
+Ni jeton de prévisualisation ni ID de journal ne sont exposés dans GTK,
+Diagnostics ou les exports. La sortie du mode d'inspection ne
+constitue jamais la preuve d'une nouvelle analyse complète.
