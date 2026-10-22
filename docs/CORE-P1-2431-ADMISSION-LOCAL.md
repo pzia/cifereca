@@ -77,3 +77,35 @@ d'absence de fuite. L'attente synthétique n'est pas un profil CPU/métier réel
 Ce banc reproductible **ne qualifie aucun gain**, ni famine sous arrivée continue,
 ni latence GTK, ni identité/annulation d'opérations métier ; ces preuves et
 l'activation contrôlée restent à #2431/#1741. Aucun quota produit n'est activé.
+
+## Banc comparatif : réadmission coordonnée par priorité (tranche expérimentale)
+
+Le banc fournit maintenant une seconde politique **uniquement pour les demandes
+synthétiques différées du coordinateur**, sans modifier les exécutants du Core :
+
+```sh
+PYTHONPATH=src python scripts/benchmark_task_admission.py --rounds 5 --jobs-per-pool 64 --io-ms 2 --coordinator-policy fair_round_robin
+```
+
+L'ancienne politique `legacy_scan` demeure celle utilisée par défaut pour
+conserver le comparatif initial. `fair_round_robin` conserve chaque refus
+dans un backlog **extérieur aux workers**, tente au plus le nombre de places
+libres annoncé par le budget global et alterne les trois pools. Lorsque les
+classes sont présentes, elle propose au plus **trois** candidats « utilisateur »
+avant un « fond ». La priorité effective reste celle du
+`SharedTaskAdmission` et de `PriorityExecutor`, qui peuvent encore refuser
+une tentative en raison de quotas de portée ou d'une course de libération.
+Le coordinateur ne contourne ni leur admission ni leur borne.
+
+Les deux politiques produisent un JSON `schema_version=2`, explicitant le
+`coordinator_policy` retenu et conservant `completed`, les tentatives refusées,
+latences de bout en bout **depuis le début du lot**, CPU/RSS et les comptages
+de leases. Reproduire les **deux commandes avec les mêmes arguments** avant
+toute conclusion. Les différences de durée incluent les politiques du banc.
+
+**Limites impératives :** les vrais pools Gtk/Search/Plugins ne sont pas
+branchés à ce coordinateur ; il n'est pas un ordonnanceur produit. L'absence
+de famine sous arrivée continue, l'équité entre identités/fournisseurs et
+la sécurité d'une réadmission de requêtes métier (notamment actions utilisateur
+non idempotentes) ne sont **pas prouvées**. Aucun quota, retry ni acquisition
+n'est activé en production, aucune accélération promise.
