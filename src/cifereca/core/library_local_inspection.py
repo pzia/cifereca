@@ -372,6 +372,10 @@ class LocalInspection:
         self._manual_file_proofs = {}
         self._manual_right_scopes = {}
         self._manual_file_observations = {}
+        # A declaration is descriptive, never one of the attested strategies.
+        self._declared_right_scopes = {}
+        self._declared_pending = None
+        self._declared_last = None
         self._manual_audit_complete = audit.redacted().get('status') == 'complete'
         self._manual_pair_evidence_complete = _pair_evidence_complete(audit)
         # Private, same-identity facets for the direct-selection file browser.
@@ -701,6 +705,10 @@ class LocalInspection:
                         matching_artifacts[0].get('size'),
                     )
             scope = right_scope(right)
+            if (scope is not None and scope[0] == identity_id
+                    and scope[1] in ('kobo', 'numilog', 'paris')
+                    and scope_counts[scope] == 1):
+                self._declared_right_scopes[f'right:{index}'] = scope
             if scope is not None and right.get('provider_id') == 'numilog':
                 self._manual_right_scopes[f'right:{index}'] = scope
             # The shared audit does not project backup revision or provider
@@ -865,6 +873,9 @@ class LocalInspection:
         self._manual_file_proofs.clear()
         self._manual_right_scopes.clear()
         self._manual_file_observations.clear()
+        self._declared_right_scopes.clear()
+        self._declared_pending = None
+        self._declared_last = None
         self._manual_pending = None
         self._manual_undo = None
         self._manual_undo_pending = None
@@ -1102,6 +1113,134 @@ class LocalInspection:
         self._manual_preview_generation += 1
         self._manual_pending = None
         self._manual_undo_pending = None
+        self._declared_pending = None
+
+    def _declaration_inputs(self, right_key, file_key):
+        if (not self.valid() or self._manual_service is None
+                or type(right_key) is not str or type(file_key) is not str
+                or not right_key.startswith('right:') or not file_key.startswith('file:')
+                or right_key not in self._cases or file_key not in self._cases
+                or 'confirmed_link' in self._cases[file_key].states):
+            return None
+        scope = self._declared_right_scopes.get(right_key)
+        observation = self._manual_file_observations.get(file_key)
+        if scope is None or observation is None or scope[0] != self._manual_identity:
+            return None
+        return {'observation': observation, **dict(zip((
+            'identity_id', 'provider_id', 'credential_id', 'account_id', 'item_id',
+        ), scope))}
+
+    def preview_declared_link(self, right_key, file_key, *, revoke=False,
+                              cancelled=lambda: False):
+        """Review a descriptive association; no attested fallback or token in GTK.
+
+        Explicitly choosing this action never invents a receipt. All collisions
+        and freshness are checked by the independent writer even on a partial
+        audit. A selection change cancels both declaration and attested plans.
+        """
+        self.revoke_manual_attachment_preview()
+        generation = self._manual_preview_generation
+        options = self._declaration_inputs(right_key, file_key)
+        if options is None or type(revoke) is not bool:
+            return {'status': 'unavailable', 'read_only': True}
+        relation = None
+        if revoke:
+            last = self._declared_last
+            if last is None or last[:2] != (right_key, file_key):
+                return {'status': 'unavailable', 'read_only': True}
+            relation = last[2]
+        from .library_declared_links import (
+            DeclarationRejected, declare_local_link, inspect_declared_link,
+        )
+        try:
+            if not revoke:
+                try:
+                    existing = inspect_declared_link(
+                        self._manual_service, **options,
+                        cancelled=lambda: (cancelled() or not self.valid()
+                                           or generation != self._manual_preview_generation),
+                    )
+                except DeclarationRejected as error:
+                    if str(error) != 'relation_scope_changed':
+                        raise
+                else:
+                    if (not self.valid() or cancelled()
+                            or generation != self._manual_preview_generation):
+                        return {'status': 'unavailable', 'read_only': True}
+                    self._declared_last = (right_key, file_key, existing.relation_id)
+                    return {'status': ('needs_review' if existing.status == 'needs_review'
+                                       else 'already_declared'),
+                            'read_only': True, 'trust': 'user_declaration',
+                            'revoke_available': True}
+            result = declare_local_link(
+                self._manual_service, **options, revoke=relation,
+                cancelled=lambda: (cancelled() or not self.valid()
+                                   or generation != self._manual_preview_generation),
+            )
+        except DeclarationRejected:
+            return {'status': 'blocked', 'read_only': True}
+        if (not self.valid() or cancelled()
+                or generation != self._manual_preview_generation):
+            return {'status': 'unavailable', 'read_only': True}
+        if result.status in ('preview', 'revoke_preview'):
+            self._declared_pending = (
+                right_key, file_key, result.plan_token, relation,
+            )
+            # The selected right and file already supply the visible private
+            # coordinates. Only the exact fixed mutation is returned here.
+            return {'status': result.status, 'read_only': True,
+                    'requires_explicit_confirmation': True,
+                    'trust': 'user_declaration',
+                    'change': 'revoke_declaration' if revoke else 'record_declaration',
+                    'rights_mutations': 0, 'placement_mutations': 0,
+                    'file_mutations': 0}
+        if result.status == 'already_declared':
+            self._declared_last = (right_key, file_key, result.relation_id)
+            return {'status': 'already_declared', 'read_only': True,
+                    'trust': 'user_declaration', 'revoke_available': True}
+        return {'status': 'unavailable', 'read_only': True}
+
+    def confirm_declared_link(self, right_key, file_key, *, user_confirmed=False,
+                              cancelled=lambda: False):
+        """Consume one private declaration plan after a separate human action."""
+        pending, self._declared_pending = self._declared_pending, None
+        generation = self._manual_preview_generation
+        if (user_confirmed is not True or pending is None
+                or pending[:2] != (right_key, file_key)):
+            return {'status': 'unavailable', 'read_only': True}
+        options = self._declaration_inputs(right_key, file_key)
+        if options is None:
+            return {'status': 'unavailable', 'read_only': True}
+        from .library_declared_links import DeclarationRejected, declare_local_link
+        acknowledged = [self._accept_own_core_commit is None]
+
+        def committed_under_lock():
+            callback = self._accept_own_core_commit
+            if callable(callback):
+                acknowledged[0] = callback() is True
+
+        try:
+            result = declare_local_link(
+                self._manual_service, **options, confirmation=pending[2], revoke=pending[3],
+                cancelled=lambda: (cancelled() or not self.valid()
+                                   or generation != self._manual_preview_generation),
+                on_committed=committed_under_lock,
+            )
+        except DeclarationRejected:
+            return {'status': 'blocked', 'read_only': True}
+        if result.status in ('declared', 'already_declared'):
+            if acknowledged[0] and self.valid():
+                self._declared_last = (right_key, file_key, result.relation_id)
+            return {'status': result.status, 'read_only': result.changed == 0,
+                    'trust': 'user_declaration',
+                    'revoke_available': acknowledged[0] and self._declared_last is not None,
+                    'rights_mutations': 0, 'placement_mutations': 0, 'file_mutations': 0}
+        if result.status in ('revoked', 'already_revoked'):
+            self._declared_last = None
+            return {'status': result.status, 'read_only': result.changed == 0,
+                    'trust': 'user_declaration', 'revoke_available': False,
+                    'rights_mutations': 0, 'placement_mutations': 0, 'file_mutations': 0}
+        return {'status': 'unavailable', 'read_only': True}
 
     def _transaction_inputs(self, right_key, file_key):
         if (not self.valid() or self._manual_service is None
