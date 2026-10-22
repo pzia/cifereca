@@ -410,6 +410,11 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 warnings.append(
                     f"{session.descriptor.display_name}: résultats connus, recherche en ligne indisponible"
                 )
+                if offline.has_more:
+                    warnings.append(
+                        f"{session.descriptor.display_name}: "
+                        + _STALE_PUBLIC_TRUNCATED_WARNING
+                    )
             else:
                 warnings.append(
                     f"{session.descriptor.display_name}: "
@@ -495,6 +500,12 @@ def _provider_search_row(row: SearchResult) -> SearchResult:
         })
     return row
 
+
+
+_STALE_PUBLIC_TRUNCATED_WARNING = (
+    "known_catalog_page_truncated : première page de secours seulement ; "
+    "d’autres résultats connus ne sont pas affichés"
+)
 
 
 def _stale_public_fallback_warning(status: str) -> str:
@@ -911,6 +922,11 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                         provider_warnings = [
                             f"{session.descriptor.display_name}: résultats connus, recherche en ligne indisponible"
                         ]
+                        if offline.has_more:
+                            provider_warnings.append(
+                                f"{session.descriptor.display_name}: "
+                                + _STALE_PUBLIC_TRUNCATED_WARNING
+                            )
                     else:
                         provider_warnings = [
                             f"{session.descriptor.display_name}: "
