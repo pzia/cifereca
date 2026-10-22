@@ -202,10 +202,6 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert synopsis_panel.get_mapped()
         widgets['overview_panel'] = synopsis_panel
         report['checks']['P0_2712_inspection_overview_collapsed_initially'] = True
-        # Open deliberately after asserting the production default, before
-        # the long-right click. This makes the existing real wheel gesture
-        # exercise the complete detailed view, not a hidden summary.
-        synopsis_panel.set_expanded(True)
         dropdowns=[w for w in walk(window) if isinstance(w,Gtk.DropDown)]
         widgets['provider'],widgets['state']=dropdowns
         widgets['list']=next(w for w in walk(window) if isinstance(w,Gtk.ListBox))
@@ -224,6 +220,10 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         # user selection; no ownership is inferred from a shared valid ISBN.
         row = widgets['list'].get_first_child()
         device.click_widget(row)
+        # A collapsed synopsis makes the physical right selection accessible
+        # at 920px. Expand only AFTER the real XTEST click, then require
+        # the full summary to remain reachable by actual wheel scrolling.
+        widgets['overview_panel'].set_expanded(True)
         until(lambda:any(isinstance(w,Gtk.Label) and '1 / 20' in w.get_text()
                          for w in walk(controller.dialog)), compare_right)
 
