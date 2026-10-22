@@ -390,7 +390,13 @@ class LocalInspectionController:
             f"{overview.get('rights_attested', 0)} reliés par preuve · "
             f"{overview.get('rights_unverified_total', 0)} sans fichier vérifié"
             f" (n'implique pas l'absence)\n"
-            f"PLACEMENTS SQLITE · {overview.get('placements_registered', 0)} enregistrés "
+            + (
+                f"PRÊTS PARIS NON ACTIFS · {overview.get('paris_inactive_loans', 0)} "
+                "prêt(s) rendus / expirés / inactifs enregistrés, "
+                "distincts des droits actifs et consultables seulement.\n"
+                if overview.get('paris_inactive_loans', 0) else ""
+            )
+            + f"PLACEMENTS SQLITE · {overview.get('placements_registered', 0)} enregistrés "
             f"pour l'identité · {overview.get('paths', 0)} cas de chemin en anomalie\n"
             f"Indicateurs non additionnables : "
             f"{overview.get('unattributed_files', 0)} fichiers sans provenance attestée · "
