@@ -406,9 +406,10 @@ class PrivateSessionVault:
     def set_label(self, session_id: str, passphrase: str, label: str) -> None:
         """Atomic, separately encrypted metadata; never change .cbrv."""
         label = self._label_value(label)
-        # Verify the existing source *and* any existing sidecar first.
-        # Corrupt sidecars must not be silently overwritten.
-        self.get_label(session_id, passphrase)
+        # Authentication must occur *under* the same directory lock as
+        # replacing the sidecar. Otherwise a concurrent delete/retention
+        # could remove the archive after the check and this method would
+        # resurrect an orphan encrypted name for a deleted session.
         salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)
         encrypted = _aead()(_key(passphrase, salt)).encrypt(
             nonce, label.encode("utf-8"),
@@ -422,6 +423,10 @@ class PrivateSessionVault:
         dest = session_id + ".cbrn"
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
+            # Authenticate source and any prior name while holding the
+            # exclusive lock, before checking quotas or allocating staging.
+            # Reject missing/altered archives and forged label sidecars.
+            self.get_label(session_id, passphrase)
             try:
                 old = os.stat(dest, dir_fd=fd, follow_symlinks=False)
             except FileNotFoundError:
