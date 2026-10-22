@@ -136,3 +136,26 @@ def test_undo_confirmation_cannot_replay_other_accounts_or_changed_file(rig):
     with pytest.raises(ManualAttachmentRejected, match="^file_revalidation_failed$"):
         _undo(rig, done, confirmation=plan["plan_token"])
     assert len(_rows(rig[0], "placements")) == 1
+
+
+@pytest.mark.parametrize("stage", ["before_preview", "after_preview"])
+def test_undo_cannot_replay_earlier_account_context_epoch(rig, stage):
+    """Same strings after reconnect do not authorize prior account journal."""
+    service, book, _options = rig
+    original_file = book.read_bytes()
+    done = _attach(rig)
+    before = _rows(service, "placements")
+    original_metadata = _rows(service, "metadata")
+    plan = _undo(rig, done) if stage == "after_preview" else None
+
+    # Simulates logout/reconnect/rebind of the same textual account. The
+    # present scope is otherwise identical; only the account epoch changes.
+    service._account_context_epoch += 1
+    with pytest.raises(ManualAttachmentRejected, match="^journal_scope_changed$"):
+        _undo(
+            rig, done,
+            **({"confirmation": plan["plan_token"]} if plan else {}),
+        )
+    assert _rows(service, "placements") == before
+    assert _rows(service, "metadata") == original_metadata
+    assert book.read_bytes() == original_file
