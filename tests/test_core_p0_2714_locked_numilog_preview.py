@@ -147,3 +147,17 @@ def test_disabled_connection_cannot_count_as_authenticated_purchase(evidence):
     with storage._lock, storage._connect() as db:
         db.execute("UPDATE provider_connections SET enabled=0")
     assert preview(evidence).reason == "source_unavailable"
+
+
+def test_duplicated_connection_across_identities_is_not_a_scoped_binding(evidence):
+    storage, *_ = evidence
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "INSERT INTO provider_connections "
+            "(connection_id,identity_id,provider_id,credential_id,label,enabled,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,1,1,1)",
+            ("foreign-connection", "bob", "numilog", "cred", "Foreign synthetic"),
+        )
+    result = preview(evidence)
+    assert result.reason == "source_unavailable"
+    assert result.status == "blocked" and not result.attachment_authorized
