@@ -58,6 +58,8 @@ class LibraryAudit:
 def audit_library(
     database: Path, roots: dict[str, tuple[Path, ...]], *,
     limits: InventoryLimits | None = None, seconds: float = 180,
+    comparison_seconds: float = 10, candidate_seconds: float = 10,
+    candidate_index_seconds: float | None = None,
     cancelled: Callable[[], bool] = lambda: False,
     progress: Callable[[dict], None] | None = None,
     _snapshot: EvidenceSnapshot | None = None,
@@ -75,6 +77,13 @@ def audit_library(
     Callback exceptions propagate without being logged or reinterpreted.
     """
     if (type(seconds) not in (int, float) or not 0 < seconds <= 600
+            or type(comparison_seconds) not in (int, float)
+            or not 0 < comparison_seconds <= 60
+            or type(candidate_seconds) not in (int, float)
+            or not 0 < candidate_seconds <= 60
+            or (candidate_index_seconds is not None and (
+                type(candidate_index_seconds) not in (int, float)
+                or not 0 < candidate_index_seconds < candidate_seconds))
             or not isinstance(roots, dict)):
         raise ValueError('invalid_library_audit_options')
     database = Path(database)
@@ -127,9 +136,13 @@ def audit_library(
         )
     snapshot = scope_evidence(snapshot, tuple(selected))
     emit('reconciliation')
-    report = reconcile(inventory, snapshot, cancelled=stopped)
+    report = reconcile(inventory, snapshot, cancelled=stopped,
+                       seconds=comparison_seconds)
     emit('metadata_candidates')
-    candidates = metadata_candidates(inventory, snapshot, cancelled=stopped)
+    candidates = metadata_candidates(
+        inventory, snapshot, cancelled=stopped,
+        seconds=candidate_seconds, index_seconds=candidate_index_seconds,
+    )
     emit('stored_paths')
     stored_started = monotonic()
     paths = inspect_stored_paths(snapshot, selected, cancelled=stopped)

@@ -79,3 +79,37 @@ réexécuté pour identifier quelle étape consomme les 120 s :
 **aucun accélérateur, aucune hausse à 600 s, aucun abandon de CRC**
 avant mesure. Les deux tickets P0 #2565/#2657 restent ouverts ;
 aucun rattachement Numilog/Kobo ne découle de ces statistiques.
+
+
+## Mise à jour P0 du 22 octobre 2026 — budgets réservés (#2734)
+
+L'audit **scopé Maintenance** dispose maintenant d'un budget global de
+**600 s**, avec deux plafonds locaux explicites :
+
+- Comparaison des droits, placements et acquisitions : **30 s**
+  (`reconcile(seconds=30)`, plafond d'API 60 s).
+- Recherche bibliographique : **30 s maximum d'indexation**, puis
+  **30 s réservées pour comparer les fichiers**, dans une fenêtre locale
+  de 60 s. Les indicateurs booléens fermés `index_completed` et
+  `match_phase_executed` précisent si ces étapes ont réellement eu lieu.
+
+L'enveloppe totale de 600 s et son annulation priment **sur chaque phase** :
+les 30 s sont des maxima, **jamais** des garanties si les étapes précédentes
+ont déjà consommé le temps total. Les API génériques conservent leur
+plafond historique de 10 s tant qu'un appelant n'en choisit pas un autre.
+
+Si l'index atteint 30 s, le Core conserve
+`metadata_candidate_time_budget` et `index_completed=False`.
+Il peut encore comparer les fichiers avec les notices **déjà indexées**
+et produire des rapprochements `metadata_only`, toujours partiels,
+**jamais** une preuve de propriété ou d'absence de livre. Si la
+comparaison n'a pas démarré, `match_phase_executed=False` : la page
+Maintenance prévient explicitement que « zéro candidat » n'est pas une
+conclusion négative. Anciennes versions : absence des deux booléens
+traitée sans inférence de couverture.
+
+Ce lot est une **réallocation de budgets**, pas une explication vérifiée
+de la variation **256 → 227** liens (ticket #2796) ni une preuve
+que la bibliothèque réelle est inspectée exhaustivement. Les tests
+utilisent des horloges simulées et des livres synthétiques ; l'analyse
+réelle reste à rejouer.
