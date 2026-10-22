@@ -941,6 +941,35 @@ class LocalInspection:
         """
         self.revoke_manual_attachment_preview()
         generation = self._manual_preview_generation
+        case = self._cases.get(right_key) if self.valid() else None
+        if case is not None and case.provider == 'kobo':
+            options = self._kobo_transaction_inputs(right_key, file_key)
+            if options is None:
+                return {'status': 'unavailable', 'read_only': True}
+            from .kobo_local_reconciliation import (
+                ReconciliationRejected, reconcile_kobo_local,
+            )
+            try:
+                result = reconcile_kobo_local(
+                    self._manual_service, **options,
+                    cancelled=lambda: (
+                        cancelled() or not self.valid()
+                        or self._manual_preview_generation != generation
+                    ),
+                )
+            except ReconciliationRejected:
+                return {'status': 'blocked', 'read_only': True}
+            if (not self.valid() or cancelled()
+                    or self._manual_preview_generation != generation):
+                return {'status': 'unavailable', 'read_only': True}
+            token = result.get('plan_token')
+            if result.get('status') == 'preview' and type(token) is str and len(token) == 64:
+                self._manual_pending = (right_key, file_key, token)
+                return {'status': 'preview', 'read_only': True,
+                        'requires_explicit_confirmation': True}
+            return {'status': 'already_linked', 'read_only': True} if (
+                result.get('status') == 'already_linked'
+            ) else {'status': 'unavailable', 'read_only': True}
         options = self._transaction_inputs(right_key, file_key)
         if options is None:
             return {'status': 'unavailable', 'read_only': True}
@@ -977,6 +1006,46 @@ class LocalInspection:
         generation = self._manual_preview_generation
         if (user_confirmed is not True or pending is None
                 or pending[:2] != (right_key, file_key)):
+            return {'status': 'unavailable', 'read_only': True}
+        case = self._cases.get(right_key) if self.valid() else None
+        if case is not None and case.provider == 'kobo':
+            options = self._kobo_transaction_inputs(right_key, file_key)
+            if options is None:
+                return {'status': 'unavailable', 'read_only': True}
+            from .kobo_local_reconciliation import (
+                ReconciliationRejected, reconcile_kobo_local,
+            )
+            cache_stamp_accepted = [None]
+
+            def committed_under_lock():
+                callback = self._accept_own_core_commit
+                if callable(callback):
+                    cache_stamp_accepted[0] = callback() is True
+
+            try:
+                result = reconcile_kobo_local(
+                    self._manual_service, **options, confirmation=pending[2],
+                    cancelled=lambda: (
+                        cancelled() or not self.valid()
+                        or self._manual_preview_generation != generation
+                    ), on_committed=committed_under_lock,
+                )
+            except ReconciliationRejected:
+                return {'status': 'blocked', 'read_only': True}
+            status = result.get('status')
+            if status in ('applied', 'already_linked'):
+                operation = result.get('operation_id')
+                if (status == 'applied' and type(operation) is str
+                        and len(operation) == 64
+                        and (self._accept_own_core_commit is None
+                             or cache_stamp_accepted[0] is True)
+                        and self.valid()):
+                    self._manual_undo = (right_key, file_key, operation)
+                return {
+                    'status': status, 'read_only': status != 'applied',
+                    'undo_available': status == 'applied'
+                                      and self._manual_undo is not None,
+                }
             return {'status': 'unavailable', 'read_only': True}
         options = self._transaction_inputs(right_key, file_key)
         if options is None:
