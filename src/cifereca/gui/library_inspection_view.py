@@ -121,6 +121,13 @@ class LocalInspectionController:
             Gtk = self.Gtk
             line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
             label = Gtk.Label(label='Préparation des cas locaux…', xalign=0)
+            # Long phase + mode + elapsed counters must not enlarge the
+            # Maintenance action beyond a narrow GTK window.
+            if hasattr(label, 'set_wrap'):
+                label.set_wrap(True)
+                label.set_max_width_chars(48)
+            if hasattr(label, 'set_hexpand'):
+                label.set_hexpand(True)
             cancel = Gtk.Button(label='Annuler')
             cancel.set_tooltip_text('Interrompre l’inspection locale en lecture seule')
             cancel.connect('clicked', lambda *_: self.clear())
