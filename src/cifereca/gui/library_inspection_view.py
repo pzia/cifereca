@@ -1,4 +1,4 @@
-"""Private inspection with separate, explicitly confirmed local Numilog placement."""
+"""Private multi-source inspection, provider-specific confirmed local placement."""
 from __future__ import annotations
 
 from time import monotonic
@@ -611,7 +611,7 @@ class LocalInspectionController:
         # live private session. No journal ID or token is given to GTK.
         pair_undo = Gtk.Button(label='Annuler le dernier placement…')
         pair_undo.set_tooltip_text(
-            'Vérifier puis annuler uniquement le placement Numilog créé '
+            'Vérifier puis annuler uniquement le placement local créé '
             'pendant cette session, avec une nouvelle confirmation explicite.'
         )
         pair_undo.set_visible(False)
@@ -670,6 +670,7 @@ class LocalInspectionController:
         manual_page_size = 25
         selected_right = [None]
         selected_file = [None]
+        selected_provider = [None]
         pair_version = [0]
         placement_committed = [False]
 
@@ -997,11 +998,20 @@ class LocalInspectionController:
             pair_confirm.set_sensitive(False)
             fresh_preview.set_sensitive(False)
             pair_prepare.set_sensitive(False)
-            dialog = Adw.MessageDialog.new(
-                window, 'Confirmer ce placement local ?',
+            # Provider-specific proof, never a shared ISBN or inferred right.
+            # The Core will replay the exact transaction under its own lock.
+            proof_notice = (
+                'Le Core vérifiera à nouveau le droit Kobo personnel, '
+                'la sauvegarde antérieure, la révision, le compte et le SHA '
+                'du fichier sous verrou avant de restaurer le lien dans SQLite. '
+                if selected_provider[0] == 'kobo' else
                 'Le Core vérifiera à nouveau la preuve d’achat Numilog et '
                 'le fichier EPUB sous verrou avant de créer un seul placement '
-                'dans SQLite. Le livre original est conservé. '
+                'dans SQLite. '
+            )
+            dialog = Adw.MessageDialog.new(
+                window, 'Confirmer ce placement local ?',
+                proof_notice + 'Le livre original est conservé. '
                 'Annuler ne modifie rien.',
             )
             dialog.add_response('cancel', 'Annuler')
@@ -1059,8 +1069,10 @@ class LocalInspectionController:
                         pair_undo.set_visible(can_undo)
                         pair_undo.set_sensitive(can_undo)
                         pair_explanation.set_text(
-                            'Placement local Numilog enregistré. '
-                            'Fichier original et droit inchangés. Cette vue '
+                            ('Placement local Kobo enregistré. '
+                             if selected_provider[0] == 'kobo' else
+                             'Placement local Numilog enregistré. ')
+                            + 'Fichier original et droit inchangés. Cette vue '
                             'des preuves est désormais périmée : '
                             'aucune autre sélection possible. '
                             + ('Vous pouvez annuler ce placement une seule '
@@ -1155,7 +1167,9 @@ class LocalInspectionController:
                     notice.present()
                     return
                 dialog = Adw.MessageDialog.new(
-                    window, 'Annuler le placement Numilog ?',
+                    window, ('Annuler le placement Kobo ?'
+                             if selected_provider[0] == 'kobo'
+                             else 'Annuler le placement Numilog ?'),
                     'Seul le dernier placement enregistré pendant cette '
                     'session sera annulé, si ses preuves sont toujours '
                     'cohérentes. Le fichier EPUB et le droit sont conservés. '
@@ -1275,6 +1289,7 @@ class LocalInspectionController:
                     case.key if 'rights_without_verified_file' in case.states
                     else None
                 )
+                selected_provider[0] = case.provider if selected_right[0] else None
                 reset_pair()
                 if case.key.startswith('right:'):
                     candidate_items[0] = session.candidate_files(case.key)
@@ -1314,6 +1329,7 @@ class LocalInspectionController:
             detail.set_text('Sélectionnez un cas pour consulter ses preuves.' if page.total else 'Aucun cas dans ces filtres. Ce résultat ne prouve pas l’absence d’un livre.')
             candidate_items[0] = ()
             selected_right[0] = None
+            selected_provider[0] = None
             reset_pair()
             candidate_box.set_visible(False)
             for case in page.cases:
