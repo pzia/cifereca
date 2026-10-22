@@ -649,3 +649,19 @@ fichier volontairement téléchargé ne constitue pas un déchiffrement DRM.
 
 Les tests utilisent uniquement un faux portail local et un faux fichier
 ACSM, sans compte fournisseur, titre réel ou licence réelle.
+
+
+## Provenance des omissions HTTP (0.2.14, #2528)
+
+Chaque échange du ZIP anonymisé expose maintenant un code fermé
+`bodies.request/response.capture_reason` (taille Chromium non fiable,
+en-têtes refusés, compression, contenu binaire, budget, erreur de lecture,
+réponse absente ou capture réussie). Le manifeste publie uniquement les
+compteurs agrégés `body_capture_reasons` et les anciens états
+`capture_state` restent inchangés. Ces codes n'intègrent aucune URL,
+identité, valeur d'en-tête ni contenu privé.
+
+Une session chiffrée issue d'une version antérieure reste consultable :
+les motifs inexistants sont `unknown`, jamais reconstruits par hypothèse.
+Ces diagnostics n'autorisent pas la lecture d'une réponse compressée ou
+d'une taille inconnue ; les corps rejetés restent absents du ZIP.

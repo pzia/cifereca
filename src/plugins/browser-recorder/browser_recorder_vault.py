@@ -21,7 +21,7 @@ from time import monotonic, time
 
 from browser_recorder_http import (
     MAX_BODY_BYTES, MAX_EXCHANGES, MAX_TOTAL_BODY_BYTES,
-    PrivateExchange, PrivateHttpTrace,
+    PrivateExchange, PrivateHttpTrace, _BODY_REASONS,
 )
 
 SCHEMA = "cifereca.browser-recorder.private-session/1"
@@ -121,8 +121,21 @@ def _unrecord(blob: bytes, session_id: str):
         if type(rows) is not list or len(rows) > MAX_EXCHANGES:
             raise ValueError("invalid entries")
         for index, row in enumerate(rows):
-            if type(row) is not dict or set(row) != _FIELD_NAMES:
+            # Old CFRVLT01 sessions predate per-direction reason codes.
+            # Accept only those exact legacy fields, never arbitrary data.
+            legacy_fields = _FIELD_NAMES - {
+                "request_body_reason", "response_body_reason",
+            }
+            if type(row) is not dict or set(row) not in (
+                _FIELD_NAMES, legacy_fields,
+            ):
                 raise ValueError("invalid entry")
+            if any(
+                type(row[key]) is not str or row[key] not in _BODY_REASONS
+                for key in ("request_body_reason", "response_body_reason")
+                if key in row
+            ):
+                raise ValueError("invalid body reason")
             if (type(row["sequence"]) is not int or row["sequence"] != index + 1
                     or type(row["url"]) is not str or len(row["url"]) > 8192
                     or type(row["method"]) is not str

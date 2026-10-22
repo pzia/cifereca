@@ -740,3 +740,50 @@ def test_post_with_unsafe_raw_header_is_never_read(header_key, raw_value):
     assert request.read_post_data == 0
     assert trace.exchanges[0].request_body is None
     trace.destroy()
+
+
+def test_closed_capture_reasons_explain_omitted_bodies_without_reading_them():
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    cases = [
+        (Response(Request(ORIGIN + "/ok"), data=b'{"ok":true}'), "captured", 1),
+        (Response(Request(ORIGIN + "/compressed"), data=b"small",
+                  headers={"content-encoding": "gzip"}), "compressed", 0),
+        (Response(Request(ORIGIN + "/binary"), mime="application/pdf",
+                  data=b"PRIVATE_LICENSE"), "unsupported_mime", 0),
+    ]
+    for resp, reason, reads in cases:
+        emit(trace, resp.request, resp)
+        assert trace.exchanges[-1].response_body_reason == reason
+        assert resp.body_reads == reads
+    missing = Request(ORIGIN + "/unknown")
+    response = Response(missing, data=b"small")
+    missing.sizes = lambda: {}
+    emit(trace, missing, response)
+    assert response.body_reads == 0
+    assert trace.exchanges[-1].response_body_reason == "size_unavailable"
+    assert trace.omitted["unknown_size"] == 1
+    invalid = Request(ORIGIN + "/invalid")
+    response = Response(invalid, data=b"small",
+                        headers={"content-length": "INVALID_PRIVATE"})
+    emit(trace, invalid, response)
+    assert response.body_reads == 0
+    assert trace.exchanges[-1].response_body_reason == "unsafe_headers"
+    assert trace.omitted["unknown_size"] == 2
+    assert "PRIVATE_LICENSE" not in repr(trace)
+    trace.destroy()
+
+
+def test_closed_capture_reasons_distinguish_request_size_and_redirect():
+    trace = PrivateHttpTrace((ORIGIN,), max_body=64)
+    req = Request(ORIGIN + "/post", method="POST",
+                  headers={"content-type": "application/json"},
+                  data=b'{"id":1}')
+    req.sizes = lambda: {"requestBodySize": None, "responseBodySize": 0}
+    emit(trace, req, Response(req, status=302, data=b"",
+                              headers={"location": "/other"}))
+    entry = trace.exchanges[0]
+    assert req.read_post_data == 0
+    assert entry.request_body_reason == "size_unavailable"
+    assert entry.response_body_reason == "redirect"
+    assert entry.response_body_state == "redirect"
+    trace.destroy()

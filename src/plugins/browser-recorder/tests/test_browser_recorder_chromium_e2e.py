@@ -271,6 +271,7 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
             assert entry.response_headers.get("content-length") is None
             assert entry.mime == expected_mime
             assert entry.response_body_state == "captured"
+            assert entry.response_body_reason == "captured"
             assert entry.response_body
         # The binary fetch can still be in-flight when the page's final
         # /complete endpoint signals Stop. In either terminal or pending
@@ -325,8 +326,13 @@ def test_real_chromium_local_http_reaches_structural_zip_only_after_review(
                 ])
                 body = exchange["bodies"]["response"]
                 assert body["state"] == state
+                assert body["capture_state"] == "captured"
+                assert body["capture_reason"] == "captured"
                 assert body["file"] in members
                 assert members[body["file"]]
+            manifest = json.loads(members["manifest.json"])
+            assert manifest["body_capture_reasons"]["captured"] >= 3
+            assert sum(manifest["body_capture_reasons"].values()) == 2 * len(trace.exchanges)
             joined = json.dumps(preview, ensure_ascii=True)
             for secret in (TOKEN, COOKIE, ACCOUNT, UUID,
                            "PRIVATE_FAKE_TITLE", "FICTIONAL_PASSWORD"):
