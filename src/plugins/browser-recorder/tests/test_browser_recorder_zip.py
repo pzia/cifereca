@@ -1160,6 +1160,7 @@ def test_zip_preserves_closed_collector_state_separately_from_projection():
         assert binary["bodies"]["response"] == {
             "state": "body_omitted",
             "capture_state": "binary_skipped",
+            "capture_reason": "unknown",  # legacy/synthetic exchange had no reason
             "file": None,
         }
         posted = json.loads(files["exchanges/0002.json"])
