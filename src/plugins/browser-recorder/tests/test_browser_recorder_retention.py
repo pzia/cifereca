@@ -162,3 +162,47 @@ def test_unrelated_orphan_chiffre_is_never_pruned_by_retention(tmp_path, monkeyp
     vault.retention_apply(plan, PASSWORD, confirmed=True)
     assert not vault.list_ids()
     assert staging.read_bytes() == ciphertext
+
+
+def test_corrupted_encrypted_label_cannot_be_previsualized_or_deleted(
+    tmp_path, monkeypatch,
+):
+    vault = PrivateSessionVault(tmp_path / "vault")
+    first = session(vault, tmp_path, monkeypatch, age_days=170,
+                    label="PRIVATE-FICTIONAL-LABEL")
+    second = session(vault, tmp_path, monkeypatch, age_days=175)
+    plan = vault.retention_preview(PASSWORD, 90)
+    assert plan.count == 2
+    label_path = vault.path / (first + ".cbrn")
+    original = label_path.read_bytes()
+    label_path.write_bytes(original[:-1] + bytes([original[-1] ^ 0x01]))
+    before = capture_bytes(vault)
+    with pytest.raises(VaultError, match="vault_label_invalid"):
+        vault.retention_preview(PASSWORD, 90)
+    # This previously issued preview is also invalidated. All-or-nothing
+    # preflight must never delete the *other* independently valid session.
+    with pytest.raises(VaultError, match="vault_retention_changed"):
+        vault.retention_apply(plan, PASSWORD, confirmed=True)
+    assert capture_bytes(vault) == before
+    assert set(vault.list_ids()) == {first, second}
+
+
+def test_replaced_label_from_other_session_fails_aad_authentication(
+    tmp_path, monkeypatch,
+):
+    vault = PrivateSessionVault(tmp_path / "vault")
+    first = session(vault, tmp_path, monkeypatch, age_days=190,
+                    label="FICTIONAL_FIRST_LABEL")
+    second = session(vault, tmp_path, monkeypatch, age_days=210,
+                     key=OTHER, label="FICTIONAL_OTHER_PRIVATE_LABEL")
+    original = vault.path / (first + ".cbrv")
+    before = original.read_bytes()
+    # Valid AES-GCM ciphertext for another archive; identical file
+    # permissions/magic but wrong key/session-ID associated data.
+    (vault.path / (first + ".cbrn")).write_bytes(
+        (vault.path / (second + ".cbrn")).read_bytes()
+    )
+    with pytest.raises(VaultError, match="vault_label_invalid"):
+        vault.retention_preview(PASSWORD, 90)
+    assert original.read_bytes() == before
+    assert set(vault.list_ids()) == {first, second}
