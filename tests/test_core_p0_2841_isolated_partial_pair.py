@@ -182,6 +182,43 @@ def test_missing_receipt_and_changed_selected_bytes_are_not_waived(rig):
         session.close()
 
 
+def test_nonprobative_bibliographic_budget_does_not_block_valid_receipt(rig):
+    def bibliographic_partial(audit):
+        audit.metadata_candidates.reasons.add('metadata_candidate_time_budget')
+    audit, session, right, file = _numilog(rig, altered=bibliographic_partial)
+    try:
+        assert audit.redacted()['status'] == 'incomplete_scan'
+        preflight = session.preflight_manual_link(right, file)
+        assert preflight.status == 'eligible_for_fresh_validation'
+        assert 'global_partial_pair_reviewable' in preflight.codes
+        assert session.preview_manual_attachment(right, file)['status'] == 'preview'
+        assert not _rows(rig[0], 'placements')
+    finally:
+        session.close()
+
+
+def test_live_account_conflict_after_safe_preview_blocks_commit(rig):
+    _bad_files(rig[1].parent)
+    _audit, session, right, file = _numilog(rig)
+    try:
+        assert session.preview_manual_attachment(right, file)['status'] == 'preview'
+        # The account-scoped acquisition receipt changes AFTER the audit and
+        # preview, but before the human clicks confirmation.
+        with rig[0].storage._lock, rig[0].storage._connect() as db:
+            db.execute(
+                "UPDATE acquisition_ledger SET account_id='PRIVATE_FOREIGN' "
+                "WHERE entitlement_id='private-right'"
+            )
+        result = session.confirm_manual_attachment(
+            right, file, user_confirmed=True,
+        )
+        assert result['status'] != 'applied'
+        assert not _rows(rig[0], 'placements')
+        assert 'PRIVATE_FOREIGN' not in json.dumps(result)
+    finally:
+        session.close()
+
+
 def test_kobo_requires_historical_backup_but_ignores_other_invalid_epub(kobo_selected):
     case, original, _right, _file = kobo_selected
     root = case.target.parent
