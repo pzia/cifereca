@@ -187,7 +187,7 @@ def test_pip_standard_constraints_choose_an_older_eligible_release(monkeypatch):
             payload = old_item if "--constraint" in command else fresh_item
             if "--constraint" in command:
                 constraints = Path(command[command.index("--constraint") + 1]).read_text()
-                assert constraints == "sample-pkg<2.0\\n"
+                assert constraints == "sample-pkg<2.0\n"
             Path(command[command.index("--report") + 1]).write_text(
                 json.dumps({"install": [payload]}), encoding="utf-8",
             )
