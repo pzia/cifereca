@@ -99,6 +99,21 @@ def test_create_venv_prefers_offline_core_wheelhouse(tmp_path, monkeypatch):
     assert str(release) not in pip
 
 
+def test_create_venv_refuses_unattested_wheelhouse_before_venv_mutation(tmp_path, monkeypatch):
+    release = _mini_project(tmp_path / "release")
+    wheelhouse = release / "offline-wheels"
+    wheelhouse.mkdir()
+    (wheelhouse / "cifereca-9.9.9-py3-none-any.whl").write_bytes(b"wheel")
+
+    def unexpected_run(*args, **kwargs):
+        pytest.fail("unattested wheel reached subprocess/venv")
+
+    monkeypatch.setattr(updater.subprocess, "run", unexpected_run)
+    with pytest.raises(updater.UpdateError, match="dependency_provenance_unavailable"):
+        updater._create_venv(release, os.sys.executable)
+    assert not (release / ".venv").exists()
+
+
 def test_atomic_current_switch_and_previous(tmp_path, monkeypatch):
     source1 = _mini_project(tmp_path / "src1", "1.0.0")
     source2 = _mini_project(tmp_path / "src2", "2.0.0")
