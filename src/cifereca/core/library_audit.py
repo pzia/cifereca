@@ -63,6 +63,7 @@ def audit_library(
     cancelled: Callable[[], bool] = lambda: False,
     progress: Callable[[dict], None] | None = None,
     _snapshot: EvidenceSnapshot | None = None,
+    _reuse: dict | None = None,
 ) -> LibraryAudit:
     """Run all existing local phases with a shared deadline/cancel signal.
 
@@ -120,6 +121,7 @@ def audit_library(
     inventory = scan_identity_roots(
         selected, limits=replace(limits, seconds=min(limits.seconds, seconds)),
         cancelled=stopped, progress=lambda counters: emit('inventory', counters),
+        _reuse=_reuse,
     )
     emit('snapshot')
     if stopped():

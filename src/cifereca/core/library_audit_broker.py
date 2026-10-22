@@ -9,6 +9,7 @@ from .library_audit import audit_library
 from .library_inventory import InventoryLimits
 from .library_audit_roots import configured_identity_roots
 from .library_inspection_cache import begin_inspection_cache, remember_inspection_cache
+from .library_inventory_checkpoint import begin_inventory_resume, remember_inventory_resume
 from .library_reconciliation import read_library_snapshot
 
 _ROOT_ERRORS = frozenset({
@@ -150,6 +151,16 @@ def _execute_scoped_audit(service, identity_id, control, finish):
             if changed:
                 return aggregate_snapshot_timing(_unavailable({'reconciliation_scope_changed'}))
             return aggregate_snapshot_timing(_unavailable(snapshot.reasons))
+        # The snapshot was read afresh on this run; cached *file contents*
+        # never carry SQLite rights or placement conclusions across runs.
+        scope_key = (
+            id(config), id(config_data), id(identities), id(current), epoch,
+            id(storage), str(database), projected, configured,
+            tuple((owner, tuple(paths)) for owner, paths in sorted(roots.items())),
+        )
+        generation, observations = begin_inventory_resume(
+            service, identity_id, scope_key,
+        )
         result = audit_library(
             database, roots, limits=InventoryLimits(seconds=_SCOPED_AUDIT_SECONDS),
             seconds=_SCOPED_AUDIT_SECONDS,
@@ -159,7 +170,13 @@ def _execute_scoped_audit(service, identity_id, control, finish):
             comparison_seconds=30, candidate_seconds=60,
             candidate_index_seconds=30,
             cancelled=cancelled, progress=progress, _snapshot=snapshot,
+            _reuse=observations,
         )
+        # A cancelled *file* scan can still contribute positive, fully
+        # validated observations for a later attempt. A changed identity or
+        # configuration cannot retain them. No SQLite facts are stored.
+        remember_inventory_resume(service, identity_id, scope_key,
+                                  generation, result.inventory, same_scope)
         stopped = cancelled()
         if changed:
             return aggregate_snapshot_timing(_unavailable({'reconciliation_scope_changed'}))
