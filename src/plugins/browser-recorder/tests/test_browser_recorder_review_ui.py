@@ -57,6 +57,23 @@ class Widget:
         raise AttributeError(key)
 
 
+class Notebook(Widget):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tab_titles = []
+        self.current_page = 0
+
+    def append_page(self, child, label):
+        self.children.append(child)
+        self.tab_titles.append(label.label)
+
+    def set_current_page(self, page):
+        self.current_page = page
+
+    def get_current_page(self):
+        return self.current_page
+
+
 class Combo(Widget):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -97,6 +114,9 @@ class Gtk:
     Orientation = NS(VERTICAL=1, HORIZONTAL=2)
     SelectionMode = NS(NONE=0)
     WrapMode = NS(CHAR=1)
+    PolicyType = NS(NEVER=0, AUTOMATIC=1)
+    Widget = Widget
+    Notebook = Notebook
     Box = Widget
     FlowBox = Widget
     Label = Widget
