@@ -317,12 +317,14 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
     try:
         assert tasks.handle is None  # building the page never starts Chromium
         children = []
-        item = root.get_child().get_child().get_first_child()
+        item = root.get_first_child()
         while item is not None:
             children.append(item)
             item = item.get_next_sibling()
-        assert len(children) == 6
-        description, site, consent, workflow, private, advanced = children
+        assert len(children) == 3
+        description, private, advanced = children
+        site = plugin.private_panel.site
+        consent = plugin.private_panel.consent
         assert isinstance(site, Gtk.Entry)
         assert isinstance(consent, Gtk.CheckButton)
         assert private is plugin.private_panel.widget
@@ -330,7 +332,7 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
         assert not advanced.get_expanded()
         assert "HAR" in advanced.get_label()
         assert "HTTP" in description.get_label()
-        assert "ZIP" in workflow.get_label()
+        assert plugin.private_panel.tabs.get_n_pages() == 4
         assert plugin.private_panel.start.get_sensitive()
         assert not plugin.private_panel.export_button.get_sensitive()
         # Verify real GTK accepts focus on the consent and HTTP start
@@ -339,6 +341,8 @@ def test_real_gtk4_primary_page_prefers_private_http_over_legacy_har(
         # Gtk.Entry delegates keyboard focus to its internal Gtk.Text child.
         focus = window.get_focus()
         assert focus is site or focus.is_ancestor(site)
+        plugin.private_panel.tabs.set_current_page(1)
+        flush_glib()
         assert plugin.private_panel.start.grab_focus()
         assert window.get_focus() is plugin.private_panel.start
         legacy = advanced.get_child()
@@ -457,8 +461,8 @@ def test_gtk_capture_failure_is_attested_and_privacy_safe(
     flush_glib()
     try:
         assert diagnostics.snapshot() == []
-        site = root.get_child().get_child().get_first_child().get_next_sibling()
-        consent = site.get_next_sibling()
+        site = page.private_panel.site
+        consent = page.private_panel.consent
         site.set_text(ORIGIN + "/catalog")
         assert not consent.get_active()
         page.private_panel.start.emit("clicked")
@@ -618,7 +622,7 @@ def test_native_gtk_legacy_har_errors_reach_safe_core_diagnostics(
     try:
         # The HAR controls are secondary, and page rendering is silent.
         assert diagnostics.snapshot() == []
-        advanced = root.get_child().get_child().get_last_child()
+        advanced = root.get_last_child()
         assert isinstance(advanced, Gtk.Expander)
         assert not advanced.get_expanded()
         advanced.set_expanded(True)
@@ -630,8 +634,8 @@ def test_native_gtk_legacy_har_errors_reach_safe_core_diagnostics(
         har_name = controls.get_next_sibling()
         status = har_name.get_next_sibling()
         assert isinstance(status, Gtk.Label)
-        entry = root.get_child().get_child().get_first_child().get_next_sibling()
-        consent = entry.get_next_sibling()
+        entry = plugin.private_panel.site
+        consent = plugin.private_panel.consent
         entry.set_text(ORIGIN + "/catalog")
         har_name.set_text("20261021T190000Z-12345678.har")
         chosen = record_button if mode == "record" else replay_button
