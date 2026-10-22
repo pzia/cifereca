@@ -302,3 +302,56 @@ def test_refresh_does_nothing_after_close():
     window.search_controls = NS(set_provider_choices=Mock())
     refresh_query_providers(window)
     window.search_controls.set_provider_choices.assert_not_called()
+
+
+def test_unavailable_paris_hint_is_scoped_and_never_selectable():
+    """A configured Paris outage stays visible without advertising online search."""
+    window, _events, _calls, _changed, _activate, _caps, _create = _setup()
+    window.service.current_identity = NS(identity_id="alice")
+    window.service.searchable_providers = lambda: []
+    window.service.catalogue_source_capabilities = lambda identity_id=None: [
+        NS(provider_id="paris", identity_scope="authenticated",
+           catalog_search_supported=True, catalog_search_available=False),
+    ]
+    window.service.accounts_for_identity = lambda identity_id: (
+        [NS(provider_id="paris", identity_id="alice")] if identity_id == "alice" else []
+    )
+    controls = NS(
+        set_provider_choices=Mock(),
+        set_provider_search_capabilities=Mock(),
+        set_provider_status_notice=Mock(),
+    )
+    window.search_controls = controls
+    refresh_query_providers(window)
+    assert "paris" not in dict(controls.set_provider_choices.call_args.args[0])
+    assert "compte configuré mais source non connectée" in (
+        controls.set_provider_status_notice.call_args.args[0]
+    )
+
+    # Switching profile must not retain evidence of another profile account.
+    window.service.current_identity = NS(identity_id="bob")
+    refresh_query_providers(window)
+    assert "aucun compte rattaché à ce profil" in (
+        controls.set_provider_status_notice.call_args.args[0]
+    )
+
+
+def test_connected_or_disabled_paris_has_no_disconnected_notice():
+    window, _events, _calls, _changed, _activate, _caps, _create = _setup()
+    window.service.current_identity = NS(identity_id="alice")
+    controls = NS(
+        set_provider_choices=Mock(), set_provider_search_capabilities=Mock(),
+        set_provider_status_notice=Mock(),
+    )
+    window.search_controls = controls
+    row = NS(
+        provider_id="paris", identity_scope="authenticated",
+        catalog_search_supported=True, catalog_search_available=True,
+    )
+    window.service.catalogue_source_capabilities = lambda identity_id=None: [row]
+    refresh_query_providers(window)
+    controls.set_provider_status_notice.assert_called_with("")
+    row.catalog_search_available = False
+    window.service.catalogue_source_capabilities = lambda identity_id=None: []
+    refresh_query_providers(window)
+    controls.set_provider_status_notice.assert_called_with("")
