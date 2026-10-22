@@ -207,6 +207,25 @@ def _copy_source(source: Path, destination: Path) -> None:
 
 
 def _create_venv(release: Path, python: str) -> Path:
+    # P0 #2770: inspect the complete offline wheel inventory *before* venv
+    # creation. A missing/modified proof must not start a pip installation.
+    # The manifest belongs to a trusted, signed release archive; standalone
+    # manifests do not independently authenticate publication timestamps.
+    wheelhouse = release / "offline-wheels"
+    version = _metadata(release)[1]
+    if wheelhouse.is_dir():
+        from .wheelhouse_quarantine import verify_wheelhouse
+        from .plugins.python_quarantine import QuarantineRejected
+        try:
+            verified = verify_wheelhouse(wheelhouse, core_version=version)
+        except QuarantineRejected as exc:
+            raise UpdateError(str(exc)) from None
+        core_wheels = sorted(wheelhouse.glob(f"cifereca-{version}-*.whl"))
+        if not core_wheels or any(wheel not in verified for wheel in core_wheels):
+            raise UpdateError("dependency_not_eligible")
+    else:
+        core_wheels = []
+
     venv = release / ".venv"
     # PyGObject/GTK stays a system dependency, therefore the release venv may
     # see system site-packages. All cifereca Python runtime dependencies are,
@@ -220,9 +239,6 @@ def _create_venv(release: Path, python: str) -> Path:
     py = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     if not py.is_file():
         raise UpdateError("Python du venv absent")
-    wheelhouse = release / "offline-wheels"
-    version = _metadata(release)[1]
-    core_wheels = sorted(wheelhouse.glob(f"cifereca-{version}-*.whl")) if wheelhouse.is_dir() else []
     if core_wheels:
         command = [
             str(py), "-m", "pip", "install", "--disable-pip-version-check",
