@@ -929,6 +929,7 @@ class PrivateReviewPanel:
         if (self.vault_directory is None or self._closed
                 or self.is_recording() or self.is_scanning()):
             return
+        self._invalidate_retention()
         try:
             ids = PrivateSessionVault(self.vault_directory).list_ids()
         except VaultError:
@@ -1529,6 +1530,7 @@ class PrivateReviewPanel:
         self._refresh()
 
     def destroy(self):
+        self._retention_plan = None
         if self._private_destination_dialog is not None:
             chooser, self._private_destination_dialog = (
                 self._private_destination_dialog, None
