@@ -24,12 +24,13 @@ from cifereca.plugins.python_quarantine import QuarantineRejected, check_pip_rep
 from cifereca.wheelhouse_quarantine import attest_wheelhouse, verify_wheelhouse
 
 
-def _run(command: list[str]) -> None:
+def _run(command: list[str], *, stage: str) -> None:
     result = subprocess.run(
         command, cwd=ROOT, text=True, capture_output=True, timeout=360, check=False,
     )
     if result.returncode:
         # Tool output can include index URLs and environment state; never echo it.
+        print(f"wheelhouse_preflight_failed:{stage}", file=sys.stderr)
         raise QuarantineRejected("dependency_not_eligible")
 
 
@@ -53,13 +54,15 @@ def _approved_runtime_wheels(requirements: list[str]) -> tuple[str, ...]:
                     encoding="utf-8",
                 )
                 command += ["--constraint", str(constraint_file)]
-            _run(command)
+            _run(command, stage="resolve")
             try:
                 plan = json.loads(report.read_text(encoding="utf-8"))
                 return check_pip_report(plan, now=datetime.now(timezone.utc))
             except QuarantineRejected as exc:
                 if str(exc) != "dependency_too_recent" or not exc.name or not exc.version:
+                    print(f"wheelhouse_preflight_failed:attest:{str(exc)}", file=sys.stderr)
                     raise
+                print(f"wheelhouse_quarantined:{exc.name}=={exc.version}", file=sys.stderr)
                 # Each retry must strictly reduce at least one allowed version.
                 try:
                     if exc.name in constraints and Version(exc.version) >= Version(constraints[exc.name]):
@@ -90,14 +93,14 @@ def main() -> int:
             sys.executable, "-m", "pip", "--isolated", "download",
             "--disable-pip-version-check", "--no-index", "--no-deps",
             "--no-cache-dir", "--dest", str(destination), url,
-        ])
+        ], stage="download")
     # Building the first-party wheel uses previously provisioned build tools;
     # this script does not install or upgrade those tools.
     _run([
         sys.executable, "-m", "pip", "--isolated", "wheel",
         "--disable-pip-version-check", "--no-deps", "--no-build-isolation",
         "--no-index", "--wheel-dir", str(destination), str(ROOT),
-    ])
+    ], stage="build-core")
     attest_wheelhouse(destination, core_version=version)
     verify_wheelhouse(destination, core_version=version)
     print("admitted_wheelhouse_ready")
