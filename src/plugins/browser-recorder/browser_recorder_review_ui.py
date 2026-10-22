@@ -401,16 +401,24 @@ class PrivateReviewPanel:
         self.pause_button = Gtk.Button(label="Mettre en pause")
         self.preview_button = Gtk.Button(label="Prévisualiser les choix")
         self.clear = Gtk.Button(label="Effacer les données privées")
-        for button in (self.start, self.stop, self.pause_button,
-                       self.preview_button, self.clear):
+        for button in (self.start, self.stop, self.pause_button):
             controls.append(button)
         box.append(controls)
         box.append(Gtk.Label(
-            label="Après l'arrêt, passer à l'onglet 4 · Revue et ZIP LLM. "
-                  "Aucun envoi externe n'est effectué.",
+            label="Après l'arrêt, la revue s'ouvre dans l'onglet 4. "
+                  "Aucun export ni envoi externe n'est automatique.",
             xalign=0, wrap=True,
         ))
         box = self.review_box
+        review_controls = Gtk.FlowBox()
+        review_controls.set_selection_mode(Gtk.SelectionMode.NONE)
+        review_controls.set_min_children_per_line(1)
+        review_controls.set_max_children_per_line(2)
+        review_controls.set_row_spacing(6)
+        review_controls.set_column_spacing(8)
+        for button in (self.preview_button, self.clear):
+            review_controls.append(button)
+        box.append(review_controls)
         box.append(Gtk.Label(
             label="Revue clavier : Tab pour cibler un identifiant ; "
                   "1 = anonymiser, 2 = conserver, 3 = exclure. "
