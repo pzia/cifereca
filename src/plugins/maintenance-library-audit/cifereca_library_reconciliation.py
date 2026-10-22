@@ -301,6 +301,28 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                     'same_sqlite_proofs',
                 )
                 table_names = drift.get('changed_sqlite_tables')
+                # Optional forward-compatible Core P0 #2796 row counts. Never
+                # render arbitrary nested payloads, table names or raw proofs.
+                row_deltas = drift.get('sqlite_proof_row_deltas')
+                safe_row_deltas = (
+                    row_deltas is None or (
+                        type(row_deltas) is dict
+                        and type(table_names) is list
+                        and set(row_deltas) == set(
+                            key for key in table_names if type(key) is str
+                        )
+                        and all(
+                            name in table_labels
+                            and type(delta) is dict
+                            and set(delta) == {'removed', 'added'}
+                            and all(type(delta[key]) is int
+                                    and 0 <= delta[key] <= 100_000
+                                    for key in ('removed', 'added'))
+                            and (delta['removed'] or delta['added'])
+                            for name, delta in row_deltas.items()
+                        )
+                    )
+                )
                 cause = drift.get('interpretation')
                 basis = drift.get('basis')
                 if (all(type(drift.get(key)) is int and 0 <= drift[key] <= 4096
@@ -311,6 +333,7 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                         and all(type(name) is str and name in table_labels
                                 for name in table_names)
                         and len(set(table_names)) == len(table_names)
+                        and safe_row_deltas
                         and type(basis) is str and basis in ('complete', 'observed_only')
                         and type(cause) is str and cause in explanations):
                     previous = drift['previous_observed']
@@ -354,6 +377,16 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                             ', '.join(table_labels[name] for name in table_names)
                             if table_names else 'aucune des cinq tables de preuve'
                         )
+                        row_delta_lines = (
+                            ('Évolution des lignes de preuve SQLite (retirées / '
+                             'apparues ; une ligne modifiée compte dans les deux) : '
+                             + ' · '.join(
+                                 f'{table_labels[table]} '
+                                 f'{row_deltas[table]["removed"]} / '
+                                 f'{row_deltas[table]["added"]}'
+                                 for table in table_names
+                             ) + '.'),
+                        ) if row_deltas else ()
                         stability_lines = (
                             'Évolution entre deux audits de même portée (' + source_note
                             + f') : {previous} puis {current} fichier(s) observé(s).',
@@ -366,7 +399,7 @@ class LibraryReconciliationAuditTool(_ReadOnlyTool):
                             f'{drift["lost_confirmed"]} ; nouveaux : '
                             f'{drift["gained_confirmed"]}. '
                             'Ces nombres ne prouvent aucune perte de livre ou de droit.',
-                        )
+                        ) + row_delta_lines
             candidate_metrics = ()
             keys = (
                 ('catalog_rows_examined', 'notices'),
