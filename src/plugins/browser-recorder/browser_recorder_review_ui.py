@@ -93,6 +93,12 @@ class PrivateReviewPanel:
         self.vault_directory = Path(vault_directory) if vault_directory else None
         self.vault_consent = None
         self.vault_passphrase = None
+        # Unlocked only by an explicit open action. Transient bytearray is
+        # wiped on lock/destroy; never persisted, logged, or sent to plugins.
+        self._vault_secret = None
+        self.vault_state = None
+        self.vault_open_button = None
+        self.vault_close_button = None
         self.session_list = None
         self.delete_confirm = None
         self.private_export_button = None
@@ -117,9 +123,8 @@ class PrivateReviewPanel:
         self._index_handle = None
         self._retention_plan = None
 
-        # Three independent workspaces replace the former long, mixed form.
-        # Each tab has its own scroll position; status and the shared vault
-        # passphrase remain reachable regardless of the selected workspace.
+        # Workspaces have independent scroll positions. The vault lock
+        # controls remain reachable regardless of the selected tab.
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         root.set_hexpand(True)
         root.set_vexpand(True)
@@ -131,17 +136,32 @@ class PrivateReviewPanel:
         self.status.set_selectable(True)
         root.append(self.status)
         if self.vault_directory is not None:
-            root.append(Gtk.Label(
-                label="Phrase secrète du coffre — requise pour capturer, "
-                      "ouvrir ou gérer une session chiffrée ; jamais exportée.",
+            self.vault_state = Gtk.Label(
+                label="Coffre fermé · saisir la phrase secrète une fois pour l'ouvrir.",
                 xalign=0, wrap=True,
-            ))
+            )
+            root.append(self.vault_state)
+            vault_controls = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
+            )
             self.vault_passphrase = Gtk.Entry()
             self.vault_passphrase.set_visibility(False)
+            self.vault_passphrase.set_hexpand(True)
             self.vault_passphrase.set_placeholder_text(
                 "Phrase secrète du coffre (12 caractères minimum)"
             )
-            root.append(self.vault_passphrase)
+            vault_controls.append(self.vault_passphrase)
+            self.vault_open_button = Gtk.Button(label="Ouvrir le coffre")
+            self.vault_close_button = Gtk.Button(label="Fermer le coffre")
+            vault_controls.append(self.vault_open_button)
+            vault_controls.append(self.vault_close_button)
+            root.append(vault_controls)
+            self.vault_open_button.connect(
+                "clicked", lambda *_: self.unlock_sessions(),
+            )
+            self.vault_close_button.connect(
+                "clicked", lambda *_: self.lock_vault(),
+            )
 
         self.tabs = Gtk.Notebook()
         self.tabs.set_scrollable(True)
@@ -218,10 +238,11 @@ class PrivateReviewPanel:
         if self.vault_directory is not None:
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
-                label="Coffre chiffré : chaque capture consentie est archivée "
-                      "pour être revue plus tard, sans export ZIP. Entrez une "
-                      "phrase secrète d'au moins 12 caractères et conservez-la. "
-                      "Une panne peut ne laisser qu'une capture partielle.",
+                label="Coffre chiffré : cliquez « Ouvrir le coffre » une seule "
+                      "fois pour réutiliser la phrase secrète en mémoire "
+                      "pendant cette ouverture de page. « Fermer le coffre » "
+                      "efface l'accès en mémoire sans supprimer les sessions. "
+                      "Chaque capture exige toujours son consentement.",
                 xalign=0, wrap=True,
             ))
             self.vault_consent = Gtk.CheckButton(
@@ -339,8 +360,8 @@ class PrivateReviewPanel:
             )
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
-                label="Exporter une session pour un LLM : sélectionnez une session, "
-                      "saisissez la phrase secrète du coffre, puis choisissez où "
+                label="Exporter une session pour un LLM : ouvrez le coffre "
+                      "une fois, sélectionnez une session, puis choisissez où "
                       "enregistrer le fichier ZIP. Pas de second mot de passe ni "
                       "de permissions de dossier à configurer. Le coffre reste "
                       "chiffré ; le ZIP exporté est EN CLAIR (URL, identifiants "
@@ -394,8 +415,8 @@ class PrivateReviewPanel:
                 label="Session archivée dans le coffre : vous pouvez l'exporter "
                       "directement pour un LLM sans attendre les décisions "
                       "d'anonymisation. Ce ZIP est NON CHIFFRÉ et contient les "
-                      "observations privées conservées. Saisissez la phrase "
-                      "du coffre en haut, puis choisissez où l'enregistrer.",
+                      "observations privées conservées. Ouvrez le coffre "
+                      "une fois en haut, puis choisissez où l'enregistrer.",
                 xalign=0, wrap=True,
             ))
             self.current_private_export_button = Gtk.Button(
@@ -568,6 +589,21 @@ class PrivateReviewPanel:
             and not self.legacy_running()
         )
         if self.vault_directory is not None:
+            unlocked = self._vault_secret is not None
+            self.vault_state.set_label(
+                "Coffre OUVERT · clé en mémoire uniquement · Fermer pour verrouiller."
+                if unlocked else
+                "Coffre FERMÉ · phrase secrète requise pour l'ouvrir."
+            )
+            self.vault_passphrase.set_sensitive(
+                not self._closed and not busy and not scanning and not unlocked
+            )
+            self.vault_open_button.set_sensitive(
+                not self._closed and not busy and not scanning and not unlocked
+            )
+            self.vault_close_button.set_sensitive(
+                not self._closed and not busy and not scanning and unlocked
+            )
             self.sessions_refresh.set_sensitive(
                 not self._closed and not busy and not scanning
             )
