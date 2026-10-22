@@ -114,6 +114,12 @@ class LocalInspectionController:
         """The Maintenance ActionRow owns the nonmodal loading indicator."""
         self._activity_row = row
 
+    def _set_activity_state(self, message):
+        """One fixed local inspection status, independent of last audit."""
+        if (self._activity_row is not None
+                and hasattr(self._activity_row, 'set_subtitle') and self.alive()):
+            self._activity_row.set_subtitle(message)
+
     def _show_activity(self):
         if self._activity_row is None or not hasattr(self.Gtk, 'Box'):
             return
@@ -136,6 +142,9 @@ class LocalInspectionController:
             self._activity_row.add_suffix(line)
             self._activity_box, self._activity_label = line, label
         self._activity_label.set_label('Préparation des cas locaux…')
+        self._set_activity_state(
+            'Inspection en cours · lecture seule · couverture inconnue.'
+        )
         self._activity_box.set_visible(True)
 
     def _hide_activity(self):
@@ -183,6 +192,11 @@ class LocalInspectionController:
             if (generation == self._generation and self.control is not None
                     and not self.control.cancelled() and self.alive()):
                 self._activity_mode = code
+                self._set_activity_state(
+                    'Réutilisation du cache privé validé.'
+                    if code == 'cached' else
+                    'Nouvelle inspection locale hors réseau · couverture inconnue.'
+                )
                 self._render_activity()
             return False
 
@@ -213,6 +227,7 @@ class LocalInspectionController:
         idle_add(publish)
 
     def clear(self):
+        running = self.control is not None and self._activity_started is not None
         self._generation += 1
         if self.control is not None:
             self.control.cancel()
@@ -227,6 +242,10 @@ class LocalInspectionController:
             dialog, self.dialog = self.dialog, None
             dialog.destroy()
         self._hide_activity()
+        if running:
+            self._set_activity_state(
+                'Inspection interrompue · aucun constat d’absence de livre.'
+            )
 
     def start(self):
         self.clear()
@@ -270,9 +289,15 @@ class LocalInspectionController:
             self.control = None
             self._hide_activity()
             if not isinstance(session, LocalInspection):
+                self._set_activity_state(
+                    'Inspection impossible · aucune absence de livre établie.'
+                )
                 self.parent.show_error(_inspection_failure_message(session), 'Inspection locale')
                 return
             if not session.valid():
+                self._set_activity_state(
+                    'Inspection interrompue : périmètre ou identité modifiés.'
+                )
                 # Unlike a failed snapshot envelope, an established private
                 # session can really be invalidated by the active scope guard.
                 self.parent.show_error(
@@ -281,11 +306,19 @@ class LocalInspectionController:
                 )
                 return
             self.session = session
+            self._set_activity_state(
+                'Inspection terminée · cas locaux consultables.'
+                if session.summary().get('status') == 'complete' else
+                'Inspection partielle · preuves non exhaustives.'
+            )
             self.present()
 
         def failed(_error):
             if generation == self._generation and self.alive():
                 self.clear()
+                self._set_activity_state(
+                    'Inspection impossible · aucune absence de livre établie.'
+                )
                 self.parent.show_error('Inspection locale indisponible. Relancez la réconciliation.', 'Inspection locale')
 
         self.parent.runner.submit('Inspection locale de bibliothèque', read, completed, failed,
