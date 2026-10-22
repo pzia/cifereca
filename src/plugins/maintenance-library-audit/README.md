@@ -1,6 +1,6 @@
 # Audits de bibliothèque
 
-Le package 0.2.6 détaille les compteurs dans « Résultats… » avec un Core proposant
+Le package 0.2.8 détaille les compteurs dans « Résultats… » avec un Core proposant
 `MaintenanceResult.details`. Les anciennes versions compatibles conservent le
 résumé et les avertissements. Les catégories peuvent se recouper ; leurs nombres
 ne prouvent jamais une association ou une absence de livre.
@@ -29,3 +29,10 @@ Tests de ce package dans `tests/`, lancés depuis ce répertoire. Les brokers de
 tests unitaires sont minimaux ; ils ne constituent pas une recette GTK de cette
 nouvelle entrée. Les filtres par fournisseur/état, l'inspection locale privée et
 les réparations appartiennent aux lots suivants de #2565.
+
+Depuis le Core #2734, les détails de Réconciliation affichent aussi, si les
+quatre agrégats sont présents et cohérents, le nombre de fichiers repris en
+mémoire, inspectés pendant cet audit et revalidés après péremption. Chaque
+nouvel audit relit SQLite/WAL et vérifie les chemins/fichiers ; ces nombres ne
+prouvent aucun droit. Un ancien Core conserve les mêmes résultats sans ligne
+de reprise. Aucune donnée privée du checkpoint n'est exportée.
