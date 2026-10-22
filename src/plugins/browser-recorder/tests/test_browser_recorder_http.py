@@ -787,3 +787,37 @@ def test_closed_capture_reasons_distinguish_request_size_and_redirect():
     assert entry.response_body_reason == "redirect"
     assert entry.response_body_state == "redirect"
     trace.destroy()
+
+
+@pytest.mark.parametrize("assets_first", (False, True))
+def test_static_resource_flood_cannot_starve_late_json_or_post(assets_first):
+    trace = PrivateHttpTrace((ORIGIN,))
+    def assets():
+        for n in range(1000):
+            req = Request(ORIGIN + "/image/" + str(n))
+            req.resource_type = "image"
+            response = Response(req, mime="image/png", data=b"PNG")
+            emit(trace, req, response)
+            assert response.body_reads == 0
+    def useful():
+        for n in range(10):
+            req = Request(ORIGIN + "/api/" + str(n))
+            req.resource_type = "fetch"
+            emit(trace, req, Response(req, data=b'{"ProductId":214}'))
+        req = Request(ORIGIN + "/late-post", method="POST",
+                      headers={"content-type":"application/json"}, data=b'{"page":2}')
+        req.resource_type = "image"  # non-GET must never be sacrificed
+        emit(trace, req, Response(req))
+    for action in ((assets, useful) if assets_first else (useful, assets)):
+        action()
+    assert len(trace.exchanges) == 75
+    assert trace.omitted["static_metadata_budget"] == 936
+    assert trace.omitted["limit"] == 0
+    assert sum(e.response_body is not None for e in trace.exchanges) == 11
+    assert trace.exchanges[-1 if assets_first else 10].request_body == '{"page":2}'
+    assert [e.sequence for e in trace.exchanges] == list(range(1, 76))
+    coverage = trace.coverage()
+    assert coverage["text_responses"] == 11
+    assert coverage["binary_skipped"] == 64
+    assert "api" not in repr(coverage) and ORIGIN not in repr(coverage)
+    trace.destroy()

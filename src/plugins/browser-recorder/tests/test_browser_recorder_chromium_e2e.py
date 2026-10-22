@@ -138,6 +138,22 @@ def fake_bookstore():
             calls.append(("GET", target))
             if target == "/catalog":
                 self.send(200, catalog_page(), "text/html; charset=utf-8")
+            elif target == "/asset-flood":
+                self.send(200, b'''<!doctype html><html><body><script>
+                  async function run() {
+                    await Promise.all(Array.from({length:1000}, (_, i) => new Promise(resolve => {
+                      const image = new Image(); image.onload = image.onerror = resolve;
+                      image.src = '/binary.png?n=' + i;
+                    })));
+                    for (let i=0; i<10; i++) {
+                      const r = await fetch('/api/books?page=' + i); await r.text();
+                    }
+                    const r = await fetch('/post-target', {method:'POST',
+                      headers:{'Content-Type':'application/json'}, body:'{"page":2}'});
+                    await r.text(); await fetch('/complete');
+                  }
+                  window.addEventListener('DOMContentLoaded', run);
+                  </script></body></html>''', "text/html")
             elif target == "/welcome":
                 self.send(200, b"<html><body>Welcome FICTIONAL user</body></html>",
                           "text/html")
@@ -958,4 +974,50 @@ def test_real_chromium_download_is_separate_explicit_save_not_a_trace_body(
         finally:
             review.destroy()
     finally:
+        trace.destroy()
+
+
+def test_real_chromium_static_flood_retains_ten_json_and_late_post(
+    fake_bookstore, monkeypatch, tmp_path,
+):
+    from browser_recorder_vault import PrivateSessionVault
+    server, stop, calls = fake_bookstore
+    origin = f"http://127.0.0.1:{server.server_port}"
+    original = http_recorder.site_origin
+    def local(url):
+        parsed = urlsplit(url)
+        return origin if parsed.scheme == "http" and parsed.netloc == urlsplit(origin).netloc else original(url)
+    import browser_recorder_zip as zipped
+    monkeypatch.setattr(http_recorder, "site_origin", local)
+    monkeypatch.setattr(zipped, "site_origin", local)
+    vault = PrivateSessionVault(tmp_path / "vault")
+    writer = vault.begin("FICTIONAL-ASSET-FLOOD-PASSWORD")
+    summaries = []
+    trace = http_recorder.record_http(
+        origin + "/asset-flood", stop, max_seconds=60,
+        vault_writer=writer, coverage_callback=summaries.append,
+    )
+    stored = vault.open(writer.session_id, "FICTIONAL-ASSET-FLOOD-PASSWORD")
+    try:
+        assert len(trace.exchanges) < 100
+        assert trace.omitted["limit"] == 0
+        assert trace.omitted["static_metadata_budget"] >= 936
+        assert calls.count(("GET", "/binary.png")) == 1000
+        assert calls.count(("GET", "/api/books")) == 10
+        assert calls.count(("POST", "/post-target")) == 1
+        assert sum(urlsplit(e.url).path == "/api/books" and e.response_body is not None
+                   for e in stored.trace.exchanges) == 10
+        assert any(e.method == "POST" and e.request_body == '{"page":2}'
+                   for e in stored.trace.exchanges)
+        assert all(e.response_body is None for e in trace.exchanges if e.url.find('/binary.png') >= 0)
+        assert summaries and all(type(v) is int for row in summaries for v in row.values())
+        review = IdentifierReview(stored.trace)
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        plan = prepare_reviewed_zip(review)
+        manifest = json.loads(next(row["text"] for row in plan.preview()["members"]
+                                   if row["name"] == "manifest.json"))
+        assert manifest["capture_omissions"]["static_metadata_budget"] >= 936
+    finally:
+        stored.trace.destroy()
         trace.destroy()

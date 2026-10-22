@@ -665,3 +665,23 @@ Une session chiffrée issue d'une version antérieure reste consultable :
 les motifs inexistants sont `unknown`, jamais reconstruits par hypothèse.
 Ces diagnostics n'autorisent pas la lecture d'une réponse compressée ou
 d'une taille inconnue ; les corps rejetés restent absents du ZIP.
+
+## Budget des ressources statiques (#2864)
+
+Le collecteur réserve au plus 64 des 240 emplacements aux requêtes GET
+que Chromium classe image, police, média ou feuille de style (un tiers du
+plafond si celui-ci est réduit). Les suivantes sont comptées comme
+`static_metadata_budget`, sans conserver leurs URLs ou corps. Ce classement
+porte sur l'intention de la requête, pas sur le MIME de la réponse absente.
+Aucune éviction ni renumérotation des observations déjà conservées.
+
+Les requêtes document, XHR/fetch, scripts et toutes les mutations restent
+soumises au budget général ; les origines, refus des binaires et limites
+des corps restent inchangés. Le compteur de ressources hors budget ne doit
+pas être interprété comme autant de binaires observés.
+
+Un bandeau commun donne en direct les échanges conservés/plafond, réponses
+textuelles réellement conservées, binaires et compression exclus, ressources
+statiques hors budget et hors périmètre. Il avertit à 80 % du plafond et
+quand aucune réponse n'est disponible pour l'analyse. Le même bilan est
+recalculé lors de l'ouverture d'une session privée.

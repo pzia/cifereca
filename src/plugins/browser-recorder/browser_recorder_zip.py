@@ -793,6 +793,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
     omission_codes = (
         "out_of_scope", "limit", "binary_skipped", "oversize",
         "unknown_size", "compressed", "network_error", "paused",
+        "static_metadata_budget",
     )
     capture_omissions = {}
     for code in omission_codes:
