@@ -304,7 +304,7 @@ def test_independent_inspection_row_preserves_partial_failure_and_cancel(scoped)
         add_suffix=lambda *_a: None, set_subtitle=statuses.append,
     ))
     owner.start()
-    assert statuses[-1].startswith('Inspection en cours')
+    assert statuses[-1].startswith('Préparation des cas : cache privé ou nouvelle inspection locale')
     owner.clear()
     assert statuses[-1] == 'Inspection interrompue · aucun constat d’absence de livre.'
     owner.start()
