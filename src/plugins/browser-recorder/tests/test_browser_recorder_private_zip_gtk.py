@@ -151,12 +151,12 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         panel._prompt_private_zip_file = lambda accepted, cancelled: accepted(
             folder / "session-for-llm.zip"
         )
-        panel.current_private_export_button.emit("clicked")
         assert not list(folder.iterdir())
         assert outcomes == []
-        assert panel.current_private_export_button.get_sensitive()
-        # No second master prompt after explicitly opening the vault.
+        # Once the vault was explicitly opened, the very first click exports.
+        # No additional master-password entry or ZIP confirmation is needed.
         assert panel.vault_passphrase.get_text() == ""
+        assert panel.current_private_export_button.get_sensitive()
         panel.current_private_export_button.emit("clicked")
         flush()
         files = list(folder.glob("*.zip"))
