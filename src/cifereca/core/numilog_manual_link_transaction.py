@@ -12,6 +12,7 @@ import json
 import re
 import sqlite3
 import time
+import uuid
 from pathlib import Path
 
 from ..locking import InterProcessLock, LockBusyError
@@ -22,6 +23,7 @@ from .library_fresh_file_check import revalidate_observed_file
 from .library_inventory import FileObservation
 
 _SCHEMA = "numilog.local.attachment/1"
+_JOURNAL = "core.numilog.local-attachment."
 
 
 class ManualAttachmentRejected(ValueError):
@@ -221,13 +223,63 @@ def _token(scope, snapshot, observation):
     ).hexdigest()
 
 
-def _receipt(status, *, token=None, changed=0):
+def _checkpoint(observation):
+    return {
+        "path": observation.path, "sha256": observation.sha256,
+        "size": observation.size, "fingerprint": list(observation.fingerprint),
+    }
+
+
+def _journal_id(record):
+    # 'state' changes from applied to undone, without changing its ID.
+    fixed = {key: value for key, value in record.items() if key != "state"}
+    raw = json.dumps(fixed, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(("numilog-local-journal/1\\0" + raw).encode()).hexdigest()
+
+
+def _journal_read(db, operation_id):
+    row = db.execute("SELECT value FROM metadata WHERE key=?",
+                     (_JOURNAL + operation_id,)).fetchone()
+    _require(row is not None and type(row[0]) is str
+             and 0 < len(row[0]) <= 16000, "journal_unavailable")
+    try:
+        record = json.loads(row[0])
+    except (ValueError, RecursionError):
+        raise ManualAttachmentRejected("journal_invalid") from None
+    _require(type(record) is dict and set(record) == {
+        "version", "state", "nonce", "scope", "file",
+        "token", "after",
+    } and record.get("version") == 1
+             and record.get("state") in {"applied", "undone"}
+             and type(record.get("nonce")) is str
+             and re.fullmatch(r"[0-9a-f]{32}", record["nonce"]) is not None
+             and type(record.get("token")) is str
+             and re.fullmatch(r"[0-9a-f]{64}", record["token"]) is not None
+             and type(record.get("scope")) is dict
+             and type(record.get("file")) is dict
+             and type(record.get("after")) is dict
+             and _journal_id(record) == operation_id, "journal_invalid")
+    return record
+
+
+def _undo_token(record, evidence_token):
+    raw = json.dumps(
+        {"operation": _journal_id(record), "evidence": evidence_token,
+         "state": record["state"]},
+        sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    )
+    return hashlib.sha256(("numilog-local-undo/1\\0" + raw).encode()).hexdigest()
+
+
+def _receipt(status, *, token=None, changed=0, operation=None):
+    pending = status in {"preview", "undo_preview"}
     return {
         "schema": _SCHEMA, "status": status, "ok": True,
-        "offline": True, "read_only": status == "preview",
-        "dry_run": status == "preview", "changed": changed,
-        "plan_token": token if status == "preview" else None,
-        "requires_explicit_confirmation": status == "preview",
+        "offline": True, "read_only": pending,
+        "dry_run": pending, "changed": changed,
+        "plan_token": token if pending else None,
+        "operation_id": operation,
+        "requires_explicit_confirmation": pending,
         "file_mutations": 0, "rights_mutations": 0,
         "originals_preserved": True,
     }
@@ -296,10 +348,24 @@ def reconcile_numilog_manual(
                  observation.path, identity_id, "numilog", item_id,
                  "present", now, now, now),
             )
-            _require(_evidence(
+            after = _evidence(
                 db, identity_id=identity_id, credential_id=credential_id,
                 account_id=account_id, item_id=item_id, observed=observation,
-            )["placement"] is not None, "post_write_evidence_changed")
+            )["placement"]
+            _require(after is not None, "post_write_evidence_changed")
+            journal = {
+                "version": 1, "state": "applied",
+                "nonce": uuid.uuid4().hex, "scope": scope,
+                "file": _checkpoint(observation),
+                "token": token, "after": after,
+            }
+            encoded = json.dumps(journal, sort_keys=True, ensure_ascii=True)
+            _require(len(encoded) <= 16000, "journal_budget_exhausted")
+            operation = _journal_id(journal)
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?)",
+                (_JOURNAL + operation, encoded),
+            )
             # Cooperative writer lock + SQLite BEGIN IMMEDIATE keep DB stable.
             # The file is still external: rehash and reopen nofollow at commit.
             fresh_again = revalidate_observed_file(
@@ -308,7 +374,7 @@ def reconcile_numilog_manual(
             )
             _require(fresh_again.verified and valid() and not cancelled(),
                      "file_changed_before_commit")
-            return _receipt("applied", changed=1)
+            return _receipt("applied", changed=1, operation=operation)
     except LockBusyError:
         raise ManualAttachmentRejected("acquisition_busy") from None
     except (OSError, sqlite3.Error):
