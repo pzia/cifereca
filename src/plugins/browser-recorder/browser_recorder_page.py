@@ -79,6 +79,18 @@ class BrowserRecorderPage:
             # An optional diagnostics broker must not break the GTK action.
             pass
 
+    def _report_http_outcome(self, operation, code, *, duration_ms=None, output_bytes=None):
+        detail = {"operation": operation, "code": code}
+        if operation == "private_zip_export":
+            for key, value in (("duration_ms", duration_ms), ("output_bytes", output_bytes)):
+                if type(value) is int:
+                    detail[key] = value
+        status = ("ok" if code == "private_zip_exported" else
+                  "warning" if code == "private_zip_export_cancelled" else "error")
+        self.context.report_diagnostic(
+            "browser recorder user action", status, detail=detail, level="normal",
+        )
+
     def build(self, host):
         from gi.repository import Gtk, GLib
         from browser_recorder_review_ui import PrivateReviewPanel
@@ -132,10 +144,7 @@ class BrowserRecorderPage:
             vault_directory=self.context.data_directory / "private-sessions",
             # The Core binds this callback to the installed plugin identity.
             # Never forward a provider value, URL, exception or trace body.
-            diagnostic=lambda operation, code: self.context.report_diagnostic(
-                "browser recorder user action", "error",
-                detail={"operation": operation, "code": code}, level="normal",
-            ),
+            diagnostic=self._report_http_outcome,
         )
         box.append(self.private_panel.widget)
 
