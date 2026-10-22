@@ -527,7 +527,8 @@ class PrivateSessionVault:
                 if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                         or info.st_uid != os.getuid()
                         or stat.S_IMODE(info.st_mode) != 0o600
-                        or not 64 <= info.st_size <= max_bytes):
+                        or not (53 if max_bytes == MAX_LABEL_FILE else 64)
+                        <= info.st_size <= max_bytes):
                     raise VaultError("vault_unsafe_file")
                 with os.fdopen(handle, "rb", closefd=False) as stream:
                     data = stream.read(max_bytes + 1)
