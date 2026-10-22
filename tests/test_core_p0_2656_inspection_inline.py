@@ -277,7 +277,7 @@ def test_independent_inspection_row_tracks_ongoing_then_completed_without_rescan
     inspected = read()
     owner.present = lambda: None
     completed(inspected)
-    assert states[-1] == 'Inspection terminée · cas locaux consultables.'
+    assert states[-1] == 'Inspection terminée · nouvelle inspection locale.'
     assert not suffixes[0].visible
     old = states[-1]
     owner.clear()  # Closing the private consultation is not an audit failure.
@@ -314,3 +314,32 @@ def test_independent_inspection_row_preserves_partial_failure_and_cancel(scoped)
     assert statuses[-1] == 'Inspection impossible · aucune absence de livre établie.'
     assert len(errors) == 1 and 'SQLite' in errors[0][0]
     owner.clear()
+
+
+def test_fast_private_cache_hit_remains_explained_after_completion(scoped):
+    from cifereca.core.library_audit_broker import LibraryReconciliationReadBrokerImpl
+    service, _, _ = scoped
+    LibraryReconciliationReadBrokerImpl(service).audit(identity_id="alice")
+    jobs, states = [], []
+    owner = LocalInspectionController(
+        parent=NS(
+            service=service, runner=NS(submit=lambda *a, **k: jobs.append(a)),
+            show_error=lambda *_a: None,
+        ),
+        Gtk=NS(Box=FakeBox, Label=FakeLabel, Button=FakeButton,
+               Orientation=NS(HORIZONTAL=0)),
+        Adw=NS(), Pango=NS(),
+        GLib=NS(idle_add=lambda _fn: None, source_remove=lambda *_a: None),
+        alive=lambda: True,
+    )
+    owner.attach_activity_row(NS(
+        add_suffix=lambda *_a: None, set_subtitle=states.append,
+    ))
+    owner.start()
+    from_cache = jobs[0][1]()
+    assert from_cache.from_audit_cache() is True
+    owner.present = lambda: None
+    jobs[0][2](from_cache)
+    assert states[-1] == 'Inspection terminée · cache privé réutilisé.'
+    owner.clear()
+    assert states[-1] == 'Inspection terminée · cache privé réutilisé.'
