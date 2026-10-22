@@ -68,6 +68,8 @@ class MetadataCandidateReport:
     files_examined: int = 0
     index_ms: int = 0
     match_ms: int = 0
+    index_completed: bool = False
+    match_phase_executed: bool = False
 
     def redacted(self):
         return {'schema': 1, 'read_only': True, 'acquisition_authorized': False,
@@ -79,12 +81,15 @@ class MetadataCandidateReport:
                 'references_examined': self.references_examined,
                 'files_examined': self.files_examined,
                 'index_ms': self.index_ms, 'match_ms': self.match_ms,
+                'index_completed': self.index_completed,
+                'match_phase_executed': self.match_phase_executed,
                 'certainty': 'metadata_only'}
 
 
 def metadata_candidates(inventory: Inventory, snapshot: EvidenceSnapshot, *,
                         cancelled=lambda: False, max_candidates: int = 10_000,
-                        seconds: float = 10) -> MetadataCandidateReport:
+                        seconds: float = 10,
+                        index_seconds: float | None = None) -> MetadataCandidateReport:
     """Same-identity catalog metadata only. No relation is a repair suggestion.
 
     Limits have distinct *closed* codes (#2565): timeout, cancellation,
@@ -92,10 +97,18 @@ def metadata_candidates(inventory: Inventory, snapshot: EvidenceSnapshot, *,
     No code implies ownership, missing acquisition or exhaustiveness.
     """
     if (type(max_candidates) is not int or not 1 <= max_candidates <= 10_000
-            or type(seconds) not in (int, float) or not 0 < seconds <= 30):
+            or type(seconds) not in (int, float) or not 0 < seconds <= 60
+            or (index_seconds is not None and (
+                type(index_seconds) not in (int, float)
+                or not 0 < index_seconds < seconds))):
         raise ValueError('invalid_candidate_limits')
     result = MetadataCandidateReport(reasons=set(inventory.reasons) | set(snapshot.reasons))
-    deadline = time.monotonic() + seconds
+    started_at = time.monotonic()
+    deadline = started_at + seconds
+    # Legacy one-shot API retains its full 10-second index budget. Scoped
+    # Maintenance explicitly reserves a separate matching window (30+30s).
+    index_deadline = (deadline if index_seconds is None
+                      else started_at + index_seconds)
     index = defaultdict(set)
     rows = snapshot.tables.get('catalog_entries', [])
     if len(rows) > 100_000:
@@ -111,10 +124,15 @@ def metadata_candidates(inventory: Inventory, snapshot: EvidenceSnapshot, *,
         return False
 
     started = time.perf_counter()
+    index_timed_out = False
     try:
         for ci, row in enumerate(rows[:100_000]):
             if stopped():
                 return result
+            if time.monotonic() >= index_deadline:
+                result.reasons.add('metadata_candidate_time_budget')
+                index_timed_out = True
+                break
             result.catalog_rows_examined += 1
             keys = row.get('bibliographic_identifiers', ())
             if not isinstance(keys, (list, tuple)):
@@ -129,9 +147,18 @@ def metadata_candidates(inventory: Inventory, snapshot: EvidenceSnapshot, *,
                     return result
                 if isinstance(key, (list, tuple)) and len(key) == 2 and all(type(v) is str for v in key):
                     index[(row.get('identity_id'), tuple(key))].add(ci)
+        if not index_timed_out and len(rows) <= 100_000:
+            result.index_completed = True
     finally:
         result.index_ms = max(0, min(600_000, int((time.perf_counter() - started) * 1000)))
-
+    if index_timed_out and index_seconds is None:
+        return result
+    # A budgeted partial index is NOT negative evidence. Nonetheless perform
+    # a bounded metadata-only match over the indexed subset when time remains.
+    # This is deliberately not a rights/ownership attestation.
+    if stopped():
+        return result
+    result.match_phase_executed = True
     started = time.perf_counter()
     try:
         for fi, observation in enumerate(inventory.files):
