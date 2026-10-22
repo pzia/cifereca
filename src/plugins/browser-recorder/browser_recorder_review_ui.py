@@ -217,6 +217,9 @@ class PrivateReviewPanel:
             self.staging_prune.connect(
                 "clicked", lambda *_: self.prune_staging(),
             )
+            self.staging_confirm.connect(
+                "toggled", lambda *_: self._refresh(),
+            )
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
                 label="Export DE SECOURS non anonymisé : contient URL, "
