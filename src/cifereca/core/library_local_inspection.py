@@ -830,7 +830,8 @@ class LocalInspection:
                        'unattributed', case_states, evidence('placements', index)):
                 break
             self._case_search[f'path:{index}'] = _searchable(
-                label + ' ' + _text(placements[index].get('path'))[-256:]
+                label + ' ' + _text(placements[index].get('placement_id'))[:128]
+                + ' ' + _text(placements[index].get('path'))[-256:]
             )[:3200]
             if state == 'stored_path_missing':
                 self._path_missing_by_sqlite_state[bucket] += 1
