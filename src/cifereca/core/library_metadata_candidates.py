@@ -129,7 +129,7 @@ def metadata_candidates(inventory: Inventory, snapshot: EvidenceSnapshot, *,
         for ci, row in enumerate(rows[:100_000]):
             if stopped():
                 return result
-            if time.monotonic() >= index_deadline:
+            if index_seconds is not None and time.monotonic() >= index_deadline:
                 result.reasons.add('metadata_candidate_time_budget')
                 index_timed_out = True
                 break
