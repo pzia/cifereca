@@ -427,7 +427,11 @@ def undo_numilog_manual(
             _require(set(original_scope) == {*scope, "epoch"}
                      and all(original_scope.get(key) == value
                              for key, value in scope.items())
-                     and type(original_scope.get("epoch")) is int,
+                     and type(original_scope.get("epoch")) is int
+                     # A reconnect/rebound account can reuse identical
+                     # credential/item text: only the original context epoch
+                     # may revoke its own journaled placement.
+                     and original_scope["epoch"] == service._account_context_epoch,
                      "journal_scope_changed")
             _require(journal["file"] == _checkpoint(observation),
                      "journal_file_changed")
