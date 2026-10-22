@@ -115,7 +115,10 @@ def test_sigkill_after_ciphertext_fsync_never_loses_last_commit_or_leaks(
             )
             assert len(restored.trace.exchanges) == 1
             assert PRIVATE in restored.trace.exchanges[0].url
-            assert restored.trace.end_reason is None
+            if case == "label":
+                assert restored.trace.end_reason in {"button", "browser_closed"}
+            else:
+                assert restored.trace.end_reason is None
         finally:
             restored.trace.destroy()
         assert vault.get_label(sidlist[0], KEY) == ""
