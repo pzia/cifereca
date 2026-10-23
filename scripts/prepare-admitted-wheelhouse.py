@@ -8,6 +8,7 @@ dependencies are included and checked. No managed venv is created by this tool.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -75,7 +76,42 @@ def _approved_runtime_wheels(requirements: list[str]) -> tuple[str, ...]:
     raise QuarantineRejected("dependency_not_eligible")
 
 
+def _plugin_python_requirements() -> list[str]:
+    """Gather plugin direct constraints before creating a release wheelhouse."""
+    requirements: list[str] = []
+    manifests = sorted((ROOT / "src" / "plugins").glob("*/cifereca-plugin.json"))
+    if not manifests:
+        raise QuarantineRejected("dependency_not_eligible")
+    for path in manifests:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        for descriptor in manifest.get("plugins", []):
+            if type(descriptor) is not dict:
+                raise QuarantineRejected("dependency_not_eligible")
+            for req in descriptor.get("system_requires", []):
+                if type(req) is not dict:
+                    raise QuarantineRejected("dependency_not_eligible")
+                if req.get("type") != "python-package":
+                    continue
+                name, version = req.get("name"), req.get("version") or ""
+                if type(name) is not str or type(version) is not str:
+                    raise QuarantineRejected("dependency_not_eligible")
+                from packaging.requirements import Requirement
+                try:
+                    candidate = Requirement(name + version)
+                except Exception:
+                    raise QuarantineRejected("dependency_not_eligible") from None
+                if candidate.url or not candidate.name:
+                    raise QuarantineRejected("dependency_not_eligible")
+                text = str(candidate)
+                if text not in requirements:
+                    requirements.append(text)
+    return requirements
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--include-plugin-deps", action="store_true")
+    args = parser.parse_args()
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     if project["project"]["version"] != version:
@@ -87,7 +123,13 @@ def main() -> int:
     destination.mkdir()
     # Verify all runtime dependencies (including every transitive) before pip
     # is permitted to download exact wheel URLs to the release wheelhouse.
-    urls = _approved_runtime_wheels(project["project"]["dependencies"])
+    requested = list(project["project"]["dependencies"])
+    if args.include_plugin_deps:
+        # Official full-source releases bundle every plugin. Resolve their
+        # complete *combined* dependency graph, never independently choose
+        # wheels which conflict at installation time.
+        requested.extend(_plugin_python_requirements())
+    urls = _approved_runtime_wheels(requested)
     for url in urls:
         _run([
             sys.executable, "-m", "pip", "--isolated", "download",
