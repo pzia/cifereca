@@ -70,11 +70,26 @@ def _scope(service, scope):
     roots = configured_identity_roots(config, scope['identity_id'])[scope['identity_id']]
 
     def account_matches():
-        matches = [row for row in service.accounts
-                   if row.provider_id == scope['provider_id']
-                   and row.credential_id == scope['credential_id']]
-        return (len(matches) == 1 and matches[0].identity_id == scope['identity_id']
-                and matches[0].unique_id == scope['account_id'])
+        # Paris can expose its primary borrower (empty Account.unique_id,
+        # persisted as "primary") and several paired borrowers under ONE
+        # provider/credential. Requiring a unique credential hid valid choices.
+        # Match the exact normalized borrower instead. A second account with
+        # the same exact coordinates remains ambiguous and is refused.
+        def borrower(row):
+            uid = row.unique_id
+            if (scope['provider_id'] == 'paris'
+                    and uid == '' and row.is_primary is True):
+                return 'primary'
+            return uid
+
+        matches = [
+            row for row in service.accounts
+            if row.provider_id == scope['provider_id']
+            and row.credential_id == scope['credential_id']
+            and borrower(row) == scope['account_id']
+        ]
+        return (len(matches) == 1
+                and matches[0].identity_id == scope['identity_id'])
 
     _require(account_matches(), 'account_scope_changed')
 
@@ -192,10 +207,15 @@ def _context(db, scope):
              'source_scope_changed')
     # No authenticated-library receipt requirement: this only binds an
     # EXISTING selected row to its actual account. It never creates a right.
+    # A second borrower may hold the same edition under one connection.
+    # A *declaration* is bound to a selected exact right, not proof that no
+    # other borrower owns the edition. Attested placement collision checks
+    # remain stricter in _collisions() and never inherit this relaxation.
     rights = _rows(db, 'SELECT entitlement_id,identity_id,provider_id,credential_id,account_id,'
                    'item_id,entitlement_type,state,loan_id,expires_at FROM entitlements WHERE provider_id=? '
-                   'AND credential_id=? AND item_id=? LIMIT 3',
-                   (scope['provider_id'], scope['credential_id'], scope['item_id']))
+                   'AND credential_id=? AND identity_id=? AND account_id=? AND item_id=? LIMIT 3',
+                   (scope['provider_id'], scope['credential_id'],
+                    scope['identity_id'], scope['account_id'], scope['item_id']))
     _require(len(rights) == 1 and all(rights[0].get(k) == v for k, v in scope.items()),
              'right_scope_changed')
     context = {'connection': connections[0], 'right': rights[0]}
