@@ -7,6 +7,7 @@ from ..core.library_local_inspection import LocalInspection, PROVIDERS, STATES, 
 from ..task_queue import TaskPriority
 from .maintenance_tools import MaintenanceCancelControl
 from .library_declaration_actions import DeclarationActions
+from .library_declaration_history import PrivateDeclarationHistory
 
 
 # Core-only closed failure causes: never expose private source text in GTK.
@@ -543,6 +544,13 @@ class LocalInspectionController:
         history_controls.append(show_history)
         history_controls.set_visible(overview.get('paths_historical_missing', 0) > 0)
         box.append(history_controls)
+        # Open on demand: this private, revocable list reads only already
+        # stored user declarations. It is never part of the attested counters.
+        declaration_history = PrivateDeclarationHistory(
+            Gtk=Gtk, session=session,
+            alive=lambda: self.session is session and self.alive(),
+        )
+        box.append(declaration_history.expander)
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
         # Allow the main viewport to reach every comparison action even when
         # a long candidate column exceeds the available window height.
