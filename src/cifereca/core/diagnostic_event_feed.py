@@ -14,6 +14,7 @@ import re
 import stat
 from typing import Any
 
+from .diagnostic_domains import canonical_diagnostic_domain
 from .diagnostic_numilog_projection import (
     public_numilog_fields, public_numilog_message, public_numilog_session_log,
     public_numilog_session_fields,
@@ -307,6 +308,17 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "ADEPT" if adept_detail else
                 "PLUGIN" if connection_detail or connection_success_detail else None
             )
+            # A family is attached only to an explicitly parsed Core schema,
+            # not to a generic TRACE, logger name or arbitrary plugin text.
+            domain = (
+                "kobo_backup" if kobo_detail else
+                "numilog" if numilog_detail or numilog_session_detail else
+                "source_sync" if source_sync_detail else
+                "loan_download" if loan_download_detail else
+                "adept" if adept_detail else
+                "provider_connection" if connection_detail or connection_success_detail
+                else None
+            )
             # A provider identity comes only from a closed Core log schema,
             # never from a logger suffix, URL, TRACE free text or account label.
             # ADEPT is a shared runtime; a Numilog plugin session line alone
@@ -325,6 +337,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 **({"provider_id": attested_provider_id} if attested_provider_id else {}),
                 "module": ".".join(safe_parts)[:90],
                 **({"business_module": business_module} if business_module else {}),
+                **({"domain": domain} if domain else {}),
                 "severity": match["level"].lower(),
                 "message": message[:500] if numilog_detail or source_sync_detail or loan_download_detail or adept_detail else message[:240],
                 **({"detail": kobo_detail} if kobo_detail else {}),
@@ -417,6 +430,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                  if word in _STRUCTURED_TERMS][:5]
         message = " ".join(terms) if terms else "[opération masquée]"
         public_detail = {}
+        domain = None
         # The Core attests user-requested Browser Recorder provisioning
         # operations. A generic PLUGIN.add() record with identical text
         # cannot publish even a fixed code without this provenance flag.
@@ -428,6 +442,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             if attested:
                 public_detail = attested
                 message = operation
+                domain = "browser_recorder"
         # This projection is restricted to the Core connection producer's
         # exact fixed operation/code pair. Other PLUGIN records remain masked,
         # even if an arbitrary plugin supplies a well-formed provider_id.
@@ -440,6 +455,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                     == validated["provider_id"]):
                 public_detail = validated
                 message = "connexion fournisseur échouée"
+                domain = "provider_connection"
         # Success is independently attested and schema-checked. A generic
         # plugin claiming "provider connected" cannot become Core evidence.
         if (category == "PLUGIN"
@@ -454,12 +470,15 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             )):
                 public_detail = validated
                 message = "connexion fournisseur réussie"
+                domain = "provider_connection"
         if (category == "KOBO"
                 and operation == "automatic backup decision"
                 and type(diagnostics) is Diagnostics
                 and row.get("verified_kobo_backup") is True):
             public_detail = public_kobo_backup_decision(row.get("detail"))
             message = public_kobo_backup_message(public_detail) or "[opération masquée]"
+            if public_detail:
+                domain = "kobo_backup"
         reconciliation_detail = {}
         if (category == "LIBRARY"
                 and operation == "library_reconciliation_audit"
@@ -470,6 +489,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                     "ok" if inspected["status"] == "complete" else inspected["status"]):
                 reconciliation_detail = inspected
                 public_detail = inspected
+                domain = "reconciliation"
                 message = {
                     "complete": "réconciliation locale terminée",
                     "partial": "réconciliation locale incomplète",
@@ -488,6 +508,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             if adept_detail:
                 public_detail = adept_detail
                 message = public_adept_message(adept_detail)
+                domain = "adept"
                 severity = "error" if adept_detail["status"] == "failed" else "info"
         if (category == "SYNC" and operation == "source sync"
                 and type(diagnostics) is Diagnostics
@@ -496,6 +517,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             if source_sync_detail:
                 public_detail = source_sync_detail
                 message = public_source_sync_message(public_detail)
+                domain = "source_sync"
                 severity = ("error" if public_detail["status"] == "failed" else
                             "warning" if public_detail["status"] == "cancelled" else "info")
         if (category in {"PNB", "LOAN"} and operation == "download_loan"
@@ -509,6 +531,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             )):
                 loan_download_detail = candidate
                 public_detail = candidate
+                domain = "loan_download"
                 message = "Téléchargement du prêt · " + candidate["status"] + " · " + candidate["code"]
                 severity = ("info" if candidate["status"] == "success"
                             else "error" if candidate["status"] == "failed"
@@ -527,6 +550,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 public_detail = public_numilog_fields(
                     operation, row.get("detail"), row.get("duration_ms"),
                 )
+                if operation == "startup_materialization" and public_detail:
+                    domain = "numilog"
                 task_ref = row.get("task_ref")
                 if (operation in {"acquisition_delivery", "session_state", "startup_materialization"}
                         and type(task_ref) is str and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
@@ -578,6 +603,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "timestamp": utc_stamp,
             "source": "core_events",
             "module": module,
+            **({"domain": domain} if domain else {}),
             **({"provider_id": attested_provider_id} if attested_provider_id else {}),
             "severity": severity,
             "message": message,
@@ -603,7 +629,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
 def query_diagnostic_events(
     diagnostics: Any, *, log_path: Path,
     source: str = "all", module: str = "", severity: str = "",
-    provider_id: str = "",
+    provider_id: str = "", domain: str = "",
     since: str | None = None, until: str | None = None,
     limit: int = 50, offset: int = 0, reason_code: str = "",
 ) -> dict[str, Any]:
@@ -626,6 +652,11 @@ def query_diagnostic_events(
         reason_code and not known_reason_code(reason_code)
     ):
         raise ValueError("unknown reconciliation reason code")
+    # The filter applies to *attested* event families globally, never to
+    # arbitrary message text, raw operation names, or unverified categories.
+    selected_domain = canonical_diagnostic_domain(domain) if domain else ""
+    if type(domain) is not str:
+        raise ValueError("unknown diagnostic domain")
     if not isinstance(severity, str) or severity.lower() not in {"", "debug", "info", "warning", "error", "critical"}:
         raise ValueError("unknown diagnostic severity")
     if any(value is not None and (not isinstance(value, str) or len(value) > 64) for value in (since, until)):
@@ -662,6 +693,8 @@ def query_diagnostic_events(
         ]
     if provider_id:
         events = [row for row in events if row.get("provider_id") == provider_id]
+    if selected_domain:
+        events = [row for row in events if row.get("domain") == selected_domain]
     if severity:
         if severity.lower() not in {"debug", "info", "warning", "error", "critical"}:
             raise ValueError("unknown diagnostic severity")
