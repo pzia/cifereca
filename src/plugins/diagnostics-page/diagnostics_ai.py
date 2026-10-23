@@ -21,7 +21,9 @@ import stat
 from typing import Any
 
 from cifereca.plugin_api import LLMRequest
-from diagnostics_explorer import public_source_evidence, public_provider_id
+from diagnostics_explorer import (
+    public_source_evidence, public_provider_id, resolve_domain_filter,
+)
 
 _MAX_PROMPT = 3000
 _MAX_USER_LOG_BYTES = 65536
@@ -513,7 +515,7 @@ def _valid_since(since: object) -> bool:
 def prepare_analysis(
     llm: Any, diagnostics_broker: Any, *, source: str = "all",
     since: str | None = None, module: str = "", severity: str = "",
-    provider_id: str = "",
+    provider_id: str = "", domain: str = "",
     include_snapshot: bool = False, include_support_report: bool = False,
     manual_log: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -572,9 +574,10 @@ def prepare_analysis(
             safe_manual_rows.append({"line": row["line"], "signals": dict(signals)})
     else:
         safe_manual_rows = []
-    module = module.strip()
+    scoped_domain, module = resolve_domain_filter(module, domain)
     scope = {
         "source": source, "module": module, "severity": severity,
+        **({"attested_domain": scoped_domain} if scoped_domain else {}),
         **({"provider_id": provider_id} if provider_id else {}),
         "since": since, "include_snapshot": include_snapshot,
         "include_support_report": include_support_report,
@@ -585,6 +588,8 @@ def prepare_analysis(
                  since=since, until=None, limit=_MAX_EVENTS, offset=0)
     if provider_id:
         query["provider_id"] = provider_id
+    if scoped_domain:
+        query["domain"] = scoped_domain
     feed = diagnostics_broker.events(**query)
     if not isinstance(feed, Mapping):
         raise ValueError("diagnostics_unavailable")
@@ -598,6 +603,15 @@ def prepare_analysis(
         # A broker ignoring the exact filter must not produce an apparently
         # scoped preview or consent request for another provider's events.
         raise ValueError("diagnostics_provider_scope_mismatch")
+    if scoped_domain and any(
+        not isinstance(item, Mapping)
+        or item.get("source") != "core_events"
+        or item.get("domain") != scoped_domain
+        or item.get("module") != (
+            "PLUGIN" if scoped_domain == "browser_recorder" else "LIBRARY")
+        for item in events
+    ):
+        raise ValueError("diagnostics_domain_scope_mismatch")
     raw_total = feed.get("total")
     # The Core can return a full, correctly bounded page with more matching
     # events beyond it. Do not mistake 24/500 for complete coverage.
