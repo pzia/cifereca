@@ -174,7 +174,10 @@ class PythonDependencyManager:
                 ) from exc
             if isinstance(exc, PythonDependencyError):
                 raise
-            raise PythonDependencyError(str(exc)) from exc
+            # Provider/import errors can contain arbitrary credentials, paths,
+            # or signed URLs. Preserve structured quarantine errors above,
+            # redact every other unexpected dependency failure.
+            raise PythonDependencyError("dependency_provenance_unavailable") from None
 
     def _pip_base(self, wheel_dirs: Sequence[Path]) -> list[str]:
         command = [
@@ -277,8 +280,9 @@ class PythonDependencyManager:
                 text=True, capture_output=True, timeout=300, check=False,
             )
             if proc.returncode != 0:
-                detail = (proc.stderr or proc.stdout or "").strip()
-                raise PythonDependencyError(f"pip rollback uninstall failed: {detail[-1200:]}")
+                # pip may echo private indexes, credentials or user paths.
+                # Diagnostics and CLI must never echo subprocess output.
+                raise PythonDependencyError("dependency_not_eligible")
         if changed:
             # Rollback is another third-party wheel acquisition. Never bypass
             # the exact-file PyPI SHA/date preflight by using a raw pip command
