@@ -631,6 +631,28 @@ class DiagnosticsPagePlugin:
         filters_top.append(period_selector)
         journals_tab.append(filters_top)
 
+        # Server-side, provenance-verified domain (before pagination).
+        # Only explicit fixed aliases are accepted, not raw log text.
+        domain_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        domain_caption = Gtk.Label(
+            label="Domaine attesté (toutes les pages) :", xalign=0
+        )
+        domain_filter = Gtk.Entry()
+        domain_filter.set_width_chars(18)
+        domain_filter.set_max_width_chars(32)
+        domain_filter.set_hexpand(True)
+        domain_filter.set_placeholder_text(
+            "Browser / recorder / Réconciliation · Entrée"
+        )
+        domain_filter.set_tooltip_text(
+            "Alias connus uniquement : Browser, recorder, Réconciliation, "
+            "Reconciliation, Réconcilitation. Filtre Core exact avant pagination ; "
+            "les événements non attestés n'appartiennent à aucun de ces domaines."
+        )
+        domain_row.append(domain_caption)
+        domain_row.append(domain_filter)
+        journals_tab.append(domain_row)
+
         filters_bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         module_filter = Gtk.Entry()
         module_filter.set_placeholder_text("Préfixe module (Entrée pour appliquer)")
@@ -1345,6 +1367,7 @@ class DiagnosticsPagePlugin:
             query = {
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
+                "domain": domain_filter.get_text().strip(),
                 "provider_id": provider_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
@@ -1480,6 +1503,7 @@ class DiagnosticsPagePlugin:
             query = {
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
+                "domain": domain_filter.get_text().strip(),
                 "provider_id": provider_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
@@ -1573,6 +1597,8 @@ class DiagnosticsPagePlugin:
         severity_selector.connect("notify::selected", reset_events)
         period_selector.connect("notify::selected", reset_events)
         module_filter.connect("activate", reset_events)
+        domain_filter.connect("activate", reset_events)
+        domain_filter.connect("changed", lambda *_: invalidate_selection())
         provider_filter.connect("activate", reset_events)
         provider_filter.connect("changed", lambda *_: invalidate_selection())
         reason_code_filter.connect("activate", reset_events)
@@ -1652,6 +1678,7 @@ class DiagnosticsPagePlugin:
                 selected_source = SOURCES[int(source_selector.get_selected())]
                 selected_period = PERIODS[int(period_selector.get_selected())]
                 selected_module = module_filter.get_text().strip()
+                selected_domain = domain_filter.get_text().strip()
                 selected_provider = provider_filter.get_text().strip()
                 selected_severity = SEVERITIES[int(severity_selector.get_selected())]
                 selected_snapshot = ai_snapshot.get_active()
@@ -1684,7 +1711,7 @@ class DiagnosticsPagePlugin:
                 return prepare_analysis(
                     self.llm, broker, source=selected_source,
                     module=selected_module, severity=selected_severity,
-                    provider_id=selected_provider,
+                    provider_id=selected_provider, domain=selected_domain,
                     since=explorer_since(selected_period),
                     include_snapshot=selected_snapshot,
                     include_support_report=selected_support_report,
@@ -1892,6 +1919,7 @@ class DiagnosticsPagePlugin:
         severity_selector.connect("notify::selected", invalidate_ai)
         period_selector.connect("notify::selected", invalidate_ai)
         module_filter.connect("changed", invalidate_ai)
+        domain_filter.connect("changed", invalidate_ai)
         provider_filter.connect("changed", invalidate_ai)
         ai_snapshot.connect("toggled", invalidate_ai)
         ai_support_report.connect("toggled", invalidate_ai)
