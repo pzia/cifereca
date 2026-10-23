@@ -146,7 +146,7 @@ def test_ai_domain_preview_uses_same_global_scope_and_one_use_consent():
         model, preview, approval_id=preview["approval_id"],
     )
     assert analysis["ok"] is True and model.calls == 1
-    with pytest.raises(ValueError, match="explicit_consent_required"):
+    with pytest.raises(ValueError, match="consent_already_used"):
         analyze_with_consent(
             model, preview, approval_id=preview["approval_id"],
         )
