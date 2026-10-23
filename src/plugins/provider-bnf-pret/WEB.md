@@ -213,3 +213,26 @@ non comme droits actuels. La fermeture ou le changement de profil efface le cumu
 **Aucune capacité `sync.loans` n'est encore déclarée**.
 
 Tests : `python -m unittest discover -s src/plugins/provider-bnf-pret/tests -p test_loan_observations.py -v`.
+
+
+## Diagnostic privé de structure DOM — qualification P0 #2055
+
+Après ouverture volontaire de Chromium et confirmation manuelle du compte,
+le lecteur expose « Diagnostiquer les sélecteurs visibles ». Cette action
+n'effectue **aucune requête réseau** et n'inspecte ni valeurs de champs, ni
+texte, HTML, URL, cookie, formulaire ou stockage. Une évaluation dans la page
+ne renvoie que sept **compteurs de correspondances** de sélecteurs
+actuellement employés (prêts, recherche, microdata Book, liens de ressources
+et de prêts), plafonnés à 101 ; le résultat apparaît **uniquement dans l'UI**
+de la session courante, jamais dans TaskBroker/Diagnostics/LLM.
+
+L'extraction exige la session `readonly`, l'identité/compte/époque exacts,
+une URL du portail autorisée et une page stable. Un résultat inattendu est
+refusé plutôt que transmis. Les tests Chromium n'utilisent que des pages
+HTML synthétiques interceptées. Ces comptes ne constituent **aucune preuve
+d'identité distante, de droit actif, de complétude ou de synchronisation**.
+En particulier « 0 blocs de prêts » signifie seulement que le sélecteur
+actuel ne correspond à aucun nœud de la page lue : ne jamais en déduire
+une restitution ou une absence de prêt. Pour la qualification sur parcours
+réel, on peut noter les seuls compteurs locaux, sans joindre capture,
+identifiants personnels, HTML, SAML, URL signée ou licence.
