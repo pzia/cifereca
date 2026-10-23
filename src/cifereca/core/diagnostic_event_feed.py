@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import unicodedata
 from typing import Any
 
 from .diagnostic_numilog_projection import (
@@ -84,6 +85,32 @@ _STRUCTURED_TERMS = frozenset({
     "catalog", "search", "library", "update", "install", "check", "health",
     "error", "warning", "state", "fetch", "adept", "pnb", "paris", "kobo",
 })
+_BUSINESS_DOMAIN_ALIASES = {
+    "browser": "browser_recorder",
+    "recorder": "browser_recorder",
+    "browser recorder": "browser_recorder",
+    "browser_recorder": "browser_recorder",
+    "reconciliation": "reconciliation",
+    "reconcilitation": "reconciliation",  # Documented UI typo, not fuzzy matching.
+}
+
+
+def canonical_diagnostic_domain(value: str) -> str:
+    """Only fixed public aliases; reject free-text paths, sites or accounts."""
+    if type(value) is not str or len(value) > 48:
+        raise ValueError("invalid diagnostic domain")
+    key = "".join(
+        char for char in unicodedata.normalize("NFD", value.strip().casefold())
+        if unicodedata.category(char) != "Mn"
+    )
+    if not key:
+        return ""
+    canonical = _BUSINESS_DOMAIN_ALIASES.get(key)
+    if canonical is None:
+        raise ValueError("unknown diagnostic domain")
+    return canonical
+
+
 _CATEGORIES = frozenset({
     "CORE", "SYNC", "ADEPT", "PNB", "PARIS", "KOBO", "PLUGIN",
     "UPDATER", "UI", "CATALOG", "DIAGNOSTICS", "IMPORT", "LIBRARY", "NUMILOG",
@@ -402,6 +429,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                  if word in _STRUCTURED_TERMS][:5]
         message = " ".join(terms) if terms else "[opération masquée]"
         public_detail = {}
+        attested_domain = ""
         # The Core attests user-requested Browser Recorder provisioning
         # operations. A generic PLUGIN.add() record with identical text
         # cannot publish even a fixed code without this provenance flag.
@@ -413,6 +441,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             if attested:
                 public_detail = attested
                 message = operation
+                attested_domain = "browser_recorder"
         # This projection is restricted to the Core connection producer's
         # exact fixed operation/code pair. Other PLUGIN records remain masked,
         # even if an arbitrary plugin supplies a well-formed provider_id.
@@ -455,6 +484,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                     "ok" if inspected["status"] == "complete" else inspected["status"]):
                 reconciliation_detail = inspected
                 public_detail = inspected
+                attested_domain = "reconciliation"
                 message = {
                     "complete": "réconciliation locale terminée",
                     "partial": "réconciliation locale incomplète",
@@ -545,6 +575,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "timestamp": utc_stamp,
             "source": "core_events",
             "module": module,
+            **({"domain": attested_domain} if attested_domain else {}),
             **({"provider_id": attested_provider_id} if attested_provider_id else {}),
             "severity": severity,
             "message": message,
@@ -573,6 +604,7 @@ def query_diagnostic_events(
     provider_id: str = "",
     since: str | None = None, until: str | None = None,
     limit: int = 50, offset: int = 0, reason_code: str = "",
+    domain: str = "",
 ) -> dict[str, Any]:
     """A bounded/paginated snapshot with explicit source states.
 
@@ -581,6 +613,7 @@ def query_diagnostic_events(
     """
     if not isinstance(source, str) or source not in {"all", "core_events", "app_log"}:
         raise ValueError("unknown diagnostic source")
+    selected_domain = canonical_diagnostic_domain(domain)
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("diagnostic module must be a string of at most 90 characters")
     # Provider and module are independent filters. A caller-supplied value
@@ -627,6 +660,10 @@ def query_diagnostic_events(
             or (type(row.get("business_module")) is str
                 and row["business_module"].casefold().startswith(prefix))
         ]
+    if selected_domain:
+        # Only a verified Core projection can carry domain. Do not search
+        # arbitrary app_log messages or all PLUGIN/LIBRARY records.
+        events = [row for row in events if row.get("domain") == selected_domain]
     if provider_id:
         events = [row for row in events if row.get("provider_id") == provider_id]
     if severity:
