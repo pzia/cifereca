@@ -5,8 +5,10 @@ try:
     from cifereca.plugin_api import prefer_downloads_for_save
 except ImportError:
     # A plugin-only update must remain safe with an older Core.
-    def prefer_downloads_for_save(_chooser):
+    def _keep_native_folder(_chooser):
         return False
+
+    prefer_downloads_for_save = _keep_native_folder
 
 
 def support_report_bytes(text):
