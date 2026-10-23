@@ -352,6 +352,42 @@ class BrowserSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(browser.BrowserSessionError, "^page_changed$"):
             self.session.probe_visible_dom(expected=self.session.scope)
 
+    def test_book_controls_require_current_public_fiche_no_navigation(self):
+        self.ready()
+        self.runtime.page.url = browser.ORIGIN + '/resources/synthetic-book'
+        self.runtime.page.evaluate_hook = lambda _: {
+            'code': 'ok', 'borrow_controls': 1,
+            'booking_controls': 0, 'unavailable_markers': 1,
+        }
+        before = sum(c[0] == 'goto' for c in self.runtime.page.calls)
+        result = self.session.book_actions(expected=self.session.scope)
+        self.assertEqual((result.borrow_controls, result.booking_controls,
+                          result.unavailable_markers), (1, 0, 1))
+        self.assertIs(result.borrow_authorized, False)
+        self.assertEqual(before, sum(c[0] == 'goto' for c in self.runtime.page.calls))
+        self.runtime.page.url = browser.ORIGIN + '/results?q=book'
+        with self.assertRaisesRegex(browser.BrowserSessionError, '^unexpected_page$'):
+            self.session.book_actions(expected=self.session.scope)
+        self.runtime.page.url = browser.ORIGIN + '/resources/synthetic-book?private=token'
+        with self.assertRaisesRegex(browser.BrowserSessionError, '^unexpected_page$'):
+            self.session.book_actions(expected=self.session.scope)
+
+    def test_book_controls_scope_and_page_race_fail_closed(self):
+        self.ready()
+        self.runtime.page.url = browser.ORIGIN + '/resources/synthetic-book'
+        other = browser.ProfileScope('another', 'account', 'epoch')
+        before = len(self.runtime.page.calls)
+        with self.assertRaisesRegex(browser.BrowserSessionError, '^scope_mismatch$'):
+            self.session.book_actions(expected=other)
+        self.assertEqual(before, len(self.runtime.page.calls))
+        def change(_):
+            self.session._navigated(self.runtime.page.main_frame)
+            return {'code': 'ok', 'borrow_controls': 1,
+                    'booking_controls': 0, 'unavailable_markers': 1}
+        self.runtime.page.evaluate_hook = change
+        with self.assertRaisesRegex(browser.BrowserSessionError, '^page_changed$'):
+            self.session.book_actions(expected=self.session.scope)
+
     def test_navigation_during_extraction_discards_result(self):
         self.ready()
         def change(result):
