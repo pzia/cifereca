@@ -80,6 +80,14 @@ def _structured_group_values(values: dict[str, list[str]]) -> tuple[list[str], l
     return series,collections
 
 
+def _bnf_unavailable_xml():
+    """A syntactically invalid or non-SRU HTTP 200 is not a catalogue zero."""
+    failure = ProviderError("BnF : invalid_sru_response")
+    failure.code = "search_temporarily_unavailable"
+    failure.retryable = False
+    return failure
+
+
 class BnfCatalogueSession(ProviderSession):
     def __init__(self, *, diagnostics: Any, **kwargs: Any):
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
@@ -163,7 +171,18 @@ class BnfCatalogueSession(ProviderSession):
                 "error": type(exc).__name__,
                 "http_status": status if type(status) is int and 100 <= status <= 599 else None,
             })
-            raise ProviderError(f"BnF : catalogue temporairement indisponible ({code})") from exc
+            failure = ProviderError(f"BnF : catalogue temporairement indisponible ({code})")
+            if status == 401:
+                failure.code = "search_authentication_required"
+            elif status == 403:
+                failure.code = "search_access_denied"
+            elif (status in {408, 429}
+                  or type(status) is int and 500 <= status <= 599
+                  or isinstance(exc, (httpx.TransportError, httpx.DecodingError))):
+                failure.code = "search_temporarily_unavailable"
+                failure.retryable = False  # No duplicate SRU GET.
+            # Request errors can contain signed URLs or account information.
+            raise failure from None
         # Unknown support is omitted from scoped searches. API v1 only allows
         # physical/digital; all-scope uses a documented physical fallback.
         if scope != "all":
@@ -184,10 +203,10 @@ class BnfCatalogueSession(ProviderSession):
     def parse_records(self, content: bytes):
         try:
             root = ET.fromstring(content)
-        except ET.ParseError as exc:
-            raise ProviderError("BnF : réponse du catalogue inexploitable") from exc
+        except ET.ParseError:
+            raise _bnf_unavailable_xml() from None
         if root.tag != f"{{{SRU}}}searchRetrieveResponse":
-            raise ProviderError("BnF : réponse SRU attendue")
+            raise _bnf_unavailable_xml() from None
         if any(n.tag.rsplit("}", 1)[-1] == "diagnostic" for n in root.iter()):
             raise ProviderError("BnF : requête refusée par le service SRU")
         # SRU 1.2 numberOfRecords is the server's evidence for a genuine
@@ -196,7 +215,7 @@ class BnfCatalogueSession(ProviderSession):
         totals = root.findall(f"{{{SRU}}}numberOfRecords")
         if (len(totals) != 1 or totals[0].text is None
                 or re.fullmatch(r"[0-9]{1,12}", totals[0].text.strip()) is None):
-            raise ProviderError("BnF : invalid_sru_response")
+            raise _bnf_unavailable_xml() from None
         rows = {}
         for data in root.findall(f".//{{{SRU}}}recordData"):
             values: dict[str, list[str]] = {}
