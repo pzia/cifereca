@@ -381,7 +381,22 @@ class KoboAdeptRuntime:
                      retryable=error.get('retryable') is True)
             fail('Échec Kobo-Adept ; code fournisseur non qualifié.',
                  'kobo_adept_failed', returncode=proc.returncode)
-        self._report(f"Kobo-Adept {self.last_run_diagnostic.get('operation') or 'operation'}", "ok")
+        # P1 #2845: preserve timing evidence for the four read-only commands
+        # observed repeatedly on startup. A normal-level diagnostic contains
+        # only the fixed operation family and bounded technical counters;
+        # no CLI argv, profile, account, token, response or subject text.
+        # This does NOT prove that calls share the same scope/freshness and
+        # must never be used to coalesce inventory or suppress an explicit refresh.
+        normal_read = (
+            (type(args) is list and args in (
+                ['contract', '--json'], ['capabilities', '--json'],
+                ['profile', 'list', '--json'], ['loans', 'list', '--json'],
+            ))
+        )
+        self._report(
+            f"Kobo-Adept {self.last_run_diagnostic.get('operation') or 'operation'}",
+            "ok", level="normal" if normal_read else "detailed",
+        )
         return value
 
     def contract(self):
