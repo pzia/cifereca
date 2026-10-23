@@ -46,7 +46,9 @@ def test_real_selection_preflight_and_commit_drive_pinned_guide():
     code = UI.read_text(encoding="utf-8")
     ast.parse(code)
     assert "reconciliation-guided-step" in code
-    assert "toolbar_view.add_bottom_bar(guide_status)" in code
+    assert "footer.prepend(guide_status)" in code
+    assert "toolbar_view.add_bottom_bar(guide_status)" not in code
+    assert "guide_status.set_ellipsize(Pango.EllipsizeMode.END)" in code
     # The default filter is configured before handlers can cause a second
     # render, and every other state remains selectable from the dropdown.
     default = "state.set_selected(list(STATES).index('rights_without_verified_file'))"
