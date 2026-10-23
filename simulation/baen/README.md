@@ -16,6 +16,8 @@ python3 simulation/datasetctl.py down ux-small
 | `/health` | Seed, disponibilité et comptes synthétiques |
 | `/allbooks/category/index/id/2012?page=N&pageSize=N&q=X` | Catalogue, recherche serveur, pagination, 0 résultat |
 | `?q=rate-limit`, `?q=down` | HTTP 429, HTTP 503 |
+| `?q=layout-change` | HTTP 200 à contenu non qualifié : résultat partiel, jamais zéro attesté |
+| Recherche absente (`q=nothing`) | HTTP 200, marqueurs exacts `Showing 0-0 of 0` et `No results` : zéro vérifié |
 | `/allbooks/{slug}` | Détail WebScription : titre, auteur, date, ISBN, lien EPUB optionnel |
 | `/downloads/{slug}.epub` | EPUB fictif valide généré localement, type MIME `application/epub+zip` |
 | `/downloads/{slug}.epub?fault=invalid-epub` | Corps invalide pour contrôle du transport |
