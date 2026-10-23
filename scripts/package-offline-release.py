@@ -40,7 +40,7 @@ def _tracked(source: Path) -> tuple[Path, ...]:
         raw = os.fsdecode(name)
         relative = PurePosixPath(raw)
         if (relative.is_absolute() or ".." in relative.parts
-                or not relative.parts or any(part.startswith(".git") for part in relative.parts)):
+                or not relative.parts or any(part == ".git" for part in relative.parts)):
             raise ValueError("release_unsafe_tracked_path")
         path = source.joinpath(*relative.parts)
         if not path.is_file() or path.is_symlink():
