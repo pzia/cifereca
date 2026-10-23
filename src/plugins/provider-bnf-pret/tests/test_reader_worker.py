@@ -67,6 +67,11 @@ class FakeReader:
         self.call('suggestions')
         return ('private-suggestions', expected)
 
+    def search(self, query, *, expected):
+        self.call('search')
+        assert expected == self.scope
+        return ('private-search', query, expected)
+
     def current_detail(self, *, expected):
         self.call('visible_detail')
         return ('private-detail-visible', expected)
@@ -151,6 +156,10 @@ class ReaderWorkerTests(unittest.TestCase):
         self.confirm(scope)
         self.worker.submit('loans', expected=scope).result(2)
         self.worker.submit('suggestions', expected=scope).result(2)
+        self.assertEqual(
+            self.worker.submit('search', expected=scope, search_query='Synthetic title').result(2),
+            ('private-search', 'Synthetic title', scope),
+        )
         self.worker.submit('detail', expected=scope, resource_id='synthetic').result(2)
         self.assertEqual(self.worker.submit('visible_detail', expected=scope).result(2),
                          ('private-detail-visible', scope))
@@ -179,6 +188,19 @@ class ReaderWorkerTests(unittest.TestCase):
         for name in ('borrow', 'download', 'return', 'open_login', lambda: None):
             with self.assertRaisesRegex(Error, '^unsupported_reader_command$'):
                 self.worker.submit(name, expected=scope)
+
+    def test_search_query_never_leaks_and_mutating_routes_remain_forbidden(self):
+        scope = self.start()
+        for search_query in (None, '', ' ', 'a', 'secret\ntrace', 'x' * 129, 4):
+            with self.assertRaisesRegex(Error, '^invalid_search$'):
+                self.worker.submit('search', expected=scope, search_query=search_query)
+        with self.assertRaisesRegex(Error, '^invalid_search$'):
+            self.worker.submit('loans', expected=scope, search_query='private')
+        future = self.worker.submit('search', expected=scope, search_query='private-search-term')
+        self.assertNotIn('private-search-term', repr(self.worker))
+        self.assertNotIn('private-search-term', repr(worker_module._Command(
+            'search', scope, future, query='private-search-term')))
+        self.assertEqual(future.result(2)[0], 'private-search')
 
     def test_cancelled_request_not_executed(self):
         scope = self.start()

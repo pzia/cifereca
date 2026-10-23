@@ -15,13 +15,13 @@ from threading import Event, RLock
 from cifereca_bnf_pret_browser import BrowserSessionError, ReaderBrowserSession
 from cifereca_bnf_pret_web import ProfileScope
 
-_OPERATIONS = frozenset({"confirm_account", "loans", "suggestions", "detail", "visible_detail"})
+_OPERATIONS = frozenset({"confirm_account", "loans", "suggestions", "detail", "visible_detail", "search"})
 _CODES = frozenset({
     "consent_required", "account_confirmation_required", "playwright_unavailable",
     "browser_unavailable", "login_not_verified", "auth_required", "access_refused",
     "rate_limited", "http_error", "session_closed", "scope_mismatch", "invalid_resource",
     "unrecognized_dom", "page_changed", "read_failed", "navigation_failed",
-    "html_limit", "dom_limit", "item_limit", "invalid_session_state",
+    "html_limit", "dom_limit", "item_limit", "invalid_session_state", "invalid_search",
 })
 
 
@@ -37,6 +37,7 @@ class _Command:
     future: Future = field(repr=False)
     resource_id: str | None = field(default=None, repr=False)
     confirmed: bool = False
+    query: str | None = field(default=None, repr=False)
 
 
 class ReaderWorker:
@@ -79,7 +80,7 @@ class ReaderWorker:
             if self._state != "closed":
                 self._state = "stopping"
 
-    def submit(self, operation, *, expected, resource_id=None, account_confirmed=False):
+    def submit(self, operation, *, expected, resource_id=None, account_confirmed=False, search_query=None):
         if type(operation) is not str or operation not in _OPERATIONS:
             raise BrowserSessionError("unsupported_reader_command")
         if operation == "confirm_account" and account_confirmed is not True:
@@ -88,13 +89,21 @@ class ReaderWorker:
             raise BrowserSessionError("invalid_resource")
         if operation != "detail" and resource_id is not None:
             raise BrowserSessionError("invalid_resource")
+        if operation == "search":
+            if (type(search_query) is not str or not 2 <= len(search_query) <= 128
+                    or any(ord(c) < 32 or ord(c) == 127 for c in search_query)
+                    or not 2 <= len(" ".join(search_query.split())) <= 128):
+                raise BrowserSessionError("invalid_search")
+        elif search_query is not None:
+            raise BrowserSessionError("invalid_search")
         with self._lock:
             if self._stop.is_set() or self._state not in {"login", "readonly"}:
                 raise BrowserSessionError("session_closed")
             if not isinstance(expected, ProfileScope) or expected != self._scope:
                 raise BrowserSessionError("scope_mismatch")
             future = Future()
-            command = _Command(operation, expected, future, resource_id, account_confirmed is True)
+            command = _Command(operation, expected, future, resource_id,
+                               account_confirmed is True, search_query)
             try:
                 self._commands.put_nowait(command)
             except Full:
@@ -124,6 +133,8 @@ class ReaderWorker:
                 value = session.detail(command.resource_id, expected=command.scope)
             elif command.operation == "visible_detail":
                 value = session.current_detail(expected=command.scope)
+            elif command.operation == "search":
+                value = session.search(command.query, expected=command.scope)
             elif command.operation == "loans":
                 value = session.loans(expected=command.scope)
             else:

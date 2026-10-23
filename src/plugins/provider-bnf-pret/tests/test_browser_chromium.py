@@ -26,6 +26,9 @@ HTML = {
         '<a href="/resources/synthetic-book">Titre fictif</a>'
         '<a href="/loans/synthetic-loan?signature=SYNTHETIC_SECRET">Télécharger</a>'
         '</div></section></body></html>',
+    '/results': '<html><body><ul class="search-results__list">'
+        '<li class="search-resource-result"><a href="/resources/synthetic-book">'
+        'Titre fictif</a></li></ul></body></html>',
     '/resources/synthetic-book': '<html><body><article itemscope itemtype="https://schema.org/Book">'
         '<h1 itemprop="name">Titre fictif</h1><meta itemprop="isbn" content="9780000000002">'
         '<span itemprop="author" itemscope itemtype="https://schema.org/Person">'
@@ -110,6 +113,12 @@ class ChromiumReaderTests(unittest.TestCase):
         self.assertEqual(detail.records[0].availability, 'unavailable')
         visible = self.session.current_detail(expected=self.session.scope)
         self.assertEqual(visible.records[0].title, 'Titre fictif')
+
+    def test_real_explicit_readonly_search_uses_html_route(self):
+        result = self.session.search('Fiction française', expected=self.session.scope)
+        self.assertEqual(result.records[0].resource_id, 'synthetic-book')
+        self.assertEqual(result.records[0].title, 'Titre fictif')
+        self.assertIn('/results?q=Fiction%20fran%C3%A7aise', self.session._page.url)
 
     def test_real_request_guard_blocks_post_and_loan_get(self):
         results = self.session._page.evaluate("""async () => {

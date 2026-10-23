@@ -8,7 +8,7 @@ from __future__ import annotations
 import secrets
 import threading
 from queue import Queue, Empty
-from urllib.parse import parse_qsl, urlsplit, unquote
+from urllib.parse import parse_qsl, urlsplit, unquote, quote
 
 from cifereca_bnf_pret_web import (
     MAX_HTML_BYTES, MAX_NODES, MAX_DEPTH, ORIGIN, ProfileScope, WebParseError,
@@ -289,8 +289,23 @@ class ReaderBrowserSession:
             raise BrowserSessionError("unexpected_page")
         return self._read("detail", expected)
 
+    def search(self, query, *, expected):
+        """Explicit GET to the observed public HTML results route, not API/XHR.
+
+        Never trigger on typing. The text stays inside the browser-owner
+        command and the results remain private until the UI checks scope.
+        """
+        if (type(query) is not str or not 2 <= len(query) <= 128
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in query)):
+            raise BrowserSessionError("invalid_search")
+        normalized = " ".join(query.strip().split())
+        if not 2 <= len(normalized) <= 128:
+            raise BrowserSessionError("invalid_search")
+        self._goto(ORIGIN + "/results?q=" + quote(normalized, safe=""), expected)
+        return self._read("suggestions", expected)
+
     def suggestions(self, *, expected):
-        # Search via the visible website, no guessed autocomplete endpoint.
+        # Reading the page is distinct from an explicit search navigation.
         return self._read("suggestions", expected)
 
     def pump(self):
