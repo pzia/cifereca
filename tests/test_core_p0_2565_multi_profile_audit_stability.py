@@ -19,6 +19,8 @@ from tests.test_core_p0_2796_reconciliation_repeatability import _fixture
 
 def _run(identity="alice", *, changed=False):
     inventory, tables = _fixture(3)
+    # Full proof projection needs the (possibly empty) Kobo backup table too.
+    tables["backup_items"] = []
     if identity != "alice":
         inventory.files = [replace(file, identity_id=identity)
                            for file in inventory.files]
