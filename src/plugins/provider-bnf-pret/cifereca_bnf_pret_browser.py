@@ -258,7 +258,9 @@ class ReaderBrowserSession:
 
     def probe_visible_dom(self, *, expected):
         """Local counts only; no navigation and no raw DOM export."""
-        self._check("readonly")
+        self._check()
+        if self._mode not in {"login", "readonly"}:
+            raise BrowserSessionError("invalid_session_state")
         if not isinstance(expected, ProfileScope) or expected != self.scope:
             raise BrowserSessionError("scope_mismatch")
         generation = self._generation
