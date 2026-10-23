@@ -24,12 +24,12 @@ def _unsupported_chapter(path):
     data = bytearray(path.read_bytes())
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         local = archive.getinfo("cover.png").header_offset
-    assert data[local:local + 4] == b"PK\\x03\\x04"
+    assert data[local:local + 4] == bytes.fromhex("504b0304")
     method = struct.pack("<H", 99)
     data[local + 8:local + 10] = method
     central = 0
     found = False
-    while (central := data.find(b"PK\\x01\\x02", central)) >= 0:
+    while (central := data.find(bytes.fromhex("504b0102"), central)) >= 0:
         length = struct.unpack_from("<H", data, central + 28)[0]
         name = bytes(data[central + 46:central + 46 + length])
         if name == b"cover.png":
