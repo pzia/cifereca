@@ -73,6 +73,10 @@ GTK_PHASES_2027 = (
     "maint_p1_naming", "maint_p1_duplicates", "maint_done",
     "maint_dialog_visible", "maint_dialog_response",
     "maint_p1_dialog_visible", "maint_p1_dialog_response",
+    # Stable, redacted acceptance checkpoints (no private book details).
+    "maint_inspection_opened", "maint_inspection_right_selected",
+    "maint_inspection_candidate_navigated", "maint_inspection_file_selected",
+    "maint_inspection_preflight", "maint_inspection_finished",
 )
 _PHASE_MARKER = re.compile(
     r"^CIFERECA_E2E_GTK_PHASE:(?P<phase>[a-z0-9_]+)$"

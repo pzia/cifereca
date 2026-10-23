@@ -677,7 +677,8 @@ def main():
         from gi.repository import Pango
         from library_inspection_acceptance import exercise
         exercise(parent=window[0], Gtk=Gtk, Adw=Adw, GLib=GLib, Pango=Pango,
-                 device=device[0], until=until, walk=walk, report=report, done=finish_inspection)
+                 device=device[0], until=until, walk=walk, report=report,
+                 checkpoint=gtk_phase_2027, done=finish_inspection)
 
     def finish_inspection():
         gtk_phase_2027("maint_done")

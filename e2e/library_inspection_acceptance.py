@@ -20,7 +20,8 @@ from cifereca.gui.maintenance_result_view import MaintenanceResultView
 from cifereca.plugin_api import MaintenanceResult
 
 
-def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done):
+def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
+             report, done, checkpoint=lambda phase: None):
     report['checks']['inspection_setup_entered']=True
     tmp = tempfile.TemporaryDirectory()
     root = Path(tmp.name)
@@ -160,6 +161,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(allocated,click)
 
     def initial():
+        checkpoint('maint_inspection_opened')
         report['checks']['inspection_window_mapped']=True
         window=controller.dialog
         assert window.get_width()<=parent.get_width()
@@ -274,6 +276,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                          for w in walk(controller.dialog)), compare_right)
 
     def compare_right():
+        checkpoint('maint_inspection_right_selected')
         report['checks']['inspection_candidates_initially_visible']=True
         labels='\n'.join(w.get_text() for w in walk(controller.dialog)
                           if isinstance(w,Gtk.Label))
@@ -350,6 +353,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             until(lambda:any(isinstance(w,Gtk.Label) and '2 / 20' in w.get_text()
                              for w in walk(controller.dialog)), compare_next)
 
+        # The detailed scope summary moved to a collapsed expander on main;
+        # wheel over the permanently visible private-identity notice instead.
         # A genuine mouse wheel must scroll the OUTER window without
         # faking GtkAdjustment movement; the nested ListBoxes are separate.
         def wheel_target():
@@ -361,7 +366,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             summary = next(
                 w for w in walk(controller.dialog)
                 if isinstance(w, Gtk.Label)
-                and w.get_text().startswith('Périmètre local ·')
+                and w.get_text().startswith('Identité active ·')
             )
             if not summary.get_mapped():
                 return False
@@ -383,7 +388,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             summary = next(
                 w for w in walk(controller.dialog)
                 if isinstance(w, Gtk.Label)
-                and w.get_text().startswith('Périmètre local ·')
+                and w.get_text().startswith('Identité active ·')
             )
             x, y = device.widget_point(summary)
             device.wheel(x, y, down=True, ticks=4)
@@ -398,11 +403,16 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             adjustment.set_value(0)
             until(wheel_target, send_wheel)
         else:
-            # No scroll range means no wheel gesture is needed to reach
-            # these controls, and should not be counted as a wheel PASS.
+            # The stage buttons now live in a sticky footer, not below the
+            # description. A large desktop can fit the entire shortened
+            # content without vertical scrolling: prove this exact physical
+            # geometry rather than count a nonexistent wheel gesture.
+            assert adjustment.get_upper() <= adjustment.get_page_size() + 1
+            report['checks']['P0_2712_no_outer_scroll_needed'] = True
             until(candidate_allocated, candidate_click)
 
     def compare_next():
+        checkpoint('maint_inspection_candidate_navigated')
         report['checks']['inspection_candidate_navigation_reached']=True
         labels='\n'.join(w.get_text() for w in walk(controller.dialog)
                           if isinstance(w,Gtk.Label))
@@ -413,25 +423,57 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         assert candidate_cases[1].label in labels
         assert 'FOREIGN_SECRET' not in labels
         report['checks']['local_inspection_right_candidate_side_by_side_no_attestation']=True
+        report['checks']['native_manual_toggle_lookup_started'] = True
         manual=next(w for w in walk(controller.dialog)
                     if isinstance(w,Gtk.Button)
                     and w.get_label()=='Comparer tous les fichiers non liés')
+        report['checks']['native_manual_toggle_found'] = True
         def ready():
+            # The fixed bottom action bar reduces the tall panel viewport.
+            # Verify that the actual native pointer will hit this inner
+            # comparison toggle, not a clipped location or the sticky bar.
             manual.grab_focus()
             if not manual.get_mapped() or not manual.get_sensitive():
                 return False
+            outer = widgets['main_scroll']
+            page = outer.get_child()
+            if isinstance(page, Gtk.Viewport):
+                page = page.get_child()
+            ok, bounds = manual.compute_bounds(page)
+            if ok:
+                adjustment = outer.get_vadjustment()
+                adjustment.set_value(max(
+                    0, min(bounds.get_y() - adjustment.get_page_size() / 2,
+                           adjustment.get_upper() - adjustment.get_page_size()),
+                ))
+            window = controller.dialog
+            visible, box = manual.compute_bounds(window)
+            if not visible or box.get_width() <= 0 or box.get_height() <= 0:
+                return False
+            cx = box.get_x() + box.get_width() / 2
+            cy = box.get_y() + box.get_height() / 2
+            if not (0 <= cx < window.get_width() and 0 <= cy < window.get_height()):
+                return False
+            picked = window.pick(cx, cy, Gtk.PickFlags.DEFAULT)
+            while picked is not None and picked is not manual:
+                picked = picked.get_parent()
+            if picked is not manual:
+                return False
+            report['checks']['native_manual_toggle_pointer_hit'] = True
             try:
                 x,y=device.widget_point(manual)
-                return x>=0 and y>=0
+                return x >= 0 and y >= 0
             except RuntimeError:
                 return False
         def click():
+            report['checks']['native_manual_toggle_clicked'] = True
             device.click_widget(manual)
             until(lambda:any(isinstance(w,Gtk.Label) and '1 / 600' in w.get_text()
                              for w in walk(controller.dialog)),manual_first)
         until(ready,click)
 
     def manual_first():
+        report['checks']['native_manual_toggle_result_visible'] = True
         texts='\\n'.join(w.get_text() for w in walk(controller.dialog)
                         if isinstance(w,Gtk.Label))
         assert 'Fichiers non liés · comparaison manuelle' in texts
@@ -442,6 +484,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
                     if isinstance(w,Gtk.SearchEntry)
                     and w.get_placeholder_text()=='Filtrer les fichiers non liés…')
         assert search.get_visible()
+        report['checks']['native_manual_panel_labels_validated'] = True
         # Direct physical selection from the NEW bounded list, not merely
         # next/previous navigation. The first page contains 25 of 600 files.
         file_list = next(w for w in walk(controller.dialog)
@@ -453,19 +496,54 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             rows.append(child)
             child=child.get_next_sibling()
         assert len(rows) == 25, len(rows)
+        report['checks']['native_manual_list_has_25_rows'] = True
         selected_row=rows[1]
 
         def file_row_ready():
+            # The paginated file list has its own GtkScrolledWindow. With
+            # sticky actions, the outer panel also scrolls; both must
+            # physically expose this file row before sending XTEST events.
             selected_row.grab_focus()
             if not selected_row.get_mapped() or not selected_row.get_sensitive():
                 return False
+            ancestor = selected_row.get_parent()
+            while ancestor is not None:
+                if isinstance(ancestor, Gtk.ScrolledWindow):
+                    page = ancestor.get_child()
+                    if isinstance(page, Gtk.Viewport):
+                        page = page.get_child()
+                    ok, rect = selected_row.compute_bounds(page)
+                    if ok:
+                        adj = ancestor.get_vadjustment()
+                        adj.set_value(max(0, min(
+                            rect.get_y() - adj.get_page_size() / 2,
+                            adj.get_upper() - adj.get_page_size(),
+                        )))
+                ancestor = ancestor.get_parent()
+            window = controller.dialog
+            ok, rect = selected_row.compute_bounds(window)
+            if not ok or rect.get_width() <= 0 or rect.get_height() <= 0:
+                return False
+            cx = rect.get_x() + rect.get_width()/2
+            cy = rect.get_y() + rect.get_height()/2
+            if not (0 <= cx < window.get_width() and 0 <= cy < window.get_height()):
+                return False
+            picked = window.pick(cx, cy, Gtk.PickFlags.DEFAULT)
+            while picked is not None and picked is not selected_row:
+                picked = picked.get_parent()
+            if picked is not selected_row:
+                return False
             try:
-                x,y=device.widget_point(selected_row)
-                return x>=0 and y>=0
+                x, y = device.widget_point(selected_row)
+                if x < 0 or y < 0:
+                    return False
             except RuntimeError:
                 return False
+            report['checks']['native_manual_file_row_hit_tested'] = True
+            return True
 
         def click_file():
+            report['checks']['native_manual_file_row_clicked'] = True
             device.click_widget(selected_row)
             until(lambda:any(isinstance(w,Gtk.Label)
                              and '2 / 600 · exploration non probante' in w.get_text()
@@ -475,6 +553,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(file_row_ready, click_file)
 
     def manual_direct_selected():
+        checkpoint('maint_inspection_file_selected')
         report['checks']['P0_2714_click_file_from_paged_list']=True
         text='\\n'.join(w.get_text() for w in walk(controller.dialog)
                          if isinstance(w,Gtk.Label))
@@ -541,6 +620,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(preflight_ready, run_preflight)
 
     def manual_preflight():
+        checkpoint('maint_inspection_preflight')
         text='\\n'.join(w.get_text() for w in walk(controller.dialog)
                        if isinstance(w,Gtk.Label))
         assert 'Aucun fichier n’a été rattaché.' in text
@@ -641,10 +721,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         until(lambda:controller.dialog is None,lambda:revoked(session))
 
     def revoked(session):
-        # The 920x620 inspection with long candidate actions MUST overflow.
-        # Never record a green E2E if the wheel branch was silently skipped
-        # at all three desktop resolutions; the gesture itself is the proof.
-        assert report['checks'].get('P0_2712_physical_wheel_scroll_reached') is True
+        # A small viewport needs a real physical wheel when it overflows.
+        # With a sticky action footer, a larger viewport may have no scroll
+        # range: exact, observed no-overflow geometry also counts as access.
+        assert (report['checks'].get('P0_2712_physical_wheel_scroll_reached') is True
+                or report['checks'].get('P0_2712_no_outer_scroll_needed') is True)
         assert report['checks'].get('P0_2712_tab_shift_tab_candidate_navigation') is True
         assert not session.valid() and not session.page().cases
         assert sources()==before
@@ -652,6 +733,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
         result_view.clear()
         host.destroy()
         tmp.cleanup()
+        checkpoint('maint_inspection_finished')
         done()
 
     host.present()

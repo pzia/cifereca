@@ -589,7 +589,10 @@ class LocalInspectionController:
             'Exploration manuelle uniquement : aucune correspondance '
             'bibliographique ni provenance fournisseur supposée.'
         )
-        candidate_box.append(manual_toggle)
+        # Keep manual discovery as an explicit action visible alongside
+        # preflight; a collapsed/tall evidence panel must not hide the only
+        # way to pick a file when bibliographic matches are absent.
+        # This same widget is moved, not cloned, preserving the callback.
         manual_search = Gtk.SearchEntry()
         manual_search.set_placeholder_text('Filtrer les fichiers non liés…')
         manual_search.set_visible(False)
@@ -657,14 +660,12 @@ class LocalInspectionController:
             'Aucun rattachement ni changement SQLite ne sera effectué.'
         )
         pair_prepare.set_sensitive(False)
-        candidate_box.append(pair_prepare)
         fresh_preview = Gtk.Button(label='Vérifier les preuves actuelles…')
         fresh_preview.set_tooltip_text(
             'Revalider le reçu d’achat et le SHA du fichier en tâche de fond. '
             'Prévisualisation uniquement, sans écriture ni rattachement.'
         )
         fresh_preview.set_visible(False)
-        candidate_box.append(fresh_preview)
         # The Core-only token never reaches GTK, and a separate explicit
         # consent dialog is required before any placement can be written.
         pair_confirm = Gtk.Button(label='Confirmer le placement local…')
@@ -674,7 +675,6 @@ class LocalInspectionController:
         )
         pair_confirm.set_visible(False)
         pair_confirm.set_sensitive(False)
-        candidate_box.append(pair_confirm)
         # Undo is eligible ONLY for a placement committed in the same still
         # live private session. No journal ID or token is given to GTK.
         pair_undo = Gtk.Button(label='Annuler le dernier placement…')
@@ -684,7 +684,6 @@ class LocalInspectionController:
         )
         pair_undo.set_visible(False)
         pair_undo.set_sensitive(False)
-        candidate_box.append(pair_undo)
         pair_explanation = Gtk.Label(label='', xalign=0)
         pair_explanation.set_wrap(True)
         pair_explanation.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -716,8 +715,23 @@ class LocalInspectionController:
         count.set_hexpand(True)
         close = Gtk.Button(label='Fermer')
         for widget in (previous, count, following, close): footer.append(widget)
-        # Keep navigation/close visible while the long inspection moves under
-        # the header. Inner lists retain their own scrollbars for large sets.
+        # Keep all four stages of the selected-pair workflow visible even
+        # when a 600-book audit makes its evidence panes tall. The buttons
+        # are THE SAME widgets/callbacks as before, not independent bypasses.
+        # Horizontal scrolling prevents clipped confirmation at 920 px.
+        pair_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        pair_actions.append(manual_toggle)
+        for action in (pair_prepare, fresh_preview, pair_confirm, pair_undo):
+            pair_actions.append(action)
+        action_scroll = Gtk.ScrolledWindow()
+        action_scroll.set_name('reconciliation-pair-actions-scroll')
+        action_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        action_scroll.set_child(pair_actions)
+        action_scroll.set_min_content_height(40)
+        action_scroll.set_visible(False)
+        toolbar_view.add_bottom_bar(action_scroll)
+        # Navigation is always visible; the action row is additionally
+        # present only when a right has been selected for comparison.
         toolbar_view.add_bottom_bar(footer)
         content_scroll = Gtk.ScrolledWindow()
         content_scroll.set_name('reconciliation-content-scroll')
@@ -1361,6 +1375,7 @@ class LocalInspectionController:
                     ) else None
                 )
                 selected_provider[0] = case.provider if selected_right[0] else None
+                action_scroll.set_visible(selected_right[0] is not None)
                 pair_prepare.set_label(
                     'Examiner le prêt (lecture seule)' if case.provider == 'paris'
                     else 'Préparer le rattachement'
@@ -1406,6 +1421,7 @@ class LocalInspectionController:
             candidate_items[0] = ()
             selected_right[0] = None
             selected_provider[0] = None
+            action_scroll.set_visible(False)
             reset_pair()
             candidate_box.set_visible(False)
             for case in page.cases:
