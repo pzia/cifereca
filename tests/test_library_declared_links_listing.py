@@ -8,7 +8,7 @@ import pytest
 from cifereca.core.library_declared_links import (
     DeclarationRejected, list_declared_links,
 )
-from tests.test_library_declared_links import apply, rig, records, rows
+from tests.test_library_declared_links import apply, inspect, rig, records, rows
 
 
 def test_active_identity_sees_stable_nonattested_link_after_two_syncs(rig):
@@ -135,6 +135,7 @@ def test_disabled_connection_never_looks_like_current_provider_provenance(rig):
         return item
 
     assert view().review == 'recorded_unverified_file'
+    assert inspect(rig, result.relation_id).status == 'declared_current'
     service.storage.provider_connection_put({
         'identity_id': 'default',
         'provider_id': options['provider_id'],
@@ -143,6 +144,7 @@ def test_disabled_connection_never_looks_like_current_provider_provenance(rig):
         'enabled': False,
     })
     assert view().review == 'source_or_right_changed'
+    assert inspect(rig, result.relation_id).status == 'needs_review'
     assert list_declared_links(service, identity_id='default',
                                include_revoked=True).total == 1
     service.storage.provider_connection_put({
@@ -153,5 +155,6 @@ def test_disabled_connection_never_looks_like_current_provider_provenance(rig):
         'enabled': True,
     })
     assert view().review == 'recorded_unverified_file'
+    assert inspect(rig, result.relation_id).status == 'declared_current'
     assert {table: rows(service, table) for table in baseline} == baseline
     assert book.is_file()
