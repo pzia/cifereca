@@ -205,7 +205,11 @@ sélection différente ne supprime ni n'expire automatiquement un prêt.
 Le collecteur refuse les contradictions, pages prétendument exhaustives,
 identifiants invalides et plus de 100 observations. `close()` révoque le
 contenu en mémoire : nouvelle session = nouvel objet, aucune persistence ni
-écriture Core. Son raccordement à l'UI de lecture viendra dans une tranche
-suivante ; **aucune capacité `sync.loans` n'est encore déclarée**.
+écriture Core. La page BnF-Prêt consomme maintenant ces comptes après chaque lecture des prêts
+validée pour la même session ; elle affiche distinctement les prêts de la dernière
+page, les références nouvelles et toutes celles déjà vues dans la session.
+Après une erreur, les observations antérieures restent visibles comme historiques,
+non comme droits actuels. La fermeture ou le changement de profil efface le cumul.
+**Aucune capacité `sync.loans` n'est encore déclarée**.
 
 Tests : `python -m unittest discover -s src/plugins/provider-bnf-pret/tests -p test_loan_observations.py -v`.

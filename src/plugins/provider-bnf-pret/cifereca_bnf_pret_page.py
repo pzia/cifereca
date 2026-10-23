@@ -8,6 +8,7 @@ from __future__ import annotations
 from cifereca.plugin_api import UiPageContribution
 from cifereca_bnf_pret_worker import ReaderWorker, BrowserSessionError
 from cifereca_bnf_pret_web import CatalogPage, CatalogRecord
+from cifereca_bnf_pret_observations import ObservedLoans, ObservedLoanCounts
 import re
 
 _MESSAGES = {
@@ -72,6 +73,16 @@ def suggestion_lines(result, *, limit=12):
     return tuple(lines)
 
 
+def loan_observation_status(counts):
+    """UI-only counts; 'seen' is never a count of current loan rights."""
+    if not isinstance(counts, ObservedLoanCounts):
+        return _DEFAULT_ERROR
+    return (f"{counts.on_last_page} prêt(s) visibles sur cette page ; "
+            f"{counts.newly_seen} nouvelle(s) référence(s) ; "
+            f"{counts.seen_in_session} référence(s) vues depuis l'ouverture de la session. "
+            "Observations partielles, aucun droit actif attesté ou publié.")
+
+
 def safe_error(exc):
     """Translate only an allowlisted adapter code, never print exception text."""
     if not isinstance(exc, BrowserSessionError):
@@ -86,6 +97,7 @@ class BnfReaderPage:
         self.tasks = None
         self.worker = None
         self.handle = None
+        self.observations = None
         self._generation = 0
         self._ui = None
         self._unsubscribe = None
@@ -106,6 +118,10 @@ class BnfReaderPage:
 
     def _stop(self):
         self._generation += 1
+        observations = self.observations
+        self.observations = None
+        if observations is not None:
+            observations.close()
         worker, handle = self.worker, self.handle
         self.worker = self.handle = None
         if worker is not None:
@@ -247,15 +263,23 @@ class BnfReaderPage:
                         result = fut.result()
                     except Exception as exc:
                         preview.set_label("")
-                        status.set_label(safe_error(exc))
+                        message = safe_error(exc)
+                        if name in ("confirm_account", "loans") and self.observations is not None:
+                            message += " Observations antérieures conservées sans attestation actuelle."
+                        status.set_label(message)
                     else:
                         preview.set_label("")
                         if name in ("confirm_account", "loans"):
-                            count = len(result.loans)
-                            status.set_label(
-                                f"{count} prêt(s) visibles dans la page BnF ; "
-                                "inventaire non exhaustif, aucun droit publié."
-                            )
+                            try:
+                                if self.observations is None:
+                                    self.observations = ObservedLoans(scope)
+                                counts = self.observations.observe(result)
+                            except Exception:
+                                # A rejected/ambiguous snapshot never overwrites
+                                # previous observations or leaks private payloads.
+                                status.set_label(_DEFAULT_ERROR)
+                            else:
+                                status.set_label(loan_observation_status(counts))
                         elif name == "visible_detail":
                             if len(result.records) != 1:
                                 status.set_label("Fiche non reconnue : aucune notice publiée.")

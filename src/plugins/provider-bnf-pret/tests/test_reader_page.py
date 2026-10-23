@@ -90,6 +90,29 @@ class BnfReaderPageTests(unittest.TestCase):
         self.assertEqual(page.suggestion_lines(
             CatalogPage((CatalogRecord("abc", "X"),)*101, "partial")), ())
 
+    def test_ui_loan_summary_is_bounded_and_non_authorizing(self):
+        from cifereca_bnf_pret_observations import ObservedLoanCounts
+        result = page.loan_observation_status(ObservedLoanCounts(0, 0, 4))
+        self.assertIn("0 prêt(s) visibles sur cette page", result)
+        self.assertIn("4 référence(s) vues", result)
+        self.assertIn("aucun droit actif attesté", result)
+        self.assertEqual(page.loan_observation_status(object()), page._DEFAULT_ERROR)
+
+    def test_ui_stop_retracts_observation_state(self):
+        instance = page.BnfReaderPage()
+        worker, handle = FakeWorker(), FakeHandle()
+        from cifereca_bnf_pret_web import ProfileScope, LoanSnapshot, LoanRecord
+        from cifereca_bnf_pret_observations import ObservedLoans
+        obs = ObservedLoans(ProfileScope("profile", "reader", "epoch"))
+        obs.observe(LoanSnapshot(ProfileScope("profile", "reader", "epoch"),
+                                 (LoanRecord("loan1", "resource1"),), "observed"))
+        instance.worker, instance.handle, instance.observations = worker, handle, obs
+        instance._stop()
+        self.assertTrue(worker.stopped)
+        self.assertTrue(handle.cancelled)
+        self.assertIsNone(instance.observations)
+        self.assertIn("closed", repr(obs))
+
     def test_browser_exception_is_never_rendered(self):
         secret = "reader@example.test?SAMLResponse=PRIVATE"
         self.assertNotIn(secret, page.safe_error(RuntimeError(secret)))
