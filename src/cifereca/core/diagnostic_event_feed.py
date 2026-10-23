@@ -639,10 +639,14 @@ def query_diagnostic_events(
                 if row.get("source") == "core_events"
                 and row.get("module") == "PLUGIN"
                 and type(row.get("detail")) is dict
+                and row["detail"].get("plugin_id") == "ui.page.browser-recorder"
                 and row["detail"].get("operation") in {
-                    "browser_recorder_provision", "browser_recorder_session",
-                    "browser_recorder_export",
+                    "python_dependencies_install", "chromium_probe",
+                    "chromium_install", "http_capture", "http_review",
+                    "zip_prepare", "zip_export", "private_zip_export",
+                    "har_record", "har_replay",
                 }
+                and type(row["detail"].get("code")) is str
             ]
         elif domain == "reconciliation":
             events = [
