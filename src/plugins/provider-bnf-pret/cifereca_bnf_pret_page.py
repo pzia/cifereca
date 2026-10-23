@@ -9,6 +9,7 @@ from cifereca.plugin_api import UiPageContribution
 from cifereca_bnf_pret_worker import ReaderWorker, BrowserSessionError
 from cifereca_bnf_pret_web import CatalogPage, CatalogRecord
 from cifereca_bnf_pret_observations import ObservedLoans, ObservedLoanCounts
+from cifereca_bnf_pret_selection import VisibleResourceSelection
 import re
 
 _MESSAGES = {
@@ -69,7 +70,7 @@ def suggestion_lines(result, *, limit=12):
         title = readable(row.title) or "Sans titre"
         authors = (readable(", ".join(a for a in row.authors if type(a) is str), 100)
                    if type(row.authors) in (tuple, list) else "")
-        lines.append("• " + title + (" — " + authors if authors else "") + " [BnF " + rid + "]")
+        lines.append(f"{len(lines) + 1}. " + title + (" — " + authors if authors else "") + " [BnF " + rid + "]")
     return tuple(lines)
 
 
@@ -98,6 +99,7 @@ class BnfReaderPage:
         self.worker = None
         self.handle = None
         self.observations = None
+        self.selection = None
         self._generation = 0
         self._ui = None
         self._unsubscribe = None
@@ -118,10 +120,12 @@ class BnfReaderPage:
 
     def _stop(self):
         self._generation += 1
-        observations = self.observations
-        self.observations = None
+        observations, selection = self.observations, self.selection
+        self.observations = self.selection = None
         if observations is not None:
             observations.close()
+        if selection is not None:
+            selection.close()
         worker, handle = self.worker, self.handle
         self.worker = self.handle = None
         if worker is not None:
@@ -179,6 +183,14 @@ class BnfReaderPage:
         preview.set_selectable(True)
         preview_frame.set_child(preview)
         root.append(preview_frame)
+        chooser_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        chooser_bar.append(Gtk.Label(label="N° de la notice observée :"))
+        notice_index = Gtk.SpinButton.new_with_range(1, 12, 1)
+        notice_index.set_digits(0)
+        chooser_bar.append(notice_index)
+        choose_button = Gtk.Button(label="Ouvrir sa fiche dans Chromium")
+        chooser_bar.append(choose_button)
+        root.append(chooser_bar)
 
         def current():
             try:
@@ -204,6 +216,12 @@ class BnfReaderPage:
             loans_button.set_sensitive(same and mode == "readonly" and not busy)
             search_button.set_sensitive(same and mode == "readonly" and not busy)
             detail_button.set_sensitive(same and mode == "readonly" and not busy)
+            choose_button.set_sensitive(
+                same and mode == "readonly" and not busy and self.selection is not None
+            )
+            notice_index.set_sensitive(
+                same and mode == "readonly" and not busy and self.selection is not None
+            )
             stop_button.set_sensitive(worker is not None)
 
         def scope_ok(worker, scope, generation):
@@ -239,12 +257,31 @@ class BnfReaderPage:
             if busy or not scope_ok(worker, scope, generation):
                 sync_profile()
                 return
+            resource_id = None
+            if name == "detail":
+                selection = self.selection
+                if selection is None:
+                    status.set_label("Aucune notice observée à ouvrir.")
+                    return
+                try:
+                    resource_id = selection.choose(
+                        notice_index.get_value_as_int() - 1,
+                        expected=scope, revision=selection.revision,
+                    )
+                except Exception:
+                    status.set_label("Sélection invalide ou expirée : relire les résultats.")
+                    return
+            # A new browser command makes the previously displayed choices stale.
+            # In particular, no second navigation is permitted from an old list.
+            selection, self.selection = self.selection, None
+            if selection is not None:
+                selection.close()
             busy = True
             reset_buttons()
             status.set_label("Lecture BnF en cours…")
             try:
                 future = worker.submit(
-                    name, expected=scope,
+                    name, expected=scope, resource_id=resource_id,
                     account_confirmed=(name == "confirm_account"),
                 )
             except Exception as exc:
@@ -280,7 +317,7 @@ class BnfReaderPage:
                                 status.set_label(_DEFAULT_ERROR)
                             else:
                                 status.set_label(loan_observation_status(counts))
-                        elif name == "visible_detail":
+                        elif name in ("visible_detail", "detail"):
                             if len(result.records) != 1:
                                 status.set_label("Fiche non reconnue : aucune notice publiée.")
                             else:
@@ -300,11 +337,26 @@ class BnfReaderPage:
                                 status.set_label("\n".join(parts))
                         else:
                             rows = suggestion_lines(result)
-                            preview.set_label("\n".join(rows))
-                            status.set_label(
-                                f"{len(result.records)} suggestion(s) visibles ; "
-                                f"{len(rows)} affichée(s) ici, non exhaustives."
-                            )
+                            selection = None
+                            try:
+                                selection = VisibleResourceSelection(scope)
+                                observed = selection.observe(result, expected=scope)
+                                if observed != len(rows):
+                                    raise ValueError("inconsistent_visible_projection")
+                            except Exception:
+                                if selection is not None:
+                                    selection.close()
+                                status.set_label(_DEFAULT_ERROR)
+                            else:
+                                self.selection = selection
+                                preview.set_label("\n".join(rows))
+                                notice_index.set_range(1, max(1, len(rows)))
+                                notice_index.set_value(1)
+                                status.set_label(
+                                    f"{len(result.records)} suggestion(s) visibles ; "
+                                    f"{len(rows)} affichée(s) ici, non exhaustives. "
+                                    "Choisissez un numéro pour ouvrir une fiche."
+                                )
                     reset_buttons()
                     return False
                 GLib.idle_add(show)
@@ -351,6 +403,7 @@ class BnfReaderPage:
                         message = safe_error(exc)
                     self._stop()
                     busy = False
+                    preview.set_label("")
                     status.set_label(message)
                     reset_buttons()
                     return False
@@ -382,6 +435,7 @@ class BnfReaderPage:
         loans_button.connect("clicked", lambda _b: command("loans"))
         search_button.connect("clicked", lambda _b: command("suggestions"))
         detail_button.connect("clicked", lambda _b: command("visible_detail"))
+        choose_button.connect("clicked", lambda _b: command("detail"))
         stop_button.connect("clicked", stop)
         root.connect("unmap", lambda *_args: stop() if self.worker is not None else None)
 

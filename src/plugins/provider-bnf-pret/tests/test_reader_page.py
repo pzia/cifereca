@@ -73,12 +73,34 @@ class BnfReaderPageTests(unittest.TestCase):
                           authors=("Auteur  fictif",)) for n in range(18))
         lines = page.suggestion_lines(CatalogPage(records, "partial"))
         self.assertEqual(len(lines), 12)
-        self.assertEqual(lines[0], "• Fiction <Titre> — Auteur fictif [BnF id-0]")
+        self.assertEqual(lines[0], "1. Fiction <Titre> — Auteur fictif [BnF id-0]")
         self.assertIn("id-11", lines[-1])
         self.assertFalse(any("id-12" in text for text in lines))
         self.assertEqual(page.suggestion_lines(CatalogPage((), "partial")), ())
         self.assertEqual(page.suggestion_lines(CatalogPage(records, "partial"), limit=1000), ())
         self.assertNotIn("https://", "\n".join(lines))
+
+    def test_suggestions_display_explicit_number_for_selected_resource(self):
+        from cifereca_bnf_pret_web import CatalogPage, CatalogRecord
+        lines = page.suggestion_lines(CatalogPage((
+            CatalogRecord("ref1", "Alpha"), CatalogRecord("ref2", "Bêta"),
+        ), "partial"))
+        self.assertEqual(lines, (
+            "1. Alpha [BnF ref1]", "2. Bêta [BnF ref2]",
+        ))
+
+    def test_stop_revokes_visible_catalog_selection(self):
+        from cifereca_bnf_pret_selection import VisibleResourceSelection
+        from cifereca_bnf_pret_web import ProfileScope, CatalogPage, CatalogRecord
+        scope = ProfileScope("identity-private", "local-account", "epoch-private")
+        selection = VisibleResourceSelection(scope)
+        selection.observe(CatalogPage((CatalogRecord("resource-only", "Fiction"),),
+                                      "partial"), expected=scope)
+        instance = page.BnfReaderPage()
+        instance.selection = selection
+        instance._stop()
+        self.assertIsNone(instance.selection)
+        self.assertIn("closed", repr(selection))
 
     def test_unknown_projection_and_untrusted_ids_fail_closed(self):
         from cifereca_bnf_pret_web import CatalogPage, CatalogRecord
