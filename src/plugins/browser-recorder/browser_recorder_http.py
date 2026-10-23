@@ -611,7 +611,11 @@ class PrivateHttpTrace:
         the resulting review, and neither paused nor abandoned bodies leak.
         """
         now_ms = int((monotonic() - self._begin) * 1000)
-        self.omitted["unfinished"] += len(self._pending)
+        # Requests still pending at Stop are sealed, even if the final
+        # response was observed but Chromium never emitted requestfinished.
+        # No pending body survives into an archive marked completed.
+        inflight = {id(entry) for entry in self._pending.values()}
+        self.omitted["unfinished"] += len(inflight)
         for entry in self._pending.values():
             entry.duration_ms = max(0, now_ms - entry.started_ms)
             entry.request_body = None
@@ -621,6 +625,23 @@ class PrivateHttpTrace:
             if entry.response_body_state != "redirect":
                 entry.response_body_state = "unfinished"
                 entry.response_body_reason = "unfinished"
+        # An unusual event order can pop an entry in finished() while its
+        # Response object is absent or has been evicted. It no longer occurs
+        # in _pending, yet its per-response state may remain 'pending'. Seal
+        # that orphan too; do not invent a response or erase valid POST data.
+        # This code only runs at terminal capture sealing, never on pause.
+        for entry in self.exchanges:
+            if id(entry) in inflight:
+                continue
+            if entry.response_body_state == "pending":
+                entry.response_body = None
+                entry.response_body_state = "unfinished"
+                entry.response_body_reason = "unfinished"
+                self.omitted["unfinished"] += 1
+            if entry.request_body_reason == "pending":
+                entry.request_body = None
+                entry.request_body_state = "body_omitted"
+                entry.request_body_reason = "unfinished"
         self._pending.clear()
         self._responses.clear()
 
