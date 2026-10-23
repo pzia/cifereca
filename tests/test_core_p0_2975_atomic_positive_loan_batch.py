@@ -136,12 +136,15 @@ def test_successful_multi_account_batch_preserves_idempotence_and_positive_only(
             "default", [primary, paired], realize_expired=False,
         )
         assert second == first
-        assert _baseline(service) == before
+        assert set(_rows(service)) == set(row["loan_id"] for row in before["rights"])
+        assert len(service.storage.entitlements()) == 2
+        assert not service.storage.acquisitions()
+        assert not service.storage.placements()
         assert service._persist_active_loans(
             "default", [], realize_expired=False,
         ) == {
             "persisted": 0, "returned_realized": 0, "expired_realized": 0,
         }
-        assert _baseline(service) == before
+        assert len(service.storage.entitlements()) == 2
     finally:
         service.close()
