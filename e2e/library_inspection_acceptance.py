@@ -290,6 +290,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
             until(lambda:any(isinstance(w,Gtk.Label) and '2 / 20' in w.get_text()
                              for w in walk(controller.dialog)), compare_next)
 
+        # The detailed scope summary moved to a collapsed expander on main;
+        # wheel over the permanently visible private-identity notice instead.
         # A genuine mouse wheel must scroll the OUTER window without
         # faking GtkAdjustment movement; the nested ListBoxes are separate.
         def wheel_target():
@@ -298,7 +300,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
             summary = next(
                 w for w in walk(controller.dialog)
                 if isinstance(w, Gtk.Label)
-                and w.get_text().startswith('Périmètre local ·')
+                and w.get_text().startswith('Identité active ·')
             )
             if not summary.get_mapped():
                 return False
@@ -319,7 +321,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
             summary = next(
                 w for w in walk(controller.dialog)
                 if isinstance(w, Gtk.Label)
-                and w.get_text().startswith('Périmètre local ·')
+                and w.get_text().startswith('Identité active ·')
             )
             x, y = device.widget_point(summary)
             device.wheel(x, y, down=True, ticks=4)
