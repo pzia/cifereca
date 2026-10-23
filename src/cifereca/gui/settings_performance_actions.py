@@ -137,8 +137,8 @@ def bind_settings_performance_actions(
                 window, Gtk.FileChooserAction.SAVE,
                 "Exporter", "Annuler",
             )
-            chooser.set_current_name("cifereca-performances.json")
             prefer_downloads_for_save(chooser)
+            chooser.set_current_name("cifereca-performances.json")
 
             def chosen(dialog, response):
                 try:
