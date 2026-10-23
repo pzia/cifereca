@@ -763,14 +763,18 @@ class LocalInspectionController:
         count.set_hexpand(True)
         close = Gtk.Button(label='Fermer')
         for widget in (previous, count, following, close): footer.append(widget)
-        # Closed guidance stays pinned while the evidence pane scrolls:
-        # selecting an item never implies ownership or attachment authority.
+        # Reuse the existing pinned navigation bar rather than adding
+        # another vertical bar: at 920×620 the content still needs enough
+        # height for a physical GTK/XTEST selection. A clipped hint retains
+        # its complete text in the tooltip.
         guide_status = Gtk.Label(
             label=_reconciliation_step_label('idle'), xalign=0,
         )
         guide_status.set_name('reconciliation-guided-step')
-        guide_status.set_wrap(True)
-        toolbar_view.add_bottom_bar(guide_status)
+        guide_status.set_max_width_chars(48)
+        guide_status.set_ellipsize(Pango.EllipsizeMode.END)
+        guide_status.set_tooltip_text(_reconciliation_step_label('idle'))
+        footer.prepend(guide_status)
         # Keep all four stages of the selected-pair workflow visible even
         # when a 600-book audit makes its evidence panes tall. The buttons
         # are THE SAME widgets/callbacks as before, not independent bypasses.
@@ -826,9 +830,9 @@ class LocalInspectionController:
         pair_actions.insert_child_after(declarations.revoke, declarations.declare)
 
         def guide(stage):
-            guide_status.set_text(_reconciliation_step_label(
-                stage, selected_provider[0],
-            ))
+            label = _reconciliation_step_label(stage, selected_provider[0])
+            guide_status.set_text(label)
+            guide_status.set_tooltip_text(label)
 
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
