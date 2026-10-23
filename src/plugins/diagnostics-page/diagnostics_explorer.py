@@ -456,8 +456,8 @@ def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
     suffix = " · recherche dans cette page uniquement" if search else ""
     family = (" · domaine : " + DOMAIN_LABELS[domain]
               if domain in DOMAIN_LABELS else "")
-    return (f"{shown} événements affichés · {total} dans le périmètre filtré"
-            f" · page à partir de {offset + 1}{family}{suffix}")
+    return (f"{shown} événements affichés · {total} disponibles"
+            f" (périmètre filtré) · page à partir de {offset + 1}{family}{suffix}")
 
 
 def empty_observation(payload: Mapping[str, Any], *, period: str,
