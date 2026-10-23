@@ -98,3 +98,31 @@ et atteste `offline-wheels/` avant le test de l'updater. Son préflight pip
 peut encore télécharger des métadonnées ou wheels avant admission : ce point
 reste ouvert et ne doit pas être présenté comme une admission avant récupération. La réparation/installation de packages plugins
 hors ligne et la dérogation CVE nominative restent à traiter.
+
+## Dépendances Python de plugins sans réseau PyPI
+
+Quand `CIFERECA_PLUGIN_DEPS_OFFLINE=1` (ou `allow_index=False`), le Core
+peut maintenant satisfaire des dépendances de plugins à partir de la
+**wheelhouse de la release Core active**, située à côté de son venv. Cette
+wheelhouse doit provenir d'une **release authentifiée par la chaîne de
+publication** et contenir toutes les roues du graphe de dépendances plugins
+(directes et transitives) pour la plateforme. Le manifeste JSON seul n'est
+**pas** une signature.
+
+Avant le premier appel pip : vérification locale de l'inventaire complet,
+des SHA-256 et des dates de publication (168 h révolues). La résolution
+standard pip est ensuite exécutée avec `--isolated --no-index --find-links`
+vers cette **seule** wheelhouse approuvée. Chaque candidat sélectionné doit
+être un fichier exact de cet inventaire ; l'installation utilise son URI
+locale épinglée au SHA attesté et `--no-index --no-deps`. Des répertoires
+`wheels/` apportés par des ZIP de plugins sont **exclus** du mode offline :
+une preuve JSON autonome dans un ZIP non authentifié ne saurait fournir une
+autorité de confiance.
+
+Sans wheelhouse attestée, avec wheel modifiée, transitive manquante ou
+contrainte insatisfaisable, le processus refuse **avant toute mutation**,
+sans fallback réseau. Une installation de plugin optionnel ne devient donc
+possible hors ligne que si le **pipeline de release** a préparé l'ensemble
+compatible dans la wheelhouse Core. La préparation exhaustive par plateforme,
+la signature de release et le statut UX « plugin différé » restent des
+critères ouverts du P0 #2770.
