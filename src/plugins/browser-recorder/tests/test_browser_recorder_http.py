@@ -1164,3 +1164,55 @@ def test_evicted_playwright_response_body_is_isolated_and_later_json_survives(ca
     assert len(trace.exchanges) == 2
     assert not trace._pending and not trace._responses
     trace.destroy()
+
+
+
+def test_completed_trace_seals_response_evicted_after_event_pop():
+    """A removed pending request must not leak 'pending' into a completed ZIP."""
+    trace = PrivateHttpTrace((ORIGIN,))
+    req = Request(ORIGIN + "/api/evicted")
+    resp = Response(req, data=b'{"BookId":214}')
+    trace.request(req)
+    trace.response(resp)
+    assert trace.exchanges[0].response_body_reason == "pending"
+
+    # Emulate an observed Playwright requestfinished without a response
+    # object in the recorder map (event ordering or prior eviction).
+    trace._responses.pop(id(req), None)
+    trace.finished(req)
+    assert not trace._pending
+    assert trace.exchanges[0].response_body_state == "pending"
+
+    trace.finish_open_requests()
+    entry = trace.exchanges[0]
+    assert entry.status == 200 and entry.mime == "application/json"
+    assert entry.response_body is None
+    assert entry.response_body_state == "unfinished"
+    assert entry.response_body_reason == "unfinished"
+    assert trace.omitted["unfinished"] == 1
+    assert resp.body_reads == 0
+    trace.finish_open_requests()  # Sealing is idempotent.
+    assert trace.omitted["unfinished"] == 1
+    trace.destroy()
+
+
+def test_sealing_detached_pending_post_does_not_drop_valid_request():
+    trace = PrivateHttpTrace((ORIGIN,))
+    req = Request(ORIGIN + "/api/write", method="POST",
+                  headers={"content-type": "application/json"},
+                  data=b'{"BookId":214}')
+    resp = Response(req, data=b'{"ok":true}')
+    trace.request(req)
+    trace.response(resp)
+    trace._responses.pop(id(req), None)
+    trace.finished(req)  # Request body was measured and retained.
+    entry = trace.exchanges[0]
+    assert entry.request_body == '{"BookId":214}'
+    assert entry.response_body_reason == "pending"
+    trace.finish_open_requests()
+    assert entry.request_body == '{"BookId":214}'
+    assert entry.request_body_reason == "captured"
+    assert entry.response_body is None
+    assert entry.response_body_reason == "unfinished"
+    assert trace.omitted["unfinished"] == 1
+    trace.destroy()
