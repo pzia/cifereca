@@ -335,3 +335,14 @@ Une recherche refusée laisse la session ouverte ; ni droit ni prêt n'est
 créé ou modifié. La saisie interactive du terminal relève de l'utilisateur
 et ne doit pas être collée dans des rapports ou logs. Les tests utilisent
 une recherche entièrement synthétique.
+
+## Pagination des résultats depuis la CLI — #2055
+
+Après SSO manuel, `[n] page suivante` demande explicitement au navigateur
+de suivre **une unique ancre visible** sur la page de résultats courante.
+Le garde `observed_next_results_url` refuse tout lien inventé, hors origine
+ou saute-page ; `/loans` et les formulaires restent bloqués. Le terminal
+n'affiche que le **nombre de notices visibles** et un état non exhaustif,
+jamais un lien, titre, compte, paramètre de recherche ou token. Si le
+lien est absent, le CLI reste utilisable sans inférer la fin du catalogue.
+Les tests utilisent seulement des objets et pages synthétiques.
