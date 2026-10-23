@@ -414,7 +414,34 @@ class KoboSession(ProviderSession):
         # fallback from a complete authenticated catalogue/library search.
         # Reset is done before input validation, so even rejected attempts
         # cannot leave a previous personal-denial warning visible.
-        rows = self.catalog.search(query, **options)
+        try:
+            rows = self.catalog.search(query, **options)
+        except KoboVaultError as exc:
+            # The public Core fallback accepts only the exact search_* code
+            # vocabulary. Keep the KoboVaultError *type* and verified HTTP
+            # status for callers, but never propagate its HTTPX cause (which
+            # may carry signed URLs/private account context). A 401/403 must
+            # not be reclassified as a public service outage.
+            status = exc.status_code if type(exc.status_code) is int else None
+            if status == 401:
+                public_code = "search_authentication_required"
+            elif status == 403:
+                public_code = "search_access_denied"
+            elif (
+                status in {408, 429}
+                or type(status) is int and 500 <= status <= 599
+                or type(exc.code) is str and exc.code in {
+                    "network_error", "rate_limited", "server_error"
+                }
+            ):
+                public_code = "search_temporarily_unavailable"
+            else:
+                public_code = None
+            failure = KoboVaultError(
+                "Kobo-Vault : recherche indisponible",
+                code=public_code, status_code=status,
+            )
+            raise failure from None
         if account_id is None and scope in {"all", "digital"}:
             # #1917: the public catalogue was searched, not the personal
             # library. Report reduced coverage rather than a complete hit
