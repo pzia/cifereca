@@ -15,6 +15,7 @@ from cifereca_bnf_pret_web import (
     _id, parse_detail, parse_loans, parse_suggestions,
 )
 from cifereca_bnf_pret_dom_probe import DOM_PROBE_JS, DomProbe
+from cifereca_bnf_pret_book_actions import BOOK_ACTIONS_JS, BookActionSignals
 
 
 class BrowserSessionError(ValueError):
@@ -315,6 +316,25 @@ class ReaderBrowserSession:
         if _id(self._page.url, "resources") is None:
             raise BrowserSessionError("unexpected_page")
         return self._read("detail", expected)
+
+    def book_actions(self, *, expected):
+        """Read counts within the current visible Book DOM; never click/submit."""
+        self._check("readonly")
+        if not isinstance(expected, ProfileScope) or expected != self.scope:
+            raise BrowserSessionError("scope_mismatch")
+        generation = self._generation
+        try:
+            before = self._page.url
+            if not _reader_url(before) or _id(before, "resources") is None:
+                raise BrowserSessionError("unexpected_page")
+            result = self._page.evaluate(BOOK_ACTIONS_JS)
+            if generation != self._generation or self._page.url != before:
+                raise BrowserSessionError("page_changed")
+            return BookActionSignals.from_browser(result, scope=self.scope)
+        except (BrowserSessionError, WebParseError):
+            raise
+        except Exception:
+            raise BrowserSessionError("read_failed") from None
 
     def search(self, query, *, expected):
         """Explicit GET to the observed public HTML results route, not API/XHR.
