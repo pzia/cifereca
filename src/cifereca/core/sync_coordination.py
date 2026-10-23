@@ -451,11 +451,15 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 if result["status"] in {"retryable_error", "attention_required"}:
                     # The acquiring loan belongs to one source. Do not mark
                     # healthy siblings partial because its ADEPT action failed.
+                    # Reuse the same exact positive-loan scope contract
+                    # used before persistence. Paris primary has
+                    # Account.unique_id=="" but Loan.source_account_id=="primary";
+                    # comparing raw UIDs would miss it and incorrectly mark
+                    # EVERY other healthy source partial. Never infer owner
+                    # solely from an identical credential or a book title.
                     affected = [
                         self.sync_source_id(account) for account in accounts
-                        if account.provider_id == loan.source_provider
-                        and account.credential_id == loan.source_credential
-                        and (account.unique_id or "") == (loan.source_account_id or "")
+                        if _opening_loans_scoped(account, identity.identity_id, [loan])
                     ]
                     # An orphan/ambiguous loan cannot prove that any source
                     # completed its opening cycle. Be conservative.
