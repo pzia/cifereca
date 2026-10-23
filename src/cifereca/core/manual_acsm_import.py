@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .bnf_pret_saved_token import inspect_saved_bnf_token
+
 
 def import_acsm(
     self, source: Path, *, identity_id: str | None = None, provider_id: str = "manual", title: str | None = None,
@@ -20,8 +22,23 @@ def import_acsm(
     The ACSM is copied into resumable staging, fulfilled through the DRM
     plugin layer, validated, then indexed as a normal local Artifact.
     """
-    source = Path(source).expanduser().resolve()
-    if not source.is_file() or source.suffix.casefold() != ".acsm":
+    original_source = Path(source).expanduser()
+    # BnF's consented browser download may use the neutral .bin suffix.
+    # Admit this path only after bounded, namespace-specific XML inspection
+    # on the *original* path, before resolving symlinks, hashing, creating
+    # any staging area, ledger entry, or invoking ADEPT. An ACSM candidate
+    # remains untrusted: the existing identity-scoped ADEPT broker decides.
+    is_bin = original_source.suffix.casefold() == ".bin"
+    if is_bin:
+        evidence = inspect_saved_bnf_token(original_source)
+        if evidence.code != "candidate_acsm":
+            raise ProviderConfigurationError(
+                "Jeton ADEPT .bin invalide, expiré ou non vérifiable"
+            )
+    source = original_source.resolve()
+    if not source.is_file() or source.suffix.casefold() not in (
+        {".acsm", ".bin"} if is_bin else {".acsm"}
+    ):
         raise ProviderConfigurationError("Sélectionnez un fichier ACSM valide")
     identity = self.identity_by_id(identity_id) if identity_id else self.current_identity
     if identity is None:
