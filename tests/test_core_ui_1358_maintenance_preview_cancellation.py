@@ -147,18 +147,19 @@ def _method():
     namespace = {
         "MaintenanceResultView": MaintenanceResultView,
         "LocalInspectionController": LocalInspectionController,
-        # Base GTK-free harness: actual row/ticket guard, inert renderer.
-        # Specialised tests may replace this with real widget composition.
+        # The minimal historical GTK harness exercises cancellation and
+        # consent, not widgets. Every maintenance.tool now has a progress
+        # relay; the dedicated widget harness tests the real GTK builder.
         "build_maintenance_line": lambda **kw: (
             Container(),
             MaintenanceLineProgress(
                 idle_add=lambda callback: callback(),
-                render=lambda _state: None,
-                alive=kw["alive"], activity_label=kw["activity_label"],
+                render=lambda state: None,
+                alive=kw["alive"],
+                activity_label=kw["activity_label"],
             ),
         ),
         "clear_box": lambda box: box.children.clear(),
-        "GLib": NS(idle_add=lambda callback: callback()),
         "Gtk": NS(Button=Button, Label=lambda **_kw: Container(),
                   ScrolledWindow=Container,
                   PolicyType=NS(NEVER=0, AUTOMATIC=1)),
@@ -169,6 +170,7 @@ def _method():
             ResponseAppearance=NS(DESTRUCTIVE=1, SUGGESTED=2),
         ),
         "MaintenanceContext": lambda **kw: NS(**kw),
+        "GLib": NS(idle_add=lambda callback: callback()),
         "MaintenanceCancelControl": guard.MaintenanceCancelControl,
         "MaintenanceCancelledError": guard.MaintenanceCancelledError,
         "MaintenanceBusyError": guard.MaintenanceBusyError,
@@ -205,7 +207,10 @@ def _mounted():
     )
     _method()(host)
     row = host._tools_box.children[0].children[0]
-    preview, cancel, _status = row.children
+    preview, cancel = row.children[:2]
+    # The third child is the independent progress display, not a new
+    # confirmation/cancellation action.
+    assert len(row.children) == 3
     return host, tool, jobs, errors, preview, cancel
 
 
