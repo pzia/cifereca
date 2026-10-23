@@ -29,7 +29,9 @@ HTML = {
         '</div></section></body></html>',
     '/results': '<html><body><ul class="search-results__list">'
         '<li class="search-resource-result"><a href="/resources/synthetic-book">'
-        'Titre fictif</a></li></ul></body></html>',
+        'Titre fictif</a></li></ul>'
+        '<nav class="pagination"><a rel="next" href="/results?q=fiction&page=2">'
+        'Page suivante</a></nav></body></html>',
     '/resources/synthetic-book': '<html><body><article itemscope itemtype="https://schema.org/Book">'
         '<h1 itemprop="name">Titre fictif</h1><meta itemprop="isbn" content="9780000000002">'
         '<span itemprop="author" itemscope itemtype="https://schema.org/Person">'
@@ -154,6 +156,26 @@ class ChromiumReaderTests(unittest.TestCase):
         self.assertIs(result.borrow_authorized, False)
         self.assertEqual(self.session._page.url,
                          browser.ORIGIN + '/resources/synthetic-book')
+
+    def test_real_next_page_from_observed_html_anchor_only(self):
+        self.session.search('fiction', expected=self.session.scope)
+        # A second DOM link cannot override the visible, valid one when
+        # an ancestor hides it via CSS (untrusted portal markup).
+        self.session._page.evaluate("""() => {
+            const hidden = document.createElement('div');
+            hidden.style.display = 'none';
+            const link = document.createElement('a');
+            link.rel = 'next';
+            link.href = '/results?q=other&page=2';
+            hidden.appendChild(link);
+            document.body.appendChild(hidden);
+        }""")
+        result = self.session.next_results(expected=self.session.scope)
+        self.assertEqual(result.records[0].resource_id, 'synthetic-book')
+        self.assertEqual(self.session._page.url,
+                         browser.ORIGIN + '/results?q=fiction&page=2')
+        with self.assertRaisesRegex(browser.BrowserSessionError, '^next_page_unavailable$'):
+            self.session.next_results(expected=self.session.scope)
 
     def test_real_request_guard_blocks_post_and_loan_get(self):
         results = self.session._page.evaluate("""async () => {

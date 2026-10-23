@@ -299,3 +299,25 @@ Les navigations, XHR, POST et liens de prêt restent soumis aux interdictions
 existantes. Le navigateur n'est pas restreint avant confirmation, afin de laisser
 l'utilisateur effectuer le SSO. Un éventuel CDN indispensable doit être qualifié
 explicitement avant tout élargissement ; il n'est pas présumé autorisé.
+
+
+## Pagination volontaire des résultats Web — #2055
+
+Le lecteur offre « Page suivante (si lien visible) » uniquement après lecture
+explicite d'une page HTML de résultats. La commande navigateur ne crée aucun
+lien : elle relève **une seule ancre DOM visible** portant `rel=next` ou
+`.pagination a.next` depuis la page actuellement affichée, sans examiner de
+texte, formulaire, cookie ni contenu de compte. Ces sélecteurs ont été vérifiés
+sur une page **synthétique** en Chromium ; ils restent à qualifier sur BnF réel.
+
+Le contrat `observed_next_results_url` autorise uniquement un GET HTTPS vers
+`/results` sur l'origine exacte, le passage de la page N à N+1 (maximum 100)
+et le maintien des mêmes critères/filtres. Fragment, paramètres inconnus,
+URL signée, lien prêt/téléchargement, saut de page et lien ambigu sont refusés.
+Un lien absent produit un code fermé sans réseau ni modification de droits.
+
+Chaque page remplace les choix de notices visibles et garde la même
+identité/compte/époque ; une fermeture ou bascule de profil les invalide.
+L'absence de lien « suivant » ne prouve **jamais** la complétude du catalogue
+ou du portefeuille d'emprunts. Ce mécanisme ne lit pas les pages de prêts,
+ne synchronise aucun droit et n'automatise aucun emprunt ni téléchargement.

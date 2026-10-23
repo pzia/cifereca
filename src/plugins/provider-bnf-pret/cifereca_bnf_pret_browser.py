@@ -16,6 +16,7 @@ from cifereca_bnf_pret_web import (
 )
 from cifereca_bnf_pret_dom_probe import DOM_PROBE_JS, DomProbe
 from cifereca_bnf_pret_book_actions import BOOK_ACTIONS_JS, BookActionSignals
+from cifereca_bnf_pret_paging import observed_next_results_url
 
 
 class BrowserSessionError(ValueError):
@@ -126,6 +127,27 @@ EXTRACT_DOM = r"""({kind, maxBytes, maxNodes, maxDepth}) => {
     return {code:'ok', url, html};
   } catch (error) {
     return fail(['html_limit','dom_limit','field_limit'].includes(error) ? error : 'extraction_failed');
+  }
+}"""
+
+
+# Only one visible 'next' anchor may authorize a further HTML GET.
+# No text, HTML, form data, cookies, storage or link URL is exposed to UI.
+NEXT_RESULTS_JS = r"""() => {
+  const before = location.href;
+  try {
+    const links = [...document.querySelectorAll('a[rel~="next"], .pagination a.next')].filter(a => {
+      if (!a.isConnected || a.hidden || a.closest('[hidden], [aria-hidden="true"]')) return false;
+      const style = getComputedStyle(a);
+      return style.display !== 'none' && style.visibility !== 'hidden' && a.getClientRects().length > 0;
+    });
+    if (links.length !== 1) return {code: 'unavailable'};
+    const href = links[0].getAttribute('href');
+    if (typeof href !== 'string' || !href || href.length > 4096) return {code: 'unavailable'};
+    if (location.href !== before) return {code: 'page_changed'};
+    return {code: 'ok', from: before, href};
+  } catch (_) {
+    return {code: 'unavailable'};
   }
 }"""
 
@@ -353,6 +375,32 @@ class ReaderBrowserSession:
         if not 2 <= len(normalized) <= 128:
             raise BrowserSessionError("invalid_search")
         self._goto(ORIGIN + "/results?q=" + quote(normalized, safe=""), expected)
+        return self._read("suggestions", expected)
+
+    def next_results(self, *, expected):
+        """Explicitly follow one observed next-page link, never derive a URL."""
+        self._check("readonly")
+        if not isinstance(expected, ProfileScope) or expected != self.scope:
+            raise BrowserSessionError("scope_mismatch")
+        generation = self._generation
+        before = self._page.url
+        if not _reader_url(before) or urlsplit(before).path != "/results":
+            raise BrowserSessionError("next_page_unavailable")
+        try:
+            link = self._page.evaluate(NEXT_RESULTS_JS, {})
+            if generation != self._generation or before != self._page.url:
+                raise BrowserSessionError("page_changed")
+            if (type(link) is not dict or set(link) != {"code", "from", "href"}
+                    or link.get("code") != "ok" or link.get("from") != before):
+                raise BrowserSessionError("next_page_unavailable")
+            target = observed_next_results_url(before, link["href"])
+        except WebParseError:
+            raise BrowserSessionError("next_page_unavailable") from None
+        except BrowserSessionError:
+            raise
+        except Exception:
+            raise BrowserSessionError("next_page_unavailable") from None
+        self._goto(target, expected)
         return self._read("suggestions", expected)
 
     def suggestions(self, *, expected):

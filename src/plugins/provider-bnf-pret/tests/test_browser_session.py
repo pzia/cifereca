@@ -30,6 +30,7 @@ class FakePage:
         self.calls = []
         self.events = {}
         self.evaluate_hook = None
+        self.paging_reply = {"code": "unavailable"}
         self.redirect = None
 
     def on(self, name, callback):
@@ -43,7 +44,8 @@ class FakePage:
 
     def evaluate(self, script, args):
         self.calls.append(('evaluate', script, args))
-        result = dict(code='ok', url=self.url, html=self.html)
+        result = (self.paging_reply if script == browser.NEXT_RESULTS_JS
+                  else dict(code='ok', url=self.url, html=self.html))
         if self.evaluate_hook:
             return self.evaluate_hook(result)
         return result
@@ -252,6 +254,54 @@ class BrowserSessionTests(unittest.TestCase):
         self.assertEqual(len([row for row in self.runtime.page.calls if row[0] == 'goto']), before + 1)
         self.assertEqual(self.runtime.page.url, browser.ORIGIN + '/results?q=Fiction%20fran%C3%A7aise')
         self.assertNotIn("Fiction", repr(self.session))
+
+    def test_next_page_get_requires_single_observed_href(self):
+        self.ready()
+        self.runtime.page.url = browser.ORIGIN + "/results?q=fiction"
+        self.runtime.page.html = ('<ul class="search-results__list">'
+                                  '<li class="search-resource-result">'
+                                  '<a href="/resources/book">Fiction</a></li></ul>')
+        self.runtime.page.paging_reply = {
+            "code": "ok", "from": self.runtime.page.url,
+            "href": "/results?q=fiction&page=2",
+        }
+        observed = self.session.next_results(expected=self.session.scope)
+        self.assertEqual(len(observed.records), 1)
+        self.assertEqual(self.runtime.page.url, browser.ORIGIN + "/results?q=fiction&page=2")
+        self.assertNotIn("fiction", repr(self.session))
+
+    def test_next_page_rejects_foreign_scope_and_malformed_links(self):
+        self.ready()
+        self.runtime.page.url = browser.ORIGIN + "/results?q=fiction"
+        before = self.runtime.page.url
+        other = browser.ProfileScope("other", "other", "epoch")
+        with self.assertRaisesRegex(browser.BrowserSessionError, "^scope_mismatch$"):
+            self.session.next_results(expected=other)
+        for bad in ({"code": "unavailable"}, {"code": "ok", "from": before,
+                     "href": "/loans/private?page=2"},
+                    {"code": "ok", "from": before,
+                     "href": "/results?q=changed&page=2"},
+                    {"code": "ok", "from": before,
+                     "href": "/results?q=fiction&page=2", "html": "SAML"}):
+            self.runtime.page.paging_reply = bad
+            navigations = sum(x[0] == "goto" for x in self.runtime.page.calls)
+            with self.assertRaisesRegex(browser.BrowserSessionError, "^next_page_unavailable$"):
+                self.session.next_results(expected=self.session.scope)
+            self.assertEqual(navigations, sum(x[0] == "goto" for x in self.runtime.page.calls))
+
+    def test_next_page_rejects_changed_page(self):
+        self.ready()
+        self.runtime.page.url = browser.ORIGIN + "/results?q=fiction"
+        before = self.runtime.page.url
+        self.runtime.page.paging_reply = {
+            "code": "ok", "from": before, "href": "/results?q=fiction&page=2"
+        }
+        def changed(result):
+            self.session._navigated(self.runtime.page.main_frame)
+            return result
+        self.runtime.page.evaluate_hook = changed
+        with self.assertRaisesRegex(browser.BrowserSessionError, "^page_changed$"):
+            self.session.next_results(expected=self.session.scope)
 
     def test_search_rejects_control_and_empty_input_without_navigation(self):
         self.ready()

@@ -67,6 +67,10 @@ class FakeReader:
         self.call('suggestions')
         return ('private-suggestions', expected)
 
+    def next_results(self, *, expected):
+        self.call('next_results')
+        return ('private-next-page', expected)
+
     def probe_visible_dom(self, *, expected):
         self.call('dom_probe')
         return ('private-probe', expected)
@@ -164,6 +168,8 @@ class ReaderWorkerTests(unittest.TestCase):
         self.confirm(scope)
         self.worker.submit('loans', expected=scope).result(2)
         self.worker.submit('suggestions', expected=scope).result(2)
+        self.assertEqual(self.worker.submit('next_results', expected=scope).result(2),
+                         ('private-next-page', scope))
         self.assertEqual(self.worker.submit('dom_probe', expected=scope).result(2),
                          ('private-probe', scope))
         self.assertEqual(self.worker.submit('book_actions', expected=scope).result(2),
@@ -200,6 +206,17 @@ class ReaderWorkerTests(unittest.TestCase):
         for name in ('borrow', 'download', 'return', 'open_login', lambda: None):
             with self.assertRaisesRegex(Error, '^unsupported_reader_command$'):
                 self.worker.submit(name, expected=scope)
+
+    def test_next_results_requires_current_scope_and_no_user_route(self):
+        scope = self.start()
+        self.confirm(scope)
+        for kwargs in ({'resource_id': 'synthetic'}, {'search_query': 'q=private'}):
+            with self.assertRaises(Error):
+                self.worker.submit('next_results', expected=scope, **kwargs)
+        with self.assertRaisesRegex(Error, "^scope_mismatch$"):
+            self.worker.submit('next_results', expected=ProfileScope('a','b','c'))
+        self.assertEqual(self.worker.submit('next_results', expected=scope).result(2),
+                         ('private-next-page', scope))
 
     def test_book_controls_cannot_take_resource_or_query_or_mutate(self):
         scope = self.start()
