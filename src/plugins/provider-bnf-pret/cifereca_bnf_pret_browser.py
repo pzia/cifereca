@@ -201,7 +201,11 @@ class ReaderBrowserSession:
                 # No arbitrary GET subrequests (e.g. logout disguised as image).
                 static = path.endswith(('.js', '.css', '.png', '.jpg', '.jpeg', '.gif',
                                         '.webp', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.otf'))
-                allowed = allowed and static and request.resource_type in {"script", "stylesheet", "image", "font"}
+                # Never fetch arbitrary external static assets after consented SSO.
+                # A third-party stylesheet/font/image can leak navigation context.
+                allowed = (allowed and parts.netloc == "pret.bnf.fr"
+                           and static and request.resource_type in
+                           {"script", "stylesheet", "image", "font"})
             if allowed:
                 route.continue_()
             else:

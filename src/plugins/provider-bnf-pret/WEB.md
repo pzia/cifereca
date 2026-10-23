@@ -288,3 +288,14 @@ ou identité modifiée invalide le diagnostic. Aucun nouveau GET/POST n'est lanc
 autorisé.** Ce diagnostic ne publie aucune capacité d'emprunt, aucun droit et
 aucun fichier. L'automatisation du formulaire réel reste hors service jusqu'à
 qualification de ses états et preuve d'une confirmation humaine explicite.
+
+
+## Garde du chargement statique après confirmation SSO (#2055)
+
+Après confirmation humaine, le filtre de lecture seule n'autorise plus le
+chargement de ressources statiques (.css, .js, images, polices) depuis une
+origine HTTPS tierce : l'origine doit être exactement `https://pret.bnf.fr`.
+Les navigations, XHR, POST et liens de prêt restent soumis aux interdictions
+existantes. Le navigateur n'est pas restreint avant confirmation, afin de laisser
+l'utilisateur effectuer le SSO. Un éventuel CDN indispensable doit être qualifié
+explicitement avant tout élargissement ; il n'est pas présumé autorisé.
