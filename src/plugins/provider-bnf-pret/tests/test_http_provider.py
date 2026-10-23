@@ -184,7 +184,6 @@ class HTTPProviderTests(unittest.TestCase):
         self.assertFalse(PLUGIN.descriptor.capabilities.digital_download)
         self.assertFalse(PLUGIN.descriptor.capabilities.borrow)
 
-if __name__ == '__main__': unittest.main()
 
 
 def test_provider_loans_persist_through_core_without_absence_deletion(tmp_path):
@@ -234,3 +233,208 @@ def test_official_package_install_activation_and_disable_without_network(tmp_pat
         assert manager.status('provider.bnf-pret').state == 'disabled'
     finally:
         manager.close()
+
+
+def search_html(ids=('book-a',), following=''):
+    cards = ''.join('<li class="search-resource-result">'
+                    f'<a href="/resources/{rid}"><span itemprop="name">Titre {rid}</span></a>'
+                    '<span itemprop="author">Auteur fictif</span>'
+                    '<meta itemprop="publisher" content="Éditeur fictif">'
+                    '<meta itemprop="isbn" content="9780000000002">'
+                    '<meta itemprop="inLanguage" content="fr">'
+                    '</li>' for rid in ids)
+    return '<ul class="search-results__list">' + cards + '</ul>' + following
+
+
+DETAIL = ('<article itemscope itemtype="https://schema.org/Book">'
+          '<h1 itemprop="name">Fiche synthétique</h1>'
+          '<span itemprop="author">Auteur de la fiche</span>'
+          '<button class="button-borrow">Emprunter</button></article>')
+
+
+class HTTPCatalogTests(unittest.TestCase):
+    def make(self):
+        session, calls, state = HTTPProviderTests().make()
+        base = session.client.http._transport.handler
+        state.update(pages={'1':search_html()}, detail=DETAIL, statuses={}, redirects={})
+        requests = []
+        def handler(request):
+            if request.url.host=='pret.bnf.fr' and request.url.path in {'/results','/resources/book-a'}:
+                calls.append((request.method,request.url.host,request.url.path))
+                requests.append(request)
+                if request.url.path=='/results':
+                    page=request.url.params.get('page','1')
+                    if page in state['redirects']:
+                        return httpx.Response(302,headers={'location':state['redirects'].pop(page)})
+                    return httpx.Response(state['statuses'].get(page,200),
+                                          text=state['pages'].get(page,'<html>Inconnu</html>'),
+                                          headers={'content-type':'text/html'})
+                return httpx.Response(200,text=state['detail'],headers={'content-type':'text/html'})
+            return base(request)
+        session.client.http._transport.handler=handler
+        self.addCleanup(session.close)
+        return session,calls,state,requests
+
+    def test_public_search_metadata_and_detail_without_login_or_right(self):
+        session,calls,state,requests=self.make()
+        rows=session.search('fiction française')
+        row,=rows
+        self.assertEqual(requests[0].url.params['q'],'fiction française')
+        self.assertEqual((row.source_provider,row.source_credential,row.record_id),('bnf-pret','credential-a','book-a'))
+        self.assertEqual(row.author,'Auteur fictif')
+        self.assertEqual(row.publisher,'Éditeur fictif')
+        self.assertEqual(row.metadata['languages'],['fr'])
+        self.assertEqual(row.metadata['isbn'],'9780000000002')
+        self.assertIsNone(row.owned)
+        self.assertFalse(row.downloadable)
+        self.assertIsNone(row.download_url)
+        self.assertIsNone(row.format)
+        self.assertTrue(session.last_search_warnings)
+        detail=session.holdings(row)
+        self.assertEqual(detail.title,'Fiche synthétique')
+        self.assertEqual(detail.author,'Auteur de la fiche')
+        self.assertEqual(detail.availability_status,'unknown')
+        self.assertEqual(detail.holdings,[])
+        self.assertFalse(session.connected)
+        self.assertTrue(all(method=='GET' and host=='pret.bnf.fr' for method,host,path in calls))
+        self.assertFalse(any('/loans/' in path or '/sso/' in path for _,_,path in calls))
+
+    def test_only_observed_next_link_is_followed_and_duplicate_is_deduplicated(self):
+        session,calls,state,requests=self.make()
+        state['pages']['1']=search_html(('book-a','homonym-a'),
+                '<nav class="pagination"><a rel="next" href="/results?q=fiction&amp;page=2">Suite</a></nav>')
+        state['pages']['2']=search_html(('book-a','homonym-b'))
+        rows=session.search('fiction')
+        self.assertEqual({r.record_id for r in rows},{'book-a','homonym-a','homonym-b'})
+        self.assertEqual([r.url.params.get('page','1') for r in requests],['1','2'])
+
+    def test_later_403_preserves_observed_records_and_warns(self):
+        session,calls,state,requests=self.make()
+        state['pages']['1']=search_html(following='<a rel="next" href="/results?q=fiction&amp;page=2">Suite</a>')
+        state['statuses']['2']=403
+        rows=session.search('fiction')
+        self.assertEqual(len(rows),1)
+        self.assertIn('access_denied',session.last_search_warnings)
+        self.assertEqual(len(requests),2)
+
+    def test_first_page_refusals_have_core_codes_without_retry_or_fake_zero(self):
+        from cifereca.search_failures import search_failure_code
+        from cifereca.plugin_api import ProviderError
+        for status,code in [(401,'SearchAuthenticationRequired'),(403,'SearchAccessDenied'),(429,'SearchTemporarilyUnavailable')]:
+            session,calls,state,requests=self.make()
+            state['statuses']['1']=status
+            with self.assertRaises(ProviderError) as result:
+                session.search('fiction')
+            self.assertEqual(search_failure_code(result.exception),code)
+            self.assertEqual(len(requests),1)
+
+    def test_invalid_next_link_never_fetches_foreign_mutator_or_changed_query(self):
+        for link in ['https://evil.test/results?q=fiction&amp;page=2',
+                     '/loans/loan-a','/v1/resources','/results?q=other&amp;page=2',
+                     '/results?q=fiction&amp;page=8', '/results?q=fiction&amp;page=2&amp;token=PRIVATE']:
+            session,calls,state,requests=self.make()
+            state['pages']['1']=search_html(following=f'<a rel="next" href="{link}">Suite</a>')
+            self.assertEqual(len(session.search('fiction')),1)
+            self.assertIn('next_page_unavailable',session.last_search_warnings)
+            self.assertEqual(len(requests),1)
+
+    def test_page_budget_stops_after_five_observed_pages(self):
+        session,calls,state,requests=self.make()
+        for n in range(1,6):
+            state['pages'][str(n)]=search_html((f'book-{n}',),
+                f'<a rel="next" href="/results?q=fiction&amp;page={n+1}">Suite</a>')
+        self.assertEqual(len(session.search('fiction')),5)
+        self.assertEqual(len(requests),5)
+        self.assertIn('search_page_limit',session.last_search_warnings)
+
+    def test_bad_html_and_login_form_are_not_empty_catalogues(self):
+        from cifereca.plugin_api import ProviderError
+        for html in ['<html>Inconnu</html>', LOGIN, '<ul class="search-results__list"><li>Tronqué']:
+            session,calls,state,requests=self.make()
+            state['pages']['1']=html
+            with self.assertRaises(ProviderError):
+                session.search('fiction')
+            self.assertEqual(len(requests),1)
+
+    def test_explicit_empty_is_still_non_exhaustive(self):
+        session,calls,state,requests=self.make()
+        state['pages']['1']=search_html(())
+        self.assertEqual(session.search('fiction'),[])
+        self.assertEqual(session.last_search_warnings,['inventory_not_exhaustive'])
+
+    def test_unsupported_options_and_invalid_query_are_refused_without_io(self):
+        from cifereca.plugin_api import ProviderCapabilityError, ProviderError
+        session,calls,state,requests=self.make()
+        for kwargs in [{'scope':'physical'},{'field':'isbn'},{'page':1},{'page':True},{'content_types':('audio',)}]:
+            with self.assertRaises(ProviderCapabilityError):session.search('fiction',**kwargs)
+        for query in ['', 'a', 'a'*129, 'test\nprivate',None]:
+            with self.assertRaises(ProviderError):session.search(query)
+        self.assertEqual(requests,[])
+
+    def test_search_redirect_mismatch_and_detail_scope_are_refused(self):
+        from dataclasses import replace
+        from cifereca.plugin_api import ProviderError
+        session,calls,state,requests=self.make()
+        row,=session.search('fiction')
+        for item in [replace(row,source_provider='paris'),replace(row,source_credential='other'),replace(row,record_id='../loans/a')]:
+            with self.assertRaises((ProviderConfigurationError,ProviderError)):session.holdings(item)
+        self.assertEqual(len(requests),1)
+        state['redirects']['1']='https://pret.bnf.fr/results?q=other'
+        with self.assertRaisesRegex(ProviderError,'search_redirect_mismatch'):session.search('fiction')
+
+    def test_explicit_unavailability_is_separate_from_borrow_button(self):
+        session,calls,state,requests=self.make()
+        row,=session.search('fiction')
+        state['detail']=DETAIL.replace('</article>','<p class="lb_unavailable">Indisponible</p></article>')
+        self.assertEqual(session.holdings(row).availability_status,'unavailable')
+        self.assertFalse(session.capabilities.borrow)
+        self.assertFalse(session.capabilities.digital_download)
+
+    def test_close_during_search_discards_inflight_results(self):
+        session,calls,state,requests=self.make()
+        request=session.client.request
+        def closing(*args,**kwargs):
+            result=request(*args,**kwargs)
+            session.close()
+            return result
+        session.client.request=closing
+        with self.assertRaisesRegex(ProviderConfigurationError,'session_closed'):session.search('fiction')
+
+
+def test_catalogue_uses_core_search_and_detail_without_entitlement(tmp_path):
+    sys.path.insert(0, str(ROOT.parents[2]))
+    from tests.test_sync_state_contract import _service
+    service = _service(tmp_path)
+    case = HTTPCatalogTests()
+    session, calls, state, requests = case.make()
+    try:
+        account, = session.connect()
+        account.identity_id = 'default'
+        service.accounts = [account]
+        service.registry.register(PLUGIN)
+        service._sessions[service._session_key('bnf-pret', 'credential-a')] = session
+        rows = service.search('fiction', provider_id='bnf-pret', scope='digital', force=True)
+        assert len(rows) == 1
+        assert rows[0].metadata['isbn'] == '9780000000002'
+        assert service.last_search_warnings
+        detail = service.holdings(rows[0], force=True)
+        assert detail.title == 'Fiche synthétique'
+        assert detail.availability_status == 'unknown'
+        batches = []
+        summary = service.search_progressive('fiction', provider_id='bnf-pret',
+                                             scope='digital', force=True, on_batch=batches.append)
+        assert summary.result_count == 1
+        assert summary.providers_failed == 0
+        assert summary.warnings and batches
+        assert service.storage.entitlements() == []
+        assert service.storage.acquisitions() == []
+        assert service.storage.placements() == []
+        assert not any(method != 'GET' or path.startswith(('/loans/', '/v1/'))
+                       for method, host, path in calls
+                       if host == 'pret.bnf.fr' and not path.startswith('/sso/'))
+    finally:
+        service.close()
+
+
+if __name__ == '__main__':
+    unittest.main()

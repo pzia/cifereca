@@ -6,6 +6,7 @@ import time
 from urllib.parse import urljoin, urlsplit
 import httpx
 from cifereca_bnf_pret_web import _DOM, MAX_HTML_BYTES, WebParseError
+from cifereca_bnf_pret_paging import _params
 
 ORIGIN = 'https://pret.bnf.fr'
 ACTIVITY = ORIGIN + '/my_profile/activity'
@@ -24,8 +25,14 @@ def allowed_url(url: str, *, authenticating: bool = False) -> str:
             raise ValueError
         allowed = False
         if u.hostname == 'pret.bnf.fr':
-            allowed = (u.path == '/my_profile/activity'
-                       or bool(re.fullmatch(r'/resources/[A-Za-z0-9_-]{1,128}', u.path)))
+            allowed = (not u.query and (u.path == '/my_profile/activity'
+                       or bool(re.fullmatch(r'/resources/[A-Za-z0-9_-]{1,128}', u.path))))
+            if u.path == '/results':
+                try:
+                    params = _params(url)
+                    allowed = ('q' in params and 2 <= len(params['q'].strip()) <= 128)
+                except WebParseError:
+                    allowed = False
             if authenticating:
                 allowed |= u.path.startswith('/sso/saml/')
         elif authenticating and u.hostname == 'idppub.bnf.fr':
