@@ -573,7 +573,10 @@ class LocalInspectionController:
             'Exploration manuelle uniquement : aucune correspondance '
             'bibliographique ni provenance fournisseur supposée.'
         )
-        candidate_box.append(manual_toggle)
+        # Keep manual discovery as an explicit action visible alongside
+        # preflight; a collapsed/tall evidence panel must not hide the only
+        # way to pick a file when bibliographic matches are absent.
+        # This same widget is moved, not cloned, preserving the callback.
         manual_search = Gtk.SearchEntry()
         manual_search.set_placeholder_text('Filtrer les fichiers non liés…')
         manual_search.set_visible(False)
@@ -701,6 +704,7 @@ class LocalInspectionController:
         # are THE SAME widgets/callbacks as before, not independent bypasses.
         # Horizontal scrolling prevents clipped confirmation at 920 px.
         pair_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        pair_actions.append(manual_toggle)
         for action in (pair_prepare, fresh_preview, pair_confirm, pair_undo):
             pair_actions.append(action)
         action_scroll = Gtk.ScrolledWindow()
