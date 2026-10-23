@@ -16,7 +16,7 @@ from cifereca.plugin_api import ProviderError
 from diagnostics_explorer import (
     PAGE_SIZE, PERIODS, SEVERITIES, SOURCES, export_selected_events,
     explorer_since, fetch_explorer_page, next_page_offset, sanitized_rows, selectable_event_ids,
-    source_summaries, public_provider_id,
+    source_summaries, public_provider_id, canonical_diagnostic_domain_alias,
 )
 
 MAX_SELECTED = 200
@@ -198,6 +198,7 @@ def collect_filtered_selection(
             or (reason_code and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", reason_code) is None)
             or type(max_pages) is not int or not 1 <= max_pages <= MAX_SCAN_PAGES):
         raise ValueError("invalid diagnostic selection filters")
+    domain = canonical_diagnostic_domain_alias(domain)
     levels = ("error", "critical") if mode == "errors" else (severity,)
     # Capture the relative-period boundary for ALL requests in this scan.
     reference_time = datetime.now(timezone.utc)
