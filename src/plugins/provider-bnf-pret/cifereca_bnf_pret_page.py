@@ -24,6 +24,7 @@ _MESSAGES = {
     "session_closed": "Session terminée.",
     "scope_mismatch": "Identité changée : session interrompue.",
     "reader_busy": "Lecture déjà en cours.",
+    "invalid_search": "Recherche invalide (2 à 128 caractères, sans caractère de contrôle).",
     "html_limit": "Page trop volumineuse : lecture partielle non publiée.",
     "dom_limit": "Page trop complexe : lecture refusée.",
 }
@@ -82,6 +83,13 @@ def loan_observation_status(counts):
             f"{counts.newly_seen} nouvelle(s) référence(s) ; "
             f"{counts.seen_in_session} référence(s) vues depuis l'ouverture de la session. "
             "Observations partielles, aucun droit actif attesté ou publié.")
+
+
+def valid_search_text(value):
+    """A search is an explicit, bounded user input, never an account URL."""
+    return (type(value) is str and 2 <= len(value) <= 128
+            and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+            and 2 <= len(" ".join(value.split())) <= 128)
 
 
 def safe_error(exc):
@@ -172,6 +180,15 @@ class BnfReaderPage:
         stop_button = Gtk.Button(label="Fermer la session")
         for button in (open_button, confirm_button, loans_button, search_button, detail_button, stop_button):
             row.append(button)
+        search_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        search_field = Gtk.Entry()
+        search_field.set_max_length(128)
+        search_field.set_placeholder_text("Titre ou auteur (recherche sur la page Web)")
+        search_field.set_hexpand(True)
+        search_bar.append(search_field)
+        search_action = Gtk.Button(label="Rechercher sur BnF")
+        search_bar.append(search_action)
+        root.append(search_bar)
         status = Gtk.Label(label="Aucune connexion ni lecture lancée.", xalign=0, wrap=True)
         status.set_selectable(True)
         root.append(status)
@@ -215,6 +232,8 @@ class BnfReaderPage:
             confirm_button.set_sensitive(same and mode == "login" and not busy)
             loans_button.set_sensitive(same and mode == "readonly" and not busy)
             search_button.set_sensitive(same and mode == "readonly" and not busy)
+            search_field.set_sensitive(same and mode == "readonly" and not busy)
+            search_action.set_sensitive(same and mode == "readonly" and not busy)
             detail_button.set_sensitive(same and mode == "readonly" and not busy)
             choose_button.set_sensitive(
                 same and mode == "readonly" and not busy and self.selection is not None
@@ -242,6 +261,7 @@ class BnfReaderPage:
                 busy = False
                 active_identity = new_id
                 preview.set_label("")
+                search_field.set_text("")
                 status.set_label("Le profil actif a changé : ancienne session révoquée.")
             current_profile = updated
             profile.set_label("Profil Cifereca : " +
@@ -257,6 +277,12 @@ class BnfReaderPage:
             if busy or not scope_ok(worker, scope, generation):
                 sync_profile()
                 return
+            search_query = None
+            if name == "search":
+                search_query = search_field.get_text()
+                if not valid_search_text(search_query):
+                    status.set_label("Recherche invalide : 2–128 caractères, sans contrôle.")
+                    return
             resource_id = None
             if name == "detail":
                 selection = self.selection
@@ -283,6 +309,7 @@ class BnfReaderPage:
                 future = worker.submit(
                     name, expected=scope, resource_id=resource_id,
                     account_confirmed=(name == "confirm_account"),
+                    search_query=search_query,
                 )
             except Exception as exc:
                 busy = False
@@ -404,6 +431,7 @@ class BnfReaderPage:
                     self._stop()
                     busy = False
                     preview.set_label("")
+                    search_field.set_text("")
                     status.set_label(message)
                     reset_buttons()
                     return False
@@ -415,6 +443,7 @@ class BnfReaderPage:
             self._stop()
             busy = False
             preview.set_label("")
+            search_field.set_text("")
             status.set_label("Session fermée et observations privées invalidées.")
             reset_buttons()
 
@@ -434,6 +463,7 @@ class BnfReaderPage:
         confirm_button.connect("clicked", lambda _b: command("confirm_account"))
         loans_button.connect("clicked", lambda _b: command("loans"))
         search_button.connect("clicked", lambda _b: command("suggestions"))
+        search_action.connect("clicked", lambda _b: command("search"))
         detail_button.connect("clicked", lambda _b: command("visible_detail"))
         choose_button.connect("clicked", lambda _b: command("detail"))
         stop_button.connect("clicked", stop)

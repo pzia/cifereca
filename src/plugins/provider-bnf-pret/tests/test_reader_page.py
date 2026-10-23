@@ -135,6 +135,13 @@ class BnfReaderPageTests(unittest.TestCase):
         self.assertIsNone(instance.observations)
         self.assertIn("closed", repr(obs))
 
+    def test_explicit_search_text_validation(self):
+        self.assertTrue(page.valid_search_text("Fiction française"))
+        self.assertTrue(page.valid_search_text("  Auteur  "))
+        for query in (None, 1, "", "x", " ", "x" * 129,
+                      "contact@example.com\nprivate", "unsafe\tquery"):
+            self.assertFalse(page.valid_search_text(query))
+
     def test_browser_exception_is_never_rendered(self):
         secret = "reader@example.test?SAMLResponse=PRIVATE"
         self.assertNotIn(secret, page.safe_error(RuntimeError(secret)))
