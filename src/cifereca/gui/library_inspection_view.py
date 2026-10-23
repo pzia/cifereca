@@ -8,6 +8,7 @@ from ..task_queue import TaskPriority
 from .maintenance_tools import MaintenanceCancelControl
 from .library_declaration_actions import DeclarationActions
 from .library_declaration_history import PrivateDeclarationHistory
+from .library_guided_steps import guided_stage_text
 
 
 # Core-only closed failure causes: never expose private source text in GTK.
@@ -528,6 +529,12 @@ class LocalInspectionController:
         shortcuts.append(show_files)
         shortcuts.append(show_rights)
         box.append(shortcuts)
+        guided_step = Gtk.Label(
+            label=guided_stage_text('choose_right'), xalign=0,
+        )
+        guided_step.set_name('reconciliation-guided-stage')
+        guided_step.set_wrap(True)
+        box.append(guided_step)
         history_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         hide_history = Gtk.CheckButton(label='Masquer les anciens emplacements')
         hide_history.set_active(True)
@@ -779,6 +786,12 @@ class LocalInspectionController:
         pair_actions.prepend(declarations.declare)
         pair_actions.insert_child_after(declarations.revoke, declarations.declare)
 
+        def show_stage(phase):
+            # Only closed CoreUI-authored text may enter this status line.
+            guided_step.set_text(guided_stage_text(
+                phase, provider=selected_provider[0],
+            ))
+
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
             # user changes files, filters, identity or the inspection window.
@@ -792,6 +805,10 @@ class LocalInspectionController:
             pair_undo.set_visible(False)
             pair_undo.set_sensitive(False)
             selected_file[0] = file_key
+            show_stage(
+                'choose_right' if selected_right[0] is None else
+                'choose_file' if file_key is None else 'review_pair'
+            )
             declarations.reset()
             pair_prepare.set_sensitive(
                 selected_right[0] is not None and file_key is not None
@@ -997,6 +1014,10 @@ class LocalInspectionController:
                     'unavailable': 'Paire ou session indisponible.',
                 }
                 heading = labels.get(result.status, 'Préflight indisponible.')
+                show_stage(
+                    'review_ready' if result.status == 'eligible_for_fresh_validation'
+                    else 'review_blocked'
+                )
                 if (result.read_only is not True
                         or result.attachment_authorized is not False):
                     heading = 'Préflight indisponible.'
@@ -1018,6 +1039,7 @@ class LocalInspectionController:
                 pair_explanation.set_text(
                     'Préflight local indisponible. Aucune modification autorisée.'
                 )
+                show_stage('review_blocked')
             pair_report.set_visible(True)
             pair_report.set_expanded(True)
 
@@ -1028,6 +1050,7 @@ class LocalInspectionController:
             chosen_right, chosen_file = selected_right[0], selected_file[0]
             version = pair_version[0]
             fresh_preview.set_sensitive(False)
+            show_stage('review_ready')
             pair_confirm.set_visible(False)
             pair_confirm.set_sensitive(False)
             pair_explanation.set_text(
@@ -1071,6 +1094,7 @@ class LocalInspectionController:
                     ),
                 }
                 status = result.get('status') if type(result) is dict else None
+                show_stage('confirm' if status == 'preview' else 'review_blocked')
                 pair_explanation.set_text(states.get(status, states['unavailable']))
                 pair_report.set_visible(True)
                 pair_report.set_expanded(True)
@@ -1085,6 +1109,7 @@ class LocalInspectionController:
                     pair_explanation.set_text(
                         'Vérification indisponible. Aucun rattachement.'
                     )
+                    show_stage('review_blocked')
                     fresh_preview.set_sensitive(True)
 
             self.parent.runner.submit(
@@ -1162,6 +1187,7 @@ class LocalInspectionController:
                         # immediately, but keep exactly this session open so
                         # its private, non-exported undo token remains usable.
                         placement_committed[0] = True
+                        show_stage('finished')
                         for control in (
                             listing, provider, state, search, previous, following,
                             candidate_prev, candidate_next, manual_toggle,
