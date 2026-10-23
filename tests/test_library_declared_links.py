@@ -299,8 +299,16 @@ def test_declared_loan_survives_realized_sync_without_becoming_permanent(rig):
     result = apply(rig)
     stored = records(service)
     for _ in range(2):
-        # Real Core lifecycle operation for a loan absent from the next sync.
-        service._persist_active_loans('default', [])
+        # An explicitly attested complete source may close this one loan;
+        # an unverified empty opening listing must never do so.
+        right_row = service.storage.entitlements()[0]
+        service.storage.entitlement_realize_missing_loans(
+            set(), identity_id='default',
+            complete_scopes={(
+                right_row['provider_id'], right_row['credential_id'],
+                right_row['account_id'],
+            )},
+        )
         assert inspect(rig, result.relation_id).status == 'needs_review'
         assert records(service) == stored
     assert service.storage.entitlements()[0]['entitlement_type'] == 'loan'
