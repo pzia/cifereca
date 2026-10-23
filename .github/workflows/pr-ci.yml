@@ -168,6 +168,10 @@ jobs:
           PLUGIN_TARGETS: ${{ steps.scope.outputs.plugin_targets }}
         run: |
           python -m pip install --disable-pip-version-check "pytest>=8,<9" "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=10,<12" "cryptography>=42,<48"
+          if [[ "${{ steps.scope.outputs.bnf_reader }}" == "true" ]]; then
+            # The BnF acceptance suite exercises real Core SQLite persistence.
+            python -m pip install --disable-pip-version-check -e .
+          fi
           if [[ -z "$PLUGIN_TARGETS" || " $PLUGIN_TARGETS " == *" src/plugins/epub_optimizer "* ]]; then
             python -m pip install --disable-pip-version-check "PyMuPDF>=1.26,<2"
           fi
