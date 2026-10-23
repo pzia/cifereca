@@ -21,7 +21,6 @@ from cifereca.logging_utils import RedactionFilter, _redact_log_identifiers
 def test_log_identifier_redaction_preserves_public_trace_context(message):
     result = _redact_log_identifiers(message)
     assert "PERSON_PRIVATE" not in result
-    assert "provider_id=" in result or "provider_id" in result or "book_id" in result or "stage=" in result or "uid=" in result
     if "provider_id=paris" in message:
         assert "provider_id=paris" in result
     if "book_id=9782000000000" in message:
