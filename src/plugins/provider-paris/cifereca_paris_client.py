@@ -470,6 +470,13 @@ class ParisClient:
             headers={**self._api_headers(), "Content-Type": "application/json; charset=UTF-8", "Origin": self.base_url, "Referer": f"{self.base_url}/search.aspx?SC={scenario}"},
             json=body,
         )
+        # SearchService's 401/403 is an access verdict, not a wide-query
+        # result-size problem. 408/429/5xx are HTTP outages: a smaller POST
+        # to the same route does not repair them. Keep business responses
+        # (including the documented broad-query error) on the existing
+        # controlled 50 -> 20 retry path.
+        if r.status_code in {401, 403, 408, 429} or r.status_code >= 500:
+            r.raise_for_status()
         data = self._json(r, f"search {scenario}")
         rows = ((data.get("d") or {}).get("Results") or [])
         return [x for x in (normalize_search_result(raw, scenario) for raw in rows if isinstance(raw, dict)) if x]
@@ -532,11 +539,21 @@ class ParisClient:
                     )
                     continue
             except httpx.HTTPError as exc:
-                # A network outage cannot be repaired by shrinking the page.
+                # Transport/auth/status failures do not need a same-endpoint
+                # re-POST with smaller result size. Keep the branch independent.
                 failures.append((scenario, exc))
-                self.last_search_warnings.append(
-                    "Catalogue numérique momentanément indisponible" if scenario == "EBOOKS" else "Catalogue physique momentanément indisponible"
+                caption = "Catalogue numérique" if scenario == "EBOOKS" else "Catalogue physique"
+                status = (
+                    exc.response.status_code
+                    if isinstance(exc, httpx.HTTPStatusError) else None
                 )
+                if status == 401:
+                    warning = caption + " : authentification requise"
+                elif status == 403:
+                    warning = caption + " : accès refusé"
+                else:
+                    warning = caption + " momentanément indisponible"
+                self.last_search_warnings.append(warning)
                 continue
 
             # An empty result from an available catalogue is still a
@@ -553,11 +570,33 @@ class ParisClient:
                 for warning in self.last_search_warnings
             ]
         if failures and not successful_scenarios:
-            if scope == "digital":
-                raise ParisSearchUnavailable("Le catalogue numérique n'a pas répondu à cette recherche. Essayez un terme plus précis ou réessayez dans quelques instants.") from failures[-1][1]
-            if scope == "physical":
-                raise ParisSearchUnavailable("Le catalogue physique n'a pas répondu à cette recherche. Réessayez dans quelques instants.") from failures[-1][1]
-            raise ParisSearchUnavailable("Les catalogues Paris n'ont pas répondu à cette recherche. Réessayez dans quelques instants.") from failures[-1][1]
+            # No public stale fallback on a verified 401/403, even when
+            # another branch had a timeout. Inspect httpx's numeric response
+            # only, never exception text, request URL or private payload.
+            http_statuses = [
+                error.response.status_code for _name, error in failures
+                if isinstance(error, httpx.HTTPStatusError)
+            ]
+            if 403 in http_statuses:
+                error = ParisSearchUnavailable("Accès au catalogue Paris refusé.")
+                error.code = "search_access_denied"
+                error.retryable = False
+            elif 401 in http_statuses:
+                error = ParisSearchUnavailable("Authentification requise pour le catalogue Paris.")
+                error.code = "search_authentication_required"
+                error.retryable = False
+            else:
+                message = (
+                    "Le catalogue numérique n'a pas répondu à cette recherche. Essayez un terme plus précis ou réessayez dans quelques instants."
+                    if scope == "digital" else
+                    "Le catalogue physique n'a pas répondu à cette recherche. Réessayez dans quelques instants."
+                    if scope == "physical" else
+                    "Les catalogues Paris n'ont pas répondu à cette recherche. Réessayez dans quelques instants."
+                )
+                error = ParisSearchUnavailable(message)
+            # Do not chain raw Syracuse errors (which can contain the
+            # request URL, personal cookies, or provider response text).
+            raise error
         return out
 
     def _holdings_payload(self, docbase: str, record_id: str, scenario: str, search_terms: str = "") -> dict[str, Any]:
