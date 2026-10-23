@@ -174,6 +174,19 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
 
     def expand():
         report['checks']['native_declaration_right_selected'] = True
+        # Observe actual mapped GTK guidance on the selected synthetic pair.
+        # Only stage names/booleans go to the report, never right or path.
+        guided = next(
+            (w for w in walk(controller.dialog)
+             if isinstance(w, Gtk.Label)
+             and w.get_name() == 'reconciliation-guided-stages'), None,
+        )
+        assert guided is not None and guided.get_mapped()
+        assert '1/4 Droit sélectionné' in guided.get_text()
+        assert '2/4 Fichier sélectionné' in guided.get_text()
+        assert '3/4 Préflight à lancer' in guided.get_text()
+        assert '4/4 Confirmation non disponible' in guided.get_text()
+        report['checks']['native_declaration_guided_stages_visible'] = True
         checkpoint('maint_declaration_right_selected')
         expander = next(w for w in walk(controller.dialog)
                         if isinstance(w, Gtk.Expander)
