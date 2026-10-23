@@ -72,3 +72,32 @@ def test_maintenance_checkpoint_missing_symlink_or_other_scenario_is_safe(tmp_pa
     source.write_text(json.dumps([{"scenario": "startup", "returncode": 1}]))
     row = exporter.safe_summary(source)["results"][0]
     assert "maintenance_last_safe_checkpoint" not in row
+
+
+def test_narrow_920_and_1024_expose_same_closed_fixture_checkpoint(tmp_path):
+    for width in (920, 1024):
+        scenario = f"maintenance-tools-{width}"
+        source = tmp_path / "summary.json"
+        source.write_text(json.dumps([{
+            "scenario": scenario, "returncode": 1,
+            "error": "PRIVATE_ACCOUNT_FILENAME_TOKEN",
+        }]))
+        report = tmp_path / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        report.write_text(json.dumps({
+            "checks": {
+                "real_tools_route_and_action": True,
+                "inspection_window_mapped": True,
+                "native_manual_file_row_clicked": True,
+                "native_declaration_preview_dialog": "PRIVATE_NOT_TRUE",
+            },
+            "error": "PRIVATE_SENSITIVE_PATH", "traceback": "/home/PRIVATE",
+        }))
+        evidence = exporter.safe_summary(source)["results"][0]
+        assert evidence["status"] == "FAIL"
+        assert evidence["maintenance_last_safe_checkpoint"] == "manual_file_row_clicked"
+        assert all("PRIVATE" not in repr(evidence) for _ in (0,))
+        assert set(evidence) <= {
+            "scenario", "status", "returncode", "maintenance_last_safe_checkpoint",
+        }
+
