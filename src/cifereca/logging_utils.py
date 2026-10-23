@@ -14,14 +14,16 @@ _diagnostic_level = "normal"
 # borrower or account references, even when a plugin formats them as text.
 # Do not mask provider_id, site or public book_id.
 _PRIVATE_LOG_IDENTIFIERS = re.compile(
-    r"""(?i)\\b(?:loan_id|account_key|account_id|source_account_id|identity_id|"""
-    r"""credential_id|profile_id|reader_id|user_id|username|uid)\\b"""
-    r"""['"]?\\s*[:=]\\s*(?:"[^"\\r\\n]{0,1024}"|'[^'\\r\\n]{0,1024}'|[^\\s,;}'"\\]]+)"""
+    r"""(?i)\b(?P<name>loan_id|account_key|account_id|source_account_id|"""
+    r"""identity_id|credential_id|profile_id|reader_id|user_id|username|uid)\b"""
+    r"""['"]?\s*[:=]\s*(?:"[^"\r\n]{0,1024}"|'[^'\r\n]{0,1024}'|[^\s,;}'"]+)"""
 )
 
 
 def _redact_log_identifiers(value: str) -> str:
-    return _PRIVATE_LOG_IDENTIFIERS.sub("<private-id>=<redacted>", value)
+    return _PRIVATE_LOG_IDENTIFIERS.sub(
+        lambda match: match.group("name") + "=<redacted>", value,
+    )
 
 
 def set_diagnostics_level(level):
