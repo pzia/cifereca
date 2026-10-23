@@ -654,9 +654,9 @@ def query_diagnostic_events(
         raise ValueError("unknown reconciliation reason code")
     # The filter applies to *attested* event families globally, never to
     # arbitrary message text, raw operation names, or unverified categories.
-    selected_domain = canonical_diagnostic_domain(domain) if domain else ""
     if type(domain) is not str:
         raise ValueError("unknown diagnostic domain")
+    selected_domain = canonical_diagnostic_domain(domain) if domain else ""
     if not isinstance(severity, str) or severity.lower() not in {"", "debug", "info", "warning", "error", "critical"}:
         raise ValueError("unknown diagnostic severity")
     if any(value is not None and (not isinstance(value, str) or len(value) > 64) for value in (since, until)):
