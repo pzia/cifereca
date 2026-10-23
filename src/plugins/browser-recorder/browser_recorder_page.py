@@ -167,7 +167,7 @@ class BrowserRecorderPage:
                                 xalign=0, wrap=True)
         destination.set_selectable(True)
         legacy_box.append(destination)
-        box.append(advanced)
+        self.private_panel.settings_box.append(advanced)
 
         def buttons(mode=None):
             active = mode in {"record", "replay"}

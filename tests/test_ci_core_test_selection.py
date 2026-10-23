@@ -163,3 +163,21 @@ def test_2141_sync_page_changes_cannot_skip_cross_cutting_p0_regressions():
         )
     # Keep unrelated GUI component PRs fast: never globally widen the selector.
     assert selector.select(["src/cifereca/gui/query_controls.py"], ROOT)[0] == "ui-component"
+
+
+def test_installed_recorder_gtk_change_keeps_real_gate_and_headless_contract():
+    selector = _module()
+    native = "tests/test_browser_recorder_installed_gtk_blackbox.py"
+    mode, targets = selector.select([native, "src/plugins/browser-recorder/browser_recorder_page.py"], ROOT)
+    assert mode == "changed"
+    assert targets == [native, "tests/test_core_p0_2663_recorder_package_contract.py"]
+    workflow = (ROOT / ".github/workflows/browser-recorder-chromium-e2e.yml").read_text()
+    assert native in workflow  # actual GTK execution is never replaced by skip
+
+
+def test_installed_recorder_missing_headless_contract_fails_to_full_selection(tmp_path):
+    selector = _module()
+    native = "tests/test_browser_recorder_installed_gtk_blackbox.py"
+    (tmp_path / "tests").mkdir()
+    (tmp_path / native).write_text("# synthetic native test")
+    assert selector.select([native], tmp_path) == ("full", ["tests"])

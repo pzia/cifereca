@@ -4,7 +4,7 @@ Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **B
 
 **Parcours le plus simple pour un LLM :** utiliser « Parcours HTTP privé »,
 consentir à l'archivage dans le coffre chiffré, démarrer Chromium et arrêter
-la capture. L'onglet **Revue** propose alors **« Exporter directement cette
+la capture. L'onglet **Sessions et exports** propose alors **« Exporter directement cette
 session privée pour LLM… »**, même si aucun identifiant n'a été anonymisé.
 Cliquer **Ouvrir le coffre** et saisir la phrase secrète **une seule fois**,
 puis choisir « Enregistrer sous » : le ZIP ordinaire est créé en mode 0600. Il contient les observations privées
@@ -20,21 +20,19 @@ Le HAR historique reste une fonction secondaire.
 ## Accès à la fonction principale
 
 Depuis **Configuration → Browser Recorder**, l'écran est organisé en
-**quatre onglets défilants indépendamment** :
+**trois onglets défilants indépendamment** :
 
-- **1 · Paramètres** : URL HTTPS, consentement de capture, hôtes tiers en
-  métadonnées seulement et autorisation du coffre. L'en-tête fixe propose
-  **Ouvrir le coffre / Fermer le coffre**.
-- **2 · Capture** : démarrer, mettre en pause, reprendre et arrêter Chromium.
-- **3 · Sessions et export privé** : sessions chiffrées, consultation,
-  réouverture, renommage, suppression et entretien. Le bouton
-  **« Exporter cette session pour un LLM… »** permet, après saisie de la
-  phrase du coffre, un simple **Enregistrer sous** dans un dossier ordinaire.
-  Il produit un `.zip` **en clair**, sans mot de passe ni anonymisation.
-- **4 · Revue et ZIP LLM** : **export direct en clair de la session en cours
-  de revue** (si elle est archivée), ou revue/anonymisation individuelle,
-  aperçu local, ZIP filtré consultable membre par membre et confirmation.
-  Une capture non vide ou une session réouverte mène directement ici.
+- **Capture** (ouvert par défaut) : URL HTTPS, consentements de capture et
+  de stockage chiffré, démarrage volontaire de Chromium. Pendant la capture,
+  Arrêter et Pause/Reprendre restent accessibles sous tous les onglets.
+- **Sessions et exports** : sessions chiffrées, consultation, réouverture,
+  renommage et suppression confirmée. Export privé direct par **Enregistrer
+  sous** : ZIP **en clair**, sans second mot de passe ni anonymisation imposée.
+  La revue individuelle et l'aperçu exact du ZIP anonymisé sont disponibles
+  ensuite dans le même onglet ; ouvrir une session n'exporte aucun fichier.
+- **Paramètres** : hôtes tiers en métadonnées seulement, négociation HTTP,
+  rétention et nettoyage sur aperçu/confirmation, fonctions HAR héritées
+  repliées. Aucun réglage ne remplace le consentement d'une capture.
 
 Le bandeau d'état et les boutons **Ouvrir le coffre / Fermer le coffre**
 restent disponibles quel que soit l'onglet. Une fois ouvert, le coffre garde
@@ -89,7 +87,7 @@ pages de 24 identifiants avec les boutons « Identifiants précédents /
 suivants » ou « Aller au prochain identifiant sans décision » : ce dernier
 n'applique **aucun choix** et parcourt seulement les entrées à examiner.
 Préparer le ZIP, examiner les membres puis confirmer l'export restent des
-actions séparées et volontaires. Dans l'onglet **Revue et ZIP LLM**, la
+actions séparées et volontaires. Dans l'onglet **Sessions et exports**, la
 recherche filtre uniquement les **noms des membres** du ZIP exact, et le
 bouton « Voir directement le rapport de couverture » ouvre
 `coverage-report.json` ; tous les contenus restent en mémoire, sans
@@ -397,7 +395,7 @@ des données sensibles. Pour travailler avec un LLM, vérifier ses conditions de
 confidentialité, lui transmettre explicitement l'archive et supprimer ensuite
 la copie claire locale si elle n'est plus utile. Les secrets, réponses binaires,
 cookies ou autres éléments rejetés *pendant la capture* ne peuvent pas être
-restaurés. Le ZIP revu/anonymisé de l'onglet 4 reste disponible en parallèle.
+restaurés. Le ZIP revu/anonymisé de Sessions et exports reste disponible en parallèle.
 
 ### Compatibilité des anciennes archives chiffrées `.brzip`
 
@@ -447,7 +445,7 @@ relative/symbolique, un nom hors format, un dossier inexistant ou un fichier
 déjà présent n'écrivent rien et ne remplacent aucun ZIP. L'archive est créée
 en mode 0600, et les permissions du dossier sont vérifiées.
 
-Le nouveau bouton de l'onglet 3 ouvre **Enregistrer sous** avec nom
+Le nouveau bouton de Sessions et exports ouvre **Enregistrer sous** avec nom
 `cifereca-session-privee.zip`. Aucun mode 0700 n'est imposé sur le dossier
 choisi et aucun mot de passe ZIP n'est demandé. La copie créée est **en clair
 et réservée à l'utilisateur (0600)** ; ne pas la confondre avec le coffre chiffré.

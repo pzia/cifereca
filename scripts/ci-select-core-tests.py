@@ -230,6 +230,14 @@ def _ui_component_tests(core_sources: list[str], root: Path) -> list[str] | None
 def select(paths: list[str], root: Path = ROOT) -> tuple[str, list[str]]:
     changed = [path.strip() for path in paths if path.strip()]
     changed_tests = _changed_tests(changed, root)
+    # Native installed-recorder assertions run in the dedicated GTK job.
+    # The headless PR job still verifies the package/API boundary; selecting
+    # only the native module would produce pytest exit 5 (all import-skipped).
+    if "tests/test_browser_recorder_installed_gtk_blackbox.py" in changed_tests:
+        companion = "tests/test_core_p0_2663_recorder_package_contract.py"
+        if not (root / companion).is_file():
+            return "full", ["tests"]
+        changed_tests = sorted(set(changed_tests) | {companion})
 
     if any(path in FULL_CORE_FILES for path in changed):
         return "full", ["tests"]

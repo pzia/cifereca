@@ -130,7 +130,8 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
         window.set_child(root)
         window.present()
         _flush()
-        description, private, advanced = _children(root)
+        description, private = _children(root)
+        advanced = service.private_panel.settings_box.get_last_child()
         site = service.private_panel.site
         consent = service.private_panel.consent
         assert isinstance(site, Gtk.Entry)
@@ -138,9 +139,9 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
         assert isinstance(advanced, Gtk.Expander)
         assert not advanced.get_expanded()
         assert "HTTP" in description.get_label()
-        assert service.private_panel.tabs.get_n_pages() == 4
-        assert "Revue" in service.private_panel.tabs.get_tab_label_text(
-            service.private_panel.tabs.get_nth_page(3))
+        assert service.private_panel.tabs.get_n_pages() == 3
+        assert "Sessions" in service.private_panel.tabs.get_tab_label_text(
+            service.private_panel.tabs.get_nth_page(1))
         assert "HAR" in advanced.get_label()
         assert not advanced.get_child().get_mapped()
 
@@ -151,6 +152,7 @@ def test_install_zip_activate_via_core_and_open_public_gtk_page(
         assert site.grab_focus()
         focused = window.get_focus()
         assert focused is site or focused.is_ancestor(site)
+        service.private_panel.tabs.set_current_page(2)
         advanced.set_expanded(True)
         _flush()
         assert advanced.get_child().get_mapped()

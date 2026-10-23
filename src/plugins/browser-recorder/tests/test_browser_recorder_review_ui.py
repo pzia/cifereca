@@ -83,6 +83,7 @@ class Widget:
         self.label = kwargs.get("label", "")
         self.callbacks = {}
         self.sensitive = True
+        self.visible = True
         self.buffer = self
         self.text = ""
 
@@ -112,6 +113,9 @@ class Widget:
 
     def connect(self, event, callback):
         self.callbacks[event] = callback
+
+    def set_visible(self, value):
+        self.visible = value
 
     def set_sensitive(self, value):
         self.sensitive = value
@@ -268,8 +272,7 @@ def test_workspaces_separate_capture_sessions_review_without_export(monkeypatch)
     panel, tasks, raw = make_panel(monkeypatch)
     try:
         assert panel.tabs.tab_titles == [
-            "1 · Paramètres", "2 · Capture",
-            "3 · Sessions et export privé", "4 · Revue et ZIP LLM",
+            "Capture", "Sessions et exports", "Paramètres",
         ]
         assert panel.tabs.current_page == 0
         assert panel.configure_button in panel.capture_box.children
@@ -282,9 +285,19 @@ def test_workspaces_separate_capture_sessions_review_without_export(monkeypatch)
         assert panel.status in panel.widget.children
         assert panel.export_button.sensitive is False
         panel.begin()
+        handle = panel._handle
+        generation = panel._generation
+        assert panel.active_controls.visible
+        assert panel.stop in panel.active_controls.children
+        for page in (1, 2, 0):
+            panel.tabs.set_current_page(page)
+            assert panel._handle is handle and panel.is_recording()
+            assert panel._generation == generation
+            assert panel.stop.sensitive
         panel.stop_capture()
         tasks.handles[-1].finish()
-        assert panel.tabs.current_page == 3
+        assert not panel.active_controls.visible
+        assert panel.tabs.current_page == 1
         assert not panel.export_button.sensitive
     finally:
         panel.destroy()
@@ -821,7 +834,7 @@ def test_encrypted_capture_remains_exportable_when_identifier_review_fails(
         assert panel._review is None
         assert panel._trace is raw
         assert raw.vault_session_id
-        assert panel.tabs.get_current_page() == 3
+        assert panel.tabs.get_current_page() == 1
         assert panel.current_private_export_button.sensitive
         assert "Revue filtrée impossible" in panel.status.label
         assert (vault_path / (raw.vault_session_id + ".cbrv")).is_file()

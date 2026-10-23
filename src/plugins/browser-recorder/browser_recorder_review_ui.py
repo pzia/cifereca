@@ -206,10 +206,9 @@ class PrivateReviewPanel:
             orientation=Gtk.Orientation.VERTICAL, spacing=10,
         )
         for section, title in (
-            (self.settings_box, "1 · Paramètres"),
-            (self.capture_box, "2 · Capture"),
-            (self.sessions_box, "3 · Sessions et export privé"),
-            (self.review_box, "4 · Revue et ZIP LLM"),
+            (self.capture_box, "Capture"),
+            (self.sessions_box, "Sessions et exports"),
+            (self.settings_box, "Paramètres"),
         ):
             for side in ("top", "bottom", "start", "end"):
                 getattr(section, "set_margin_" + side)(12)
@@ -240,16 +239,6 @@ class PrivateReviewPanel:
                   "téléchargement (8 maximum). Annuler = aucune conservation.",
             xalign=0, wrap=True,
         ))
-        # Page host supplies real Gtk widgets; standalone headless tests use
-        # immutable site/consent proxies, which have no GTK parent.
-        if isinstance(site, getattr(Gtk, "Widget", ())):
-            box.append(Gtk.Label(
-                label="Adresse HTTPS du site à parcourir",
-                xalign=0, wrap=True,
-            ))
-            box.append(site)
-        if isinstance(consent, getattr(Gtk, "Widget", ())):
-            box.append(consent)
         box.append(Gtk.Label(
             label="Hôtes tiers facultatifs (HTTPS, séparés par des virgules) : "
                   "métadonnées de requête seulement, jamais URL ni corps. "
@@ -316,7 +305,6 @@ class PrivateReviewPanel:
             self.vault_consent = Gtk.CheckButton(
                 label="J'autorise le stockage local chiffré de cette capture."
             )
-            box.append(self.vault_consent)
             box = self.sessions_box
             box.append(Gtk.Label(
                 label="Sessions archivées : consultez les captures chiffrées "
@@ -360,6 +348,7 @@ class PrivateReviewPanel:
             self.sessions_delete.connect(
                 "clicked", lambda *_: self.delete_session(),
             )
+            box = self.settings_box
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
                 label="Rétention privée : uniquement sur demande. Seules les "
@@ -426,6 +415,7 @@ class PrivateReviewPanel:
             self.staging_confirm.connect(
                 "toggled", lambda *_: self._refresh(),
             )
+            box = self.sessions_box
             box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
             box.append(Gtk.Label(
                 label="Exporter une session pour un LLM : ouvrez le coffre "
@@ -445,19 +435,31 @@ class PrivateReviewPanel:
                 "clicked", lambda *_: self.export_private_zip(),
             )
         box = self.capture_box
+        # Page host supplies real Gtk widgets; standalone headless tests use
+        # immutable site/consent proxies, which have no GTK parent.
+        if isinstance(site, getattr(Gtk, "Widget", ())):
+            box.append(Gtk.Label(
+                label="Adresse HTTPS du site à parcourir",
+                xalign=0, wrap=True,
+            ))
+            box.append(site)
+        if isinstance(consent, getattr(Gtk, "Widget", ())):
+            box.append(consent)
+        if self.vault_directory is not None:
+            box.append(self.vault_consent)
         box.append(Gtk.Label(
-            label="Capture du parcours — configurez d'abord le site HTTPS, "
-                  "les autorisations et le coffre dans Paramètres. "
-                  "Seul un démarrage volontaire ouvre Chromium.",
+            label="Parcours manuel dans Chromium. Ouvrez le coffre ci-dessus, "
+                  "puis autorisez cette capture. Paramètres contient les "
+                  "options réseau et les outils de nettoyage.",
             xalign=0, wrap=True,
         ))
         self.configure_button = Gtk.Button(label="Modifier les paramètres…")
         box.append(self.configure_button)
         self.configure_button.connect(
-            "clicked", lambda *_: self.tabs.set_current_page(0),
+            "clicked", lambda *_: self.tabs.set_current_page(2),
         )
-        # FlowBox wraps the five capture/review buttons at sidebar/mobile
-        # widths; a single horizontal Box could push Stop/Clear off-screen.
+        # Start belongs to Capture; Stop/Pause share a persistent action bar
+        # so navigating to another tab cannot hide an active recorder.
         controls = Gtk.FlowBox()
         controls.set_selection_mode(Gtk.SelectionMode.NONE)
         controls.set_min_children_per_line(1)
@@ -469,14 +471,19 @@ class PrivateReviewPanel:
         self.pause_button = Gtk.Button(label="Mettre en pause")
         self.preview_button = Gtk.Button(label="Prévisualiser les choix")
         self.clear = Gtk.Button(label="Effacer les données privées")
-        for button in (self.start, self.stop, self.pause_button):
-            controls.append(button)
+        controls.append(self.start)
         box.append(controls)
+        self.active_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.active_controls.append(self.stop)
+        self.active_controls.append(self.pause_button)
+        root.append(self.active_controls)
         box.append(Gtk.Label(
-            label="Après l'arrêt, la revue s'ouvre dans l'onglet 4. "
+            label="Après l'arrêt, ouvrez Sessions et exports pour le ZIP privé "
+                  "ou une revue anonymisée facultative. "
                   "Aucun export ni envoi externe n'est automatique.",
             xalign=0, wrap=True,
         ))
+        self.sessions_box.append(self.review_box)
         box = self.review_box
         if self.vault_directory is not None:
             box.append(Gtk.Label(
@@ -733,6 +740,7 @@ class PrivateReviewPanel:
         self.accept_compressed.set_sensitive(not self._closed and not self.is_recording())
         busy = self.is_recording()
         self.diagnose_origins.set_sensitive(not self._closed and not busy)
+        self.active_controls.set_visible(not self._closed and busy)
         scanning = self.is_scanning()
         replaceable = self._trace is None or (
             self.vault_directory is not None
@@ -1143,7 +1151,7 @@ class PrivateReviewPanel:
                         # requested a separate direct LLM export path.
                         # Do not surface provider exceptions or original URLs.
                         if getattr(result, "vault_session_id", None):
-                            self.tabs.set_current_page(3)
+                            self.tabs.set_current_page(1)
                             self.status.set_label(
                                 "Revue filtrée impossible : capture conservée "
                                 "dans le coffre chiffré. Vous pouvez exporter "
@@ -1160,7 +1168,7 @@ class PrivateReviewPanel:
                         self._emit_failure("http_review", "review_failed")
                     else:
                         self._show_candidates()
-                        self.tabs.set_current_page(3)
+                        self.tabs.set_current_page(1)
                         if getattr(result, "vault_session_id", None):
                             self.status.set_label(
                                 f"Session archivée en coffre chiffré : "
@@ -1639,7 +1647,7 @@ class PrivateReviewPanel:
             )
             return
         self._show_candidates(update_status=False)
-        self.tabs.set_current_page(3)
+        self.tabs.set_current_page(1)
         private = stored.private_summary()
         # This is the user's private, unlocked GTK panel: origin and time
         # never travel through diagnostics, public broker, or ZIP manifest.
