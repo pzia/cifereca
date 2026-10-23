@@ -334,9 +334,30 @@ def _right_explanation(right, ledger, placements, artifacts, files, incomplete,
                 if not any(f.sha256 and f.sha256 == artifact.get('sha256')
                            and f.size == artifact.get('size') for f in observed):
                     why.append('SHA ou taille du fichier observé non concordants ou non vérifiés.')
-            if not any(f.validation == 'ok' and
-                       f.structure_validation == 'epub_structure_crc_ok' for f in observed):
-                why.append('Structure EPUB non validée pour le fichier observé.')
+            # PDF and EPUB have distinct scanner contracts. A PDF receives
+            # only a minimal header/trailer check, never an EPUB CRC or a
+            # claim of full PDF conformance, DRM validity or loan ownership.
+            # Do not call a valid PDF an invalid EPUB in the shared view.
+            valid_epub = any(
+                f.media_format == 'epub' and f.validation == 'ok'
+                and f.structure_validation == 'epub_structure_crc_ok'
+                for f in observed
+            )
+            minimal_pdf = any(
+                f.media_format == 'pdf'
+                and f.validation == 'pdf_signature_only'
+                and f.structure_validation == 'pdf_structure_minimal'
+                for f in observed
+            )
+            if not valid_epub and not minimal_pdf:
+                if any(f.media_format == 'epub' for f in observed):
+                    why.append('Structure EPUB et CRC non validés pour le fichier observé.')
+                if any(f.media_format == 'pdf' for f in observed):
+                    why.append(
+                        'Signature et fin de fichier PDF non vérifiées ; '
+                        'la conformité PDF et la validité DRM ne sont jamais attestées '
+                        'par ce contrôle minimal.'
+                    )
         if placement.get('state') != 'present':
             why.append('État de placement non confirmé comme présent.')
     if incomplete:
@@ -1228,10 +1249,15 @@ class LocalInspection:
             observation = self._manual_file_observations.get(file_key)
             verified = (
                 observation is not None
-                and observation.validation == 'ok'
-                and observation.media_format in ('epub', 'pdf')
-                and (observation.media_format == 'pdf'
-                     or observation.structure_validation == 'epub_structure_crc_ok')
+                and (
+                    (observation.media_format == 'epub'
+                     and observation.validation == 'ok'
+                     and observation.structure_validation == 'epub_structure_crc_ok')
+                    or
+                    (observation.media_format == 'pdf'
+                     and observation.validation == 'pdf_signature_only'
+                     and observation.structure_validation == 'pdf_structure_minimal')
+                )
             )
             return _explain_pair_coverage(review_kobo_candidate(
                 proof,
