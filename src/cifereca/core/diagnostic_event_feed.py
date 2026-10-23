@@ -417,6 +417,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                  if word in _STRUCTURED_TERMS][:5]
         message = " ".join(terms) if terms else "[opération masquée]"
         public_detail = {}
+        domain = None
         # The Core attests user-requested Browser Recorder provisioning
         # operations. A generic PLUGIN.add() record with identical text
         # cannot publish even a fixed code without this provenance flag.
@@ -428,6 +429,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             if attested:
                 public_detail = attested
                 message = operation
+                domain = "browser_recorder"
         # This projection is restricted to the Core connection producer's
         # exact fixed operation/code pair. Other PLUGIN records remain masked,
         # even if an arbitrary plugin supplies a well-formed provider_id.
@@ -470,6 +472,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                     "ok" if inspected["status"] == "complete" else inspected["status"]):
                 reconciliation_detail = inspected
                 public_detail = inspected
+                domain = "reconciliation"
                 message = {
                     "complete": "réconciliation locale terminée",
                     "partial": "réconciliation locale incomplète",
@@ -578,6 +581,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "timestamp": utc_stamp,
             "source": "core_events",
             "module": module,
+            **({"domain": domain} if domain else {}),
             **({"provider_id": attested_provider_id} if attested_provider_id else {}),
             "severity": severity,
             "message": message,
@@ -603,7 +607,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
 def query_diagnostic_events(
     diagnostics: Any, *, log_path: Path,
     source: str = "all", module: str = "", severity: str = "",
-    provider_id: str = "",
+    provider_id: str = "", domain: str = "",
     since: str | None = None, until: str | None = None,
     limit: int = 50, offset: int = 0, reason_code: str = "",
 ) -> dict[str, Any]:
@@ -616,6 +620,8 @@ def query_diagnostic_events(
         raise ValueError("unknown diagnostic source")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("diagnostic module must be a string of at most 90 characters")
+    if type(domain) is not str or domain not in {"", "browser_recorder", "reconciliation"}:
+        raise ValueError("unknown attested diagnostic domain")
     # Provider and module are independent filters. A caller-supplied value
     # is never interpreted as a provider name, account alias or URL.
     if type(provider_id) is not str or (
@@ -660,6 +666,11 @@ def query_diagnostic_events(
             or (type(row.get("business_module")) is str
                 and row["business_module"].casefold().startswith(prefix))
         ]
+    if domain:
+        # Only the closed projection of Core-verified events has this field.
+        # Neither PLUGIN/LIBRARY category nor arbitrary message text is proof.
+        # Apply to the entire bounded source snapshot BEFORE pagination.
+        events = [row for row in events if row.get("domain") == domain]
     if provider_id:
         events = [row for row in events if row.get("provider_id") == provider_id]
     if severity:
