@@ -335,3 +335,24 @@ def test_legacy_unknown_tool_shows_honest_indeterminate_progress_and_safe_failur
     flush(m)
     assert m.feedback.state.phase == "error"
     assert m.errors[-1][0] == "Nettoyage des caches impossible."
+
+
+def test_failed_foreign_plugin_description_never_exposes_exception_or_plugin_id():
+    method = harness._method()
+    namespace = method.production_globals
+    namespace["Gtk"].Label = lambda **kw: NS(label=kw.get("label"))
+    secret_tool = NS(describe=lambda: (_ for _ in ()).throw(
+        ValueError("PRIVATE_PASSWORD /home/sensitive/export.zip")
+    ))
+    host = NS(
+        _closed=False, _tools_box=harness.Container(),
+        plugin_manager=NS(services=lambda _name: [
+            NS(service=secret_tool, plugin_id="PRIVATE_PLUGIN_ORIGIN")
+        ]),
+    )
+    method(host)
+    assert len(host._tools_box.children) == 1
+    label = host._tools_box.children[0].label
+    assert label == "Outil de maintenance indisponible : description non vérifiable."
+    assert "PRIVATE_" not in label
+    assert "/home/" not in label
