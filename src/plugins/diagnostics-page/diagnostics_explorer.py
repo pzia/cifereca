@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 import json
 import re
+import unicodedata
 
 from diagnostics_reconciliation import (
     reconciliation_event_summary,
@@ -39,6 +40,36 @@ SOURCES = ("all", "core_events", "app_log")
 SEVERITIES = ("", "debug", "info", "warning", "error", "critical")
 PERIODS = ("all", "hour", "day", "week", "month")
 PAGE_SIZE = 50
+DOMAIN_LABELS = {
+    "": "Tous domaines",
+    "browser_recorder": "Browser Recorder",
+    "reconciliation": "Réconciliation",
+}
+
+
+def normalize_diagnostic_domain(value: object) -> str:
+    """Closed UI aliases; never pass arbitrary input to the Core broker.
+
+    An unknown string MUST NOT silently downgrade the global filter to 'all'.
+    Accent and one known spelling variant are deliberately accepted, not
+    fuzzy-matched against private messages or source names.
+    """
+    if type(value) is not str or len(value) > 64:
+        raise ValueError("unknown diagnostic domain")
+    canonical = "".join(
+        char for char in unicodedata.normalize("NFKD", value.strip().casefold())
+        if not unicodedata.combining(char)
+    ).replace("_", " ").replace("-", " ")
+    canonical = " ".join(canonical.split())
+    if canonical in ("",):
+        return ""
+    if canonical in ("browser", "recorder", "browser recorder"):
+        return "browser_recorder"
+    if canonical in ("reconciliation", "reconcilitation"):
+        return "reconciliation"
+    raise ValueError("unknown diagnostic domain")
+
+
 # Only Core canonical public provider labels, never account names or URLs.
 _PUBLIC_PROVIDER_RE = re.compile(
     r"[a-z][a-z0-9]{0,31}(?:[._-][a-z][a-z0-9]{0,31}){0,5}\Z", re.ASCII,
@@ -122,7 +153,7 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
 
 def fetch_explorer_page(
     broker: Any, *, source: str = "all", module: str = "",
-    provider_id: str = "",
+    provider_id: str = "", domain: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
 ) -> dict[str, Any]:
@@ -135,6 +166,7 @@ def fetch_explorer_page(
         raise ValueError("invalid diagnostics module")
     if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
         raise ValueError("invalid diagnostics provider")
+    verified_domain = normalize_diagnostic_domain(domain)
     if (type(reason_code) is not str
             or (reason_code and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", reason_code) is None)):
         raise ValueError("invalid reconciliation reason code")
@@ -152,6 +184,10 @@ def fetch_explorer_page(
         query["reason_code"] = reason_code
     if provider_id:
         query["provider_id"] = provider_id
+    if verified_domain:
+        # Preserve compatibility with legacy brokers for the default 'all'
+        # only. A selected business domain requires an exact server filter.
+        query["domain"] = verified_domain
     return broker.events(**query)
 
 
@@ -181,6 +217,11 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             for key in ("timestamp", "source", "module", "severity", "message", "status", "event_id")
         }
         provider = public_provider_id(raw.get("provider_id"))
+        domain = raw.get("domain")
+        if (raw.get("source") == "core_events"
+                and ((raw.get("module") == "PLUGIN" and domain == "browser_recorder")
+                     or (raw.get("module") == "LIBRARY" and domain == "reconciliation"))):
+            safe["domain"] = domain
         if provider is not None:
             safe["provider_id"] = provider
         # The Core attests the terminal reconciliation event; present only
@@ -432,7 +473,8 @@ def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
 
 
 def empty_observation(payload: Mapping[str, Any], *, period: str,
-                      severity: str = "", module: str = "", search: str = "") -> str:
+                      severity: str = "", module: str = "", search: str = "",
+                      domain: str = "") -> str:
     """A filtered empty feed is neither a health check nor complete coverage."""
     labels = {"all": "tout l’historique disponible", "hour": "dernière heure",
               "day": "24 heures", "week": "7 jours", "month": "30 jours"}
@@ -451,7 +493,7 @@ def empty_observation(payload: Mapping[str, Any], *, period: str,
         payload.get("status") in ("partial", "unavailable")
         or any(s["status"] not in {"available", "empty"} for s in states)
     )
-    if severity or module or search:
+    if severity or module or search or domain:
         message = f"Aucun événement correspondant aux filtres · période : {window}."
         if incomplete:
             message += " Couverture partielle ; événements manquants possibles."
