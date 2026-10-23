@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cifereca.plugin_api import prefer_downloads_for_save
+try:
+    from cifereca.plugin_api import prefer_downloads_for_save
+except ImportError:
+    # Plugin-only updates remain usable on a Core without this optional UX hook.
+    def _keep_native_folder(_chooser):
+        return False
+
+    prefer_downloads_for_save = _keep_native_folder
 
 from .profiles import default_output_path, discover_profiles
 
