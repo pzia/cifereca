@@ -1,370 +1,83 @@
-# BnF Prêt — adaptateur DOM lecteur (#2055 P0)
+# BnF Prêt — fournisseur HTTPX (#2055)
 
-Décision utilisateur du 23 octobre 2026 : le produit utilise le **parcours Web
-lecteur**, avec SSO interactif puis consultation des pages du portail. Les études
-API/OPDS de `QUALIFICATION.md` et des deux anciens modules sont historiques ;
-elles ne constituent plus une dépendance de cette intégration.
+La version 0.2.0 remplace `ui.page.bnf-pret` par `provider.bnf-pret`, un
+`ProviderPlugin` / `ProviderSession` utilisant `httpx.Client`, comme Paris.
+L'installation et l'activation ne démarrent aucun navigateur et ne nécessitent
+ni Playwright, ni Chromium, ni Browser Recorder. Les anciens modules navigateur sont supprimés.
 
-## Tranche livrée
+## Installer et essayer
 
-`cifereca_bnf_pret_web.py` est une projection **offline**, sans dépendance externe,
-sans import Core, réseau, navigateur, stockage, acquisition ou formulaire soumis.
-Elle n'est pas encore un provider installable. Aucun manifeste ne déclare des
-capacités fonctionnelles fictives. Les anciennes études ne sont pas appelées.
-
-| Projection | Structure documentée dans #2055 | Garantie / limite |
-| --- | --- | --- |
-| Suggestions | `.search-results__list .search-resource-result`, liens `/resources/{id}` | 0/1/N, déduplication par ressource ; homonymes distincts ; titre microdata ou texte de lien unique ; jamais une recherche exhaustive |
-| Fiche | microdata `name`, `author`, `publisher`, `isbn`, `inLanguage`, `description` | Le garde `itemscope` / `schema.org/Book` est **synthétique, à qualifier** sur DOM réel ; absence/ambiguïté refusée ; noms imbriqués Person séparés du titre |
-| Disponibilité | `.lb_unavailable`, `.button-borrow`, `.button-booking` | Marqueur d'indisponibilité textuel dans la fiche uniquement ; bouton seul = `unknown`, aucune capacité d'emprunt |
-| Prêts | `.active-loans .js-loan`, liens `/loans/{id}` et `/resources/{id}` | Paire unique par bloc ; contexte explicite identité/compte/époque de session ; aucune URL signée conservée |
-
-Les classes et noms de propriétés proviennent des **faits structurels expurgés**
-du ticket ; tous les contenus de tests sont fabriqués. La structure exacte des
-dates, des états serveur et de la pagination n'est pas qualifiée : **aucune date,
-quota ou exhaustivité n'est inventé**. Une section vide reste `partial` ; une
-page inconnue ou tronquée est refusée, jamais assimilée à une suppression.
-
-`merge_observed_loans` accumule sans destruction les observations de la même
-époque de session ; il refuse les contradictions, changements de profil/compte et
-excès de volume. Ce résultat n'est **ni un ledger de droits ni une synchronisation
-Core complète**. Une ancienne observation n'est pas un droit courant.
-
-Bornes : 512 Kio UTF-8 par document (contrôle avant parsing), 12 000 nœuds,
-64 niveaux, 100 notices/prêts et 4 096 caractères par valeur. Les éléments masqués
-et scripts sont écartés ; aucun script n'est exécuté. Aucun lien n'est suivi.
-Origine exacte HTTPS, chemins de ressource/prêt contrôlés, queries et fragments
-jetés. Les données métier sont exclues des `repr` et des messages d'erreur.
-Ces objets restent des données privées de l'application, **pas des payloads de
-diagnostic** : ne pas sérialiser leurs champs vers les logs ou un LLM.
-
-## Session navigateur lecteur
-
-`cifereca_bnf_pret_browser.py` raccorde maintenant la projection à une session
-Playwright/Chromium visible, créée sur action explicite. Elle possède un contexte
-neuf et une époque aléatoire pour l'identité/compte locaux sélectionnés, sans
-profil persistant, HAR, état exporté ni dépendance au Browser Recorder.
-
-Le SSO est **manuel**. L'adaptateur ne lit ni formulaire, ni cookie, ni assertion.
-Après confirmation humaine du compte utilisé, `finish_login` installe les règles
-de lecture seule sur tout le contexte, puis charge l'activité. Cette confirmation
-est une déclaration humaine, **pas une vérification automatique de l'identité BnF**.
-Une page de prêts reconnue ne suffit pas à publier des droits dans le Core.
-
-En lecture seule : POST/PUT/DELETE, WebSockets, navigation hors portail ou vers
-SSO/déconnexion, routes de prêt/téléchargement et API historique sont bloqués.
-Les sous-requêtes GET ne sont permises que pour les pages de lecture autorisées
-et les types/extensions statiques connus. Une nouvelle dépendance du site peut
-donc être refusée ; sa qualification doit précéder un élargissement. Aucun clic
-automatique, retry, téléchargement ou retour n'est implémenté.
-
-L'extraction JavaScript sélectionne une seule section utile et contrôle son
-volume **dans le navigateur avant transfert vers Python**. Elle reconstruit un
-HTML minimal : classes/propriétés permises, liens canoniques sans queries,
-aucun champ de formulaire ni attribut actif. Pour les prêts, elle écarte tous les
-textes et ne conserve que les liens structurants. Les gardes Python s'appliquent
-à nouveau. Une navigation pendant l'extraction invalide le résultat.
-
-### Essai local volontaire
-
-Dans un environnement disposant déjà de **Playwright Python >=1.50,<2 et de son
-Chromium**, lancer :
+Depuis la branche contenant cette version :
 
 ```bash
-python src/plugins/provider-bnf-pret/cifereca_bnf_pret_browser.py
+python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.2.0.zip --replace
+cifereca-cli plugin enable provider.bnf-pret
 ```
 
-Le programme demande l'accord avant ouverture, laisse l'utilisateur se connecter,
-puis demande confirmation du compte. Il affiche uniquement des compteurs et
-états fermés ; aucune donnée privée ni snapshot n'est enregistré. Les commandes
-`s` et `l` lisent les suggestions visibles ou rechargent l'activité ; `q` ferme
-et détruit la session. La boucle traite les événements Playwright pendant la
-saisie clavier, afin de laisser la navigation et ses gardes fonctionner.
+Dans Configuration, ajouter une connexion **BnF Prêt** au bon profil Cifereca,
+saisir l'identifiant et le mot de passe BnF, puis connecter. Les prêts reconnus
+sont disponibles dans Emprunts et Synchronisation via les parcours Core habituels.
+L'ancien identifiant de page UI n'est plus une contribution du package.
 
-API Python : `open_login(consent=True)` → SSO manuel →
-`finish_login(account_confirmed=True)` → `suggestions`, `detail`, `loans`
-avec `expected=session.scope` → `close()` dans un `finally`. Tous les appels,
-y compris `pump()` depuis une future boucle UI/worker, restent sur le **même
-thread propriétaire**. Une nouvelle connexion exige une nouvelle instance.
+## Authentification et limites connues
 
-**Preuves actuelles :** tests de cycle de vie et extraction JS sous Node, ainsi que
-2 tests de navigation Chromium réelle en CI sur pages totalement synthétiques.
-**Aucune connexion SSO BnF réelle ni identité amont n'est validée.** Aucun manifeste
-n'active encore un provider. Le raccordement Recherche/Emprunts/Sync reste à faire.
+Observation publique sans compte du 23 octobre 2026 : activité →
+`pret.bnf.fr/sso/saml/init` → `idppub.bnf.fr/idp/profile/…` →
+`authentification.bnf.fr/login`. La page de connexion présente un formulaire
+POST relatif `login`, champs `username`, `password`, `execution`, `_eventId`,
+`geolocation`. Le client lit le formulaire reçu et ses champs cachés ; il ne
+reconstruit pas de jeton. Les valeurs de tests sont intégralement synthétiques.
 
-Deux tests d'acceptation **Chromium réel sur pages synthétiques** sont fournis,
-exécutés par le gate PR CI isolé sur pages synthétiques :
+Après soumission des identifiants au seul hôte d'authentification officiel,
+le client peut soumettre une réponse SAML fraîchement émise dans cette même
+session à l'origine du portail. Aucune assertion issue d'une capture, cookie
+importé, export d'état, HTML privé ou persistance SSO n'est utilisé. Une étape
+2FA/CAPTCHA/JavaScript ou un formulaire inconnu est refusé avec
+`auth_interactive_required` / `unsupported_form`, sans repli navigateur.
+**Connexion authentifiée sur un vrai compte et sélecteurs réels non encore
+recettés** : le parcours public et les tests synthétiques ne prouvent pas ce succès.
+
+Les redirections sont contrôlées avant chaque requête. Les POST sont réservés
+à la connexion, sans retry ni transfert POST par 307/308. Une lecture de prêts
+ne peut pas suivre une redirection SSO, déclencher un emprunt ou télécharger.
+Limites : 512 Kio décompressés/document, 12 redirections/appel, 8 étapes de
+formulaire, timeout HTTP de 15 s et budget global connexion de 60 s.
+Les cookies restent dans le client du credential ; fermeture et échec de
+connexion les révoquent. Les erreurs publiques n'exposent que des codes fermés. Le fournisseur publie
+également ces codes dans Diagnostics avec la seule phase `login` ou `loans`,
+car le Core affiche une erreur générique à la connexion. Aucun identifiant,
+URL, cookie, formulaire ou texte de réponse n'est ajouté au diagnostic ; une
+panne du collecteur n'altère pas le résultat de l'opération.
+
+## Prêts et synchronisation
+
+Projection HTML de `.active-loans .js-loan`, paire unique de liens
+`/resources/{id}` et `/loans/{id}`. Le titre vient du texte du lien de ressource
+quand il est unique. Les dates et la pagination des prêts ne sont pas qualifiées :
+aucune date n'est inventée. Chaque `Loan` porte provider, credential, compte et
+identité exacts. Le lien de téléchargement n'est pas transmis au Core.
+
+L'inventaire est **toujours partiel** (`last_loan_errors` signale
+`inventory_not_exhaustive`). La synchronisation ajoute/actualise les prêts
+observés, mais une page vide, tronquée, une session expirée ou un prêt absent
+ne prouve aucune fin de droit. Le Core actuel (#2975) conserve les anciens droits
+sans preuve négative exhaustive ; #2055 interdit les acquisitions BnF implicites.
+Aucun fichier, placement ou historique n'est supprimé par ce fournisseur.
+
+Cette première tranche déclare seulement `sync.loans`. Recherche, emprunt,
+réservation, retour et téléchargement ADEPT ne sont pas annoncés.
+
+## Validation
 
 ```bash
-CIFERECA_BNF_CHROMIUM_TEST=1 python -m unittest discover \
-  -s src/plugins/provider-bnf-pret/tests -p test_browser_chromium.py -v
+PYTHONPATH=src python -m pytest src/plugins/provider-bnf-pret/tests -q
+python scripts/verify-packaging.py
+python -m unittest scripts.test_plugin_packaging
+python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
 ```
 
-Ils interceptent toutes les requêtes et fournissent uniquement du HTML synthétique
-(aucun accès BnF/IdP réel). Le navigateur headless de test vérifie l'extraction
-effective et les refus réseau POST/prêt/API. Sans opt-in, ces tests sont **ignorés,
-pas réussis** ; avec opt-in, une dépendance ou un binaire manquant fait échouer
-le gate. Cette preuve ne remplacera pas la qualification fournisseur du SSO.
-
-## Worker asynchrone lecteur
-
-### Worker pour le broker public tasks
-
-`cifereca_bnf_pret_worker.py` fournit une boucle de commandes pour le futur
-raccordement UI. La soumettre une seule fois via
-`tasks.submit(lambda control: worker.run(control, consent=True))`, uniquement
-après action et consentement utilisateur. Le navigateur est créé, utilisé et
-fermé sur ce même thread ; aucun appel Playwright ne part du thread GTK.
-
-Attendre `worker.state == "login"`, puis conserver `worker.scope`. Les commandes
-`confirm_account` (confirmation humaine explicite), `suggestions`, `detail` et
-`loans` exigent toutes `expected=scope` et renvoient un Future privé. Elles sont
-limitées à huit en attente ; aucun retry ni commande de mutation n'existe.
-Les callbacks UI doivent être rapatriés sur GTK et **revérifier le scope actuel**
-avant affichage. Le résultat de la tâche longue ne contient qu'un code fermé,
-jamais un snapshot privé.
-
-Appeler `worker.stop()` sur fermeture UI, changement d'identité ou déconnexion.
-Cela invalide immédiatement le scope ; le thread propriétaire ferme ensuite le
-navigateur. L'annulation TaskControl est également prise en compte. Un résultat
-arrivant après annulation est refusé, les commandes en attente sont terminées
-avec erreur fermée et une session fermée n'est jamais réutilisée. Cette boucle
-ne déclare toujours aucun compte/droit Core et ne crée aucun widget GTK.
-
-## Prochaine tranche Plugins
-
-1. Qualifier dans Chromium réel le contexte éphémère et les sélecteurs, notamment
-   le garde Book exact, les états vides et la recherche du portail. L'identité
-   amont reste à vérifier au bon niveau ; ne pas transformer le scope local ou
-   une déclaration humaine en preuve automatique d'un droit BnF.
-2. Raccorder le cycle de vie à un worker/UI et à l'identité Core via l'API publique,
-   avec annulation et changement de profil. Introduire ensuite le manifeste
-   read-only avec activation explicite et tests d'installation adaptés.
-3. Projeter recherche/prêts via `cifereca.plugin_api` ; qualifier les échéances et
-   snapshots avant toute évolution du ledger. Ne pas importer de module Core
-   privé ; une primitive publique manquante relève du propriétaire Core.
-4. Ajouter ensuite confirmation d'emprunt, POST navigateur sans retry et
-   vérification dans l'activité. Réservation/restitution restent hors MVP.
-5. Observer le **vrai téléchargement** (nom, MIME, octets) avant remise ACSM à la
-   chaîne ADEPT existante. `.bin` est un artefact du Recorder, **aucun import ou
-   renommage spécial** n'est nécessaire ici. Aucune licence dans trace/ZIP/CI.
-
-## Vérification reproductible
-
-```bash
-python -m unittest discover -s src/plugins/provider-bnf-pret/tests -v
-python -m unittest discover -s tests -p test_bnf_pret_web_dom.py -v
-python -m unittest discover -s tests -p test_bnf_pret_browser_session.py -v
-python -m unittest discover -s tests -p test_bnf_pret_reader_worker.py -v
-```
-
-Les ponts de collecte `tests/test_bnf_pret_web_dom.py` et
-`tests/test_bnf_pret_browser_session.py` et
-`tests/test_bnf_pret_reader_worker.py` exercent les mêmes assertions
-dans le gate Core existant malgré l'absence volontaire de manifeste. Il ne
-modifie aucun runner. Les tests du worker sont synthétiques : aucune preuve GTK, SSO réel,
-emprunt ou fulfillment n'est revendiquée.
-
-
-## Page CoreUI locale expérimentale — opt-in
-
-Le manifeste \`org.cifereca.provider.bnf-pret\` expose **uniquement**
-\`ui.page.bnf-pret\`, désactivé par défaut. Aucune contribution
-\`provider.library\` ni \`catalog.search\`/\`sync.loans\` n'est annoncée.
-Après activation explicite et installation de Playwright/Chromium, la page
-« BnF Prêt (lecture expérimentale) » associe sa session à **l'unique identité
-Core active attestée**. En l'absence de profil unique, aucun démarrage n'est
-possible. Changement de profil ou fermeture de page invalident immédiatement
-les futures en vol, révoquent la session et ferment Chromium sur son thread.
-
-Le consentement est recueilli avant l'ouverture. L'utilisateur effectue
-son SSO lui-même dans le navigateur. Cliquer « J'ai terminé la connexion »
-est une confirmation humaine, **pas** une validation automatique de compte
-ou de droit BnF. Les commandes lisent les prêts et suggestions visibles,
-avec seulement des compteurs/statuts fermés dans cette première interface.
-Ces comptes sont toujours non exhaustifs et ne sont **jamais publiés**
-dans Core ou Diagnostics. Aucune mutation, téléchargement, réservation ou
-synchronisation silencieuse. Identifiant de compte du worker : simple
-marqueur local, non assimilé à un identifiant BnF authentifié.
-
-Tests de contrôle sans GTK/Playwright :
-\`python -m unittest discover -s src/plugins/provider-bnf-pret/tests -p test_reader_page.py -v\`.
-La CI Core collecte également \`tests/test_bnf_pret_reader_page.py\`.
-La recette GTK/SSO réelle et la qualification des sélecteurs restent ouvertes.
-
-## Observations de prêts en mémoire — session unique
-
-`cifereca_bnf_pret_observations.py` accumule seulement les couples structurés
-`loan_id/resource_id` d'une **même** identité/compte/époque de session.
-La consultation retourne des **compteurs** : prêts présents sur la dernière page,
-nouvelles observations et références vues depuis l'ouverture de la session.
-Le cumul est une information historique de parcours, **jamais le total des droits
-actifs**. Une page vide/partielle, une erreur HTTP, une déconnexion ou une
-sélection différente ne supprime ni n'expire automatiquement un prêt.
-
-Le collecteur refuse les contradictions, pages prétendument exhaustives,
-identifiants invalides et plus de 100 observations. `close()` révoque le
-contenu en mémoire : nouvelle session = nouvel objet, aucune persistence ni
-écriture Core. La page BnF-Prêt consomme maintenant ces comptes après chaque lecture des prêts
-validée pour la même session ; elle affiche distinctement les prêts de la dernière
-page, les références nouvelles et toutes celles déjà vues dans la session.
-Après une erreur, les observations antérieures restent visibles comme historiques,
-non comme droits actuels. La fermeture ou le changement de profil efface le cumul.
-**Aucune capacité `sync.loans` n'est encore déclarée**.
-
-Tests : `python -m unittest discover -s src/plugins/provider-bnf-pret/tests -p test_loan_observations.py -v`.
-
-
-## Diagnostic privé de structure DOM — qualification P0 #2055
-
-Après ouverture volontaire de Chromium, **avant ou après** la confirmation
-manuelle du compte, le lecteur expose « Diagnostiquer les sélecteurs visibles ».
-Cela permet de qualifier une page BnF reconnue même si le DOM d'activité ne
-permet pas encore de confirmer la session. Cette action
-n'effectue **aucune requête réseau** et n'inspecte ni valeurs de champs, ni
-texte, HTML, URL, cookie, formulaire ou stockage. Une évaluation dans la page
-ne renvoie que sept **compteurs de correspondances** de sélecteurs
-actuellement employés (prêts, recherche, microdata Book, liens de ressources
-et de prêts), plafonnés à 101 ; le résultat apparaît **uniquement dans l'UI**
-de la session courante, jamais dans TaskBroker/Diagnostics/LLM.
-
-L'extraction exige la session `readonly`, l'identité/compte/époque exacts,
-une URL du portail autorisée et une page stable. Un résultat inattendu est
-refusé plutôt que transmis. Les tests Chromium n'utilisent que des pages
-HTML synthétiques interceptées. Ces comptes ne constituent **aucune preuve
-d'identité distante, de droit actif, de complétude ou de synchronisation**.
-En particulier « 0 blocs de prêts » signifie seulement que le sélecteur
-actuel ne correspond à aucun nœud de la page lue : ne jamais en déduire
-une restitution ou une absence de prêt. Pour la qualification sur parcours
-réel, on peut noter les seuls compteurs locaux, sans joindre capture,
-identifiants personnels, HTML, SAML, URL signée ou licence.
-
-
-## Correspondance déclarée du compte BnF et du profil Core
-
-La confirmation du SSO nécessite désormais une **case volontaire distincte**
-du consentement à ouvrir Chromium. L'utilisateur atteste que le compte BnF
-employé dans la fenêtre est celui qu'il souhaite associer au **profil Cifereca
-sélectionné** ; sans cette case, l'action de confirmation est désactivée.
-L'attestation est invalidée si le profil change, si la session s'arrête,
-au démarrage d'une nouvelle session et après confirmation. La page continue
-d'afficher qu'il s'agit d'une **déclaration humaine**, non d'une preuve de
-l'identité amont ou d'un droit emprunté : aucun `account_id` BnF n'est
-déduit des cookies, pages de compte ou assertions SSO, aucune synchronisation
-de droit Core n'est permise par cette seule attestation.
-
-
-## Consultation d'une fiche issue des prêts visibles (#2055)
-
-Après confirmation **humaine** du compte et lecture HTML de l'activité, la
-page affiche la liste numérotée des **identifiants publics de fiches BnF** des
-livres présents dans les blocs observés (12 maximum), sans afficher l'ID
-du prêt ou son lien de téléchargement. Elle propose ensuite un numéro de
-livre associé à un prêt **sur la dernière page observée**, puis
-« Ouvrir la fiche du livre emprunté ».  Le geste ouvre exclusivement
-`/resources/{id}` à partir de l'ID canonique lu dans ce bloc ; il **ne suit
-jamais** `/loans/{id}` et ne déclenche ni téléchargement, ni POST, ni retour,
-ni acquisition. Les identifiants privés de prêt ne figurent pas dans l'interface.
-
-Le choix disparaît dès une nouvelle commande (même infructueuse), lors d'une
-page vide, du changement de profil ou de l'arrêt de Chromium. Il est lié à
-l'identité, au compte local et à l'époque du worker. Un livre observé dans
-un bloc de prêt ne garantit pas qu'un droit est encore valide et **ne crée
-aucune écriture de ledger**. L'ordre affiché est seulement celui des blocs DOM,
-pas celui d'un inventaire exhaustif.
-
-
-## Contrôles d'emprunt — préqualification sans mutation (#2055)
-
-Après consultation explicite d'une **fiche BnF déjà ouverte**, le bouton
-« Examiner les contrôles d'emprunt (lecture seule) » compte uniquement les
-éléments DOM associés à « Emprunter », « Réserver » et « Indisponible », dans
-la racine microdata Book reconnue. Aucune URL, aucun champ de formulaire, jeton
-CSRF, compte, titre ou HTML n'est récupéré. La session et la page doivent rester
-identiques du début à la fin de la lecture ; toute redirection, query signée
-ou identité modifiée invalide le diagnostic. Aucun nouveau GET/POST n'est lancé.
-
-**Présence d'un bouton ≠ disponibilité, éligibilité, consentement ou emprunt
-autorisé.** Ce diagnostic ne publie aucune capacité d'emprunt, aucun droit et
-aucun fichier. L'automatisation du formulaire réel reste hors service jusqu'à
-qualification de ses états et preuve d'une confirmation humaine explicite.
-
-
-## Garde du chargement statique après confirmation SSO (#2055)
-
-Après confirmation humaine, le filtre de lecture seule n'autorise plus le
-chargement de ressources statiques (.css, .js, images, polices) depuis une
-origine HTTPS tierce : l'origine doit être exactement `https://pret.bnf.fr`.
-Les navigations, XHR, POST et liens de prêt restent soumis aux interdictions
-existantes. Le navigateur n'est pas restreint avant confirmation, afin de laisser
-l'utilisateur effectuer le SSO. Un éventuel CDN indispensable doit être qualifié
-explicitement avant tout élargissement ; il n'est pas présumé autorisé.
-
-
-## Pagination volontaire des résultats Web — #2055
-
-Le lecteur offre « Page suivante (si lien visible) » uniquement après lecture
-explicite d'une page HTML de résultats. La commande navigateur ne crée aucun
-lien : elle relève **une seule ancre DOM visible** portant `rel=next` ou
-`.pagination a.next` depuis la page actuellement affichée, sans examiner de
-texte, formulaire, cookie ni contenu de compte. Ces sélecteurs ont été vérifiés
-sur une page **synthétique** en Chromium ; ils restent à qualifier sur BnF réel.
-
-Le contrat `observed_next_results_url` autorise uniquement un GET HTTPS vers
-`/results` sur l'origine exacte, le passage de la page N à N+1 (maximum 100)
-et le maintien des mêmes critères/filtres. Fragment, paramètres inconnus,
-URL signée, lien prêt/téléchargement, saut de page et lien ambigu sont refusés.
-Un lien absent produit un code fermé sans réseau ni modification de droits.
-
-Chaque page remplace les choix de notices visibles et garde la même
-identité/compte/époque ; une fermeture ou bascule de profil les invalide.
-L'absence de lien « suivant » ne prouve **jamais** la complétude du catalogue
-ou du portefeuille d'emprunts. Ce mécanisme ne lit pas les pages de prêts,
-ne synchronise aucun droit et n'automatise aucun emprunt ni téléchargement.
-
-
-
-## Recherche Web explicite en CLI — #2055
-
-Après SSO manuel, `[r] rechercher` demande un terme de 2 à 128
-caractères et invoque uniquement le GET HTML `/results?q=...` déjà
-qualifié par le garde réseau et le parseur existants. Le terminal indique
-le nombre de notices **visibles seulement** et l'état fermé `ok/partial`,
-sans réimprimer la requête, les titres, les URL ou les identifiants.
-Une recherche refusée laisse la session ouverte ; ni droit ni prêt n'est
-créé ou modifié. La saisie interactive du terminal relève de l'utilisateur
-et ne doit pas être collée dans des rapports ou logs. Les tests utilisent
-une recherche entièrement synthétique.
-
-## Pagination des résultats depuis la CLI — #2055
-
-Après SSO manuel, `[n] page suivante` demande explicitement au navigateur
-de suivre **une unique ancre visible** sur la page de résultats courante.
-Le garde `observed_next_results_url` refuse tout lien inventé, hors origine
-ou saute-page ; `/loans` et les formulaires restent bloqués. Le terminal
-n'affiche que le **nombre de notices visibles** et un état non exhaustif,
-jamais un lien, titre, compte, paramètre de recherche ou token. Si le
-lien est absent, le CLI reste utilisable sans inférer la fin du catalogue.
-Les tests utilisent seulement des objets et pages synthétiques.
-
-## Protection Core à l'ouverture — P0 #2055
-
-Même si un futur adaptateur publiait des prêts BnF-Prêt rattachés à un compte,
-le Core ne doit pas considérer leur observation comme un consentement au
-**téléchargement** : `_opening_sync_locked` applique désormais
-`_opening_loan_acquisition_allowed`, qui refuse toute acquisition implicite
-pour `source_provider='bnf-pret'`, y compris si une URL de livre ou un objet
-brut est présent. Les autres sources conservent leur règle d'acquisition
-existante. Le garde ne supprime ni prêt, ni artefact local, ni provenance.
-Une seconde barrière, dans la façade Core `_acquire_active_loan_automatically`,
-refuse également `bnf-pret` **avant toute acquisition de verrou ou I/O**, y
-compris en appel direct et en mode `force_refresh=True`. Son seul résultat
-est un code fermé `bnf_web_explicit_only` avec `retry=explicit_only`.
-
-La protection **ne vaut pas synchronisation de droits achevée** : la connexion
-Web BnF actuelle ne revendique pas d'identité distante authentifiée ni de
-snapshot exhaustif. Toute acquisition future devra avoir sa propre commande
-volontaire, être liée au profil/compte confirmé, vérifier le résultat local et
-réutiliser la chaîne ADEPT autorisée sans accès privé à l'API institutionnelle.
-
-Tests offline : `python -m pytest tests/test_core_p0_2055_bnf_opening_guard.py -q`.
+Tests HTTPX MockTransport : chaîne SSO/formulaires/cookies, inventaire partiel,
+compte exact, deux sessions isolées, HTML modifié, erreurs 403/429, taille,
+redirection interdite, absence de mutation et fermeture. Aucun compte réel,
+assertion privée, téléchargement ou preuve GTK n'est nécessaire à ces tests.

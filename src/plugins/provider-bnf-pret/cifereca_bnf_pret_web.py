@@ -251,6 +251,7 @@ class ProfileScope:
 class LoanRecord:
     loan_id: str = field(repr=False)
     resource_id: str = field(repr=False)
+    title: str = field(default="", repr=False, compare=False)
     # Raw dates intentionally absent: no date selector has been qualified.
 
 
@@ -287,7 +288,10 @@ def parse_loans(html: str, *, page_url: str, expected: ProfileScope,
         if len(lids) != 1 or len(rids) != 1:
             partial = True
             continue
-        loan = LoanRecord(next(iter(lids)), next(iter(rids)))
+        titles = {n.text() for n in card.walk() if n.tag == "a"
+                  and _id(n.attrs.get("href", ""), "resources") and n.text()}
+        loan = LoanRecord(next(iter(lids)), next(iter(rids)),
+                          next(iter(titles)) if len(titles) == 1 else "")
         if loan.loan_id in loans and loans[loan.loan_id] != loan:
             raise WebParseError("ambiguous_loans")
         loans[loan.loan_id] = loan
