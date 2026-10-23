@@ -812,3 +812,23 @@ corps réellement publiés) et avec les états/motifs par échange. Une source
 avec 1/11 JSON capturé n'en devient pas 11/11 après export. `size_unavailable`
 reste refusé faute de taille réseau mesurée fiable ; aucun `response.body()`
 aveugle ni rejeu réseau n'est introduit.
+
+## Sélecteur immédiatement cohérent après une capture (#2884)
+
+Après la sauvegarde **terminée** dans le coffre chiffré, la page rafraîchit
+immédiatement la liste opaque locale et sélectionne **l'ID exact** de cette
+capture, avant toute nouvelle capture. Aucun réseau, déchiffrement
+automatique, nom de fournisseur, titre ni secret n'est nécessaire pour
+lister les IDs. Un arrêt vide ou échoué ne présélectionne pas de nouvelle
+session « terminée ». Si le fichier final n'est pas listable, le message
+signale l'index indisponible sans inventer une réussite de déchiffrement.
+
+Les IDs des fichiers sont aléatoires : leur ordre alphanumérique **n'est
+pas chronologique**. La liste verrouillée dit désormais « Archive chiffrée
+· <ID court> », sans numérotation trompeuse. Un clic manuel sur « Lister »
+préserve la sélection précédente si l'archive existe encore ; une **nouvelle
+capture finalisée** a seule priorité pour sélectionner automatiquement
+son propre ID. Déverrouiller les métadonnées reste un geste distinct.
+Une erreur de clé pour une ancienne session n'est jamais réparée par la
+capture d'une autre session sous une nouvelle clé ; ne pas conclure à une
+corruption cryptographique à partir du seul sélecteur.

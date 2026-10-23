@@ -1129,3 +1129,38 @@ def test_evidence_counts_capture_usefulness_without_exposing_private_values():
     finally:
         review.destroy()
         trace.destroy()
+
+
+def test_evicted_playwright_response_body_is_isolated_and_later_json_survives(caplog):
+    """A Playwright Error from response.body() cannot escape the callback.
+
+    This mimics Network.getResponseBody having no resource after a navigation.
+    The free-text error is intentionally private and must not reach logging.
+    """
+    trace = PrivateHttpTrace((ORIGIN,))
+    request = Request(ORIGIN + "/api/first")
+    response = Response(request, data=b'{"ProductId":214}')
+    def evicted_body():
+        response.body_reads += 1
+        raise RuntimeError("Network.getResponseBody: PRIVATE_TOKEN_OR_URL")
+    response.body = evicted_body
+
+    emit(trace, request, response)  # No exception may escape into pyee.
+    first = trace.exchanges[0]
+    assert first.status == 200 and first.mime == "application/json"
+    assert first.response_body is None
+    assert first.response_body_state == "body_omitted"
+    assert first.response_body_reason == "read_failed"
+    assert not first.network_error
+    assert response.body_reads == 1
+    assert "PRIVATE_TOKEN_OR_URL" not in caplog.text
+    assert "PRIVATE_TOKEN_OR_URL" not in repr(trace)
+
+    following = Request(ORIGIN + "/api/next")
+    result = Response(following, data=b'{"BookId":214}')
+    emit(trace, following, result)
+    assert result.body_reads == 1
+    assert trace.exchanges[1].response_body == '{"BookId":214}'
+    assert len(trace.exchanges) == 2
+    assert not trace._pending and not trace._responses
+    trace.destroy()

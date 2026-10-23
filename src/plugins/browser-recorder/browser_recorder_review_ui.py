@@ -1249,6 +1249,19 @@ class PrivateReviewPanel:
                         + f"{skipped} annulés, {failed} en échec. "
                         + "Aucun binaire dans le ZIP."
                     )
+                # SessionWriter.save(..., "completed") is atomic and
+                # precedes worker completion. Select its exact immutable ID
+                # now, never the lexicographic last random archive. A failed
+                # or empty capture does not invent a completed archive.
+                sid = (getattr(result, "vault_session_id", None)
+                       if result is not None and not message else None)
+                if sid and not self.refresh_sessions(
+                        preferred_id=sid, preserve_status=True):
+                    self.status.set_label(
+                        "Capture conservée, mais liste du coffre inaccessible "
+                        "ou archive absente de l'index. Actualisez les sessions "
+                        "avant tout export ; aucune opération automatique."
+                    )
                 self._refresh()
                 return False
 
@@ -1477,25 +1490,38 @@ class PrivateReviewPanel:
 
         handle.add_done_callback(finished)
 
-    def refresh_sessions(self):
+    def refresh_sessions(self, *, preferred_id=None, preserve_status=False):
+        """List opaque IDs without pretending their lexicographic order is age.
+
+        Only a newly sealed capture supplies preferred_id. Manual refresh
+        preserves an operator's current selection whenever it still exists.
+        This method never decrypts metadata or contacts a remote provider.
+        """
         if (self.vault_directory is None or self._closed
                 or self.is_recording() or self.is_scanning()):
-            return
+            return False
         self._invalidate_retention()
+        selected_before = self.session_list.get_active_id()
         try:
             ids = PrivateSessionVault(self.vault_directory).list_ids()
         except VaultError:
             self.status.set_label("Bibliothèque chiffrée inaccessible.")
-            return
+            return False
         self.session_list.remove_all()
-        for index, session_id in enumerate(ids, 1):
-            self.session_list.append(session_id, f"Session {index} · {session_id[:8]}")
-        if ids:
-            self.session_list.set_active_id(ids[-1])
-        self.status.set_label(
-            f"{len(ids)} sessions chiffrées trouvées ; aucun site contacté."
-        )
+        for session_id in ids:
+            self.session_list.append(session_id, f"Archive chiffrée · {session_id[:8]}")
+        selected = (preferred_id if preferred_id in ids
+                    else selected_before if selected_before in ids
+                    else ids[0] if ids else None)
+        if selected is not None:
+            self.session_list.set_active_id(selected)
+        if not preserve_status:
+            self.status.set_label(
+                f"{len(ids)} archives chiffrées trouvées · ordre des ID "
+                "non chronologique · aucune métadonnée déchiffrée."
+            )
         self._refresh()
+        return preferred_id is None or preferred_id in ids
 
     def unlock_sessions(self):
         """Build the sensitive catalogue only on explicit local unlock.
