@@ -163,6 +163,13 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
 
     def file_view_visible():
         report['checks']['native_declaration_manual_files_visible'] = True
+        # Distinguish an absent Core right/file context from GTK selection
+        # reset. The result is boolean only; never publish account or path.
+        files = session.unconfirmed_files(limit=10).cases
+        assert len(files) == 1
+        report['checks']['native_declaration_one_file_available'] = True
+        assert session.declaration_context(right.key, files[0].key) is not None
+        report['checks']['native_declaration_core_pair_admissible'] = True
         until(lambda: button('Déclarer ce lien…').get_sensitive(), expand)
 
     def expand():
