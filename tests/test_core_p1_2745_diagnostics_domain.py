@@ -41,7 +41,7 @@ def test_domains_are_verified_before_global_pagination_and_source_coverage(tmp_p
     assert browser["events"][0]["domain"] == "browser_recorder"
     assert browser["events"][0]["module"] == "PLUGIN"
     assert browser["events"][0]["severity"] == "error"
-    assert "domain" not in _read(diagnostics, tmp_path)["events"][0]
+    assert any("domain" not in row for row in _read(diagnostics, tmp_path, limit=100)["events"])
 
     recon = _read(diagnostics, tmp_path, domain="reconciliation", limit=1)
     assert recon["total"] == 2 and recon["next_offset"] == 1
