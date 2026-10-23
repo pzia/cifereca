@@ -125,6 +125,7 @@ def fetch_explorer_page(
     provider_id: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
+    domain: str = "",
 ) -> dict[str, Any]:
     """Only public diagnostics.events; never a path or arbitrary log query."""
     if not isinstance(source, str) or not isinstance(severity, str) or not isinstance(period, str):
@@ -133,6 +134,10 @@ def fetch_explorer_page(
         raise ValueError("unsupported diagnostics filter")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("invalid diagnostics module")
+    # Domain aliases are interpreted by the Core, never by GTK message text.
+    # Reject long/malformed values before touching a broker or filesystem.
+    if type(domain) is not str or len(domain) > 40:
+        raise ValueError("invalid diagnostics domain")
     if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
         raise ValueError("invalid diagnostics provider")
     if (type(reason_code) is not str
@@ -150,6 +155,10 @@ def fetch_explorer_page(
     # never silently downgrade a global filter to local 50-item search.
     if reason_code:
         query["reason_code"] = reason_code
+    if domain:
+        # Never silently emulate a global domain filter with 50 local rows
+        # when an older broker lacks the optional keyword.
+        query["domain"] = domain
     if provider_id:
         query["provider_id"] = provider_id
     return broker.events(**query)
