@@ -8,6 +8,7 @@ another Chromium run and produce two independently reviewed ZIPs.
 from __future__ import annotations
 
 from hashlib import sha256
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -91,6 +92,7 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
     panel = None
     source_hashes = {}
     ids = []
+    private_export = tmp_path / "explicit-private-session-B.zip"
     vault_path = (tmp_path / "core-data" / "plugins" / "data"
                   / PLUGIN_ID / "private-sessions")
     try:
@@ -155,6 +157,54 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
             ).hexdigest()
             assert len(vault.list_ids()) == index + 1
             assert not list(vault_path.glob("*.zip"))
+            if index == 1:
+                # P0 private path: user explicitly selects the *current B*
+                # archive for a clear ZIP BEFORE the third capture can
+                # replace the visible trace. Never choose the newest ID by
+                # ordering, never implicitly export, never write into vault.
+                assert not private_export.exists()
+                original_prompt = panel._prompt_private_zip_file
+                panel._prompt_private_zip_file = (
+                    lambda accepted, cancelled: accepted(private_export)
+                )
+                try:
+                    panel.vault_passphrase.set_text(PASSPHRASE)
+                    panel.export_private_zip(current=True)
+                finally:
+                    panel._prompt_private_zip_file = original_prompt
+                assert private_export.is_file()
+                assert private_export.stat().st_mode & 0o777 == 0o600
+                with ZipFile(private_export) as archive:
+                    assert archive.testzip() is None
+                    assert sorted(archive.namelist()) == ["README.txt", "trace.json"]
+                    # Fictional bodies remain private, deliberately unredacted.
+                    # Assert types/counters, not raw body text in a log.
+                    data = json.loads(archive.read("trace.json"))
+                assert data["id"] == ids[1]
+                assert data["state"] == "completed"
+                assert len(data["exchanges"]) >= 9
+                assert any(
+                    row["method"] == "POST" and type(row["request_body"]) is str
+                    for row in data["exchanges"]
+                )
+                assert any(
+                    row["mime"] == "application/json"
+                    and type(row["response_body"]) is str
+                    for row in data["exchanges"]
+                )
+                assert sha256(
+                    (vault_path / (ids[0] + ".cbrv")).read_bytes()
+                ).hexdigest() == source_hashes[ids[0]]
+                assert sha256(
+                    (vault_path / (ids[1] + ".cbrv")).read_bytes()
+                ).hexdigest() == source_hashes[ids[1]]
+            elif index == 2:
+                # Starting C cannot silently overwrite the explicit export B.
+                assert private_export.exists()
+                with ZipFile(private_export) as archive:
+                    assert json.loads(
+                        archive.read("trace.json")
+                    )["id"] == ids[1]
         assert calls.count(("POST", "/login")) == 3
         assert calls.count(("GET", "/api/books")) == 3
         assert calls.count(("GET", "/done")) == 3
@@ -209,6 +259,24 @@ print("3")
     )
     assert probe.returncode == 0
     assert probe.stdout.strip() == "3" and not probe.stderr
+
+    # A separate standard-library-only process can consume the exact
+    # decrypted B archive; it neither imports Cifereca nor reopens Chromium.
+    private_probe = subprocess.run(
+        [sys.executable, "-c",
+         "import json,sys,zipfile; "
+         "z=zipfile.ZipFile(sys.argv[1]); "
+         "doc=json.loads(z.read('trace.json')); "
+         "assert doc['id']==sys.argv[2] and doc['state']=='completed'; "
+         "assert any(row['method']=='POST' and "
+         "isinstance(row['request_body'],str) for row in doc['exchanges']); "
+         "z.close(); print('exact-B')",
+         str(private_export), ids[1]],
+        env=probe_env, cwd=tmp_path, stdin=subprocess.DEVNULL,
+        capture_output=True, text=True, timeout=20,
+    )
+    assert private_probe.returncode == 0
+    assert private_probe.stdout.strip() == "exact-B"
 
     # Also create the *installed Core plugin and real GTK window* in a
     # separate OS process. Parent's Python imports, GTK widgets, futures and
