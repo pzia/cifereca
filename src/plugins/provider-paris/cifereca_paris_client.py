@@ -607,21 +607,78 @@ class ParisClient:
         # Parse HTML attributes, not a regex requiring a specific quote style.
         # Decode only for classification: use the server's original URL for navigation.
         class Links(HTMLParser):
-            def __init__(self):super().__init__(convert_charrefs=True);self.hrefs=[]
-            def handle_starttag(self,tag,attrs):
-                if tag.casefold()=='a':
-                    self.hrefs.extend(v.strip() for k,v in attrs if k.casefold()=='href' and v)
-        links=Links();links.feed(html_view[:2_000_000])
-        candidates=[]
+            def __init__(self):
+                super().__init__(convert_charrefs=True)
+                self.hrefs = []
+                self.forms = 0
+                self.post_forms = 0
+                self.form_actions = 0
+
+            def handle_starttag(self, tag, attrs):
+                attrs = {str(k).casefold(): v for k, v in attrs if k is not None}
+                if tag.casefold() == "a":
+                    href = attrs.get("href")
+                    if type(href) is str and href.strip():
+                        self.hrefs.append(href.strip())
+                elif tag.casefold() == "form":
+                    self.forms += 1
+                    if str(attrs.get("method") or "").casefold() == "post":
+                        self.post_forms += 1
+                    if type(attrs.get("action")) is str and attrs["action"].strip():
+                        self.form_actions += 1
+
+        # Keep all actionable candidates under the pre-existing exact
+        # selector. The counters below are closed diagnostic classes only:
+        # observing a form, a DOM marker, or an unknown host does NOT grant
+        # permission to navigate, send a POST or infer a signed borrow URL.
+        links = Links()
+        links.feed(html_view[:2_000_000])
+        candidates = []
+        assaredirect_hrefs = 0
+        loan_book_hrefs = 0
+        rejected_scheme = 0
+        malformed_hrefs = 0
+        external_hrefs = 0
         for href in links.hrefs:
-            decoded=href
-            for _ in range(2):decoded=unquote(decoded)
-            try:parsed=urlparse(decoded)
-            except ValueError:continue
-            if parsed.path.casefold().endswith('/assaredirect.ashx') and 'loan-book.ashx' in decoded.casefold():
-                if href not in candidates:candidates.append(href)
-        _TRACE_LOG.info("TRACE paris pnb-loan link-discovery can_loan=true html_present=%s html_chars=%s anchors=%s candidates=%s",
-                        bool(html_view),len(html_view),len(links.hrefs),len(candidates))
+            decoded = href
+            for _ in range(2):
+                decoded = unquote(decoded)
+            try:
+                parsed = urlparse(decoded)
+                href_site = public_site(urljoin(BASE_URL, decoded))
+            except ValueError:
+                malformed_hrefs += 1
+                continue
+            if parsed.scheme and parsed.scheme.casefold() not in {"http", "https"}:
+                rejected_scheme += 1
+            if href_site == "external":
+                external_hrefs += 1
+            path_known = parsed.path.casefold().endswith("/assaredirect.ashx")
+            loan_marker = "loan-book.ashx" in decoded.casefold()
+            assaredirect_hrefs += int(path_known)
+            loan_book_hrefs += int(loan_marker)
+            if path_known and loan_marker:
+                if href not in candidates:
+                    candidates.append(href)
+        selected_site = (
+            public_site(urljoin(BASE_URL, candidates[0]))
+            if len(candidates) == 1 else "unknown"
+        )
+        _TRACE_LOG.info(
+            "TRACE paris pnb-loan link-discovery can_loan=true "
+            "html_present=%s html_chars=%s anchors=%s candidates=%s "
+            "forms=%s post_forms=%s form_actions=%s "
+            "assaredirect_hrefs=%s loan_book_hrefs=%s "
+            "dom_assaredirect=%s dom_loan_book=%s "
+            "rejected_scheme=%s malformed_hrefs=%s external_hrefs=%s "
+            "candidate_site=%s",
+            bool(html_view), len(html_view), len(links.hrefs), len(candidates),
+            links.forms, links.post_forms, links.form_actions,
+            assaredirect_hrefs, loan_book_hrefs,
+            "assaredirect.ashx" in html_view.casefold(),
+            "loan-book.ashx" in html_view.casefold(),
+            rejected_scheme, malformed_hrefs, external_hrefs, selected_site,
+        )
         if len(candidates)==1:return candidates[0]
         reason='ambiguous_link' if candidates else 'missing_link'
         _TRACE_LOG.warning("TRACE paris pnb-loan blocked phase=link-discovery reason=%s",reason)
