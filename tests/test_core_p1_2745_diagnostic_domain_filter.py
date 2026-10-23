@@ -72,7 +72,7 @@ def test_forged_category_operation_and_detail_cannot_set_domain(tmp_path):
 
 
 @pytest.mark.parametrize("bad", [
-    "browser", "recorder", "reconciliation", "Réconciliation", "ALL", "x" * 70,
+    "browser", "recorder", "reconcilliation", "Réconciliation", "ALL", "x" * 70,
     True, None, [], {}, "browser_recorder; private", "PRIVATE_KEY",
 ])
 def test_core_refuses_untrusted_or_noncanonical_domain(tmp_path, bad):
