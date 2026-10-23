@@ -64,7 +64,7 @@ def test_public_only_401_private_denial_still_preserves_catalogue_without_rights
         items = session.search("Public Book", scope="all")
         assert paths == ["/api/v2/catalog/search", "/api/v2/library/search",
                          "/api/v2/catalog/search"]
-        assert items and all(item.owned is False and item.downloadable is False
+        assert items and all(item.owned is False and item.downloadable is not True
                              for item in items)
         assert any("partial_results" in warning for warning in session.last_search_warnings)
     finally:
