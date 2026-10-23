@@ -765,8 +765,10 @@ class LocalInspectionController:
         # Same Core-bound widgets as before: visible actions stay outside
         # the tall comparison pane, in the horizontal pinned action bar.
         # Details/status remain available in the expandable private view.
-        pair_actions.append(declarations.declare)
-        pair_actions.append(declarations.revoke)
+        # The declared-link mode is the first visible choice at 920 px.
+        # A horizontal scroll still exposes the stricter attested steps.
+        pair_actions.prepend(declarations.declare)
+        pair_actions.insert_child_after(declarations.revoke, declarations.declare)
 
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
