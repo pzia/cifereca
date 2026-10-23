@@ -6,8 +6,10 @@ try:
     from cifereca.plugin_api import prefer_downloads_for_save
 except ImportError:
     # Older Core installations can still invoke native Save As.
-    def prefer_downloads_for_save(_chooser):
+    def _keep_native_folder(_chooser):
         return False
+
+    prefer_downloads_for_save = _keep_native_folder
 
 from .profiles import default_output_path, discover_profiles
 
