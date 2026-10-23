@@ -261,13 +261,19 @@ class BrowserSessionTests(unittest.TestCase):
         self.runtime.page.url = browser.ORIGIN + '/resources/synthetic-book'
         self.runtime.page.html = ('<article itemscope itemtype="https://schema.org/Book">'
                                   '<span itemprop="name">Titre fictif</span></article>')
-        before = len([row for row in self.runtime.page.calls if row[0] == 'goto'])
+        before = sum(row[0] == 'goto' for row in self.runtime.page.calls)
         detail = self.session.current_detail(expected=self.session.scope)
-        after = len([row for row in self.runtime.page.calls if row[0] == 'goto'])
+        after = sum(row[0] == 'goto' for row in self.runtime.page.calls)
         self.assertEqual(detail.records[0].title, 'Titre fictif')
         self.assertEqual(before, after)
         self.runtime.page.url = browser.ORIGIN + '/results?q=synthetic'
-        with self.assertRaisesRegex(browser.BrowserSessionError, '^unexpected_page
+        with self.assertRaisesRegex(browser.BrowserSessionError, '^unexpected_page$'):
+            self.session.current_detail(expected=self.session.scope)
+        self.runtime.page.url = browser.ORIGIN + '/resources/synthetic-book?token=private'
+        with self.assertRaisesRegex(browser.BrowserSessionError, '^unexpected_page$'):
+            self.session.current_detail(expected=self.session.scope)
+
+    def test_oversized_html_is_rechecked_on_python_boundary(self):
         self.ready()
         self.runtime.page.html = 'x' * (browser.MAX_HTML_BYTES + 1)
         with self.assertRaisesRegex(browser.WebParseError, '^html_limit$'):
