@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
+import sys
+import zipfile
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -479,3 +482,66 @@ def test_offline_plugin_wheel_changed_during_resolve_cannot_repin_new_bytes(
             ("sample-pkg",), (trusted,),
         )
     assert len(calls) == 1
+
+
+def test_real_pip_installs_attested_optional_wheel_in_fresh_offline_venv(tmp_path):
+    """Cold local-vendor install without PyPI, with a real pip and child venv."""
+    from cifereca.wheelhouse_quarantine import attest_wheelhouse
+    root = tmp_path / "release"
+    wheels = root / "offline-wheels"
+    wheels.mkdir(parents=True)
+    wheel = wheels / "sample_pkg-1.2.3-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("sample_pkg/__init__.py", "VALUE = 123\n")
+        archive.writestr(
+            "sample_pkg-1.2.3.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: sample-pkg\nVersion: 1.2.3\n",
+        )
+        archive.writestr(
+            "sample_pkg-1.2.3.dist-info/WHEEL",
+            "Wheel-Version: 1.0\nGenerator: cifereca-test\n"
+            "Root-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        archive.writestr(
+            "sample_pkg-1.2.3.dist-info/RECORD",
+            "sample_pkg/__init__.py,,\n"
+            "sample_pkg-1.2.3.dist-info/METADATA,,\n"
+            "sample_pkg-1.2.3.dist-info/WHEEL,,\n"
+            "sample_pkg-1.2.3.dist-info/RECORD,,\n",
+        )
+    registry = {
+        "info": {"name": "sample-pkg", "version": "1.2.3"},
+        "urls": [{
+            "filename": wheel.name, "packagetype": "bdist_wheel",
+            "url": "https://files.pythonhosted.org/packages/" + wheel.name,
+            "digests": {"sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()},
+            "yanked": False,
+            "upload_time_iso_8601": (NOW - timedelta(days=9)).isoformat(),
+        }],
+    }
+    attest_wheelhouse(wheels, now=NOW, read_release=lambda *_: registry)
+    venv = root / ".venv"
+    make_venv = subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(venv)],
+        check=False, capture_output=True, text=True, timeout=90,
+    )
+    assert make_venv.returncode == 0
+    py = venv / "bin" / "python"
+    source = Path(__file__).resolve().parents[1] / "src"
+    env = dict(os.environ, PYTHONPATH=str(source), PIP_NO_INDEX="1",
+               PIP_DISABLE_PIP_VERSION_CHECK="1")
+    command = [
+        str(py), "-c",
+        "from pathlib import Path; "
+        "from cifereca.plugins.python_dependencies import PythonDependencyManager; "
+        "PythonDependencyManager(allow_index=False)._pip_install("
+        "('sample-pkg==1.2.3',), (Path(" + repr(str(wheels)) + "),)); "
+        "from sample_pkg import VALUE; assert VALUE == 123",
+    ]
+    completed = subprocess.run(
+        command, env=env, capture_output=True, text=True,
+        check=False, timeout=150,
+    )
+    assert completed.returncode == 0, (
+        completed.stdout[-1600:] + completed.stderr[-1600:]
+    )
