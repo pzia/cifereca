@@ -24,6 +24,7 @@ from .diagnostic_kobo_projection import (
 )
 from .numilog_startup_diagnostics import public_log_fields as public_numilog_startup_log
 from .public_provider_diagnostics import (
+    canonical_public_provider_id,
     public_connection_fields,
     public_connection_log_fields,
 )
@@ -286,9 +287,18 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "ADEPT" if adept_detail else
                 "PLUGIN" if connection_detail else None
             )
+            # A provider identity comes only from a closed Core log schema,
+            # never from a logger suffix, URL, TRACE free text or account label.
+            attested_provider_id = (
+                connection_detail.get("provider_id")
+                or source_sync_detail.get("provider_id")
+                or ("kobo" if kobo_detail or adept_detail else None)
+                or ("numilog" if numilog_detail or numilog_session_detail else None)
+            )
             events.append({
                 "timestamp": ts,
                 "source": "app_log",
+                **({"provider_id": attested_provider_id} if attested_provider_id else {}),
                 "module": ".".join(safe_parts)[:90],
                 **({"business_module": business_module} if business_module else {}),
                 "severity": match["level"].lower(),
@@ -466,6 +476,24 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 message = public_numilog_message(operation, public_detail) or "[opération masquée]"
             else:
                 message = "[opération masquée]"
+        # Do not infer the provider from a business category (PNB/PLUGIN).
+        # Only typed observations with Core provenance attest this identity.
+        attested_provider_id = None
+        if source_sync_detail:
+            attested_provider_id = source_sync_detail["provider_id"]
+        elif (category == "PLUGIN"
+              and operation in {"provider connect", "public provider connect"}
+              and row.get("verified_public_provider_id") == public_detail.get("provider_id")
+              and public_detail.get("code")):
+            attested_provider_id = public_detail["provider_id"]
+        elif adept_detail or (category == "KOBO"
+                             and operation == "automatic backup decision"
+                             and row.get("verified_kobo_backup") is True
+                             and public_detail):
+            attested_provider_id = "kobo"
+        elif (category == "NUMILOG" and operation == "startup_materialization"
+              and row.get("verified_numilog_startup") is True and public_detail):
+            attested_provider_id = "numilog"
         base_id = _event_id("core_events", utc_stamp, category + ":" + operation)
         event_id = base_id
         # Two records may share the same timestamp/category/operation.
@@ -484,6 +512,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "timestamp": utc_stamp,
             "source": "core_events",
             "module": module,
+            **({"provider_id": attested_provider_id} if attested_provider_id else {}),
             "severity": severity,
             "message": message,
             **({"detail": public_detail} if public_detail else {}),
@@ -508,6 +537,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
 def query_diagnostic_events(
     diagnostics: Any, *, log_path: Path,
     source: str = "all", module: str = "", severity: str = "",
+    provider_id: str = "",
     since: str | None = None, until: str | None = None,
     limit: int = 50, offset: int = 0, reason_code: str = "",
 ) -> dict[str, Any]:
@@ -520,6 +550,12 @@ def query_diagnostic_events(
         raise ValueError("unknown diagnostic source")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("diagnostic module must be a string of at most 90 characters")
+    # Provider and module are independent filters. A caller-supplied value
+    # is never interpreted as a provider name, account alias or URL.
+    if type(provider_id) is not str or (
+        provider_id and canonical_public_provider_id(provider_id) is None
+    ):
+        raise ValueError("invalid canonical provider id")
     if type(reason_code) is not str or (
         reason_code and not known_reason_code(reason_code)
     ):
@@ -558,6 +594,8 @@ def query_diagnostic_events(
             or (type(row.get("business_module")) is str
                 and row["business_module"].casefold().startswith(prefix))
         ]
+    if provider_id:
+        events = [row for row in events if row.get("provider_id") == provider_id]
     if severity:
         if severity.lower() not in {"debug", "info", "warning", "error", "critical"}:
             raise ValueError("unknown diagnostic severity")
