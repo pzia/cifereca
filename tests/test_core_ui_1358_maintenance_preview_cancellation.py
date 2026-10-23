@@ -14,6 +14,7 @@ import pytest
 from cifereca.gui import maintenance_tools as guard
 from cifereca.gui.library_inspection_view import LocalInspectionController
 from cifereca.gui.maintenance_result_view import MaintenanceResultView
+from cifereca.gui.maintenance_line_progress import MaintenanceLineProgress
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
@@ -146,6 +147,16 @@ def _method():
     namespace = {
         "MaintenanceResultView": MaintenanceResultView,
         "LocalInspectionController": LocalInspectionController,
+        # Base GTK-free harness: actual row/ticket guard, inert renderer.
+        # Specialised tests may replace this with real widget composition.
+        "build_maintenance_line": lambda **kw: (
+            Container(),
+            MaintenanceLineProgress(
+                idle_add=lambda callback: callback(),
+                render=lambda _state: None,
+                alive=kw["alive"], activity_label=kw["activity_label"],
+            ),
+        ),
         "clear_box": lambda box: box.children.clear(),
         "Gtk": NS(Button=Button, Label=lambda **_kw: Container(),
                   ScrolledWindow=Container,
@@ -193,7 +204,7 @@ def _mounted():
     )
     _method()(host)
     row = host._tools_box.children[0].children[0]
-    preview, cancel = row.children
+    preview, cancel, _status = row.children
     return host, tool, jobs, errors, preview, cancel
 
 
