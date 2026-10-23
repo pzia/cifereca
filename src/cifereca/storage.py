@@ -1987,6 +1987,10 @@ class Storage:
                 self._json_dump(entitlement.metadata), now, now,
                 source.identity_id,
             ))
+        # Empty/physical-only source inventories are read-only: in particular
+        # they must not accidentally commit an unrelated cached transaction.
+        if not rows:
+            return ()
         statement = (
             "INSERT INTO entitlements("
             "entitlement_id,provider_id,credential_id,account_id,item_id,"
