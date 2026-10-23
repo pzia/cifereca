@@ -391,6 +391,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
 
         def wheel_reached():
             report['checks']['P0_2712_physical_wheel_scroll_reached']=True
+            # Restore the compact user viewport after *real* XTEST scrolling
+            # the optional long details. The sticky action/footer bars need
+            # room for the following manual comparison, not a permanently
+            # expanded statistics expander from this earlier test stage.
+            widgets['overview_panel'].set_expanded(False)
             adjustment.set_value(0)
             until(candidate_allocated, candidate_click)
 
