@@ -111,7 +111,12 @@ def test_real_runtime_probe_never_returns_argv_or_resolved_path(monkeypatch):
     assert calls == ["contract", "capabilities"]
     assert output["resolved_executable"] is True
     assert_private_absent(output)
-    assert adapter.probe() == output
+    # Each invocation has distinct timings; typed capability fields stay equal.
+    other = adapter.probe()
+    assert other["probe_timings_ms"].keys() == output["probe_timings_ms"].keys()
+    other.pop("probe_timings_ms")
+    output.pop("probe_timings_ms")
+    assert other == output
 
 
 @pytest.mark.parametrize(("contract","caps"), [
