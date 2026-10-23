@@ -183,14 +183,20 @@ def scan_identity_roots(
     validated = Counter()
     structures = Counter()
     hashed = 0
+    # Keep the metadata budget aligned with *retained* file observations.
+    # A changed root/subdirectory may revoke a whole completed subtree.
+    metadata_charges = []
     # Private per-run sets solely to make subtree invalidation exact.
     reused_keys = set()
     stale_keys = set()
     reuse = _reuse if type(_reuse) is dict else {}
 
-    def keep(file: FileObservation, *, reused=False, stale=False):
+    def keep(file: FileObservation, *, reused=False, stale=False,
+             metadata_charge=0):
         nonlocal hashed
         result.files.append(file)
+        result.metadata_bytes += metadata_charge
+        metadata_charges.append(metadata_charge)
         key = (file.identity_id, file.path)
         if reused:
             reused_keys.add(key)
@@ -209,7 +215,8 @@ def scan_identity_roots(
         nonlocal hashed
         # A replaced directory/root invalidates every former file observation.
         # Its progress counters must follow the exact same rollback.
-        for file in result.files[start:]:
+        for file, charge in zip(result.files[start:], metadata_charges[start:]):
+            result.metadata_bytes -= charge
             key = (file.identity_id, file.path)
             if key in reused_keys:
                 reused_keys.remove(key)
@@ -228,6 +235,7 @@ def scan_identity_roots(
             if not structures[file.structure_validation]:
                 del structures[file.structure_validation]
         del result.files[start:]
+        del metadata_charges[start:]
 
     if not all(hasattr(os, name) for name in ('O_NOFOLLOW', 'O_DIRECTORY', 'O_NONBLOCK')):
         result.reasons.add('nofollow_unavailable')
@@ -310,13 +318,14 @@ def scan_identity_roots(
                 current = os.stat(name, dir_fd=directory_fds[-1], follow_symlinks=False)
                 if (_fingerprint(before) == _fingerprint(os.fstat(fd))
                         == _fingerprint(current)):
-                    result.metadata_bytes += metadata_size
-                    keep(deepcopy(previous), reused=True)
+                    keep(deepcopy(previous), reused=True,
+                         metadata_charge=metadata_size)
                     return
         status = 'uninspected'
         digest = None
         metadata = {}
         structure = 'not_checked'
+        metadata_charge = 0
         with os.fdopen(os.dup(fd), 'rb') as stream:
             if size > limits.file_bytes:
                 result.reasons.add('file_byte_budget')
@@ -353,7 +362,7 @@ def scan_identity_roots(
                         metadata = {}
                         result.reasons.add('metadata_byte_budget')
                     else:
-                        result.metadata_bytes += metadata_size
+                        metadata_charge = metadata_size
                     if status != 'ok':
                         result.reasons.add('epub_parser_limit_or_invalid')
                 else:
@@ -383,7 +392,7 @@ def scan_identity_roots(
                 return
         keep(FileObservation(identity, str(path), size, path.suffix.lower()[1:],
                              digest, status, metadata, _fingerprint(before), structure),
-             stale=stale)
+             stale=stale, metadata_charge=metadata_charge)
 
     directory_fds = []
 
