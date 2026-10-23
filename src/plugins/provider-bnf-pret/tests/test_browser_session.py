@@ -261,6 +261,20 @@ class BrowserSessionTests(unittest.TestCase):
                 self.session.search(query, expected=self.session.scope)
             self.assertEqual(len([row for row in self.runtime.page.calls if row[0] == 'goto']), before)
 
+    def test_preconfirmation_probe_does_not_attest_login(self):
+        self.session.open_login(consent=True)
+        self.runtime.page.evaluate_hook = lambda _: {
+            "code": "ok", "loan_sections": 0, "loan_cards": 0,
+            "search_sections": 0, "search_cards": 0, "book_scopes": 0,
+            "resource_links": 0, "loan_links": 0,
+        }
+        report = self.session.probe_visible_dom(expected=self.session.scope)
+        self.assertEqual((report.kind, report.loan_cards), ("other", 0))
+        self.assertEqual(self.session._mode, "login")
+        self.runtime.page.url = "https://idp.example.invalid/sso"
+        with self.assertRaisesRegex(browser.BrowserSessionError, "^unexpected_page$"):
+            self.session.probe_visible_dom(expected=self.session.scope)
+
     def test_probe_visible_dom_counts_without_navigation(self):
         self.ready()
         self.runtime.page.evaluate_hook = lambda _: {
