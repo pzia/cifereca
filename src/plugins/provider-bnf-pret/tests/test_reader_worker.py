@@ -191,7 +191,7 @@ class ReaderWorkerTests(unittest.TestCase):
 
     def test_search_query_never_leaks_and_mutating_routes_remain_forbidden(self):
         scope = self.start()
-        for search_query in (None, '', ' ', 'a', 'secret\\ntrace', 'x' * 129, 4):
+        for search_query in (None, '', ' ', 'a', 'secret\ntrace', 'x' * 129, 4):
             with self.assertRaisesRegex(Error, '^invalid_search$'):
                 self.worker.submit('search', expected=scope, search_query=search_query)
         with self.assertRaisesRegex(Error, '^invalid_search$'):
