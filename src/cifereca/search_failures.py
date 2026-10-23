@@ -51,3 +51,21 @@ def search_failure_code(error: BaseException) -> str | None:
 
 def is_technical_search_error(error):
     return search_failure_code(error) is not None
+
+
+def should_stop_search_variants(error: BaseException) -> bool:
+    """Do not retry query variants after a dead route or authentication loop.
+
+    A redirect loop may reflect SSO/authentication, not a public service
+    outage. It stops repeated requests to the same path but MUST NOT enable
+    a stale-catalogue fallback. Never inspect exception messages or URLs.
+    """
+    if is_technical_search_error(error):
+        return True
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error, httpx.TooManyRedirects):
+            return True
+        error = error.__cause__ or error.__context__
+    return False

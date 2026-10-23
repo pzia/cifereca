@@ -159,3 +159,59 @@ def test_explicit_provider_refusal_outweighs_generic_outage_wrapper():
     outage = _wrapped(_http_error(401), outage=True)
     assert search_failure_code(outage) == "SearchAuthenticationRequired"
     assert not public_service_unavailable(outage)
+
+
+def test_redirect_loop_stops_query_variants_but_never_authorizes_stale():
+    from cifereca.search_failures import should_stop_search_variants
+
+    error = httpx.TooManyRedirects("PRIVATE_SSO_REDIRECT_SIGNED")
+    wrapped = _wrapped(error)
+    assert search_failure_code(error) is None
+    assert search_failure_code(wrapped) is None
+    assert not is_technical_search_error(wrapped)
+    assert should_stop_search_variants(wrapped)
+    assert not public_service_unavailable(wrapped)
+
+    # A cyclic chain cannot trap the traversal, and a normal semantic
+    # rejection remains eligible for established variant handling.
+    wrapped.__cause__.__cause__ = wrapped
+    assert should_stop_search_variants(wrapped)
+    assert not should_stop_search_variants(_wrapped(_http_error(404)))
+
+
+def test_sso_redirect_loop_does_not_retry_or_return_known_public_catalogue(
+    tmp_path, monkeypatch,
+):
+    from cifereca.search_failures import should_stop_search_variants
+
+    service = _service(tmp_path)
+    attempts, batches = [], []
+    try:
+        _known(service, provider="bad", title="Maritime Book")
+        bad = _FakeSession("bad")
+        def loop(*args, **kwargs):
+            attempts.append(args)
+            raise _wrapped(httpx.TooManyRedirects(
+                "PRIVATE_PERSONAL_LOGIN_REDIRECT?token=SIGNED"
+            ))
+        bad.search = loop
+        service._sessions = {"bad": bad, "good": _FakeSession("good")}
+        monkeypatch.setattr(
+            service, "_search_query_variants",
+            lambda _q: ["original", "would-repeat-same-route", "again"],
+        )
+        result = service.search_progressive(
+            "Maritime Book", force=True, on_batch=batches.append,
+        )
+        failed = next(batch for batch in batches if batch.provider_id == "bad")
+        assert len(attempts) == 1
+        assert failed.error_code == "ProviderSearchFailed"
+        assert failed.results == ()  # No stale results for an auth loop.
+        assert any(batch.provider_id == "good" and batch.results for batch in batches)
+        assert result.providers_failed == 1
+        assert "PRIVATE_PERSONAL" not in repr((result, batches))
+        assert not public_service_unavailable(
+            httpx.TooManyRedirects("PRIVATE_PERSONAL_LOGIN_REDIRECT")
+        )
+    finally:
+        service.close()
