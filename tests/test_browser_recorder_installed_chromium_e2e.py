@@ -326,6 +326,48 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         assert any(x.mime == "application/xml" for x in trace.exchanges)
         assert all(x.response_body is None for x in trace.exchanges
                    if x.mime == "image/png")
+        # A successful browser navigation alone is NOT evidence of a usable
+        # private capture (#2531): require real HTML, JSON, XML and the POST
+        # body from the explicitly agreed localhost fixture. Assertions use
+        # booleans/counts, never dump private request/response objects.
+        evidence = trace.coverage()
+        assert evidence["write_requests_observed"] >= 1
+        assert evidence["write_requests_captured"] >= 1
+        assert evidence["json_responses_observed"] >= 1
+        assert evidence["json_responses_captured"] >= 1
+        assert evidence["html_responses_observed"] >= 1
+        assert evidence["html_responses_captured"] >= 1
+        assert any(
+            x.mime == "application/xml" and type(x.response_body) is str
+            for x in trace.exchanges
+        )
+        assert any(
+            x.method == "POST" and x.status == 302
+            and x.request_body_state == "captured"
+            and type(x.request_body) is str
+            for x in trace.exchanges
+        )
+        assert evidence["response_read_failed"] == 0
+        assert evidence["request_read_failed"] == 0
+        assert evidence["response_unfinished"] == 0
+        assert evidence["request_unfinished"] == 0
+        # Check the *persisted encrypted* archive, not only the transient
+        # panel trace. Explicitly destroy decrypted material on test exit.
+        stored = vault.open(trace.vault_session_id, "FICTIONAL-TEST-PASSPHRASE-2026")
+        try:
+            saved = stored.trace.coverage()
+            for key in (
+                "write_requests_captured", "json_responses_captured",
+                "html_responses_captured", "response_read_failed",
+                "request_read_failed", "response_unfinished",
+            ):
+                assert saved[key] == evidence[key]
+            assert any(
+                x.method == "POST" and x.request_body_state == "captured"
+                for x in stored.trace.exchanges
+            )
+        finally:
+            stored.trace.destroy()
         # Passive instrumentation never retries or replays sensitive POSTs.
         assert [x for x in calls if x[0] == "POST"] == [("POST", "/login")]
         assert calls.count(("GET", "/api/books")) == 1
