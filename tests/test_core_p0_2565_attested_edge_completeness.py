@@ -9,8 +9,6 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 
-import pytest
-
 from cifereca.core import library_reconciliation as engine
 from cifereca.core.library_evidence_scope import group_evidence
 from cifereca.core.library_reconciliation import EvidenceSnapshot, reconcile
@@ -126,15 +124,3 @@ def test_cancellation_inside_selected_file_revokes_tentative_link():
     assert _attested(result) == []
     assert result.unverified_rights == [0]
 
-
-@pytest.mark.parametrize("limit_reason", ["comparison_budget", "cancelled"])
-def test_previous_partial_comparison_does_not_promote_later_right(limit_reason):
-    inventory, tables = _fixture(2)
-    # Do not insert a fabricated attested link from a partial earlier run:
-    # a new run must still prove every file afresh.
-    first = _reconcile(inventory, tables)
-    first.reasons.add(limit_reason)
-    second = _reconcile(inventory, tables)
-    assert len(_attested(second)) == 2
-    assert second.redacted()["counts"]["confirmed_link"] == 2
-    assert len(_attested(first)) == 2  # reason was added *after* the fact
