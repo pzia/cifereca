@@ -383,6 +383,21 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
     verified = set()
     deadline = time.monotonic() + seconds
     comparisons = 0
+
+    def in_file_stopped():
+        # A single path may have thousands of competing rights/placements.
+        # Checking time/cancellation only at the next *file* could attest a
+        # truncated (and arbitrarily late) comparison as an exact link.
+        if cancelled():
+            result.reasons.add('cancelled')
+            return True
+        if (time.monotonic() >= deadline or comparisons >= 100_000
+                or len(result.edges) >= 20_000
+                or 'comparison_budget' in result.reasons):
+            result.reasons.add('comparison_budget')
+            return True
+        return False
+
     for fi, observation in enumerate(inventory.files):
         if cancelled():
             result.reasons.add('cancelled')
@@ -410,8 +425,7 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
         confirmed = []
         for pi, placement in links:
             comparisons += 1
-            if comparisons >= 100_000 or len(result.edges) >= 20_000:
-                result.reasons.add('comparison_budget')
+            if in_file_stopped():
                 break
             candidates = artifacts.get(placement['artifact_id'], [])
             matches = [a for a in candidates if a['sha256'] == observation.sha256 and a['size'] == observation.size]
@@ -422,8 +436,7 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
             result.edges.append(EvidenceEdge(fi, 'placements', pi, 'explicit_placement_sha_size', 'bytes'))
             for ri, right in rights_by_placement.get((observation.identity_id, placement['provider_id'], placement['source_item_id']), []):
                 comparisons += 1
-                if comparisons >= 100_000 or len(result.edges) >= 20_000:
-                    result.reasons.add('comparison_budget')
+                if in_file_stopped():
                     break
                 if (right['identity_id'] != observation.identity_id
                         or right['provider_id'] != placement['provider_id']
@@ -451,23 +464,36 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
                         and candidates[0]['media_format'] in {'epub', 'kepub'}
                         and candidates[0]['artifact_id'] == 'sha256:' + observation.sha256):
                     confirmed.append(ri)
-                    result.edges.append(EvidenceEdge(fi, 'entitlements', ri, 'explicit_right_ledger_placement_sha_size', 'attested'))
+            if 'comparison_budget' in result.reasons or 'cancelled' in result.reasons:
+                break
         # A single borrower/account scope is not necessarily a single right:
         # two distinct entitlement rows for the same purchase can both have
         # valid-looking ledger chains pointing at the *same* file. Do not
         # coalesce these into one confirmed entitlement by account identity.
         # Likewise, never confirm when the per-file comparison stopped early:
         # later uninspected rows could invalidate uniqueness.
+        # Do not publish even a single attested edge until the *entire*
+        # selected-file comparison is complete and uniqueness is established.
+        # A truncated or ambiguous graph may keep byte-level candidates, but
+        # never a right-level attestation (including edge_counts/private UI).
+        if confirmed:
+            in_file_stopped()
         if (len(confirmed) == 1 and len(links) == 1
                 and not snapshot.reasons
-                and 'comparison_budget' not in result.reasons):
+                and not {'comparison_budget', 'cancelled'} & result.reasons):
             categories.discard('present_unlinked')
             categories.add('confirmed_link')
             verified.update(confirmed)
+            result.edges.append(EvidenceEdge(
+                fi, 'entitlements', confirmed[0],
+                'explicit_right_ledger_placement_sha_size', 'attested',
+            ))
         else:
             if confirmed or len(links) > 1:
                 categories.add('ambiguous')
             categories.add('local_file_without_attested_right')
+        if 'comparison_budget' in result.reasons or 'cancelled' in result.reasons:
+            break
     result.unverified_rights = [i for i, r in enumerate(rights) if r['state'] == 'active' and i not in verified]
     # Inventory may not include an owning root: never call foreign paths missing.
     # Root completeness is deliberately conservative until captured in Inventory.
