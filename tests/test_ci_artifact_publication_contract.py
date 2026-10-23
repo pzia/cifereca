@@ -13,6 +13,10 @@ ROOT = Path(__file__).resolve().parents[1] / ".github/workflows"
 
 # Exact path expressions from the reviewed workflows (not globbed directories).
 PUBLIC_ARTIFACT_PATHS = {
+    # #2055: code-only package, no session/SSO/capture/private reader state.
+    "bnf-pret-test-package.yml": (
+        "dist/cifereca-plugin-provider-bnf-pret-0.1.0.zip",
+    ),
     "e2e-smoke.yml": (
         "${{ runner.temp }}/cifereca-e2e-public/summary.json",
     ),
