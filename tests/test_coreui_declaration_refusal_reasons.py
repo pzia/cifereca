@@ -8,6 +8,7 @@ from cifereca.core import library_declared_links as engine
 from cifereca.gui.library_declaration_actions import (
     declaration_refusal_message,
 )
+from tests.test_library_declared_links import rig
 from tests.test_library_declared_link_inspection import selected
 
 
