@@ -545,6 +545,8 @@ class Diagnostics:
                     row.pop("verified_browser_recorder", None)
                 if row.get("verified_reconciliation") is False:
                     row.pop("verified_reconciliation", None)
+                if row.get("verified_loan_download") is False:
+                    row.pop("verified_loan_download", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:
