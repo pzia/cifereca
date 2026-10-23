@@ -472,7 +472,10 @@ class PrivateReviewPanel:
                       "de permissions de dossier à configurer. Le coffre reste "
                       "chiffré ; le ZIP exporté est EN CLAIR (URL, identifiants "
                       "et corps conservés) : à partager uniquement volontairement "
-                      "avec le LLM de votre choix. Aucun envoi automatique.",
+                      "avec le LLM de votre choix. Si une session est renommée, "
+                      "son nom peut être proposé dans le NOM VISIBLE du ZIP : "
+                      "modifiez ce nom dans Enregistrer sous si nécessaire. "
+                      "Aucun envoi automatique.",
                 xalign=0, wrap=True,
             ))
             self.private_export_button = Gtk.Button(
@@ -538,7 +541,9 @@ class PrivateReviewPanel:
                 label="Session archivée dans le coffre : vous pouvez l'exporter "
                       "directement pour un LLM sans attendre les décisions "
                       "d'anonymisation. Ce ZIP est NON CHIFFRÉ et contient les "
-                      "observations privées conservées. Ouvrez le coffre "
+                      "observations privées conservées. Un nom de session "
+                      "renommée peut apparaître dans le NOM VISIBLE du ZIP ; "
+                      "il est modifiable avant Enregistrer. Ouvrez le coffre "
                       "une fois en haut, puis choisissez où l'enregistrer.",
                 xalign=0, wrap=True,
             ))
