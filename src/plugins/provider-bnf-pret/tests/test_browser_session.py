@@ -432,7 +432,7 @@ class BrowserSessionTests(unittest.TestCase):
             (browser.ORIGIN + '/resources/synthetic', 'GET', True, 'continued'),
             (browser.ORIGIN + '/results?q=synthetic', 'GET', True, 'continued'),
             (browser.ORIGIN + '/my_profile/activity', 'GET', True, 'continued'),
-            ('https://cdn.example.invalid/style.css', 'GET', False, 'continued'),
+            ('https://cdn.example.invalid/style.css', 'GET', False, 'blocked'),
             (browser.ORIGIN + '/resources/synthetic', 'POST', False, 'blocked'),
             (browser.ORIGIN + '/loans/synthetic?signature=fake', 'GET', False, 'blocked'),
             (browser.ORIGIN + '/v1/resources.json', 'GET', False, 'blocked'),
