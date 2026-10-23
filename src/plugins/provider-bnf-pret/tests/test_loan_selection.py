@@ -33,6 +33,11 @@ class BnfVisibleLoanBookSelectionTests(unittest.TestCase):
         self.assertNotIn("secret-loan", repr(self.chooser))
         self.assertNotIn("account-private", repr(self.chooser))
         self.assertEqual(self.chooser.count, 2)
+        self.assertEqual(self.chooser.visible_book_lines(), (
+            "1. Livre BnF [public-book1]",
+            "2. Livre BnF [public-book2]",
+        ))
+        self.assertNotIn("secret-loan", "\n".join(self.chooser.visible_book_lines()))
 
     def test_empty_page_revokes_choices_without_claiming_return(self):
         self.chooser.observe(self.page(("loan1", "book1")), expected=self.scope)
