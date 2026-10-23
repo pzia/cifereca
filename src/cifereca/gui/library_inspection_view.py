@@ -762,6 +762,11 @@ class LocalInspectionController:
             alive=lambda: self.session is session and self.alive(),
         )
         candidate_box.insert_child_after(declarations.expander, pair_report)
+        # Same Core-bound widgets as before: visible actions stay outside
+        # the tall comparison pane, in the horizontal pinned action bar.
+        # Details/status remain available in the expandable private view.
+        pair_actions.append(declarations.declare)
+        pair_actions.append(declarations.revoke)
 
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
@@ -1151,7 +1156,7 @@ class LocalInspectionController:
                             candidate_prev, candidate_next, manual_toggle,
                             manual_search, manual_list, format_filter, sha_filter,
                             crc_filter, file_sort, pair_prepare, fresh_preview,
-                            pair_confirm,
+                            pair_confirm, declarations.declare, declarations.revoke,
                         ):
                             control.set_sensitive(False)
                         pair_confirm.set_visible(False)
