@@ -14,6 +14,52 @@ def _dashboard_count(stats: dict, key: str) -> str:
     return str(value) if type(value) is int and value >= 0 else "—"
 
 
+# The dashboard has the same source applicability rule as the public
+# Accueil overview (#1867), but must not import a plugin/private Core service.
+# Unknown sources fail closed to existing 'prêts non actualisés' semantics.
+_NON_LENDING_SOURCES = frozenset({
+    "kobo", "numilog", "numilog-catalog", "gallica", "gutenberg",
+    "bnf-catalogue", "baen", "ebooksgratuits", "local",
+})
+
+
+def _dashboard_has_no_loan_source(card: object, stats: object) -> bool:
+    if type(card) is not dict or type(stats) is not dict:
+        return False
+    providers = card.get("providers")
+    if (type(providers) not in (list, tuple, set, frozenset)
+            or not providers or len(providers) > 128
+            or any(type(pid) is not str or pid not in _NON_LENDING_SOURCES
+                   for pid in providers)):
+        return False
+    caps = card.get("capabilities")
+    if isinstance(caps, (list, tuple)) and any(
+        type(cap) is dict and cap.get("id") == "loans" for cap in caps
+    ):
+        return False
+    observed = stats.get("loan_sources_observed")
+    known = stats.get("known_loans")
+    # Historic loan evidence survives a change in configured providers.
+    return not ((type(observed) is int and observed > 0)
+                or (type(known) is int and known > 0))
+
+
+def _dashboard_source_label(source: object) -> str:
+    # Presentation only. A store account does not attest a downloaded file,
+    # and the Kobo catalogue is not a second configured account.
+    if type(source) is not dict:
+        return "Source inconnue"
+    name = str(source.get("label") or "Source inconnue")
+    pid = source.get("provider_id")
+    if pid == "kobo":
+        return name + " (Mes achats / Catalogue)"
+    if pid == "numilog":
+        return name + " (Mes achats)"
+    if pid == "numilog-catalog":
+        return name + " (Catalogue public)"
+    return name
+
+
 def render_dashboard(window, *, Gtk, add_css) -> None:
     if getattr(window, '_closed', False):
         return
@@ -83,7 +129,12 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
             local = _dashboard_count(stats, "local_books")
             loans = _dashboard_count(stats, "known_loans")
             owned = _dashboard_count(stats, "remote_owned_rights")
-            count=Gtk.Label(label=f"{local} livres locaux · {loans} prêts de bibliothèque connus",xalign=0)
+            loan_label = (
+                "aucune source de prêt configurée"
+                if _dashboard_has_no_loan_source(card, stats)
+                else f"{loans} prêts de bibliothèque connus"
+            )
+            count=Gtk.Label(label=f"{local} livres locaux · {loan_label}",xalign=0)
             count.set_wrap(True);box.append(count)
             # A distant store entitlement is neither a library loan nor
             # evidence of a downloaded EPUB. Never add these three counts.
@@ -98,7 +149,13 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
                 failed=sum(int(actions.get(key,0) or 0) for key in ('acquisitions_failed','imports_failed','synchronizations_failed','transformations_failed','transfers_failed'))
                 action_label=Gtk.Label(label=f"Actions (30 j) : {ok} réussies · {failed} échouées",xalign=0)
                 action_label.set_wrap(True); add_css(action_label, 'caption', 'dim-label'); box.append(action_label)
-        providers = ", ".join(source["label"] + ("" if source["connected"] else " (à connecter)") for source in card.get("sources", [])) or "Aucune source connectée"
+        providers = ", ".join(
+            _dashboard_source_label(source) + (
+                "" if source.get("connected") is True else " (à connecter)"
+            )
+            for source in card.get("sources", [])
+            if type(source) is dict
+        ) or "Aucune source connectée"
         source_label = Gtk.Label(label=f"Sources : {providers}", xalign=0); source_label.set_wrap(True); box.append(source_label)
         profile = "Lié" if card.get("adept_profile_id") else "À configurer"
         box.append(Gtk.Label(label=f"Profil Adobe : {profile}", xalign=0))
