@@ -734,7 +734,7 @@ class PrivateReviewPanel:
             chooser, self._export_dialog = self._export_dialog, None
             chooser.destroy()
         self._wipe_vault_password()
-        self._private_labels.clear()
+        getattr(self, "_private_labels", {}).clear()
         self._private_export_suggested_name = _PRIVATE_ZIP_DEFAULT
         self.vault_passphrase.set_text("")
         self._retention_plan = None
@@ -1559,7 +1559,7 @@ class PrivateReviewPanel:
         self._invalidate_retention()
         # Opaque refresh invalidates labels until another authenticated
         # unlock. This also covers rename, delete and interrupted capture.
-        self._private_labels.clear()
+        getattr(self, "_private_labels", {}).clear()
         self._private_export_suggested_name = _PRIVATE_ZIP_DEFAULT
         selected_before = self.session_list.get_active_id()
         try:
@@ -1852,7 +1852,9 @@ class PrivateReviewPanel:
             "Exporter la session privée pour LLM (ZIP en clair)", parent,
             Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
-        chooser.set_current_name(self._private_export_suggested_name)
+        chooser.set_current_name(
+            getattr(self, "_private_export_suggested_name", _PRIVATE_ZIP_DEFAULT)
+        )
         # User-visible filename is NOT encrypted; choosing the suggested
         # value may reveal a private session title in their Downloads folder.
         self._private_destination_dialog = chooser
@@ -1955,7 +1957,7 @@ class PrivateReviewPanel:
         # authenticated this exact session's encrypted sidecar. If the
         # locked/unknown session has no cached label, offer the neutral name.
         self._private_export_suggested_name = _private_zip_name(
-            self._private_labels.get(sid)
+            getattr(self, "_private_labels", {}).get(sid)
         )
         self._prompt_private_zip_file(selected, cancelled)
 
@@ -2374,7 +2376,7 @@ class PrivateReviewPanel:
         if self.vault_passphrase is not None:
             self.vault_passphrase.set_text("")
         self._wipe_vault_password()
-        self._private_labels.clear()
+        getattr(self, "_private_labels", {}).clear()
         self._private_export_suggested_name = _PRIVATE_ZIP_DEFAULT
         self._discard_private()
         self._stop = None
