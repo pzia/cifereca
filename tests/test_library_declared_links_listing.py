@@ -83,3 +83,71 @@ def test_closed_pagination_and_malformed_metadata_fail_closed(rig):
                    ('core.library.user-declaration.v1.bad', '{BROKEN'))
     with pytest.raises(DeclarationRejected, match='invalid_local_context'):
         list_declared_links(service, identity_id='default')
+
+
+@pytest.mark.parametrize('account_drift', (
+    'removed', 'replaced_account', 'reassigned_identity', 'duplicated'
+))
+def test_current_provider_account_drift_is_visible_without_erasing_history(
+        rig, account_drift):
+    """SQLite rights can remain after the actual provider login is removed."""
+    from dataclasses import replace
+
+    service, book, _, _, _ = rig
+    created = apply(rig)
+    baseline = records(service)
+    original = service.accounts
+    previous = list_declared_links(service, identity_id='default')
+    assert previous.rows[0].review == 'recorded_unverified_file'
+    if account_drift == 'removed':
+        service.accounts = []
+    elif account_drift == 'replaced_account':
+        service.accounts = [replace(original[0], unique_id='DIFFERENT-account')]
+    elif account_drift == 'reassigned_identity':
+        service.accounts = [replace(original[0], identity_id='alex')]
+    else:
+        service.accounts = [original[0], original[0]]
+
+    stale = list_declared_links(service, identity_id='default')
+    assert stale.total == 1 and len(stale.rows) == 1
+    assert stale.rows[0].relation_id == created.relation_id
+    assert stale.rows[0].file_path == str(book)
+    assert stale.rows[0].review == 'source_or_right_changed'
+    assert records(service) == baseline
+    assert not rows(service, 'placements')
+    assert not rows(service, 'acquisition_ledger')
+
+    # A later account sync can repair the context, not the declaration.
+    service.accounts = original
+    restored = list_declared_links(service, identity_id='default')
+    assert restored.rows[0].review == 'recorded_unverified_file'
+    assert records(service) == baseline
+
+
+def test_disabled_provider_connection_is_reviewed_not_silently_attested(rig):
+    service, _, _, _, options = rig
+    result = apply(rig)
+    baseline = records(service)
+    assert list_declared_links(service, identity_id='default').rows[0].review == (
+        'recorded_unverified_file'
+    )
+    # A service can retain an account object after a sync disables the local
+    # provider connection; the persisted right is not current provenance.
+    connection = {
+        'identity_id': 'default',
+        'provider_id': options['provider_id'],
+        'credential_id': options['credential_id'],
+        'label': 'Fixture disabled connection',
+        'enabled': False,
+    }
+    service.storage.provider_connection_put(connection)
+    page = list_declared_links(service, identity_id='default')
+    assert page.total == 1
+    assert page.rows[0].relation_id == result.relation_id
+    assert page.rows[0].review == 'source_or_right_changed'
+    assert records(service) == baseline
+    assert not rows(service, 'placements')
+    assert not rows(service, 'acquisition_ledger')
+    service.storage.provider_connection_put({**connection, 'enabled': True})
+    page = list_declared_links(service, identity_id='default')
+    assert page.rows[0].review == 'recorded_unverified_file'
