@@ -41,7 +41,7 @@ PERIODS = ("all", "hour", "day", "week", "month")
 PAGE_SIZE = 50
 # Only Core canonical public provider labels, never account names or URLs.
 _PUBLIC_PROVIDER_RE = re.compile(
-    r"[a-z][a-z0-9]{0,31}(?:[._-][a-z][a-z0-9]{0,31}){0,5}\\Z", re.ASCII,
+    r"[a-z][a-z0-9]{0,31}(?:[._-][a-z][a-z0-9]{0,31}){0,5}\Z", re.ASCII,
 )
 _PRIVATE_PROVIDER_PARTS = frozenset({
     "secret", "token", "password", "cookie", "credential", "credentials",
