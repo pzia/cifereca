@@ -11,7 +11,7 @@ from typing import Any
 import json
 import re
 
-from cifereca.core.diagnostic_domains import (
+from cifereca.plugin_api.diagnostic_domains import (
     DIAGNOSTIC_DOMAINS, canonical_diagnostic_domain,
 )
 
