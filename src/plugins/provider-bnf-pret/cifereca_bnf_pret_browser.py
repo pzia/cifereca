@@ -379,6 +379,18 @@ def _ask(session, prompt):
             session.pump()
 
 
+def _print_dom_counts(session):
+    """Print only locally observed bounded selector counts, never page content."""
+    proof = session.probe_visible_dom(expected=session.scope)
+    # DomProbe.from_browser validates these fields before reaching this point.
+    print("DOM BnF (comptages non exhaustifs) :", proof.kind,
+          "sections prêts", proof.loan_sections, "blocs prêts", proof.loan_cards,
+          "sections résultats", proof.search_sections, "notices", proof.search_cards,
+          "fiches Book", proof.book_scopes, "liens ressources", proof.resource_links,
+          "liens prêts", proof.loan_links)
+    print("Diagnostic local uniquement : compte et droits non attestés.")
+
+
 def main():
     """Manual local diagnostic entry point. No private values printed/saved."""
     session = ReaderBrowserSession("manual-local", "manual-local")
@@ -386,15 +398,37 @@ def main():
         if input("Ouvrir Chromium pour une session BnF Prêt éphémère ? [oui/non] ").strip() != "oui":
             return 0
         session.open_login(consent=True)
-        if _ask(session, "Connectez-vous dans Chromium. Confirmez le compte choisi [oui/non] : ") != "oui":
-            return 0
+        while True:
+            response = _ask(
+                session,
+                "Connectez-vous dans Chromium. [d] sélecteurs DOM, "
+                "[oui] compte BnF correspondant au profil manuel, [q] quitter : ",
+            )
+            if response == "oui":
+                break
+            if response in {"q", "non"}:
+                return 0
+            if response == "d":
+                try:
+                    _print_dom_counts(session)
+                except (BrowserSessionError, WebParseError) as exc:
+                    print("Diagnostic BnF indisponible :", str(exc))
         snapshot = session.finish_login(account_confirmed=True)
         print("Prêts observés :", len(snapshot.loans), "État :", snapshot.status)
         while True:
-            command = _ask(session, "Naviguez dans Chromium. [s] suggestions, [l] prêts, [q] quitter : ")
+            command = _ask(
+                session,
+                "Naviguez dans Chromium. [d] sélecteurs, [s] suggestions, "
+                "[l] prêts, [q] quitter : ",
+            )
             if command == "q":
                 break
-            if command == "s":
+            if command == "d":
+                try:
+                    _print_dom_counts(session)
+                except (BrowserSessionError, WebParseError) as exc:
+                    print("Diagnostic BnF indisponible :", str(exc))
+            elif command == "s":
                 result = session.suggestions(expected=session.scope)
                 print("Suggestions observées :", len(result.records), "État :", result.status)
             elif command == "l":

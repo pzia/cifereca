@@ -275,6 +275,41 @@ class BrowserSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(browser.BrowserSessionError, "^unexpected_page$"):
             self.session.probe_visible_dom(expected=self.session.scope)
 
+    def test_cli_dom_counts_redacted_before_account_confirmation(self):
+        self.session.open_login(consent=True)
+        self.runtime.page.evaluate_hook = lambda _: {
+            "code": "ok", "loan_sections": 0, "loan_cards": 0,
+            "search_sections": 0, "search_cards": 0, "book_scopes": 0,
+            "resource_links": 0, "loan_links": 0,
+        }
+        before = sum(row[0] == "goto" for row in self.runtime.page.calls)
+        with patch("builtins.print") as printed:
+            browser._print_dom_counts(self.session)
+        value = " ".join(str(x) for call in printed.call_args_list for x in call.args)
+        self.assertIn("compte et droits non attestés", value)
+        self.assertNotIn("identity-a", value)
+        self.assertNotIn("account-a", value)
+        self.assertEqual(self.session._mode, "login")
+        self.assertEqual(before, sum(row[0] == "goto" for row in self.runtime.page.calls))
+
+    def test_cli_preconfirmation_probe_never_triggers_account_confirmation(self):
+        from cifereca_bnf_pret_dom_probe import DomProbe
+        scope = browser.ProfileScope("identity-private", "account-private", "epoch")
+        fake = SimpleNamespace(
+            scope=scope,
+            open_login=lambda **kwargs: None,
+            probe_visible_dom=lambda **kwargs: DomProbe(scope, "other", 0, 0, 0, 0, 0, 0, 0),
+            close=lambda: None,
+        )
+        with patch.object(browser, "ReaderBrowserSession", return_value=fake), \
+             patch("builtins.input", return_value="oui"), \
+             patch.object(browser, "_ask", side_effect=["d", "q"]), \
+             patch("builtins.print") as printed:
+            self.assertEqual(browser.main(), 0)
+        printed_text = " ".join(str(x) for call in printed.call_args_list for x in call.args)
+        self.assertNotIn("identity-private", printed_text)
+        self.assertIn("DOM BnF", printed_text)
+
     def test_probe_visible_dom_counts_without_navigation(self):
         self.ready()
         self.runtime.page.evaluate_hook = lambda _: {
