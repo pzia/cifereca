@@ -261,3 +261,51 @@ def test_connect_marks_partial_pairings_as_incomplete(monkeypatch):
         assert session.pairing_status == {"complete": False, "error": "RuntimeError"}
     finally:
         session.close()
+
+
+def test_login_failure_emits_closed_phase_without_secret(monkeypatch):
+    diagnostics = RecordingDiagnostics()
+    session = _session(diagnostics)
+    secret = "PRIVATE_PASSWORD_OR_COOKIE"
+    def fail_login(*args, **kwargs):
+        raise RuntimeError(secret)
+    monkeypatch.setattr(session.client, "login", fail_login)
+    monkeypatch.setattr(
+        session.client, "summary",
+        lambda *_: pytest.fail("summary must not run after failed login"),
+    )
+    try:
+        with pytest.raises(RuntimeError, match=secret):
+            session.connect()
+        assert session.connected is False
+        assert (
+            ("AUTH", "Paris connection", "error"),
+            {"detail": {"provider": "paris", "code": "paris_login_failed"}},
+        ) in diagnostics.rows
+        assert secret not in repr(diagnostics.rows)
+        assert "username" not in repr(diagnostics.rows)
+        assert "password" not in repr(diagnostics.rows)
+    finally:
+        session.close()
+
+
+def test_both_summary_failures_emit_closed_phase_without_secret(monkeypatch):
+    diagnostics = RecordingDiagnostics()
+    session = _session(diagnostics)
+    secret = "SIGNED_URL_OR_SECRET"
+    monkeypatch.setattr(session.client, "login", lambda *_: {"success": True})
+    monkeypatch.setattr(
+        session.client, "summary",
+        lambda *_: (_ for _ in ()).throw(RuntimeError(secret)),
+    )
+    try:
+        with pytest.raises(RuntimeError, match=secret):
+            session.connect()
+        assert (
+            ("AUTH", "Paris connection", "error"),
+            {"detail": {"provider": "paris", "code": "paris_summary_unavailable"}},
+        ) in diagnostics.rows
+        assert secret not in repr(diagnostics.rows)
+        assert session.connected is False
+    finally:
+        session.close()

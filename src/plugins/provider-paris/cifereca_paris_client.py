@@ -186,14 +186,18 @@ class ParisClient:
             if category=="PNB" and operation=="borrow digital":
                 _TRACE_LOG.warning("TRACE paris pnb-loan failed error=%s duration_ms=%s",type(exc).__name__,int((time.perf_counter()-start)*1000))
             detail = {"error": type(exc).__name__}
-            # Search errors may contain untrusted upstream body text or a
-            # request URL. Search diagnostics are exported to the UI/support.
-            if not (
-                category == "CATALOG" and (
+            # Auth/login, account summaries and catalogue errors may expose
+            # credentials, cookies, signed URLs or upstream body text. Only
+            # the closed exception class may appear in Diagnostics (#2882).
+            private_operation = (
+                category == "AUTH"
+                or (category == "API" and operation.startswith("summary "))
+                or (category == "CATALOG" and (
                     operation.startswith("search ")
                     or operation.startswith("history cover search ")
-                )
-            ):
+                ))
+            )
+            if not private_operation:
                 detail["message"] = str(exc)[:240]
             self.diagnostics.add(category, operation, "error", int((time.perf_counter()-start)*1000), detail)
             raise
@@ -247,7 +251,7 @@ class ParisClient:
                                 "attempt": "2/2",
                                 "profile": self._http_profile,
                                 "error": type(exc).__name__,
-                                "message": str(exc)[:240],
+                                "code": "paris_login_retry_exhausted",
                             },
                         )
                         raise
@@ -257,7 +261,7 @@ class ParisClient:
                             "attempt": "1/2",
                             "profile": self._http_profile,
                             "error": type(exc).__name__,
-                            "message": str(exc)[:240],
+                            "code": "paris_login_protocol_retry",
                             "action": "retry_compat_identity_close",
                         },
                     )

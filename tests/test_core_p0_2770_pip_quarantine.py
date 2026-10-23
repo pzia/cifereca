@@ -242,3 +242,37 @@ def test_no_candidate_to_change_skips_mutating_pip(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_pip)
     PythonDependencyManager(allow_index=True)._pip_install(("already-installed",), ())
     assert len(calls) == 1 and "--dry-run" in calls[0]
+
+
+def test_rollback_reinstalls_only_through_quarantine_gate(monkeypatch):
+    """Even restoring a previously installed version is a new acquisition."""
+    manager = PythonDependencyManager(allow_index=True)
+    monkeypatch.setattr(manager_module, "_installed_versions", lambda: {
+        "sample-pkg": ("sample-pkg", "2.0"),
+    })
+    requested = []
+    monkeypatch.setattr(
+        manager, "_pip_install",
+        lambda requirements, wheels: requested.append((requirements, wheels)),
+    )
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *args, **kwargs: pytest.fail("unattested rollback pip reached"),
+    )
+    manager._restore({"sample-pkg": ("sample-pkg", "1.0")}, ())
+    assert requested == [(["sample-pkg==1.0"], ())]
+
+
+def test_offline_rollback_does_not_use_unattested_wheelhouse(monkeypatch):
+    manager = PythonDependencyManager(allow_index=False)
+    monkeypatch.setattr(manager_module, "_installed_versions", lambda: {
+        "sample-pkg": ("sample-pkg", "2.0"),
+    })
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *args, **kwargs: pytest.fail("unsafe offline rollback reached pip"),
+    )
+    with pytest.raises(PythonDependencyError, match="dependency_provenance_unavailable"):
+        manager._restore(
+            {"sample-pkg": ("sample-pkg", "1.0")}, (Path("/unverified-wheelhouse"),),
+        )

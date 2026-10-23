@@ -280,12 +280,11 @@ class PythonDependencyManager:
                 detail = (proc.stderr or proc.stdout or "").strip()
                 raise PythonDependencyError(f"pip rollback uninstall failed: {detail[-1200:]}")
         if changed:
+            # Rollback is another third-party wheel acquisition. Never bypass
+            # the exact-file PyPI SHA/date preflight by using a raw pip command
+            # or an unverified cached/offline wheelhouse (#2770).
             requested = [f"{name}=={version}" for name, version in changed]
-            command = self._pip_base(wheel_dirs) + requested
-            proc = subprocess.run(command, text=True, capture_output=True, timeout=300, check=False)
-            if proc.returncode != 0:
-                detail = (proc.stderr or proc.stdout or "").strip()
-                raise PythonDependencyError(f"pip rollback restore failed: {detail[-1200:]}")
+            self._pip_install(requested, wheel_dirs)
 
     def diagnostic(self, manifests: Sequence[PluginPackageManifest]) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
