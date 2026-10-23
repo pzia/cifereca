@@ -327,7 +327,7 @@ class ReaderBrowserSession:
             before = self._page.url
             if not _reader_url(before) or _id(before, "resources") is None:
                 raise BrowserSessionError("unexpected_page")
-            result = self._page.evaluate(BOOK_ACTIONS_JS)
+            result = self._page.evaluate(BOOK_ACTIONS_JS, {})
             if generation != self._generation or self._page.url != before:
                 raise BrowserSessionError("page_changed")
             return BookActionSignals.from_browser(result, scope=self.scope)
