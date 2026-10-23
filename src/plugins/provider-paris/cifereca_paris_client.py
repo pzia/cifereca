@@ -16,6 +16,9 @@ from urllib.parse import quote, urljoin, urlparse, unquote
 import httpx
 from cifereca.plugin_api import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult, AttentionRequired
 from cifereca_paris_constants import ACCOUNT_SERVICE, BASE_URL, CHECK_AVAILABILITY_PATH, HOLDINGS_PATH, LOGIN_PATH, SEARCH_PATH, USER_AGENT
+from cifereca_paris_trace import (
+    public_book_id, public_content_type, public_http_status, public_site,
+)
 from cifereca_paris_normalize import normalize_booking, normalize_history, normalize_item_detail, normalize_loan, normalize_search_result
 
 _BORROW_TRACE=contextvars.ContextVar('paris_borrow_trace',default='none')
@@ -819,8 +822,9 @@ class ParisClient:
         def work():
             endpoint = f"{self.base_url}{ACCOUNT_SERVICE}/DownloadDigitalDocument"
             _TRACE_LOG.info(
-                "TRACE download paris endpoint request loan_id=%s ean=%s uid_present=%s reader_id_present=%s endpoint_path=%s",
-                loan.id, loan.record_id, bool(uid), bool(reader_id), ACCOUNT_SERVICE + "/DownloadDigitalDocument",
+                "TRACE download paris endpoint request book_id=%s site=%s uid_present=%s reader_id_present=%s endpoint=DownloadDigitalDocument",
+                public_book_id(loan.record_id), public_site(self.base_url),
+                bool(uid), bool(reader_id),
             )
             r = self.client.post(
                 endpoint,
@@ -835,8 +839,10 @@ class ParisClient:
                 },
             )
             _TRACE_LOG.info(
-                "TRACE download paris endpoint response loan_id=%s status=%s content_type=%s bytes=%s",
-                loan.id, r.status_code, r.headers.get("content-type", ""), len(r.content or b""),
+                "TRACE download paris endpoint response book_id=%s site=%s status=%s content_type=%s bytes=%s",
+                public_book_id(loan.record_id), public_site(self.base_url),
+                public_http_status(r.status_code),
+                public_content_type(r.headers.get("content-type", "")), len(r.content or b""),
             )
             data = self._json(r, "download digital document")
             value = data.get("d")
