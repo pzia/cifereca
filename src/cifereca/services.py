@@ -80,7 +80,7 @@ def _loan_cache_key(account: Account) -> str:
         account.credential_id, account.unique_id,
     )
     if any(type(value) is not str or len(value) > 1024
-           or '\\0' in value for value in parts):
+           or chr(0) in value for value in parts):
         raise ProviderConfigurationError("loan_cache_scope_invalid")
     serialized = json.dumps(parts, ensure_ascii=True, separators=(',', ':'))
     return "loans.v2:" + hashlib.sha256(serialized.encode('utf-8')).hexdigest()
