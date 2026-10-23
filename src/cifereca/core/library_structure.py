@@ -115,5 +115,5 @@ def inspect_stream_structure(stream, media_format: str, *, max_bytes: int = 1024
             return 'epub_structure_invalid' if reason else 'epub_structure_crc_ok'
     except _Limit:
         return 'structure_cancelled' if cancelled() else 'structure_byte_or_time_budget'
-    except (OSError, ValueError, ElementTree.ParseError, zipfile.BadZipFile, RuntimeError, EOFError, zlib.error):
+    except (OSError, ValueError, NotImplementedError, ElementTree.ParseError, zipfile.BadZipFile, RuntimeError, EOFError, zlib.error):
         return 'structure_invalid'
