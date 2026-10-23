@@ -42,6 +42,10 @@ gap = "Flux RSS/JSON Feed servis en HTTP local ; abonnements, page GTK et autres
 data = ["local-library"]
 gap = "Fichiers manquants, couvertures, langues, doublons, chemins et actions négatives"
 
+[package.provider-bnf-pret]
+data = []
+gap = "BnF Prêt en migration HTTPX : contrats synthétiques seulement ; aucun SSO réel ni E2E GTK attesté"
+
 [package.provider-bnf-catalogue]
 data = ["bnf"]
 gap = "Zéro résultat, indisponibilité et formats atypiques"
