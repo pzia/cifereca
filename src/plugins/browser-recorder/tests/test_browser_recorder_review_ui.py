@@ -861,7 +861,16 @@ def test_coverage_reports_empty_responses_and_near_limit_without_private_values(
             "exchanges": 237, "limit": 240, "text_responses": 0,
             "binary_skipped": 166, "compressed": 68, "out_of_scope": 631,
             "static_metadata_budget": 0,
+            "json_responses_observed": 11, "json_responses_captured": 1,
+            "html_responses_observed": 10, "html_responses_captured": 5,
+            "write_requests_observed": 1, "write_requests_captured": 1,
+            "response_size_unavailable": 10, "response_over_budget": 7,
         })
+        assert "JSON 1/11" in panel.coverage_status.label
+        assert "HTML 5/10" in panel.coverage_status.label
+        assert "POST/PUT/PATCH 1/1" in panel.coverage_status.label
+        assert "10 réponse(s) sans taille fiable" in panel.coverage_status.label
+        assert "7 hors plafond" in panel.coverage_status.label
         assert "237/240" in panel.coverage_status.label
         assert "analyse des réponses impossible" in panel.coverage_status.label
         assert "presque atteinte" in panel.coverage_status.label
