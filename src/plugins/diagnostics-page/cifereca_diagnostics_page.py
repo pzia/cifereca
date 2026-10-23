@@ -14,7 +14,8 @@ from diagnostics_explorer import (
     sanitized_rows, module_groups, linked_operation_groups, source_summaries, explorer_header,
     diagnostic_channel_caption,
     next_page_offset, selectable_event_ids, export_selected_events,
-    empty_observation, local_timestamp_label,
+    empty_observation, local_timestamp_label, DOMAIN_LABELS,
+    normalize_diagnostic_domain,
 )
 from diagnostics_selection import collect_filtered_selection, page_selection_ids
 from diagnostics_performance import PerformanceCapture, performance_bytes
@@ -606,7 +607,8 @@ class DiagnosticsPagePlugin:
         journals_hint = Gtk.Label(
             label="Flux expurgé et borné du Core ; aucune collecte réseau. "
                   "La recherche texte (y compris les codes de limites de réconciliation) "
-                  "et le tri agissent sur la page chargée, pas sur tout l’historique.",
+                  "et le tri agissent sur la page chargée, pas sur tout l’historique. "
+                  "Le filtre Domaine métier agit avant pagination.",
             xalign=0,
         )
         journals_hint.set_wrap(True)
@@ -646,6 +648,23 @@ class DiagnosticsPagePlugin:
         filters_bottom.append(search_filter)
         filters_bottom.append(sort_latest)
         journals_tab.append(filters_bottom)
+
+        # Alias UI -> domaine Core attesté, sans recherche dans les journaux
+        # privés ou les messages libres de plugins.
+        domain_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        domain_caption = Gtk.Label(label="Domaine métier :", xalign=0)
+        domain_filter = Gtk.Entry()
+        domain_filter.set_width_chars(18)
+        domain_filter.set_max_width_chars(26)
+        domain_filter.set_hexpand(True)
+        domain_filter.set_placeholder_text("Browser / Réconciliation · Entrée")
+        domain_filter.set_tooltip_text(
+            "Filtre global : Browser, recorder, Réconciliation, Reconciliation "
+            "ou Réconcilitation. Vide : tous domaines."
+        )
+        domain_row.append(domain_caption)
+        domain_row.append(domain_filter)
+        journals_tab.append(domain_row)
 
         # Separate from the module prefix and from the event-source channel.
         # The Core filter is exact and runs before pagination.
@@ -1211,9 +1230,16 @@ class DiagnosticsPagePlugin:
             if selection_json is None:
                 selected_event_ids.intersection_update(valid_ids)
             journals_sources.set_text(diagnostic_channel_caption(current_page))
+            domain_label = "Domaine non reconnu"
+            try:
+                domain_label = DOMAIN_LABELS[
+                    normalize_diagnostic_domain(domain_filter.get_text())
+                ]
+            except ValueError:
+                pass
             journals_summary.set_text(explorer_header(
                 current_page, rows, search=search_filter.get_text().strip()
-            ))
+            ) + " · Domaine : " + domain_label)
             groups = (linked_operation_groups(rows) if operation_grouping.get_active()
                       else module_groups(rows))
             for group in groups:
@@ -1308,6 +1334,7 @@ class DiagnosticsPagePlugin:
                     severity=SEVERITIES[int(severity_selector.get_selected())],
                     module=module_filter.get_text().strip(),
                     search=search_filter.get_text().strip(),
+                    domain=domain_filter.get_text().strip(),
                 )
                 empty = Gtk.Label(
                     label=observation + "\nAucun événement sur cette page. "
@@ -1345,6 +1372,7 @@ class DiagnosticsPagePlugin:
             query = {
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
+                "domain": domain_filter.get_text().strip(),
                 "provider_id": provider_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
@@ -1480,6 +1508,7 @@ class DiagnosticsPagePlugin:
             query = {
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
+                "domain": domain_filter.get_text().strip(),
                 "provider_id": provider_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
@@ -1573,6 +1602,8 @@ class DiagnosticsPagePlugin:
         severity_selector.connect("notify::selected", reset_events)
         period_selector.connect("notify::selected", reset_events)
         module_filter.connect("activate", reset_events)
+        domain_filter.connect("activate", reset_events)
+        domain_filter.connect("changed", lambda *_: invalidate_selection())
         provider_filter.connect("activate", reset_events)
         provider_filter.connect("changed", lambda *_: invalidate_selection())
         reason_code_filter.connect("activate", reset_events)
@@ -1892,6 +1923,7 @@ class DiagnosticsPagePlugin:
         severity_selector.connect("notify::selected", invalidate_ai)
         period_selector.connect("notify::selected", invalidate_ai)
         module_filter.connect("changed", invalidate_ai)
+        domain_filter.connect("changed", invalidate_ai)
         provider_filter.connect("changed", invalidate_ai)
         ai_snapshot.connect("toggled", invalidate_ai)
         ai_support_report.connect("toggled", invalidate_ai)
