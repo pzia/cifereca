@@ -49,6 +49,7 @@ from .version import MANIFEST_VERSION, PLUGIN_API_VERSION
 from .contracts import (ContractStatus, ContractDefinition, ContractCheck, CONTRACT_REGISTRY, contract_definition, split_contract, capability_name_valid, contract_version_matches, check_service_contract)
 from cifereca.language import normalize_language_tag
 from cifereca.filename_normalization import sanitize_filename_component
+from cifereca.install_paths import prefer_downloads_for_save
 from cifereca.descriptions import description_text, description_element
 from cifereca.diagnostics import redact_text
 from cifereca.artifact_inspection import ArtifactInspection, detect_artifact_format, inspect_artifact, inspect_artifact_content
