@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 import json
 import re
+import unicodedata
 
 from diagnostics_reconciliation import (
     reconciliation_event_summary,
@@ -33,6 +34,26 @@ def local_timestamp_label(value: object) -> str:
         ) + " (heure locale)"
     except (ValueError, OverflowError, OSError):
         return "Horodatage indisponible"
+
+
+def canonical_diagnostic_domain_alias(value: str) -> str:
+    """Normalize only reviewed labels for the Core verified-domain broker."""
+    if type(value) is not str or len(value) > 40:
+        raise ValueError("invalid diagnostics domain")
+    folded = "".join(
+        ch for ch in unicodedata.normalize("NFKD", value.casefold())
+        if not unicodedata.combining(ch)
+    )
+    key = re.sub(r"[\s_-]+", " ", folded).strip()
+    aliases = {
+        "": "", "browser": "browser_recorder",
+        "recorder": "browser_recorder", "browser recorder": "browser_recorder",
+        "reconciliation": "reconciliation",
+        "reconcilitation": "reconciliation",
+    }
+    if key not in aliases:
+        raise ValueError("invalid diagnostics domain")
+    return aliases[key]
 
 
 SOURCES = ("all", "core_events", "app_log")
@@ -134,10 +155,9 @@ def fetch_explorer_page(
         raise ValueError("unsupported diagnostics filter")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("invalid diagnostics module")
-    # Domain aliases are interpreted by the Core, never by GTK message text.
-    # Reject long/malformed values before touching a broker or filesystem.
-    if type(domain) is not str or len(domain) > 40:
-        raise ValueError("invalid diagnostics domain")
+    # Normalize a finite vocabulary only. The Core still independently
+    # checks it, then filters attested producer tokens before pagination.
+    selected_domain = canonical_diagnostic_domain_alias(domain)
     if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
         raise ValueError("invalid diagnostics provider")
     if (type(reason_code) is not str
@@ -155,10 +175,10 @@ def fetch_explorer_page(
     # never silently downgrade a global filter to local 50-item search.
     if reason_code:
         query["reason_code"] = reason_code
-    if domain:
+    if selected_domain:
         # Never silently emulate a global domain filter with 50 local rows
         # when an older broker lacks the optional keyword.
-        query["domain"] = domain
+        query["domain"] = selected_domain
     if provider_id:
         query["provider_id"] = provider_id
     return broker.events(**query)
