@@ -43,7 +43,7 @@ def _tracked(source: Path) -> tuple[Path, ...]:
                 or not relative.parts or any(part == ".git" for part in relative.parts)):
             raise ValueError("release_unsafe_tracked_path")
         path = source.joinpath(*relative.parts)
-        if not path.is_file() or path.is_symlink():
+        if not path.is_file() or path.is_symlink() or path.resolve() != path:
             raise ValueError("release_unusable_tracked_file")
         rows.append(path)
     if len(rows) > MAX_FILES:
@@ -69,7 +69,7 @@ def create_archive(source: Path, output: Path, *, files: tuple[Path, ...] | None
     members: list[tuple[str, Path]] = []
     for item in paths:
         path = Path(item)
-        if path.is_symlink() or not path.is_file():
+        if path.is_symlink() or not path.is_file() or path.resolve() != path:
             raise ValueError("release_file_unavailable")
         try:
             relative = path.relative_to(source).as_posix()
