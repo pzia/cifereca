@@ -93,6 +93,58 @@ def public_connection_log_fields(body: object) -> dict[str, str]:
         return {}
     return fields if fields and public_connection_log_message(fields) == body else {}
 
+# #2882: an independent, *success-only* schema. A successful connection
+# does not prove that the last source synchronisation succeeded.
+# Use EVENT (not TRACE) so the normal local log keeps this closed observation
+# without opting into verbose, potentially sensitive plugin traces.
+_CONNECTION_SUCCESS_PREFIX = "EVENT provider connection success "
+CONNECTED_CODE = "provider_connected"
+
+
+def public_connection_success_fields(value: object) -> dict:
+    """Accept strictly public Core connection facts, no borrower/account key."""
+    if type(value) is not dict or set(value) != {
+        "provider_id", "code", "source_kind", "account_count",
+    }:
+        return {}
+    ident = canonical_public_provider_id(value.get("provider_id"))
+    kind = value.get("source_kind")
+    count = value.get("account_count")
+    if (ident is None or value.get("code") != CONNECTED_CODE
+            or type(kind) is not str
+            or kind not in {"configured", "singleton_public"}
+            or type(count) is not int or not 0 <= count <= 10000):
+        return {}
+    return {
+        "provider_id": ident, "code": CONNECTED_CODE,
+        "source_kind": kind, "account_count": count,
+    }
+
+
+def public_connection_success_log_message(value: object) -> str | None:
+    fields = public_connection_success_fields(value)
+    return (
+        _CONNECTION_SUCCESS_PREFIX + json.dumps(
+            fields, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        )
+        if fields else None
+    )
+
+
+def public_connection_success_log_fields(body: object) -> dict:
+    """Exact canonical log syntax; reject any trailing or private additions."""
+    if (type(body) is not str or len(body) > 512
+            or not body.startswith(_CONNECTION_SUCCESS_PREFIX)):
+        return {}
+    try:
+        fields = public_connection_success_fields(
+            json.loads(body[len(_CONNECTION_SUCCESS_PREFIX):])
+        )
+    except (ValueError, TypeError, RecursionError):
+        return {}
+    return fields if fields and public_connection_success_log_message(fields) == body else {}
+
+
 def bounded_connection_failures(rows: object) -> dict[str, object]:
     """Explicitly expose truncation, never duplicate private keys/accounts."""
     if type(rows) not in (list, tuple):
@@ -114,5 +166,7 @@ __all__ = [
     "canonical_public_provider_id", "registered_public_provider_id",
     "public_connection_failure", "bounded_connection_failures",
     "public_connection_fields", "public_connection_log_message",
-    "public_connection_log_fields",
+    "public_connection_log_fields", "CONNECTED_CODE",
+    "public_connection_success_fields", "public_connection_success_log_message",
+    "public_connection_success_log_fields",
 ]
