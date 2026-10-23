@@ -6,7 +6,14 @@ No upload, hidden export, automatic GET replay or raw HAR persistence.
 """
 from __future__ import annotations
 
-from cifereca.plugin_api import prefer_downloads_for_save
+try:
+    from cifereca.plugin_api import prefer_downloads_for_save
+except ImportError:
+    # Plugin-only updates remain usable on a Core without this optional UX hook.
+    def _keep_native_folder(_chooser):
+        return False
+
+    prefer_downloads_for_save = _keep_native_folder
 
 import json
 from pathlib import Path
