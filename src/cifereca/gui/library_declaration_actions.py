@@ -23,8 +23,10 @@ class DeclarationActions:
             'd’acquisition. Aucun droit ni placement fournisseur ne sera créé.'
         )
         self.revoke.set_visible(False)
-        for widget in (self.status, self.declare, self.revoke):
-            body.append(widget)
+        # Show the private explanation in this expandable section, while
+        # the explicit actions are placed in the persistent pair-action bar.
+        # GTK widgets are single-parented; no duplicate callbacks or choices.
+        body.append(self.status)
         self.expander.set_child(body)
         self.declare.connect('clicked', lambda *_: self.preview(False))
         self.revoke.connect('clicked', lambda *_: self.preview(True))
