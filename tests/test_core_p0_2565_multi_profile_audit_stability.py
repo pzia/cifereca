@@ -5,7 +5,6 @@ leave the Core broker as raw book/account/path observations.
 """
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import replace
 import json
 
@@ -136,5 +135,7 @@ def test_private_cache_aggregate_digest_budget_never_evicts_foreign_active_run(m
     assert sum(stability._retained_entries(slot.value)
                for slot in stability._SLOTS) <= stability._MAX_RETAINED_ENTRIES
     assert len(stability._ACTIVE) <= stability._MAX_ACTIVE
-    assert _commit(owner, "alice", scope, _run("alice")) is None
+    # Check the most recent surviving profile *before* adding A again:
+    # the aggregate quota intentionally evicts the oldest baseline.
     assert _commit(owner, "bob", scope, _run("bob"))["interpretation"] == "stable_inputs"
+    assert _commit(owner, "alice", scope, _run("alice")) is None
