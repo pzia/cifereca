@@ -6,7 +6,7 @@ import pytest
 from cifereca.core.library_declared_links import (
     DeclarationRejected, list_declared_links,
 )
-from tests.test_library_declared_links import apply, rig, records, rows
+from tests.test_library_declared_links import apply, inspect, rig, records, rows
 
 
 def test_active_identity_sees_stable_nonattested_link_after_two_syncs(rig):
@@ -145,9 +145,13 @@ def test_disabled_provider_connection_is_reviewed_not_silently_attested(rig):
     assert page.total == 1
     assert page.rows[0].relation_id == result.relation_id
     assert page.rows[0].review == 'source_or_right_changed'
+    # The detailed inspector must agree: unchanged EPUB/SHA cannot make a
+    # disabled source look like a current supplier declaration.
+    assert inspect(rig, result.relation_id).status == 'needs_review'
     assert records(service) == baseline
     assert not rows(service, 'placements')
     assert not rows(service, 'acquisition_ledger')
     service.storage.provider_connection_put({**connection, 'enabled': True})
     page = list_declared_links(service, identity_id='default')
     assert page.rows[0].review == 'recorded_unverified_file'
+    assert inspect(rig, result.relation_id).status == 'declared_current'
