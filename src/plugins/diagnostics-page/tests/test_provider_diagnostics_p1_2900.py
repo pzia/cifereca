@@ -80,8 +80,9 @@ def test_published_provider_is_safe_in_search_clipboard_and_private_values_remov
     safe = event(1)
     hostile = event(2, "reader@example.test")
     rows = sanitized_rows({"events": [safe, hostile]}, include_detail=True)
-    assert rows[0]["provider_id"] == "paris"
-    assert "provider_id" not in rows[1]
+    by_id = {row["event_id"]: row for row in rows}
+    assert by_id["event-1"]["provider_id"] == "paris"
+    assert "provider_id" not in by_id["event-2"]
     assert [r["event_id"] for r in sanitized_rows({"events": [safe, hostile]}, search="paris")] == ["event-1"]
     packed = export_selected_events(rows, {"event-1", "event-2"})
     assert '"provider_id": "paris"' in packed
