@@ -446,7 +446,7 @@ déjà présent n'écrivent rien et ne remplacent aucun ZIP. L'archive est cré�
 en mode 0600, et les permissions du dossier sont vérifiées.
 
 Le nouveau bouton de Sessions et exports ouvre **Enregistrer sous** avec nom
-`cifereca-session-privee.zip`. Aucun mode 0700 n'est imposé sur le dossier
+`cifereca-session-privee.zip` par défaut. Lorsqu'une session a été renommée puis explicitement déverrouillée, le nom proposé est par exemple `cifereca-session-privee-parcours-catalogue-bnf.zip`. Il est modifiable dans Enregistrer sous. **Ce nom de fichier est visible en clair** dans le système de fichiers, contrairement au libellé enregistré dans le coffre. Les labels ne sont ni déchiffrés sur le thread GTK ni envoyés à Diagnostics ; verrouillage, actualisation, renommage et suppression invalident leur cache transitoire. Aucun mode 0700 n'est imposé sur le dossier
 choisi et aucun mot de passe ZIP n'est demandé. La copie créée est **en clair
 et réservée à l'utilisateur (0600)** ; ne pas la confondre avec le coffre chiffré.
 
