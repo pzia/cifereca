@@ -196,7 +196,10 @@ class PrivateDeclarationHistory:
         def read():
             return self.session.preview_history_withdrawal(
                 relation_id,
-                cancelled=lambda: not self._current(relation_id, generation),
+                # Worker code may check a scalar generation only; never
+                # inspect GTK widgets from a worker thread. Core independently
+                # revalidates the active identity, scope and SQLite state.
+                cancelled=lambda: self.generation != generation,
             )
 
         def completed(result):
@@ -259,7 +262,10 @@ class PrivateDeclarationHistory:
             def write():
                 return self.session.confirm_history_withdrawal(
                     relation_id, user_confirmed=True,
-                    cancelled=lambda: not self._current(relation_id, generation),
+                    # Worker code may check a scalar generation only; never
+                # inspect GTK widgets from a worker thread. Core independently
+                # revalidates the active identity, scope and SQLite state.
+                cancelled=lambda: self.generation != generation,
                 )
 
             def completed(result):
