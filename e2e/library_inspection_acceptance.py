@@ -360,12 +360,39 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
                     if isinstance(w,Gtk.Button)
                     and w.get_label()=='Comparer tous les fichiers non liés')
         def ready():
+            # The fixed bottom action bar reduces the tall panel viewport.
+            # Verify that the actual native pointer will hit this inner
+            # comparison toggle, not a clipped location or the sticky bar.
             manual.grab_focus()
             if not manual.get_mapped() or not manual.get_sensitive():
                 return False
+            outer = widgets['main_scroll']
+            page = outer.get_child()
+            if isinstance(page, Gtk.Viewport):
+                page = page.get_child()
+            ok, bounds = manual.compute_bounds(page)
+            if ok:
+                adjustment = outer.get_vadjustment()
+                adjustment.set_value(max(
+                    0, min(bounds.get_y() - adjustment.get_page_size() / 2,
+                           adjustment.get_upper() - adjustment.get_page_size()),
+                ))
+            window = controller.dialog
+            visible, box = manual.compute_bounds(window)
+            if not visible or box.get_width() <= 0 or box.get_height() <= 0:
+                return False
+            cx = box.get_x() + box.get_width() / 2
+            cy = box.get_y() + box.get_height() / 2
+            if not (0 <= cx < window.get_width() and 0 <= cy < window.get_height()):
+                return False
+            picked = window.pick(cx, cy, Gtk.PickFlags.DEFAULT)
+            while picked is not None and picked is not manual:
+                picked = picked.get_parent()
+            if picked is not manual:
+                return False
             try:
                 x,y=device.widget_point(manual)
-                return x>=0 and y>=0
+                return x >= 0 and y >= 0
             except RuntimeError:
                 return False
         def click():
