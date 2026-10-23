@@ -569,6 +569,36 @@ class BrowserSessionTests(unittest.TestCase):
         self.assertTrue(all(row[2] == FakeSession.scope
                             for row in calls if row[0] == "search"))
 
+    def test_cli_next_page_is_explicit_and_does_not_print_links(self):
+        calls = []
+        private = "SYNTHETIC_PRIVATE_RESULTS"
+        class FakeSession:
+            scope = browser.ProfileScope("manual-local", "manual-local", "epoch")
+            def __init__(self, *_a):
+                pass
+            def open_login(self, *, consent):
+                calls.append(("open", consent))
+            def finish_login(self, *, account_confirmed):
+                calls.append(("login", account_confirmed))
+                return SimpleNamespace(loans=(), status="partial")
+            def next_results(self, *, expected):
+                calls.append(("next", expected))
+                if len([x for x in calls if x[0] == "next"]) == 1:
+                    return SimpleNamespace(records=(private,), status="partial")
+                raise browser.BrowserSessionError("next_page_unavailable")
+            def close(self):
+                calls.append(("close",))
+        out = StringIO()
+        with patch.object(browser, "ReaderBrowserSession", FakeSession), (
+             patch.object(browser, "_ask", side_effect=["oui", "n", "n", "q"])), (
+             patch("builtins.input", return_value="oui")), redirect_stdout(out):
+            self.assertEqual(browser.main(), 0)
+        self.assertEqual(len([x for x in calls if x[0] == "next"]), 2)
+        self.assertNotIn(private, out.getvalue())
+        self.assertIn("non exhaustif", out.getvalue())
+        self.assertIn("aucun lien sûr", out.getvalue())
+        self.assertEqual(calls[-1], ("close",))
+
     def test_cli_wait_keeps_browser_events_on_owner_thread(self):
         self.ready()
         released = threading.Event()

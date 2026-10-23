@@ -491,7 +491,7 @@ def main():
             command = _ask(
                 session,
                 "Naviguez dans Chromium. [d] sélecteurs, [s] suggestions, "
-                "[r] rechercher, [l] prêts, [q] quitter : ",
+                "[r] rechercher, [n] page suivante, [l] prêts, [q] quitter : ",
             )
             if command == "q":
                 break
@@ -514,6 +514,17 @@ def main():
                     print("Recherche Web indisponible : aucune donnée de droit modifiée.")
                 else:
                     print("Résultats Web : ", len(result.records),
+                          "notice(s) visibles, état :", result.status,
+                          "(non exhaustif).")
+            elif command == "n":
+                # Never synthesize pagination paths: the session can navigate
+                # only to one currently visible, validated rel=next DOM anchor.
+                try:
+                    result = session.next_results(expected=session.scope)
+                except (BrowserSessionError, WebParseError):
+                    print("Page suivante indisponible : aucun lien sûr observé.")
+                else:
+                    print("Page suivante Web :", len(result.records),
                           "notice(s) visibles, état :", result.status,
                           "(non exhaustif).")
             elif command == "l":
