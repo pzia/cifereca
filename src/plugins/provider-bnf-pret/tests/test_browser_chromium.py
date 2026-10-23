@@ -120,6 +120,17 @@ class ChromiumReaderTests(unittest.TestCase):
         self.assertEqual(result.records[0].title, 'Titre fictif')
         self.assertIn('/results?q=Fiction%20fran%C3%A7aise', self.session._page.url)
 
+    def test_real_dom_probe_emits_only_selector_counts(self):
+        proof = self.session.probe_visible_dom(expected=self.session.scope)
+        self.assertEqual((proof.kind, proof.loan_sections, proof.loan_cards,
+                          proof.resource_links, proof.loan_links), ("activity", 1, 1, 1, 1))
+        self.assertNotIn("SYNTHETIC_SECRET", repr(proof))
+        self.session.search("fiction", expected=self.session.scope)
+        report = self.session.probe_visible_dom(expected=self.session.scope)
+        self.assertEqual((report.kind, report.search_sections, report.search_cards),
+                         ("results", 1, 1))
+        self.assertEqual(report.loan_cards, 0)
+
     def test_real_request_guard_blocks_post_and_loan_get(self):
         results = self.session._page.evaluate("""async () => {
           const blocked = async (url, options) => {
