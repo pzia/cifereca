@@ -150,6 +150,33 @@ class HTTPProviderTests(unittest.TestCase):
             s.loans(account)
         self.assertFalse(s.connected)
 
+    def test_diagnostics_keep_closed_phase_and_error_without_private_data(self):
+        from types import SimpleNamespace
+        for error, expected in [('access_denied', 'access_denied'),
+                                ('PRIVATE_RESPONSE_cookie=secret', 'bnf_reader_failed')]:
+            s, _, _ = self.make()
+            events = []
+            s.diagnostics = SimpleNamespace(add=lambda *a, **kw: events.append(kw['detail']))
+            def login(*args):
+                raise ReaderHTTPError(error)
+            s.client.login = login
+            with self.assertRaisesRegex(ProviderConfigurationError, '^' + expected + '$'):
+                s.connect()
+            self.assertEqual(events, [{'provider':'bnf-pret', 'phase':'login', 'code':expected}])
+            self.assertNotIn('PRIVATE_RESPONSE', json.dumps(events))
+            s.close()
+
+    def test_diagnostic_failure_does_not_hide_provider_failure(self):
+        from types import SimpleNamespace
+        s, _, _ = self.make()
+        def unavailable(*a, **kw):
+            raise RuntimeError('synthetic diagnostic failure')
+        s.diagnostics = SimpleNamespace(add=unavailable)
+        s.client.login = lambda *a: (_ for _ in ()).throw(ReaderHTTPError('access_denied'))
+        with self.assertRaisesRegex(ProviderConfigurationError, '^access_denied$'):
+            s.connect()
+        s.close()
+
     def test_entrypoint_is_provider_and_has_no_browser_prerequisite(self):
         m=json.loads((ROOT/'cifereca-plugin.json').read_text())
         self.assertEqual(m['plugins'][0]['id'],'provider.bnf-pret')

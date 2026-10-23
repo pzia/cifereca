@@ -44,7 +44,11 @@ ne peut pas suivre une redirection SSO, déclencher un emprunt ou télécharger.
 Limites : 512 Kio décompressés/document, 12 redirections/appel, 8 étapes de
 formulaire, timeout HTTP de 15 s et budget global connexion de 60 s.
 Les cookies restent dans le client du credential ; fermeture et échec de
-connexion les révoquent. Les erreurs publiques n'exposent que des codes fermés.
+connexion les révoquent. Les erreurs publiques n'exposent que des codes fermés. Le fournisseur publie
+également ces codes dans Diagnostics avec la seule phase `login` ou `loans`,
+car le Core affiche une erreur générique à la connexion. Aucun identifiant,
+URL, cookie, formulaire ou texte de réponse n'est ajouté au diagnostic ; une
+panne du collecteur n'altère pas le résultat de l'opération.
 
 ## Prêts et synchronisation
 

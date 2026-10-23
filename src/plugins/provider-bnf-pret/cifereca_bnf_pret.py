@@ -21,14 +21,42 @@ DESCRIPTOR = ProviderDescriptor(
 )
 
 
+_PUBLIC_CODES = frozenset({
+    'access_denied', 'auth_required', 'rate_limited', 'http_unavailable',
+    'url_refused', 'mutation_refused', 'post_redirect_refused', 'redirect_invalid',
+    'redirect_limit', 'unexpected_content', 'html_limit', 'invalid_html',
+    'invalid_dom', 'dom_limit', 'item_limit', 'transport_unavailable',
+    'operation_timeout', 'auth_interactive_required', 'unsupported_form',
+    'authentication_failed', 'auth_step_limit', 'unrecognized_loans',
+    'ambiguous_loans', 'scope_mismatch', 'invalid_activity_page', 'invalid_scope',
+})
+
+
+def _public_code(error):
+    code = str(error)
+    return code if code in _PUBLIC_CODES else 'bnf_reader_failed'
+
+
 class BnfProviderSession(ProviderSession):
-    def __init__(self, *, client=None, **kwargs):
+    def __init__(self, *, client=None, diagnostics=None, **kwargs):
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
         self.client = client or ReaderHTTPClient()
+        self.diagnostics = diagnostics
         self._lock = threading.RLock()
         self._epoch = uuid4().hex
         self._closed = False
         self.last_loan_errors = [{'code': 'inventory_not_exhaustive'}]
+
+    def _report_failure(self, phase, error):
+        code = _public_code(error)
+        try:
+            if self.diagnostics is not None:
+                self.diagnostics.add('API', 'BnF Prêt', 'error', detail={
+                    'provider': 'bnf-pret', 'phase': phase, 'code': code,
+                })
+        except Exception:
+            pass  # Optional diagnostics never change the provider outcome.
+        return code
 
     def _snapshot(self, html):
         scope = ProfileScope(self.credential_id, self.credential_id, self._epoch)
@@ -47,7 +75,7 @@ class BnfProviderSession(ProviderSession):
                 self._snapshot(self.client.login(username, password))
             except (ReaderHTTPError, WebParseError) as exc:
                 self.client.clear()
-                raise ProviderConfigurationError(str(exc)) from None
+                raise ProviderConfigurationError(self._report_failure('login', exc)) from None
             if self._closed or epoch != self._epoch:
                 self.client.clear()
                 raise ProviderConfigurationError('session_closed')
@@ -70,7 +98,7 @@ class BnfProviderSession(ProviderSession):
             except (ReaderHTTPError, WebParseError) as exc:
                 self.connected = False
                 self.client.clear()
-                raise ProviderConfigurationError(str(exc)) from None
+                raise ProviderConfigurationError(self._report_failure('loans', exc)) from None
             if self._closed or epoch != self._epoch:
                 raise ProviderConfigurationError('session_closed')
             return [Loan(id=row.loan_id, provider='BNF_PRET', medium='digital',
@@ -96,7 +124,7 @@ class BnfProviderPlugin(ProviderPlugin):
 
     def create_session(self, *, credential_id, label, credentials, options, config, storage, diagnostics):
         return BnfProviderSession(credential_id=credential_id, label=label,
-                                  credentials=credentials, options=options)
+                                  credentials=credentials, options=options, diagnostics=diagnostics)
 
 
 PLUGIN = BnfProviderPlugin()
