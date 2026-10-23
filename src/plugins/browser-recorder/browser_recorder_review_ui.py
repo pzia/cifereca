@@ -10,8 +10,10 @@ try:
     from cifereca.plugin_api import prefer_downloads_for_save
 except ImportError:
     # A plugin update must remain compatible with older installed Cores.
-    def prefer_downloads_for_save(_chooser):
+    def _keep_native_folder(_chooser):
         return False
+
+    prefer_downloads_for_save = _keep_native_folder
 
 import json
 import re
