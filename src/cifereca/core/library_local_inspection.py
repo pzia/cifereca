@@ -1151,7 +1151,7 @@ class LocalInspection:
                     file_key in self._candidate_file_keys.get(right_key, ())
                 ),
             )
-        return review_local_pair(
+        return _explain_pair_coverage(review_local_pair(
             self._manual_right_proofs.get(right_key),
             self._manual_file_proofs.get(file_key),
             audit_complete=self._manual_pair_evidence_complete,
