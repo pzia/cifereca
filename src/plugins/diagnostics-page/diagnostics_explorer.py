@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 import json
 import re
+import unicodedata
 
 from diagnostics_reconciliation import (
     reconciliation_event_summary,
@@ -39,6 +40,33 @@ SOURCES = ("all", "core_events", "app_log")
 SEVERITIES = ("", "debug", "info", "warning", "error", "critical")
 PERIODS = ("all", "hour", "day", "week", "month")
 PAGE_SIZE = 50
+# Closed user aliases, not fuzzy search through any private diagnostic text.
+_DOMAIN_ALIASES = {
+    "browser": "browser_recorder",
+    "recorder": "browser_recorder",
+    "browser recorder": "browser_recorder",
+    "reconciliation": "reconciliation",
+    "reconcilitation": "reconciliation",  # Explicit historic user typo.
+}
+
+
+def diagnostic_domain(value: str) -> str:
+    """Translate a bounded alias to the Core's fixed provenance domain."""
+    if type(value) is not str or len(value) > 50:
+        raise ValueError("invalid diagnostic domain")
+    normalized = "".join(
+        c for c in unicodedata.normalize("NFKD", value.casefold())
+        if not unicodedata.combining(c)
+    )
+    normalized = re.sub(r"[\\s_-]+", " ", normalized.strip())
+    if not normalized:
+        return ""
+    matched = _DOMAIN_ALIASES.get(normalized)
+    if matched is None:
+        raise ValueError("invalid diagnostic domain")
+    return matched
+
+
 # Only Core canonical public provider labels, never account names or URLs.
 _PUBLIC_PROVIDER_RE = re.compile(
     r"[a-z][a-z0-9]{0,31}(?:[._-][a-z][a-z0-9]{0,31}){0,5}\Z", re.ASCII,
@@ -125,6 +153,7 @@ def fetch_explorer_page(
     provider_id: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
+    domain: str = "",
 ) -> dict[str, Any]:
     """Only public diagnostics.events; never a path or arbitrary log query."""
     if not isinstance(source, str) or not isinstance(severity, str) or not isinstance(period, str):
@@ -152,6 +181,9 @@ def fetch_explorer_page(
         query["reason_code"] = reason_code
     if provider_id:
         query["provider_id"] = provider_id
+    if domain:
+        # Never drop a requested global scope for an older Core broker.
+        query["domain"] = diagnostic_domain(domain)
     return broker.events(**query)
 
 
@@ -181,6 +213,12 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             for key in ("timestamp", "source", "module", "severity", "message", "status", "event_id")
         }
         provider = public_provider_id(raw.get("provider_id"))
+        # Core supplies these labels only for validated provenance. Never
+        # derive a domain from the message or raw arbitrary detail.
+        domain = raw.get("domain")
+        if (raw.get("source") == "core_events" and type(domain) is str
+                and domain in {"browser_recorder", "reconciliation"}):
+            safe["domain"] = domain
         if provider is not None:
             safe["provider_id"] = provider
         # The Core attests the terminal reconciliation event; present only
