@@ -160,8 +160,12 @@ def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcil
                 "document_type": loan.document_type,
             },
         )
+        # An upstream loan identity deliberately does not include the local
+        # profile in its stable PK. The ordinary Storage upsert can reassign a
+        # conflicting old right to another Cifereca identity; this guarded
+        # atomic writer fails closed on a source/owner collision.
+        self.storage.entitlement_put_positive_loan(entitlement)
         active_ids.add(entitlement.entitlement_id)
-        self.storage.entitlement_put(entitlement)
         persisted += 1
     returned = (self.storage.entitlement_realize_missing_loans(
         active_ids, identity_id=identity_id, complete_scopes=complete_scopes,
