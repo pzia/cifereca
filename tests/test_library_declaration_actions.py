@@ -154,6 +154,8 @@ def test_failed_preview_does_not_show_raw_exception_or_confirmation(ui, selected
     selected[4][1].unlink()
     controls.preview(False)
     assert not Dialog.dialogs
-    assert 'refusée' in controls.status.label
+    assert 'fichier a changé' in controls.status.label
+    assert 'Relancez l’inspection' in controls.status.label
+    assert 'Aucune écriture' in controls.status.label
     assert 'PRIVATE' not in controls.status.label
     assert records(selected[3]) == []

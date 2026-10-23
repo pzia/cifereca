@@ -4,6 +4,42 @@ from __future__ import annotations
 from ..task_queue import TaskPriority
 
 
+# Reviewed, privacy-safe local messages. Never render a raw Core exception,
+# provider response or path in an error, even inside this private dialog.
+_REFUSAL_MESSAGES = {
+    'account_scope_changed': 'Ce compte ne correspond plus au profil courant. Actualisez les connexions.',
+    'identity_not_active': 'Le profil actif a changé. Relancez la réconciliation.',
+    'source_scope_changed': 'La session ou les connexions ont changé. Relancez la réconciliation.',
+    'right_scope_changed': 'Le droit de cette édition a changé ou disparu. Relancez la synchronisation.',
+    'file_scope_changed': 'Ce fichier ne se trouve plus dans le profil sélectionné.',
+    'file_revalidation_failed': 'Le fichier a changé ou ne peut plus être vérifié. Relancez l’inspection.',
+    'file_changed_before_commit': 'Le fichier a changé avant la confirmation. Relancez l’inspection.',
+    'declaration_conflict': 'Une autre déclaration utilise déjà ce droit ou ce fichier. Consultez les associations déclarées.',
+    'placement_conflict': 'Un placement SQLite existant contredit ce choix. Examinez les placements enregistrés.',
+    'placement_account_ambiguous': 'Plusieurs comptes peuvent correspondre à ce placement. Vérifiez le compte.',
+    'placement_coverage_incomplete': 'Les placements concernés ne peuvent pas être vérifiés entièrement.',
+    'catalogue_conflict': 'Une notice de catalogue associée au fichier contredit le choix.',
+    'preview_changed': 'Les données ont changé depuis la prévisualisation. Recommencez.',
+    'acquisition_busy': 'Une acquisition est en cours. Réessayez après sa fin.',
+    'storage_busy': 'La base est occupée par une autre opération. Réessayez.',
+    'local_storage_unavailable': 'La base locale est momentanément inaccessible.',
+    'schema_upgrade_required': 'Une mise à niveau de la base est nécessaire.',
+    'directory_migration_pending': 'La migration du répertoire de bibliothèque doit se terminer.',
+    'declaration_budget': 'La limite des déclarations enregistrées est atteinte.',
+    'declaration_store_invalid': 'L’historique local des déclarations est incohérent. Aucune écriture.',
+    'relation_scope_changed': 'La déclaration sélectionnée a changé ou n’est plus accessible.',
+    'invalid_local_context': 'Le contexte local est invalide. Relancez l’inspection.',
+}
+
+
+def declaration_refusal_message(reason):
+    """Human guidance derived from a closed Core code, never from exception text."""
+    return _REFUSAL_MESSAGES.get(
+        reason if type(reason) is str else None,
+        'Déclaration refusée ou indisponible. Relancez la vérification locale.',
+    )
+
+
 class DeclarationActions:
     """Private GTK selection/diff/consent; the Core retains every action token."""
 
@@ -88,6 +124,11 @@ class DeclarationActions:
                     else 'Cette correspondance est déjà déclarée par vous. '
                     'Elle reste distincte d’un lien attesté et peut être révoquée.'
                 )
+            elif status == 'blocked':
+                self.status.set_text(
+                    declaration_refusal_message(result.get('reason_code'))
+                    + ' Aucune écriture.'
+                )
             else:
                 failed(None)
 
@@ -96,8 +137,7 @@ class DeclarationActions:
                 self.declare.set_sensitive(True)
                 self.revoke.set_sensitive(True)
                 self.status.set_text(
-                    'Déclaration refusée ou indisponible : vérifiez le fichier, '
-                    'le compte et les associations en conflit. Aucune écriture.'
+                    declaration_refusal_message(None) + ' Aucune écriture.'
                 )
 
         self.runner.submit('Prévisualisation de déclaration locale', read, completed, failed,
@@ -158,6 +198,12 @@ class DeclarationActions:
                 self.declare.set_sensitive(self.session.valid())
                 self.revoke.set_sensitive(True)
                 self.revoke.set_visible(result.get('revoke_available') is True)
+                if status == 'blocked':
+                    self.status.set_text(
+                        declaration_refusal_message(result.get('reason_code'))
+                        + ' Aucune écriture.'
+                    )
+                    return
                 self.status.set_text({
                     'declared': 'Correspondance enregistrée comme déclaration utilisateur. '
                                 'Aucun droit ou lien attesté créé. Déclaration révocable.',
