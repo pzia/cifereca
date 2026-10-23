@@ -731,8 +731,11 @@ class MainWindow(Adw.ApplicationWindow):
         for resolved in services:
             tool = resolved.service
             try: info = tool.describe()
-            except Exception as exc:
-                box.append(Gtk.Label(label=f"{resolved.plugin_id}: description indisponible ({exc})", xalign=0)); continue
+            except Exception:
+                # Provider exceptions can contain account data, URLs or paths.
+                # Never put raw plugin exception text in a GTK maintenance row.
+                box.append(Gtk.Label(label="Outil de maintenance : description indisponible.", xalign=0))
+                continue
             group = Adw.PreferencesGroup(); box.append(group)
             row = Adw.ActionRow(); row.set_title(info.title); row.set_subtitle(info.description or resolved.plugin_id)
             label = ("Préparer l’analyse…" if getattr(info, "id", None) == "library.reconciliation.audit"
@@ -766,7 +769,11 @@ class MainWindow(Adw.ApplicationWindow):
                 "library.naming.repair": "Renormalisation des noms",
                 "library.duplicates.cleanup": "Nettoyage des doublons",
             }
-            activity_label = activity_labels.get(getattr(info, "id", None))
+            # A future maintenance.tool can opt into plan_with_progress
+            # without shipping a CoreUI-specific ID mapping. Always mount an
+            # independent safe row; only Core-owned labels are shown and
+            # plugin progress prose remains discarded by the relay.
+            activity_label = activity_labels.get(getattr(info, "id", None), "Traitement")
             if activity_label is not None:
                 def line_alive(button=run, scope=line_scope):
                     if self._closed or button.get_root() is None:
@@ -1002,7 +1009,7 @@ class MainWindow(Adw.ApplicationWindow):
                     "library.naming.audit": "Audit des noms impossible.",
                     "library.naming.repair": "Renormalisation des noms impossible.",
                     "library.duplicates.cleanup": "Nettoyage des doublons impossible.",
-                }.get(getattr(meta, "id", None), "Nettoyage des caches impossible.")
+                }.get(getattr(meta, "id", None), "Opération de maintenance indisponible.")
                 context_generation = getattr(self, "_identity_context_generation", None)
                 progress_scope.update(
                     active=True, identity=context.identity_id, generation=context_generation,
