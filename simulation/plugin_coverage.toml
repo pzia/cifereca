@@ -42,6 +42,10 @@ gap = "Flux RSS/JSON Feed servis en HTTP local ; abonnements, page GTK et autres
 data = ["local-library"]
 gap = "Fichiers manquants, couvertures, langues, doublons, chemins et actions négatives"
 
+[package.provider-bnf-pret]
+data = []
+gap = "Lecteur BnF Prêt Web opt-in : DOM/Chromium synthétique seulement ; aucun SSO réel, emprunt, téléchargement, sync de droits ou E2E GTK attestés"
+
 [package.provider-bnf-catalogue]
 data = ["bnf"]
 gap = "Zéro résultat, indisponibilité et formats atypiques"
