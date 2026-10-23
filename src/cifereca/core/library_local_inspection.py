@@ -946,6 +946,24 @@ class LocalInspection:
         self._skipped_symlinks = self._skipped_special = 0
         self._valid = lambda: False
 
+    def declared_links_page(self, *, offset=0, limit=20, include_revoked=False):
+        """Private stored declarations after sync, never supplier-attested links.
+
+        A closed/invalid identity is not a valid empty list. No file is read,
+        no source is contacted and no existing audit count is modified.
+        """
+        if not self.valid() or self._manual_service is None:
+            return None
+        from .library_declared_links import DeclarationRejected, list_declared_links
+        try:
+            page = list_declared_links(
+                self._manual_service, identity_id=self._manual_identity,
+                offset=offset, limit=limit, include_revoked=include_revoked,
+            )
+        except DeclarationRejected:
+            return None
+        return page if self.valid() else None
+
     def from_audit_cache(self) -> bool:
         """Closed, private origin label; never expose a source path or stamp."""
         return self.valid() and self._from_audit_cache is True

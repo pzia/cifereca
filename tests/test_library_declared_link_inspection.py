@@ -232,3 +232,28 @@ def test_numilog_attention_required_receipt_does_not_block_private_declaration(s
         service.storage.entitlement_put(right)
         assert len(records(service)) == 1
         assert rows(service, 'acquisition_ledger') == ledger_before
+
+
+def test_private_history_projection_is_scoped_and_never_attested(selected):
+    session, right, file, service, fixture = selected
+    initial = session.declared_links_page()
+    assert initial is not None and initial.rows == () and initial.total == 0
+    confirmed = session.overview()['confirmed_files']
+    assert preview(selected)['status'] == 'preview'
+    assert confirm(selected, user_confirmed=True)['status'] == 'declared'
+    for _ in range(2):
+        service.storage.entitlement_put(fixture[3])
+        listing = session.declared_links_page()
+        assert listing is not None and listing.total == 1
+        assert listing.rows[0].review == 'recorded_unverified_file'
+        assert listing.rows[0].provider_id == fixture[4]['provider_id']
+        assert listing.rows[0].file_path == str(fixture[1])
+        assert session.overview()['confirmed_files'] == confirmed
+    service.storage.entitlement_put({**fixture[3], 'state': 'expired'})
+    changed = session.declared_links_page()
+    assert changed.total == 1
+    assert changed.rows[0].review == 'source_or_right_changed'
+    assert session.declared_links_page(limit=0) is None
+    assert not rows(service, 'placements')
+    session.close()
+    assert session.declared_links_page() is None
