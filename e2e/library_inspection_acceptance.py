@@ -356,9 +356,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
         assert candidate_cases[1].label in labels
         assert 'FOREIGN_SECRET' not in labels
         report['checks']['local_inspection_right_candidate_side_by_side_no_attestation']=True
+        report['checks']['native_manual_toggle_lookup_started'] = True
         manual=next(w for w in walk(controller.dialog)
                     if isinstance(w,Gtk.Button)
                     and w.get_label()=='Comparer tous les fichiers non liés')
+        report['checks']['native_manual_toggle_found'] = True
         def ready():
             # The fixed bottom action bar reduces the tall panel viewport.
             # Verify that the actual native pointer will hit this inner
@@ -390,18 +392,21 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
                 picked = picked.get_parent()
             if picked is not manual:
                 return False
+            report['checks']['native_manual_toggle_pointer_hit'] = True
             try:
                 x,y=device.widget_point(manual)
                 return x >= 0 and y >= 0
             except RuntimeError:
                 return False
         def click():
+            report['checks']['native_manual_toggle_clicked'] = True
             device.click_widget(manual)
             until(lambda:any(isinstance(w,Gtk.Label) and '1 / 600' in w.get_text()
                              for w in walk(controller.dialog)),manual_first)
         until(ready,click)
 
     def manual_first():
+        report['checks']['native_manual_toggle_result_visible'] = True
         texts='\\n'.join(w.get_text() for w in walk(controller.dialog)
                         if isinstance(w,Gtk.Label))
         assert 'Fichiers non liés · comparaison manuelle' in texts
