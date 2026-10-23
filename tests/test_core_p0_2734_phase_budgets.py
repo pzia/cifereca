@@ -140,7 +140,10 @@ def test_scoped_broker_passes_reserved_budgets_without_changing_generic_api(scop
     assert result["status"] == "complete"
     assert spy.call_count == 1
     options = spy.call_args.kwargs
-    assert options["seconds"] == 600
+    # The SQLite/WAL capture and Core preflight consume part of the shared
+    # 600-second envelope; the downstream audit never receives a fresh 600s.
+    assert 0 < options["seconds"] <= 600
+    assert options["limits"].seconds == options["seconds"]
     assert options["comparison_seconds"] == 30
     assert options["candidate_seconds"] == 60
     assert options["candidate_index_seconds"] == 30
