@@ -10,6 +10,7 @@ from cifereca_bnf_pret_worker import ReaderWorker, BrowserSessionError
 from cifereca_bnf_pret_web import CatalogPage, CatalogRecord
 from cifereca_bnf_pret_observations import ObservedLoans, ObservedLoanCounts
 from cifereca_bnf_pret_selection import VisibleResourceSelection
+from cifereca_bnf_pret_loan_selection import VisibleLoanBookSelection
 from cifereca_bnf_pret_dom_probe import DomProbe
 import re
 
@@ -142,6 +143,7 @@ class BnfReaderPage:
         self.handle = None
         self.observations = None
         self.selection = None
+        self.loan_selection = None
         self._generation = 0
         self._ui = None
         self._unsubscribe = None
@@ -162,12 +164,14 @@ class BnfReaderPage:
 
     def _stop(self):
         self._generation += 1
-        observations, selection = self.observations, self.selection
-        self.observations = self.selection = None
+        observations, selection, loans = self.observations, self.selection, self.loan_selection
+        self.observations = self.selection = self.loan_selection = None
         if observations is not None:
             observations.close()
         if selection is not None:
             selection.close()
+        if loans is not None:
+            loans.close()
         worker, handle = self.worker, self.handle
         self.worker = self.handle = None
         if worker is not None:
@@ -249,6 +253,14 @@ class BnfReaderPage:
         choose_button = Gtk.Button(label="Ouvrir sa fiche dans Chromium")
         chooser_bar.append(choose_button)
         root.append(chooser_bar)
+        loan_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        loan_bar.append(Gtk.Label(label="N° du prêt visible (sur la dernière page) :"))
+        loan_index = Gtk.SpinButton.new_with_range(1, 12, 1)
+        loan_index.set_digits(0)
+        loan_bar.append(loan_index)
+        loan_book_button = Gtk.Button(label="Ouvrir la fiche du livre emprunté")
+        loan_bar.append(loan_book_button)
+        root.append(loan_bar)
 
         def current():
             try:
@@ -288,6 +300,11 @@ class BnfReaderPage:
             notice_index.set_sensitive(
                 same and mode == "readonly" and not busy and self.selection is not None
             )
+            has_loan_choices = self.loan_selection is not None and self.loan_selection.count > 0
+            loan_book_button.set_sensitive(same and mode == "readonly"
+                                           and not busy and has_loan_choices)
+            loan_index.set_sensitive(same and mode == "readonly"
+                                     and not busy and has_loan_choices)
             stop_button.set_sensitive(worker is not None)
 
         def scope_ok(worker, scope, generation):
@@ -338,30 +355,36 @@ class BnfReaderPage:
                     status.set_label("Recherche invalide : 2–128 caractères, sans contrôle.")
                     return
             resource_id = None
-            if name == "detail":
-                selection = self.selection
+            operation = name
+            if name in ("detail", "loan_detail"):
+                selection = self.selection if name == "detail" else self.loan_selection
                 if selection is None:
-                    status.set_label("Aucune notice observée à ouvrir.")
+                    status.set_label("Aucune fiche issue de la page visible à ouvrir.")
                     return
                 try:
                     resource_id = selection.choose(
-                        notice_index.get_value_as_int() - 1,
+                        (notice_index.get_value_as_int() if name == "detail"
+                         else loan_index.get_value_as_int()) - 1,
                         expected=scope, revision=selection.revision,
                     )
                 except Exception:
-                    status.set_label("Sélection invalide ou expirée : relire les résultats.")
+                    status.set_label("Sélection invalide ou expirée : relire la page.")
                     return
-            # A new browser command makes the previously displayed choices stale.
-            # In particular, no second navigation is permitted from an old list.
-            selection, self.selection = self.selection, None
+                operation = "detail"  # Only public resource GET, never /loans/{id}.
+            # Any browser command invalidates previous lists. No stale choice can
+            # survive a navigation, refresh, identity change, or failed operation.
+            selection, loans = self.selection, self.loan_selection
+            self.selection = self.loan_selection = None
             if selection is not None:
                 selection.close()
+            if loans is not None:
+                loans.close()
             busy = True
             reset_buttons()
             status.set_label("Lecture BnF en cours…")
             try:
                 future = worker.submit(
-                    name, expected=scope, resource_id=resource_id,
+                    operation, expected=scope, resource_id=resource_id,
                     account_confirmed=(name == "confirm_account"),
                     search_query=search_query,
                 )
@@ -390,19 +413,36 @@ class BnfReaderPage:
                         if name == "confirm_account":
                             account_ack.set_active(False)
                         if name in ("confirm_account", "loans"):
+                            chosen = None
                             try:
+                                # Validate *all* entries even though only twelve
+                                # may be chosen to open a public bibliographic page.
+                                chosen = VisibleLoanBookSelection(scope)
+                                visible_count = chosen.observe(result, expected=scope)
                                 if self.observations is None:
                                     self.observations = ObservedLoans(scope)
                                 counts = self.observations.observe(result)
                             except Exception:
-                                # A rejected/ambiguous snapshot never overwrites
-                                # previous observations or leaks private payloads.
+                                if chosen is not None:
+                                    chosen.close()
                                 status.set_label(_DEFAULT_ERROR)
                             else:
-                                status.set_label(loan_observation_status(counts))
+                                self.loan_selection = chosen
+                                # The user must see which public book corresponds
+                                # to the number before choosing to navigate.
+                                preview.set_label("\n".join(chosen.visible_book_lines()))
+                                loan_index.set_range(1, max(1, visible_count))
+                                loan_index.set_value(1)
+                                message = loan_observation_status(counts)
+                                if visible_count:
+                                    message += (
+                                        f" {visible_count} fiche(s) bibliographique(s) "
+                                        "ouvrable(s) par numéro, sans téléchargement ni droit déduit."
+                                    )
+                                status.set_label(message)
                         elif name == "dom_probe":
                             status.set_label(dom_probe_message(result))
-                        elif name in ("visible_detail", "detail"):
+                        elif name in ("visible_detail", "detail", "loan_detail"):
                             if len(result.records) != 1:
                                 status.set_label("Fiche non reconnue : aucune notice publiée.")
                             else:
@@ -529,6 +569,7 @@ class BnfReaderPage:
         detail_button.connect("clicked", lambda _b: command("visible_detail"))
         probe_button.connect("clicked", lambda _b: command("dom_probe"))
         choose_button.connect("clicked", lambda _b: command("detail"))
+        loan_book_button.connect("clicked", lambda _b: command("loan_detail"))
         stop_button.connect("clicked", stop)
         root.connect("unmap", lambda *_args: stop() if self.worker is not None else None)
 

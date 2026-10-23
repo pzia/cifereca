@@ -252,3 +252,23 @@ d'afficher qu'il s'agit d'une **déclaration humaine**, non d'une preuve de
 l'identité amont ou d'un droit emprunté : aucun `account_id` BnF n'est
 déduit des cookies, pages de compte ou assertions SSO, aucune synchronisation
 de droit Core n'est permise par cette seule attestation.
+
+
+## Consultation d'une fiche issue des prêts visibles (#2055)
+
+Après confirmation **humaine** du compte et lecture HTML de l'activité, la
+page affiche la liste numérotée des **identifiants publics de fiches BnF** des
+livres présents dans les blocs observés (12 maximum), sans afficher l'ID
+du prêt ou son lien de téléchargement. Elle propose ensuite un numéro de
+livre associé à un prêt **sur la dernière page observée**, puis
+« Ouvrir la fiche du livre emprunté ».  Le geste ouvre exclusivement
+`/resources/{id}` à partir de l'ID canonique lu dans ce bloc ; il **ne suit
+jamais** `/loans/{id}` et ne déclenche ni téléchargement, ni POST, ni retour,
+ni acquisition. Les identifiants privés de prêt ne figurent pas dans l'interface.
+
+Le choix disparaît dès une nouvelle commande (même infructueuse), lors d'une
+page vide, du changement de profil ou de l'arrêt de Chromium. Il est lié à
+l'identité, au compte local et à l'époque du worker. Un livre observé dans
+un bloc de prêt ne garantit pas qu'un droit est encore valide et **ne crée
+aucune écriture de ledger**. L'ordre affiché est seulement celui des blocs DOM,
+pas celui d'un inventaire exhaustif.

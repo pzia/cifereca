@@ -102,6 +102,20 @@ class BnfReaderPageTests(unittest.TestCase):
         self.assertIsNone(instance.selection)
         self.assertIn("closed", repr(selection))
 
+    def test_stop_revokes_visible_loan_book_choices(self):
+        from cifereca_bnf_pret_loan_selection import VisibleLoanBookSelection
+        from cifereca_bnf_pret_web import ProfileScope, LoanSnapshot, LoanRecord
+        scope = ProfileScope("private-identity", "private-account", "epoch")
+        loan_choices = VisibleLoanBookSelection(scope)
+        loan_choices.observe(LoanSnapshot(scope, (LoanRecord("private-loan", "book-one"),),
+                                         "observed"), expected=scope)
+        instance = page.BnfReaderPage()
+        instance.loan_selection = loan_choices
+        instance._stop()
+        self.assertIsNone(instance.loan_selection)
+        self.assertIn("closed", repr(loan_choices))
+        self.assertNotIn("private-loan", repr(loan_choices))
+
     def test_unknown_projection_and_untrusted_ids_fail_closed(self):
         from cifereca_bnf_pret_web import CatalogPage, CatalogRecord
         self.assertEqual(page.suggestion_lines(object()), ())

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 try:
     import cifereca_bnf_pret_browser as browser
+    from cifereca_bnf_pret_loan_selection import VisibleLoanBookSelection
 finally:
     sys.path.pop(0)
 
@@ -130,6 +131,20 @@ class ChromiumReaderTests(unittest.TestCase):
         self.assertEqual((report.kind, report.search_sections, report.search_cards),
                          ("results", 1, 1))
         self.assertEqual(report.loan_cards, 0)
+
+    def test_observed_loan_opens_public_book_only(self):
+        choices = VisibleLoanBookSelection(self.session.scope)
+        self.assertEqual(choices.observe(self.snapshot, expected=self.session.scope), 1)
+        self.assertEqual(choices.visible_book_lines(),
+                         ('1. Livre BnF [synthetic-book]',))
+        chosen = choices.choose(0, expected=self.session.scope, revision=choices.revision)
+        self.assertEqual(chosen, 'synthetic-book')
+        self.assertNotEqual(chosen, self.snapshot.loans[0].loan_id)
+        detail = self.session.detail(chosen, expected=self.session.scope)
+        self.assertEqual(detail.records[0].title, 'Titre fictif')
+        self.assertEqual(self.session._page.url, browser.ORIGIN + '/resources/synthetic-book')
+        choices.close()
+        self.assertEqual(choices.visible_book_lines(), ())
 
     def test_real_request_guard_blocks_post_and_loan_get(self):
         results = self.session._page.evaluate("""async () => {
