@@ -88,7 +88,7 @@ def test_progress_on_analyzing_line_keeps_confirmation_transition_and_coalesces(
     assert len(queued) == 1
     queued.pop(0)()
     assert rendered[-1].phase == "analysis"
-    assert rendered[-1].fraction == 17 / 18
+    assert rendered[-1].fraction == 0.94  # integer percentage, capped below 100%
     assert "PRIVATE_PATH" not in rendered[-1].label
     line.confirmation(ticket)
     queued.pop(0)()
