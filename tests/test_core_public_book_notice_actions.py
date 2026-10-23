@@ -149,6 +149,10 @@ def test_ui_action_distinguishes_book_notice_from_generic_catalogue():
 @pytest.mark.parametrize("xml_link", [
     "https://opds2.ebooksgratuits.org/index.php/feed",
     "https://opds2.ebooksgratuits.org/index.php/feed/search?q=roman",
+    "https://opds2.ebooksgratuits.org/feed/item/42",
+    "https://opds2.ebooksgratuits.org/fetch/42.epub",
+    "https://opds2.ebooksgratuits.org/index.php/%252566eed/search",
+    "https://opds2.ebooksgratuits.org/index.php/%2566etch/42.epub",
     "https://opds2.ebooksgratuits.org/index.php/%66eed/search?q=roman",
     "https://opds2.ebooksgratuits.org/index.php/%2566eed/search?q=roman",
     "https://opds2.ebooksgratuits.org/index.php/opensearch.xml",
