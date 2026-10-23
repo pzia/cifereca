@@ -263,7 +263,7 @@ class BnfReaderPage:
             search_field.set_sensitive(same and mode == "readonly" and not busy)
             search_action.set_sensitive(same and mode == "readonly" and not busy)
             detail_button.set_sensitive(same and mode == "readonly" and not busy)
-            probe_button.set_sensitive(same and mode == "readonly" and not busy)
+            probe_button.set_sensitive(same and mode in {"login", "readonly"} and not busy)
             choose_button.set_sensitive(
                 same and mode == "readonly" and not busy and self.selection is not None
             )
