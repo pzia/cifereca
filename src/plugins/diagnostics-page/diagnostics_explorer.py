@@ -11,6 +11,10 @@ from typing import Any
 import json
 import re
 
+from cifereca.core.diagnostic_domains import (
+    DIAGNOSTIC_DOMAINS, canonical_diagnostic_domain,
+)
+
 from diagnostics_reconciliation import (
     reconciliation_event_summary,
     exportable_reconciliation_aggregates, sanitized_reconciliation_export,
@@ -39,6 +43,22 @@ SOURCES = ("all", "core_events", "app_log")
 SEVERITIES = ("", "debug", "info", "warning", "error", "critical")
 PERIODS = ("all", "hour", "day", "week", "month")
 PAGE_SIZE = 50
+# The display taxonomy covers the complete Core attested-domain registry.
+# Entries are product concepts, never inferred from module names or messages.
+DOMAIN_LABELS = {
+    "browser_recorder": "Browser Recorder",
+    "reconciliation": "Réconciliation",
+    "provider_connection": "Connexions fournisseur",
+    "source_sync": "Synchronisations",
+    "loan_download": "Téléchargements de prêts",
+    "kobo_backup": "Sauvegardes Kobo",
+    "numilog": "Numilog",
+    "adept": "ADEPT",
+}
+assert set(DOMAIN_LABELS) == set(DIAGNOSTIC_DOMAINS)
+DOMAIN_CHOICES = (("", "Tous les domaines"),) + tuple(
+    (code, DOMAIN_LABELS[code]) for code in DIAGNOSTIC_DOMAINS
+)
 # Only Core canonical public provider labels, never account names or URLs.
 _PUBLIC_PROVIDER_RE = re.compile(
     r"[a-z][a-z0-9]{0,31}(?:[._-][a-z][a-z0-9]{0,31}){0,5}\Z", re.ASCII,
@@ -122,7 +142,7 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
 
 def fetch_explorer_page(
     broker: Any, *, source: str = "all", module: str = "",
-    provider_id: str = "",
+    provider_id: str = "", domain: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
 ) -> dict[str, Any]:
@@ -135,6 +155,9 @@ def fetch_explorer_page(
         raise ValueError("invalid diagnostics module")
     if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
         raise ValueError("invalid diagnostics provider")
+    if type(domain) is not str:
+        raise ValueError("invalid diagnostics domain")
+    requested_domain = canonical_diagnostic_domain(domain) if domain else ""
     if (type(reason_code) is not str
             or (reason_code and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", reason_code) is None)):
         raise ValueError("invalid reconciliation reason code")
@@ -152,6 +175,9 @@ def fetch_explorer_page(
         query["reason_code"] = reason_code
     if provider_id:
         query["provider_id"] = provider_id
+    if requested_domain:
+        # Do not downgrade an unsupported old Core to page-local filtering.
+        query["domain"] = requested_domain
     return broker.events(**query)
 
 
@@ -410,7 +436,7 @@ def diagnostic_channel_caption(payload: Mapping[str, Any]) -> str:
 
 
 def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
-                    *, search: str = "") -> str:
+                    *, search: str = "", domain: str = "") -> str:
     if not isinstance(payload, Mapping):
         return "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     def bounded_count(value: Any) -> int:
@@ -428,11 +454,15 @@ def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
     if not payload.get("sources"):
         return "Canaux de diagnostic indisponibles — aucune donnée exploitable"
     suffix = " · recherche dans cette page uniquement" if search else ""
-    return f"{shown} événements affichés · {total} disponibles · page à partir de {offset + 1}{suffix}"
+    family = (" · domaine : " + DOMAIN_LABELS[domain]
+              if domain in DOMAIN_LABELS else "")
+    return (f"{shown} événements affichés · {total} dans le périmètre filtré"
+            f" · page à partir de {offset + 1}{family}{suffix}")
 
 
 def empty_observation(payload: Mapping[str, Any], *, period: str,
-                      severity: str = "", module: str = "", search: str = "") -> str:
+                      severity: str = "", module: str = "", search: str = "",
+                      domain: str = "") -> str:
     """A filtered empty feed is neither a health check nor complete coverage."""
     labels = {"all": "tout l’historique disponible", "hour": "dernière heure",
               "day": "24 heures", "week": "7 jours", "month": "30 jours"}
@@ -451,7 +481,7 @@ def empty_observation(payload: Mapping[str, Any], *, period: str,
         payload.get("status") in ("partial", "unavailable")
         or any(s["status"] not in {"available", "empty"} for s in states)
     )
-    if severity or module or search:
+    if severity or module or search or domain:
         message = f"Aucun événement correspondant aux filtres · période : {window}."
         if incomplete:
             message += " Couverture partielle ; événements manquants possibles."
