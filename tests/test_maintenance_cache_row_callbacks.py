@@ -257,3 +257,81 @@ def test_worker_guard_reason_is_safe_before_global_activity(error_type, message,
     assert str(caught.value) == message
     assert caught.value.__suppress_context__
 
+
+
+def test_unrecognised_maintenance_tool_gets_independent_guarded_progress():
+    # A third-party/future maintenance.tool must not silently drop the
+    # per-tool status, cancellation guard or the safe error boundary.
+    m = mounted(tool_id="third.party.maintenance.audit")
+    assert len(m.host._maintenance_line_rows) == 1
+    assert m.status is not None
+    assert m.feedback.state.phase == "idle"
+
+    def plan_with_progress(context, control):
+        control.report(current=1, total=4,
+                       message="PRIVATE_ACCOUNT /home/private/book.epub")
+        return m.tool.plan(context)
+
+    m.tool.plan_with_progress = plan_with_progress
+    m.preview.click()
+    args, _kw = m.jobs[-1]
+    plan = args[1]()
+    flush(m)
+    label, bars = m.status.children
+    spinner, bar = bars.children
+    assert m.feedback.state.phase == "analysis"
+    assert label.text == "Traitement en cours · 25 %"
+    assert bar.visible and bar.fraction == .25
+    assert not spinner.visible
+    assert "PRIVATE_" not in label.text
+    assert "/home/private" not in label.text
+
+    args[2](plan)
+    flush(m)
+    assert m.feedback.state.phase == "confirmation"
+    dialog = harness.Dialog.shown[-1]
+    dialog.handlers["response"](dialog, "run")
+    worker_args, _ = m.jobs[-1]
+    control = m.host._maintenance_line_rows[0][1]["control"]
+    control.report(current=2, total=4,
+                   message="PRIVATE_TOKEN sensitive bearer /secret/")
+    flush(m)
+    assert m.feedback.state.phase == "running"
+    assert label.text == "Traitement en cours · 50 %"
+    assert "PRIVATE_TOKEN" not in label.text
+    worker_args[2](NS(ok=True, summary="Terminé"))
+    flush(m)
+    assert m.feedback.state.phase == "success"
+    assert label.text == "Terminé · 100 %"
+
+
+def test_legacy_unknown_tool_shows_honest_indeterminate_progress_and_safe_failure():
+    m = mounted(tool_id="third.party.legacy")
+    assert not hasattr(m.tool, "plan_with_progress")
+    m.preview.click()
+    flush(m)
+    label, bars = m.status.children
+    spinner, bar = bars.children
+    assert m.feedback.state.phase == "analysis"
+    assert label.text == "Analyse…"
+    assert spinner.visible and not bar.visible
+    args, _ = m.jobs[-1]
+    args[2](args[1]())
+    flush(m)
+    dialog = harness.Dialog.shown[-1]
+    dialog.handlers["response"](dialog, "run")
+    flush(m)
+    assert label.text == "Traitement en cours…"
+    assert spinner.visible and not bar.visible
+    m.tool.run = lambda *_args: (_ for _ in ()).throw(
+        ValueError("PRIVATE_ACCOUNT /secret/files.xml")
+    )
+    worker_args, _ = m.jobs[-1]
+    with pytest.raises(RuntimeError) as caught:
+        worker_args[1]()
+    assert str(caught.value) == "Nettoyage des caches impossible."
+    assert "PRIVATE_ACCOUNT" not in str(caught.value)
+    worker_args[3](caught.value)
+    flush(m)
+    assert m.feedback.state.phase == "error"
+    assert m.errors[-1][0] == "Nettoyage des caches impossible."
