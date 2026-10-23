@@ -78,8 +78,8 @@ def test_form_with_only_action_remains_non_actionable(caplog):
 
 
 def test_ambiguous_signed_links_remain_blocked_without_picking_first(caplog):
-    html = ''.join(
-        f'<a href="{_borrow_href("/fake/loan-book.ashx?ean="+num)}">Book</a>'
+    html = "".join(
+        '<a href="' + _borrow_href("/fake/loan-book.ashx?ean=" + num) + '">Book</a>'
         for num in ("9782000000000", "9782000000001")
     )
     with caplog.at_level(logging.INFO, logger="cifereca"):
