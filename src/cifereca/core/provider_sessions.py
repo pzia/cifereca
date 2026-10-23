@@ -568,6 +568,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             provider_id
             and descriptor.state == "ready"
             and not descriptor.credential_fields
+            and not getattr(descriptor, "interactive_authentication", False)
             and provider_id not in configured_provider_ids
             and instantiation != "singleton_public"
         ):
@@ -588,6 +589,7 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         plugin_status = self._provider_plugin_status(provider_id)
         if (
             not provider_id or plugin.descriptor.state != "ready" or plugin.descriptor.credential_fields
+            or getattr(plugin.descriptor, "interactive_authentication", False)
             or (provider_id not in self._virtual_parent_by_provider
                 and getattr(getattr(plugin_status, "descriptor", None), "instantiation", "multiple") != "singleton_public")
         ):
@@ -601,6 +603,10 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         public_started = time.monotonic()
         try:
             session.connect()
+            # Only an affirmative session state attests a successful connection.
+            # connect() returning normally is not proof (notably for SSO).
+            if getattr(session, "connected", None) is not True:
+                raise ProviderConfigurationError("provider_not_connected")
             self._sessions[key] = session
             connected.append(key)
             _publish_connection_success(
@@ -653,6 +659,11 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         if plugin.descriptor.state != "ready":
             # Skeletons are visible to the GUI/docs but never perform I/O.
             continue
+        if getattr(plugin.descriptor, "interactive_authentication", False):
+            # A configured SSO provider cannot be opened, authenticated or
+            # declared connected by the automatic startup connection sweep.
+            # Its explicit UI flow owns the consent and authenticated state.
+            continue
         session = plugin.create_session(
             credential_id=credential_id,
             label=str(row.get("label") or plugin.descriptor.display_name),
@@ -664,6 +675,8 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
         try:
             logger.info("TRACE provider connect begin kind=configured")
             accounts = session.connect()
+            if getattr(session, "connected", None) is not True:
+                raise ProviderConfigurationError("provider_not_connected")
             logger.info("TRACE provider connect end account_count=%s dt=%.3fs", len(accounts), time.monotonic()-item_started)
             self._sessions[key] = session
             connection_id = self.storage.provider_connection_put({
