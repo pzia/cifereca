@@ -647,6 +647,24 @@ class DiagnosticsPagePlugin:
         filters_bottom.append(sort_latest)
         journals_tab.append(filters_bottom)
 
+        # Unlike local 50-row search, this Core-attested business family
+        # filter is applied BEFORE pagination and bulk selection.
+        domain_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        domain_row.append(Gtk.Label(label="Domaine métier :", xalign=0))
+        domain_filter = Gtk.Entry()
+        domain_filter.set_width_chars(18)
+        domain_filter.set_max_width_chars(36)
+        domain_filter.set_hexpand(True)
+        domain_filter.set_placeholder_text(
+            "Browser / recorder / Réconciliation · Entrée"
+        )
+        domain_filter.set_tooltip_text(
+            "Filtre Core global sur les événements attestés, toutes pages. "
+            "Vide : tous domaines. N'inclut pas les messages libres ou sites."
+        )
+        domain_row.append(domain_filter)
+        journals_tab.append(domain_row)
+
         # Separate from the module prefix and from the event-source channel.
         # The Core filter is exact and runs before pagination.
         provider_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -1211,9 +1229,20 @@ class DiagnosticsPagePlugin:
             if selection_json is None:
                 selected_event_ids.intersection_update(valid_ids)
             journals_sources.set_text(diagnostic_channel_caption(current_page))
+            from diagnostics_explorer import selected_business_domain
+            try:
+                selected_domain = selected_business_domain(domain_filter.get_text())
+            except ValueError:
+                domain_note = " · Domaine métier non reconnu"
+            else:
+                domain_note = (
+                    (" · Domaine : Browser Recorder (attesté)" if selected_domain == "browser_recorder"
+                     else " · Domaine : Réconciliation (attestée)")
+                    if selected_domain else " · Tous domaines"
+                )
             journals_summary.set_text(explorer_header(
                 current_page, rows, search=search_filter.get_text().strip()
-            ))
+            ) + domain_note)
             groups = (linked_operation_groups(rows) if operation_grouping.get_active()
                       else module_groups(rows))
             for group in groups:
@@ -1345,6 +1374,7 @@ class DiagnosticsPagePlugin:
             query = {
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
+                "domain": domain_filter.get_text().strip(),
                 "provider_id": provider_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
@@ -1480,6 +1510,7 @@ class DiagnosticsPagePlugin:
             query = {
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
+                "domain": domain_filter.get_text().strip(),
                 "provider_id": provider_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
@@ -1573,6 +1604,8 @@ class DiagnosticsPagePlugin:
         severity_selector.connect("notify::selected", reset_events)
         period_selector.connect("notify::selected", reset_events)
         module_filter.connect("activate", reset_events)
+        domain_filter.connect("activate", reset_events)
+        domain_filter.connect("changed", lambda *_: invalidate_selection())
         provider_filter.connect("activate", reset_events)
         provider_filter.connect("changed", lambda *_: invalidate_selection())
         reason_code_filter.connect("activate", reset_events)
