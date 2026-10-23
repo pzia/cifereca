@@ -751,6 +751,28 @@ class PrivateReviewPanel:
                 f"{metrics['response_size_unavailable']} réponse(s) sans taille "
                 f"fiable · {metrics['response_over_budget']} hors plafond."
             )
+        # Only optional, fixed numeric facts are accepted. Never show a
+        # Playwright exception, request URL or response content in the UI
+        # diagnostics, even after a completed encrypted capture.
+        loss_fields = (
+            "response_read_failed", "request_read_failed",
+            "response_unfinished", "request_unfinished",
+        )
+        if all(key in metrics for key in loss_fields):
+            if any(type(metrics[key]) is not int or not 0 <= metrics[key] <= 1_000_000
+                   for key in loss_fields):
+                return
+            read_loss = metrics["response_read_failed"] + metrics["request_read_failed"]
+            unfinished = metrics["response_unfinished"] + metrics["request_unfinished"]
+            if read_loss or unfinished:
+                label += (
+                    f" Attention : {metrics['response_read_failed']} réponse(s) "
+                    f"et {metrics['request_read_failed']} requête(s) dont le corps "
+                    f"n'a pas pu être relu après navigation · "
+                    f"{metrics['response_unfinished']} réponse(s) et "
+                    f"{metrics['request_unfinished']} requête(s) inachevées. "
+                    "Capture partielle, sans nouvelle requête ni rejeu automatique."
+                )
         if metrics["text_responses"] == 0:
             label += " Aucune réponse conservée : analyse des réponses impossible."
         if metrics["limit"] and metrics["exchanges"] * 5 >= metrics["limit"] * 4:
