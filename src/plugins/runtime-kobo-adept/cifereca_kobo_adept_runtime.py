@@ -804,14 +804,27 @@ class KoboAdeptRuntime:
         return result
 
     def probe_core(self):
-        # Core/Diagnostics require capability flags, not the raw vendor JSON
-        # or an executable path that can disclose the user's home directory.
+        # Core/Diagnostics require capability flags, not raw vendor JSON.
+        # #2845: measure two explicit Core probe calls independently, without
+        # inferring shared account scope or preserving any private CLI argv.
         from cifereca_runtime_probe_safe import public_core_probe
+
+        def elapsed_ms(start_ns):
+            return max(0, min(600000, (time.perf_counter_ns() - start_ns) // 1000000))
+
+        started = time.perf_counter_ns()
         contract = self.contract()
+        contract_ms = elapsed_ms(started)
+        started = time.perf_counter_ns()
         capabilities = self.capabilities()
-        return public_core_probe(
+        capabilities_ms = elapsed_ms(started)
+        result = public_core_probe(
             contract, capabilities, bool(shutil.which(self.command[0])),
         )
+        result["probe_timings_ms"] = {
+            "contract": contract_ms, "capabilities": capabilities_ms,
+        }
+        return result
 
     def probe(self):
         return self.probe_core()
