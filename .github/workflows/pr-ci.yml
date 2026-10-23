@@ -44,6 +44,7 @@ jobs:
               echo "install=true"
               echo "dataset=true"
               echo "python=true"
+              echo "bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select --full)"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -64,6 +65,7 @@ jobs:
           packaging=false
           install=false
           dataset=false
+          bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select "$changed_file")
 
           if matches '^(src/cifereca/|tests/|e2e/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$|scripts/ci_core_release_preflight\.py$)'; then
             core=true
@@ -125,7 +127,7 @@ jobs:
           fi
 
           python=false
-          if [[ "$core" == true || "$plugins" == true || "$packaging" == true || "$install" == true || "$dataset" == true ]]; then
+          if [[ "$core" == true || "$plugins" == true || "$packaging" == true || "$install" == true || "$dataset" == true || "$bnf_reader" == true ]]; then
             python=true
           fi
 
@@ -139,6 +141,7 @@ jobs:
             echo "install=$install"
             echo "dataset=$dataset"
             echo "python=$python"
+            echo "bnf_reader=$bnf_reader"
           } >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
@@ -180,6 +183,15 @@ jobs:
         run: |
           echo "Core test mode: $CORE_TEST_MODE"
           python -m pytest -q --durations=10 $CORE_TEST_TARGETS
+
+      - name: BnF reader real Chromium acceptance (synthetic intercepted pages only)
+        if: steps.scope.outputs.bnf_reader == 'true'
+        env:
+          CIFERECA_BNF_CHROMIUM_TEST: '1'
+        run: |
+          python -m pip install --disable-pip-version-check "playwright>=1.50,<2"
+          python -m playwright install --with-deps chromium
+          python scripts/ci_bnf_reader_gate.py run
 
       - name: Run plugin tests
         if: steps.scope.outputs.plugins == 'true'
