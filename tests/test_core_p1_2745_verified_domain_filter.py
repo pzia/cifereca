@@ -110,3 +110,23 @@ def test_blank_domain_is_backwards_compatible_and_not_a_module_alias(tmp_path):
     assert default == explicit
     assert _page(collector, tmp_path, module="PLUGIN", domain="recorder")["total"] == 1
     assert _page(collector, tmp_path, module="PLUGIN", domain="reconciliation")["total"] == 0
+
+
+def test_real_broker_forwards_attested_domain_without_supplier_access(tmp_path):
+    from unittest.mock import patch
+    from cifereca.brokers import DiagnosticsBrokerImpl
+
+    diag = Diagnostics()
+    for _ in range(51):
+        diag.add("PLUGIN", OPERATIONS["private_zip_export"], "error")
+    _browser(diag)
+    service = NS(diagnostics=diag)
+    with patch("cifereca.paths.log_file", return_value=tmp_path / "absent.log"):
+        result = DiagnosticsBrokerImpl(service).events(
+            source="all", domain="recorder", limit=1, offset=0,
+        )
+    assert result["total"] == 1
+    assert result["events"][0]["domain"] == "browser_recorder"
+    assert result["events"][0]["source"] == "core_events"
+    assert result["events"][0]["module"] == "PLUGIN"
+    assert "PRIVATE" not in json.dumps(result)
