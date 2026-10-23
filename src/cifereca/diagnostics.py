@@ -522,6 +522,21 @@ class Diagnostics:
         )
         with self._lock:
             self._items.append(entry)
+        # Preserve the closed audit summary after restart without widening
+        # the capture of personal files, borrowers, profiles or network data.
+        try:
+            from .core.diagnostic_reconciliation import public_reconciliation_log_message
+            message = public_reconciliation_log_message(fields)
+            if message is not None:
+                severity = (logging.INFO if status == "complete"
+                            else logging.ERROR if status == "failed"
+                            else logging.WARNING)
+                logger = logging.getLogger("cifereca")
+                if logger.isEnabledFor(severity):
+                    logger.log(severity, "%s", message)
+        except Exception:
+            # Diagnostic persistence cannot alter a read-only audit.
+            pass
 
     def snapshot(self) -> list[dict[str, Any]]:
         with self._lock:
