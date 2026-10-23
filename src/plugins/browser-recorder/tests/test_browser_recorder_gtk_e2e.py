@@ -733,3 +733,74 @@ def test_native_gtk_legacy_har_errors_reach_safe_core_diagnostics(
         plugin.deactivate()
         window.close()
         flush_glib()
+
+
+def test_real_gtk4_completed_capture_selects_sealed_vault_session_without_next_capture(
+    monkeypatch, tmp_path,
+):
+    """Real GTK controls + AES-GCM, fake network; source ID, not random ordering."""
+    from browser_recorder_vault import PrivateSessionVault
+    import browser_recorder_review_ui as view
+
+    Gtk.init()
+    tasks = FakeTasks()
+    origin = ORIGIN
+    secret = "FICTIONAL-SELECTOR-SESSION-PASSWORD"
+    vault_path = tmp_path / "vault"
+    ids = []
+
+    def recorder(start, stop, **kwargs):
+        assert start.startswith(origin) and stop.is_set()
+        trace = PrivateHttpTrace((origin,))
+        serial = len(ids) + 1
+        trace.exchanges.append(PrivateExchange(
+            1, "GET", url=origin + "/fake/" + str(serial),
+            status=200, mime="application/json",
+            response_body='{"BookId":214}', response_body_state="captured",
+            response_body_reason="captured",
+        ))
+        kwargs["vault_writer"].save(trace, "completed", force=True)
+        ids.append(trace.vault_session_id)
+        return trace
+
+    monkeypatch.setattr(view, "record_http", recorder)
+    url = Gtk.Entry()
+    url.set_text(origin + "/catalog")
+    consent = Gtk.CheckButton()
+    consent.set_active(True)
+    panel = PrivateReviewPanel(
+        Gtk, GLib, tasks, url, consent, lambda: False,
+        vault_directory=vault_path,
+    )
+    window = Gtk.Window()
+    window.set_default_size(1280, 800)
+    window.set_child(panel.widget)
+    window.present()
+    flush_glib()
+    try:
+        for count in (1, 2):
+            panel.vault_passphrase.set_text(secret)
+            panel.vault_consent.set_active(True)
+            panel.start.emit("clicked")
+            assert tasks.handle is not None
+            panel.stop.emit("clicked")
+            tasks.handle.finish()
+            flush_glib()
+            assert len(ids) == count
+            assert panel.session_list.get_active_id() == ids[-1]
+            assert len(PrivateSessionVault(vault_path).list_ids()) == count
+            recovered = PrivateSessionVault(vault_path).open(ids[-1], secret)
+            try:
+                assert recovered.trace.exchanges[0].url.endswith("/" + str(count))
+            finally:
+                recovered.trace.destroy()
+        panel.session_list.set_active_id(ids[0])
+        panel.refresh_sessions()
+        flush_glib()
+        assert panel.session_list.get_active_id() == ids[0]
+        previous = PrivateSessionVault(vault_path).open(ids[0], secret)
+        previous.trace.destroy()
+    finally:
+        panel.destroy()
+        window.close()
+        flush_glib()
