@@ -26,7 +26,7 @@ def sqlite_source_stamp(path: Path) -> tuple | None:
     Every directory ancestor is opened O_NOFOLLOW; leaf and WAL/journal stat
     operations also refuse symlinks and nonregular filesystem nodes.
     """
-    if type(path) is not Path or not path.is_absolute() or '..' in path.parts:
+    if not isinstance(path, Path) or not path.is_absolute() or '..' in path.parts:
         return None
     directory = check = -1
     try:
