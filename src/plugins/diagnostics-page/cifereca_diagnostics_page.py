@@ -663,6 +663,27 @@ class DiagnosticsPagePlugin:
         provider_row.append(provider_filter)
         journals_tab.append(provider_row)
 
+        # Business-domain filtering is Core-attested and global, unlike the
+        # independent local text search (current 50-row page). Keep the
+        # user's known aliases/typo as typed input, normalized by the broker.
+        domain_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        domain_caption = Gtk.Label(label="Domaine métier :", xalign=0)
+        domain_filter = Gtk.Entry()
+        domain_filter.set_width_chars(18)
+        domain_filter.set_max_width_chars(30)
+        domain_filter.set_hexpand(True)
+        domain_filter.set_placeholder_text(
+            "Browser / recorder / Réconciliation · Entrée"
+        )
+        domain_filter.set_tooltip_text(
+            "Filtre Core vérifié sur toutes les pages ; accepte Browser, "
+            "recorder, Réconciliation, Reconciliation et Réconcilitation. "
+            "Ne recherche jamais de corps HTTP ni de données privées."
+        )
+        domain_row.append(domain_caption)
+        domain_row.append(domain_filter)
+        journals_tab.append(domain_row)
+
         # This is a SERVER-side exact Core reason-code filter, unlike the
         # search field above which only scans the 50 loaded observations.
         # A separate row keeps controls usable on 760/1024px desktops.
@@ -1211,9 +1232,26 @@ class DiagnosticsPagePlugin:
             if selection_json is None:
                 selected_event_ids.intersection_update(valid_ids)
             journals_sources.set_text(diagnostic_channel_caption(current_page))
-            journals_summary.set_text(explorer_header(
-                current_page, rows, search=search_filter.get_text().strip()
-            ))
+            # Closed labels only: never echo an unvalidated typed account,
+            # URL or private string into a diagnostics status line.
+            from diagnostics_explorer import canonical_diagnostic_domain_alias
+            try:
+                requested_domain = canonical_diagnostic_domain_alias(
+                    domain_filter.get_text().strip()
+                )
+            except ValueError:
+                domain_label = "domaine invalide"
+            else:
+                domain_label = {
+                    "": "tous domaines",
+                    "browser_recorder": "Browser Recorder (Core attesté)",
+                    "reconciliation": "Réconciliation (Core attestée)",
+                }[requested_domain]
+            journals_summary.set_text(
+                explorer_header(
+                    current_page, rows, search=search_filter.get_text().strip()
+                ) + " · " + domain_label
+            )
             groups = (linked_operation_groups(rows) if operation_grouping.get_active()
                       else module_groups(rows))
             for group in groups:
@@ -1346,6 +1384,7 @@ class DiagnosticsPagePlugin:
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
                 "provider_id": provider_filter.get_text().strip(),
+                "domain": domain_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
                 "offset": page_offset,
@@ -1481,6 +1520,7 @@ class DiagnosticsPagePlugin:
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
                 "provider_id": provider_filter.get_text().strip(),
+                "domain": domain_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
                 "search": search_filter.get_text().strip(),
@@ -1575,6 +1615,8 @@ class DiagnosticsPagePlugin:
         module_filter.connect("activate", reset_events)
         provider_filter.connect("activate", reset_events)
         provider_filter.connect("changed", lambda *_: invalidate_selection())
+        domain_filter.connect("activate", reset_events)
+        domain_filter.connect("changed", lambda *_: (invalidate_selection(), invalidate_ai()))
         reason_code_filter.connect("activate", reset_events)
         reason_code_filter.connect("changed", lambda *_: invalidate_selection())
         search_filter.connect("changed", lambda *_: (invalidate_selection(), display_events()))
