@@ -30,7 +30,7 @@ def public_fields(value: object) -> dict[str, object]:
         return {}
     if (type(value["schema_version"]) is not int or value["schema_version"] != 1
             or canonical_public_provider_id(value["provider_id"]) is None
-            or value["operation_kind"] != "download_loan"
+            or type(value["operation_kind"]) is not str or value["operation_kind"] != "download_loan"
             or type(value["status"]) is not str or value["status"] not in STATUS
             or type(value["code"]) is not str or value["code"] not in CODES
             or type(value["phase"]) is not str or value["phase"] not in PHASES
