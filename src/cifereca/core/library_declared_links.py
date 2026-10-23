@@ -488,15 +488,34 @@ def list_declared_links(service, *, identity_id, offset=0, limit=50,
                         continue
                     review = 'revoked'
                 else:
-                    # Checking the SQLite account/right here makes no claim
-                    # about a current source login, licence or file SHA.
-                    try:
-                        context = _context(db, scope)
-                        review = ('recorded_unverified_file'
-                                  if record['right_state'] == _right_state(context)
-                                  else 'source_or_right_changed')
-                    except DeclarationRejected:
+                    # SQLite may preserve an old provider connection and right
+                    # after a user removes/replaces the live account. Never
+                    # show that stale evidence as "unchanged": the declaration
+                    # remains visible, but its source needs explicit review.
+                    # A provider+credential alone is insufficient; account
+                    # and identity must match exactly, without guessing.
+                    live_accounts = [
+                        account for account in accounts
+                        if (account.provider_id == scope['provider_id']
+                            and account.credential_id == scope['credential_id'])
+                    ]
+                    account_current = (
+                        len(live_accounts) == 1
+                        and live_accounts[0].identity_id == scope['identity_id']
+                        and live_accounts[0].unique_id == scope['account_id']
+                    )
+                    if not account_current:
                         review = 'source_or_right_changed'
+                    else:
+                        # SQLite equality does not revalidate the EPUB bytes,
+                        # current login, provider licence or an acquisition.
+                        try:
+                            context = _context(db, scope)
+                            review = ('recorded_unverified_file'
+                                      if record['right_state'] == _right_state(context)
+                                      else 'source_or_right_changed')
+                        except DeclarationRejected:
+                            review = 'source_or_right_changed'
                 result.append(DeclaredLinkView(
                     relation_id=record['relation_id'],
                     provider_id=scope['provider_id'],
