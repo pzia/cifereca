@@ -414,6 +414,27 @@ class UiPerfMonitor:
             "invalid_samples": invalid,
             "gc_samples_dropped": gc_dropped,
             "resource_window": resources,
+            # Separate from the stable stats/resource_window v1 contracts:
+            # callers asserting exact snapshots remain backward compatible.
+            "evidence": {
+                "phases": {
+                    key: {
+                        "sample_coverage": (
+                            "limited" if len(values) < 20 else "bounded_rolling"
+                        ),
+                        "p95_interpretation": "sample_nearest_rank_only",
+                    }
+                    for key, values in sorted(samples.items())
+                },
+                "resources": {
+                    "sampling_strategy": (
+                        "start_end_only" if resource_start is not None and resource_end is not None
+                        else "start_only" if resource_start is not None
+                        else "end_only" if resource_end is not None else "unavailable"
+                    ),
+                    "peak_rss_bytes": None,
+                },
+            },
             "limits": {
                 "max_samples_per_phase": self.max_samples,
                 "max_events": self._max_events,
