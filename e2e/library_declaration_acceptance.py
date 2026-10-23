@@ -87,6 +87,11 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
         return next(w for w in walk(window or controller.dialog)
                     if isinstance(w, Gtk.Button) and w.get_label() == label)
 
+    def guide_label():
+        return next(w for w in walk(controller.dialog)
+                    if isinstance(w, Gtk.Label)
+                    and w.get_name() == 'reconciliation-guided-stage')
+
     def click(widget, callback):
         def ready():
             if not widget.get_mapped() or not widget.get_sensitive():
@@ -129,6 +134,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
 
     def select_right():
         report['checks']['native_declaration_dialog_open'] = True
+        assert guide_label().get_text().startswith('1/4')
+        report['checks']['native_guided_reconciliation_starts_with_right'] = True
         checkpoint('maint_declaration_dialog_open')
         # The default list is paginated and starts with local files; the
         # synthetic Numilog right is deliberately not in the first 50 rows.
@@ -163,6 +170,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
 
     def file_view_visible():
         report['checks']['native_declaration_manual_files_visible'] = True
+        assert guide_label().get_text().startswith('3/4')
+        assert 'non attestée' in guide_label().get_text()
+        report['checks']['native_guided_reconciliation_selected_pair_explained'] = True
         # Distinguish an absent Core right/file context from GTK selection
         # reset. The result is boolean only; never publish account or path.
         files = session.unconfirmed_files(limit=10).cases
