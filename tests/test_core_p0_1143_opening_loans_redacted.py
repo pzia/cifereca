@@ -70,9 +70,9 @@ def test_partial_upstream_errors_are_counted_without_exporting_raw_error_fields(
             result = service.opening_sync()
         default = next(row for row in result["identities"]
                        if row["identity_id"] == "default")
-        # Global status uses the legacy row-count heuristic; preserve it
-        # while asserting each source state independently.
-        assert default["status"] == "failed"
+        # A partially responding Paris source is partial even with zero rows;
+        # the other account remains successful and provider details stay closed.
+        assert default["status"] == "partial"
         assert _state(service, paris)["status"] == "partial"
         assert _state(service, kobo)["status"] == "success"
         assert service.storage.latest_sync_run("default")["detail"]["provider_errors"] == [
