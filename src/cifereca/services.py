@@ -2849,6 +2849,14 @@ class LibraryService:
         Do not reuse the global acquisition lock: opening_sync already holds it.
         The loan-scoped lock also covers other callers running in another process.
         """
+        # A Web-observed BnF loan is not approval to fetch an ACSM. This
+        # second boundary protects other callers of the automatic acquisition
+        # facade even when they do not use opening_sync (#2055).
+        if type(loan) is Loan and loan.source_provider == "bnf-pret":
+            return {
+                "status": "attention_required",
+                "code": "bnf_web_explicit_only", "retry": "explicit_only",
+            }
         loan_id = str(loan.id or "").strip()
         if not loan_id:
             return {

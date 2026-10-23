@@ -272,6 +272,18 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     }
 
 
+def _opening_loan_acquisition_allowed(loan: Loan) -> bool:
+    """BnF Web loans are NEVER startup download consent (#2055).
+
+    A positive provider observation may be persisted as a scoped loan by the
+    owning Core contract, but browsing or opening Cifereca cannot trigger its
+    Web download/ACSM fulfillment. That needs a separate explicit user action.
+    Keep existing automatic acquisition decisions for other providers intact.
+    """
+    return (type(loan) is Loan and loan.source_provider != "bnf-pret"
+            and loan.medium == "digital" and bool(loan.ebook_url or loan.raw))
+
+
 def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool:
     """Reject a mixed or malformed supplier batch before writing loan rights.
 
@@ -417,7 +429,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             lifecycle = self._persist_active_loans(identity.identity_id, loans)
             detail["realized"] = lifecycle["returned_realized"] + lifecycle["expired_realized"]
             for loan in loans:
-                if loan.medium != "digital" or not (loan.ebook_url or loan.raw):
+                if not _opening_loan_acquisition_allowed(loan):
                     continue
                 result = self._acquire_active_loan_automatically(loan)
                 if result["status"] == "complete":
