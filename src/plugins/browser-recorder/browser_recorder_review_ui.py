@@ -1029,10 +1029,10 @@ class PrivateReviewPanel:
                 f"Enregistrer volontairement le téléchargement {number}",
                 parent, Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
             )
+            prefer_downloads_for_save(chooser)
             chooser.set_current_name(
                 f"cifereca-telechargement-{number:02d}.bin",
             )
-            prefer_downloads_for_save(chooser)
             self._download_dialog = chooser
             self._download_choice_done = ready
             self.status.set_label(
@@ -1813,8 +1813,8 @@ class PrivateReviewPanel:
             "Exporter la session privée pour LLM (ZIP en clair)", parent,
             Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
-        chooser.set_current_name("cifereca-session-privee.zip")
         prefer_downloads_for_save(chooser)
+        chooser.set_current_name("cifereca-session-privee.zip")
         self._private_destination_dialog = chooser
         self._refresh()
 
@@ -2213,8 +2213,8 @@ class PrivateReviewPanel:
             "Enregistrer le ZIP revu (données sensibles possibles)", parent,
             Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
-        chooser.set_current_name("cifereca-revue.zip")
         prefer_downloads_for_save(chooser)
+        chooser.set_current_name("cifereca-revue.zip")
         self._export_dialog = chooser
 
         def responded(dialog, response):
