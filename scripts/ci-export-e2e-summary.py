@@ -233,6 +233,8 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
             ("native_declaration_right_row_clicked", "declaration_right_clicked"),
             ("native_declaration_right_is_selected", "declaration_right_selected"),
             ("native_declaration_manual_files_visible", "declaration_manual_files"),
+            ("native_declaration_one_file_available", "declaration_one_file"),
+            ("native_declaration_core_pair_admissible", "declaration_core_pair"),
             ("native_declaration_right_selected", "declaration_right"),
             ("native_declaration_expander_open", "declaration_expander"),
             ("native_declaration_preview_dialog", "declaration_preview"),
