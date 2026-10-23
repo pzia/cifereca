@@ -394,13 +394,17 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, done
             adjustment.set_value(0)
             until(candidate_allocated, candidate_click)
 
-        if adjustment.get_upper() > adjustment.get_page_size() + 1:
-            adjustment.set_value(0)
-            until(wheel_target, send_wheel)
-        else:
-            # No scroll range means no wheel gesture is needed to reach
-            # these controls, and should not be counted as a wheel PASS.
-            until(candidate_allocated, candidate_click)
+        # The pairing commands have moved into a persistent toolbar. Their
+        # relocation makes the initially *collapsed* detailed page short
+        # enough to fit at some screen sizes. Force the deliberately long
+        # private overview open before testing real wheel scrolling: this
+        # preserves the exact physical XTEST requirement instead of skipping
+        # it (or falsely marking wheel reached without a gesture).
+        widgets['overview_panel'].set_expanded(True)
+        until(
+            lambda: adjustment.get_upper() > adjustment.get_page_size() + 1,
+            lambda: (adjustment.set_value(0), until(wheel_target, send_wheel)),
+        )
 
     def compare_next():
         report['checks']['inspection_candidate_navigation_reached']=True
