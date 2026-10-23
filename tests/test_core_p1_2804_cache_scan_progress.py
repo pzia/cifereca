@@ -65,21 +65,18 @@ def test_cancel_check_is_inside_namespace_scan():
     tool = CacheMaintenance()
     tool.cache = cache
     reports = []
-    control = MaintenanceCancelControl(
-        on_progress=lambda *v: reports.append(v),
-    )
-    class Rows:
-        def __iter__(self):
-            for index, row in enumerate(cache.names):
-                if index == 29:
-                    control.cancel()
-                yield row
-    cache.namespaces = lambda: Rows()
+    control = None
+    def progress(current, total, message):
+        reports.append((current, total, message))
+        if current is not None and current >= 15:
+            control.cancel()
+    control = MaintenanceCancelControl(on_progress=progress)
     with pytest.raises(Exception) as exc:
         tool.plan_with_progress(NS(), control)
     assert "annulée" in str(exc.value)
     assert cache.purges == 0
     assert any(item[0] == 0 for item in reports)
+    assert len(reports) < 10
 
 
 def test_slow_single_inventory_has_indeterminate_phase_only():
