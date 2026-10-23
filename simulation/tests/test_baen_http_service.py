@@ -130,6 +130,8 @@ class BaenContractTests(unittest.TestCase):
                 self.assertEqual(session.search("", page=2), [])
                 self.assertEqual([i.title for i in session.search("Garden")], ["The Garden of Words"])
                 self.assertEqual(session.search("nothing"), [])
+                self.assertEqual(session.last_search_warnings, [],
+                                 "attested 200 zero is not partial")
                 self.assertIn("page=2", server.calls[1])
                 self.assertIn("pageSize=2", server.calls[1])
 
@@ -162,6 +164,22 @@ class BaenContractTests(unittest.TestCase):
                     with self.subTest(query=query), self.assertRaisesRegex(ProviderError, f"^Baen : {code}$"):
                         session.search(query)
                 self.assertEqual(session.search("nothing"), [])
+            finally:
+                session.close()
+
+    def test_unknown_success_markup_is_partial_not_an_attested_zero(self):
+        with tempfile.TemporaryDirectory() as tmp, LocalBaenServer(Path(tmp)) as server:
+            session = make_session(server, transport=RecordingTransport(server))
+            try:
+                self.assertEqual(session.search("layout-change"), [])
+                self.assertTrue(any(
+                    "partial_results" in warning
+                    for warning in session.last_search_warnings
+                ))
+                self.assertEqual(len(server.calls), 1)
+                self.assertEqual(session.search("nothing"), [])
+                self.assertFalse(session.last_search_warnings)
+                self.assertEqual(len(server.calls), 2)
             finally:
                 session.close()
 
