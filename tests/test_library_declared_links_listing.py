@@ -122,3 +122,32 @@ def test_current_provider_account_drift_is_visible_without_erasing_history(
     restored = list_declared_links(service, identity_id='default')
     assert restored.rows[0].review == 'recorded_unverified_file'
     assert records(service) == baseline
+
+
+def test_disabled_provider_connection_is_reviewed_not_silently_attested(rig):
+    service, _, _, _, options = rig
+    result = apply(rig)
+    baseline = records(service)
+    assert list_declared_links(service, identity_id='default').rows[0].review == (
+        'recorded_unverified_file'
+    )
+    # A service can retain an account object after a sync disables the local
+    # provider connection; the persisted right is not current provenance.
+    connection = {
+        'identity_id': 'default',
+        'provider_id': options['provider_id'],
+        'credential_id': options['credential_id'],
+        'label': 'Fixture disabled connection',
+        'enabled': False,
+    }
+    service.storage.provider_connection_put(connection)
+    page = list_declared_links(service, identity_id='default')
+    assert page.total == 1
+    assert page.rows[0].relation_id == result.relation_id
+    assert page.rows[0].review == 'source_or_right_changed'
+    assert records(service) == baseline
+    assert not rows(service, 'placements')
+    assert not rows(service, 'acquisition_ledger')
+    service.storage.provider_connection_put({**connection, 'enabled': True})
+    page = list_declared_links(service, identity_id='default')
+    assert page.rows[0].review == 'recorded_unverified_file'
