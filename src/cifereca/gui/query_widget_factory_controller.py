@@ -18,6 +18,67 @@ def _provider_choices(window, *, library=False):
     return sorted(providers.items(), key=lambda pair: pair[1])
 
 
+def _paris_search_notice(window):
+    """Read-only, identity-scoped hint; do not offer a disconnected provider as selectable."""
+    service = window.service
+    identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
+    reader = getattr(service, "catalogue_source_capabilities", None)
+    if type(identity) is not str or not identity or not callable(reader):
+        return ""
+    matching = []
+    try:
+        inventory = reader(identity_id=identity)
+        matching = [
+            item for item in inventory
+            if getattr(item, "provider_id", None) == "paris"
+            and getattr(item, "identity_scope", None) == "authenticated"
+            and getattr(item, "catalog_search_supported", None) is True
+        ]
+        if matching and getattr(matching[0], "catalog_search_available", None) is True:
+            return ""
+        # service.accounts_for_identity contains *connected* accounts only.
+        # A failed login removes those rows: it cannot prove the absence of
+        # configured credentials. Consult the identity-scoped config projection.
+        config = getattr(service, "config", None)
+        config_reader = getattr(config, "provider_accounts", None)
+        if not callable(config_reader):
+            return ("Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+                    if matching else "")
+        rows = config_reader("paris")
+        if type(rows) not in (list, tuple) or len(rows) > 128:
+            return ("Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+                    if matching else "")
+        own = [
+            row for row in rows
+            if type(row) is dict and row.get("identity_id") == identity
+        ]
+    except Exception:
+        # Never leak provider error text, credentials or another identity's state.
+        return ("Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+                if matching else "")
+    if not matching:
+        # The catalogue inventory is deliberately limited to enabled/ready
+        # plugins. Only report absence/disablement when this identity owns a
+        # configured Paris account, not from another user's configuration.
+        if not own:
+            return ""
+        registry = getattr(service, "registry", None)
+        find_plugin = getattr(registry, "maybe_get", None)
+        if callable(find_plugin) and find_plugin("paris") is None:
+            return "Bibliothèques de Paris : plugin absent ; recherche en ligne indisponible."
+        is_enabled = getattr(service, "_provider_enabled_for_identity", None)
+        if callable(is_enabled) and is_enabled("paris", identity) is False:
+            return "Bibliothèques de Paris : plugin désactivé ; recherche en ligne indisponible."
+        return "Bibliothèques de Paris : catalogue non disponible dans ce profil."
+    if any(row.get("enabled", True) is True for row in own):
+        return "Bibliothèques de Paris : compte configuré mais source non connectée ; recherche en ligne indisponible."
+    if own:
+        return "Bibliothèques de Paris : compte désactivé pour ce profil ; recherche en ligne indisponible."
+    if any(type(row) is dict and not row.get("identity_id") for row in rows):
+        return "Bibliothèques de Paris : source non connectée ; profil du compte à vérifier."
+    return "Bibliothèques de Paris : aucun compte rattaché à ce profil ; recherche en ligne indisponible."
+
+
 def refresh_query_providers(window):
     """Refresh live controls after async provider connection without rebuilding pages."""
     if getattr(window, "_closed", False):
@@ -34,6 +95,9 @@ def refresh_query_providers(window):
                 setter = getattr(controls, "set_provider_search_capabilities", None)
                 if callable(setter):
                     setter(window.service.provider_search_capabilities())
+                notice = getattr(controls, "set_provider_status_notice", None)
+                if callable(notice):
+                    notice(_paris_search_notice(window))
         except Exception:
             # A custom controls factory may fail during refresh. Do not let
             # plugin-provided error text abort account/dashboard startup.
@@ -64,4 +128,7 @@ def build_query_controls(window, changed, activate, *, library=False, QueryContr
     setter = getattr(controls, "set_provider_search_capabilities", None)
     if callable(setter) and not library:
         setter(window.service.provider_search_capabilities())
+    notice = getattr(controls, "set_provider_status_notice", None)
+    if callable(notice) and not library:
+        notice(_paris_search_notice(window))
     return controls

@@ -40,6 +40,10 @@ def activate_identity(window, identity_id: str) -> None:
     window._pending_library_selection_generation = None
     identity_generation = window._identity_context_generation
     window._populate_accounts()
+    # Search availability hints and choices must never survive an identity
+    # switch: the previous identity may own different authenticated accounts.
+    from .query_widget_factory_controller import refresh_query_providers
+    refresh_query_providers(window)
     window._render_dashboard()
     window._search_generation = getattr(window, "_search_generation", 0) + 1
     window._search_detail_request_generation += 1

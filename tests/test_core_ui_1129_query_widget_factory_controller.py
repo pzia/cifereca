@@ -302,3 +302,114 @@ def test_refresh_does_nothing_after_close():
     window.search_controls = NS(set_provider_choices=Mock())
     refresh_query_providers(window)
     window.search_controls.set_provider_choices.assert_not_called()
+
+
+def test_unavailable_paris_hint_is_scoped_and_never_selectable():
+    """A configured Paris outage stays visible without advertising online search."""
+    window, _events, _calls, _changed, _activate, _caps, _create = _setup()
+    window.service.current_identity = NS(identity_id="alice")
+    window.service.searchable_providers = lambda: []
+    window.service.catalogue_source_capabilities = lambda identity_id=None: [
+        NS(provider_id="paris", identity_scope="authenticated",
+           catalog_search_supported=True, catalog_search_available=False),
+    ]
+    window.service.accounts_for_identity = lambda identity_id: []  # login failed
+    window.service.config = NS(provider_accounts=lambda provider: [
+        {"provider": "paris", "identity_id": "alice", "enabled": True,
+         "credentials": {"password": "MUST_NOT_LEAK"}}
+    ])
+    controls = NS(
+        set_provider_choices=Mock(),
+        set_provider_search_capabilities=Mock(),
+        set_provider_status_notice=Mock(),
+    )
+    window.search_controls = controls
+    refresh_query_providers(window)
+    assert "paris" not in dict(controls.set_provider_choices.call_args.args[0])
+    assert "compte configuré mais source non connectée" in (
+        controls.set_provider_status_notice.call_args.args[0]
+    )
+    assert "MUST_NOT_LEAK" not in controls.set_provider_status_notice.call_args.args[0]
+
+    # Switching profile must not retain evidence of another profile account.
+    window.service.current_identity = NS(identity_id="bob")
+    refresh_query_providers(window)
+    assert "aucun compte rattaché à ce profil" in (
+        controls.set_provider_status_notice.call_args.args[0]
+    )
+
+
+def test_connected_or_disabled_paris_has_no_disconnected_notice():
+    window, _events, _calls, _changed, _activate, _caps, _create = _setup()
+    window.service.current_identity = NS(identity_id="alice")
+    controls = NS(
+        set_provider_choices=Mock(), set_provider_search_capabilities=Mock(),
+        set_provider_status_notice=Mock(),
+    )
+    window.search_controls = controls
+    row = NS(
+        provider_id="paris", identity_scope="authenticated",
+        catalog_search_supported=True, catalog_search_available=True,
+    )
+    window.service.catalogue_source_capabilities = lambda identity_id=None: [row]
+    refresh_query_providers(window)
+    controls.set_provider_status_notice.assert_called_with("")
+    row.catalog_search_available = False
+    window.service.catalogue_source_capabilities = lambda identity_id=None: []
+    refresh_query_providers(window)
+    controls.set_provider_status_notice.assert_called_with("")
+
+
+def test_paris_disabled_and_legacy_unscoped_account_do_not_look_connected():
+    window, _events, _calls, _changed, _activate, _caps, _create = _setup()
+    window.service.current_identity = NS(identity_id="alice")
+    window.service.catalogue_source_capabilities = lambda identity_id=None: [
+        NS(provider_id="paris", identity_scope="authenticated",
+           catalog_search_supported=True, catalog_search_available=False),
+    ]
+    controls = NS(
+        set_provider_choices=Mock(), set_provider_search_capabilities=Mock(),
+        set_provider_status_notice=Mock(),
+    )
+    window.search_controls = controls
+    window.service.config = NS(provider_accounts=lambda provider: [
+        {"provider": "paris", "identity_id": "alice", "enabled": False},
+    ])
+    refresh_query_providers(window)
+    assert "compte désactivé" in controls.set_provider_status_notice.call_args.args[0]
+    window.service.config = NS(provider_accounts=lambda provider: [
+        {"provider": "paris", "enabled": True},
+    ])
+    refresh_query_providers(window)
+    assert "profil du compte à vérifier" in controls.set_provider_status_notice.call_args.args[0]
+
+
+@pytest.mark.parametrize(("present", "enabled", "expected"), [
+    (False, True, "plugin absent"),
+    (True, False, "plugin désactivé"),
+    (True, True, "catalogue non disponible"),
+])
+def test_search_paris_plugin_absent_or_disabled_is_scoped(
+    present, enabled, expected,
+):
+    window, events, _calls, _changed, _activate, _caps, _create = _setup()
+    controls = NS(
+        set_provider_choices=Mock(), set_provider_search_capabilities=Mock(),
+        set_provider_status_notice=Mock(),
+    )
+    window.search_controls = controls
+    window.service.current_identity = NS(identity_id="alice")
+    window.service.catalogue_source_capabilities = lambda identity_id=None: []
+    window.service.config = NS(provider_accounts=lambda provider: [
+        {"provider": "paris", "identity_id": "alice", "enabled": True,
+         "credentials": {"password": "PRIVATE_NOT_FOR_DIAGNOSTICS"}},
+    ])
+    window.service.registry = NS(maybe_get=lambda provider: object() if present else None)
+    window.service._provider_enabled_for_identity = lambda provider, identity: enabled
+    refresh_query_providers(window)
+    text = controls.set_provider_status_notice.call_args.args[0]
+    assert expected in text
+    assert "PRIVATE_NOT_FOR_DIAGNOSTICS" not in text
+    window.service.current_identity = NS(identity_id="bob")
+    refresh_query_providers(window)
+    controls.set_provider_status_notice.assert_called_with("")
