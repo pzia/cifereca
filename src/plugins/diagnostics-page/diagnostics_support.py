@@ -1,7 +1,14 @@
 """Explicit, local support export and selection preservation; no broker I/O."""
 from __future__ import annotations
 
-from cifereca.plugin_api import prefer_downloads_for_save
+try:
+    from cifereca.plugin_api import prefer_downloads_for_save
+except ImportError:
+    # Plugin-only updates remain usable on a Core without this optional UX hook.
+    def _keep_native_folder(_chooser):
+        return False
+
+    prefer_downloads_for_save = _keep_native_folder
 
 
 def support_report_bytes(text):
