@@ -149,3 +149,23 @@ def test_provider_download_trace_omits_loan_account_and_filename(
     for secret in ("SUPERPRIVATE", "loan_id=", "account_key=", "file=",
                    "content_length=", "sig="):
         assert secret not in logs
+
+
+def test_untrusted_redirect_location_does_not_publish_private_host_or_path(caplog):
+    from cifereca_paris_client import ParisClient
+
+    response = SimpleNamespace(
+        url="https://bibliotheques.paris.fr/numerique/",
+        status_code=302,
+        headers={
+            "location": "https://private-SUPERPRIVATE.syracuse.cloud/LOAN/SUPERPRIVATE?token=SUPERPRIVATE"
+        },
+    )
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        ParisClient._pnb_trace_response(response, hop=2, elapsed_ms=17)
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "target_site=external" in text
+    assert "status=302" in text
+    assert "hop=2" in text
+    assert "SUPERPRIVATE" not in text
+    assert "LOAN/" not in text
