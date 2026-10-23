@@ -143,7 +143,7 @@ def test_real_gtk_private_session_llm_zip_no_extra_export_secret(tmp_path, monke
         # Immediate direct export: no catalogue refresh, no identifier
         # decisions, no switch away from the review tab.
         assert panel.tabs.get_current_page() == 1
-        assert panel.session_list.get_active_id() is None
+        assert panel.session_list.get_active_id() == trace.vault_session_id
         assert panel.current_private_export_button.get_sensitive()
         assert panel._review.pending() > 0
         folder = tmp_path / "private-destination"
