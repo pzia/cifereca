@@ -651,6 +651,14 @@ class _BoundedOPDSTree(ET.TreeBuilder):
         return result
 
 
+def _malformed_opds_protocol():
+    """Malformed supplier Atom is not a verified zero or retriable query."""
+    failure = ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+    failure.code = 'search_temporarily_unavailable'
+    failure.retryable = False
+    return failure
+
+
 def _xml_root(content):
     if type(content) is not bytes or len(content)>OPDS_MAX_FEED_BYTES:
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
@@ -658,9 +666,11 @@ def _xml_root(content):
         # Enforce DTD/entity, depth and element budgets during XML parsing.
         # A prior byte-pattern scan alone cannot qualify non-UTF8 XML.
         return ET.fromstring(content,parser=ET.XMLParser(target=_BoundedOPDSTree()))
-    except (ET.ParseError, RecursionError, OverflowError, ValueError):
-        # Unsupported XML multi-byte encodings are unverified payloads, not
-        # exceptions whose raw parser text should escape into Core/UI.
+    except ET.ParseError:
+        # Broken supplier XML is not a zero; never echo the parser message.
+        raise _malformed_opds_protocol() from None
+    except (RecursionError, OverflowError, ValueError):
+        # Parser/budget refusals remain non-fallback security failures.
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed') from None
 
 
@@ -1033,7 +1043,7 @@ def _opds_load_acquisition(session,initial,field,needle):
         seen.add(url)
         feed,actual=_opds_fetch(session,url)
         if feed.tag!=ATOM+'feed':
-            raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+            raise _malformed_opds_protocol() from None
         entries=feed.findall(ATOM+'entry')
         # The item projector supports an EPUB with rel=alternate as well
         # as OPDS acquisition links. The navigation detector must agree:
@@ -1125,7 +1135,7 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
         return []
     root,root_url=_opds_fetch(session,session.opds_feed_url)
     if root.tag!=ATOM+'feed':
-        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+        raise _malformed_opds_protocol() from None
     if needle:
         url=_opds_search_url(session,root,root_url,needle)
     else:
