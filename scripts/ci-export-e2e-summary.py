@@ -172,6 +172,10 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
     remain in the private CI workspace and are never published.
     """
     if scenario not in {
+        # Identical fully synthetic probe: allow narrow layouts to publish
+        # the same closed milestone without exposing a screenshot, assertion,
+        # path, widget text, geometry or private traceback.
+        "maintenance-tools-920", "maintenance-tools-1024",
         "maintenance-tools-1280", "maintenance-tools-1366",
         "maintenance-tools-1600",
     }:
