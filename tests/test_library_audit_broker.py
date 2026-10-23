@@ -173,7 +173,9 @@ def test_explicit_scoped_audit_uses_shared_600s_budget_not_generic_120s(scoped, 
     assert audit.call_count == 1
     options = audit.call_args.kwargs
     assert 120 < options['seconds'] <= 600
-    assert options['limits'].seconds == options['seconds']
+    assert options['limits'].seconds == pytest.approx(
+        options['seconds'] - min(90, options['seconds'] / 2)
+    )
     assert callable(options['cancelled'])
     assert callable(options['progress'])
     assert options['_snapshot'] is not None
