@@ -64,12 +64,17 @@ def test_browser_noise_on_100_earlier_core_rows_never_masks_true_result(tmp_path
 
 
 def test_recon_alias_is_true_broker_filter_and_invalid_mix_rejected(tmp_path):
-    from tests.test_core_p0_2730_reconciliation_diagnostics import _audit
-
+    # Plugin packages run in isolation; do not import the Core test suite.
+    # This closed synthetic aggregate exercises the actual Core producer.
+    audit = {
+        "status": "incomplete_scan", "reasons": ["time_budget"],
+        "inventory": {"files_started": 1, "files": 1, "hashed_files": 1},
+        "metadata_candidates": {"catalog_rows_examined": 1},
+    }
     diagnostics = Diagnostics()
     for _ in range(117):
         diagnostics.add("LIBRARY", "generic", "warning")
-    diagnostics.add_core_reconciliation_result(_audit("incomplete_scan", ["time_budget"]))
+    diagnostics.add_core_reconciliation_result(audit)
     broker = CoreBroker(diagnostics, tmp_path)
     result = fetch_explorer_page(broker, module="Réconcilitation",
                                  period="all", severity="warning")
