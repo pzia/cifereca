@@ -866,7 +866,9 @@ def _opds_public_html_link(feed_url, raw):
         return None
     from urllib.parse import unquote
     address = urlsplit(safe)
-    path = unquote(address.path).casefold()
+    # Validate nested-encoded aliases exactly as for persisted Core notices.
+    # A MIME="text/html" assertion never transforms an OPDS feed into HTML.
+    path = unquote(unquote(address.path)).casefold().rstrip('/')
     segments = path.split('/')
     if (address.query
             or any(part in {'.', '..', 'account', 'admin', 'customer',
@@ -875,7 +877,9 @@ def _opds_public_html_link(feed_url, raw):
             or path in {'/feed', '/feed.php', '/fetch.php', '/index.php/feed',
                         '/index.php/fetch', '/index.php/feed.php',
                         '/index.php/fetch.php', '/index.php/opensearch.xml'}
-            or path.startswith(('/index.php/feed/', '/index.php/fetch/'))):
+            or path.startswith(('/feed/', '/fetch/',
+                                '/index.php/feed/', '/index.php/fetch/'))
+            or any('%' in part for part in segments)):
         return None
     return safe
 
