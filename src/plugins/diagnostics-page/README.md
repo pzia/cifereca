@@ -2,7 +2,7 @@
 
 Le champ « Fournisseur » filtre les événements avant pagination, séparément
 du module et du canal : utiliser l'identifiant canonique, par exemple
-`provider.paris`, `provider.kobo` ou `provider.numilog`. Une valeur vide
+`paris`, `kobo` ou `numilog`. Une valeur vide
 conserve tous les événements. Ce filtre demande le contrat Core de #2902 ;
 un Core antérieur ne reçoit pas de repli silencieux sur une recherche locale.
 
