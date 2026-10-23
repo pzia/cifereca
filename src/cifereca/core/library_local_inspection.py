@@ -401,6 +401,7 @@ class LocalInspection:
         self._declared_right_scopes = {}
         self._declared_pending = None
         self._declared_last = None
+        self._history_withdraw_pending = None
         self._manual_audit_complete = audit.redacted().get('status') == 'complete'
         self._manual_pair_evidence_complete = _pair_evidence_complete(audit)
         self._manual_pair_coverage_gaps = _pair_evidence_gaps(audit)
@@ -964,6 +965,70 @@ class LocalInspection:
             return None
         return page if self.valid() else None
 
+    def preview_history_withdrawal(self, relation_id, *,
+                                   cancelled=lambda: False):
+        """Revoke an obsolete statement, not an entitlement or a file.
+
+        The exact transaction token stays within this Core session.
+        """
+        self.revoke_manual_attachment_preview()
+        generation = self._manual_preview_generation
+        if (not self.valid() or self._manual_service is None
+                or not callable(cancelled)):
+            return {'status': 'unavailable', 'read_only': True}
+        from .library_declared_links import DeclarationRejected, withdraw_declared_link
+        try:
+            plan = withdraw_declared_link(
+                self._manual_service, identity_id=self._manual_identity,
+                relation_id=relation_id,
+                cancelled=lambda: (cancelled() or not self.valid()
+                                   or generation != self._manual_preview_generation),
+            )
+        except DeclarationRejected:
+            return {'status': 'blocked', 'read_only': True}
+        if not self.valid() or cancelled() or generation != self._manual_preview_generation:
+            return {'status': 'unavailable', 'read_only': True}
+        if plan.status == 'revoke_preview':
+            self._history_withdraw_pending = (relation_id, plan.plan_token, generation)
+            return {'status': 'revoke_preview', 'read_only': True,
+                    'trust': 'user_declaration', 'requires_explicit_confirmation': True,
+                    'change': 'revoke_declaration', 'rights_mutations': 0,
+                    'file_mutations': 0, 'placement_mutations': 0}
+        return {'status': plan.status, 'read_only': True}
+
+    def confirm_history_withdrawal(self, relation_id, *,
+                                   user_confirmed=False, cancelled=lambda: False):
+        """Consume exactly one matching private, stale-safe preview."""
+        pending, self._history_withdraw_pending = self._history_withdraw_pending, None
+        if (user_confirmed is not True or pending is None
+                or not callable(cancelled) or pending[0] != relation_id
+                or not self.valid() or pending[2] != self._manual_preview_generation):
+            return {'status': 'unavailable', 'read_only': True}
+        from .library_declared_links import DeclarationRejected, withdraw_declared_link
+        acknowledged = [self._accept_own_core_commit is None]
+
+        def committed_under_lock():
+            callback = self._accept_own_core_commit
+            if callable(callback):
+                acknowledged[0] = callback() is True
+
+        try:
+            result = withdraw_declared_link(
+                self._manual_service, identity_id=self._manual_identity,
+                relation_id=relation_id, confirmation=pending[1],
+                cancelled=lambda: (cancelled() or
+                                   pending[2] != self._manual_preview_generation
+                                   or not self.valid()),
+                on_committed=committed_under_lock,
+            )
+        except DeclarationRejected:
+            return {'status': 'blocked', 'read_only': True}
+        return {'status': result.status, 'read_only': True,
+                'trust': 'user_declaration',
+                'rights_mutations': 0, 'file_mutations': 0,
+                'placement_mutations': 0,
+                'commit_acknowledged': acknowledged[0]}
+
     def from_audit_cache(self) -> bool:
         """Closed, private origin label; never expose a source path or stamp."""
         return self.valid() and self._from_audit_cache is True
@@ -1185,6 +1250,7 @@ class LocalInspection:
         self._manual_pending = None
         self._manual_undo_pending = None
         self._declared_pending = None
+        self._history_withdraw_pending = None
 
     def _declaration_inputs(self, right_key, file_key):
         if (not self.valid() or self._manual_service is None

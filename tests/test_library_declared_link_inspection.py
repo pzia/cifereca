@@ -257,3 +257,48 @@ def test_private_history_projection_is_scoped_and_never_attested(selected):
     assert not rows(service, 'placements')
     session.close()
     assert session.declared_links_page() is None
+
+
+def test_obsolete_declaration_is_withdrawable_after_file_and_account_disappear(selected):
+    session, right, file, service, fixture = selected
+    assert preview(selected)['status'] == 'preview'
+    assert confirm(selected, user_confirmed=True)['status'] == 'declared'
+    relation = records(service)[0]['relation_id']
+    fixture[1].unlink()
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute('DELETE FROM entitlements')
+    service.accounts = []
+    before = {table: rows(service, table) for table in (
+        'entitlements', 'acquisition_ledger', 'artifacts', 'placements',
+        'provider_connections',
+    )}
+    plan = session.preview_history_withdrawal(relation)
+    assert plan['status'] == 'revoke_preview'
+    assert plan['trust'] == 'user_declaration'
+    assert plan['requires_explicit_confirmation'] is True
+    assert plan['change'] == 'revoke_declaration'
+    assert 'plan_token' not in plan and 'PRIVATE' not in json.dumps(plan)
+    assert session.confirm_history_withdrawal(
+        relation, user_confirmed=False)['status'] == 'unavailable'
+    assert records(service)[0]['state'] == 'active'
+    session.preview_history_withdrawal(relation)
+    answer = session.confirm_history_withdrawal(relation, user_confirmed=True)
+    assert answer['status'] == 'revoked'
+    assert answer['rights_mutations'] == answer['placement_mutations'] == 0
+    assert records(service)[0]['state'] == 'revoked'
+    assert {table: rows(service, table) for table in before} == before
+
+
+def test_history_withdrawal_selection_change_invalidates_token(selected):
+    session, right, file, service, fixture = selected
+    preview(selected)
+    confirm(selected, user_confirmed=True)
+    relation = records(service)[0]['relation_id']
+    session.preview_history_withdrawal(relation)
+    session.revoke_manual_attachment_preview()
+    assert session.confirm_history_withdrawal(
+        relation, user_confirmed=True)['status'] == 'unavailable'
+    assert records(service)[0]['state'] == 'active'
+    assert session.preview_history_withdrawal('0' * 32)['status'] == 'blocked'
+    session.close()
+    assert session.preview_history_withdrawal(relation)['status'] == 'unavailable'

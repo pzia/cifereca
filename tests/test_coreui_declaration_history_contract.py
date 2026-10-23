@@ -43,3 +43,24 @@ def test_history_only_uses_safe_source_and_review_status_vocabulary():
     }
     assert 'non revérifiés' in _REVIEW_LABELS['recorded_unverified_file']
     assert 'révoqué' in _REVIEW_LABELS['revoked'].casefold()
+
+
+def test_stale_revocation_is_explicit_and_core_bound_without_gtk_worker_reads():
+    history = HISTORY.read_text(encoding='utf-8')
+    view = VIEW.read_text(encoding='utf-8')
+    core = CORE.read_text(encoding='utf-8')
+    assert "self.withdraw_button = Gtk.Button(label='Révoquer cette déclaration…')" in history
+    assert "self.withdraw_button.set_sensitive(item.state == 'active')" in history
+    assert "self.session.preview_history_withdrawal(" in history
+    assert "self.session.confirm_history_withdrawal(" in history
+    assert "user_confirmed=True" in history
+    assert "dialog.set_body_use_markup(False)" in history
+    assert "dialog.set_default_response('cancel')" in history
+    assert "dialog.set_close_response('cancel')" in history
+    assert "cancelled=lambda: self.generation != generation" in history
+    assert "cancelled=lambda: not self._current" not in history
+    assert "withdraw_declared_link(" not in history
+    assert "def preview_history_withdrawal(" in core
+    assert "def confirm_history_withdrawal(" in core
+    assert "self._history_withdraw_pending = None" in core
+    assert "Adw=Adw, window=window, runner=self.parent.runner" in view
