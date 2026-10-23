@@ -511,9 +511,12 @@ def list_declared_links(service, *, identity_id, offset=0, limit=50,
                         # current login, provider licence or an acquisition.
                         try:
                             context = _context(db, scope)
-                            review = ('recorded_unverified_file'
-                                      if record['right_state'] == _right_state(context)
-                                      else 'source_or_right_changed')
+                            review = (
+                                'recorded_unverified_file'
+                                if (context['connection']['enabled'] == 1
+                                    and record['right_state'] == _right_state(context))
+                                else 'source_or_right_changed'
+                            )
                         except DeclarationRejected:
                             review = 'source_or_right_changed'
                 result.append(DeclaredLinkView(
