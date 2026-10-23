@@ -346,3 +346,21 @@ n'affiche que le **nombre de notices visibles** et un état non exhaustif,
 jamais un lien, titre, compte, paramètre de recherche ou token. Si le
 lien est absent, le CLI reste utilisable sans inférer la fin du catalogue.
 Les tests utilisent seulement des objets et pages synthétiques.
+
+## Protection Core à l'ouverture — P0 #2055
+
+Même si un futur adaptateur publiait des prêts BnF-Prêt rattachés à un compte,
+le Core ne doit pas considérer leur observation comme un consentement au
+**téléchargement** : `_opening_sync_locked` applique désormais
+`_opening_loan_acquisition_allowed`, qui refuse toute acquisition implicite
+pour `source_provider='bnf-pret'`, y compris si une URL de livre ou un objet
+brut est présent. Les autres sources conservent leur règle d'acquisition
+existante. Le garde ne supprime ni prêt, ni artefact local, ni provenance.
+
+La protection **ne vaut pas synchronisation de droits achevée** : la connexion
+Web BnF actuelle ne revendique pas d'identité distante authentifiée ni de
+snapshot exhaustif. Toute acquisition future devra avoir sa propre commande
+volontaire, être liée au profil/compte confirmé, vérifier le résultat local et
+réutiliser la chaîne ADEPT autorisée sans accès privé à l'API institutionnelle.
+
+Tests offline : `python -m pytest tests/test_core_p0_2055_bnf_opening_guard.py -q`.
