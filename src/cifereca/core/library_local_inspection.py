@@ -12,6 +12,7 @@ import unicodedata
 
 from .library_audit_broker import _run_scoped_audit, _unavailable
 from .library_inspection_cache import take_inspection_cache
+from .library_sqlite_freshness import sqlite_source_stamp
 from .library_manual_link_preflight import review_local_pair, review_source_read_only, review_kobo_candidate
 
 PROVIDERS = {'all': 'Tous les fournisseurs', 'kobo': 'Kobo', 'numilog': 'Numilog',
@@ -1836,9 +1837,42 @@ def open_local_inspection(service, *, identity_id, control=None, on_mode=None):
     publish_mode('new_scan')
     from .library_audit_roots import configured_identity_roots
 
-    def finish(audit, valid):
+    def finish(audit, scope_valid, source_stamp):
+        # Unlike a cached Maintenance handoff, a fresh CoreUI session used to
+        # retain only the identity/configuration guard. Its original rights
+        # snapshot could outlive an unrelated provider sync. Bind every private
+        # page, preflight, preview, confirm and undo to the exact SQLite/WAL
+        # source observed during THIS audit, not to a stamp sampled later.
+        database = Path(service.storage.path)
+        expected = [source_stamp]
+        acknowledged = [False]
+
+        def valid():
+            return (scope_valid()
+                    and sqlite_source_stamp(database) == expected[0])
+
+        def accept_own_core_commit():
+            # This callback is supplied only to the existing locked writer
+            # AFTER its own successful SQLite commit. It can advance exactly
+            # one stamp for the same-session undo. It never attests supplier
+            # ownership and cannot normalize a prior foreign sync, because
+            # the writer checks valid() before committing.
+            if acknowledged[0] or not scope_valid():
+                return False
+            current = sqlite_source_stamp(database)
+            if current is None:
+                return False
+            expected[0] = current
+            acknowledged[0] = True
+            return valid()
+
         roots = configured_identity_roots(service.config, identity_id)
-        return LocalInspection(audit, valid, identity_id,
-                               roots=roots.get(identity_id, ()), service=service)
+        session = LocalInspection(audit, valid, identity_id,
+                                  roots=roots.get(identity_id, ()),
+                                  service=service)
+        session._accept_own_core_commit = accept_own_core_commit
+        if not session.valid():
+            return _unavailable({'snapshot_changed'})
+        return session
 
     return _run_scoped_audit(service, identity_id, control, finish)
