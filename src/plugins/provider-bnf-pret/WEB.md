@@ -356,6 +356,10 @@ le Core ne doit pas considérer leur observation comme un consentement au
 pour `source_provider='bnf-pret'`, y compris si une URL de livre ou un objet
 brut est présent. Les autres sources conservent leur règle d'acquisition
 existante. Le garde ne supprime ni prêt, ni artefact local, ni provenance.
+Une seconde barrière, dans la façade Core `_acquire_active_loan_automatically`,
+refuse également `bnf-pret` **avant toute acquisition de verrou ou I/O**, y
+compris en appel direct et en mode `force_refresh=True`. Son seul résultat
+est un code fermé `bnf_web_explicit_only` avec `retry=explicit_only`.
 
 La protection **ne vaut pas synchronisation de droits achevée** : la connexion
 Web BnF actuelle ne revendique pas d'identité distante authentifiée ni de
