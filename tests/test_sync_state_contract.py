@@ -55,8 +55,20 @@ def test_missing_active_loan_becomes_realized_without_touching_artifacts(tmp_pat
         )
         service._persist_active_loans("default", [loan])
         assert len(service.storage.entitlements(state="active")) == 1
+        # Empty/partial scans are not proof of return, even if reconciliation
+        # is requested: account-scoped completeness must be supplied.
         result = service._persist_active_loans("default", [])
-        assert result["returned_realized"] == 1
+        assert result["returned_realized"] == 0
+        assert len(service.storage.entitlements(state="active")) == 1
+        result = service._persist_active_loans("default", [], reconcile_missing=True)
+        assert result["returned_realized"] == 0
+        assert len(service.storage.entitlements(state="active")) == 1
+        # Synthetic exhaustive result for precisely this digital borrower.
+        changed = service.storage.entitlement_realize_missing_loans(
+            set(), identity_id="default",
+            complete_scopes={("paris", "cred", "reader")},
+        )
+        assert changed == 1
         assert len(service.storage.entitlements(state="realized")) == 1
     finally:
         service.close()
