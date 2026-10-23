@@ -88,7 +88,14 @@ def _run_scoped_audit(service, identity_id, control, finish):
 
 
 def _execute_scoped_audit(service, identity_id, control, finish):
-    """Core-only completion hook; the public broker always returns redacted data."""
+    """Core-only completion hook; the public broker always returns redacted data.
+
+    Budget the initial SQLite/WAL capture *inside* the 600-second envelope,
+    not as an additional 10-second operation before the timed file scan.
+    """
+    # The deadline includes scope checks, preflight and the fresh snapshot.
+    # Parsers retain their stricter individual budgets and read-only rules.
+    deadline = monotonic() + _SCOPED_AUDIT_SECONDS
     try:
         config = service.config
         config_data = config.data
@@ -152,6 +159,12 @@ def _execute_scoped_audit(service, identity_id, control, finish):
             if changed:
                 return aggregate_snapshot_timing(_unavailable({'reconciliation_scope_changed'}))
             return aggregate_snapshot_timing(_unavailable(snapshot.reasons))
+        # A slow but valid SQLite/WAL read consumes the same overall budget
+        # as EPUB SHA/CRC, rights comparison and bibliographic indexing. Do
+        # not begin or label an inventory complete when the envelope expired.
+        remaining_seconds = min(_SCOPED_AUDIT_SECONDS, deadline - monotonic())
+        if remaining_seconds <= 0:
+            return aggregate_snapshot_timing(_unavailable({'audit_time_budget'}))
         # The snapshot was read afresh on this run; cached *file contents*
         # never carry SQLite rights or placement conclusions across runs.
         scope_key = (
@@ -166,8 +179,8 @@ def _execute_scoped_audit(service, identity_id, control, finish):
             service, identity_id, scope_key,
         )
         result = audit_library(
-            database, roots, limits=InventoryLimits(seconds=_SCOPED_AUDIT_SECONDS),
-            seconds=_SCOPED_AUDIT_SECONDS,
+            database, roots, limits=InventoryLimits(seconds=remaining_seconds),
+            seconds=remaining_seconds,
             # The 600-second whole-audit ceiling remains authoritative.
             # Distinct budgets: 30 s proof comparison, 30 s catalogue index,
             # then a reserved 30 s of metadata-only file matching.
