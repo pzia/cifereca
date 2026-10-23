@@ -593,20 +593,27 @@ n'atteste pas la géométrie maximisée : vérification terrain nécessaire
 ## Budget temporel pour la réconciliation interactive complète (#2565, 21/10/2026)
 
 Le broker public `library.reconciliation.read.audit`, pour **l'identité active
-explicitement sélectionnée**, transmet désormais **600 secondes** à la fois
-à l'échéance globale `audit_library(..., seconds=600)` et au plafond
-`InventoryLimits(seconds=600)`. Les valeurs générales des APIs
-`audit_library` (180 secondes) et `scan_identity_roots` (120 secondes) ne
-changent **pas**. En particulier, une inspection CLI ou un autre appel Core
-ne reçoit pas implicitement ce budget.
+explicitement sélectionnée**, dispose d'un budget **global de 600 secondes**.
+L'acquisition initiale du snapshot SQLite/WAL, les vérifications de fraîcheur
+et la préparation des checkpoints consomment **cette même enveloppe**. Une
+fois le snapshot prêt, l'inventaire ne reçoit **pas** les 600 secondes
+restantes en entier : le broker réserve jusqu'à **90 secondes** aux phases
+suivantes (30 s de comparaison des droits, 30 s d'index bibliographique
+et 30 s de rapprochement des fichiers). Si le budget restant est court,
+la réserve est limitée à sa moitié pour laisser un scan utile. Exemple : avec
+600 s restantes après le snapshot, plafond inventaire **510 s**, suivi des
+phases de preuve dans la même échéance globale. Le temps non utilisé par
+l'inventaire peut servir aux phases suivantes ; la réserve ne garantit pas
+que chaque phase bénéficiera de tout son plafond en cas d'expiration globale.
 
-Il ne s'agit **pas** d'un délai garanti pour chaque livre, ni d'un progrès
-à 100 % : les plafonds d'octets, d'entrées, de fichiers, la validation
-individuelle (EPUB/CRC), la recherche de candidats bibliographiques
-(10 secondes par défaut) et le snapshot SQLite/WAL (10 secondes par défaut)
-restent indépendants et bornés. Le snapshot initial, effectué pour vérifier
-les migrations et droits d'identité **avant** l'audit, conserve sa propre
-échéance. L'annulation explicite, le changement de compte/identité/racines
-et les erreurs de lecture terminent l'essai sans convertir une couverture
-incomplète en preuve d'absence. Les résultats demeurent locaux, expurgés
-aux frontières publiques, sans téléchargement ni réparation.
+Les valeurs génériques des APIs `audit_library` (180 secondes) et
+`scan_identity_roots` (120 secondes) ne changent **pas**. La CLI ne reçoit
+pas implicitement cette réservation. Les plafonds d'octets, d'entrées,
+de fichiers, la validation individuelle EPUB/CRC, les lectures nofollow et
+le snapshot SQLite/WAL restent indépendants et bornés : aucune phase ne
+certifie la complétude ni l'absence d'un livre qui n'a pas été inspecté.
+Un inventaire interrompu conserve le verdict `incomplete_scan` même si
+la comparaison des seules observations positives va jusqu'au bout.
+L'annulation, le changement de compte/identité/racines et les erreurs
+de lecture restent des causes explicites de refus ; aucun téléchargement
+ni réparation n'est effectué.
