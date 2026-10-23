@@ -289,6 +289,11 @@ class GutenbergSession(ProviderSession):
             )
             raise _unavailable_opds_xml() from None
 
+        # HTML/login pages and unrelated valid XML are not empty Atom feeds.
+        # A 200 transport success never proves a catalogue zero on wrong XML.
+        if root.tag != f"{{{ATOM}}}feed":
+            raise _unavailable_opds_xml() from None
+
         entries = root.findall(f"{{{ATOM}}}entry")
         stats = {
             "entries": len(entries),
@@ -516,6 +521,8 @@ class GutenbergSession(ProviderSession):
             root = ET.fromstring(content)
         except ET.ParseError:
             # Malformed Atom is an XML failure, not a forged/missing next URL.
+            raise _unavailable_opds_xml() from None
+        if root.tag != f"{{{ATOM}}}feed":
             raise _unavailable_opds_xml() from None
         try:
             base = urlsplit(base_url)
