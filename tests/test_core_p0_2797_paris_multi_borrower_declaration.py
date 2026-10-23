@@ -95,6 +95,14 @@ def test_paris_primary_and_paired_borrowers_can_declare_distinct_local_files(
     assert engine.inspect_declared_link(
         service, relation_id=b.relation_id, **paired
     ).status == "declared_current"
+    # The persisted history must use the same account identity rules as the
+    # writer, not wrongly brand both paired borrowers as disconnected.
+    history = engine.list_declared_links(service, identity_id="default")
+    assert history.total == 2
+    assert {entry.account_id for entry in history.rows} == {
+        "primary", "paired-uid",
+    }
+    assert all(entry.review == "recorded_unverified_file" for entry in history.rows)
     assert rows(service, "entitlements") == original_rights
     assert rows(service, "acquisition_ledger") == original_ledger
     assert not rows(service, "placements")
