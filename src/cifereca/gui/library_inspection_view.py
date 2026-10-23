@@ -11,6 +11,42 @@ from .library_declaration_actions import DeclarationActions
 from .library_declaration_history import PrivateDeclarationHistory
 
 
+def _guided_pair_step_text(stage, provider=None):
+    """Closed, presentation-only progress; never a Core proof or permission."""
+    stages = {
+        'right': '1/4 · Choisir un droit à examiner dans la liste.',
+        'file': '2/4 · Choisir un fichier local. Un indice bibliographique ne prouve aucun droit.',
+        'proof': (
+            '3/4 · Examiner les preuves du droit et du fichier. '
+            'Sans reçu, « Déclarer ce lien » reste une déclaration personnelle non attestée.'
+        ),
+        'eligible': (
+            '3/4 · Préflight favorable : vérifier les preuves actuelles '
+            'avant toute confirmation du placement.'
+        ),
+        'verifying': '3/4 · Vérification locale en cours, aucune écriture.',
+        'confirm': (
+            '4/4 · Preuves revérifiées : confirmer explicitement le placement, '
+            'ou annuler sans rien modifier.'
+        ),
+        'writing': '4/4 · Confirmation reçue : dernière vérification sous verrou.',
+        'blocked': (
+            '3/4 · Placement non autorisé. Consulter le motif du préflight '
+            'ou choisir une autre paire ; aucun fichier modifié.'
+        ),
+        'done': (
+            '4/4 · Placement enregistré. Les preuves de cette vue sont périmées ; '
+            'relancer la réconciliation après fermeture.'
+        ),
+    }
+    if provider == 'paris' and stage not in {'right', 'done'}:
+        return (
+            'Prêt Paris · consultation seule : comparer le droit et le fichier '
+            'sans créer de placement ni transformer un prêt en achat.'
+        )
+    return stages.get(stage, stages['right'])
+
+
 # Core-only closed failure causes: never expose private source text in GTK.
 _INSPECTION_FAILURE_MESSAGES = {
     'snapshot_time_budget': (
@@ -528,6 +564,9 @@ class LocalInspectionController:
         provider = Gtk.DropDown.new_from_strings(list(PROVIDERS.values()))
         provider.set_tooltip_text('Filtrer par fournisseur attesté pour les fichiers ; source déclarée pour les droits')
         state = Gtk.DropDown.new_from_strings(list(STATES.values()))
+        # Start the guided workflow on rights needing examination. Other
+        # states, including missing historical paths, remain selectable.
+        state.set_selected(list(STATES).index('rights_without_verified_file'))
         state.set_tooltip_text('Filtrer par état de preuve')
         search = Gtk.SearchEntry()
         search.set_placeholder_text('Filtrer par titre, auteur, nom ou identifiant…')
@@ -753,6 +792,12 @@ class LocalInspectionController:
         action_scroll.set_child(pair_actions)
         action_scroll.set_min_content_height(40)
         action_scroll.set_visible(False)
+        guide_status = Gtk.Label(label=_guided_pair_step_text('right'), xalign=0)
+        guide_status.set_name('reconciliation-guided-stage')
+        guide_status.set_wrap(True)
+        guide_status.set_margin_start(8)
+        guide_status.set_margin_end(8)
+        toolbar_view.add_bottom_bar(guide_status)
         toolbar_view.add_bottom_bar(action_scroll)
         # Navigation is always visible; the action row is additionally
         # present only when a right has been selected for comparison.
@@ -793,6 +838,10 @@ class LocalInspectionController:
         pair_actions.prepend(declarations.declare)
         pair_actions.insert_child_after(declarations.revoke, declarations.declare)
 
+        def guide(stage):
+            # Text only, with no cached private identifiers or authority.
+            guide_status.set_text(_guided_pair_step_text(stage, selected_provider[0]))
+
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
             # user changes files, filters, identity or the inspection window.
@@ -807,6 +856,8 @@ class LocalInspectionController:
             pair_undo.set_sensitive(False)
             selected_file[0] = file_key
             declarations.reset()
+            guide('proof' if selected_right[0] is not None and file_key is not None
+                  else 'file' if selected_right[0] is not None else 'right')
             pair_prepare.set_sensitive(
                 selected_right[0] is not None and file_key is not None
             )
@@ -1027,11 +1078,13 @@ class LocalInspectionController:
                     and result.attachment_authorized is False
                 )
                 fresh_preview.set_sensitive(fresh_preview.get_visible())
+                guide('eligible' if fresh_preview.get_visible() else 'blocked')
             except Exception:
                 # No raw exception, user metadata or path may cross GTK.
                 pair_explanation.set_text(
                     'Préflight local indisponible. Aucune modification autorisée.'
                 )
+                guide('blocked')
             pair_report.set_visible(True)
             pair_report.set_expanded(True)
 
@@ -1044,6 +1097,7 @@ class LocalInspectionController:
             fresh_preview.set_sensitive(False)
             pair_confirm.set_visible(False)
             pair_confirm.set_sensitive(False)
+            guide('verifying')
             pair_explanation.set_text(
                 'Vérification locale des preuves actuelles… '
                 'Aucun rattachement ne sera effectué.'
@@ -1093,6 +1147,7 @@ class LocalInspectionController:
                 pair_report.set_expanded(True)
                 pair_confirm.set_visible(status == 'preview')
                 pair_confirm.set_sensitive(status == 'preview')
+                guide('confirm' if status == 'preview' else 'blocked')
                 fresh_preview.set_sensitive(True)
 
             def failed(_error):
@@ -1102,6 +1157,7 @@ class LocalInspectionController:
                     pair_explanation.set_text(
                         'Vérification indisponible. Aucun rattachement.'
                     )
+                    guide('blocked')
                     fresh_preview.set_sensitive(True)
 
             self.parent.runner.submit(
@@ -1121,6 +1177,7 @@ class LocalInspectionController:
             pair_confirm.set_sensitive(False)
             fresh_preview.set_sensitive(False)
             pair_prepare.set_sensitive(False)
+            guide('writing')
             # Provider-specific proof, never a shared ISBN or inferred right.
             # The Core will replay the exact transaction under its own lock.
             proof_notice = (
@@ -1191,6 +1248,7 @@ class LocalInspectionController:
                         can_undo = outcome.get('undo_available') is True
                         pair_undo.set_visible(can_undo)
                         pair_undo.set_sensitive(can_undo)
+                        guide('done')
                         pair_explanation.set_text(
                             ('Placement local Kobo enregistré. '
                              if selected_provider[0] == 'kobo' else
