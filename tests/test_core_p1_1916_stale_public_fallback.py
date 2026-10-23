@@ -160,7 +160,7 @@ def test_progressive_transport_outage_keeps_good_live_and_marks_old_as_stale(
         service.close()
 
 
-@pytest.mark.parametrize("failure", ["forbidden", "timeout", "http_408", "rate_limited", "server_error", "legitimate_zero"])
+@pytest.mark.parametrize("failure", ["forbidden", "timeout", "decoding", "http_408", "rate_limited", "server_error", "legitimate_zero"])
 def test_fallback_only_on_public_outage_not_rights_or_real_empty(
     tmp_path, failure,
 ):
@@ -176,6 +176,8 @@ def test_fallback_only_on_public_outage_not_rights_or_real_empty(
                 return []
             if failure == "timeout":
                 raise httpx.ReadTimeout("remote host private")
+            if failure == "decoding":
+                raise httpx.DecodingError("PRIVATE_TOKEN invalid Content-Encoding")
             if failure in {"forbidden", "http_408", "rate_limited", "server_error"}:
                 status = {"forbidden": 403, "http_408": 408, "rate_limited": 429, "server_error": 503}[failure]
                 request = httpx.Request("GET", "https://catalog.example.invalid/search")
@@ -190,7 +192,7 @@ def test_fallback_only_on_public_outage_not_rights_or_real_empty(
             "Maritime Book", force=True, on_batch=batches.append,
         )
         assert len(batches) == 1
-        if failure in {"timeout", "http_408", "rate_limited", "server_error"}:
+        if failure in {"timeout", "decoding", "http_408", "rate_limited", "server_error"}:
             assert len(attempts) == 1
             assert batches[0].results[0].metadata["search_provenance"] == "known_catalog_stale"
             assert summary.providers_failed == 1
@@ -366,5 +368,36 @@ def test_synchronous_fallback_rejects_rights_refusals_and_empty_public_cache(
         assert "SECRET" not in str(service.last_search_warnings)
         if scenario == "no_public":
             assert "aucun résultat connu" in str(service.last_search_warnings)
+    finally:
+        service.close()
+
+
+def test_decoding_failure_keeps_healthy_source_and_private_messages_out(tmp_path):
+    """One network attempt per failed provider; no retry of looser variants."""
+    service = _service(tmp_path)
+    try:
+        _known(service, provider="bad", title="Maritime Book")
+        bad, good = _FakeSession("bad"), _FakeSession("good")
+        calls = []
+        def invalid_encoding(*args, **kwargs):
+            calls.append("bad-read")
+            raise httpx.DecodingError(
+                "https://private.invalid/?token=SECRET_DECODING"
+            )
+        bad.search = invalid_encoding
+        service._sessions = {"bad": bad, "good": good}
+        batches = []
+        result = service.search_progressive(
+            "Maritime Book", force=True, on_batch=batches.append,
+        )
+        assert len(calls) == 1
+        assert result.providers_failed == 1
+        assert any(batch.provider_id == "good" and batch.results
+                   for batch in batches)
+        stale = next(batch for batch in batches if batch.provider_id == "bad")
+        assert stale.error_code == "SearchTemporarilyUnavailable"
+        assert stale.results and stale.results[0].metadata[
+            "search_provenance"] == "known_catalog_stale"
+        assert "SECRET_DECODING" not in repr((result, batches))
     finally:
         service.close()

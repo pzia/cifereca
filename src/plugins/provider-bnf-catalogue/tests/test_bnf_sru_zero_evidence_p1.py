@@ -51,3 +51,18 @@ def test_service_diagnostic_remains_distinct_from_zero():
             '<diagnostic><message>PRIVATE_TOKEN</message></diagnostic>'
             '</diagnostics>'
         ))
+
+
+def test_sru_diagnostic_refusal_does_not_authorize_offline_fallback():
+    from cifereca.search_failures import search_failure_code
+    from cifereca.core.known_catalog_fallback import public_service_unavailable
+
+    with pytest.raises(ProviderError, match="requête refusée") as caught:
+        parse(envelope(
+            '<numberOfRecords>0</numberOfRecords><diagnostics>'
+            '<diagnostic><message>PRIVATE_SIGNED_TOKEN</message></diagnostic>'
+            '</diagnostics>'
+        ))
+    assert search_failure_code(caught.value) is None
+    assert not public_service_unavailable(caught.value)
+    assert "PRIVATE_SIGNED_TOKEN" not in str(caught.value)

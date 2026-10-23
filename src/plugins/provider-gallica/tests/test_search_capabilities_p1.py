@@ -266,3 +266,81 @@ def test_valid_page_is_forwarded_unchanged_to_both_branches(page):
         ("audio", ("Doyle", page, "all")),
     }
     assert session.last_search_warnings == []
+
+
+@pytest.mark.parametrize('status,expected_code', (
+    (401, "SearchAuthenticationRequired"),
+    (403, "SearchAccessDenied"),
+    (400, None),
+    (404, None),
+    (422, None),
+    (429, "SearchTemporarilyUnavailable"),
+    (503, "SearchTemporarilyUnavailable"),
+))
+def test_all_gallica_branches_failed_preserve_http_denial_or_semantic_status(
+    status, expected_code,
+):
+    import httpx
+    from cifereca.search_failures import search_failure_code
+    from cifereca.core.known_catalog_fallback import public_service_unavailable
+    session = fake_session()
+    calls = []
+    def failed_branch(label):
+        def call(*args):
+            calls.append(label)
+            request = httpx.Request("GET", "https://gallica.bnf.fr/?token=PRIVATE_SECRET")
+            response = httpx.Response(status, request=request, text="PRIVATE_BODY")
+            raise httpx.HTTPStatusError("PRIVATE_URL PRIVATE_SECRET",
+                                        request=request, response=response)
+        return call
+    session._search_ebooks = failed_branch("books")
+    session._search_audio = failed_branch("audio")
+    with pytest.raises(ProviderError) as caught:
+        session.search("Doyle")
+    assert sorted(calls) == ["audio", "books"]
+    assert search_failure_code(caught.value) == expected_code
+    assert public_service_unavailable(caught.value) is (expected_code == "SearchTemporarilyUnavailable")
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert "PRIVATE" not in str(caught.value) + repr(session.last_search_warnings)
+
+
+@pytest.mark.parametrize('status,expected_code', (
+    (401, "SearchAuthenticationRequired"),
+    (403, "SearchAccessDenied"),
+))
+def test_mixed_denial_and_timeout_never_enables_stale_fallback(status, expected_code):
+    import httpx
+    from cifereca.search_failures import search_failure_code
+    from cifereca.core.known_catalog_fallback import public_service_unavailable
+    session = fake_session()
+    def denied(*args):
+        req = httpx.Request("GET", "https://gallica.bnf.fr/?auth=PRIVATE_TOKEN")
+        raise httpx.HTTPStatusError("PRIVATE", request=req,
+              response=httpx.Response(status, request=req))
+    def timeout(*args):
+        raise httpx.ReadTimeout("PRIVATE_NET")
+    session._search_ebooks = timeout
+    session._search_audio = denied
+    with pytest.raises(ProviderError) as caught:
+        session.search("Doyle")
+    assert search_failure_code(caught.value) == expected_code
+    assert not public_service_unavailable(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_gallica_partial_branch_still_exposes_healthy_rows_despite_denial():
+    import httpx
+    session = fake_session()
+    book = NS(id="attested", content_type="ebook")
+    session._search_ebooks = lambda *_: [book]
+    def denied(*_):
+        request = httpx.Request("GET", "https://gallica.bnf.fr/PRIVATE?token=SECRET")
+        raise httpx.HTTPStatusError("PRIVATE", request=request,
+                                    response=httpx.Response(403, request=request))
+    session._search_audio = denied
+    assert session.search("Doyle") == [book]
+    assert len(session.last_search_warnings) == 1
+    assert session.last_search_warnings[0].startswith("partial_results")
+    assert "PRIVATE" not in repr(session.last_search_warnings)

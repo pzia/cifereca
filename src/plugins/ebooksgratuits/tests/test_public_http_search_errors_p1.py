@@ -93,3 +93,61 @@ def test_blank_selector_request_is_legitimate_empty_without_http(field):
         assert session.last_search_warnings == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("status,public_status", (
+    (400, None),
+    (401, "SearchAuthenticationRequired"),
+    (403, "SearchAccessDenied"),
+    (404, None),
+    (408, "SearchTemporarilyUnavailable"),
+    (429, "SearchTemporarilyUnavailable"),
+    (500, "SearchTemporarilyUnavailable"),
+))
+@pytest.mark.parametrize("backend", ("html", "opds"))
+def test_wrapped_public_search_keeps_exact_core_refusal_and_outage(
+    status, public_status, backend,
+):
+    from cifereca.search_failures import search_failure_code
+    from cifereca.core.known_catalog_fallback import public_service_unavailable
+    requests = []
+    def handler(request):
+        requests.append(request.method)
+        return httpx.Response(status, text="PRIVATE_TOKEN?secret=SIGNED")
+    session = mod.EbooksSession(
+        credential_id="public", label="", credentials={},
+        options={"acquisition_backend": backend},
+        config={}, diagnostics=None, transport=None,
+    )
+    session.client.close()
+    session.client = httpx.Client(transport=httpx.MockTransport(handler), trust_env=False)
+    session.connected = True
+    try:
+        with pytest.raises(ProviderError) as caught:
+            session.search("Doyle", field="title")
+        assert search_failure_code(caught.value) == public_status
+        assert public_service_unavailable(caught.value) is (
+            public_status == "SearchTemporarilyUnavailable"
+        )
+        assert requests == (["POST"] if backend == "html" else ["GET"])
+        assert caught.value.__cause__ is None
+        assert "PRIVATE" not in str(caught.value)
+        assert "SIGNED" not in str(caught.value)
+    finally:
+        session.close()
+
+
+def test_public_redirect_loop_is_not_fallback_authorization():
+    from cifereca.search_failures import search_failure_code
+    failure = mod._public_search_error(httpx.TooManyRedirects("PRIVATE_TOKEN"))
+    assert search_failure_code(failure) is None
+    assert getattr(failure, "code", None) is None
+    assert "PRIVATE_TOKEN" not in str(failure)
+
+
+def test_public_decoding_error_is_offline_outage_not_catalogue_zero():
+    from cifereca.search_failures import search_failure_code
+    failure = mod._public_search_error(httpx.DecodingError("PRIVATE_TOKEN"))
+    assert search_failure_code(failure) == "SearchTemporarilyUnavailable"
+    assert failure.retryable is False
+    assert "PRIVATE_TOKEN" not in str(failure)

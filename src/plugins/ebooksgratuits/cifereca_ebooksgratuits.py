@@ -211,7 +211,7 @@ def _attested_filter_metadata(selected,label):
     return {}
 
 def _public_search_error(exc):
-    """Return a bounded, stable error; never expose an upstream URL or body."""
+    """Fixed HTTP/transport status; never echo upstream URL, body or headers."""
     status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
     code = (
         'auth_required' if status == 401 else
@@ -219,7 +219,19 @@ def _public_search_error(exc):
         'rate_limited' if status == 429 else
         'service_unavailable'
     )
-    return ProviderError(f'Ebooks libres et gratuits : {code}')
+    failure = ProviderError(f'Ebooks libres et gratuits : {code}')
+    # #1917: protect the Core public-search fallback after wrapping httpx.
+    # Semantic 4xx and unverified redirects are not technical outages.
+    if status == 401:
+        failure.code = 'search_authentication_required'
+    elif status == 403:
+        failure.code = 'search_access_denied'
+    elif (status in {408, 429}
+          or type(status) is int and 500 <= status <= 599
+          or isinstance(exc, (httpx.TransportError, httpx.DecodingError))):
+        failure.code = 'search_temporarily_unavailable'
+        failure.retryable = False
+    return failure
 
 
 # A failed public download is different from a failed search. Convert ONLY
@@ -351,7 +363,7 @@ class EbooksSession(ProviderSession):
         self._accounts=[]
     def _fetch(self,url):
         try:r=self.client.get(url); r.raise_for_status(); return r
-        except httpx.HTTPError as e: raise _public_search_error(e) from e
+        except httpx.HTTPError as e: raise _public_search_error(e) from None
     @staticmethod
     def _search_payload(query,page,page_size=50):
         return {'titre':str(query or '').strip(),'offset':str(page*page_size),'Submit':'Rechercher'}
@@ -410,7 +422,7 @@ class EbooksSession(ProviderSession):
                         'id_auteur':'0','id_categorie':'1','id_genre':'1'}
                 params[selected]=value
                 r=self.client.get(self.base_url+'ebooks.php',params=params); r.raise_for_status()
-            except httpx.HTTPError as e: raise _public_search_error(e) from e
+            except httpx.HTTPError as e: raise _public_search_error(e) from None
         elif field in {'all','title','titre'}:
             if field == 'all' and str(query or '').strip():
                 # The upstream form sends the term as a titre selector. It
@@ -423,7 +435,7 @@ class EbooksSession(ProviderSession):
             if query or page:
                 try:
                     r=self.client.post(self.base_url+'ebooks.php',data=self._search_payload(query,page,self.page_size)); r.raise_for_status()
-                except httpx.HTTPError as e: raise _public_search_error(e) from e
+                except httpx.HTTPError as e: raise _public_search_error(e) from None
             else:
                 r=self._fetch(self.base_url+'ebooks.php')
         else:
@@ -708,7 +720,7 @@ def _opds_fetch(session,url):
                 return _xml_root(b''.join(chunks)),checked
         raise ProviderError('Ebooks libres et gratuits : invalid_opds_link')
     except httpx.HTTPError as e:
-        raise _public_search_error(e) from e
+        raise _public_search_error(e) from None
 
 
 def _opds_links(node,base):
