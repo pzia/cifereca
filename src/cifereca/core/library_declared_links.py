@@ -519,3 +519,100 @@ def list_declared_links(service, *, identity_id, offset=0, limit=50,
     except (ValueError, TypeError, AttributeError, KeyError, RecursionError,
             UnicodeError):
         raise DeclarationRejected('invalid_local_context') from None
+
+
+def withdraw_declared_link(service, *, identity_id, relation_id,
+                           confirmation=None, cancelled=lambda: False,
+                           on_committed=None):
+    """Explicitly withdraw one *user* statement, even when its book is gone.
+
+    This is deliberately NOT an attested-placement undo, entitlement removal,
+    orphan cleanup or source operation. The active profile may retract its
+    own previously recorded assertion after a file was moved/deleted or the
+    provider connection/right expired, without rebuilding a fictitious file
+    observation or reactivating the provider account.
+
+    Preview and confirmation run the same snapshot checks under the normal
+    SQLite writer and acquisition locks; no account, file or proof mutation.
+    """
+    try:
+        _require(_text(identity_id), 'invalid_identity')
+        _require(type(relation_id) is str
+                 and re.fullmatch('[0-9a-f]{32}', relation_id) is not None,
+                 'invalid_relation')
+        _require(confirmation is None or (type(confirmation) is str
+                 and re.fullmatch('[0-9a-f]{64}', confirmation) is not None),
+                 'invalid_confirmation')
+        _require(callable(cancelled), 'invalid_cancellation')
+        _require(on_committed is None or callable(on_committed),
+                 'invalid_commit_hook')
+        current = service.current_identity
+        _require(current is not None and current.identity_id == identity_id,
+                 'identity_not_active')
+        config, storage = service.config, service.storage
+        accounts, identities = service.accounts, service.identities
+        epoch, data = service._account_context_epoch, config.data
+
+        def valid():
+            try:
+                return (service.current_identity is current
+                        and current.identity_id == identity_id
+                        and service.config is config and config.data is data
+                        and service.storage is storage
+                        and service.accounts is accounts
+                        and service.identities is identities
+                        and service._account_context_epoch == epoch)
+            except Exception:
+                return False
+
+        write = confirmation is not None
+        lock = InterProcessLock(acquisition_lock_file()) if write else nullcontext()
+        committed = []
+
+        def notify_commit():
+            if committed and on_committed is not None:
+                on_committed()
+
+        with lock, _transaction(storage, write, notify_commit) as db:
+            _require(valid() and not cancelled(), 'source_scope_changed')
+            records = _records(db)
+            matches = [r for r in records if (
+                r['relation_id'] == relation_id
+                and r['scope']['identity_id'] == identity_id
+            )]
+            _require(len(matches) == 1, 'relation_scope_changed')
+            before = matches[0]
+            if before['state'] == 'revoked':
+                return DeclarationResult('already_revoked',
+                                         relation_id=relation_id)
+            after = {**before, 'state': 'revoked'}
+            token = _token({
+                'operation': 'withdraw-user-declaration/1',
+                'identity': identity_id, 'relation': relation_id,
+                'database': str(storage.path), 'epoch': epoch,
+                'records': records, 'before': before, 'after': after,
+            })
+            if not write:
+                return DeclarationResult('revoke_preview', token,
+                                         relation_id, before=before, after=after)
+            _require(confirmation == token, 'preview_changed')
+            final = {**after, 'revoked_at': int(time.time())}
+            _require(len(_json(final)) <= _MAX_RECORD_BYTES,
+                     'declaration_budget')
+            db.execute('UPDATE metadata SET value=? WHERE key=?',
+                       (_json(final), _PREFIX + relation_id))
+            _require(db.execute('SELECT changes()').fetchone()[0] == 1,
+                     'relation_scope_changed')
+            _require(valid() and not cancelled(), 'source_scope_changed')
+            committed.append(True)
+            return DeclarationResult('revoked', relation_id=relation_id,
+                                     changed=1)
+    except DeclarationRejected:
+        raise
+    except LockBusyError:
+        raise DeclarationRejected('acquisition_busy') from None
+    except (sqlite3.Error, OSError):
+        raise DeclarationRejected('local_storage_unavailable') from None
+    except (ValueError, TypeError, KeyError, AttributeError, RecursionError,
+            UnicodeError):
+        raise DeclarationRejected('invalid_local_context') from None
