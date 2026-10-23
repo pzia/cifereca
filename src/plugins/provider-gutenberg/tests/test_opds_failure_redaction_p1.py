@@ -219,3 +219,36 @@ def test_unverified_next_link_does_not_authorize_offline_fallback():
     assert getattr(caught.value, "code", None) is None
     assert search_failure_code(caught.value) is None
     assert SECRET not in str(caught.value)
+
+@pytest.mark.parametrize('payload', (
+    b"<html><body>No results</body></html>",
+    b"<response><count>0</count></response>",
+))
+def test_well_formed_non_atom_http_200_is_not_empty_catalogue(payload):
+    from cifereca.search_failures import search_failure_code
+    requests = []
+    def handler(req):
+        requests.append(str(req.url))
+        return httpx.Response(200, content=payload)
+    session, diagnostics = session_with_handler(handler)
+    try:
+        with pytest.raises(ProviderError, match="invalid_opds_feed") as caught:
+            session.search("book", page=0)
+        assert len(requests) == 1
+        assert search_failure_code(caught.value) == "SearchTemporarilyUnavailable"
+        assert caught.value.__cause__ is None
+        assert SECRET not in repr(diagnostics.events) + str(caught.value)
+    finally:
+        session.close()
+
+def test_valid_atom_feed_without_entries_is_still_legitimate_zero():
+    calls = []
+    def handler(req):
+        calls.append(1)
+        return httpx.Response(200, content=b'<feed xmlns="http://www.w3.org/2005/Atom"/>')
+    session, _ = session_with_handler(handler)
+    try:
+        assert session.search("book") == []
+        assert calls == [1]
+    finally:
+        session.close()
