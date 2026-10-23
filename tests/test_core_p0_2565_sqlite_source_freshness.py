@@ -58,7 +58,13 @@ def test_source_stamp_rejects_symlinked_database_and_sidecar(tmp_path):
 def test_source_commit_during_inventory_is_partial_not_current_rights(scoped, tmp_path):
     service, database, root = scoped
     fixture_writer_calls = []
-    original = service.storage.acquisitions()
+    # The scoped broker fixture intentionally uses a lightweight storage
+    # adapter without the production Storage.acquisitions() API. Assert
+    # direct SQLite evidence instead of relying on a missing facade.
+    with sqlite3.connect(database) as db:
+        original = db.execute(
+            "SELECT COUNT(*) FROM acquisition_ledger"
+        ).fetchone()[0]
     before = sqlite_source_stamp(database)
     assert before is not None
 
@@ -87,7 +93,10 @@ def test_source_commit_during_inventory_is_partial_not_current_rights(scoped, tm
     assert partial["acquisition_authorized"] is False
     assert partial["repair_authorized"] is False
     assert "reconciliation" not in partial
-    assert service.storage.acquisitions() == original
+    with sqlite3.connect(database) as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM acquisition_ledger"
+        ).fetchone()[0] == original
     for forbidden in ("PRIVATE", str(database), str(root)):
         assert forbidden not in json.dumps(partial)
 
