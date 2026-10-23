@@ -299,6 +299,13 @@ def test_unrecognised_maintenance_tool_gets_independent_guarded_progress():
     assert m.feedback.state.phase == "running"
     assert label.text == "Traitement en cours · 50 %"
     assert "PRIVATE_TOKEN" not in label.text
+    # Invalid counts from a future producer are not a credible progress
+    # percentage and must not flow into the GTK row unchanged.
+    control.report(current=1_000_001, total=1_000_001,
+                   message="PRIVATE_TOKEN bogus maximum")
+    flush(m)
+    assert label.text == "Traitement en cours…"
+    assert spinner.visible and not bar.visible
     worker_args[2](NS(ok=True, summary="Terminé"))
     flush(m)
     assert m.feedback.state.phase == "success"
