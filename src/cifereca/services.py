@@ -666,6 +666,23 @@ class LibraryService:
         if not session.capabilities.loans:
             return []
         rows = session.loans(account)
+        # Never silently rewrite a supplier-provided different identity into
+        # the selected account. Validate the entire batch before mutation,
+        # caching or entitlement persistence; provider exceptions remain closed.
+        if type(rows) is not list or any(
+            type(row) is not Loan
+            or (row.identity_id is not None and row.identity_id != account.identity_id)
+            or row.source_provider != account.provider_id
+            or row.source_credential != account.credential_id
+            or (row.source_account_id is not None
+                and row.source_account_id not in (
+                    account.unique_id,
+                    "primary" if account.provider_id == "paris" and not account.unique_id
+                    else account.unique_id,
+                ))
+            for row in rows
+        ):
+            raise ProviderConfigurationError("Inventaire de prêts : périmètre de compte non conforme")
         for row in rows:
             row.identity_id = account.identity_id
             if row.source_account_id is None:
@@ -2414,8 +2431,10 @@ class LibraryService:
         return library_projection.library_entries(self, identity_id=identity_id, scan=scan, logger=_TRACE_LOG)
 
     def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcile_missing: bool = True) -> dict[str, int]:
-        """Persist current digital loans and realize rights no longer reported."""
-        return library_mutation._persist_active_loans(self, identity_id, loans, reconcile_missing=reconcile_missing)
+        """Persist observed loans; never treat unverified absence as a return."""
+        return library_mutation._persist_active_loans(
+            self, identity_id, loans, reconcile_missing=reconcile_missing,
+        )
 
     @staticmethod
     def _loan_destination_name(title: str, suffix: str = ".epub") -> str:
