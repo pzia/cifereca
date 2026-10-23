@@ -105,9 +105,25 @@ class BaenSession(ProviderSession):
                 code='rate_limited'
             else:
                 code='service_unavailable'
-            raise ProviderError(f'Baen : {code}') from exc
+            failure = ProviderError(f'Baen : {code}')
+            if status == 401:
+                failure.code = 'search_authentication_required'
+            elif status == 403:
+                failure.code = 'search_access_denied'
+            elif status in {408, 429} or 500 <= status <= 599:
+                failure.code = 'search_temporarily_unavailable'
+                failure.retryable = False
+            # The transport exception can contain a signed URL, private
+            # request parameters or a remote body; keep public diagnostics
+            # closed even if a caller inspects __cause__.
+            raise failure from None
         except httpx.HTTPError as exc:
-            raise ProviderError('Baen : service_unavailable') from exc
+            failure = ProviderError('Baen : service_unavailable')
+            if isinstance(exc, (httpx.TransportError, httpx.DecodingError)):
+                failure.code = 'search_temporarily_unavailable'
+                failure.retryable = False
+            # Redirect loops are not evidence of a technical outage.
+            raise failure from None
         out=[]; seen=set()
         for href,body in re.findall(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',r.text,re.I|re.S):
             plain=' '.join(re.sub('<[^>]+>',' ',html.unescape(body)).split())
