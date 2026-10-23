@@ -27,6 +27,7 @@ from PIL import ImageGrab
 
 from x11_input import X11Input
 from gtk_layout_critical import GTK_PHASES_2027
+from maintenance_hit_target import choose_verified_point
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
 from cifereca.locking import InterProcessLock
@@ -224,22 +225,21 @@ def main():
             f"sensitive={button.get_sensitive()} page={window[0].view_stack.get_visible_child_name()}"
         )
         if button.get_root() is window[0] and button in tuple(walk(window[0]._tools_box)):
-            # The GTK4 ActionRow reports unreliable native transformations
-            # under our rootless Xvfb runner (its computed click landed on the
-            # title bar). This isolated screen is fixed at 1024/1280/1366/1600, window
-            # starts at 0,0 and the trailing action is top-right at y=144.
-            # Explicit screen coordinates still send genuine XTEST events.
+            # At 920px the responsive tools row can wrap vertically.
+            # A fixed y=144 may hit an unrelated widget. Before the ONLY
+            # XTEST click, verify the button in GTK's actual window hit tree.
             assert window[0].get_width() > 800, "Unexpected GTK window geometry"
-            # Progress is now a suffix after the preview button. GTK's
-            # horizontal bounds remain usable; keep the verified row y.
             ok, bounds = button.compute_bounds(window[0])
             assert ok, "Preview button horizontal bounds unavailable"
-            x = round(bounds.get_x() + bounds.get_width() / 2)
-            y = 144
-            device[0].click(x, y)
+            x, y = choose_verified_point(
+                window[0], button, bounds, Gtk.PickFlags.DEFAULT,
+            )
+            screen_x, screen_y = device[0].window_point(window[0], x, y)
+            device[0].click(screen_x, screen_y)
             report["pointer_actions"].append({
-                "widget": button.get_name(), "x": x, "y": y,
-                "source": "XTEST pointer/button events (GTK window bounds)",
+                "widget": button.get_name(),
+                "x": screen_x, "y": screen_y,
+                "source": "XTEST pointer/button events (GTK pick-verified bounds)",
             })
         else:
             report["pointer_actions"].append(device[0].click_widget(button))
