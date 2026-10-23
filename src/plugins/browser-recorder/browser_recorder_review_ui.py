@@ -6,6 +6,15 @@ No upload, hidden export, automatic GET replay or raw HAR persistence.
 """
 from __future__ import annotations
 
+try:
+    from cifereca.plugin_api import prefer_downloads_for_save
+except ImportError:
+    # A plugin update must remain compatible with older installed Cores.
+    def _keep_native_folder(_chooser):
+        return False
+
+    prefer_downloads_for_save = _keep_native_folder
+
 import json
 import re
 import unicodedata
@@ -1061,6 +1070,7 @@ class PrivateReviewPanel:
                 f"Enregistrer volontairement le téléchargement {number}",
                 parent, Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
             )
+            prefer_downloads_for_save(chooser)
             chooser.set_current_name(
                 f"cifereca-telechargement-{number:02d}.bin",
             )
@@ -1852,6 +1862,7 @@ class PrivateReviewPanel:
             "Exporter la session privée pour LLM (ZIP en clair)", parent,
             Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
+        prefer_downloads_for_save(chooser)
         chooser.set_current_name(
             getattr(self, "_private_export_suggested_name", _PRIVATE_ZIP_DEFAULT)
         )
@@ -2261,6 +2272,7 @@ class PrivateReviewPanel:
             "Enregistrer le ZIP revu (données sensibles possibles)", parent,
             Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
+        prefer_downloads_for_save(chooser)
         chooser.set_current_name("cifereca-revue.zip")
         self._export_dialog = chooser
 

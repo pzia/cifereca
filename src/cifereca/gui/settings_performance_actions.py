@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from cifereca.plugin_api import prefer_downloads_for_save
+
 
 def bind_settings_performance_actions(
     window, *, page_lifetime, capture_button, export_button, status_label, Gtk,
@@ -135,6 +137,7 @@ def bind_settings_performance_actions(
                 window, Gtk.FileChooserAction.SAVE,
                 "Exporter", "Annuler",
             )
+            prefer_downloads_for_save(chooser)
             chooser.set_current_name("cifereca-performances.json")
 
             def chosen(dialog, response):

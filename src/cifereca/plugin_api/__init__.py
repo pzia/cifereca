@@ -5,6 +5,7 @@ External plugins should import from this package only.  Internal modules such as
 """
 
 from .context import PluginContext
+from cifereca.install_paths import prefer_downloads_for_save
 from .provider_collection import (ProviderCollection, ProviderCollectionSnapshot, VirtualProviderEntry, ProviderCollectionValidationError, validate_provider_collection_snapshot)
 from .provider_search_stream import ProviderSearchEvent, ProviderSearchStream
 from .errors import (AttentionRequired, PluginApiError, UserFacingError, UnsupportedOperation, AuthenticationRequired, ConfigurationRequired, TemporaryUnavailable, NotFound, Conflict, Cancelled)
@@ -86,7 +87,7 @@ __all__ = [
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost", "UiActionHost", "UiBookNavigationHost", "UiLoadedSearchNoticeHost", "UiPluginManagementHost",
     "CatalogBroker", "CatalogueSourceInventoryBroker", "ReleaseUpdateReadBroker", "AcquisitionBroker", "SynchronizationBroker", "SourceMaterializationScheduleBroker", "SourceInventoryRefreshScheduleBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
     "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryReconciliationReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker",
-    "normalize_language_tag", "sanitize_filename_component", "description_text", "description_element", "redact_text",
+    "normalize_language_tag", "sanitize_filename_component", "prefer_downloads_for_save", "description_text", "description_element", "redact_text",
     "normalize_acquisition_offers", "attested_offer_formats", "rank_acquisition_offers", "acquisition_format_projection", "ArtifactInspection", "detect_artifact_format", "inspect_artifact", "inspect_artifact_content", "publish_artifact_content", "publish_artifact_file",
     "ContractStatus", "ContractDefinition", "ContractCheck", "CONTRACT_REGISTRY", "contract_definition", "split_contract", "capability_name_valid", "contract_version_matches", "check_service_contract",
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiPerformanceHost", "UiSearchNavigationHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiBookListEntry", "UiBookDetailAction", "DocumentLink", "UiBookDetailPresentation", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",

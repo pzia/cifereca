@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cifereca.plugin_api import prefer_downloads_for_save
+
 
 def build_settings_diagnostic_callbacks(
     self, *, page_lifetime, refresh_text, diag_text, level_drop,
@@ -102,6 +104,7 @@ def build_settings_diagnostic_callbacks(
             "Exporter",
             "Annuler",
         )
+        prefer_downloads_for_save(chooser)
         chooser.set_current_name("cifereca-diagnostic.txt")
 
         def chosen(dialog, response) -> None:
