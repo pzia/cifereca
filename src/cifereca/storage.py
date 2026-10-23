@@ -1946,6 +1946,68 @@ class Storage:
             )
         return str(row["entitlement_id"])
 
+    def entitlement_put_positive_loan(self, entitlement: Any) -> str:
+        """Upsert an authenticated positive loan without stealing another owner.
+
+        Entitlement IDs intentionally follow upstream source coordinates, not
+        the Cifereca identity: two locally linked identities can therefore
+        derive the *same* PK for one loan. A normal SQLite conflict update
+        could previously reassign that PK's identity/state/metadata to the
+        most recently synchronized profile. Reject a mismatched owner or
+        source atomically in SQLite; never infer that a different borrower
+        had returned or acquired the loan. No receipts or placements are
+        created by this method.
+        """
+        from .acquisition_engine import Entitlement
+        if type(entitlement) is not Entitlement or entitlement.entitlement_type != "loan":
+            raise ValueError("invalid_positive_loan")
+        source = entitlement.source
+        fields = (
+            source.provider_id, source.credential_id, source.account_id,
+            source.identity_id, entitlement.item_id, entitlement.loan_id,
+        )
+        if (any(type(value) is not str for value in fields)
+                or any(not value for value in (
+                    source.provider_id, source.credential_id,
+                    source.identity_id, entitlement.item_id, entitlement.loan_id,
+                ))
+                or any(len(value) > 1024 or any(c in value for c in "\\0\\r\\n")
+                       for value in fields)
+                or entitlement.state != "active"):
+            raise ValueError("invalid_positive_loan")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            cur = db.execute(
+                "INSERT INTO entitlements("
+                "entitlement_id,provider_id,credential_id,account_id,item_id,"
+                "revision_id,entitlement_type,state,loan_id,expires_at,"
+                "metadata_json,discovered_at,updated_at,identity_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(entitlement_id) DO UPDATE SET "
+                "revision_id=excluded.revision_id,state=excluded.state,"
+                "loan_id=excluded.loan_id,"
+                "expires_at=COALESCE(excluded.expires_at,entitlements.expires_at),"
+                "metadata_json=excluded.metadata_json,updated_at=excluded.updated_at "
+                "WHERE entitlements.identity_id IS excluded.identity_id "
+                "AND entitlements.provider_id=excluded.provider_id "
+                "AND entitlements.credential_id=excluded.credential_id "
+                "AND entitlements.account_id IS excluded.account_id "
+                "AND entitlements.item_id=excluded.item_id "
+                "AND entitlements.entitlement_type='loan' "
+                "AND entitlements.loan_id IS excluded.loan_id",
+                (
+                    entitlement.entitlement_id, source.provider_id,
+                    source.credential_id, source.account_id, entitlement.item_id,
+                    entitlement.revision_id, "loan", "active",
+                    entitlement.loan_id, entitlement.expires_at,
+                    self._json_dump(entitlement.metadata), now, now,
+                    source.identity_id,
+                ),
+            )
+            if cur.rowcount != 1:
+                raise ValueError("loan_entitlement_scope_conflict")
+        return entitlement.entitlement_id
+
     def numilog_entitlement_reservations(
         self, *, identity_id: str, credential_id: str, account_id: str,
         candidate_ids: tuple[str, ...],
