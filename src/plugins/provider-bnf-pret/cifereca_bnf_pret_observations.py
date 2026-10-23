@@ -56,7 +56,9 @@ class ObservedLoans:
             raise WebParseError("item_limit")
         current: dict[str, LoanRecord] = {}
         for loan in snapshot.loans:
-            if not isinstance(loan, LoanRecord):
+            if (not isinstance(loan, LoanRecord)
+                    or type(loan.loan_id) is not str
+                    or type(loan.resource_id) is not str):
                 raise WebParseError("invalid_observation")
             if (_id("/loans/" + loan.loan_id, "loans") != loan.loan_id
                     or _id("/resources/" + loan.resource_id, "resources") != loan.resource_id):
