@@ -142,7 +142,8 @@ class BnfReaderPage:
         def reset_buttons():
             worker = self.worker
             mode = worker.state if worker is not None else "closed"
-            same = current() is not None and current()[0] == active_identity
+            observed = current()
+            same = observed is not None and observed[0] == active_identity
             open_button.set_sensitive(worker is None and same)
             consent.set_sensitive(worker is None)
             confirm_button.set_sensitive(same and mode == "login" and not busy)
@@ -152,7 +153,7 @@ class BnfReaderPage:
 
         def scope_ok(worker, scope, generation):
             now = current()
-            return (valid() and self._generation == generation
+            return (valid() and worker is not None and self._generation == generation
                     and self.worker is worker and worker.scope == scope
                     and scope is not None and now is not None
                     and now[0] == scope.identity_id == active_identity)
@@ -283,8 +284,8 @@ class BnfReaderPage:
             identity = current()
             if identity is None or identity[0] != active_identity:
                 sync_profile()
-            if self.worker is not None and self.worker.state == "closed":
-                stop()
+            # The completed TaskHandle owns final error reporting and teardown.
+            # Do not mask its closed error by stopping on an intermediate state.
             reset_buttons()
             return True
 
