@@ -217,8 +217,10 @@ Tests : `python -m unittest discover -s src/plugins/provider-bnf-pret/tests -p t
 
 ## Diagnostic privé de structure DOM — qualification P0 #2055
 
-Après ouverture volontaire de Chromium et confirmation manuelle du compte,
-le lecteur expose « Diagnostiquer les sélecteurs visibles ». Cette action
+Après ouverture volontaire de Chromium, **avant ou après** la confirmation
+manuelle du compte, le lecteur expose « Diagnostiquer les sélecteurs visibles ».
+Cela permet de qualifier une page BnF reconnue même si le DOM d'activité ne
+permet pas encore de confirmer la session. Cette action
 n'effectue **aucune requête réseau** et n'inspecte ni valeurs de champs, ni
 texte, HTML, URL, cookie, formulaire ou stockage. Une évaluation dans la page
 ne renvoie que sept **compteurs de correspondances** de sélecteurs
