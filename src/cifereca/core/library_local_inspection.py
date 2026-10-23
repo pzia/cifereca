@@ -363,6 +363,26 @@ class LocalPage:
     limited: bool
 
 
+# Closed declaration refusal vocabulary. Untrusted exception messages never
+# cross the Core boundary, including when a plugin or SQLite is malformed.
+_DECLARATION_REFUSAL_CODES = frozenset({
+    'account_scope_changed', 'identity_not_active', 'source_scope_changed',
+    'right_scope_changed', 'file_scope_changed', 'file_revalidation_failed',
+    'file_changed_before_commit', 'declaration_conflict', 'placement_conflict',
+    'placement_account_ambiguous', 'placement_coverage_incomplete',
+    'catalogue_conflict', 'preview_changed', 'acquisition_busy',
+    'storage_busy', 'local_storage_unavailable', 'schema_upgrade_required',
+    'directory_migration_pending', 'declaration_budget',
+    'declaration_store_invalid', 'relation_scope_changed',
+    'invalid_local_context',
+})
+
+
+def _declaration_refusal(error):
+    code = str(error)
+    return code if code in _DECLARATION_REFUSAL_CODES else 'unavailable'
+
+
 class LocalInspection:
     """One active identity, bounded private projection, revocation on every read."""
 
@@ -1314,8 +1334,9 @@ class LocalInspection:
                 cancelled=lambda: (cancelled() or not self.valid()
                                    or generation != self._manual_preview_generation),
             )
-        except DeclarationRejected:
-            return {'status': 'blocked', 'read_only': True}
+        except DeclarationRejected as error:
+            return {'status': 'blocked', 'read_only': True,
+                    'reason_code': _declaration_refusal(error)}
         if (not self.valid() or cancelled()
                 or generation != self._manual_preview_generation):
             return {'status': 'unavailable', 'read_only': True}
@@ -1381,8 +1402,9 @@ class LocalInspection:
                                    or generation != self._manual_preview_generation),
                 on_committed=committed_under_lock,
             )
-        except DeclarationRejected:
-            return {'status': 'blocked', 'read_only': True}
+        except DeclarationRejected as error:
+            return {'status': 'blocked', 'read_only': True,
+                    'reason_code': _declaration_refusal(error)}
         if result.status in ('declared', 'already_declared'):
             if acknowledged[0] and self.valid():
                 self._declared_last = (right_key, file_key, result.relation_id)
