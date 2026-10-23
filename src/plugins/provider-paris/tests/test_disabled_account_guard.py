@@ -427,7 +427,7 @@ def test_paris_summary_syracuse_403_dilicom_ok_still_connects(monkeypatch):
     session = _session(diagnostics)
     monkeypatch.setattr(session.client, "login", lambda *_: {"success": True})
     def get(*args, **kwargs):
-        source = kwargs["params"].get("provider")
+        source = kwargs["params"].get("serviceCode")
         if source == "SYRACUSE":
             return httpx.Response(
                 403, json={"message": "PRIVATE"},
