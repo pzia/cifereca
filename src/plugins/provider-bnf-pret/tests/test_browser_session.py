@@ -256,6 +256,23 @@ class BrowserSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(browser.BrowserSessionError, '^unrecognized_dom$'):
             self.session.suggestions(expected=self.session.scope)
 
+    def test_current_visible_detail_requires_exact_book_page_without_navigation(self):
+        self.ready()
+        self.runtime.page.url = browser.ORIGIN + '/resources/synthetic-book'
+        self.runtime.page.html = ('<article itemscope itemtype="https://schema.org/Book">'
+                                  '<span itemprop="name">Titre fictif</span></article>')
+        before = sum(row[0] == 'goto' for row in self.runtime.page.calls)
+        detail = self.session.current_detail(expected=self.session.scope)
+        after = sum(row[0] == 'goto' for row in self.runtime.page.calls)
+        self.assertEqual(detail.records[0].title, 'Titre fictif')
+        self.assertEqual(before, after)
+        self.runtime.page.url = browser.ORIGIN + '/results?q=synthetic'
+        with self.assertRaisesRegex(browser.BrowserSessionError, '^unexpected_page$'):
+            self.session.current_detail(expected=self.session.scope)
+        self.runtime.page.url = browser.ORIGIN + '/resources/synthetic-book?token=private'
+        with self.assertRaisesRegex(browser.BrowserSessionError, '^unexpected_page$'):
+            self.session.current_detail(expected=self.session.scope)
+
     def test_oversized_html_is_rechecked_on_python_boundary(self):
         self.ready()
         self.runtime.page.html = 'x' * (browser.MAX_HTML_BYTES + 1)

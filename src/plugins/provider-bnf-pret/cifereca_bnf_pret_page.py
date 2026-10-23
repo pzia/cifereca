@@ -1,7 +1,7 @@
 """Explicit BnF-Prêt reader page, opt-in and read-only (#2055).
 
 No provider.library registration, implicit SSO, rights ledger, ACSM or
-Browser Recorder. Only fixed outcome codes/counts cross into the UI status.
+Browser Recorder. Only validated on-screen metadata and closed states appear in UI.
 """
 from __future__ import annotations
 
@@ -41,6 +41,11 @@ def selected_identity(rows):
     if type(label) is not str or not 1 <= len(label) <= 128:
         label = "Profil actif"
     return identity, label
+
+
+def readable(value, limit=180):
+    """Bound text for this local GTK display, never for logs or a broker result."""
+    return " ".join(value.split())[:limit] if type(value) is str else ""
 
 
 def safe_error(exc):
@@ -119,8 +124,9 @@ class BnfReaderPage:
         confirm_button = Gtk.Button(label="J'ai terminé la connexion BnF")
         loans_button = Gtk.Button(label="Relire mes prêts")
         search_button = Gtk.Button(label="Lire les résultats visibles")
+        detail_button = Gtk.Button(label="Lire la fiche visible")
         stop_button = Gtk.Button(label="Fermer la session")
-        for button in (open_button, confirm_button, loans_button, search_button, stop_button):
+        for button in (open_button, confirm_button, loans_button, search_button, detail_button, stop_button):
             row.append(button)
         status = Gtk.Label(label="Aucune connexion ni lecture lancée.", xalign=0, wrap=True)
         status.set_selectable(True)
@@ -149,6 +155,7 @@ class BnfReaderPage:
             confirm_button.set_sensitive(same and mode == "login" and not busy)
             loans_button.set_sensitive(same and mode == "readonly" and not busy)
             search_button.set_sensitive(same and mode == "readonly" and not busy)
+            detail_button.set_sensitive(same and mode == "readonly" and not busy)
             stop_button.set_sensitive(worker is not None)
 
         def scope_ok(worker, scope, generation):
@@ -214,6 +221,24 @@ class BnfReaderPage:
                                 f"{count} prêt(s) visibles dans la page BnF ; "
                                 "inventaire non exhaustif, aucun droit publié."
                             )
+                        elif name == "visible_detail":
+                            if len(result.records) != 1:
+                                status.set_label("Fiche non reconnue : aucune notice publiée.")
+                            else:
+                                record = result.records[0]
+                                title = readable(record.title) or "Titre non renseigné"
+                                authors = readable(", ".join(record.authors))
+                                isbn = readable(record.isbn, 24)
+                                availability = ("indisponible" if record.availability == "unavailable"
+                                                else "non déterminée")
+                                parts = ["Fiche visible : " + title]
+                                if authors:
+                                    parts.append("Auteur(s) : " + authors)
+                                if isbn:
+                                    parts.append("ISBN : " + isbn)
+                                parts.append("Disponibilité : " + availability
+                                             + " ; aucune capacité d'emprunt déduite.")
+                                status.set_label("\n".join(parts))
                         else:
                             status.set_label(
                                 f"{len(result.records)} suggestion(s) visibles ; "
@@ -293,6 +318,7 @@ class BnfReaderPage:
         confirm_button.connect("clicked", lambda _b: command("confirm_account"))
         loans_button.connect("clicked", lambda _b: command("loans"))
         search_button.connect("clicked", lambda _b: command("suggestions"))
+        detail_button.connect("clicked", lambda _b: command("visible_detail"))
         stop_button.connect("clicked", stop)
         root.connect("unmap", lambda *_args: stop() if self.worker is not None else None)
 

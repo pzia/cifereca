@@ -67,6 +67,10 @@ class FakeReader:
         self.call('suggestions')
         return ('private-suggestions', expected)
 
+    def current_detail(self, *, expected):
+        self.call('visible_detail')
+        return ('private-detail-visible', expected)
+
     def detail(self, resource_id, *, expected):
         self.call('detail')
         return (resource_id, expected)
@@ -148,6 +152,8 @@ class ReaderWorkerTests(unittest.TestCase):
         self.worker.submit('loans', expected=scope).result(2)
         self.worker.submit('suggestions', expected=scope).result(2)
         self.worker.submit('detail', expected=scope, resource_id='synthetic').result(2)
+        self.assertEqual(self.worker.submit('visible_detail', expected=scope).result(2),
+                         ('private-detail-visible', scope))
         self.worker.stop()
         self.thread.join(2)
         self.assertEqual(self.errors, [])
