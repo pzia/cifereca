@@ -38,7 +38,10 @@ def search_failure_code(error: BaseException) -> str | None:
                 provider_refusal = provider_refusal or "SearchAccessDenied"
             elif provider_code == "search_temporarily_unavailable":
                 unavailable = True
-        if isinstance(error, (httpx.TransportError, ParseError)):
+        # An invalid Content-Encoding body is a protocol/data-read failure:
+        # httpx.DecodingError derives from RequestError, not TransportError.
+        # Distinguish it from redirect loops, which may mean login/auth.
+        if isinstance(error, (httpx.TransportError, httpx.DecodingError, ParseError)):
             unavailable = True
         error = error.__cause__ or error.__context__
     # A closed, built-in provider refusal outranks a generic timeout marker,
