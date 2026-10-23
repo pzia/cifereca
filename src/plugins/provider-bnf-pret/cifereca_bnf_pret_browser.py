@@ -491,7 +491,7 @@ def main():
             command = _ask(
                 session,
                 "Naviguez dans Chromium. [d] sélecteurs, [s] suggestions, "
-                "[l] prêts, [q] quitter : ",
+                "[r] rechercher, [l] prêts, [q] quitter : ",
             )
             if command == "q":
                 break
@@ -503,6 +503,19 @@ def main():
             elif command == "s":
                 result = session.suggestions(expected=session.scope)
                 print("Suggestions observées :", len(result.records), "État :", result.status)
+            elif command == "r":
+                # Explicit operator action; private terms never enter diagnostics,
+                # stdout, TaskBroker, or persistent storage. Invalid input is
+                # recoverable and leaves the reader's session open.
+                query = _ask(session, "Recherche Web explicite (2–128 caractères) : ")
+                try:
+                    result = session.search(query, expected=session.scope)
+                except (BrowserSessionError, WebParseError):
+                    print("Recherche Web indisponible : aucune donnée de droit modifiée.")
+                else:
+                    print("Résultats Web : ", len(result.records),
+                          "notice(s) visibles, état :", result.status,
+                          "(non exhaustif).")
             elif command == "l":
                 result = session.loans(expected=session.scope)
                 print("Prêts observés :", len(result.loans), "État :", result.status)

@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import threading
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -530,6 +532,40 @@ class BrowserSessionTests(unittest.TestCase):
         calls = []
         self.runtime.socket_callback(SimpleNamespace(close=lambda: calls.append('close')))
         self.assertEqual(calls, ['close'])
+
+    def test_cli_explicit_search_keeps_query_out_of_print_and_is_recoverable(self):
+        private = "SYNTHETIC_PRIVATE_SEARCH_123"
+        calls = []
+
+        class FakeSession:
+            scope = browser.ProfileScope("manual-local", "manual-local", "epoch")
+            def __init__(self, *_a):
+                pass
+            def open_login(self, *, consent):
+                self.assert_consent = consent
+            def finish_login(self, *, account_confirmed):
+                calls.append(("login", account_confirmed))
+                return SimpleNamespace(loans=(), status="partial")
+            def search(self, query, *, expected):
+                calls.append(("search", query, expected))
+                if query == private:
+                    return SimpleNamespace(records=(object(),), status="partial")
+                raise browser.BrowserSessionError("invalid_search")
+            def close(self):
+                calls.append(("close",))
+
+        output = StringIO()
+        with patch.object(browser, "ReaderBrowserSession", FakeSession), (
+             patch.object(browser, "_ask",
+                          side_effect=["oui", "r", private, "r", "x", "q"])), (
+             patch("builtins.input", return_value="oui")), redirect_stdout(output):
+            self.assertEqual(browser.main(), 0)
+        self.assertEqual(len([row for row in calls if row[0] == "search"]), 2)
+        self.assertEqual(calls[-1], ("close",))
+        self.assertNotIn(private, output.getvalue())
+        self.assertIn("non exhaustif", output.getvalue())
+        self.assertIn("Recherche Web indisponible", output.getvalue())
+        self.assertTrue(calls[0] == ("login", True))
 
     def test_cli_wait_keeps_browser_events_on_owner_thread(self):
         self.ready()
