@@ -8,7 +8,7 @@ branch-local datetime imports remain late imports.
 """
 from __future__ import annotations
 from typing import Any
-from ..models import Loan
+from ..models import Account, Loan
 
 
 def _paris_digital_inventory_complete(session: Any) -> bool:
@@ -41,6 +41,39 @@ def _paris_inventory_rows_well_formed(rows: Any) -> bool:
         type(row) is Loan
         and type(row.id) is str and bool(row.id)
         and type(row.provider) is str and bool(row.provider)
+        for row in rows
+    )
+
+
+def _paris_inventory_exact_borrower(rows: Any, account: Any) -> bool:
+    """A complete source can prove absence ONLY for its intended borrower.
+
+    The normal Paris adapter stamps every row with the source credential and
+    borrower, including the primary account sentinel. A foreign member's
+    rows (or rows missing these coordinates) cannot certify this member's
+    loan as returned. A row may omit identity_id in the legacy Paris adapter;
+    an explicitly *different* identity is never accepted.
+    """
+    if type(account) is not Account or not _paris_inventory_rows_well_formed(rows):
+        return False
+    if not (
+        type(account.provider_id) is str and account.provider_id == 'paris'
+        and type(account.credential_id) is str and bool(account.credential_id)
+        and type(account.unique_id) is str
+        and type(account.identity_id) is str and bool(account.identity_id)
+    ):
+        return False
+    borrower = account.unique_id or 'primary'
+    return all(
+        type(row.source_provider) is str
+        and row.source_provider == account.provider_id
+        and type(row.source_credential) is str
+        and row.source_credential == account.credential_id
+        and type(row.source_account_id) is str
+        and row.source_account_id == borrower
+        and (row.identity_id is None
+             or (type(row.identity_id) is str
+                 and row.identity_id == account.identity_id))
         for row in rows
     )
 
@@ -83,8 +116,8 @@ def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
     error_type = None
     try:
         loans = session.loans(account)  # ALWAYS direct provider; bypass cached account reads
-        if not _paris_inventory_rows_well_formed(loans):
-            raise ValueError("provider inventory has malformed loan rows")
+        if not _paris_inventory_exact_borrower(loans, account):
+            raise ValueError("provider inventory has malformed or foreign borrower rows")
         # A failed SYRACUSE leg is unrelated to digital loans. Any missing
         # or unrecognized provider error is ambiguous and fails closed.
         if loan.source_provider == "paris" and not _paris_digital_inventory_complete(session):
@@ -121,8 +154,8 @@ def verify_paris_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE
         return {"status": "verification_unavailable", "verification": "unavailable"}
     try:
         rows = session.loans(account)
-        if not _paris_inventory_rows_well_formed(rows):
-            raise ValueError("Paris inventory incomplete or malformed")
+        if not _paris_inventory_exact_borrower(rows, account):
+            raise ValueError("Paris inventory incomplete or foreign borrower")
         if not _paris_digital_inventory_complete(session):
             raise ValueError("Paris digital inventory unverified")
         present = any(
