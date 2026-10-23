@@ -148,6 +148,7 @@ class DiagnosticEntry:
     verified_kobo_backup: bool = False
     verified_browser_recorder: bool = False
     verified_reconciliation: bool = False
+    verified_loan_download: bool = False
 
 
 class Diagnostics:
@@ -185,6 +186,38 @@ class Diagnostics:
         )
         with self._lock:
             self._items.append(entry)
+
+    def add_core_loan_download(self, event: object) -> None:
+        """Core-only terminal result for ONE explicitly requested recovery.
+
+        Generic add() cannot claim verified_loan_download. Strict projection
+        and a constant log grammar prevent a plugin-supplied URL, exception,
+        loan ID, profile or account label from escaping either channel.
+        """
+        from .core.diagnostic_loan_download import public_fields, log_message
+        fields = public_fields(event)
+        if not fields:
+            return
+        status = fields["status"]
+        severity = logging.INFO if status == "success" else logging.WARNING
+        record = self.enabled and (self.level != "errors" or status != "success")
+        if record:
+            entry = DiagnosticEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                category="PNB" if fields["provider_id"] == "paris" else "LOAN",
+                operation="download_loan", status="ok" if status == "success" else status,
+                duration_ms=fields["duration_ms"], detail=fields,
+                verified_loan_download=True,
+            )
+            with self._lock:
+                self._items.append(entry)
+        try:
+            logger = logging.getLogger("cifereca")
+            if logger.isEnabledFor(severity):
+                logger.log(severity, "%s", log_message(fields))
+        except Exception:
+            # Diagnostics are never allowed to alter an acquisition result.
+            pass
 
     def add_core_browser_recorder_result(self, operation: str, code: str, *,
                                          duration_ms=None, output_bytes=None) -> None:
@@ -512,6 +545,8 @@ class Diagnostics:
                     row.pop("verified_browser_recorder", None)
                 if row.get("verified_reconciliation") is False:
                     row.pop("verified_reconciliation", None)
+                if row.get("verified_loan_download") is False:
+                    row.pop("verified_loan_download", None)
             return rows
 
     def text(self, version: str, extra: dict[str, Any] | None = None) -> str:

@@ -1,8 +1,6 @@
 """#2797: persisted declarations are visible after sync, without attestation."""
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
 from cifereca.core.library_declared_links import (
@@ -87,74 +85,73 @@ def test_closed_pagination_and_malformed_metadata_fail_closed(rig):
         list_declared_links(service, identity_id='default')
 
 
-def test_removed_changed_or_ambiguous_live_account_requires_review(rig):
-    """A stale SQLite right is not proof that the provider account is active."""
-    service, book, _, right, _ = rig
-    original_accounts = service.accounts
+@pytest.mark.parametrize('account_drift', (
+    'removed', 'replaced_account', 'reassigned_identity', 'duplicated'
+))
+def test_current_provider_account_drift_is_visible_without_erasing_history(
+        rig, account_drift):
+    """SQLite rights can remain after the actual provider login is removed."""
+    from dataclasses import replace
+
+    service, book, _, _, _ = rig
+    created = apply(rig)
+    baseline = records(service)
+    original = service.accounts
+    previous = list_declared_links(service, identity_id='default')
+    assert previous.rows[0].review == 'recorded_unverified_file'
+    if account_drift == 'removed':
+        service.accounts = []
+    elif account_drift == 'replaced_account':
+        service.accounts = [replace(original[0], unique_id='DIFFERENT-account')]
+    elif account_drift == 'reassigned_identity':
+        service.accounts = [replace(original[0], identity_id='alex')]
+    else:
+        service.accounts = [original[0], original[0]]
+
+    stale = list_declared_links(service, identity_id='default')
+    assert stale.total == 1 and len(stale.rows) == 1
+    assert stale.rows[0].relation_id == created.relation_id
+    assert stale.rows[0].file_path == str(book)
+    assert stale.rows[0].review == 'source_or_right_changed'
+    assert records(service) == baseline
+    assert not rows(service, 'placements')
+    assert not rows(service, 'acquisition_ledger')
+
+    # A later account sync can repair the context, not the declaration.
+    service.accounts = original
+    restored = list_declared_links(service, identity_id='default')
+    assert restored.rows[0].review == 'recorded_unverified_file'
+    assert records(service) == baseline
+
+
+def test_disabled_provider_connection_is_reviewed_not_silently_attested(rig):
+    service, _, _, _, options = rig
     result = apply(rig)
-    baseline = {table: rows(service, table) for table in (
-        'entitlements', 'acquisition_ledger', 'artifacts', 'placements',
-        'backup_items', 'metadata',
-    )}
-    original_bytes = book.read_bytes()
-
-    def view():
-        page = list_declared_links(service, identity_id='default')
-        assert page.total == 1
-        item, = page.rows
-        assert item.relation_id == result.relation_id
-        return item
-
-    assert view().review == 'recorded_unverified_file'
-    service.accounts = []
-    assert view().review == 'source_or_right_changed'
-    service.accounts = [replace(original_accounts[0], unique_id='other-account')]
-    assert view().review == 'source_or_right_changed'
-    service.accounts = original_accounts + original_accounts
-    assert view().review == 'source_or_right_changed'
-
-    # A genuine reappearance after a provider sync can restore the
-    # conservative recorded-only state, never supplier attestation.
-    service.accounts = original_accounts
-    assert view().review == 'recorded_unverified_file'
-    assert {table: rows(service, table) for table in baseline} == baseline
-    assert book.read_bytes() == original_bytes
-
-
-def test_disabled_connection_never_looks_like_current_provider_provenance(rig):
-    service, book, _, right, options = rig
-    result = apply(rig)
-    baseline = {table: rows(service, table) for table in (
-        'entitlements', 'acquisition_ledger', 'artifacts', 'placements',
-        'backup_items', 'metadata',
-    )}
-
-    def view():
-        item, = list_declared_links(service, identity_id='default').rows
-        assert item.relation_id == result.relation_id
-        return item
-
-    assert view().review == 'recorded_unverified_file'
-    assert inspect(rig, result.relation_id).status == 'declared_current'
-    service.storage.provider_connection_put({
+    baseline = records(service)
+    assert list_declared_links(service, identity_id='default').rows[0].review == (
+        'recorded_unverified_file'
+    )
+    # A service can retain an account object after a sync disables the local
+    # provider connection; the persisted right is not current provenance.
+    connection = {
         'identity_id': 'default',
         'provider_id': options['provider_id'],
         'credential_id': options['credential_id'],
-        'label': 'Synthetic connection',
+        'label': 'Fixture disabled connection',
         'enabled': False,
-    })
-    assert view().review == 'source_or_right_changed'
+    }
+    service.storage.provider_connection_put(connection)
+    page = list_declared_links(service, identity_id='default')
+    assert page.total == 1
+    assert page.rows[0].relation_id == result.relation_id
+    assert page.rows[0].review == 'source_or_right_changed'
+    # The detailed inspector must agree: unchanged EPUB/SHA cannot make a
+    # disabled source look like a current supplier declaration.
     assert inspect(rig, result.relation_id).status == 'needs_review'
-    assert list_declared_links(service, identity_id='default',
-                               include_revoked=True).total == 1
-    service.storage.provider_connection_put({
-        'identity_id': 'default',
-        'provider_id': options['provider_id'],
-        'credential_id': options['credential_id'],
-        'label': 'Synthetic connection',
-        'enabled': True,
-    })
-    assert view().review == 'recorded_unverified_file'
+    assert records(service) == baseline
+    assert not rows(service, 'placements')
+    assert not rows(service, 'acquisition_ledger')
+    service.storage.provider_connection_put({**connection, 'enabled': True})
+    page = list_declared_links(service, identity_id='default')
+    assert page.rows[0].review == 'recorded_unverified_file'
     assert inspect(rig, result.relation_id).status == 'declared_current'
-    assert {table: rows(service, table) for table in baseline} == baseline
-    assert book.is_file()

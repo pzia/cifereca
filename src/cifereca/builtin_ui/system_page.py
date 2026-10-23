@@ -1,4 +1,4 @@
-from cifereca.plugin_api import UiPageContribution
+from cifereca.plugin_api import UiPageContribution, prefer_downloads_for_save
 
 
 class SystemPages:
@@ -107,6 +107,7 @@ class SystemPages:
                 "Exporter",
                 "Annuler",
             )
+            prefer_downloads_for_save(chooser)
             chooser.set_current_name("cifereca-diagnostic.txt")
 
             def chosen(dialog, response) -> None:

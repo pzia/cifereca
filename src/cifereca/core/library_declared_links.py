@@ -398,13 +398,14 @@ def inspect_declared_link(service, *, relation_id=None, observation, identity_id
             fresh = revalidate_observed_file(observation, roots, identity_id=identity_id,
                                              cancelled=lambda: cancelled() or not valid())
             _require(valid() and not cancelled(), 'source_scope_changed')
-            # A disabled source connection remains historically recorded,
-            # never a currently reviewable supplier context. Even if file
-            # bytes and the stored loan state are unchanged, the statement
-            # must be shown as needing review rather than "current".
-            matches = (record['file'] == _file(observation)
-                       and fresh.verified
-                       and context['connection']['enabled'] == 1)
+            # The supplier connection may have been disabled after the
+            # declaration. No file/SHA equality can restore live account
+            # context or promote a historical user statement to current.
+            matches = (
+                record['file'] == _file(observation)
+                and fresh.verified
+                and context['connection']['enabled'] == 1
+            )
             try:
                 _collisions(db, scope, observation, _records(db))
             except DeclarationRejected:
@@ -494,33 +495,35 @@ def list_declared_links(service, *, identity_id, offset=0, limit=50,
                         continue
                     review = 'revoked'
                 else:
-                    # A persisted right alone is not a live account: the user
-                    # may have disconnected this credential while old SQLite
-                    # provider_connections and entitlements remain intact.
-                    # Mark that declaration as needing review, not as a
-                    # current supplier association. Never delete it.
+                    # SQLite may preserve an old provider connection and right
+                    # after a user removes/replaces the live account. Never
+                    # show that stale evidence as "unchanged": the declaration
+                    # remains visible, but its source needs explicit review.
+                    # A provider+credential alone is insufficient; account
+                    # and identity must match exactly, without guessing.
                     live_accounts = [
-                        account for account in service.accounts
-                        if account.provider_id == scope['provider_id']
-                        and account.credential_id == scope['credential_id']
+                        account for account in accounts
+                        if (account.provider_id == scope['provider_id']
+                            and account.credential_id == scope['credential_id'])
                     ]
-                    live_account_matches = (
+                    account_current = (
                         len(live_accounts) == 1
                         and live_accounts[0].identity_id == scope['identity_id']
                         and live_accounts[0].unique_id == scope['account_id']
                     )
-                    if not live_account_matches:
+                    if not account_current:
                         review = 'source_or_right_changed'
                     else:
-                        # This checks the current SQLite account/right only;
-                        # neither supplier login nor file SHA is revalidated.
+                        # SQLite equality does not revalidate the EPUB bytes,
+                        # current login, provider licence or an acquisition.
                         try:
                             context = _context(db, scope)
-                            connection_enabled = context['connection']['enabled'] == 1
-                            review = ('recorded_unverified_file'
-                                      if connection_enabled
-                                      and record['right_state'] == _right_state(context)
-                                      else 'source_or_right_changed')
+                            review = (
+                                'recorded_unverified_file'
+                                if (context['connection']['enabled'] == 1
+                                    and record['right_state'] == _right_state(context))
+                                else 'source_or_right_changed'
+                            )
                         except DeclarationRejected:
                             review = 'source_or_right_changed'
                 result.append(DeclaredLinkView(

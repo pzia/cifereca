@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+try:
+    from cifereca.plugin_api import prefer_downloads_for_save
+except ImportError:
+    # Older Core installations can still invoke native Save As.
+    def _keep_native_folder(_chooser):
+        return False
+
+    prefer_downloads_for_save = _keep_native_folder
+
 from .profiles import default_output_path, discover_profiles
 
 
@@ -341,6 +350,7 @@ class OptimizerPage:
             "Enregistrer",
             "Annuler",
         )
+        prefer_downloads_for_save(dialog)
         current = self.output_entry.get_text().strip()
         if current:
             dialog.set_current_name(Path(current).name)

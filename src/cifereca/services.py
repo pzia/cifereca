@@ -2583,6 +2583,66 @@ class LibraryService:
         }
 
     def reacquire_digital_loan(self, loan: Loan) -> dict[str, Any]:
+        """One terminal, closed diagnostic for each *explicit* user recovery.
+
+        This wrapper never turns a failed action into success, retries it,
+        creates an acquisition, or logs arbitrary provider messages. The
+        existing guarded Core orchestration remains the single executor.
+        """
+        from .core.diagnostic_loan_download import CODES
+        from .core.public_provider_diagnostics import registered_public_provider_id
+        started = time.monotonic()
+
+        def emit(status: str, code: str) -> None:
+            try:
+                provider = registered_public_provider_id(
+                    self.registry, getattr(loan, "source_provider", None),
+                )
+                self.diagnostics.add_core_loan_download({
+                    "schema_version": 1, "provider_id": provider,
+                    "operation_kind": "download_loan", "status": status,
+                    "code": code if type(code) is str and code in CODES
+                            else "unclassified_error",
+                    # No phase more specific than completion is attested
+                    # across every early admission and ADEPT failure path.
+                    "phase": "terminal",
+                    "duration_ms": trace_duration_ms(time.monotonic() - started) or 0,
+                })
+            except Exception:
+                # Diagnostics must never change the underlying download error,
+                # especially when a plugin supplies hostile properties.
+                pass
+
+        try:
+            result = self._reacquire_digital_loan_impl(loan)
+        except AttentionRequired as exc:
+            try:
+                code = exc.code
+            except Exception:
+                code = None
+            emit("attention_required", code)
+            raise
+        except ProviderConfigurationError:
+            emit("failed", "provider_failure")
+            raise
+        except Exception:
+            emit("failed", "unclassified_error")
+            raise
+        else:
+            status = result.get("status") if type(result) is dict else None
+            if status == "complete":
+                emit("success", "completed")
+            elif status == "attention_required":
+                candidate = result.get("code")
+                emit("attention_required", candidate)
+            elif status == "retryable_error":
+                candidate = result.get("code")
+                emit("retryable_error", candidate)
+            else:
+                emit("failed", "unclassified_error")
+            return result
+
+    def _reacquire_digital_loan_impl(self, loan: Loan) -> dict[str, Any]:
         """Explicit full recovery, serialized with automatic acquisitions.
 
         Preserve a usable previous acquisition/binding on failed re-acquisition.
