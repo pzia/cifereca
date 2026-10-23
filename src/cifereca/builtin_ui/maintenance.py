@@ -80,7 +80,13 @@ class CacheMaintenance:
             control.report(current=0, total=1, message="Nettoyage des caches…")
         result = self.cache.purge() if self.cache is not None else None
         if control is not None:
-            control.report(current=1, total=1, message="Caches nettoyés")
+            # Progress is evidence of completion, not a substitute for the
+            # backend result. A failed/unavailable purge must not publish 1/1
+            # or "Caches nettoyés" before the terminal error state.
+            if result is not None and result.ok is True:
+                control.report(current=1, total=1, message="Purge des caches effectuée")
+            else:
+                control.report(message="Purge des caches incomplète")
         if result is None:
             return MaintenanceResult(False, 0, "Broker cache indisponible")
         return MaintenanceResult(
