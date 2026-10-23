@@ -1177,7 +1177,6 @@ class LocalInspectionController:
             pair_confirm.set_sensitive(False)
             fresh_preview.set_sensitive(False)
             pair_prepare.set_sensitive(False)
-            guide('writing')
             # Provider-specific proof, never a shared ISBN or inferred right.
             # The Core will replay the exact transaction under its own lock.
             proof_notice = (
@@ -1209,6 +1208,7 @@ class LocalInspectionController:
                 if response != 'apply':
                     reset_pair(chosen_file)
                     return
+                guide('writing')
                 pair_confirm.set_visible(False)
                 pair_explanation.set_text(
                     'Confirmation reçue · vérification transactionnelle en cours…'
