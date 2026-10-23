@@ -109,6 +109,27 @@ def _attachment_refusal_message(outcome: object, provider: object, default: str)
     return default + '\nMotif vérifié : ' + label if label else default
 
 
+def _reconciliation_step_label(stage, provider=None):
+    """Closed, non-private navigation hints; never infer proof from a stage.
+
+    This is only a GTK orientation aid, NOT the Core preflight or a write
+    authorization. Paris attested placements remain read-only.
+    """
+    stages = {
+        'idle': '1/4 · Choisir un droit non vérifié.',
+        'right': '2/4 · Choisir un fichier. Les indices ne prouvent aucun droit.',
+        'file': '3/4 · Examiner les preuves (lecture seule).',
+        'checking': '3/4 · Vérification fraîche en cours · aucune écriture.',
+        'blocked': '3/4 · Preuves insuffisantes · aucun placement autorisé.',
+        'ready': '4/4 · Preuves vérifiées · confirmation humaine requise.',
+        'applying': '4/4 · Confirmation reçue · revalidation sous verrou.',
+        'done': 'Placement enregistré · relancer l’inspection pour actualiser.',
+    }
+    if provider == 'paris' and stage in {'file', 'checking', 'blocked', 'ready'}:
+        return '3/4 · Prêt Paris : examen en lecture seule, sans placement.'
+    return stages.get(stage, stages['idle'])
+
+
 class LocalInspectionController:
     """GTK owner of a cancellable fresh read and its revocable local window."""
 
@@ -528,6 +549,9 @@ class LocalInspectionController:
         provider = Gtk.DropDown.new_from_strings(list(PROVIDERS.values()))
         provider.set_tooltip_text('Filtrer par fournisseur attesté pour les fichiers ; source déclarée pour les droits')
         state = Gtk.DropDown.new_from_strings(list(STATES.values()))
+        # Default to the action-oriented right list before GTK callbacks are
+        # connected; changing the filter later remains entirely user-driven.
+        state.set_selected(list(STATES).index('rights_without_verified_file'))
         state.set_tooltip_text('Filtrer par état de preuve')
         search = Gtk.SearchEntry()
         search.set_placeholder_text('Filtrer par titre, auteur, nom ou identifiant…')
@@ -739,6 +763,18 @@ class LocalInspectionController:
         count.set_hexpand(True)
         close = Gtk.Button(label='Fermer')
         for widget in (previous, count, following, close): footer.append(widget)
+        # Reuse the existing pinned navigation bar rather than adding
+        # another vertical bar: at 920×620 the content still needs enough
+        # height for a physical GTK/XTEST selection. A clipped hint retains
+        # its complete text in the tooltip.
+        guide_status = Gtk.Label(
+            label=_reconciliation_step_label('idle'), xalign=0,
+        )
+        guide_status.set_name('reconciliation-guided-step')
+        guide_status.set_max_width_chars(48)
+        guide_status.set_ellipsize(Pango.EllipsizeMode.END)
+        guide_status.set_tooltip_text(_reconciliation_step_label('idle'))
+        footer.prepend(guide_status)
         # Keep all four stages of the selected-pair workflow visible even
         # when a 600-book audit makes its evidence panes tall. The buttons
         # are THE SAME widgets/callbacks as before, not independent bypasses.
@@ -793,6 +829,11 @@ class LocalInspectionController:
         pair_actions.prepend(declarations.declare)
         pair_actions.insert_child_after(declarations.revoke, declarations.declare)
 
+        def guide(stage):
+            label = _reconciliation_step_label(stage, selected_provider[0])
+            guide_status.set_text(label)
+            guide_status.set_tooltip_text(label)
+
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
             # user changes files, filters, identity or the inspection window.
@@ -806,6 +847,9 @@ class LocalInspectionController:
             pair_undo.set_visible(False)
             pair_undo.set_sensitive(False)
             selected_file[0] = file_key
+            guide('file' if file_key is not None else (
+                'right' if selected_right[0] is not None else 'idle'
+            ))
             declarations.reset()
             pair_prepare.set_sensitive(
                 selected_right[0] is not None and file_key is not None
@@ -1027,11 +1071,13 @@ class LocalInspectionController:
                     and result.attachment_authorized is False
                 )
                 fresh_preview.set_sensitive(fresh_preview.get_visible())
+                guide('file' if fresh_preview.get_visible() else 'blocked')
             except Exception:
                 # No raw exception, user metadata or path may cross GTK.
                 pair_explanation.set_text(
                     'Préflight local indisponible. Aucune modification autorisée.'
                 )
+                guide('blocked')
             pair_report.set_visible(True)
             pair_report.set_expanded(True)
 
@@ -1044,6 +1090,7 @@ class LocalInspectionController:
             fresh_preview.set_sensitive(False)
             pair_confirm.set_visible(False)
             pair_confirm.set_sensitive(False)
+            guide('checking')
             pair_explanation.set_text(
                 'Vérification locale des preuves actuelles… '
                 'Aucun rattachement ne sera effectué.'
@@ -1093,6 +1140,7 @@ class LocalInspectionController:
                 pair_report.set_expanded(True)
                 pair_confirm.set_visible(status == 'preview')
                 pair_confirm.set_sensitive(status == 'preview')
+                guide('ready' if status == 'preview' else 'blocked')
                 fresh_preview.set_sensitive(True)
 
             def failed(_error):
@@ -1102,6 +1150,7 @@ class LocalInspectionController:
                     pair_explanation.set_text(
                         'Vérification indisponible. Aucun rattachement.'
                     )
+                    guide('blocked')
                     fresh_preview.set_sensitive(True)
 
             self.parent.runner.submit(
@@ -1153,6 +1202,7 @@ class LocalInspectionController:
                     reset_pair(chosen_file)
                     return
                 pair_confirm.set_visible(False)
+                guide('applying')
                 pair_explanation.set_text(
                     'Confirmation reçue · vérification transactionnelle en cours…'
                 )
@@ -1179,6 +1229,7 @@ class LocalInspectionController:
                         # immediately, but keep exactly this session open so
                         # its private, non-exported undo token remains usable.
                         placement_committed[0] = True
+                        guide('done')
                         for control in (
                             listing, provider, state, search, previous, following,
                             candidate_prev, candidate_next, manual_toggle,
