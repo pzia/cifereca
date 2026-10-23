@@ -147,6 +147,12 @@ def _execute_scoped_audit(service, identity_id, control, finish):
         progress({'phase': 'snapshot'})
         if cancelled():
             return _unavailable({'reconciliation_scope_changed' if changed else 'audit_cancelled'})
+        # Bracket snapshot acquisition itself: a provider sync may commit
+        # between the SQLite reader's final source check and this worker's
+        # first post-read stat. Never accept a stale image from that race.
+        pre_snapshot_source = sqlite_source_stamp(database)
+        if pre_snapshot_source is None:
+            return _unavailable({'snapshot_changed'})
         snapshot_started = monotonic()
         snapshot = read_library_snapshot(database, cancelled=cancelled, identity_id=identity_id)
         snapshot_ms = max(0, min(30000, int((monotonic() - snapshot_started) * 1000)))
@@ -170,7 +176,7 @@ def _execute_scoped_audit(service, identity_id, control, finish):
         # that a source sync will refrain from writing SQLite during a long
         # SHA/CRC scan. Only non-secret stat fingerprints are held privately.
         snapshot_source = sqlite_source_stamp(database)
-        if snapshot_source is None:
+        if snapshot_source is None or snapshot_source != pre_snapshot_source:
             return aggregate_snapshot_timing(_unavailable({'snapshot_changed'}))
         # The snapshot was read afresh on this run; cached *file contents*
         # never carry SQLite rights or placement conclusions across runs.
