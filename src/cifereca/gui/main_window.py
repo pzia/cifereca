@@ -731,8 +731,15 @@ class MainWindow(Adw.ApplicationWindow):
         for resolved in services:
             tool = resolved.service
             try: info = tool.describe()
-            except Exception as exc:
-                box.append(Gtk.Label(label=f"{resolved.plugin_id}: description indisponible ({exc})", xalign=0)); continue
+            except Exception:
+                # A third-party describe() error may embed credentials, local
+                # paths or URLs. Do not render its text or even a plugin-owned
+                # arbitrary identifier in a status label.
+                box.append(Gtk.Label(
+                    label="Outil de maintenance indisponible : description non vérifiable.",
+                    xalign=0,
+                ))
+                continue
             group = Adw.PreferencesGroup(); box.append(group)
             row = Adw.ActionRow(); row.set_title(info.title); row.set_subtitle(info.description or resolved.plugin_id)
             label = ("Préparer l’analyse…" if getattr(info, "id", None) == "library.reconciliation.audit"
