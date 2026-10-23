@@ -40,6 +40,22 @@ class BnfReaderPageTests(unittest.TestCase):
         self.assertIsNone(page.selected_identity([b] * 129))
         self.assertIsNone(page.selected_identity({"selected": b}))
 
+    def test_reader_actions_wrap_on_narrow_gtk_windows(self):
+        # The 8 controls used to be a single overflowing Gtk.Box; their
+        # availability, including the explicit Close action, is a P0 tester
+        # requirement on laptops. Avoid GTK imports in the offline contract.
+        source = (ROOT / "cifereca_bnf_pret_page.py").read_text(encoding="utf-8")
+        self.assertIn("row = Gtk.FlowBox()", source)
+        self.assertIn("row.set_min_children_per_line(1)", source)
+        self.assertIn("row.set_max_children_per_line(3)", source)
+        self.assertIn("row.set_row_spacing(6)", source)
+        self.assertIn("row.set_selection_mode(Gtk.SelectionMode.NONE)", source)
+        self.assertNotIn(
+            'row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)', source
+        )
+        self.assertIn('stop_button = Gtk.Button(label="Fermer la session")', source)
+        self.assertIn('row.append(button)', source)
+
     def test_no_implicit_browser_on_activation(self):
         calls = []
         context = SimpleNamespace(
