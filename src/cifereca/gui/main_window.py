@@ -1043,14 +1043,28 @@ class MainWindow(Adw.ApplicationWindow):
                             raise
                         raise RuntimeError(failure_message) from None
 
-                # Planning is itself cancellable from GTK. The plugin plan()
-                # signature has no control, so cancellation discards its result;
-                # it must never reopen a stale confirmation after a slow scan.
+                # A producer can opt in to plan_with_progress(context, control).
+                # The worker emits *only bounded counters* to this Core-owned
+                # row. Provider prose is discarded: no book title, path,
+                # account ID or URL can reach GTK via a progress message.
+                # Reconciliation already owns a separate progress protocol.
+                def preview_progress(current, total, _private_message):
+                    if feedback is None or ticket is None:
+                        return
+                    if not (type(current) is int and type(total) is int
+                            and 0 <= current <= total <= 1_000_000):
+                        current = total = None
+                    feedback.report(ticket, current=current, total=total)
+
+                # Planning is cancellable even for legacy plan(context)
+                # producers (whose result must be discarded after cancel).
                 previous_control = cancellation_state["control"]
                 if previous_control is not None:
                     previous_control.cancel()
                 planning_control = MaintenanceCancelControl(
                     owner_closed=lambda: self._closed,
+                    on_progress=(preview_progress if feedback is not None
+                                 and not is_reconciliation else None),
                 )
                 cancellation_state["control"] = planning_control
                 can_cancel_preview = getattr(meta, "cancellable", False) is True
