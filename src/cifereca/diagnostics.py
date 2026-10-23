@@ -489,6 +489,20 @@ class Diagnostics:
         )
         with self._lock:
             self._items.append(entry)
+        # Record only the already-closed aggregate in the rotating local log.
+        # This must never change the offline audit result.
+        try:
+            from .core.diagnostic_reconciliation import public_reconciliation_log_message
+            message = public_reconciliation_log_message(fields)
+            if message is not None:
+                severity = (logging.INFO if status == "complete"
+                            else logging.ERROR if status == "failed"
+                            else logging.WARNING)
+                logger = logging.getLogger("cifereca")
+                if logger.isEnabledFor(severity):
+                    logger.log(severity, "%s", message)
+        except Exception:
+            pass
 
     def snapshot(self) -> list[dict[str, Any]]:
         with self._lock:
