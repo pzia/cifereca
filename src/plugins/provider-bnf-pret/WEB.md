@@ -257,8 +257,11 @@ de droit Core n'est permise par cette seule attestation.
 ## Consultation d'une fiche issue des prêts visibles (#2055)
 
 Après confirmation **humaine** du compte et lecture HTML de l'activité, la
-page propose un numéro de prêt **sur la dernière page observée** (au maximum
-12), puis « Ouvrir la fiche du livre emprunté ». Le geste ouvre exclusivement
+page affiche la liste numérotée des **identifiants publics de fiches BnF** des
+livres présents dans les blocs observés (12 maximum), sans afficher l'ID
+du prêt ou son lien de téléchargement. Elle propose ensuite un numéro de
+livre associé à un prêt **sur la dernière page observée**, puis
+« Ouvrir la fiche du livre emprunté ».  Le geste ouvre exclusivement
 `/resources/{id}` à partir de l'ID canonique lu dans ce bloc ; il **ne suit
 jamais** `/loans/{id}` et ne déclenche ni téléchargement, ni POST, ni retour,
 ni acquisition. Les identifiants privés de prêt ne figurent pas dans l'interface.
