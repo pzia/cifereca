@@ -633,9 +633,9 @@ class DiagnosticsPagePlugin:
 
         filters_bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         module_filter = Gtk.Entry()
-        module_filter.set_placeholder_text("Préfixe module (Entrée pour appliquer)")
+        module_filter.set_placeholder_text("Module ou domaine : Browser, Recorder, Réconciliation (Entrée)")
         module_filter.set_hexpand(True)
-        module_filter.set_tooltip_text("Filtre serveur sur le préfixe de module")
+        module_filter.set_tooltip_text("Filtre global avant pagination : préfixe module ou domaine attesté Browser Recorder / Réconciliation")
         search_filter = Gtk.Entry()
         search_filter.set_placeholder_text("Rechercher dans cette page")
         search_filter.set_hexpand(True)
