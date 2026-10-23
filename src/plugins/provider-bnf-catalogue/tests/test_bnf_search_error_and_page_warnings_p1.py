@@ -147,3 +147,79 @@ def test_invalid_page_clears_stale_partial_warning_without_network():
         assert session.last_search_warnings == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("status,core_code", (
+    (400, None), (404, None),
+    (401, "SearchAuthenticationRequired"), (403, "SearchAccessDenied"),
+    (408, "SearchTemporarilyUnavailable"),
+    (429, "SearchTemporarilyUnavailable"),
+    (503, "SearchTemporarilyUnavailable"),
+))
+def test_sru_failure_preserves_core_refusal_and_stale_policy(status, core_code):
+    from cifereca.search_failures import search_failure_code
+    from cifereca.core.known_catalog_fallback import public_service_unavailable
+
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(
+            status, text="PRIVATE_TOKEN https://catalogue.example/?token=SECRET"
+        )
+    session, events = _session(handler)
+    try:
+        with pytest.raises(ProviderError) as caught:
+            session.search("Doyle", field="author")
+        assert len(calls) == 1  # Never retry an equivalent SRU request.
+        assert search_failure_code(caught.value) == core_code
+        assert public_service_unavailable(caught.value) is (
+            core_code == "SearchTemporarilyUnavailable"
+        )
+        assert caught.value.__cause__ is None
+        assert caught.value.__suppress_context__ is True
+        assert "PRIVATE" not in str(caught.value)
+        assert "SECRET" not in str(caught.value)
+        assert "PRIVATE" not in repr(events)
+    finally:
+        session.close()
+
+
+def test_sru_transport_or_decoding_is_not_an_attested_zero():
+    from cifereca.search_failures import search_failure_code
+    for error in (httpx.ReadTimeout("PRIVATE_TOKEN"),
+                  httpx.DecodingError("PRIVATE_TOKEN")):
+        def handler(request):
+            raise error
+        session, _ = _session(handler)
+        try:
+            with pytest.raises(ProviderError) as caught:
+                session.search("Doyle")
+            assert search_failure_code(caught.value) == "SearchTemporarilyUnavailable"
+            assert caught.value.__cause__ is None
+            assert "PRIVATE_TOKEN" not in str(caught.value)
+        finally:
+            session.close()
+
+
+def test_sru_200_invalid_envelope_never_claims_legitimate_zero():
+    from cifereca.search_failures import search_failure_code
+    cases = [
+        b"<searchRetrieveResponse",
+        b"<html><body>PRIVATE_TOKEN</body></html>",
+        b'<searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/"/>',
+    ]
+    for payload in cases:
+        calls = []
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(200, content=payload)
+        session, _ = _session(handler)
+        try:
+            with pytest.raises(ProviderError, match="invalid_sru_response") as caught:
+                session.search("Doyle")
+            assert len(calls) == 1
+            assert search_failure_code(caught.value) == "SearchTemporarilyUnavailable"
+            assert caught.value.__cause__ is None
+            assert "PRIVATE_TOKEN" not in str(caught.value)
+        finally:
+            session.close()
