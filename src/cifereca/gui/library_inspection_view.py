@@ -743,6 +743,17 @@ class LocalInspectionController:
         # when a 600-book audit makes its evidence panes tall. The buttons
         # are THE SAME widgets/callbacks as before, not independent bypasses.
         # Horizontal scrolling prevents clipped confirmation at 920 px.
+        # Readable, fixed-vocabulary guidance stays above the pinned actions.
+        # This is presentation state only: no proof, receipt or permission.
+        stage_label = Gtk.Label(
+            label='1/4 Choisir un droit · 2/4 Choisir un fichier · '
+                  '3/4 Examiner les preuves · 4/4 Confirmation non disponible',
+            xalign=0,
+        )
+        stage_label.set_name('reconciliation-guided-stages')
+        stage_label.set_wrap(True)
+        stage_label.add_css_class('dim-label')
+        toolbar_view.add_bottom_bar(stage_label)
         pair_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         pair_actions.append(manual_toggle)
         for action in (pair_prepare, fresh_preview, pair_confirm, pair_undo):
@@ -793,6 +804,44 @@ class LocalInspectionController:
         pair_actions.prepend(declarations.declare)
         pair_actions.insert_child_after(declarations.revoke, declarations.declare)
 
+        def show_stage(phase='choose'):
+            # Never infer supplier rights from a selected EPUB or ISBN.
+            # A stage only reports what this exact private session has done.
+            if selected_right[0] is None:
+                stage_label.set_text(
+                    '1/4 Choisir un droit · 2/4 Choisir un fichier · '
+                    '3/4 Examiner les preuves · 4/4 Confirmation non disponible'
+                )
+                return
+            if selected_file[0] is None:
+                stage_label.set_text(
+                    '1/4 Droit sélectionné · 2/4 Choisir un fichier · '
+                    '3/4 Preuves non examinées · 4/4 Aucune confirmation'
+                )
+                return
+            captions = {
+                'choose': ('Préflight à lancer', 'Confirmation non disponible'),
+                'preview_needed': ('Préflight lu · revalidation nécessaire',
+                                   'Confirmation non disponible'),
+                'blocked': ('Preuves insuffisantes ou vérification refusée',
+                            'Aucune écriture autorisée'),
+                'checking': ('Vérification locale en cours', 'Aucune écriture'),
+                'ready': ('Preuves revérifiées pour cette paire',
+                          'Confirmation explicite requise'),
+                'committing': ('Revalidation sous verrou en cours',
+                               'Écriture non encore confirmée'),
+                'committed': ('Placement local revalidé et enregistré',
+                              'Relancer l’inspection ou annuler ici'),
+            }
+            evidence, next_action = captions.get(phase, captions['choose'])
+            if selected_provider[0] == 'paris' and phase in {'choose', 'blocked'}:
+                evidence = 'Prêt Paris · consultation seule des preuves'
+                next_action = 'Aucun placement fournisseur automatique'
+            stage_label.set_text(
+                f'1/4 Droit sélectionné · 2/4 Fichier sélectionné · '
+                f'3/4 {evidence} · 4/4 {next_action}'
+            )
+
         def reset_pair(file_key=None):
             # Invalidate even a still-running SQLite/SHA preview when the
             # user changes files, filters, identity or the inspection window.
@@ -813,6 +862,7 @@ class LocalInspectionController:
             pair_report.set_expanded(False)
             pair_report.set_visible(False)
             pair_explanation.set_text('')
+            show_stage()
 
         def valid():
             if self.session is session and self.alive() and session.valid():
@@ -998,6 +1048,7 @@ class LocalInspectionController:
             if (not valid() or selected_right[0] is None
                     or selected_file[0] is None):
                 return
+            decision = 'blocked'
             try:
                 result = session.preflight_manual_link(
                     selected_right[0], selected_file[0],
@@ -1027,6 +1078,8 @@ class LocalInspectionController:
                     and result.attachment_authorized is False
                 )
                 fresh_preview.set_sensitive(fresh_preview.get_visible())
+                if fresh_preview.get_visible():
+                    decision = 'preview_needed'
             except Exception:
                 # No raw exception, user metadata or path may cross GTK.
                 pair_explanation.set_text(
@@ -1034,6 +1087,7 @@ class LocalInspectionController:
                 )
             pair_report.set_visible(True)
             pair_report.set_expanded(True)
+            show_stage(decision)
 
         def preview_fresh_pair(*_args):
             if (not valid() or selected_right[0] is None
@@ -1048,6 +1102,7 @@ class LocalInspectionController:
                 'Vérification locale des preuves actuelles… '
                 'Aucun rattachement ne sera effectué.'
             )
+            show_stage('checking')
 
             def read():
                 return session.preview_manual_attachment(
@@ -1094,6 +1149,7 @@ class LocalInspectionController:
                 pair_confirm.set_visible(status == 'preview')
                 pair_confirm.set_sensitive(status == 'preview')
                 fresh_preview.set_sensitive(True)
+                show_stage('ready' if status == 'preview' else 'blocked')
 
             def failed(_error):
                 if (valid() and version == pair_version[0]
@@ -1103,6 +1159,7 @@ class LocalInspectionController:
                         'Vérification indisponible. Aucun rattachement.'
                     )
                     fresh_preview.set_sensitive(True)
+                    show_stage('blocked')
 
             self.parent.runner.submit(
                 'Vérification locale avant rattachement', read, completed, failed,
@@ -1156,6 +1213,7 @@ class LocalInspectionController:
                 pair_explanation.set_text(
                     'Confirmation reçue · vérification transactionnelle en cours…'
                 )
+                show_stage('committing')
 
                 def commit():
                     return session.confirm_manual_attachment(
@@ -1205,6 +1263,7 @@ class LocalInspectionController:
                         )
                         pair_report.set_visible(True)
                         pair_report.set_expanded(True)
+                        show_stage('committed')
                         return
                     if status == 'already_linked':
                         self.clear()
@@ -1226,6 +1285,7 @@ class LocalInspectionController:
                         ))
                         pair_report.set_visible(True)
                         pair_report.set_expanded(True)
+                        show_stage('blocked')
 
                 def failed(_error):
                     if (self.session is session and self.alive()
@@ -1240,6 +1300,7 @@ class LocalInspectionController:
                             )
                             pair_report.set_visible(True)
                             pair_report.set_expanded(True)
+                            show_stage('blocked')
 
                 self.parent.runner.submit(
                     'Confirmation du placement local', commit, completed, failed,
