@@ -1673,6 +1673,7 @@ class DiagnosticsPagePlugin:
                 selected_source = SOURCES[int(source_selector.get_selected())]
                 selected_period = PERIODS[int(period_selector.get_selected())]
                 selected_module = module_filter.get_text().strip()
+                selected_domain = DOMAIN_CHOICES[int(domain_selector.get_selected())][0]
                 selected_provider = provider_filter.get_text().strip()
                 selected_severity = SEVERITIES[int(severity_selector.get_selected())]
                 selected_snapshot = ai_snapshot.get_active()
@@ -1705,7 +1706,7 @@ class DiagnosticsPagePlugin:
                 return prepare_analysis(
                     self.llm, broker, source=selected_source,
                     module=selected_module, severity=selected_severity,
-                    provider_id=selected_provider,
+                    provider_id=selected_provider, domain=selected_domain,
                     since=explorer_since(selected_period),
                     include_snapshot=selected_snapshot,
                     include_support_report=selected_support_report,
@@ -1774,6 +1775,7 @@ class DiagnosticsPagePlugin:
                 f"{preview['manual_lines']} lignes de journal sélectionné (signaux seulement). "
                 f"Périmètre demandé : {scope['source']} · "
                 f"{scope['module'] or 'tous modules'} · "
+                f"{scope.get('domain') or 'tous domaines'} · "
                 f"{scope['severity'] or 'tous niveaux'} · "
                 f"depuis {scope['since'] or 'tout historique'} · "
                 f"diagnostics structurés : {'oui' if scope['include_snapshot'] else 'non'} · "
@@ -1912,6 +1914,7 @@ class DiagnosticsPagePlugin:
         source_selector.connect("notify::selected", invalidate_ai)
         severity_selector.connect("notify::selected", invalidate_ai)
         period_selector.connect("notify::selected", invalidate_ai)
+        domain_selector.connect("notify::selected", invalidate_ai)
         module_filter.connect("changed", invalidate_ai)
         provider_filter.connect("changed", invalidate_ai)
         ai_snapshot.connect("toggled", invalidate_ai)
