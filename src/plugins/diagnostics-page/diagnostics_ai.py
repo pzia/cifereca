@@ -21,7 +21,7 @@ import stat
 from typing import Any
 
 from cifereca.plugin_api import LLMRequest
-from diagnostics_explorer import public_source_evidence, public_provider_id
+from diagnostics_explorer import public_source_evidence, public_provider_id, diagnostic_domain
 
 _MAX_PROMPT = 3000
 _MAX_USER_LOG_BYTES = 65536
@@ -513,7 +513,7 @@ def _valid_since(since: object) -> bool:
 def prepare_analysis(
     llm: Any, diagnostics_broker: Any, *, source: str = "all",
     since: str | None = None, module: str = "", severity: str = "",
-    provider_id: str = "",
+    provider_id: str = "", domain: str = "",
     include_snapshot: bool = False, include_support_report: bool = False,
     manual_log: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -529,6 +529,7 @@ def prepare_analysis(
         raise ValueError("unsupported_module")
     if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
         raise ValueError("unsupported_provider")
+    domain_code = diagnostic_domain(domain)
     if type(severity) is not str or severity not in (
         "", "debug", "info", "warning", "error", "critical",
     ):
@@ -576,6 +577,7 @@ def prepare_analysis(
     scope = {
         "source": source, "module": module, "severity": severity,
         **({"provider_id": provider_id} if provider_id else {}),
+        **({"domain": domain_code} if domain_code else {}),
         "since": since, "include_snapshot": include_snapshot,
         "include_support_report": include_support_report,
     }
@@ -585,6 +587,8 @@ def prepare_analysis(
                  since=since, until=None, limit=_MAX_EVENTS, offset=0)
     if provider_id:
         query["provider_id"] = provider_id
+    if domain_code:
+        query["domain"] = domain_code
     feed = diagnostics_broker.events(**query)
     if not isinstance(feed, Mapping):
         raise ValueError("diagnostics_unavailable")
@@ -598,6 +602,12 @@ def prepare_analysis(
         # A broker ignoring the exact filter must not produce an apparently
         # scoped preview or consent request for another provider's events.
         raise ValueError("diagnostics_provider_scope_mismatch")
+    if domain_code and any(
+        not isinstance(item, Mapping) or item.get("source") != "core_events"
+        or item.get("domain") != domain_code
+        for item in events
+    ):
+        raise ValueError("diagnostics_domain_scope_mismatch")
     raw_total = feed.get("total")
     # The Core can return a full, correctly bounded page with more matching
     # events beyond it. Do not mistake 24/500 for complete coverage.
