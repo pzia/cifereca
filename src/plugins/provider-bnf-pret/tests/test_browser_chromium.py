@@ -146,6 +146,15 @@ class ChromiumReaderTests(unittest.TestCase):
         choices.close()
         self.assertEqual(choices.visible_book_lines(), ())
 
+    def test_real_book_controls_probe_stays_on_public_fiche(self):
+        self.session.detail('synthetic-book', expected=self.session.scope)
+        result = self.session.book_actions(expected=self.session.scope)
+        self.assertEqual((result.borrow_controls, result.booking_controls,
+                          result.unavailable_markers), (1, 0, 1))
+        self.assertIs(result.borrow_authorized, False)
+        self.assertEqual(self.session._page.url,
+                         browser.ORIGIN + '/resources/synthetic-book')
+
     def test_real_request_guard_blocks_post_and_loan_get(self):
         results = self.session._page.evaluate("""async () => {
           const blocked = async (url, options) => {
