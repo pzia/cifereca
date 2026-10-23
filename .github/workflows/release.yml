@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
 
     steps:
@@ -138,6 +138,20 @@ jobs:
             --validate-with-update-dev \
             --update-dev /tmp/cifereca-release-installed/bin/cifereca-update-dev
 
+      - name: Build attested Linux x86_64 Python 3.11 offline release
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          python scripts/prepare-admitted-wheelhouse.py --include-plugin-deps
+          python scripts/package-offline-release.py --out "dist/cifereca-offline-$(cat VERSION)-linux-x86_64-py311.zip"
+
+      - name: Cold offline ZIP install and plugin smoke before publication
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          PIP_NO_INDEX: "1"
+          CIFERECA_PLUGIN_DEPS_OFFLINE: "1"
+        run: python scripts/ci-offline-release-gate.py "dist/cifereca-offline-$(cat VERSION)-linux-x86_64-py311.zip"
+
       - name: Validate exact Core release assets and generate SHA-256 checksums
         shell: bash
         run: |
@@ -147,9 +161,10 @@ jobs:
           wheel="cifereca-$version-py3-none-any.whl"
           dev="cifereca-dev-plugins-$sha.zip"
           bundle="cifereca-plugins-all-in-one-$sha.zip"
+          offline="cifereca-offline-$version-linux-x86_64-py311.zip"
           # Refuse publishing any unreviewed archive, diagnostic dump, log
           # or profile accidentally deposited into dist by a future step.
-          mapfile -t expected < <(printf '%s\n' "$wheel" "$dev" "$bundle" | LC_ALL=C sort)
+          mapfile -t expected < <(printf '%s\n' "$wheel" "$dev" "$bundle" "$offline" | LC_ALL=C sort)
           mapfile -t actual < <(find dist -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
           if [[ "${actual[*]}" != "${expected[*]}" ]]; then
             echo 'Unexpected Core release artifact set; refusing publication.' >&2
@@ -160,12 +175,13 @@ jobs:
           done
           (
             cd dist
-            sha256sum "$wheel" "$dev" "$bundle" > SHA256SUMS
+            sha256sum "$wheel" "$dev" "$bundle" "$offline" > SHA256SUMS
           )
           {
             echo "RELEASE_WHEEL=$wheel"
             echo "RELEASE_DEV=$dev"
             echo "RELEASE_BUNDLE=$bundle"
+            echo "RELEASE_OFFLINE=$offline"
           } >> "$GITHUB_ENV"
 
       - name: Install Cosign for Core release provenance
@@ -178,7 +194,7 @@ jobs:
         run: |
           set -euo pipefail
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
-          for artifact in "dist/$RELEASE_WHEEL" "dist/$RELEASE_DEV" "dist/$RELEASE_BUNDLE"; do
+          for artifact in "dist/$RELEASE_WHEEL" "dist/$RELEASE_DEV" "dist/$RELEASE_BUNDLE" "dist/$RELEASE_OFFLINE"; do
             cosign sign-blob --yes --bundle "$artifact.sigstore.json" "$artifact"
             test -s "$artifact.sigstore.json"
             cosign verify-blob "$artifact" \
@@ -213,7 +229,7 @@ jobs:
           {
             printf '# Cifereca %s\n\n' "$RELEASE_TAG"
             printf 'Distribution Core et plugins de release, construite sur le commit vérifié [%s](https://github.com/%s/commit/%s).\n\n' "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_SHA"
-            printf '%s\n' '- Artefacts : wheel Core, ZIP de développement, ZIP all-in-one, SHA256SUMS et trois bundles de signature Sigstore.'
+            printf '%s\n' '- Artefacts : wheel Core, ZIP de développement, ZIP all-in-one, ZIP Core hors ligne Linux x86_64/Python 3.11, SHA256SUMS et quatre bundles de signature Sigstore.'
             printf '%s\n\n' '- Tous les octets et signatures sont vérifiés avant publication ; consulter SHA256SUMS pour les téléchargements.'
             printf 'Inventaire de versions : [plugin-release.json](https://github.com/%s/blob/%s/src/cifereca/plugin-release.json).\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA"
           } > "$notes_file"
@@ -231,10 +247,11 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" \
             "dist/$RELEASE_WHEEL" "dist/$RELEASE_DEV" \
-            "dist/$RELEASE_BUNDLE" "dist/SHA256SUMS" \
+            "dist/$RELEASE_BUNDLE" "dist/$RELEASE_OFFLINE" "dist/SHA256SUMS" \
             "dist/$RELEASE_WHEEL.sigstore.json" \
             "dist/$RELEASE_DEV.sigstore.json" \
             "dist/$RELEASE_BUNDLE.sigstore.json" \
+            "dist/$RELEASE_OFFLINE.sigstore.json" \
             --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Verify downloaded Core release draft assets
@@ -258,7 +275,7 @@ jobs:
           done
           (cd "$downloaded" && sha256sum -c SHA256SUMS)
           identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
-          for archive in "$RELEASE_WHEEL" "$RELEASE_DEV" "$RELEASE_BUNDLE"; do
+          for archive in "$RELEASE_WHEEL" "$RELEASE_DEV" "$RELEASE_BUNDLE" "$RELEASE_OFFLINE"; do
             test -s "$downloaded/$archive.sigstore.json"
             cosign verify-blob "$downloaded/$archive" \
               --bundle "$downloaded/$archive.sigstore.json" \
