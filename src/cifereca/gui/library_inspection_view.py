@@ -109,6 +109,31 @@ def _attachment_refusal_message(outcome: object, provider: object, default: str)
     return default + '\nMotif vérifié : ' + label if label else default
 
 
+def _guided_pair_instruction(*, right_selected: bool, file_selected: bool,
+                             confirmation_available: bool = False) -> str:
+    """Closed UX guidance only; never an entitlement or placement decision."""
+    if not right_selected:
+        return (
+            '1/4 · Choisir un droit : commencez par les droits sans fichier '
+            'vérifié. Vous pouvez modifier les filtres ci-dessus.'
+        )
+    if not file_selected:
+        return (
+            '2/4 · Choisir un fichier local du même profil. '
+            'Un ISBN commun ou un candidat proposé ne prouve aucun droit.'
+        )
+    if confirmation_available:
+        return (
+            '4/4 · Vérification fraîche favorable. La confirmation explicite '
+            'est facultative ; le Core revérifiera encore avant toute écriture.'
+        )
+    return (
+        '3/4 · Examiner les preuves de cette paire. '
+        '« Préparer le rattachement » exige les preuves fournisseur ; '
+        '« Déclarer ce lien » consigne seulement votre choix, sans reçu.'
+    )
+
+
 class LocalInspectionController:
     """GTK owner of a cancellable fresh read and its revocable local window."""
 
@@ -529,6 +554,10 @@ class LocalInspectionController:
         provider.set_tooltip_text('Filtrer par fournisseur attesté pour les fichiers ; source déclarée pour les droits')
         state = Gtk.DropDown.new_from_strings(list(STATES.values()))
         state.set_tooltip_text('Filtrer par état de preuve')
+        # The usual task is to associate an unverified right, not to sift
+        # through hundreds of local files and historical missing placements.
+        # This changes only the initial private filter, never any evidence.
+        state.set_selected(list(STATES).index('rights_without_verified_file'))
         search = Gtk.SearchEntry()
         search.set_placeholder_text('Filtrer par titre, auteur, nom ou identifiant…')
         search.set_hexpand(True)
@@ -542,6 +571,16 @@ class LocalInspectionController:
         shortcuts.append(show_files)
         shortcuts.append(show_rights)
         box.append(shortcuts)
+        guidance = Gtk.Label(
+            label=_guided_pair_instruction(
+                right_selected=False, file_selected=False
+            ),
+            xalign=0,
+        )
+        guidance.set_name('reconciliation-guided-stage')
+        guidance.set_wrap(True)
+        guidance.set_selectable(True)
+        box.append(guidance)
         history_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         hide_history = Gtk.CheckButton(label='Masquer les anciens emplacements')
         hide_history.set_active(True)
@@ -806,6 +845,10 @@ class LocalInspectionController:
             pair_undo.set_visible(False)
             pair_undo.set_sensitive(False)
             selected_file[0] = file_key
+            guidance.set_text(_guided_pair_instruction(
+                right_selected=selected_right[0] is not None,
+                file_selected=file_key is not None,
+            ))
             declarations.reset()
             pair_prepare.set_sensitive(
                 selected_right[0] is not None and file_key is not None
@@ -1093,6 +1136,10 @@ class LocalInspectionController:
                 pair_report.set_expanded(True)
                 pair_confirm.set_visible(status == 'preview')
                 pair_confirm.set_sensitive(status == 'preview')
+                guidance.set_text(_guided_pair_instruction(
+                    right_selected=True, file_selected=True,
+                    confirmation_available=status == 'preview',
+                ))
                 fresh_preview.set_sensitive(True)
 
             def failed(_error):
