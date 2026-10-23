@@ -90,3 +90,17 @@ def test_release_producer_captures_python_plugin_requirements_without_network():
     assert any(req.startswith("httpx") for req in rows)
     assert len(rows) == len(set(rows))
     assert all("://" not in req for req in rows)
+
+
+def test_release_archive_rejects_symlinked_parent_directory(tmp_path):
+    source, files = _release(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "private.txt").write_text("NEVER PACK")
+    (source / "indirect").symlink_to(outside, target_is_directory=True)
+    output = tmp_path / "offline.zip"
+    with pytest.raises(ValueError):
+        packager.create_archive(
+            source, output, files=(*files, source / "indirect" / "private.txt"),
+        )
+    assert not output.exists()
