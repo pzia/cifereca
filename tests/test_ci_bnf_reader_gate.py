@@ -61,6 +61,16 @@ class BnfReaderGateTests(unittest.TestCase):
         result.failures.append(('case', 'failure'))
         self.assertFalse(gate.successful(result))
 
+    def test_optional_browser_runtime_does_not_activate_generic_headed_tests(self):
+        workflow = (ROOT / '.github/workflows/pr-ci.yml').read_text()
+        step = workflow.split('- name: BnF reader real Chromium acceptance', 1)[1].split('\n      - name:', 1)[0]
+        self.assertIn('python -m venv "$RUNNER_TEMP/bnf-reader-venv"', step)
+        self.assertNotIn('--system-site-packages', step)
+        self.assertNotIn('python -m pip install', step)
+        self.assertIn('"$bnf_python" -m pip install', step)
+        self.assertIn('"$bnf_python" -m playwright install --with-deps chromium', step)
+        self.assertIn('"$bnf_python" scripts/ci_bnf_reader_gate.py run', step)
+
 
 if __name__ == '__main__':
     unittest.main()
