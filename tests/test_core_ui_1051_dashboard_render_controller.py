@@ -542,7 +542,7 @@ def test_p1_1867_optional_numilog_catalogue_not_mistaken_for_purchases():
     render()
     labels = _descendant_labels(window.dashboard_cards.children[0])
     assert "2 livres locaux · aucune source de prêt configurée" in labels
-    assert "Sources : Numilog (Mes achats), Numilog (Catalogue public) (à connecter)" in labels
+    assert "Sources : Numilog (Mes achats), Numilog (Catalogue public) (recherche indisponible)" in labels
 
 
 def test_p1_1867_loan_evidence_or_unknown_source_keeps_existing_count():
@@ -591,3 +591,18 @@ def test_p1_1867_no_implicit_provider_call_for_unrecognized_or_malformed_scope()
     assert "0 livres locaux · — prêts de bibliothèque connus" in labels[1]
     assert "0 livres locaux · aucune source de prêt configurée" in labels[2]
     assert events == ["statistics", "snapshot"]
+
+def test_p1_1867_catalogue_descriptor_with_scope_already_named_not_duplicated():
+    card = _card(
+        providers=["numilog"],
+        statistics={"local_books": 0, "known_loans": None},
+        sources=[{
+            "provider_id": "numilog-catalog",
+            "label": "Numilog — Catalogue public", "connected": True,
+        }],
+    )
+    window, _, _, _, render = _window([card])
+    render()
+    labels = _descendant_labels(window.dashboard_cards.children[0])
+    assert "Sources : Numilog — Catalogue public" in labels
+    assert "Catalogue public (Catalogue public)" not in str(labels)
