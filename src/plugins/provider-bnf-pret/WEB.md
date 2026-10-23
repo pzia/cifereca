@@ -272,3 +272,19 @@ l'identité, au compte local et à l'époque du worker. Un livre observé dans
 un bloc de prêt ne garantit pas qu'un droit est encore valide et **ne crée
 aucune écriture de ledger**. L'ordre affiché est seulement celui des blocs DOM,
 pas celui d'un inventaire exhaustif.
+
+
+## Contrôles d'emprunt — préqualification sans mutation (#2055)
+
+Après consultation explicite d'une **fiche BnF déjà ouverte**, le bouton
+« Examiner les contrôles d'emprunt (lecture seule) » compte uniquement les
+éléments DOM associés à « Emprunter », « Réserver » et « Indisponible », dans
+la racine microdata Book reconnue. Aucune URL, aucun champ de formulaire, jeton
+CSRF, compte, titre ou HTML n'est récupéré. La session et la page doivent rester
+identiques du début à la fin de la lecture ; toute redirection, query signée
+ou identité modifiée invalide le diagnostic. Aucun nouveau GET/POST n'est lancé.
+
+**Présence d'un bouton ≠ disponibilité, éligibilité, consentement ou emprunt
+autorisé.** Ce diagnostic ne publie aucune capacité d'emprunt, aucun droit et
+aucun fichier. L'automatisation du formulaire réel reste hors service jusqu'à
+qualification de ses états et preuve d'une confirmation humaine explicite.

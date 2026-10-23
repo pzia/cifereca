@@ -187,6 +187,19 @@ class BnfReaderPageTests(unittest.TestCase):
         self.assertTrue(page.account_confirmation_ready(
             page.selected_identity([a]), "a", True))
 
+    def test_book_control_counters_never_authorize_loan(self):
+        from cifereca_bnf_pret_book_actions import BookActionSignals
+        from cifereca_bnf_pret_web import ProfileScope
+        result = BookActionSignals(ProfileScope('private', 'private', 'epoch'), 1, 2, 1)
+        summary = page.book_action_summary(result)
+        self.assertIn('1 contrôle(s) Emprunter', summary)
+        self.assertIn('aucune disponibilité ni autorisation', summary)
+        self.assertNotIn('private', summary)
+        self.assertEqual(page.book_action_summary(object()), page._DEFAULT_ERROR)
+        self.assertEqual(page.book_action_summary(
+            BookActionSignals(ProfileScope('i', 'a', 'e'), 102, 0, 0)),
+            page._DEFAULT_ERROR)
+
     def test_browser_exception_is_never_rendered(self):
         secret = "reader@example.test?SAMLResponse=PRIVATE"
         self.assertNotIn(secret, page.safe_error(RuntimeError(secret)))

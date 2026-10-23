@@ -12,6 +12,7 @@ from cifereca_bnf_pret_observations import ObservedLoans, ObservedLoanCounts
 from cifereca_bnf_pret_selection import VisibleResourceSelection
 from cifereca_bnf_pret_loan_selection import VisibleLoanBookSelection
 from cifereca_bnf_pret_dom_probe import DomProbe
+from cifereca_bnf_pret_book_actions import BookActionSignals
 import re
 
 _MESSAGES = {
@@ -127,6 +128,23 @@ def dom_probe_message(probe):
             + ". Valeurs plafonnées à 101. Aucun compte, droit ou inventaire attesté.")
 
 
+def book_action_summary(signals):
+    """Local counts are never evidence of a loan right or a permitted POST."""
+    if not isinstance(signals, BookActionSignals):
+        return _DEFAULT_ERROR
+    fields = (signals.borrow_controls, signals.booking_controls,
+              signals.unavailable_markers)
+    if any(type(x) is not int or not 0 <= x <= 101 for x in fields):
+        return _DEFAULT_ERROR
+    return (
+        f"Fiche : {fields[0]} contrôle(s) Emprunter ; "
+        f"{fields[1]} contrôle(s) Réserver ; "
+        f"{fields[2]} indicateur(s) Indisponible. "
+        "Indices DOM uniquement : aucune disponibilité ni autorisation "
+        "d'emprunt attestée. Aucun clic ni POST effectué."
+    )
+
+
 def safe_error(exc):
     """Translate only an allowlisted adapter code, never print exception text."""
     if not isinstance(exc, BrowserSessionError):
@@ -220,10 +238,11 @@ class BnfReaderPage:
         loans_button = Gtk.Button(label="Relire mes prêts")
         search_button = Gtk.Button(label="Lire les résultats visibles")
         detail_button = Gtk.Button(label="Lire la fiche visible")
+        actions_button = Gtk.Button(label="Examiner les contrôles d'emprunt (lecture seule)")
         probe_button = Gtk.Button(label="Diagnostiquer les sélecteurs visibles")
         stop_button = Gtk.Button(label="Fermer la session")
         for button in (open_button, confirm_button, loans_button, search_button,
-                       detail_button, probe_button, stop_button):
+                       detail_button, actions_button, probe_button, stop_button):
             row.append(button)
         search_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         search_field = Gtk.Entry()
@@ -293,6 +312,7 @@ class BnfReaderPage:
             search_field.set_sensitive(same and mode == "readonly" and not busy)
             search_action.set_sensitive(same and mode == "readonly" and not busy)
             detail_button.set_sensitive(same and mode == "readonly" and not busy)
+            actions_button.set_sensitive(same and mode == "readonly" and not busy)
             probe_button.set_sensitive(same and mode in {"login", "readonly"} and not busy)
             choose_button.set_sensitive(
                 same and mode == "readonly" and not busy and self.selection is not None
@@ -442,6 +462,8 @@ class BnfReaderPage:
                                 status.set_label(message)
                         elif name == "dom_probe":
                             status.set_label(dom_probe_message(result))
+                        elif name == "book_actions":
+                            status.set_label(book_action_summary(result))
                         elif name in ("visible_detail", "detail", "loan_detail"):
                             if len(result.records) != 1:
                                 status.set_label("Fiche non reconnue : aucune notice publiée.")
@@ -567,6 +589,7 @@ class BnfReaderPage:
         search_button.connect("clicked", lambda _b: command("suggestions"))
         search_action.connect("clicked", lambda _b: command("search"))
         detail_button.connect("clicked", lambda _b: command("visible_detail"))
+        actions_button.connect("clicked", lambda _b: command("book_actions"))
         probe_button.connect("clicked", lambda _b: command("dom_probe"))
         choose_button.connect("clicked", lambda _b: command("detail"))
         loan_book_button.connect("clicked", lambda _b: command("loan_detail"))

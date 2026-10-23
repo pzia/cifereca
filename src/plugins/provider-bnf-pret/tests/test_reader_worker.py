@@ -71,6 +71,10 @@ class FakeReader:
         self.call('dom_probe')
         return ('private-probe', expected)
 
+    def book_actions(self, *, expected):
+        self.call('book_actions')
+        return ('private-book-signals', expected)
+
     def search(self, query, *, expected):
         self.call('search')
         assert expected == self.scope
@@ -162,6 +166,8 @@ class ReaderWorkerTests(unittest.TestCase):
         self.worker.submit('suggestions', expected=scope).result(2)
         self.assertEqual(self.worker.submit('dom_probe', expected=scope).result(2),
                          ('private-probe', scope))
+        self.assertEqual(self.worker.submit('book_actions', expected=scope).result(2),
+                         ('private-book-signals', scope))
         self.assertEqual(
             self.worker.submit('search', expected=scope, search_query='Synthetic title').result(2),
             ('private-search', 'Synthetic title', scope),
@@ -194,6 +200,15 @@ class ReaderWorkerTests(unittest.TestCase):
         for name in ('borrow', 'download', 'return', 'open_login', lambda: None):
             with self.assertRaisesRegex(Error, '^unsupported_reader_command$'):
                 self.worker.submit(name, expected=scope)
+
+    def test_book_controls_cannot_take_resource_or_query_or_mutate(self):
+        scope = self.start()
+        self.confirm(scope)
+        for kwargs in ({'resource_id': 'synthetic'}, {'search_query': 'private'}):
+            with self.assertRaises(Error):
+                self.worker.submit('book_actions', expected=scope, **kwargs)
+        self.assertEqual(self.worker.submit('book_actions', expected=scope).result(2)[0],
+                         'private-book-signals')
 
     def test_probe_rejects_unscoped_requests_and_mutating_arguments(self):
         scope = self.start()
