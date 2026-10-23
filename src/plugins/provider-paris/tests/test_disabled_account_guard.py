@@ -373,3 +373,83 @@ def test_untyped_paris_login_failure_stays_generic(monkeypatch):
         assert "SECRET_URL" not in repr(diagnostics.rows)
     finally:
         session.close()
+
+
+@pytest.mark.parametrize(("status", "expected"), [
+    (403, "paris_summary_http_forbidden"),
+    (401, "paris_summary_http_unauthorized"),
+    (429, "paris_summary_rate_limited"),
+    (502, "paris_summary_upstream_unavailable"),
+])
+def test_paris_summary_http_failure_diagnostic_is_closed_and_scoped(
+    monkeypatch, status, expected,
+):
+    diagnostics = RecordingDiagnostics()
+    session = _session(diagnostics)
+    secret = "PRIVATE_ACCOUNT_OR_COOKIE"
+    monkeypatch.setattr(session.client, "login", lambda *_: {"success": True})
+    def get(*args, **kwargs):
+        return httpx.Response(
+            status, json={"message": secret},
+            request=httpx.Request("GET", "https://bibliotheques.paris.fr/private/"),
+        )
+    monkeypatch.setattr(session.client.client, "get", get)
+    monkeypatch.setattr(session.client, "pairings", lambda: pytest.fail(
+        "pairings must not run after two summary errors",
+    ))
+    try:
+        with pytest.raises(Exception):
+            session.connect()
+        assert session.connected is False
+        for upstream in ("SYRACUSE", "DILICOM"):
+            assert any(
+                args[:3] == ("API", f"summary {upstream}", "error")
+                and kwargs.get("detail", {}).get("code") == expected
+                for args, kwargs in diagnostics.rows
+            )
+            assert any(
+                args[:3] == ("API", f"summary {upstream}", "error")
+                and len(args) > 4 and args[4].get("code") == expected
+                for args, kwargs in diagnostics.rows
+            )
+        assert secret not in repr(diagnostics.rows)
+        assert any(
+            args[:3] == ("AUTH", "Paris connection", "error")
+            and kwargs.get("detail", {}).get("code") == "paris_summary_unavailable"
+            for args, kwargs in diagnostics.rows
+        )
+    finally:
+        session.close()
+
+
+def test_paris_summary_syracuse_403_dilicom_ok_still_connects(monkeypatch):
+    diagnostics = RecordingDiagnostics()
+    session = _session(diagnostics)
+    monkeypatch.setattr(session.client, "login", lambda *_: {"success": True})
+    def get(*args, **kwargs):
+        source = kwargs["params"].get("serviceCode")
+        if source == "SYRACUSE":
+            return httpx.Response(
+                403, json={"message": "PRIVATE"},
+                request=httpx.Request("GET", "https://bibliotheques.paris.fr/"),
+            )
+        return httpx.Response(
+            200, json={
+                "success": True,
+                "d": {"AccountSummary": {"DisplayName": "Lecteur", "Status": "active"}},
+            }, request=httpx.Request("GET", "https://bibliotheques.paris.fr/"),
+        )
+    monkeypatch.setattr(session.client.client, "get", get)
+    monkeypatch.setattr(session.client, "pairings", lambda: [])
+    try:
+        accounts = session.connect()
+        assert len(accounts) == 1
+        assert session.connected is True
+        assert any(
+            args[:2] == ("API", "summary SYRACUSE")
+            and kwargs.get("detail", {}).get("code") == "paris_summary_http_forbidden"
+            for args, kwargs in diagnostics.rows
+        )
+        assert "PRIVATE" not in repr(diagnostics.rows)
+    finally:
+        session.close()

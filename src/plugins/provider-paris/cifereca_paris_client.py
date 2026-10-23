@@ -64,6 +64,22 @@ class AuthenticationError(ParisError):
         super().__init__(message)
         self.code = code
 
+PARIS_SUMMARY_HTTP_CODES = frozenset({
+    "paris_summary_http_forbidden", "paris_summary_http_unauthorized",
+    "paris_summary_rate_limited", "paris_summary_upstream_unavailable",
+})
+
+
+class ParisSummaryHTTPError(ParisError):
+    """Closed reason for a failed account-summary HTTP response."""
+
+    def __init__(self, code: str) -> None:
+        if code not in PARIS_SUMMARY_HTTP_CODES:
+            raise ValueError("invalid_paris_summary_http_reason")
+        super().__init__("Compte Paris : réponse HTTP indisponible")
+        self.code = code
+
+
 class ParisClient:
     def __init__(self, base_url: str = BASE_URL, timeout: float = 25.0, diagnostics: Any | None = None,
                  client_factory: Callable[[], httpx.Client] | None = None):
@@ -214,6 +230,9 @@ class ParisClient:
             )
             if category == "AUTH" and isinstance(exc, AuthenticationError):
                 detail["code"] = exc.code
+            if (category == "API" and operation.startswith("summary ")
+                    and isinstance(exc, ParisSummaryHTTPError)):
+                detail["code"] = exc.code
             if not private_operation:
                 detail["message"] = str(exc)[:240]
             self.diagnostics.add(category, operation, "error", int((time.perf_counter()-start)*1000), detail)
@@ -310,6 +329,17 @@ class ParisClient:
     def summary(self, provider: str = "SYRACUSE", uid: str = "") -> dict[str, Any]:
         def work():
             r = self.client.get(f"{self.base_url}{ACCOUNT_SERVICE}/RetrieveAccountSummary", params=self._params(provider, uid), headers=self._api_headers())
+            # Distinguish server/WAF refusals from disabled credentials without
+            # logging any upstream response or signed endpoint URL.
+            reason = (
+                "paris_summary_http_forbidden" if r.status_code == 403 else
+                "paris_summary_http_unauthorized" if r.status_code == 401 else
+                "paris_summary_rate_limited" if r.status_code == 429 else
+                "paris_summary_upstream_unavailable" if 500 <= r.status_code <= 599
+                else None
+            )
+            if reason is not None:
+                raise ParisSummaryHTTPError(reason)
             data = self._json(r, f"summary {provider}")
             d = data.get("d") if isinstance(data.get("d"), dict) else {}
             return d.get("AccountSummary") if isinstance(d.get("AccountSummary"), dict) else d
