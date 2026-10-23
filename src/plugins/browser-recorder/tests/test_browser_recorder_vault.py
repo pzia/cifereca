@@ -330,3 +330,43 @@ def test_selected_limit_is_in_reviewed_coverage_and_manifest():
     finally:
         review.destroy()
         trace.destroy()
+
+
+
+def test_completed_vault_and_private_zip_contain_no_pending_response(tmp_path):
+    """Only synthetic values: persist a sealed trace, then reopen from AES-GCM."""
+    from browser_recorder_http import PrivateExchange
+    from browser_recorder_private_zip import save_session_llm_zip
+    from zipfile import ZipFile
+
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/api/book/214", status=200,
+        mime="application/json", response_body_state="pending",
+        response_body_reason="pending",
+    ))
+    trace.finish_open_requests()
+    assert trace.exchanges[0].response_body_reason == "unfinished"
+    assert trace.omitted["unfinished"] == 1
+
+    vault = PrivateSessionVault(tmp_path / "vault")
+    writer = vault.begin(PASSPHRASE)
+    writer.save(trace, "completed", force=True)
+    reopened = vault.open(writer.session_id, PASSPHRASE)
+    try:
+        assert reopened.state == "completed"
+        row = reopened.trace.exchanges[0]
+        assert row.response_body_state == "unfinished"
+        assert row.response_body_reason == "unfinished"
+        assert reopened.trace.omitted["unfinished"] == 1
+        destination = tmp_path / "consented-private.zip"
+        save_session_llm_zip(reopened, destination, confirmed=True)
+        with ZipFile(destination) as archive:
+            payload = json.loads(archive.read("trace.json"))
+        assert payload["exchanges"][0]["response_body_reason"] == "unfinished"
+        assert payload["omitted"]["unfinished"] == 1
+        assert all(e["response_body_reason"] != "pending"
+                   for e in payload["exchanges"])
+    finally:
+        reopened.trace.destroy()
+        trace.destroy()
