@@ -86,6 +86,14 @@ def loan_observation_status(counts):
             "Observations partielles, aucun droit actif attesté ou publié.")
 
 
+def account_confirmation_ready(observed, identity_id, acknowledged):
+    """Human declaration bound to the sole currently selected Core identity."""
+    return (acknowledged is True
+            and type(identity_id) is str and bool(identity_id)
+            and type(observed) is tuple and len(observed) == 2
+            and observed[0] == identity_id)
+
+
 def valid_search_text(value):
     """A search is an explicit, bounded user input, never an account URL."""
     return (type(value) is str and 2 <= len(value) <= 128
@@ -196,6 +204,11 @@ class BnfReaderPage:
             label="J'autorise l'ouverture d'une session Chromium éphémère pour le profil actif."
         )
         root.append(consent)
+        account_ack = Gtk.CheckButton(
+            label="Je confirme utiliser dans Chromium le compte BnF correspondant "
+                  "au profil Cifereca affiché (déclaration personnelle, non vérifiée automatiquement)."
+        )
+        root.append(account_ack)
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         root.append(row)
         open_button = Gtk.Button(label="Ouvrir le portail BnF")
@@ -257,7 +270,12 @@ class BnfReaderPage:
             same = observed is not None and observed[0] == active_identity
             open_button.set_sensitive(worker is None and same)
             consent.set_sensitive(worker is None)
-            confirm_button.set_sensitive(same and mode == "login" and not busy)
+            account_ack.set_sensitive(same and mode == "login" and not busy)
+            confirm_button.set_sensitive(
+                same and mode == "login" and not busy
+                and account_confirmation_ready(observed, active_identity,
+                                               account_ack.get_active())
+            )
             loans_button.set_sensitive(same and mode == "readonly" and not busy)
             search_button.set_sensitive(same and mode == "readonly" and not busy)
             search_field.set_sensitive(same and mode == "readonly" and not busy)
@@ -289,6 +307,7 @@ class BnfReaderPage:
                 self._stop()
                 busy = False
                 active_identity = new_id
+                account_ack.set_active(False)
                 preview.set_label("")
                 search_field.set_text("")
                 status.set_label("Le profil actif a changé : ancienne session révoquée.")
@@ -305,6 +324,12 @@ class BnfReaderPage:
             generation = self._generation
             if busy or not scope_ok(worker, scope, generation):
                 sync_profile()
+                return
+            if name == "confirm_account" and not account_confirmation_ready(
+                    current(), scope.identity_id, account_ack.get_active()):
+                status.set_label(
+                    "Confirmez d'abord que le compte BnF utilisé correspond au profil actif."
+                )
                 return
             search_query = None
             if name == "search":
@@ -362,6 +387,8 @@ class BnfReaderPage:
                         status.set_label(message)
                     else:
                         preview.set_label("")
+                        if name == "confirm_account":
+                            account_ack.set_active(False)
                         if name in ("confirm_account", "loans"):
                             try:
                                 if self.observations is None:
@@ -432,6 +459,7 @@ class BnfReaderPage:
                 status.set_label("Consentement explicite nécessaire avant l'ouverture.")
                 return
             consent.set_active(False)
+            account_ack.set_active(False)
             preview.set_label("")
             generation = self._generation + 1
             self._generation = generation
@@ -461,6 +489,7 @@ class BnfReaderPage:
                         message = safe_error(exc)
                     self._stop()
                     busy = False
+                    account_ack.set_active(False)
                     preview.set_label("")
                     search_field.set_text("")
                     status.set_label(message)
@@ -473,6 +502,7 @@ class BnfReaderPage:
             nonlocal busy
             self._stop()
             busy = False
+            account_ack.set_active(False)
             preview.set_label("")
             search_field.set_text("")
             status.set_label("Session fermée et observations privées invalidées.")
@@ -492,6 +522,7 @@ class BnfReaderPage:
 
         open_button.connect("clicked", start)
         confirm_button.connect("clicked", lambda _b: command("confirm_account"))
+        account_ack.connect("toggled", lambda *_args: reset_buttons())
         loans_button.connect("clicked", lambda _b: command("loans"))
         search_button.connect("clicked", lambda _b: command("suggestions"))
         search_action.connect("clicked", lambda _b: command("search"))
