@@ -1,6 +1,8 @@
 """#2797: persisted declarations are visible after sync, without attestation."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from cifereca.core.library_declared_links import (
@@ -83,3 +85,74 @@ def test_closed_pagination_and_malformed_metadata_fail_closed(rig):
                    ('core.library.user-declaration.v1.bad', '{BROKEN'))
     with pytest.raises(DeclarationRejected, match='invalid_local_context'):
         list_declared_links(service, identity_id='default')
+
+
+def test_removed_changed_or_ambiguous_live_account_requires_review(rig):
+    """A stale SQLite right is not proof that the provider account is active."""
+    service, book, _, right, _ = rig
+    original_accounts = service.accounts
+    result = apply(rig)
+    baseline = {table: rows(service, table) for table in (
+        'entitlements', 'acquisition_ledger', 'artifacts', 'placements',
+        'backup_items', 'metadata',
+    )}
+    original_bytes = book.read_bytes()
+
+    def view():
+        page = list_declared_links(service, identity_id='default')
+        assert page.total == 1
+        item, = page.rows
+        assert item.relation_id == result.relation_id
+        return item
+
+    assert view().review == 'recorded_unverified_file'
+    service.accounts = []
+    assert view().review == 'source_or_right_changed'
+    service.accounts = [replace(original_accounts[0], unique_id='other-account')]
+    assert view().review == 'source_or_right_changed'
+    service.accounts = original_accounts + original_accounts
+    assert view().review == 'source_or_right_changed'
+
+    # A genuine reappearance after a provider sync can restore the
+    # conservative recorded-only state, never supplier attestation.
+    service.accounts = original_accounts
+    service.storage.entitlement_put(right)
+    assert view().review == 'recorded_unverified_file'
+    assert {table: rows(service, table) for table in baseline} == baseline
+    assert book.read_bytes() == original_bytes
+
+
+def test_disabled_connection_never_looks_like_current_provider_provenance(rig):
+    service, book, _, right, options = rig
+    result = apply(rig)
+    baseline = {table: rows(service, table) for table in (
+        'entitlements', 'acquisition_ledger', 'artifacts', 'placements',
+        'backup_items', 'metadata',
+    )}
+
+    def view():
+        item, = list_declared_links(service, identity_id='default').rows
+        assert item.relation_id == result.relation_id
+        return item
+
+    assert view().review == 'recorded_unverified_file'
+    service.storage.provider_connection_put({
+        'identity_id': 'default',
+        'provider_id': options['provider_id'],
+        'credential_id': options['credential_id'],
+        'label': 'Synthetic connection',
+        'enabled': False,
+    })
+    assert view().review == 'source_or_right_changed'
+    assert list_declared_links(service, identity_id='default',
+                               include_revoked=True).total == 1
+    service.storage.provider_connection_put({
+        'identity_id': 'default',
+        'provider_id': options['provider_id'],
+        'credential_id': options['credential_id'],
+        'label': 'Synthetic connection',
+        'enabled': True,
+    })
+    assert view().review == 'recorded_unverified_file'
+    assert {table: rows(service, table) for table in baseline} == baseline
+    assert book.is_file()
