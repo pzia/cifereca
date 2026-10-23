@@ -467,7 +467,8 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     # traceback, including credentials or a signed ACSM URL.
                     logger.warning("TRACE loans sync error code=loan_source_failed")
             loans.sort(key=lambda row: (str(row.due_at or "9999"), row.title.casefold()))
-            all_loans.extend(loans)
+            # A batch may be rejected atomically on a later owner collision.
+            # Do not publish its uncommitted positive loans in last_loans.
             detail["loans"] = len(loans)
             if provider_errors:
                 detail["provider_errors"] = provider_errors
@@ -476,6 +477,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             # Preserve old active rights until a specific complete scope is
             # explicitly proven; separately proven expiry remains effective.
             lifecycle = self._persist_active_loans(identity.identity_id, loans)
+            all_loans.extend(loans)
             detail["realized"] = lifecycle["returned_realized"] + lifecycle["expired_realized"]
             for loan in loans:
                 if not _opening_loan_acquisition_allowed(loan):
