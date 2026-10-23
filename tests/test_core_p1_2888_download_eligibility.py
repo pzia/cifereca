@@ -119,7 +119,7 @@ def test_detail_panel_explains_refused_action_without_starting_download():
                   and n.name == "show_loan")
     text = ast.unparse(method)
     assert "loan_download_unavailable_message" in text
-    assert '"Téléchargement du prêt"' in text
+    assert "Téléchargement du prêt" in text
     assert "self.window.service.can_download_loan(loan)" in text
     assert "borrow_digital" not in text
     assert "download_digital" not in text
