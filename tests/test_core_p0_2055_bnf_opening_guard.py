@@ -42,3 +42,20 @@ def test_existing_provider_auto_acquisition_rules_are_unchanged(provider):
 def test_absence_of_web_provenance_never_becomes_consent():
     assert _opening_loan_acquisition_allowed(_loan("bnf-pret", ebook_url="fictional")) is False
     assert _opening_loan_acquisition_allowed(object()) is False
+
+
+def test_automatic_acquisition_facade_refuses_bnf_before_any_io():
+    # A deliberately unusable service proves that the early refusal does not
+    # even attempt to obtain a lock, inspect an account, or call a provider.
+    from cifereca.services import LibraryService
+
+    for force_refresh in (False, True):
+        row = _loan("bnf-pret", ebook_url="https://example.invalid/signed-private-url")
+        result = LibraryService._acquire_active_loan_automatically(
+            object(), row, force_refresh=force_refresh,
+        )
+        assert result == {
+            "status": "attention_required",
+            "code": "bnf_web_explicit_only", "retry": "explicit_only",
+        }
+        assert "signed-private-url" not in repr(result)
