@@ -6,6 +6,8 @@ approval token and a stable, disclosed destination.
 """
 from __future__ import annotations
 
+from cifereca.core.diagnostic_domains import DIAGNOSTIC_DOMAINS, canonical_diagnostic_domain
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -513,7 +515,7 @@ def _valid_since(since: object) -> bool:
 def prepare_analysis(
     llm: Any, diagnostics_broker: Any, *, source: str = "all",
     since: str | None = None, module: str = "", severity: str = "",
-    provider_id: str = "",
+    provider_id: str = "", domain: str = "",
     include_snapshot: bool = False, include_support_report: bool = False,
     manual_log: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -529,6 +531,9 @@ def prepare_analysis(
         raise ValueError("unsupported_module")
     if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
         raise ValueError("unsupported_provider")
+        if type(domain) is not str:
+        raise ValueError("unsupported_domain")
+    chosen_domain = canonical_diagnostic_domain(domain) if domain else ""
     if type(severity) is not str or severity not in (
         "", "debug", "info", "warning", "error", "critical",
     ):
@@ -576,6 +581,7 @@ def prepare_analysis(
     scope = {
         "source": source, "module": module, "severity": severity,
         **({"provider_id": provider_id} if provider_id else {}),
+        **({"domain": chosen_domain} if chosen_domain else {}),
         "since": since, "include_snapshot": include_snapshot,
         "include_support_report": include_support_report,
     }
@@ -585,6 +591,8 @@ def prepare_analysis(
                  since=since, until=None, limit=_MAX_EVENTS, offset=0)
     if provider_id:
         query["provider_id"] = provider_id
+    if chosen_domain:
+        query["domain"] = chosen_domain
     feed = diagnostics_broker.events(**query)
     if not isinstance(feed, Mapping):
         raise ValueError("diagnostics_unavailable")
@@ -598,6 +606,11 @@ def prepare_analysis(
         # A broker ignoring the exact filter must not produce an apparently
         # scoped preview or consent request for another provider's events.
         raise ValueError("diagnostics_provider_scope_mismatch")
+    if chosen_domain and any(
+        not isinstance(item, Mapping) or item.get("domain") != chosen_domain
+        for item in events
+    ):
+        raise ValueError("diagnostics_domain_scope_mismatch")
     raw_total = feed.get("total")
     # The Core can return a full, correctly bounded page with more matching
     # events beyond it. Do not mistake 24/500 for complete coverage.
@@ -858,12 +871,18 @@ def analyze_with_consent(
         not isinstance(gate, _OneUseApproval)
         or not isinstance(refs, tuple)
         or not isinstance(scope, dict)
-        or set(scope) not in (
-            {"source", "module", "severity", "since",
-             "include_snapshot", "include_support_report"},
-            {"source", "module", "severity", "since",
-             "include_snapshot", "include_support_report", "user_log_selected"},
-        )
+        or not {"source", "module", "severity", "since",
+                "include_snapshot", "include_support_report"} <= set(scope)
+        or set(scope) - {
+            "source", "module", "severity", "since",
+            "include_snapshot", "include_support_report",
+            "provider_id", "domain", "user_log_selected",
+        }
+        or ("domain" in scope and (
+            type(scope["domain"]) is not str
+            or scope["domain"] not in DIAGNOSTIC_DOMAINS
+        ))
+        or ("provider_id" in scope and public_provider_id(scope["provider_id"]) is None)
         or ("user_log_selected" in scope and scope["user_log_selected"] is not True)
         or type(scope.get("include_snapshot")) is not bool
         or type(scope.get("include_support_report")) is not bool
