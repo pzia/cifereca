@@ -4,6 +4,7 @@ from __future__ import annotations
 from time import monotonic
 
 from ..core.library_local_inspection import LocalInspection, PROVIDERS, STATES, open_local_inspection
+from ..core.library_attachment_refusal import public_refusal_label
 from ..task_queue import TaskPriority
 from .maintenance_tools import MaintenanceCancelControl
 from .library_declaration_actions import DeclarationActions
@@ -93,6 +94,19 @@ def _inspection_failure_message(result: object) -> str:
             or type(reasons[0]) is not str):
         return _INSPECTION_FALLBACK
     return _INSPECTION_FAILURE_MESSAGES.get(reasons[0], _INSPECTION_FALLBACK)
+
+
+def _attachment_refusal_message(outcome: object, provider: object, default: str) -> str:
+    """Display only Core allowlisted codes; never stringify an arbitrary error.
+
+    A fake status, secret-bearing exception, provider text or unknown code
+    cannot become part of the GTK message.
+    """
+    if (type(outcome) is not dict or outcome.get('status') != 'blocked'
+            or outcome.get('read_only') is not True):
+        return default
+    label = public_refusal_label(provider, outcome.get('reason_code'))
+    return default + '\nMotif vérifié : ' + label if label else default
 
 
 class LocalInspectionController:
@@ -1071,7 +1085,10 @@ class LocalInspectionController:
                     ),
                 }
                 status = result.get('status') if type(result) is dict else None
-                pair_explanation.set_text(states.get(status, states['unavailable']))
+                pair_explanation.set_text(_attachment_refusal_message(
+                    result, selected_provider[0],
+                    states.get(status, states['unavailable']),
+                ))
                 pair_report.set_visible(True)
                 pair_report.set_expanded(True)
                 pair_confirm.set_visible(status == 'preview')
@@ -1202,10 +1219,11 @@ class LocalInspectionController:
                         return
                     reset_pair(chosen_file)
                     if valid():
-                        pair_explanation.set_text(
+                        pair_explanation.set_text(_attachment_refusal_message(
+                            outcome, selected_provider[0],
                             'Placement refusé ou indisponible : preuves ou '
-                            'périmètre modifiés. Aucune écriture confirmée.'
-                        )
+                            'périmètre modifiés. Aucune écriture confirmée.',
+                        ))
                         pair_report.set_visible(True)
                         pair_report.set_expanded(True)
 

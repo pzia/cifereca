@@ -1497,8 +1497,11 @@ class LocalInspection:
                         or self._manual_preview_generation != generation
                     ),
                 )
-            except ReconciliationRejected:
-                return {'status': 'blocked', 'read_only': True}
+            except ReconciliationRejected as exc:
+                from .library_attachment_refusal import public_refusal_code
+                code = public_refusal_code('kobo', exc)
+                return {'status': 'blocked', 'read_only': True,
+                        **({'reason_code': code} if code else {})}
             if (not self.valid() or cancelled()
                     or self._manual_preview_generation != generation):
                 return {'status': 'unavailable', 'read_only': True}
@@ -1522,8 +1525,11 @@ class LocalInspection:
                 cancelled=lambda: (cancelled() or not self.valid()
                                    or self._manual_preview_generation != generation),
             )
-        except ManualAttachmentRejected:
-            return {'status': 'blocked', 'read_only': True}
+        except ManualAttachmentRejected as exc:
+            from .library_attachment_refusal import public_refusal_code
+            code = public_refusal_code('numilog', exc)
+            return {'status': 'blocked', 'read_only': True,
+                    **({'reason_code': code} if code else {})}
         if (not self.valid() or cancelled()
                 or self._manual_preview_generation != generation):
             return {'status': 'unavailable', 'read_only': True}
@@ -1570,8 +1576,11 @@ class LocalInspection:
                         or self._manual_preview_generation != generation
                     ), on_committed=committed_under_lock,
                 )
-            except ReconciliationRejected:
-                return {'status': 'blocked', 'read_only': True}
+            except ReconciliationRejected as exc:
+                from .library_attachment_refusal import public_refusal_code
+                code = public_refusal_code('kobo', exc)
+                return {'status': 'blocked', 'read_only': True,
+                        **({'reason_code': code} if code else {})}
             status = result.get('status')
             if status in ('applied', 'already_linked'):
                 operation = result.get('operation_id')
@@ -1609,8 +1618,11 @@ class LocalInspection:
                                    or self._manual_preview_generation != generation),
                 on_committed=committed_under_lock,
             )
-        except ManualAttachmentRejected:
-            return {'status': 'blocked', 'read_only': True}
+        except ManualAttachmentRejected as exc:
+            from .library_attachment_refusal import public_refusal_code
+            code = public_refusal_code('numilog', exc)
+            return {'status': 'blocked', 'read_only': True,
+                    **({'reason_code': code} if code else {})}
         # A committed write must not be reported as a failure merely because
         # GTK detached a moment AFTER SQLite commit. The Core transaction
         # checked generation/cancellation before its own final commit.
@@ -1664,8 +1676,11 @@ class LocalInspection:
                         or self._manual_preview_generation != generation
                     ),
                 )
-            except ReconciliationRejected:
-                return {'status': 'blocked', 'read_only': True}
+            except ReconciliationRejected as exc:
+                from .library_attachment_refusal import public_refusal_code
+                code = public_refusal_code('kobo', exc)
+                return {'status': 'blocked', 'read_only': True,
+                        **({'reason_code': code} if code else {})}
             if (not self.valid() or cancelled()
                     or self._manual_preview_generation != generation):
                 return {'status': 'unavailable', 'read_only': True}
@@ -1690,8 +1705,11 @@ class LocalInspection:
                 cancelled=lambda: cancelled() or not self.valid()
                           or self._manual_preview_generation != generation,
             )
-        except ManualAttachmentRejected:
-            return {'status': 'blocked', 'read_only': True}
+        except ManualAttachmentRejected as exc:
+            from .library_attachment_refusal import public_refusal_code
+            code = public_refusal_code('numilog', exc)
+            return {'status': 'blocked', 'read_only': True,
+                    **({'reason_code': code} if code else {})}
         if (not self.valid() or cancelled()
                 or self._manual_preview_generation != generation):
             return {'status': 'unavailable', 'read_only': True}
@@ -1734,8 +1752,11 @@ class LocalInspection:
                         or self._manual_preview_generation != generation
                     ),
                 )
-            except ReconciliationRejected:
-                return {'status': 'blocked', 'read_only': True}
+            except ReconciliationRejected as exc:
+                from .library_attachment_refusal import public_refusal_code
+                code = public_refusal_code('kobo', exc)
+                return {'status': 'blocked', 'read_only': True,
+                        **({'reason_code': code} if code else {})}
             if result.get('status') in ('undone', 'already_undone'):
                 self._manual_undo = None
                 return {'status': result['status'],
@@ -1754,8 +1775,11 @@ class LocalInspection:
                 cancelled=lambda: cancelled() or not self.valid()
                           or self._manual_preview_generation != generation,
             )
-        except ManualAttachmentRejected:
-            return {'status': 'blocked', 'read_only': True}
+        except ManualAttachmentRejected as exc:
+            from .library_attachment_refusal import public_refusal_code
+            code = public_refusal_code('numilog', exc)
+            return {'status': 'blocked', 'read_only': True,
+                    **({'reason_code': code} if code else {})}
         if result.get('status') in ('undone', 'already_undone'):
             self._manual_undo = None
             return {
