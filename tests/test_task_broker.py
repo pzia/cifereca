@@ -91,3 +91,47 @@ def test_optional_broker_pending_cap_rejects_without_leaking_reservation():
     finally:
         release.set()
         broker.close()
+
+
+@pytest.mark.parametrize("priority", (
+    True, False, 0.5, "0", None, object(),
+))
+def test_plugin_invalid_priority_rejected_before_broker_work(priority):
+    from cifereca.task_admission import SharedTaskAdmission
+
+    admission = SharedTaskAdmission(max_inflight=1, reserve_user_slots=0)
+    broker = TaskBrokerImpl(
+        _Service(), max_workers=1,
+        shared_admission=admission, admission_scope="PRIVATE_PLUGIN_SCOPE",
+    )
+    try:
+        with pytest.raises(ValueError, match="invalid task priority"):
+            broker.for_plugin("PRIVATE_PLUGIN").submit(
+                lambda control: pytest.fail("invalid priority executed"),
+                priority=priority, label="PRIVATE_ACCOUNT",
+            )
+        assert broker._executor is None
+        assert broker._controls == {}
+        assert admission.snapshot()["inflight"] == 0
+        assert admission.snapshot()["rejected"] == 0
+        assert broker.for_plugin("valid").submit(
+            lambda control: "accepted", priority=0,
+        ).result(timeout=3) == "accepted"
+    finally:
+        broker.close()
+    assert admission.snapshot()["inflight"] == 0
+
+
+def test_plugin_priority_custom_int_not_invoked_under_broker_or_pool_lock():
+    class HostilePriority:
+        def __int__(self):
+            raise AssertionError("PRIVATE_INT_HOOK_USED")
+
+    broker = TaskBrokerImpl(_Service(), max_workers=1)
+    try:
+        with pytest.raises(ValueError, match="invalid task priority"):
+            broker.submit(lambda control: None, priority=HostilePriority())
+        assert broker._executor is None
+        assert broker.submit(lambda control: "ok", priority=40).result(timeout=3) == "ok"
+    finally:
+        broker.close()
