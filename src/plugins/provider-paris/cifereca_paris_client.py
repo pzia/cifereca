@@ -16,6 +16,9 @@ from urllib.parse import quote, urljoin, urlparse, unquote
 import httpx
 from cifereca.plugin_api import Account, Booking, HistoryItem, ItemDetail, Loan, SearchResult, AttentionRequired
 from cifereca_paris_constants import ACCOUNT_SERVICE, BASE_URL, CHECK_AVAILABILITY_PATH, HOLDINGS_PATH, LOGIN_PATH, SEARCH_PATH, USER_AGENT
+from cifereca_paris_trace import (
+    public_book_id, public_content_type, public_http_status, public_site,
+)
 from cifereca_paris_normalize import normalize_booking, normalize_history, normalize_item_detail, normalize_loan, normalize_search_result
 
 _BORROW_TRACE=contextvars.ContextVar('paris_borrow_trace',default='none')
@@ -649,7 +652,10 @@ class ParisClient:
         )
         if (parsed.scheme not in {"http", "https"} or parsed.username or parsed.password
                 or not (existing_host or supplier_host)):
-            _TRACE_LOG.warning("PNB redirect refused host=%s reason=host_scheme_port_or_credentials", host)
+            _TRACE_LOG.warning(
+                "PNB redirect refused site=%s reason=host_scheme_port_or_credentials",
+                public_site(url),
+            )
             raise ParisRedirectError(host)
 
     @staticmethod
@@ -672,15 +678,15 @@ class ParisClient:
         location = response.headers.get("location") or ""
         try:
             target = urlparse(urljoin(str(response.url), location)) if location else None
-            host = target.hostname if target else None
+            site = public_site(target.geturl()) if target else "unknown"
             scheme = target.scheme if target and target.scheme in {"https", "http"} else ("other" if target else None)
             port = target.port if target else None
             acsm = bool(target and target.path.casefold().endswith(".acsm"))
         except ValueError:
-            host, scheme, port, acsm = None, "invalid", None, False
+            site, scheme, port, acsm = "unknown", "invalid", None, False
         _TRACE_LOG.info(
-            "TRACE paris pnb-loan hop-response hop=%s status=%s target_host=%s target_scheme=%s target_port=%s target_acsm=%s dt_ms=%s",
-            hop, response.status_code, host, scheme, port, acsm, elapsed_ms,
+            "TRACE paris pnb-loan hop-response hop=%s status=%s target_site=%s target_scheme=%s target_port=%s target_acsm=%s dt_ms=%s",
+            hop, public_http_status(response.status_code), site, scheme, port, acsm, elapsed_ms,
         )
 
     def _get_pnb_response(self, url, **kwargs):
@@ -711,16 +717,16 @@ class ParisClient:
             self._validate_pnb_redirect_url(current)
             parsed = urlparse(current)
             _TRACE_LOG.info(
-                "TRACE paris pnb-loan redirect-request hop=%s host=%s path=%s",
-                hop + 1, parsed.hostname, self._pnb_trace_path(current),
+                "TRACE paris pnb-loan redirect-request hop=%s site=%s",
+                hop + 1, public_site(current),
             )
             hop_started = time.monotonic()
             response = self._get_pnb_response(current, headers=navigation_headers)
             self._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
             location = response.headers.get("location") or ""
             _TRACE_LOG.info(
-                "TRACE paris pnb-loan redirect-response hop=%s status=%s host=%s path=%s has_location=%s",
-                hop + 1, response.status_code, parsed.hostname, self._pnb_trace_path(current), bool(location),
+                "TRACE paris pnb-loan redirect-response hop=%s status=%s site=%s has_location=%s",
+                hop + 1, public_http_status(response.status_code), public_site(current), bool(location),
             )
             if response.status_code not in {301, 302, 303, 307, 308}:
                 raise ParisError(
@@ -733,8 +739,8 @@ class ParisClient:
             next_parsed = urlparse(next_url)
             if next_parsed.path.casefold().endswith(".acsm") or "urllink.acsm" in next_parsed.path.casefold():
                 _TRACE_LOG.info(
-                    "TRACE paris pnb-loan acsm-ready hop=%s host=%s path=%s",
-                    hop + 1, next_parsed.hostname, self._pnb_trace_path(next_url),
+                    "TRACE paris pnb-loan acsm-ready hop=%s site=%s",
+                    hop + 1, public_site(next_url),
                 )
                 return next_url
             current_host = (urlparse(str(response.url)).hostname or "").casefold()
@@ -819,8 +825,9 @@ class ParisClient:
         def work():
             endpoint = f"{self.base_url}{ACCOUNT_SERVICE}/DownloadDigitalDocument"
             _TRACE_LOG.info(
-                "TRACE download paris endpoint request loan_id=%s ean=%s uid_present=%s reader_id_present=%s endpoint_path=%s",
-                loan.id, loan.record_id, bool(uid), bool(reader_id), ACCOUNT_SERVICE + "/DownloadDigitalDocument",
+                "TRACE download paris endpoint request book_id=%s site=%s uid_present=%s reader_id_present=%s endpoint=DownloadDigitalDocument",
+                public_book_id(loan.record_id), public_site(self.base_url),
+                bool(uid), bool(reader_id),
             )
             r = self.client.post(
                 endpoint,
@@ -835,8 +842,10 @@ class ParisClient:
                 },
             )
             _TRACE_LOG.info(
-                "TRACE download paris endpoint response loan_id=%s status=%s content_type=%s bytes=%s",
-                loan.id, r.status_code, r.headers.get("content-type", ""), len(r.content or b""),
+                "TRACE download paris endpoint response book_id=%s site=%s status=%s content_type=%s bytes=%s",
+                public_book_id(loan.record_id), public_site(self.base_url),
+                public_http_status(r.status_code),
+                public_content_type(r.headers.get("content-type", "")), len(r.content or b""),
             )
             data = self._json(r, "download digital document")
             value = data.get("d")

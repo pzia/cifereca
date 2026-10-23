@@ -15,6 +15,9 @@ from cifereca.plugin_api import (
     acquisition_format_projection, normalize_acquisition_format,
 )
 from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError
+from cifereca_paris_trace import (
+    public_book_id, public_content_type, public_http_status, public_site,
+)
 from cifereca.plugin_api import (
     CredentialField,
     ProviderCapabilities,
@@ -524,7 +527,9 @@ class ParisProviderSession(ProviderSession):
 
     def download_digital(self, loan: Loan, account: Account, target_dir: Path) -> tuple[Path, str]:
         started = time.monotonic()
-        account_key = str(loan.source_account_id or account.unique_id or "primary")
+        # Book metadata may be included only when the catalogue identifier is
+        # an exact public 13-digit EAN. Borrower and loan identifiers stay private.
+        book_id = public_book_id(loan.record_id)
 
         # Active DILICOM loans already carry their PNB delivery URL in
         # AdditionalProperties.EbookUrl.  That URL represents the existing
@@ -538,34 +543,41 @@ class ParisProviderSession(ProviderSession):
             if parsed_direct.scheme not in {"http", "https"}:
                 raise ProviderConfigurationError("Lien PNB du prêt invalide: schéma HTTP(S) requis")
             _TRACE_LOG.info(
-                "TRACE download paris direct-loan-url loan_id=%s account_key=%s host=%s path=%s",
-                loan.id, account_key, parsed_direct.hostname, self.client._pnb_trace_path(url),
+                "TRACE download paris direct-loan-url book_id=%s site=%s",
+                book_id, public_site(url),
             )
         else:
             _TRACE_LOG.info(
-                "TRACE download paris direct-loan-url missing loan_id=%s account_key=%s fallback=DownloadDigitalDocument",
-                loan.id, account_key,
+                "TRACE download paris direct-loan-url missing book_id=%s fallback=DownloadDigitalDocument",
+                book_id,
             )
             _TRACE_LOG.info(
-                "TRACE download paris prefs begin loan_id=%s account_key=%s upstream_uid_present=%s",
-                loan.id, account_key, bool(account.unique_id),
+                "TRACE download paris prefs begin book_id=%s upstream_uid_present=%s",
+                book_id, bool(account.unique_id),
             )
             prefs = self.client.pnb_preferences()
             _TRACE_LOG.info(
-                "TRACE download paris prefs end loan_id=%s reader_id_present=%s passphrase_present=%s hint_present=%s dt=%.3fs",
-                loan.id, bool(prefs.get("ReaderId")), bool(prefs.get("PassPhrase")), bool(prefs.get("Hint")), time.monotonic()-started,
+                "TRACE download paris prefs end book_id=%s reader_id_present=%s passphrase_present=%s hint_present=%s duration_ms=%s",
+                book_id, bool(prefs.get("ReaderId")), bool(prefs.get("PassPhrase")),
+                bool(prefs.get("Hint")), int((time.monotonic()-started)*1000),
             )
             endpoint_started = time.monotonic()
             _TRACE_LOG.info(
-                "TRACE download paris acquisition-url begin loan_id=%s ean=%s account_key=%s upstream_uid_present=%s",
-                loan.id, loan.record_id, account_key, bool(account.unique_id),
+                "TRACE download paris acquisition-url begin book_id=%s site=%s upstream_uid_present=%s",
+                book_id, public_site(self.client.base_url), bool(account.unique_id),
             )
             url = self.client.download_digital_document(loan, "" if account.is_primary else account.unique_id, prefs)
-            _TRACE_LOG.info("TRACE download paris acquisition-url end loan_id=%s url_returned=%s dt=%.3fs", loan.id, bool(url), time.monotonic()-endpoint_started)
+            _TRACE_LOG.info(
+                "TRACE download paris acquisition-url end book_id=%s url_returned=%s duration_ms=%s",
+                book_id, bool(url), int((time.monotonic()-endpoint_started)*1000),
+            )
             url = urljoin(self.client.base_url + "/", url)
         parsed = urlparse(url)
         http_started = time.monotonic()
-        _TRACE_LOG.info("TRACE download paris acsm-http begin loan_id=%s host=%s path=%s", loan.id, parsed.hostname, self.client._pnb_trace_path(url))
+        _TRACE_LOG.info(
+            "TRACE download paris acsm-http begin book_id=%s site=%s",
+            book_id, public_site(url),
+        )
         current = url
         for hop in range(12):
             self.client._validate_pnb_redirect_url(current)
@@ -578,9 +590,11 @@ class ParisProviderSession(ProviderSession):
             current = urljoin(str(response.url), location)
         else: raise ProviderConfigurationError('Trop de redirections PNB')
         _TRACE_LOG.info(
-            "TRACE download paris acsm-http response loan_id=%s status=%s content_type=%s content_length=%s final_host=%s final_path=%s dt=%.3fs",
-            loan.id, response.status_code, response.headers.get("content-type", ""), response.headers.get("content-length", ""),
-            urlparse(str(response.url)).hostname, self.client._pnb_trace_path(str(response.url)), time.monotonic()-http_started,
+            "TRACE download paris acsm-http response book_id=%s status=%s content_type=%s bytes=%s site=%s duration_ms=%s",
+            book_id, public_http_status(response.status_code),
+            public_content_type(response.headers.get("content-type", "")),
+            len(response.content), public_site(str(response.url)),
+            int((time.monotonic()-http_started)*1000),
         )
         response.raise_for_status()
         content = response.content
@@ -594,13 +608,14 @@ class ParisProviderSession(ProviderSession):
                 "acsm": "ACSM invalide ou réponse HTML",
             }
             raise ProviderError(labels.get(fmt, "Format numérique non pris en charge"))
-        _TRACE_LOG.info("TRACE download paris document-validated loan_id=%s kind=%s bytes=%s", loan.id, fmt, len(content))
+        _TRACE_LOG.info("TRACE download paris document-validated book_id=%s kind=%s bytes=%s", book_id, fmt, len(content))
         name = sanitize_filename_component(str(loan.title), "download")
         path = target_dir / (name[:160] + '.' + fmt)
         publish_artifact_content(path, content)
         _TRACE_LOG.info(
-            "TRACE download paris acsm-write loan_id=%s file=%s bytes=%s detected_acsm=%s total_dt=%.3fs",
-            loan.id, path, len(content), path.suffix.casefold() == ".acsm", time.monotonic()-started,
+            "TRACE download paris acsm-write book_id=%s bytes=%s detected_acsm=%s duration_ms=%s",
+            book_id, len(content), path.suffix.casefold() == ".acsm",
+            int((time.monotonic()-started)*1000),
         )
         return path, url
 
