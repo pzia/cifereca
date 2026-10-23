@@ -274,6 +274,13 @@ class PythonDependencyManager:
             for key, (_display, version) in after.items()
             if key in before and version != before[key][1]
         ]
+        if changed:
+            # Reinstatement of previously installed distributions needs an
+            # exact-file proof. Do this *before* any destructive uninstall:
+            # if PyPI/attestation is unavailable, keep the currently usable
+            # venv unchanged instead of removing its newly added packages.
+            requested = [f"{name}=={version}" for name, version in changed]
+            self._pip_install(requested, wheel_dirs)
         if added:
             proc = subprocess.run(
                 [sys.executable, "-m", "pip", "uninstall", "-y", *sorted(set(added))],
@@ -283,12 +290,6 @@ class PythonDependencyManager:
                 # pip may echo private indexes, credentials or user paths.
                 # Diagnostics and CLI must never echo subprocess output.
                 raise PythonDependencyError("dependency_not_eligible")
-        if changed:
-            # Rollback is another third-party wheel acquisition. Never bypass
-            # the exact-file PyPI SHA/date preflight by using a raw pip command
-            # or an unverified cached/offline wheelhouse (#2770).
-            requested = [f"{name}=={version}" for name, version in changed]
-            self._pip_install(requested, wheel_dirs)
 
     def diagnostic(self, manifests: Sequence[PluginPackageManifest]) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
