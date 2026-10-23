@@ -14,7 +14,7 @@ from cifereca.plugin_api import (
     AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
     acquisition_format_projection, normalize_acquisition_format,
 )
-from cifereca_paris_client import AuthenticationError, ParisClient
+from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError
 from cifereca.plugin_api import (
     CredentialField,
     ProviderCapabilities,
@@ -195,14 +195,16 @@ class ParisProviderSession(ProviderSession):
                 if first_summary_error is None:
                     first_summary_error = exc
                 try:
+                    detail = {
+                        "provider": self.provider_id,
+                        "credential_id": self.credential_id,
+                        "upstream": upstream,
+                        "error": type(exc).__name__,
+                    }
+                    if isinstance(exc, ParisSummaryHTTPError):
+                        detail["code"] = exc.code
                     self.diagnostics.add(
-                        "API", f"summary {upstream}", "error",
-                        detail={
-                            "provider": self.provider_id,
-                            "credential_id": self.credential_id,
-                            "upstream": upstream,
-                            "error": type(exc).__name__,
-                        },
+                        "API", f"summary {upstream}", "error", detail=detail,
                     )
                 except Exception:
                     pass
