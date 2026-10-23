@@ -547,7 +547,8 @@ class LocalInspectionController:
         # Open on demand: this private, revocable list reads only already
         # stored user declarations. It is never part of the attested counters.
         declaration_history = PrivateDeclarationHistory(
-            Gtk=Gtk, session=session,
+            Gtk=Gtk, Adw=Adw, window=window, runner=self.parent.runner,
+            session=session,
             alive=lambda: self.session is session and self.alive(),
         )
         box.append(declaration_history.expander)
