@@ -128,7 +128,7 @@ def test_foreign_or_corrupt_cached_row_causes_fresh_read_without_reassignment(
         good = _loan(account, "correct")
         poisoned = asdict(replace(_loan(account, "FOREIGN"), **{bad_field: bad_value}))
         cache_key = _loan_cache_key(account)
-        service.storage.cache_put("account", cache_key, [poisoned], ttl=300)
+        service.storage.cache_put("account", cache_key, [poisoned], ttl_seconds=300)
         reads = []
         _session(service, account.credential_id, lambda _account: [good], reads)
         rows = service._loans_for_account(account)
@@ -152,7 +152,7 @@ def test_old_ambiguous_alias_is_never_used_even_when_it_contains_foreign_loans(t
         old = "paris:cred:reader:loans"
         row = asdict(_loan(account, "FOREIGN"))
         row["identity_id"] = "alex"
-        service.storage.cache_put("account", old, [row], ttl=300)
+        service.storage.cache_put("account", old, [row], ttl_seconds=300)
         assert service.storage.cache_get("account", old)[0]["id"] == "FOREIGN"
         calls = []
         _session(service, account.credential_id,
