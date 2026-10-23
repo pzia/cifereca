@@ -321,3 +321,17 @@ identité/compte/époque ; une fermeture ou bascule de profil les invalide.
 L'absence de lien « suivant » ne prouve **jamais** la complétude du catalogue
 ou du portefeuille d'emprunts. Ce mécanisme ne lit pas les pages de prêts,
 ne synchronise aucun droit et n'automatise aucun emprunt ni téléchargement.
+
+
+
+## Recherche Web explicite en CLI — #2055
+
+Après SSO manuel, `[r] rechercher` demande un terme de 2 à 128
+caractères et invoque uniquement le GET HTML `/results?q=...` déjà
+qualifié par le garde réseau et le parseur existants. Le terminal indique
+le nombre de notices **visibles seulement** et l'état fermé `ok/partial`,
+sans réimprimer la requête, les titres, les URL ou les identifiants.
+Une recherche refusée laisse la session ouverte ; ni droit ni prêt n'est
+créé ou modifié. La saisie interactive du terminal relève de l'utilisateur
+et ne doit pas être collée dans des rapports ou logs. Les tests utilisent
+une recherche entièrement synthétique.
