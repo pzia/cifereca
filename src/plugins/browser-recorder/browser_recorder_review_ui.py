@@ -9,13 +9,13 @@ from __future__ import annotations
 try:
     from cifereca.plugin_api import prefer_downloads_for_save
 except ImportError:
-    # Plugin-only updates remain usable on a Core without this optional UX hook.
-    def _keep_native_folder(_chooser):
+    # Support plugin-only updates on older Core versions.
+    def prefer_downloads_for_save(_chooser):
         return False
 
-    prefer_downloads_for_save = _keep_native_folder
-
 import json
+import re
+import unicodedata
 from pathlib import Path
 from threading import Event
 from time import monotonic
@@ -29,6 +29,27 @@ from browser_recorder_private_zip import save_session_llm_zip
 
 
 _REVIEW_PAGE_SIZE = 24  # Bound GTK widgets even for 256 distinct private IDs.
+_PRIVATE_ZIP_DEFAULT = "cifereca-session-privee.zip"
+
+
+def _private_zip_name(label: object) -> str:
+    """Only a suggested user-visible filename, never persisted/logged.
+
+    The AES-GCM sidecar is the source. Restrict to portable ASCII and remove
+    path separators, dot components, bidi/control and invisible characters.
+    Do not use a GTK combobox caption or a provider-supplied URL here.
+    """
+    if type(label) is not str or not label:
+        return _PRIVATE_ZIP_DEFAULT
+    canonical = unicodedata.normalize("NFKD", label)
+    ascii_label = "".join(
+        char for char in canonical
+        if ord(char) < 128 and unicodedata.category(char) not in {"Cc", "Cf"}
+    )
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_label.lower()).strip("-")
+    slug = slug[:64].rstrip("-")
+    return (f"cifereca-session-privee-{slug}.zip" if slug
+            else _PRIVATE_ZIP_DEFAULT)
 
 _PRIVATE_EXPORT_FAILURES = {
     "vault_unlock_failed": "Coffre impossible à déverrouiller : fermez-le puis ouvrez-le avec la bonne phrase secrète. Une archive altérée peut aussi empêcher son ouverture.",
@@ -129,6 +150,10 @@ class PrivateReviewPanel:
         # Unlocked only by an explicit open action. Transient bytearray is
         # wiped on lock/destroy; never persisted, logged, or sent to plugins.
         self._vault_secret = None
+        # Decrypted *only* by the explicit unlock worker, for authenticated
+        # sessions; never populate from the GTK label or plaintext filesystem.
+        self._private_labels: dict[str, str] = {}
+        self._private_export_suggested_name = _PRIVATE_ZIP_DEFAULT
         self.vault_state = None
         self.vault_open_button = None
         self.vault_close_button = None
@@ -454,7 +479,10 @@ class PrivateReviewPanel:
                       "de permissions de dossier à configurer. Le coffre reste "
                       "chiffré ; le ZIP exporté est EN CLAIR (URL, identifiants "
                       "et corps conservés) : à partager uniquement volontairement "
-                      "avec le LLM de votre choix. Aucun envoi automatique.",
+                      "avec le LLM de votre choix. Si une session est renommée, "
+                      "son nom peut être proposé dans le NOM VISIBLE du ZIP : "
+                      "modifiez ce nom dans Enregistrer sous si nécessaire. "
+                      "Aucun envoi automatique.",
                 xalign=0, wrap=True,
             ))
             self.private_export_button = Gtk.Button(
@@ -520,7 +548,9 @@ class PrivateReviewPanel:
                 label="Session archivée dans le coffre : vous pouvez l'exporter "
                       "directement pour un LLM sans attendre les décisions "
                       "d'anonymisation. Ce ZIP est NON CHIFFRÉ et contient les "
-                      "observations privées conservées. Ouvrez le coffre "
+                      "observations privées conservées. Un nom de session "
+                      "renommée peut apparaître dans le NOM VISIBLE du ZIP ; "
+                      "il est modifiable avant Enregistrer. Ouvrez le coffre "
                       "une fois en haut, puis choisissez où l'enregistrer.",
                 xalign=0, wrap=True,
             ))
@@ -711,6 +741,8 @@ class PrivateReviewPanel:
             chooser, self._export_dialog = self._export_dialog, None
             chooser.destroy()
         self._wipe_vault_password()
+        getattr(self, "_private_labels", {}).clear()
+        self._private_export_suggested_name = _PRIVATE_ZIP_DEFAULT
         self.vault_passphrase.set_text("")
         self._retention_plan = None
         self._last_export_path = None
@@ -1533,6 +1565,10 @@ class PrivateReviewPanel:
                 or self.is_recording() or self.is_scanning()):
             return False
         self._invalidate_retention()
+        # Opaque refresh invalidates labels until another authenticated
+        # unlock. This also covers rename, delete and interrupted capture.
+        getattr(self, "_private_labels", {}).clear()
+        self._private_export_suggested_name = _PRIVATE_ZIP_DEFAULT
         selected_before = self.session_list.get_active_id()
         try:
             ids = PrivateSessionVault(self.vault_directory).list_ids()
@@ -1632,6 +1668,10 @@ class PrivateReviewPanel:
                             self._refresh()
                             return False
                     known = {entry["id"]: entry for entry in entries}
+                    self._private_labels = {
+                        sid: info["label"] for sid, info in known.items()
+                        if type(info.get("label")) is str and info["label"]
+                    }
                     old_selected = self.session_list.get_active_id()
                     self.session_list.remove_all()
                     ordered = [item["id"] for item in entries]
@@ -1821,7 +1861,11 @@ class PrivateReviewPanel:
             Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
         )
         prefer_downloads_for_save(chooser)
-        chooser.set_current_name("cifereca-session-privee.zip")
+        chooser.set_current_name(
+            getattr(self, "_private_export_suggested_name", _PRIVATE_ZIP_DEFAULT)
+        )
+        # User-visible filename is NOT encrypted; choosing the suggested
+        # value may reveal a private session title in their Downloads folder.
         self._private_destination_dialog = chooser
         self._refresh()
 
@@ -1918,6 +1962,12 @@ class PrivateReviewPanel:
                 "après l'avoir transmis volontairement à votre LLM."
             )
 
+        # No GTK-thread scrypt: the explicit vault unlock worker already
+        # authenticated this exact session's encrypted sidecar. If the
+        # locked/unknown session has no cached label, offer the neutral name.
+        self._private_export_suggested_name = _private_zip_name(
+            getattr(self, "_private_labels", {}).get(sid)
+        )
         self._prompt_private_zip_file(selected, cancelled)
 
     def toggle_pause(self):
@@ -2336,6 +2386,8 @@ class PrivateReviewPanel:
         if self.vault_passphrase is not None:
             self.vault_passphrase.set_text("")
         self._wipe_vault_password()
+        getattr(self, "_private_labels", {}).clear()
+        self._private_export_suggested_name = _PRIVATE_ZIP_DEFAULT
         self._discard_private()
         self._stop = None
         self._handle = None
