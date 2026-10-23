@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cifereca.plugin_api import prefer_downloads_for_save
+
 from .profiles import default_output_path, discover_profiles
 
 
@@ -344,6 +346,7 @@ class OptimizerPage:
         current = self.output_entry.get_text().strip()
         if current:
             dialog.set_current_name(Path(current).name)
+        prefer_downloads_for_save(dialog)
         dialog.connect("response", self._output_response)
         self._dialogs.append(dialog)
         dialog.show()
