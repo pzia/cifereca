@@ -56,7 +56,7 @@ def _dashboard_source_label(source: object) -> str:
     if pid == "numilog":
         return name + " (Mes achats)"
     if pid == "numilog-catalog":
-        return name + " (Catalogue public)"
+        return name if "catalogue" in name.casefold() else name + " (Catalogue public)"
     return name
 
 
@@ -151,7 +151,10 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
                 action_label.set_wrap(True); add_css(action_label, 'caption', 'dim-label'); box.append(action_label)
         providers = ", ".join(
             _dashboard_source_label(source) + (
-                "" if source.get("connected") is True else " (à connecter)"
+                "" if source.get("connected") is True
+                else " (recherche indisponible)"
+                if source.get("provider_id") == "numilog-catalog"
+                else " (à connecter)"
             )
             for source in card.get("sources", [])
             if type(source) is dict
