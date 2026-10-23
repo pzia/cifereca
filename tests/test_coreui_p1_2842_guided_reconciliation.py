@@ -70,3 +70,17 @@ def test_footer_controls_and_starting_scope_remain_single_writer():
     assert "guide('verifying')" in view
     assert "guide('writing')" in view
     assert "guide('blocked')" in view
+
+
+def test_stage_four_never_claims_consent_before_human_apply():
+    view = (Path(__file__).resolve().parents[1]
+            / "src/cifereca/gui/library_inspection_view.py").read_text()
+    consent = view.split("        def confirm_local_placement(*_args):", 1)[1]
+    consent = consent.split("        def undo_local_placement(", 1)[0]
+    assert consent.count("guide('writing')") == 1
+    assert consent.index("dialog = Adw.MessageDialog.new(") < consent.index(
+        "if response != 'apply':"
+    ) < consent.index("guide('writing')")
+    assert consent.index("guide('writing')") < consent.index(
+        "def commit():"
+    )
