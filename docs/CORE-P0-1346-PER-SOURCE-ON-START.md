@@ -80,3 +80,17 @@ URL, tokens ou messages bruts de fournisseurs.
 Le nouveau réglage ne garantit ni la réussite d'ADEPT/DRM ni l'absence de
 restrictions fournisseur : les blocages et acquis partiels doivent rester
 visibles comme tels.
+
+## Prêts au rafraîchissement explicite — P0 #2975
+
+La synchronisation d'une source autorisée (`synchronize_source`) enregistre
+maintenant les **lignes positives** de prêts numériques qu'elle vient de lire,
+dans le périmètre exact `identité + fournisseur + credential + emprunteur`,
+comme la synchronisation d'ouverture. Elle refuse les origines mixtes,
+les comptes supprimés/réaffectés pendant la lecture et les sessions révoquées.
+**Aucune liste vide ou partielle n'est une preuve de restitution**, et cette
+commande ne lance ni acquisition/DRM, ni retour de prêt, ni expiration globale
+des droits d'un autre compte. L'inventaire Paris peut être `partial` si
+DILICOM ou SYRACUSE échoue ; seules les lignes positives valides sont
+conservées. L'événement public dédié emploie le code fermé
+`source_sync_partial`, sans erreur source, identifiant d'emprunteur ou URL.

@@ -11,6 +11,7 @@ PREFIX = "TRACE source sync "
 _OUTCOMES = {
     ("start", "running"): "source_sync_started",
     ("completed", "success"): "source_sync_complete",
+    ("completed", "partial"): "source_sync_partial",
     ("completed", "skipped"): "source_disabled",
     ("completed", "failed"): frozenset({"source_sync_failed", "operation_busy"}),
     ("completed", "cancelled"): "source_sync_cancelled",

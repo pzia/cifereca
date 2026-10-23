@@ -18,8 +18,10 @@ ni le résultat de synchronisation ni le journal d'actions existant.
 | Code fournisseur, HTTP status, `retryable` | Non attestés par ce producteur | Absents | Absents | Absents | Absents |
 | Compte, identité, source privée, titre, chemin, URL, token, exception, XML | Données non admises par ce schéma | Interdit | Interdit | Interdit | Interdit |
 
-Les codes sont `source_sync_started`, `source_sync_complete`, `source_disabled`,
-`source_sync_failed`, `operation_busy` et `source_sync_cancelled`. Un fournisseur
+Les codes sont `source_sync_started`, `source_sync_complete`,
+`source_sync_partial` (inventaire Paris numérique incomplet),
+`source_disabled`, `source_sync_failed`, `operation_busy` et
+`source_sync_cancelled`. Un fournisseur
 non enregistré ou dont le slug n'est pas publiable devient `source_inconnue`.
 Un plugin qui appelle le générique `Diagnostics.add` avec les mêmes noms de
 champs n'atteste **pas** un événement : le collecteur réserve un marqueur au
