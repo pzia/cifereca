@@ -272,6 +272,33 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     }
 
 
+def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool:
+    """Reject a mixed or malformed supplier batch before writing loan rights.
+
+    An account listing may contain several upstream branches (Paris DILICOM
+    and SYRACUSE), but may never carry another credential/borrower/identity.
+    This is a positive-row safety gate, NOT an absence/completeness proof.
+    """
+    if type(account) is not Account or type(identity_id) is not str or type(rows) is not list:
+        return False
+    provider, credential = account.provider_id, account.credential_id
+    if type(provider) is not str or not provider or type(credential) is not str or not credential:
+        return False
+    expected_account = account.unique_id or ("primary" if provider == "paris" else "")
+    if type(expected_account) is not str:
+        return False
+    return all(
+        type(loan) is Loan
+        and type(loan.id) is str and bool(loan.id)
+        and type(loan.source_provider) is str and loan.source_provider == provider
+        and type(loan.source_credential) is str and loan.source_credential == credential
+        and type(loan.source_account_id) is str and loan.source_account_id == expected_account
+        and type(loan.identity_id) is str and loan.identity_id == identity_id
+        and type(loan.medium) is str and loan.medium in ("digital", "physical", "unknown")
+        for loan in rows
+    )
+
+
 def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, deep: bool=False, logger) -> dict[str, Any]:
     from ..brokers import SynchronizationBrokerImpl
     source_status = SynchronizationBrokerImpl(self)
@@ -346,6 +373,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         "TRACE loans sync end count=%s dt=%.3fs",
                         len(account_loans), time.monotonic() - loan_started,
                     )
+                    if not _opening_loans_scoped(account, identity.identity_id, account_loans):
+                        # Do not persist any row from an ambiguous account batch;
+                        # avoid displaying or logging provider-controlled details.
+                        raise ProviderConfigurationError("loan_source_scope_mismatch")
                     session = self._sessions.get(self._session_key(account.provider_id, account.credential_id))
                     partial_errors = list(getattr(session, "last_loan_errors", []) or []) if session is not None else []
                     if partial_errors:
@@ -379,6 +410,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             detail["loans"] = len(loans)
             if provider_errors:
                 detail["provider_errors"] = provider_errors
+            # No current supplier offers a Core-attested exhaustive per-account
+            # negative listing contract (including pagination and row validity).
+            # Preserve old active rights until a specific complete scope is
+            # explicitly proven; separately proven expiry remains effective.
             lifecycle = self._persist_active_loans(identity.identity_id, loans)
             detail["realized"] = lifecycle["returned_realized"] + lifecycle["expired_realized"]
             for loan in loans:
@@ -424,7 +459,14 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     detail.setdefault("acquisition_errors", []).append(issue)
                     self.diagnostics.add("ACQUISITION", "loan sync", "error" if result["status"] == "retryable_error" else "warning", detail=issue, level="errors")
             if errors or attention:
-                status = "partial" if loans or len(accounts) > len(provider_errors) else "failed"
+                # A partially successful source is not a total failure even
+                # when its list contains zero entries. Provider error counts
+                # need not equal the number of accounts (Paris has 2 branches).
+                status = (
+                    "partial" if loans or any(
+                        state in ("partial", "success") for state in source_outcomes.values()
+                    ) else "failed"
+                )
             else:
                 status = "success"
         except Exception:

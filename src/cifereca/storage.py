@@ -1815,29 +1815,54 @@ class Storage:
                 continue
         return None
 
-    def entitlement_realize_missing_loans(self, active_entitlement_ids: set[str], *, identity_id: str | None = None, now: int | None = None) -> int:
-        """Realize active loan rights no longer reported by their provider.
+    def entitlement_realize_missing_loans(
+        self, active_entitlement_ids: set[str], *, identity_id: str | None = None,
+        complete_scopes: set[tuple[str, str, str]] | frozenset[tuple[str, str, str]] | None = None,
+        now: int | None = None,
+    ) -> int:
+        """Mark absent loans realized only for complete, exact borrower scopes.
 
-        Expiry is handled separately; this covers explicit return / upstream removal.
-        Artifacts and placements are intentionally untouched.
+        An identity-level union, a successful sync task and a partial supplier
+        response are not negative evidence. No file, placement, artifact or
+        acquisition record is removed. Expiration is a separate operation.
         """
-        ts = int(now or time.time())
-        where = ["entitlement_type='loan'", "state='active'"]
-        args: list[Any] = []
-        if identity_id is not None:
-            where.append("identity_id=?")
-            args.append(identity_id)
-        with self._lock, self._connect() as db:
-            rows = db.execute("SELECT entitlement_id FROM entitlements WHERE " + " AND ".join(where), tuple(args)).fetchall()
-            stale = [str(row[0]) for row in rows if str(row[0]) not in active_entitlement_ids]
-            if not stale:
+        if type(identity_id) is not str or not identity_id:
+            return 0
+        if type(complete_scopes) not in (set, frozenset) or not 0 < len(complete_scopes) <= 1000:
+            return 0
+        for scope in complete_scopes:
+            if (type(scope) is not tuple or len(scope) != 3
+                    or any(type(part) is not str for part in scope)
+                    or not scope[0] or not scope[1]):
+                # A malformed scope invalidates the entire absence decision.
                 return 0
-            placeholders = ",".join("?" for _ in stale)
-            cur = db.execute(
-                f"UPDATE entitlements SET state='realized',updated_at=? WHERE entitlement_id IN ({placeholders})",
-                (ts, *stale),
-            )
-            return cur.rowcount
+        if type(active_entitlement_ids) is not set or any(
+            type(value) is not str for value in active_entitlement_ids
+        ):
+            return 0
+        timestamp = int(now if now is not None else time.time())
+        changed = 0
+        with self._lock, self._connect() as db:
+            for provider, credential, account in sorted(complete_scopes):
+                rows = db.execute(
+                    "SELECT entitlement_id FROM entitlements "
+                    "WHERE entitlement_type='loan' AND state='active' "
+                    "AND identity_id=? AND provider_id=? AND credential_id=? "
+                    "AND account_id=?",
+                    (identity_id, provider, credential, account),
+                ).fetchall()
+                for (entitlement_id,) in rows:
+                    if entitlement_id in active_entitlement_ids:
+                        continue
+                    cur = db.execute(
+                        "UPDATE entitlements SET state='realized',updated_at=? "
+                        "WHERE entitlement_id=? AND identity_id=? AND provider_id=? "
+                        "AND credential_id=? AND account_id=? "
+                        "AND entitlement_type='loan' AND state='active'",
+                        (timestamp, entitlement_id, identity_id, provider, credential, account),
+                    )
+                    changed += cur.rowcount
+        return changed
 
     def sync_run_put(self, row: dict[str, Any]) -> str:
         now = int(row.get("updated_at") or time.time())
