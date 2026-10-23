@@ -473,7 +473,8 @@ def explorer_header(payload: Mapping[str, Any], rows: list[dict[str, str]],
 
 
 def empty_observation(payload: Mapping[str, Any], *, period: str,
-                      severity: str = "", module: str = "", search: str = "") -> str:
+                      severity: str = "", module: str = "", search: str = "",
+                      domain: str = "") -> str:
     """A filtered empty feed is neither a health check nor complete coverage."""
     labels = {"all": "tout l’historique disponible", "hour": "dernière heure",
               "day": "24 heures", "week": "7 jours", "month": "30 jours"}
@@ -492,7 +493,7 @@ def empty_observation(payload: Mapping[str, Any], *, period: str,
         payload.get("status") in ("partial", "unavailable")
         or any(s["status"] not in {"available", "empty"} for s in states)
     )
-    if severity or module or search:
+    if severity or module or search or domain:
         message = f"Aucun événement correspondant aux filtres · période : {window}."
         if incomplete:
             message += " Couverture partielle ; événements manquants possibles."
