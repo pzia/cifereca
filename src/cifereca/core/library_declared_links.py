@@ -488,15 +488,35 @@ def list_declared_links(service, *, identity_id, offset=0, limit=50,
                         continue
                     review = 'revoked'
                 else:
-                    # Checking the SQLite account/right here makes no claim
-                    # about a current source login, licence or file SHA.
-                    try:
-                        context = _context(db, scope)
-                        review = ('recorded_unverified_file'
-                                  if record['right_state'] == _right_state(context)
-                                  else 'source_or_right_changed')
-                    except DeclarationRejected:
+                    # A persisted right alone is not a live account: the user
+                    # may have disconnected this credential while old SQLite
+                    # provider_connections and entitlements remain intact.
+                    # Mark that declaration as needing review, not as a
+                    # current supplier association. Never delete it.
+                    live_accounts = [
+                        account for account in service.accounts
+                        if account.provider_id == scope['provider_id']
+                        and account.credential_id == scope['credential_id']
+                    ]
+                    live_account_matches = (
+                        len(live_accounts) == 1
+                        and live_accounts[0].identity_id == scope['identity_id']
+                        and live_accounts[0].unique_id == scope['account_id']
+                    )
+                    if not live_account_matches:
                         review = 'source_or_right_changed'
+                    else:
+                        # This checks the current SQLite account/right only;
+                        # neither supplier login nor file SHA is revalidated.
+                        try:
+                            context = _context(db, scope)
+                            connection_enabled = context['connection']['enabled'] == 1
+                            review = ('recorded_unverified_file'
+                                      if connection_enabled
+                                      and record['right_state'] == _right_state(context)
+                                      else 'source_or_right_changed')
+                        except DeclarationRejected:
+                            review = 'source_or_right_changed'
                 result.append(DeclaredLinkView(
                     relation_id=record['relation_id'],
                     provider_id=scope['provider_id'],
