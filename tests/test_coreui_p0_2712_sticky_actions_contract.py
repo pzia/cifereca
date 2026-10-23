@@ -22,6 +22,12 @@ def test_four_pair_actions_are_pinned_to_the_bottom_bar_not_the_long_page():
         assert f"{button}.connect('clicked'," in code
     assert "pair_actions.append(action)" in code
     assert "for action in (pair_prepare, fresh_preview, pair_confirm, pair_undo):" in code
+    # Manual exploration must be reachable even when the local evidence
+    # panel is tall and the audit has no bibliographic candidate.
+    assert "candidate_box.append(manual_toggle)" not in code
+    assert "pair_actions.append(manual_toggle)" in code
+    assert "manual_toggle.connect('clicked'," in code
+    assert code.count("Gtk.Button(label='Comparer tous les fichiers non liés')") == 1
     assert "toolbar_view.add_bottom_bar(action_scroll)" in code
     assert "toolbar_view.add_bottom_bar(footer)" in code
     assert "action_scroll.set_visible(selected_right[0] is not None)" in code
