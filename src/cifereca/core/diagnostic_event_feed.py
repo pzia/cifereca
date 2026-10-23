@@ -24,6 +24,7 @@ from .diagnostic_kobo_projection import (
 )
 from .numilog_startup_diagnostics import public_log_fields as public_numilog_startup_log
 from .public_provider_diagnostics import (
+    canonical_public_provider_id,
     public_connection_fields,
     public_connection_log_fields,
 )
@@ -286,10 +287,19 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "ADEPT" if adept_detail else
                 "PLUGIN" if connection_detail else None
             )
+            # Only these exact Core producers attest a provider. A runtime
+            # (ADEPT), logger name or generic NUMILOG payload does not.
+            provider_id = (
+                connection_detail.get("provider_id")
+                or source_sync_detail.get("provider_id")
+                or ("provider.kobo" if kobo_detail else None)
+                or ("provider.numilog" if numilog_detail else None)
+            )
             events.append({
                 "timestamp": ts,
                 "source": "app_log",
                 "module": ".".join(safe_parts)[:90],
+                **({"provider_id": provider_id} if provider_id else {}),
                 **({"business_module": business_module} if business_module else {}),
                 "severity": match["level"].lower(),
                 "message": message[:500] if numilog_detail or source_sync_detail or adept_detail else message[:240],
@@ -379,6 +389,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                  if word in _STRUCTURED_TERMS][:5]
         message = " ".join(terms) if terms else "[opération masquée]"
         public_detail = {}
+        provider_id = None
         # The Core attests user-requested Browser Recorder provisioning
         # operations. A generic PLUGIN.add() record with identical text
         # cannot publish even a fixed code without this provenance flag.
@@ -401,12 +412,15 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             if (validated and row.get("verified_public_provider_id")
                     == validated["provider_id"]):
                 public_detail = validated
+                provider_id = validated["provider_id"]
                 message = "connexion fournisseur échouée"
         if (category == "KOBO"
                 and operation == "automatic backup decision"
                 and type(diagnostics) is Diagnostics
                 and row.get("verified_kobo_backup") is True):
             public_detail = public_kobo_backup_decision(row.get("detail"))
+            if public_detail:
+                provider_id = "provider.kobo"
             message = public_kobo_backup_message(public_detail) or "[opération masquée]"
         reconciliation_detail = {}
         if (category == "LIBRARY"
@@ -442,6 +456,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             source_sync_detail = public_source_sync_fields(row.get("detail"))
             if source_sync_detail:
                 public_detail = source_sync_detail
+                provider_id = source_sync_detail["provider_id"]
                 message = public_source_sync_message(public_detail)
                 severity = ("error" if public_detail["status"] == "failed" else
                             "warning" if public_detail["status"] == "cancelled" else "info")
@@ -459,6 +474,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 public_detail = public_numilog_fields(
                     operation, row.get("detail"), row.get("duration_ms"),
                 )
+                if operation == "startup_materialization" and public_detail:
+                    provider_id = "provider.numilog"
                 task_ref = row.get("task_ref")
                 if (operation in {"acquisition_delivery", "session_state", "startup_materialization"}
                         and type(task_ref) is str and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
@@ -484,6 +501,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "timestamp": utc_stamp,
             "source": "core_events",
             "module": module,
+            **({"provider_id": provider_id} if provider_id else {}),
             "severity": severity,
             "message": message,
             **({"detail": public_detail} if public_detail else {}),
@@ -510,6 +528,7 @@ def query_diagnostic_events(
     source: str = "all", module: str = "", severity: str = "",
     since: str | None = None, until: str | None = None,
     limit: int = 50, offset: int = 0, reason_code: str = "",
+    provider_id: str = "",
 ) -> dict[str, Any]:
     """A bounded/paginated snapshot with explicit source states.
 
@@ -520,6 +539,10 @@ def query_diagnostic_events(
         raise ValueError("unknown diagnostic source")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("diagnostic module must be a string of at most 90 characters")
+    if type(provider_id) is not str or (
+        provider_id and canonical_public_provider_id(provider_id) is None
+    ):
+        raise ValueError("diagnostic provider must be a canonical public provider id")
     if type(reason_code) is not str or (
         reason_code and not known_reason_code(reason_code)
     ):
@@ -562,6 +585,10 @@ def query_diagnostic_events(
         if severity.lower() not in {"debug", "info", "warning", "error", "critical"}:
             raise ValueError("unknown diagnostic severity")
         events = [row for row in events if row["severity"] == severity.lower()]
+    if provider_id:
+        # Exact match before pagination. Never search messages, private
+        # collector fields or module/category names to infer provenance.
+        events = [row for row in events if row.get("provider_id") == provider_id]
     if lower or upper:
         events = [
             row for row in events
