@@ -128,3 +128,37 @@ def test_gtk_selector_is_before_pagination_not_page_only_search():
     assert source.count('"domain": DOMAIN_CHOICES[int(domain_selector.get_selected())][0]') >= 2
     assert "domain=DOMAIN_CHOICES[int(domain_selector.get_selected())][0]" in source
     assert "source_selector.connect" in source
+
+
+def test_ai_domain_preview_uses_same_global_scope_and_one_use_consent():
+    from diagnostics_ai import prepare_analysis, analyze_with_consent
+    from tests.test_diagnostics_ai_p0 import FakeBroker, FakeLLM
+
+    model = FakeLLM()
+    item = event(1, "reconciliation")
+    broker = FakeBroker([item])
+    preview = prepare_analysis(model, broker, domain="Réconciliation")
+    assert broker.filters[0]["domain"] == "reconciliation"
+    assert preview["scope"]["domain"] == "reconciliation"
+    assert model.calls == 0
+    assert "reconciliation" in preview["prompt"]
+    analysis = analyze_with_consent(
+        model, preview, approval_id=preview["approval_id"],
+    )
+    assert analysis["ok"] is True and model.calls == 1
+    with pytest.raises(ValueError, match="explicit_consent_required"):
+        analyze_with_consent(
+            model, preview, approval_id=preview["approval_id"],
+        )
+
+
+def test_ai_rejects_nonmatching_domain_from_misbehaving_broker():
+    from diagnostics_ai import prepare_analysis
+    from tests.test_diagnostics_ai_p0 import FakeBroker, FakeLLM
+
+    model = FakeLLM()
+    with pytest.raises(ValueError, match="diagnostics_domain_scope_mismatch"):
+        prepare_analysis(
+            model, FakeBroker([event(1, "kobo_backup")]), domain="reconciliation",
+        )
+    assert model.calls == 0
