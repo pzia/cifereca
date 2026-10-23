@@ -352,8 +352,15 @@ class ParisClient:
         def work():
             r = self.client.get(f"{self.base_url}{ACCOUNT_SERVICE}/ListLoans", params=self._params(provider, uid), headers=self._api_headers())
             data = self._json(r, f"loans {provider}")
-            rows = ((data.get("d") or {}).get("Loans") or [])
-            return [normalize_loan(x, provider) for x in rows if isinstance(x, dict)]
+            # A malformed/partial ListLoans response is NOT evidence of zero
+            # loans. Preserve earlier rights instead of silently dropping rows.
+            envelope = data.get("d")
+            if type(envelope) is not dict or "Loans" not in envelope:
+                raise ParisError("paris_loans_inventory_shape_invalid")
+            rows = envelope["Loans"]
+            if type(rows) is not list or any(type(row) is not dict for row in rows):
+                raise ParisError("paris_loans_inventory_shape_invalid")
+            return [normalize_loan(row, provider) for row in rows]
         return self._timed("API", f"loans {provider}", work)
 
     def all_loans(self, uid: str = "") -> list[Loan]:
