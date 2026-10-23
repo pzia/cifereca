@@ -13,7 +13,7 @@ import json
 import re
 
 from cifereca.plugin_api import ProviderError
-from cifereca.core.diagnostic_domains import (
+from cifereca.plugin_api.diagnostic_domains import (
     DIAGNOSTIC_DOMAINS, canonical_diagnostic_domain,
 )
 from diagnostics_explorer import (
