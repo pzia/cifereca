@@ -70,14 +70,15 @@ def _redacted_page_fingerprint(rows):
     # must invalidate a multi-page selection.
     return tuple(
         tuple(row[field] for field in _EXPORTED_EVENT_FIELDS)
-        + (row.get("business_module", ""), row.get("provider_id", ""))
+        + (row.get("business_module", ""), row.get("provider_id", ""),
+           row.get("domain", ""))
         for row in rows
     )
 
 
 def _check_selected_scope(rows, *, source: str, module: str, severity: str,
                           since: datetime | None, reason_code: str = "",
-                          provider_id: str = ""):
+                          provider_id: str = "", domain: str = ""):
     """Reject all events contradicting a requested Core broker filter.
 
     A malformed/old timestamp must not count as "all errors this hour".
@@ -93,6 +94,8 @@ def _check_selected_scope(rows, *, source: str, module: str, severity: str,
                 or (module_prefix
                     and not row["module"].casefold().startswith(module_prefix)
                     and not row.get("business_module", "").casefold().startswith(module_prefix))):
+            raise ValueError("diagnostic selection contains out-of-scope events")
+        if domain and row.get("domain") != domain:
             raise ValueError("diagnostic selection contains out-of-scope events")
         if provider_id and row.get("provider_id") != provider_id:
             raise ValueError("diagnostic selection contains out-of-scope events")
@@ -144,6 +147,15 @@ def _checked_page(payload: Mapping, offset: int, expected_total: int | None,
     }
     for row in rows:
         raw = by_id.get(row["event_id"])
+        if (row["source"] == "core_events" and isinstance(raw, Mapping)
+                and raw.get("source") == "core_events"
+                and ((raw.get("module") == "PLUGIN"
+                      and raw.get("domain") == "browser_recorder")
+                     or (raw.get("module") == "LIBRARY"
+                         and raw.get("domain") == "reconciliation"))):
+            # Exact, Core-owned domain tokens only. Kept for the internal
+            # filtered-scope check, never copied to public clipboard events.
+            row["domain"] = raw["domain"]
         if (row["source"] == "app_log" and isinstance(raw, Mapping)
                 and raw.get("source") == "app_log"
                 and raw.get("module") == row["module"]
@@ -161,7 +173,7 @@ def _checked_page(payload: Mapping, offset: int, expected_total: int | None,
 
 def collect_filtered_selection(
     broker, *, source="all", module="", severity="", period="day", search="",
-    provider_id="", reason_code="", mode="errors",
+    provider_id="", reason_code="", domain="", mode="errors",
     cancelled: Callable[[], bool] | None = None,
     max_pages=MAX_SCAN_PAGES,
 ) -> FilteredSelection:
@@ -181,6 +193,7 @@ def collect_filtered_selection(
             or len(search) > 500
             or type(provider_id) is not str
             or (provider_id and public_provider_id(provider_id) is None)
+            or type(domain) is not str or len(domain) > 40
             or type(reason_code) is not str
             or (reason_code and re.fullmatch(r"[a-z][a-z0-9_]{0,79}", reason_code) is None)
             or type(max_pages) is not int or not 1 <= max_pages <= MAX_SCAN_PAGES):
@@ -208,13 +221,15 @@ def collect_filtered_selection(
                 broker, source=source, module=module, severity=level,
                 period=period, offset=offset, reference_time=reference_time,
                 reason_code=reason_code, provider_id=provider_id,
+                domain=domain,
             )
             rows, total, following = _checked_page(
                 page, offset, total_expected, reason_code=reason_code,
             )
             _check_selected_scope(rows, source=source, module=module,
                                   severity=level, since=period_start,
-                                  reason_code=reason_code, provider_id=provider_id)
+                                  reason_code=reason_code, provider_id=provider_id,
+                                  domain=domain)
             total_expected = total
             if first_page_fingerprint is None:
                 first_page_fingerprint = _redacted_page_fingerprint(rows)
@@ -248,13 +263,15 @@ def collect_filtered_selection(
             broker, source=source, module=module, severity=level,
             period=period, offset=0, reference_time=reference_time,
             reason_code=reason_code, provider_id=provider_id,
+            domain=domain,
         )
         reread, _total, _next = _checked_page(
             current, 0, total_expected, reason_code=reason_code,
         )
         _check_selected_scope(reread, source=source, module=module,
                               severity=level, since=period_start,
-                              reason_code=reason_code, provider_id=provider_id)
+                              reason_code=reason_code, provider_id=provider_id,
+                              domain=domain)
         if _redacted_page_fingerprint(reread) != first_page_fingerprint:
             raise ValueError("diagnostic selection changed during pagination")
 
@@ -280,6 +297,7 @@ def collect_filtered_selection(
         "period": period,
         "reconciliation_reason_code": reason_code or None,
         "provider_filter": provider_id or None,
+        "domain_filter": domain or None,
         "local_text_search_applied": bool(search),
         "pagination_consistency": "first_page_rechecked_non_atomic",
         "sources_partial_or_unavailable": partial,
