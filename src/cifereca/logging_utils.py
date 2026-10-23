@@ -23,12 +23,21 @@ _PRIVATE_LOG_IDENTIFIERS = re.compile(
     r"""['"]?\s*[:=]\s*(?:"(?:\\[^\r\n]|[^"\\\r\n])*(?:"|(?=\r|\n|$))"""
     r"""|'(?:\\[^\r\n]|[^'\\\r\n])*(?:'|(?=\r|\n|$))|[^\s,;}'"]+)"""
 )
+_LOG_URL = re.compile(r"https?://[^\s<>\"']+", re.I)
 
 
 def _redact_log_identifiers(value: str) -> str:
     return _PRIVATE_LOG_IDENTIFIERS.sub(
         lambda match: match.group("name") + "=<redacted>", value,
     )
+
+
+def _redact_local_log_text(value: str) -> str:
+    from .diagnostics import redact_text
+    # A hostname/path is not inherently public: legacy URL text may contain
+    # user-specific subdomains or opaque delivery secrets without a query.
+    # Trusted producers publish site separately through their closed schema.
+    return _redact_log_identifiers(redact_text(_LOG_URL.sub("<redacted-url>", value)))
 
 
 def set_diagnostics_level(level):
@@ -39,7 +48,7 @@ def set_diagnostics_level(level):
 
 class RedactionFilter(logging.Filter):
     def filter(self, record):
-        from .diagnostics import redact_text, redact
+        from .diagnostics import redact
         if _diagnostic_level == "errors" and record.levelno < logging.WARNING:
             return False
         message = record.getMessage()
@@ -54,17 +63,15 @@ class RedactionFilter(logging.Filter):
         if message.startswith("TRACE") and _diagnostic_level != "trace":
             return False
         record.args = redact(record.args) if isinstance(record.args, dict) else tuple(redact(value) for value in (record.args or ()))
-        record.msg = _redact_log_identifiers(redact_text(record.getMessage()))
+        record.msg = _redact_local_log_text(record.getMessage())
         record.args = ()
         if record.exc_info:
             import traceback
-            record.exc_text = _redact_log_identifiers(
-                redact_text("".join(traceback.format_exception(*record.exc_info)))
-            )
+            record.exc_text = _redact_local_log_text("".join(traceback.format_exception(*record.exc_info)))
         elif record.exc_text:
-            record.exc_text = _redact_log_identifiers(redact_text(record.exc_text))
+            record.exc_text = _redact_local_log_text(record.exc_text)
         if record.stack_info:
-            record.stack_info = _redact_log_identifiers(redact_text(record.stack_info))
+            record.stack_info = _redact_local_log_text(record.stack_info)
         return True
 
 

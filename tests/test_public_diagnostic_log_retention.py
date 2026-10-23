@@ -204,3 +204,20 @@ def test_errors_mode_does_not_promote_successful_info_trace(monkeypatch):
     assert not logging_utils.RedactionFilter().filter(record(
         "TRACE task correlation task_ref=aaaaaaaaaaaa status=success", level=logging.INFO,
     ))
+
+
+@pytest.mark.parametrize("url", [
+    "https://reader-PRIVATE.example.invalid/opaque-PRIVATE",
+    "https://bibliotheques.paris.fr/opaque-PRIVATE",
+    "https://user:PRIVATE@reader-PRIVATE.example.invalid/?token=PRIVATE",
+])
+def test_legacy_url_text_is_removed_while_explicit_public_context_survives(monkeypatch, url):
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
+    item = record("provider_id=paris site=bibliotheques.paris.fr book_id=9782000000000 " + url)
+    item.exc_text = url
+    item.stack_info = url
+    assert logging_utils.RedactionFilter().filter(item)
+    rendered = logging.Formatter("%(message)s").format(item)
+    assert "PRIVATE" not in rendered and "https://" not in rendered
+    assert "site=bibliotheques.paris.fr" in rendered
+    assert "book_id=9782000000000" in rendered
