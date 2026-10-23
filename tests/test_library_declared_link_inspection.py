@@ -199,3 +199,36 @@ def test_replaced_file_can_revoke_old_statement_in_a_new_inspection(selected):
         assert rig[1].read_bytes() != b''
     finally:
         second.close()
+
+
+@pytest.mark.parametrize('rig', ['numilog'], indirect=True)
+def test_numilog_attention_required_receipt_does_not_block_private_declaration(selected):
+    """Historical incomplete acquisition must not require invented receipts."""
+    session, right_key, file_key, service, fixture = selected
+    _service, _book, _root, right, _options = fixture
+    service.storage.acquisition_put({
+        'acquisition_id': 'synthetic-incomplete-acquisition',
+        'entitlement_id': right['entitlement_id'],
+        'provider_id': 'numilog',
+        'credential_id': right['credential_id'],
+        'account_id': right['account_id'],
+        'identity_id': right['identity_id'],
+        'item_id': right['item_id'],
+        'status': 'attention_required',
+        'attention_code': 'artifact_not_published',
+    })
+    ledger_before = rows(service, 'acquisition_ledger')
+    # The strict provider-attested route must still refuse an incomplete
+    # receipt; a user statement is a separate, lower-trust operation.
+    assert session.preview_manual_attachment(right_key, file_key)['status'] == 'unavailable'
+    assert session.preview_declared_link(right_key, file_key)['status'] == 'preview'
+    answer = session.confirm_declared_link(right_key, file_key, user_confirmed=True)
+    assert answer['status'] == 'declared'
+    assert answer['trust'] == 'user_declaration'
+    assert rows(service, 'acquisition_ledger') == ledger_before
+    assert not rows(service, 'placements')
+    assert len(records(service)) == 1
+    for _ in range(2):
+        service.storage.entitlement_put(right)
+        assert len(records(service)) == 1
+        assert rows(service, 'acquisition_ledger') == ledger_before
