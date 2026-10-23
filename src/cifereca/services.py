@@ -172,14 +172,34 @@ class LibraryService:
         self.diagnostics.level = level
         set_diagnostics_level(level)
 
-    def can_download_loan(self, loan: Loan) -> bool:
+    def loan_download_eligibility(self, loan: Loan) -> dict[str, object]:
+        """Read-only explanation of a digital-loan action's availability.
+
+        No refresh, provider GET, remote download, or log emission; the
+        connected session and its announced capability are the only facts.
+        Never publish account, loan, credential, URL or provider exception.
+        This is NOT evidence of Adobe/PNB borrower authorization: the real
+        acquisition pipeline still validates identity, rights, DRM and leases.
+        """
         if loan.medium != "digital":
-            return False
+            return {"available": False, "code": "not_digital"}
         try:
-            session = self._session_for_source(loan.source_provider, loan.source_credential)
-            return bool(session.connected and session.capabilities.digital_download)
+            session = self._session_for_source(
+                loan.source_provider, loan.source_credential,
+            )
         except Exception:
-            return False
+            return {"available": False, "code": "provider_unavailable"}
+        try:
+            if not bool(session.connected):
+                return {"available": False, "code": "provider_disconnected"}
+            if not bool(session.capabilities.digital_download):
+                return {"available": False, "code": "download_unsupported"}
+        except Exception:
+            return {"available": False, "code": "provider_unavailable"}
+        return {"available": True, "code": "available"}
+
+    def can_download_loan(self, loan: Loan) -> bool:
+        return self.loan_download_eligibility(loan)["available"] is True
 
     def save_configuration(self, data: dict[str, Any]) -> dict[str, Any]:
         """Apply staged settings and journal directory changes before publishing them."""

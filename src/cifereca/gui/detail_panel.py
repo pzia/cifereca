@@ -22,6 +22,7 @@ from .query_model import result_row
 from ..plugin_api import UiBookDetailPresentation, document_links
 from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation
 from .action_widgets import clear_box, add_css
+from .loan_download_status import loan_download_unavailable_message
 
 
 if TYPE_CHECKING:
@@ -533,7 +534,28 @@ class DetailPanel(Gtk.Box):
             ],
         ))
         buttons: list[Gtk.Button] = []
-        if include_pnb_action and self.window.service.can_download_loan(loan):
+        downloadable = (
+            self.window.service.can_download_loan(loan)
+            if loan.medium == "digital" else False
+        )
+        if loan.medium == "digital" and not downloadable:
+            # Presentation is read-only. Explain a withheld action without
+            # logging at every GTK rerender or triggering any provider fetch.
+            eligibility = getattr(
+                self.window.service, "loan_download_eligibility", None,
+            )
+            if callable(eligibility):
+                try:
+                    reason = loan_download_unavailable_message(
+                        eligibility(loan),
+                    )
+                except Exception:
+                    reason = None
+                if reason:
+                    self._group(
+                        "Téléchargement du prêt", [("Disponibilité", reason)],
+                    )
+        if include_pnb_action and downloadable:
             prepare = self.window.action_button("Télécharger le livre du prêt", "document-save-symbolic", suggested=True)
             prepare.connect("clicked", lambda _b: self.window.prepare_pnb_for_loan(loan, send=False, control=prepare))
             prepare.set_tooltip_text("Récupère le prêt et traite son ACSM avec Kobo-Adept. Un fichier déjà présent est conservé ; une nouvelle copie peut être créée. Aucun nouvel emprunt.")
