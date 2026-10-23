@@ -72,3 +72,34 @@ def test_maintenance_checkpoint_missing_symlink_or_other_scenario_is_safe(tmp_pa
     source.write_text(json.dumps([{"scenario": "startup", "returncode": 1}]))
     row = exporter.safe_summary(source)["results"][0]
     assert "maintenance_last_safe_checkpoint" not in row
+
+
+
+def test_all_native_maintenance_viewports_export_one_closed_checkpoint(tmp_path):
+    """920/1024 failures must be diagnosable without private GTK stderr."""
+    for viewport in (920, 1024, 1280, 1366, 1600):
+        scenario = f"maintenance-tools-{viewport}"
+        source = tmp_path / "summary.json"
+        source.write_text(json.dumps([
+            {"scenario": scenario, "returncode": 1, "error": "SECRET_ACCOUNT"}
+        ]))
+        report = tmp_path / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(json.dumps({
+            "checks": {
+                "real_tools_route_and_action": True,
+                "P1_1498-duplicates_cancelled_terminal_on_own_line": True,
+                "inspection_fixture_created": "SECRET_not_boolean",
+            },
+            "failure_stack": "/home/SECRET_PATH token=SECRET",
+            "error": "SECRET_ACCOUNT",
+        }))
+        output = exporter.safe_summary(source)["results"][0]
+        assert output["maintenance_last_safe_checkpoint"] == "maintenance_p1_done"
+        assert "SECRET" not in repr(output)
+        assert "failure_stack" not in repr(output)
+        report.write_text(json.dumps({
+            "checks": {"real_tools_route_and_action": True}
+        }))
+        output = exporter.safe_summary(source)["results"][0]
+        assert output["maintenance_last_safe_checkpoint"] == "maintenance_route"
