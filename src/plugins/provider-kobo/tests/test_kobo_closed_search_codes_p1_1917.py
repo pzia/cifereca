@@ -66,7 +66,7 @@ def test_public_only_401_private_denial_still_preserves_catalogue_without_rights
                          "/api/v2/catalog/search"]
         assert items and all(item.owned is False and item.downloadable is False
                              for item in items)
-        assert any("partiel" in warning for warning in session.last_search_warnings)
+        assert any("partial_results" in warning for warning in session.last_search_warnings)
     finally:
         session.close()
 
