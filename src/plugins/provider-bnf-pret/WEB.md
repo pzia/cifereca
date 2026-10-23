@@ -191,3 +191,21 @@ Tests de contrôle sans GTK/Playwright :
 \`python -m unittest discover -s src/plugins/provider-bnf-pret/tests -p test_reader_page.py -v\`.
 La CI Core collecte également \`tests/test_bnf_pret_reader_page.py\`.
 La recette GTK/SSO réelle et la qualification des sélecteurs restent ouvertes.
+
+## Observations de prêts en mémoire — session unique
+
+`cifereca_bnf_pret_observations.py` accumule seulement les couples structurés
+`loan_id/resource_id` d'une **même** identité/compte/époque de session.
+La consultation retourne des **compteurs** : prêts présents sur la dernière page,
+nouvelles observations et références vues depuis l'ouverture de la session.
+Le cumul est une information historique de parcours, **jamais le total des droits
+actifs**. Une page vide/partielle, une erreur HTTP, une déconnexion ou une
+sélection différente ne supprime ni n'expire automatiquement un prêt.
+
+Le collecteur refuse les contradictions, pages prétendument exhaustives,
+identifiants invalides et plus de 100 observations. `close()` révoque le
+contenu en mémoire : nouvelle session = nouvel objet, aucune persistence ni
+écriture Core. Son raccordement à l'UI de lecture viendra dans une tranche
+suivante ; **aucune capacité `sync.loans` n'est encore déclarée**.
+
+Tests : `python -m unittest discover -s src/plugins/provider-bnf-pret/tests -p test_loan_observations.py -v`.
