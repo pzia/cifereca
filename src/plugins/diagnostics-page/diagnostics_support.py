@@ -1,6 +1,13 @@
 """Explicit, local support export and selection preservation; no broker I/O."""
 from __future__ import annotations
 
+try:
+    from cifereca.plugin_api import prefer_downloads_for_save
+except ImportError:
+    # A plugin-only update must remain safe with an older Core.
+    def prefer_downloads_for_save(_chooser):
+        return False
+
 
 def support_report_bytes(text):
     from cifereca_diagnostics_page import _redacted_text
@@ -56,6 +63,7 @@ class SupportReportExport:
                 self.title, self.parent(),
                 self.Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
             )
+            prefer_downloads_for_save(self.dialog)
             self.dialog.set_current_name(self.filename)
             self.dialog.connect("response", self.response)
             self.button.set_sensitive(False)
