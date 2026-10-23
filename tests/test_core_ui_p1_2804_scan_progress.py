@@ -179,6 +179,7 @@ def test_two_unknown_plugin_rows_are_isolated_and_drop_late_refresh_reports():
     ta, tb = a.feedback.state, b.feedback.state
     assert ta.phase == tb.phase == "analysis"
     ca = a.host._maintenance_line_rows[0][1]["control"]
+    stale_ticket = a.host._maintenance_line_rows[0][1]["ticket"]
     cb = b.host._maintenance_line_rows[0][1]["control"]
     assert ca is not cb
     ca.report(current=3, total=6, message="/PRIVATE/A")
@@ -192,6 +193,5 @@ def test_two_unknown_plugin_rows_are_isolated_and_drop_late_refresh_reports():
     cb.report(current=2, total=4, message="PRIVATE_B")
     flush(b)
     assert b.feedback.state.fraction == .5
-    assert a.feedback.state.phase == "analysis" or not a.feedback.valid(
-        a.host._maintenance_line_rows[0][1]["ticket"] or -1
-    )
+    assert not a.feedback.valid(stale_ticket)
+    assert a.feedback.state.fraction == .5
