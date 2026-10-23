@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 import json
 import re
+import unicodedata
 
 from diagnostics_reconciliation import (
     reconciliation_event_summary,
@@ -39,6 +40,32 @@ SOURCES = ("all", "core_events", "app_log")
 SEVERITIES = ("", "debug", "info", "warning", "error", "critical")
 PERIODS = ("all", "hour", "day", "week", "month")
 PAGE_SIZE = 50
+_DOMAIN_ALIASES = {
+    "browser": "browser_recorder",
+    "recorder": "browser_recorder",
+    "browser recorder": "browser_recorder",
+    "browser_recorder": "browser_recorder",
+    "reconciliation": "reconciliation",
+    "reconcilitation": "reconciliation",
+}
+PUBLIC_DOMAINS = ("browser_recorder", "reconciliation")
+
+
+def selected_business_domain(raw: str) -> str:
+    """Closed UI aliases, identical to the Core broker vocabulary."""
+    if type(raw) is not str or len(raw) > 48:
+        raise ValueError("invalid diagnostics domain")
+    normalized = "".join(
+        char for char in unicodedata.normalize("NFD", raw.strip().casefold())
+        if unicodedata.category(char) != "Mn"
+    )
+    if not normalized:
+        return ""
+    try:
+        return _DOMAIN_ALIASES[normalized]
+    except KeyError:
+        raise ValueError("unknown diagnostics domain") from None
+
 # Only Core canonical public provider labels, never account names or URLs.
 _PUBLIC_PROVIDER_RE = re.compile(
     r"[a-z][a-z0-9]{0,31}(?:[._-][a-z][a-z0-9]{0,31}){0,5}\Z", re.ASCII,
@@ -125,6 +152,7 @@ def fetch_explorer_page(
     provider_id: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
+    domain: str = "",
 ) -> dict[str, Any]:
     """Only public diagnostics.events; never a path or arbitrary log query."""
     if not isinstance(source, str) or not isinstance(severity, str) or not isinstance(period, str):
@@ -140,6 +168,7 @@ def fetch_explorer_page(
         raise ValueError("invalid reconciliation reason code")
     if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
         raise ValueError("invalid diagnostics offset")
+    canonical_domain = selected_business_domain(domain)
     query = {
         "source": source, "module": module.strip()[:90],
         "severity": severity, "since": explorer_since(period, now=reference_time),
@@ -148,6 +177,9 @@ def fetch_explorer_page(
     # Older Core versions can still serve the unfiltered page. Require the
     # optional new broker keyword ONLY for an explicitly selected code;
     # never silently downgrade a global filter to local 50-item search.
+    if canonical_domain:
+        # Never emulate server filtering by looking only at page 1.
+        query["domain"] = canonical_domain
     if reason_code:
         query["reason_code"] = reason_code
     if provider_id:
@@ -181,6 +213,9 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
             for key in ("timestamp", "source", "module", "severity", "message", "status", "event_id")
         }
         provider = public_provider_id(raw.get("provider_id"))
+        domain = raw.get("domain")
+        if type(domain) is str and domain in PUBLIC_DOMAINS:
+            safe["domain"] = domain
         if provider is not None:
             safe["provider_id"] = provider
         # The Core attests the terminal reconciliation event; present only
