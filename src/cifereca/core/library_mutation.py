@@ -130,7 +130,8 @@ def catalog_index_path(self, path: Path, *, title: str | None=None, item_id: str
 
 
 def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcile_missing: bool=False,
-                          complete_scopes: set[tuple[str, str, str]] | frozenset[tuple[str, str, str]] | None = None) -> dict[str, int]:
+                          complete_scopes: set[tuple[str, str, str]] | frozenset[tuple[str, str, str]] | None = None,
+                          realize_expired: bool = True) -> dict[str, int]:
     """Persist positive loan rows; no missing-loan inference without scoped proof."""
     active_ids: set[str] = set()
     persisted = 0
@@ -165,5 +166,8 @@ def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcil
     returned = (self.storage.entitlement_realize_missing_loans(
         active_ids, identity_id=identity_id, complete_scopes=complete_scopes,
     ) if reconcile_missing and complete_scopes else 0)
-    expired = self.storage.entitlement_realize_expired()
+    # Explicit single-source inventory sync only persists *positive* rows.
+    # Historical expirations across other providers/profiles belong to the
+    # dedicated lifecycle reconciliation, not a manual refresh of one source.
+    expired = self.storage.entitlement_realize_expired() if realize_expired else 0
     return {"persisted": persisted, "returned_realized": returned, "expired_realized": expired}
