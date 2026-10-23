@@ -38,6 +38,8 @@ def local_timestamp_label(value: object) -> str:
 SOURCES = ("all", "core_events", "app_log")
 SEVERITIES = ("", "debug", "info", "warning", "error", "critical")
 PERIODS = ("all", "hour", "day", "week", "month")
+# Closed Core-attested domains. The empty value preserves legacy brokers.
+DOMAINS = ("", "browser_recorder", "reconciliation")
 PAGE_SIZE = 50
 # Only Core canonical public provider labels, never account names or URLs.
 _PUBLIC_PROVIDER_RE = re.compile(
@@ -122,7 +124,7 @@ def explorer_since(period: str, *, now: datetime | None = None) -> str | None:
 
 def fetch_explorer_page(
     broker: Any, *, source: str = "all", module: str = "",
-    provider_id: str = "",
+    domain: str = "", provider_id: str = "",
     severity: str = "", period: str = "day", offset: int = 0,
     reference_time: datetime | None = None, reason_code: str = "",
 ) -> dict[str, Any]:
@@ -133,6 +135,8 @@ def fetch_explorer_page(
         raise ValueError("unsupported diagnostics filter")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("invalid diagnostics module")
+    if type(domain) is not str or domain not in DOMAINS:
+        raise ValueError("invalid diagnostics domain")
     if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
         raise ValueError("invalid diagnostics provider")
     if (type(reason_code) is not str
@@ -150,6 +154,10 @@ def fetch_explorer_page(
     # never silently downgrade a global filter to local 50-item search.
     if reason_code:
         query["reason_code"] = reason_code
+    # An old Core cannot promise a global domain filter. Do not silently
+    # degrade this to a local search through the first 50 observations.
+    if domain:
+        query["domain"] = domain
     if provider_id:
         query["provider_id"] = provider_id
     return broker.events(**query)
@@ -183,6 +191,12 @@ def sanitized_rows(payload: Mapping[str, Any], *, search: str = "",
         provider = public_provider_id(raw.get("provider_id"))
         if provider is not None:
             safe["provider_id"] = provider
+        # An exact Core projection only, never inferred from a PLUGIN/
+        # LIBRARY module, translated message or plugin-controlled text.
+        if (raw.get("source") == "core_events"
+                and type(raw.get("domain")) is str
+                and raw["domain"] in DOMAINS[1:]):
+            safe["domain"] = raw["domain"]
         # The Core attests the terminal reconciliation event; present only
         # finite, local aggregate labels. The code is searchable on this page
         # without changing the broker's server-side query or exporting books.
