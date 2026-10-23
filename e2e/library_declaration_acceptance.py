@@ -135,9 +135,9 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report, chec
                      and w.get_name() == 'reconciliation-guided-stage')
         assert guide.get_text().startswith('1/4')
         report['checks']['native_guided_right_first'] = True
-        # The default list is paginated and starts with local files; the
-        # synthetic Numilog right is deliberately not in the first 50 rows.
-        # Switch via the actual GTK shortcut before physically selecting it.
+        # The default list now starts with non-attested rights (#2842);
+        # exercise the actual GTK shortcut anyway to prove it remains usable.
+        # The right must be selected physically, not just found in Core.
         click(button('Droits non vérifiés'), lambda: until(right_visible, click_right))
 
     def right_visible():
