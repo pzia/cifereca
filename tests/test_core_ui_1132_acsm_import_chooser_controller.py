@@ -142,8 +142,8 @@ def test_dialog_title_transience_buttons_and_acsm_patterns_are_preserved():
         "action": Gtk.FileChooserAction.OPEN,
     }
     assert chooser.buttons == ("Annuler", 0, "Importer", 1)
-    assert chooser.filters[0].label == "ACSM (*.acsm)"
-    assert chooser.filters[0].patterns == ["*.acsm", "*.ACSM"]
+    assert chooser.filters[0].label == "ACSM ou jeton ADEPT téléchargé (*.acsm, *.bin)"
+    assert chooser.filters[0].patterns == ["*.acsm", "*.ACSM", "*.bin", "*.BIN"]
     assert chooser.presented == 1
     assert host._acsm_chooser is chooser
     assert submitted == []
