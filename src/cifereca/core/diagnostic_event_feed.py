@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import unicodedata
 from typing import Any
 
 from .diagnostic_numilog_projection import (
@@ -402,6 +403,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                  if word in _STRUCTURED_TERMS][:5]
         message = " ".join(terms) if terms else "[opération masquée]"
         public_detail = {}
+        # Only validated Core projections may set a business-domain facet.
+        business_domain = ""
         # The Core attests user-requested Browser Recorder provisioning
         # operations. A generic PLUGIN.add() record with identical text
         # cannot publish even a fixed code without this provenance flag.
@@ -412,6 +415,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             attested = verified_fields(row.get("detail"), operation, status)
             if attested:
                 public_detail = attested
+                business_domain = "browser_recorder"
                 message = operation
         # This projection is restricted to the Core connection producer's
         # exact fixed operation/code pair. Other PLUGIN records remain masked,
@@ -454,6 +458,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             if inspected and status == (
                     "ok" if inspected["status"] == "complete" else inspected["status"]):
                 reconciliation_detail = inspected
+                business_domain = "reconciliation"
                 public_detail = inspected
                 message = {
                     "complete": "réconciliation locale terminée",
@@ -545,6 +550,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "timestamp": utc_stamp,
             "source": "core_events",
             "module": module,
+            **({"domain": business_domain} if business_domain else {}),
             **({"provider_id": attested_provider_id} if attested_provider_id else {}),
             "severity": severity,
             "message": message,
@@ -567,10 +573,35 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
     return events, state
 
 
+def canonical_diagnostic_domain(value: str) -> str:
+    """Exact, bounded aliases; never classify events from free-form messages."""
+    if type(value) is not str or len(value) > 40:
+        raise ValueError("unknown diagnostic domain")
+    alias = "".join(
+        char for char in unicodedata.normalize("NFKD", value.strip().casefold())
+        if not unicodedata.combining(char)
+    ).replace("-", " ").replace("_", " ")
+    return {
+        "": "",
+        "browser": "browser_recorder",
+        "recorder": "browser_recorder",
+        "browser recorder": "browser_recorder",
+        "reconciliation": "reconciliation",
+        "reconcilitation": "reconciliation",
+    }.get(alias) if alias in {
+        "", "browser", "recorder", "browser recorder",
+        "reconciliation", "reconcilitation",
+    } else _unknown_diagnostic_domain()
+
+
+def _unknown_diagnostic_domain():
+    raise ValueError("unknown diagnostic domain")
+
+
 def query_diagnostic_events(
     diagnostics: Any, *, log_path: Path,
     source: str = "all", module: str = "", severity: str = "",
-    provider_id: str = "",
+    provider_id: str = "", domain: str = "",
     since: str | None = None, until: str | None = None,
     limit: int = 50, offset: int = 0, reason_code: str = "",
 ) -> dict[str, Any]:
@@ -583,6 +614,7 @@ def query_diagnostic_events(
         raise ValueError("unknown diagnostic source")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("diagnostic module must be a string of at most 90 characters")
+    domain_id = canonical_diagnostic_domain(domain)
     # Provider and module are independent filters. A caller-supplied value
     # is never interpreted as a provider name, account alias or URL.
     if type(provider_id) is not str or (
@@ -629,6 +661,10 @@ def query_diagnostic_events(
         ]
     if provider_id:
         events = [row for row in events if row.get("provider_id") == provider_id]
+    if domain_id:
+        # Global pre-pagination query over *attested* Core-only domain fields.
+        # A generic PLUGIN/LIBRARY log or text match cannot impersonate one.
+        events = [row for row in events if row.get("domain") == domain_id]
     if severity:
         if severity.lower() not in {"debug", "info", "warning", "error", "critical"}:
             raise ValueError("unknown diagnostic severity")
