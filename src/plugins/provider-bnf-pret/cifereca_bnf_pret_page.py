@@ -428,6 +428,9 @@ class BnfReaderPage:
                                 status.set_label(_DEFAULT_ERROR)
                             else:
                                 self.loan_selection = chosen
+                                # The user must see which public book corresponds
+                                # to the number before choosing to navigate.
+                                preview.set_label("\n".join(chosen.visible_book_lines()))
                                 loan_index.set_range(1, max(1, visible_count))
                                 loan_index.set_value(1)
                                 message = loan_observation_status(counts)
