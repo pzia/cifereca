@@ -46,9 +46,13 @@ def choose_acsm(window, *, Gtk):
     )
     window._acsm_chooser = chooser
     filt = Gtk.FileFilter()
-    filt.set_name("ACSM (*.acsm)")
+    # The Core validates .bin content before *any* staging or ADEPT action;
+    # extension alone is never evidence of an ACSM or a valid BnF loan.
+    filt.set_name("ACSM ou jeton ADEPT téléchargé (*.acsm, *.bin)")
     filt.add_pattern("*.acsm")
     filt.add_pattern("*.ACSM")
+    filt.add_pattern("*.bin")
+    filt.add_pattern("*.BIN")
     chooser.add_filter(filt)
     completed = False
 
