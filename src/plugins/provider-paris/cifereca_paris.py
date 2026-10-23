@@ -14,7 +14,7 @@ from cifereca.plugin_api import (
     AcquisitionOffer, AcquisitionOfferSet, AcquisitionPreferences,
     acquisition_format_projection, normalize_acquisition_format,
 )
-from cifereca_paris_client import ParisClient
+from cifereca_paris_client import AuthenticationError, ParisClient, ParisSummaryHTTPError
 from cifereca.plugin_api import (
     CredentialField,
     ProviderCapabilities,
@@ -172,13 +172,15 @@ class ParisProviderSession(ProviderSession):
             raise ProviderConfigurationError("Bibliothèques de Paris : identifiant et mot de passe requis")
         try:
             self.client.login(username, password)
-        except Exception:
-            # Never log the provider exception (which may contain login,
-            # cookies, a signed URL or response contents).
+        except Exception as exc:
+            # A 403 upstream must not be misdiagnosed as bad credentials.
+            # Only our typed AuthenticationError carries approved reason
+            # codes; untrusted exception text and cookies are never logged.
+            reason = exc.code if isinstance(exc, AuthenticationError) else "paris_login_failed"
             try:
                 self.diagnostics.add(
                     "AUTH", "Paris connection", "error",
-                    detail={"provider": "paris", "code": "paris_login_failed"},
+                    detail={"provider": "paris", "code": reason},
                 )
             except Exception:
                 pass
@@ -193,14 +195,16 @@ class ParisProviderSession(ProviderSession):
                 if first_summary_error is None:
                     first_summary_error = exc
                 try:
+                    detail = {
+                        "provider": self.provider_id,
+                        "credential_id": self.credential_id,
+                        "upstream": upstream,
+                        "error": type(exc).__name__,
+                    }
+                    if isinstance(exc, ParisSummaryHTTPError):
+                        detail["code"] = exc.code
                     self.diagnostics.add(
-                        "API", f"summary {upstream}", "error",
-                        detail={
-                            "provider": self.provider_id,
-                            "credential_id": self.credential_id,
-                            "upstream": upstream,
-                            "error": type(exc).__name__,
-                        },
+                        "API", f"summary {upstream}", "error", detail=detail,
                     )
                 except Exception:
                     pass

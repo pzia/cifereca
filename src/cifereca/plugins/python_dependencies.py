@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import hashlib
 import json
 from datetime import datetime, timezone
 import os
@@ -11,7 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from packaging.utils import canonicalize_name
+from packaging.utils import canonicalize_name, parse_wheel_filename, InvalidWheelFilename
+from packaging.version import Version, InvalidVersion
 
 from cifereca.plugin_api import SystemRequirement
 
@@ -195,15 +197,121 @@ class PythonDependencyManager:
             command.append("--no-index")
         return command
 
+    def _pip_install_offline(self, requested: Sequence[str], wheel_dirs: Sequence[Path]) -> None:
+        """Resolve offline, then install only hash-pinned admitted release wheels.
+
+        The installed Core release is the trust root. A plugin ZIP's own
+        wheelhouse+JSON is NOT a signature, so never treat a plugin-provided
+        directory as an admission authority.
+        """
+        trusted = Path(sys.prefix).resolve().parent / "offline-wheels"
+        if trusted not in tuple(Path(item).resolve() for item in wheel_dirs):
+            raise PythonDependencyError("dependency_provenance_unavailable")
+        from cifereca import __version__
+        from cifereca.wheelhouse_quarantine import verify_wheelhouse
+        try:
+            admitted = verify_wheelhouse(trusted, core_version=__version__)
+        except QuarantineRejected as exc:
+            raise PythonDependencyError(str(exc)) from None
+        except (OSError, ValueError, TypeError):
+            raise PythonDependencyError("dependency_provenance_unavailable") from None
+        if not admitted:
+            raise PythonDependencyError("dependency_provenance_unavailable")
+        allowed = {wheel.as_uri(): wheel for wheel in admitted}
+        # Keep the attester's SHA, *never* turn a later modified file into an
+        # approved candidate merely by hashing its new bytes for pip.
+        try:
+            manifest = json.loads(
+                (trusted / "wheelhouse-provenance.json").read_text(encoding="utf-8")
+            )
+            approved_hashes = {
+                row["filename"]: row["sha256"] for row in manifest["wheels"]
+            }
+        except (OSError, ValueError, KeyError, TypeError):
+            raise PythonDependencyError("dependency_provenance_unavailable") from None
+
+        with tempfile.NamedTemporaryFile(
+            prefix="cifereca-offline-plan-", suffix=".json", delete=False,
+        ) as report:
+            report_path = Path(report.name)
+        try:
+            # This exact trusted directory is the *only* pip source. Other
+            # wheel_dirs (e.g. from plugin ZIPs) are intentionally excluded.
+            plan_cmd = [
+                sys.executable, "-m", "pip", "--isolated", "install",
+                "--disable-pip-version-check", "--no-index", "--no-cache-dir",
+                "--only-binary=:all:", "--find-links", str(trusted),
+                "--dry-run", "--report", str(report_path), *requested,
+            ]
+            proc = subprocess.run(
+                plan_cmd, text=True, capture_output=True, timeout=300, check=False,
+            )
+            if proc.returncode != 0:
+                raise PythonDependencyError("dependency_not_eligible")
+            if report_path.stat().st_size > 2 * 1024 * 1024:
+                raise PythonDependencyError("dependency_provenance_unavailable")
+            plan = json.loads(report_path.read_text(encoding="utf-8"))
+            if type(plan) is not dict or type(plan.get("install")) is not list:
+                raise PythonDependencyError("dependency_provenance_unavailable")
+            pinned: list[str] = []
+            for item in plan["install"]:
+                if type(item) is not dict or type(item.get("metadata")) is not dict:
+                    raise PythonDependencyError("dependency_provenance_unavailable")
+                meta = item["metadata"]
+                dl = item.get("download_info")
+                if type(dl) is not dict or type(dl.get("url")) is not str:
+                    raise PythonDependencyError("dependency_provenance_unavailable")
+                # Require the *exact* local URI; a remote link or a symlinked
+                # path injected into the pip report cannot enter the install.
+                wheel = allowed.get(dl["url"])
+                if wheel is None:
+                    raise PythonDependencyError("dependency_provenance_unavailable")
+                try:
+                    name, version, _build, _tags = parse_wheel_filename(wheel.name)
+                    if (name != canonicalize_name(meta.get("name"))
+                            or version != Version(meta.get("version"))):
+                        raise PythonDependencyError("dependency_not_eligible")
+                except (InvalidWheelFilename, InvalidVersion, TypeError, ValueError):
+                    raise PythonDependencyError("dependency_not_eligible") from None
+                digest = hashlib.sha256()
+                with wheel.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                if digest.hexdigest() != approved_hashes.get(wheel.name):
+                    raise PythonDependencyError("dependency_provenance_unavailable")
+                pinned.append(wheel.as_uri() + "#sha256=" + approved_hashes[wheel.name])
+            if not pinned:
+                return  # Existing compatible venv needs no mutation.
+            # Direct hash-pinned local URI + --no-deps prevents pip from
+            # running a second resolver or quietly fetching from an index.
+            install = [
+                sys.executable, "-m", "pip", "--isolated", "install",
+                "--disable-pip-version-check", "--no-index", "--no-deps",
+                "--no-cache-dir", *pinned,
+            ]
+            installed = subprocess.run(
+                install, text=True, capture_output=True, timeout=300, check=False,
+            )
+            if installed.returncode != 0:
+                raise PythonDependencyError("dependency_not_eligible")
+        except PythonDependencyError:
+            raise
+        except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+            raise PythonDependencyError("dependency_provenance_unavailable") from None
+        finally:
+            report_path.unlink(missing_ok=True)
+
     def _pip_install(self, requested: Sequence[str], wheel_dirs: Sequence[Path]) -> None:
         if not requested:
             return
         # P0 #2770: pip is still the standard resolver. Its dry-run plan
         # includes transitive dependencies. No venv writes are allowed before
         # *each exact proposed wheel* has a PyPI release-time + SHA proof.
-        # Disallow an unattested local wheelhouse/index as a silent fallback.
+        # Offline may use only an admitted wheelhouse from the installed
+        # Core release; untrusted plugin wheels never bypass the 168h gate.
         if not self.allow_index:
-            raise PythonDependencyError("dependency_provenance_unavailable")
+            self._pip_install_offline(requested, wheel_dirs)
+            return
         with tempfile.NamedTemporaryFile(prefix="cifereca-pip-", suffix=".json", delete=False) as report:
             report_path = Path(report.name)
         try:

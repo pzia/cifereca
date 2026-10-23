@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
+import sys
+import zipfile
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -316,3 +320,228 @@ def test_rollback_quarantine_failure_preserves_added_installed_distributions(mon
     with pytest.raises(PythonDependencyError, match="^dependency_provenance_unavailable$"):
         manager._restore(before, ())
     assert calls == [("preflight", ("old-pkg==1.0",))]
+
+
+def _approved_offline_release(tmp_path, monkeypatch):
+    """An installed release's pre-attested wheelhouse; no live PyPI."""
+    from cifereca.wheelhouse_quarantine import attest_wheelhouse
+    prefix = tmp_path / ".venv"
+    prefix.mkdir()
+    trusted = tmp_path / "offline-wheels"
+    trusted.mkdir()
+    wheel = trusted / "sample_pkg-1.2.3-py3-none-any.whl"
+    wheel.write_bytes(b"fixture approved wheel contents")
+    registry = {
+        "info": {"name": "sample-pkg", "version": "1.2.3"},
+        "urls": [{
+            "filename": wheel.name, "packagetype": "bdist_wheel",
+            "url": "https://files.pythonhosted.org/packages/" + wheel.name,
+            "digests": {"sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()},
+            "yanked": False, "upload_time_iso_8601": (
+                NOW - timedelta(days=9)
+            ).isoformat(),
+        }],
+    }
+    attest_wheelhouse(trusted, now=NOW, read_release=lambda *_: registry)
+    monkeypatch.setattr(manager_module.sys, "prefix", str(prefix))
+    return trusted, wheel
+
+
+def test_offline_plugin_install_resolves_and_installs_only_attested_file(
+    tmp_path, monkeypatch,
+):
+    trusted, wheel = _approved_offline_release(tmp_path, monkeypatch)
+    evil = tmp_path / "untrusted-plugin-wheelhouse"
+    evil.mkdir()
+    (evil / "other-1.0-py3-none-any.whl").write_bytes(b"NOT ATTESTED")
+    commands = []
+    def fake_pip(command, **kwargs):
+        commands.append(command)
+        if "--dry-run" in command:
+            Path(command[command.index("--report") + 1]).write_text(
+                json.dumps({"install": [{
+                    "metadata": {"name": "sample-pkg", "version": "1.2.3"},
+                    "download_info": {"url": wheel.as_uri()},
+                }]}),
+                encoding="utf-8",
+            )
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(subprocess, "run", fake_pip)
+    PythonDependencyManager(allow_index=False)._pip_install(
+        ("sample-pkg>=1",), (trusted, evil),
+    )
+    assert len(commands) == 2
+    assert "--no-index" in commands[0] and "--no-index" in commands[1]
+    assert "--dry-run" in commands[0] and "--only-binary=:all:" in commands[0]
+    assert "--no-deps" in commands[1] and "--no-cache-dir" in commands[1]
+    assert str(evil) not in " ".join(commands[0] + commands[1])
+    assert wheel.as_uri() + "#sha256=" + hashlib.sha256(wheel.read_bytes()).hexdigest() in commands[1]
+
+
+@pytest.mark.parametrize("alteration", ["missing", "modified", "recent", "untrusted_only"])
+def test_offline_plugin_refuses_unattested_or_recent_before_any_pip(
+    tmp_path, monkeypatch, alteration,
+):
+    trusted, wheel = _approved_offline_release(tmp_path, monkeypatch)
+    if alteration == "missing":
+        (trusted / "wheelhouse-provenance.json").unlink()
+    elif alteration == "modified":
+        wheel.write_bytes(b"tampered artifact")
+    elif alteration == "recent":
+        manifest_path = trusted / "wheelhouse-provenance.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["wheels"][0]["uploaded_at"] = (
+            datetime.now(timezone.utc) - timedelta(hours=1)
+        ).isoformat()
+        manifest_path.write_text(json.dumps(manifest))
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *args, **kwargs: pytest.fail("pip executed without valid admission"),
+    )
+    wheel_dirs = (
+        (tmp_path / "untrusted-wheels",) if alteration == "untrusted_only"
+        else (trusted,)
+    )
+    with pytest.raises(PythonDependencyError):
+        PythonDependencyManager(allow_index=False)._pip_install(
+            ("sample-pkg>=1",), wheel_dirs,
+        )
+
+
+@pytest.mark.parametrize("suspicious", ["https", "other_local", "mismatched_version"])
+def test_offline_plugin_denies_unattested_pip_report_before_mutation(
+    tmp_path, monkeypatch, suspicious,
+):
+    trusted, wheel = _approved_offline_release(tmp_path, monkeypatch)
+    calls = []
+    def fake_pip(command, **kwargs):
+        calls.append(command)
+        if "--dry-run" not in command:
+            pytest.fail("untrusted pip candidate reached mutating install")
+        url = wheel.as_uri()
+        version = "1.2.3"
+        if suspicious == "https":
+            url = "https://files.pythonhosted.org/packages/" + wheel.name
+        elif suspicious == "other_local":
+            url = (tmp_path / "unverified-1.0-py3-none-any.whl").as_uri()
+        else:
+            version = "2.0"
+        Path(command[command.index("--report") + 1]).write_text(
+            json.dumps({"install": [{
+                "metadata": {"name": "sample-pkg", "version": version},
+                "download_info": {"url": url},
+            }]}),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(subprocess, "run", fake_pip)
+    with pytest.raises(PythonDependencyError, match="dependency_"):
+        PythonDependencyManager(allow_index=False)._pip_install(
+            ("sample-pkg",), (trusted,),
+        )
+    assert len(calls) == 1
+
+
+def test_offline_plugin_fully_satisfied_installed_dependencies_no_mutation(
+    tmp_path, monkeypatch,
+):
+    trusted, _wheel = _approved_offline_release(tmp_path, monkeypatch)
+    calls = []
+    def fake_pip(command, **kwargs):
+        calls.append(command)
+        Path(command[command.index("--report") + 1]).write_text(
+            json.dumps({"install": []}), encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(subprocess, "run", fake_pip)
+    PythonDependencyManager(allow_index=False)._pip_install(
+        ("sample-pkg",), (trusted,),
+    )
+    assert len(calls) == 1 and "--dry-run" in calls[0]
+
+
+def test_offline_plugin_wheel_changed_during_resolve_cannot_repin_new_bytes(
+    tmp_path, monkeypatch,
+):
+    trusted, wheel = _approved_offline_release(tmp_path, monkeypatch)
+    calls = []
+    def race(command, **kwargs):
+        calls.append(command)
+        assert "--dry-run" in command, "modified wheel reached pip install"
+        Path(command[command.index("--report") + 1]).write_text(
+            json.dumps({"install": [{
+                "metadata": {"name": "sample-pkg", "version": "1.2.3"},
+                "download_info": {"url": wheel.as_uri()},
+            }]}), encoding="utf-8",
+        )
+        wheel.write_bytes(b"attacker modified the file after initial verification")
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(subprocess, "run", race)
+    with pytest.raises(PythonDependencyError, match="dependency_provenance_unavailable"):
+        PythonDependencyManager(allow_index=False)._pip_install(
+            ("sample-pkg",), (trusted,),
+        )
+    assert len(calls) == 1
+
+
+def test_real_pip_installs_attested_optional_wheel_in_fresh_offline_venv(tmp_path):
+    """Cold local-vendor install without PyPI, with a real pip and child venv."""
+    from cifereca.wheelhouse_quarantine import attest_wheelhouse
+    root = tmp_path / "release"
+    wheels = root / "offline-wheels"
+    wheels.mkdir(parents=True)
+    wheel = wheels / "sample_pkg-1.2.3-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("sample_pkg/__init__.py", "VALUE = 123\n")
+        archive.writestr(
+            "sample_pkg-1.2.3.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: sample-pkg\nVersion: 1.2.3\n",
+        )
+        archive.writestr(
+            "sample_pkg-1.2.3.dist-info/WHEEL",
+            "Wheel-Version: 1.0\nGenerator: cifereca-test\n"
+            "Root-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        archive.writestr(
+            "sample_pkg-1.2.3.dist-info/RECORD",
+            "sample_pkg/__init__.py,,\n"
+            "sample_pkg-1.2.3.dist-info/METADATA,,\n"
+            "sample_pkg-1.2.3.dist-info/WHEEL,,\n"
+            "sample_pkg-1.2.3.dist-info/RECORD,,\n",
+        )
+    registry = {
+        "info": {"name": "sample-pkg", "version": "1.2.3"},
+        "urls": [{
+            "filename": wheel.name, "packagetype": "bdist_wheel",
+            "url": "https://files.pythonhosted.org/packages/" + wheel.name,
+            "digests": {"sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()},
+            "yanked": False,
+            "upload_time_iso_8601": (NOW - timedelta(days=9)).isoformat(),
+        }],
+    }
+    attest_wheelhouse(wheels, now=NOW, read_release=lambda *_: registry)
+    venv = root / ".venv"
+    make_venv = subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(venv)],
+        check=False, capture_output=True, text=True, timeout=90,
+    )
+    assert make_venv.returncode == 0
+    py = venv / "bin" / "python"
+    source = Path(__file__).resolve().parents[1] / "src"
+    env = dict(os.environ, PYTHONPATH=str(source), PIP_NO_INDEX="1",
+               PIP_DISABLE_PIP_VERSION_CHECK="1")
+    command = [
+        str(py), "-c",
+        "from pathlib import Path; "
+        "from cifereca.plugins.python_dependencies import PythonDependencyManager; "
+        "PythonDependencyManager(allow_index=False)._pip_install("
+        "('sample-pkg==1.2.3',), (Path(" + repr(str(wheels)) + "),)); "
+        "from sample_pkg import VALUE; assert VALUE == 123",
+    ]
+    completed = subprocess.run(
+        command, env=env, capture_output=True, text=True,
+        check=False, timeout=150,
+    )
+    assert completed.returncode == 0, (
+        completed.stdout[-1600:] + completed.stderr[-1600:]
+    )
