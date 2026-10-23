@@ -112,3 +112,27 @@ def test_file_disappearing_after_opf_does_not_charge_uncommitted_metadata(
     assert actual.metadata_bytes == expected.metadata_bytes
     assert actual.files[0].metadata == expected.files[0].metadata
     assert "PRIVATE_" not in json.dumps(actual.redacted())
+
+
+def test_pdf_warm_reuse_does_not_charge_nonexistent_opf_metadata(tmp_path):
+    root = tmp_path / "PRIVATE_PDF_ROOT"
+    root.mkdir()
+    (root / "PRIVATE_ONLY_PDF.pdf").write_bytes(
+        b"%PDF-1.7\\n1 0 obj\\nendobj\\n%%EOF\\n"
+    )
+    first = scan_identity_roots({"alice": (root,)})
+    assert first.reasons == set()
+    assert first.metadata_bytes == 0
+    assert first.files[0].structure_validation == "pdf_structure_minimal"
+    reuse = {(row.identity_id, row.path): row for row in first.files}
+    warmed = scan_identity_roots(
+        {"alice": (root,)},
+        limits=InventoryLimits(metadata_bytes=1),
+        _reuse=reuse,
+    )
+    assert warmed.reasons == set()
+    assert warmed.reused_files == 1
+    assert warmed.metadata_bytes == 0
+    assert warmed.phase_calls["sha256"] == 0
+    assert warmed.phase_calls["structure"] == 0
+    assert "PRIVATE_" not in json.dumps(warmed.redacted())
