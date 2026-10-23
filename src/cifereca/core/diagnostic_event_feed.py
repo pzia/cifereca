@@ -402,6 +402,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                  if word in _STRUCTURED_TERMS][:5]
         message = " ".join(terms) if terms else "[opération masquée]"
         public_detail = {}
+        public_domain = None
         # The Core attests user-requested Browser Recorder provisioning
         # operations. A generic PLUGIN.add() record with identical text
         # cannot publish even a fixed code without this provenance flag.
@@ -412,6 +413,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             attested = verified_fields(row.get("detail"), operation, status)
             if attested:
                 public_detail = attested
+                public_domain = "browser_recorder"
                 message = operation
         # This projection is restricted to the Core connection producer's
         # exact fixed operation/code pair. Other PLUGIN records remain masked,
@@ -455,6 +457,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                     "ok" if inspected["status"] == "complete" else inspected["status"]):
                 reconciliation_detail = inspected
                 public_detail = inspected
+                public_domain = "reconciliation"
                 message = {
                     "complete": "réconciliation locale terminée",
                     "partial": "réconciliation locale incomplète",
@@ -545,6 +548,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "timestamp": utc_stamp,
             "source": "core_events",
             "module": module,
+            **({"domain": public_domain} if public_domain else {}),
             **({"provider_id": attested_provider_id} if attested_provider_id else {}),
             "severity": severity,
             "message": message,
@@ -567,10 +571,22 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
     return events, state
 
 
+_DOMAIN_ALIASES = {
+    "": "",
+    "browser": "browser_recorder",
+    "recorder": "browser_recorder",
+    "browser recorder": "browser_recorder",
+    "browser_recorder": "browser_recorder",
+    "réconciliation": "reconciliation",
+    "reconciliation": "reconciliation",
+    "réconcilitation": "reconciliation",  # historical user typo
+}
+
+
 def query_diagnostic_events(
     diagnostics: Any, *, log_path: Path,
     source: str = "all", module: str = "", severity: str = "",
-    provider_id: str = "",
+    domain: str = "", provider_id: str = "",
     since: str | None = None, until: str | None = None,
     limit: int = 50, offset: int = 0, reason_code: str = "",
 ) -> dict[str, Any]:
@@ -583,6 +599,13 @@ def query_diagnostic_events(
         raise ValueError("unknown diagnostic source")
     if not isinstance(module, str) or len(module) > 90:
         raise ValueError("diagnostic module must be a string of at most 90 characters")
+    # A closed, human-readable business domain is attested by Core only.
+    # This is NOT a substring search on arbitrary plugin messages or logs.
+    if type(domain) is not str or len(domain) > 40:
+        raise ValueError("unknown diagnostic domain")
+    domain_code = _DOMAIN_ALIASES.get(domain.strip().casefold())
+    if domain_code is None:
+        raise ValueError("unknown diagnostic domain")
     # Provider and module are independent filters. A caller-supplied value
     # is never interpreted as a provider name, account alias or URL.
     if type(provider_id) is not str or (
@@ -615,6 +638,13 @@ def query_diagnostic_events(
         rows, state = _source_logs(log_path)
         events.extend(rows)
         states.append(state)
+    if domain_code:
+        # Filter before offset/limit and accept only the Core's verified
+        # closed projection. Neither PLUGIN nor LIBRARY on their own proves
+        # that an observation belongs to Browser Recorder or reconciliation.
+        events = [row for row in events
+                  if row.get("source") == "core_events"
+                  and row.get("domain") == domain_code]
     if module:
         # "module" is the logger on app_log, but the Core producer category on
         # core_events. A KOBO/NUMILOG business filter must not discard a
