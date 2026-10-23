@@ -12,6 +12,7 @@ from .library_inspection_cache import begin_inspection_cache, remember_inspectio
 from .library_inventory_checkpoint import begin_inventory_resume, remember_inventory_resume
 from .library_audit_stability import begin_audit_stability, finish_audit_stability
 from .library_reconciliation import read_library_snapshot
+from .library_sqlite_freshness import sqlite_source_stamp
 
 _ROOT_ERRORS = frozenset({
     'invalid_reconciliation_identity_scope', 'invalid_reconciliation_root_configuration',
@@ -165,6 +166,12 @@ def _execute_scoped_audit(service, identity_id, control, finish):
         remaining_seconds = min(_SCOPED_AUDIT_SECONDS, deadline - monotonic())
         if remaining_seconds <= 0:
             return aggregate_snapshot_timing(_unavailable({'audit_time_budget'}))
+        # The snapshot is a coherent picture at capture time, NOT a promise
+        # that a source sync will refrain from writing SQLite during a long
+        # SHA/CRC scan. Only non-secret stat fingerprints are held privately.
+        snapshot_source = sqlite_source_stamp(database)
+        if snapshot_source is None:
+            return aggregate_snapshot_timing(_unavailable({'snapshot_changed'}))
         # The snapshot was read afresh on this run; cached *file contents*
         # never carry SQLite rights or placement conclusions across runs.
         scope_key = (
@@ -199,6 +206,13 @@ def _execute_scoped_audit(service, identity_id, control, finish):
             return aggregate_snapshot_timing(_unavailable({'reconciliation_scope_changed'}))
         if stopped:
             return aggregate_snapshot_timing(_unavailable({'audit_cancelled'}))
+        # A committed source DB/WAL/journal change invalidates any claim
+        # that the rights graph reflects today's library, even when the file
+        # bytes and hashes stayed unchanged. Preserve ONLY reusable positive
+        # file observations; never publish stale confirmed-link counters or
+        # cache a private inspection offering old rights as current.
+        if sqlite_source_stamp(database) != snapshot_source:
+            return aggregate_snapshot_timing(_unavailable({'snapshot_changed'}))
         outcome = finish(result, same_scope)
         comparison = finish_audit_stability(
             service, identity_id, scope_key, stability_generation,
