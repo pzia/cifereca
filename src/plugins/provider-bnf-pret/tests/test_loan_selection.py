@@ -45,6 +45,7 @@ class BnfVisibleLoanBookSelectionTests(unittest.TestCase):
         self.assertEqual(self.chooser.observe(self.page(status="partial"),
                                               expected=self.scope), 0)
         self.assertEqual(self.chooser.count, 0)
+        self.assertEqual(self.chooser.visible_book_lines(), ())
         with self.assertRaisesRegex(WebParseError, "^selection_expired$"):
             self.chooser.choose(0, expected=self.scope, revision=old)
         with self.assertRaisesRegex(WebParseError, "^invalid_selection$"):
