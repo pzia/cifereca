@@ -21,7 +21,7 @@ import stat
 from typing import Any
 
 from cifereca.plugin_api import LLMRequest
-from diagnostics_explorer import public_source_evidence
+from diagnostics_explorer import public_source_evidence, public_provider_id
 
 _MAX_PROMPT = 3000
 _MAX_USER_LOG_BYTES = 65536
@@ -337,6 +337,9 @@ def _public_event_row(item: Mapping[str, Any]) -> dict[str, str]:
     source = item.get("source")
     if type(source) is str and source in ("core_events", "app_log"):
         row["source"] = source
+    provider = public_provider_id(item.get("provider_id"))
+    if "source" in row and provider is not None:
+        row["provider_id"] = provider
     module = item.get("module")
     if type(module) is str and 0 < len(module) <= 90:
         row["module"] = _public_module_filter(module)
@@ -524,7 +527,6 @@ def prepare_analysis(
         ord(char) < 32 or ord(char) == 127 for char in module
     ):
         raise ValueError("unsupported_module")
-    from diagnostics_explorer import public_provider_id
     if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
         raise ValueError("unsupported_provider")
     if type(severity) is not str or severity not in (
@@ -589,6 +591,13 @@ def prepare_analysis(
     events = feed.get("events") or ()
     if not isinstance(events, (tuple, list)):
         raise ValueError("diagnostics_unavailable")
+    if provider_id and any(
+        not isinstance(item, Mapping) or public_provider_id(item.get("provider_id")) != provider_id
+        for item in events
+    ):
+        # A broker ignoring the exact filter must not produce an apparently
+        # scoped preview or consent request for another provider's events.
+        raise ValueError("diagnostics_provider_scope_mismatch")
     raw_total = feed.get("total")
     # The Core can return a full, correctly bounded page with more matching
     # events beyond it. Do not mistake 24/500 for complete coverage.

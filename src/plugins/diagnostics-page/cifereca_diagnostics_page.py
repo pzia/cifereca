@@ -655,7 +655,7 @@ class DiagnosticsPagePlugin:
         provider_filter.set_width_chars(16)
         provider_filter.set_max_width_chars(28)
         provider_filter.set_hexpand(True)
-        provider_filter.set_placeholder_text("Identifiant canonique (ex. paris) · Entrée")
+        provider_filter.set_placeholder_text("Identifiant canonique (ex. provider.paris) · Entrée")
         provider_filter.set_tooltip_text(
             "Filtre Core exact sur le provider attesté ; ne pas utiliser un compte ou un email."
         )

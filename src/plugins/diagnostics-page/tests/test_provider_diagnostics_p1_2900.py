@@ -13,7 +13,7 @@ from diagnostics_explorer import (
 from diagnostics_selection import collect_filtered_selection
 
 
-def event(idx, provider="paris"):
+def event(idx, provider="provider.paris"):
     return {
         "event_id": f"event-{idx}",
         "timestamp": "2026-10-23T06:00:00+00:00",
@@ -50,15 +50,15 @@ class Broker:
 
 
 def test_provider_is_an_exact_server_side_filter_not_module_alias():
-    broker = Broker([event(1), event(2, "kobo")])
+    broker = Broker([event(1), event(2, "provider.kobo")])
     payload = fetch_explorer_page(
         broker, period="all", source="core_events", module="SYNC",
-        provider_id="paris",
+        provider_id="provider.paris",
     )
-    assert broker.calls[0]["provider_id"] == "paris"
+    assert broker.calls[0]["provider_id"] == "provider.paris"
     assert broker.calls[0]["module"] == "SYNC"
     assert len(payload["events"]) == 1
-    assert sanitized_rows(payload)[0]["provider_id"] == "paris"
+    assert sanitized_rows(payload)[0]["provider_id"] == "provider.paris"
     legacy = Broker([event(1)])
     fetch_explorer_page(legacy, period="all")
     assert "provider_id" not in legacy.calls[0]
@@ -81,34 +81,34 @@ def test_published_provider_is_safe_in_search_clipboard_and_private_values_remov
     hostile = event(2, "reader@example.test")
     rows = sanitized_rows({"events": [safe, hostile]}, include_detail=True)
     by_id = {row["event_id"]: row for row in rows}
-    assert by_id["event-1"]["provider_id"] == "paris"
+    assert by_id["event-1"]["provider_id"] == "provider.paris"
     assert "provider_id" not in by_id["event-2"]
-    assert [r["event_id"] for r in sanitized_rows({"events": [safe, hostile]}, search="paris")] == ["event-1"]
+    assert [r["event_id"] for r in sanitized_rows({"events": [safe, hostile]}, search="provider.paris")] == ["event-1"]
     packed = export_selected_events(rows, {"event-1", "event-2"})
-    assert '"provider_id": "paris"' in packed
+    assert '"provider_id": "provider.paris"' in packed
     assert "reader@example.test" not in packed
 
 
 def test_bulk_selection_rejects_broker_that_ignores_provider_filter():
-    broker = Broker([event(1, "kobo")], ignore_filter=True)
+    broker = Broker([event(1, "provider.kobo")], ignore_filter=True)
     with pytest.raises(ValueError, match="out-of-scope"):
         collect_filtered_selection(
             broker, period="all", severity="error", mode="all",
-            provider_id="paris",
+            provider_id="provider.paris",
         )
-    assert broker.calls[0]["provider_id"] == "paris"
+    assert broker.calls[0]["provider_id"] == "provider.paris"
 
 
 def test_bulk_selection_retains_provider_scope_in_export_without_private_accounts():
-    broker = Broker([event(1), event(2, "kobo")])
+    broker = Broker([event(1), event(2, "provider.kobo")])
     selected = collect_filtered_selection(
         broker, period="all", severity="error", mode="all",
-        provider_id="paris",
+        provider_id="provider.paris",
     )
     result = json.loads(selected.export_json)
     assert selected.count == 1
-    assert result["selection"]["provider_filter"] == "paris"
-    assert result["events"][0]["provider_id"] == "paris"
+    assert result["selection"]["provider_filter"] == "provider.paris"
+    assert result["events"][0]["provider_id"] == "provider.paris"
     assert len(broker.calls) == 2  # first page and exact-scope consistency recheck
 
 
@@ -122,3 +122,84 @@ def test_ui_has_explicit_filter_and_ai_inherits_same_server_scope():
     assert '"provider_id": provider_filter.get_text().strip()' in page
     assert 'provider_id=selected_provider' in page
     assert 'query["provider_id"] = provider_id' in ai
+    assert 'ex. provider.paris' in page
+
+
+def test_ai_preserves_attested_provider_in_evidence_and_exact_scope_without_sending():
+    from diagnostics_ai import prepare_analysis
+    from tests.test_diagnostics_ai_p0 import FakeBroker, FakeLLM
+    model = FakeLLM()
+    broker = FakeBroker([event(1)])
+    preview = prepare_analysis(model, broker, provider_id="provider.paris")
+    assert broker.filters[0]["provider_id"] == "provider.paris"
+    assert preview["scope"]["provider_id"] == "provider.paris"
+    # Provider appears both in the requested scope and in the actual event.
+    assert preview["prompt"].count('"provider_id": "provider.paris"') == 2
+    assert model.calls == 0
+
+
+@pytest.mark.parametrize("provider", ["provider.kobo", "provider.paris.catalog", None,
+                                      "PRIVATE@example.invalid", True])
+def test_ai_refuses_broker_ignoring_exact_provider_filter_before_consent(provider):
+    from diagnostics_ai import prepare_analysis
+    from tests.test_diagnostics_ai_p0 import FakeBroker, FakeLLM
+    model = FakeLLM()
+    with pytest.raises(ValueError, match="diagnostics_provider_scope_mismatch"):
+        prepare_analysis(model, FakeBroker([event(1, provider)]), provider_id="provider.paris")
+    assert model.calls == 0
+
+
+def test_ai_unfiltered_events_keep_only_valid_explicit_provider():
+    from diagnostics_ai import prepare_analysis
+    from tests.test_diagnostics_ai_p0 import FakeBroker, FakeLLM
+    model = FakeLLM()
+    rows = [event(1), event(2, "PRIVATE@example.invalid"), event(3)]
+    del rows[-1]["provider_id"]
+    rows[-1]["detail"] = {"provider_id": "provider.numilog", "password": "PRIVATE"}
+    preview = prepare_analysis(model, FakeBroker(rows))
+    assert '"provider_id": "provider.paris"' in preview["prompt"]
+    assert "PRIVATE" not in preview["prompt"]
+    assert "provider.numilog" not in preview["prompt"]
+    assert "provider_id" not in preview["scope"]
+    assert model.calls == 0
+
+
+def test_bulk_selection_refuses_provider_changed_during_consistency_recheck():
+    class ChangedBroker(Broker):
+        def events(self, **filters):
+            if self.calls:
+                self.rows[0]["provider_id"] = "provider.kobo"
+            return super().events(**filters)
+    with pytest.raises(ValueError, match="out-of-scope"):
+        collect_filtered_selection(ChangedBroker([event(1)], ignore_filter=True),
+                                   provider_id="provider.paris", period="all", mode="all")
+
+
+def test_old_core_supports_unfiltered_page_and_refuses_explicit_provider():
+    class OldCore:
+        def events(self, *, source, module, severity, since, until, limit, offset):
+            return {"events": [], "total": 0, "offset": offset}
+    assert fetch_explorer_page(OldCore())["events"] == []
+    with pytest.raises(TypeError):
+        fetch_explorer_page(OldCore(), provider_id="provider.paris")
+
+
+def test_real_core_broker_provider_survives_page_bulk_copy_and_ai(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from cifereca.brokers import DiagnosticsBrokerImpl
+    from cifereca.diagnostics import Diagnostics
+    from diagnostics_ai import prepare_analysis
+    from tests.test_diagnostics_ai_p0 import FakeLLM
+    diag = Diagnostics(level="errors")
+    for provider in ("provider.paris", "provider.kobo", "provider.numilog"):
+        diag.add_core_source_sync(provider, phase="completed", status="failed", code="source_sync_failed")
+    monkeypatch.setattr("cifereca.paths.log_file", lambda: tmp_path / "missing")
+    broker = DiagnosticsBrokerImpl(SimpleNamespace(diagnostics=diag))
+    for provider in ("provider.paris", "provider.kobo", "provider.numilog"):
+        payload = fetch_explorer_page(broker, provider_id=provider, source="core_events", period="all")
+        rows = sanitized_rows(payload)
+        assert len(rows) == 1 and rows[0]["provider_id"] == provider
+        selected = collect_filtered_selection(broker, provider_id=provider, source="core_events", period="all")
+        assert json.loads(selected.export_json)["events"][0]["provider_id"] == provider
+        preview = prepare_analysis(FakeLLM(), broker, provider_id=provider, source="core_events")
+        assert preview["prompt"].count('"provider_id": "' + provider + '"') == 2
