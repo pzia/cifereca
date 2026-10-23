@@ -148,3 +148,44 @@ def test_successful_multi_account_batch_preserves_idempotence_and_positive_only(
         assert len(service.storage.entitlements()) == 2
     finally:
         service.close()
+
+
+def test_opening_sync_does_not_publish_uncommitted_loan_batch(tmp_path, monkeypatch):
+    from cifereca.models import Account
+
+    service = _service(tmp_path)
+    try:
+        account = Account(
+            display_name="PRIVATE borrower", unique_id="reader",
+            provider_id="paris", credential_id="shared", identity_id="default",
+        )
+        service.accounts = [account]
+        foreign = _loan("conflict", credential="shared", account="reader",
+                        identity="alex")
+        service._persist_active_loans("alex", [foreign], realize_expired=False)
+        before = _baseline(service)
+        first = _loan("fresh", credential="shared", account="reader")
+        clash = replace(foreign, identity_id="default")
+
+        def source_read(selected, *, force=False):
+            assert selected is account and force is True
+            return [first, clash]
+
+        monkeypatch.setattr(service, "_loans_for_account", source_read)
+        monkeypatch.setattr(
+            service, "_acquire_active_loan_automatically",
+            lambda _loan: pytest.fail("no acquisition for rejected loan batch"),
+        )
+        outcome = service.opening_sync()
+        record = next(row for row in outcome["identities"]
+                      if row["identity_id"] == "default")
+        assert record["status"] == "failed"
+        assert record["realized"] == 0
+        assert service.last_loans == []
+        assert not _rows(service).get(first.id)
+        assert _rows(service)[foreign.id]["identity_id"] == "alex"
+        assert _baseline(service)["rights"] == before["rights"]
+        assert not service.storage.acquisitions()
+        assert not service.storage.placements()
+    finally:
+        service.close()
