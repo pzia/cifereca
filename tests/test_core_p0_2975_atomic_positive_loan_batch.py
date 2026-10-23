@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from cifereca.core import library_mutation
 from tests.test_core_p0_2975_loan_absence_scope import _loan
 from tests.test_sync_state_contract import _service
 
@@ -37,7 +38,7 @@ def test_positive_batch_rollback_if_last_loan_belongs_to_other_local_identity(tm
         foreign = _loan(
             "conflict", credential="shared", account="reader", identity="alex",
         )
-        service._persist_active_loans("alex", [foreign], realize_expired=False)
+        library_mutation._persist_active_loans(service, "alex", [foreign], realize_expired=False)
         before = _baseline(service)
         first = _loan(
             "fresh", credential="shared", account="reader", identity="default",
@@ -46,7 +47,7 @@ def test_positive_batch_rollback_if_last_loan_belongs_to_other_local_identity(tm
         clashing = replace(foreign, identity_id="default",
                            title="PRIVATE MUST NOT OVERWRITE")
         with pytest.raises(ValueError, match="^loan_entitlement_scope_conflict$"):
-            service._persist_active_loans(
+            library_mutation._persist_active_loans(service, 
                 "default", [first, clashing], realize_expired=False,
             )
         assert _baseline(service) == before
@@ -54,7 +55,7 @@ def test_positive_batch_rollback_if_last_loan_belongs_to_other_local_identity(tm
         assert "PRIVATE MUST NOT OVERWRITE" not in json.dumps(_baseline(service))
         assert _rows(service)["loan-conflict"]["identity_id"] == "alex"
         # A corrected request remains possible after SQLite's rollback.
-        outcome = service._persist_active_loans(
+        outcome = library_mutation._persist_active_loans(service, 
             "default", [first], realize_expired=False,
         )
         assert outcome == {
@@ -71,13 +72,13 @@ def test_positive_batch_conflict_rolls_back_existing_row_refresh(tmp_path):
         original = _loan("existing", credential="cred", account="reader")
         foreign = _loan("conflict", credential="cred", account="reader",
                         identity="alex")
-        service._persist_active_loans("default", [original], realize_expired=False)
-        service._persist_active_loans("alex", [foreign], realize_expired=False)
+        library_mutation._persist_active_loans(service, "default", [original], realize_expired=False)
+        library_mutation._persist_active_loans(service, "alex", [foreign], realize_expired=False)
         before = _baseline(service)
         fresh = replace(original, title="PRIVATE REFRESH MUST ROLLBACK")
         collision = replace(foreign, identity_id="default")
         with pytest.raises(ValueError, match="^loan_entitlement_scope_conflict$"):
-            service._persist_active_loans(
+            library_mutation._persist_active_loans(service, 
                 "default", [fresh, collision], realize_expired=False,
             )
         assert _baseline(service) == before
@@ -102,13 +103,13 @@ def test_invalid_last_loan_cannot_leave_previous_row_inserted(
         bad = replace(_loan("malformed"), **{field: value})
         if field == "record_id":
             # An edition-less row is permitted when the loan id is exact.
-            expected = service._persist_active_loans(
+            expected = library_mutation._persist_active_loans(service, 
                 "default", [first, bad], realize_expired=False,
             )
             assert expected["persisted"] == 2
         else:
             with pytest.raises(ValueError, match="^invalid_positive_loan$"):
-                service._persist_active_loans(
+                library_mutation._persist_active_loans(service, 
                     "default", [first, bad], realize_expired=False,
                 )
             assert _baseline(service)["rights"] == []
@@ -124,7 +125,7 @@ def test_successful_multi_account_batch_preserves_idempotence_and_positive_only(
         primary = _loan("primary", account="primary")
         paired = _loan("paired", account="paired")
         physical = replace(_loan("paper"), medium="physical")
-        first = service._persist_active_loans(
+        first = library_mutation._persist_active_loans(service, 
             "default", [primary, physical, paired], realize_expired=False,
         )
         assert first == {
@@ -132,7 +133,7 @@ def test_successful_multi_account_batch_preserves_idempotence_and_positive_only(
         }
         assert set(_rows(service)) == {primary.id, paired.id}
         before = _baseline(service)
-        second = service._persist_active_loans(
+        second = library_mutation._persist_active_loans(service, 
             "default", [primary, paired], realize_expired=False,
         )
         assert second == first
@@ -140,7 +141,7 @@ def test_successful_multi_account_batch_preserves_idempotence_and_positive_only(
         assert len(service.storage.entitlements()) == 2
         assert not service.storage.acquisitions()
         assert not service.storage.placements()
-        assert service._persist_active_loans(
+        assert library_mutation._persist_active_loans(service, 
             "default", [], realize_expired=False,
         ) == {
             "persisted": 0, "returned_realized": 0, "expired_realized": 0,
@@ -162,7 +163,7 @@ def test_opening_sync_does_not_publish_uncommitted_loan_batch(tmp_path, monkeypa
         service.accounts = [account]
         foreign = _loan("conflict", credential="shared", account="reader",
                         identity="alex")
-        service._persist_active_loans("alex", [foreign], realize_expired=False)
+        library_mutation._persist_active_loans(service, "alex", [foreign], realize_expired=False)
         before = _baseline(service)
         first = _loan("fresh", credential="shared", account="reader")
         clash = replace(foreign, identity_id="default")
