@@ -4,6 +4,28 @@ L'explorateur « Journaux par composant » est inséré dans la **page Diagnosti
 existante** ; il n'installe aucune nouvelle page parallèle. Il consomme
 uniquement `context.broker("diagnostics").events()`, livré par #1010.
 
+## Contexte fournisseur Core (#2900)
+
+Le broker accepte `events(provider_id="paris")` : correspondance
+exacte, sensible à la casse, appliquée avant pagination et cumulable avec les
+filtres existants. La valeur vide conserve tous les événements. Un slug
+canonique inconnu renvoie zéro résultat ; une valeur malformée est refusée
+avant lecture. Les états de couverture des sources restent visibles.
+
+Le champ public `provider_id` est distinct de `source` (canal) et `module`
+(composant technique). Il est publié dans les deux canaux uniquement pour
+les producteurs Core attestés : échecs de connexion, synchronisation des
+sources, décision de sauvegarde Kobo et matérialisation initiale Numilog.
+Les détails fermés existants sont conservés. `source_inconnue` signifie que
+le Core n'a pas pu attester un fournisseur enregistré.
+
+Un module, une opération libre, un payload de plugin ou un runtime ADEPT ne
+suffisent pas à attester un provider. Les événements sans cette preuve restent
+sans `provider_id` ; les événements historiques ne sont pas enrichis par
+déduction. Ce champ ne prouve ni une connexion active ni une relation entre
+deux événements. Cette tranche ajoute le contrat Core ; le contrôle GTK de
+filtrage et l'émission de sites/identifiants publics de livres restent à livrer.
+
 ## Explorer
 La première consultation est déclenchée lors du premier affichage de la page,
 dans le broker `tasks` ; le résultat revient via `GLib.idle_add`, sans lecture

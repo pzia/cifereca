@@ -289,11 +289,13 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             )
             # A provider identity comes only from a closed Core log schema,
             # never from a logger suffix, URL, TRACE free text or account label.
+            # ADEPT is a shared runtime; a Numilog plugin session line alone
+            # has no Core registry attestation. Neither proves a provider.
             attested_provider_id = (
                 connection_detail.get("provider_id")
                 or source_sync_detail.get("provider_id")
-                or ("kobo" if kobo_detail or adept_detail else None)
-                or ("numilog" if numilog_detail or numilog_session_detail else None)
+                or ("kobo" if kobo_detail else None)
+                or ("numilog" if numilog_detail else None)
             )
             events.append({
                 "timestamp": ts,
@@ -478,6 +480,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 message = "[opération masquée]"
         # Do not infer the provider from a business category (PNB/PLUGIN).
         # Only typed observations with Core provenance attest this identity.
+        # runtime.kobo-adept also serves Paris, Numilog and manual imports.
         attested_provider_id = None
         if source_sync_detail:
             attested_provider_id = source_sync_detail["provider_id"]
@@ -486,7 +489,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
               and row.get("verified_public_provider_id") == public_detail.get("provider_id")
               and public_detail.get("code")):
             attested_provider_id = public_detail["provider_id"]
-        elif adept_detail or (category == "KOBO"
+        elif (category == "KOBO"
                              and operation == "automatic backup decision"
                              and row.get("verified_kobo_backup") is True
                              and public_detail):
