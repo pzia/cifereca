@@ -1111,6 +1111,43 @@ def _github_checkout(repository: str, ref: str, destination: Path) -> str:
     return sha
 
 
+
+def _prepare_github_wheelhouse(source: Path, python: str) -> None:
+    """Prepare eligible runtime wheels before a managed GitHub installation.
+
+    A git checkout normally has no bundled wheelhouse.  Admission is run in
+    the verified checkout's temporary directory, without writing to the
+    active runtime.  If PyPI/packaging is unavailable, keep the old release.
+    """
+    wheelhouse = source / "offline-wheels"
+    if wheelhouse.exists():
+        # Do not accept a mutable pre-existing repository wheelhouse in place
+        # of an independently produced, attested one.
+        raise UpdateError("dependency_provenance_unavailable")
+    script = source / "scripts" / "prepare-admitted-wheelhouse.py"
+    if not script.is_file() or script.is_symlink():
+        raise UpdateError("dependency_provenance_unavailable")
+    result = _run_bounded_process(
+        [python, str(script)], timeout=900, cwd=source,
+        text=True, capture_output=True, check=False,
+    )
+    if result.returncode != 0:
+        # Child output is untrusted: it can contain private URLs or tokens.
+        raise UpdateError("dependency_not_eligible")
+    # A producer-side JSON is not a signature; this verifier is a local
+    # integrity and 168h proof check. Trust in the checkout comes from the
+    # already-selected GitHub commit, not from the JSON alone.
+    from .wheelhouse_quarantine import verify_wheelhouse
+    from .plugins.python_quarantine import QuarantineRejected
+    try:
+        version = _metadata(source)[1]
+        verify_wheelhouse(wheelhouse, core_version=version)
+    except (QuarantineRejected, OSError, ValueError) as exc:
+        reason = str(exc) if isinstance(exc, QuarantineRejected) else "dependency_provenance_unavailable"
+        raise UpdateError(reason) from None
+
+
+
 def install_github(
     ref: str = "main",
     *,
@@ -1123,6 +1160,10 @@ def install_github(
         source = Path(tmp) / "source"
         sha = _github_checkout(repository, ref, source)
         provenance = {"type": "github", "repository": repository, "ref": ref, "commit": sha}
+        if not dry_run:
+            # Keep --github installable despite the fail-closed source fallback.
+            # Admission precedes managed venv creation or release switching.
+            step("manifest_validation", _prepare_github_wheelhouse, source, select_python(python))
         result = install_source(
             source,
             python=python,
