@@ -510,6 +510,7 @@ def _valid_since(since: object) -> bool:
 def prepare_analysis(
     llm: Any, diagnostics_broker: Any, *, source: str = "all",
     since: str | None = None, module: str = "", severity: str = "",
+    provider_id: str = "",
     include_snapshot: bool = False, include_support_report: bool = False,
     manual_log: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -523,6 +524,9 @@ def prepare_analysis(
         ord(char) < 32 or ord(char) == 127 for char in module
     ):
         raise ValueError("unsupported_module")
+    from diagnostics_explorer import public_provider_id
+    if type(provider_id) is not str or (provider_id and public_provider_id(provider_id) is None):
+        raise ValueError("unsupported_provider")
     if type(severity) is not str or severity not in (
         "", "debug", "info", "warning", "error", "critical",
     ):
@@ -569,15 +573,17 @@ def prepare_analysis(
     module = module.strip()
     scope = {
         "source": source, "module": module, "severity": severity,
+        **({"provider_id": provider_id} if provider_id else {}),
         "since": since, "include_snapshot": include_snapshot,
         "include_support_report": include_support_report,
     }
     if manual_log is not None:
         scope["user_log_selected"] = True
-    feed = diagnostics_broker.events(
-        source=source, module=module, severity=severity,
-        since=since, until=None, limit=_MAX_EVENTS, offset=0,
-    )
+    query = dict(source=source, module=module, severity=severity,
+                 since=since, until=None, limit=_MAX_EVENTS, offset=0)
+    if provider_id:
+        query["provider_id"] = provider_id
+    feed = diagnostics_broker.events(**query)
     if not isinstance(feed, Mapping):
         raise ValueError("diagnostics_unavailable")
     events = feed.get("events") or ()
