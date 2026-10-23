@@ -766,7 +766,11 @@ class MainWindow(Adw.ApplicationWindow):
                 "library.naming.repair": "Renormalisation des noms",
                 "library.duplicates.cleanup": "Nettoyage des doublons",
             }
-            activity_label = activity_labels.get(getattr(info, "id", None))
+            # Every resolved maintenance.tool owns a progress row. Existing
+            # reviewed labels remain specific, while future/third-party tools
+            # use a Core-owned generic label: never echo plugin prose, paths
+            # or accounts via the live progress channel.
+            activity_label = activity_labels.get(getattr(info, "id", None), "Traitement")
             if activity_label is not None:
                 def line_alive(button=run, scope=line_scope):
                     if self._closed or button.get_root() is None:
