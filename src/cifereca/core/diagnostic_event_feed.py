@@ -294,8 +294,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             attested_provider_id = (
                 connection_detail.get("provider_id")
                 or source_sync_detail.get("provider_id")
-                or ("provider.kobo" if kobo_detail else None)
-                or ("provider.numilog" if numilog_detail else None)
+                or ("kobo" if kobo_detail else None)
+                or ("numilog" if numilog_detail else None)
             )
             events.append({
                 "timestamp": ts,
@@ -493,10 +493,10 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                              and operation == "automatic backup decision"
                              and row.get("verified_kobo_backup") is True
                              and public_detail):
-            attested_provider_id = "provider.kobo"
+            attested_provider_id = "kobo"
         elif (category == "NUMILOG" and operation == "startup_materialization"
               and row.get("verified_numilog_startup") is True and public_detail):
-            attested_provider_id = "provider.numilog"
+            attested_provider_id = "numilog"
         base_id = _event_id("core_events", utc_stamp, category + ":" + operation)
         event_id = base_id
         # Two records may share the same timestamp/category/operation.

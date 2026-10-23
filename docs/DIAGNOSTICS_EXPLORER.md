@@ -6,7 +6,7 @@ uniquement `context.broker("diagnostics").events()`, livré par #1010.
 
 ## Contexte fournisseur Core (#2900)
 
-Le broker accepte `events(provider_id="provider.paris")` : correspondance
+Le broker accepte `events(provider_id="paris")` : correspondance
 exacte, sensible à la casse, appliquée avant pagination et cumulable avec les
 filtres existants. La valeur vide conserve tous les événements. Un slug
 canonique inconnu renvoie zéro résultat ; une valeur malformée est refusée
