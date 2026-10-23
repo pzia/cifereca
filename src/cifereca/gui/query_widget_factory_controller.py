@@ -41,17 +41,20 @@ def _paris_search_notice(window):
         config = getattr(service, "config", None)
         config_reader = getattr(config, "provider_accounts", None)
         if not callable(config_reader):
-            return "Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+            return ("Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+                    if matching else "")
         rows = config_reader("paris")
         if type(rows) not in (list, tuple) or len(rows) > 128:
-            return "Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+            return ("Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+                    if matching else "")
         own = [
             row for row in rows
             if type(row) is dict and row.get("identity_id") == identity
         ]
     except Exception:
         # Never leak provider error text, credentials or another identity's state.
-        return "Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+        return ("Bibliothèques de Paris : source non connectée ; état du compte indéterminé."
+                if 'matching' in locals() and matching else "")
     if not matching:
         # The catalogue inventory is deliberately limited to enabled/ready
         # plugins. Only report absence/disablement when this identity owns a
