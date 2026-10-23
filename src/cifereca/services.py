@@ -66,6 +66,65 @@ from .storage import Storage
 from .core.provider_stream import consume_provider_stream, SearchStreamFailure, SearchStreamCancelled
 from .core.provider_collection_cache import ProviderCollectionSnapshotStore
 
+def _loan_cache_key(account: Account) -> str:
+    """Opaque, unambiguous identity/provider/credential/borrower cache scope.
+
+    The legacy `provider:credential:uid:loans` alias omitted identity, and
+    `:` can occur inside a provider credential or borrower identifier. Do
+    not read old aliases: they cannot be safely attributed retroactively.
+    """
+    if type(account) is not Account:
+        raise ProviderConfigurationError("loan_cache_scope_invalid")
+    parts = (
+        account.identity_id, account.provider_id,
+        account.credential_id, account.unique_id,
+    )
+    if any(type(value) is not str or len(value) > 1024
+           or '\\0' in value for value in parts):
+        raise ProviderConfigurationError("loan_cache_scope_invalid")
+    serialized = json.dumps(parts, ensure_ascii=True, separators=(',', ':'))
+    return "loans.v2:" + hashlib.sha256(serialized.encode('utf-8')).hexdigest()
+
+
+def _cached_loans_for_exact_account(value: object, account: Account) -> list[Loan] | None:
+    """Treat cached rows as untrusted: never rewrite their source/identity.
+
+    A cache hit is only usable if every row still identifies the same
+    provider, credential, account and identity. Corrupt/legacy rows trigger
+    an ordinary fresh provider read, never a cross-account display.
+    """
+    if type(value) is not list or len(value) > 10_000:
+        return None
+    expected_accounts = {account.unique_id}
+    if account.provider_id == 'paris' and account.unique_id == '':
+        expected_accounts.add('primary')
+    loans = []
+    for value_row in value:
+        if type(value_row) is not dict:
+            return None
+        try:
+            row = Loan(**value_row)
+        except (TypeError, ValueError):
+            return None
+        if not (
+            type(row) is Loan
+            and type(row.id) is str and bool(row.id)
+            and type(row.source_provider) is str
+            and row.source_provider == account.provider_id
+            and type(row.source_credential) is str
+            and row.source_credential == account.credential_id
+            and type(row.source_account_id) is str
+            and row.source_account_id in expected_accounts
+            and type(row.identity_id) is str
+            and row.identity_id == account.identity_id
+            and type(row.medium) is str
+            and row.medium in ('digital', 'physical', 'unknown')
+        ):
+            return None
+        loans.append(row)
+    return loans
+
+
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+")
 
 _TRACE_LOG = logging.getLogger("cifereca")
@@ -649,17 +708,12 @@ class LibraryService:
         return f"{prefix}:{kind}:{suffix}" if suffix else f"{prefix}:{kind}"
 
     def _loans_for_account(self, account: Account, *, force: bool = False) -> list[Loan]:
-        uid = account.unique_id or "primary"
-        key = f"{account.provider_id}:{account.credential_id}:{uid}:loans"
+        key = _loan_cache_key(account)
         ttl = int(self.config.get("cache.dashboard_seconds", 300))
         if not force:
             cached = self.storage.cache_get("account", key)
-            if isinstance(cached, list):
-                rows = [Loan(**x) for x in cached]
-                for row in rows:
-                    row.identity_id = account.identity_id
-                    if row.source_account_id is None:
-                        row.source_account_id = account.unique_id
+            rows = _cached_loans_for_exact_account(cached, account)
+            if rows is not None:
                 self._record_loan_statistics(account, rows, from_cache=True)
                 return rows
         session = self._session_for_account(account)
