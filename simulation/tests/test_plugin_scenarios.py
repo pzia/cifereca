@@ -41,6 +41,19 @@ class PluginCoverageTests(unittest.TestCase):
         self.assertNotIn("cifericaopds", report["unclassified"])
         self.assertNotIn("dev-updater", report["unclassified"])
 
+    def test_bnf_reader_is_classified_without_inventing_live_capabilities(self):
+        report = plugin_coverage.build_report()
+        rows = {row["package"]: row for row in report["packages"]}
+        reader = rows["provider-bnf-pret"]
+        self.assertEqual(reader["plugin_ids"], ["ui.page.bnf-pret"])
+        self.assertEqual(reader["ui_routes"], ["ui.page.bnf-pret"])
+        self.assertEqual(reader["data"], [])
+        self.assertEqual(reader["services"], [])
+        self.assertEqual(reader["http_fixtures"], [])
+        self.assertFalse(reader["e2e_gtk_verified"])
+        self.assertIn("SSO réel", reader["gap"])
+        self.assertNotIn("provider-bnf-pret", report["unclassified"])
+
     def test_all_services_profiles_include_ebooksgratuits(self):
         import datasetctl
         catalog = datasetctl.load_catalog()
