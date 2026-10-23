@@ -22,6 +22,10 @@ _ROOT_ERRORS = frozenset({
 # the generic API is too short for hundreds of EPUB/CRC checks. This scope
 # remains read-only, cancellable and hard-capped by both Core validators.
 _SCOPED_AUDIT_SECONDS = 600
+# File traversal is often CRC-bound; reserve capacity for the two *distinct*
+# later proof/index-and-match phases. The user-visible 600 s total does not
+# increase. The reservation is advisory if a single bounded parser overruns.
+_SCOPED_TAIL_RESERVE_SECONDS = 90
 
 _MESSAGES = {
     'inventory': 'Inventaire local', 'snapshot': 'Lecture des preuves locales',
@@ -191,12 +195,24 @@ def _execute_scoped_audit(service, identity_id, control, finish):
         stability_generation, stability_previous = begin_audit_stability(
             service, identity_id, scope_key,
         )
+        # The source-stamp check, checkpoint lookup and drift-state lookup
+        # above also consume the same global envelope. Never allocate the
+        # earlier preflight's remaining time again after those operations.
+        audit_seconds = min(_SCOPED_AUDIT_SECONDS, deadline - monotonic())
+        if audit_seconds <= 0:
+            return aggregate_snapshot_timing(_unavailable({'audit_time_budget'}))
+        # Preserve 30 s of right comparisons + 60 s of index/matching even
+        # if a large (600+) EPUB/CRC inventory cannot finish. A short residual
+        # window splits evenly rather than suppressing all file traversal.
+        # The inventory still reports 'time_budget' on incomplete traversal;
+        # downstream comparisons never turn those absent files into evidence.
+        reserve = min(_SCOPED_TAIL_RESERVE_SECONDS, audit_seconds / 2)
+        inventory_seconds = audit_seconds - reserve
         result = audit_library(
-            database, roots, limits=InventoryLimits(seconds=remaining_seconds),
-            seconds=remaining_seconds,
-            # The 600-second whole-audit ceiling remains authoritative.
-            # Distinct budgets: 30 s proof comparison, 30 s catalogue index,
-            # then a reserved 30 s of metadata-only file matching.
+            database, roots, limits=InventoryLimits(seconds=inventory_seconds),
+            seconds=audit_seconds,
+            # Distinct phase budgets inside the same global deadline:
+            # 30 s proof comparison and 30+30 s catalogue index/matching.
             comparison_seconds=30, candidate_seconds=60,
             candidate_index_seconds=30,
             cancelled=cancelled, progress=progress, _snapshot=snapshot,
