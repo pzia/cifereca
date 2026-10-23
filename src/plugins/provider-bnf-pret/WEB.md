@@ -238,3 +238,17 @@ actuel ne correspond à aucun nœud de la page lue : ne jamais en déduire
 une restitution ou une absence de prêt. Pour la qualification sur parcours
 réel, on peut noter les seuls compteurs locaux, sans joindre capture,
 identifiants personnels, HTML, SAML, URL signée ou licence.
+
+
+## Correspondance déclarée du compte BnF et du profil Core
+
+La confirmation du SSO nécessite désormais une **case volontaire distincte**
+du consentement à ouvrir Chromium. L'utilisateur atteste que le compte BnF
+employé dans la fenêtre est celui qu'il souhaite associer au **profil Cifereca
+sélectionné** ; sans cette case, l'action de confirmation est désactivée.
+L'attestation est invalidée si le profil change, si la session s'arrête,
+au démarrage d'une nouvelle session et après confirmation. La page continue
+d'afficher qu'il s'agit d'une **déclaration humaine**, non d'une preuve de
+l'identité amont ou d'un droit emprunté : aucun `account_id` BnF n'est
+déduit des cookies, pages de compte ou assertions SSO, aucune synchronisation
+de droit Core n'est permise par cette seule attestation.
