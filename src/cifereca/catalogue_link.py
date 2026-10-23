@@ -124,8 +124,10 @@ def catalogue_notice_url(row, *, base=None, provider=None):
                                 '/index.php/feed', '/index.php/feed.php',
                                 '/index.php/fetch', '/index.php/fetch.php',
                                 '/index.php/opensearch.xml'}
-                    or path.startswith(('/index.php/feed/',
-                                        '/index.php/fetch/'))):
+                    or path.startswith(('/feed/', '/fetch/',
+                                        '/index.php/feed/',
+                                        '/index.php/fetch/'))
+                    or '%' in path):
                 continue
         # Numilog currently exposes the authenticated personal-library index
         # as friendly_url for every holding, without a per-book public notice.
