@@ -174,3 +174,48 @@ def test_search_transport_failure_publishes_closed_outage_without_raw_cause():
         assert SECRET not in repr(diag.events) + str(caught.value)
     finally:
         session.close()
+
+
+def test_malformed_search_feed_is_typed_outage_not_attested_zero(caplog):
+    """Actual search performs one GET; broken XML is not a zero-result proof."""
+    from cifereca.search_failures import search_failure_code
+    calls = []
+    def handler(request):
+        calls.append(str(request.url))
+        return httpx.Response(200, content=b'<feed><bad token="' + SECRET.encode())
+    session, diag = session_with_handler(handler)
+    try:
+        with caplog.at_level("WARNING", logger="cifereca.plugin.provider.gutenberg"):
+            with pytest.raises(ProviderError, match="invalid_opds_feed") as caught:
+                session.search("book", page=0, field="all")
+        assert len(calls) == 1
+        assert caught.value.code == "search_temporarily_unavailable"
+        assert caught.value.retryable is False
+        assert search_failure_code(caught.value) == "SearchTemporarilyUnavailable"
+        assert_redacted(caught, diag, caplog)
+    finally:
+        session.close()
+
+
+def test_malformed_pagination_feed_is_outage_not_missing_page():
+    from cifereca.search_failures import search_failure_code
+    with pytest.raises(ProviderError, match="invalid_opds_feed") as caught:
+        GutenbergSession._next_page_url(b"<feed><unclosed", SIGNED)
+    assert caught.value.code == "search_temporarily_unavailable"
+    assert search_failure_code(caught.value) == "SearchTemporarilyUnavailable"
+    assert caught.value.__cause__ is None
+    assert SECRET not in str(caught.value)
+
+
+def test_unverified_next_link_does_not_authorize_offline_fallback():
+    from cifereca.search_failures import search_failure_code
+    feed = (
+        b'<feed xmlns="http://www.w3.org/2005/Atom">'
+        b'<link rel="next" href="https://private.invalid/?token=SECRET"/>'
+        b"</feed>"
+    )
+    with pytest.raises(ProviderError, match="opds_next_link_unverified") as caught:
+        GutenbergSession._next_page_url(feed, SIGNED)
+    assert getattr(caught.value, "code", None) is None
+    assert search_failure_code(caught.value) is None
+    assert SECRET not in str(caught.value)
