@@ -181,3 +181,60 @@ class PluginsOnly(unittest.TestCase):
             # Missing package IDs must not leak through public smoke exceptions.
             with self.assertRaisesRegex(dev.DevUpdateError, 'packages actifs absents'):
                 dev._smoke_plugins(['test.provider', 'other.provider'])
+
+
+class DesktopExportDirectory(unittest.TestCase):
+    """A user-selected export stays in their hands; only the initial folder changes."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.cfg = self.root / "config"
+        self.cfg.mkdir()
+        self.localized = self.root / "Téléchargements personnalisés"
+        self.localized.mkdir()
+        (self.cfg / "user-dirs.dirs").write_text(
+            'XDG_DOWNLOAD_DIR="' + str(self.localized) + '"\n', encoding="utf-8",
+        )
+
+    def _choose(self, dialog):
+        import sys
+        from types import SimpleNamespace
+        from cifereca.plugin_api import prefer_downloads_for_save
+
+        fake_gio = SimpleNamespace(File=SimpleNamespace(new_for_path=lambda p: ("gio", p)))
+        fake_gi = SimpleNamespace(repository=SimpleNamespace(Gio=fake_gio))
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.cfg)}), \\
+             patch.dict(sys.modules, {"gi": fake_gi, "gi.repository": fake_gi.repository}):
+            return prefer_downloads_for_save(dialog)
+
+    def test_localized_xdg_folder_is_suggested_without_choosing_a_file(self):
+        from unittest.mock import Mock
+        dialog = Mock()
+        self.assertTrue(self._choose(dialog))
+        dialog.set_current_folder.assert_called_once_with(("gio", str(self.localized)))
+        dialog.set_file.assert_not_called()
+
+    def test_fallback_to_existing_home_downloads_if_xdg_missing(self):
+        from unittest.mock import Mock
+        (self.cfg / "user-dirs.dirs").write_text('XDG_DOWNLOAD_DIR="/nonexistent/not-here"\\n')
+        home = self.root / "home"
+        (home / "Downloads").mkdir(parents=True)
+        dialog = Mock()
+        with patch("cifereca.install_paths.Path.home", return_value=home):
+            self.assertTrue(self._choose(dialog))
+        dialog.set_current_folder.assert_called_once_with(("gio", str(home / "Downloads")))
+
+    def test_no_destination_folder_keeps_native_default(self):
+        from unittest.mock import Mock
+        (self.cfg / "user-dirs.dirs").write_text('XDG_DOWNLOAD_DIR="/nonexistent/not-here"\\n')
+        home = self.root / "home"
+        home.mkdir()
+        dialog = Mock()
+        with patch("cifereca.install_paths.Path.home", return_value=home):
+            self.assertFalse(self._choose(dialog))
+        dialog.set_current_folder.assert_not_called()
+
+    def test_missing_setter_is_non_blocking(self):
+        self.assertFalse(self._choose(object()))
