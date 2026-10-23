@@ -218,6 +218,17 @@ class PythonDependencyManager:
         if not admitted:
             raise PythonDependencyError("dependency_provenance_unavailable")
         allowed = {wheel.as_uri(): wheel for wheel in admitted}
+        # Keep the attester's SHA, *never* turn a later modified file into an
+        # approved candidate merely by hashing its new bytes for pip.
+        try:
+            manifest = json.loads(
+                (trusted / "wheelhouse-provenance.json").read_text(encoding="utf-8")
+            )
+            approved_hashes = {
+                row["filename"]: row["sha256"] for row in manifest["wheels"]
+            }
+        except (OSError, ValueError, KeyError, TypeError):
+            raise PythonDependencyError("dependency_provenance_unavailable") from None
 
         with tempfile.NamedTemporaryFile(
             prefix="cifereca-offline-plan-", suffix=".json", delete=False,
@@ -266,7 +277,9 @@ class PythonDependencyManager:
                 with wheel.open("rb") as stream:
                     for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                         digest.update(chunk)
-                pinned.append(wheel.as_uri() + "#sha256=" + digest.hexdigest())
+                if digest.hexdigest() != approved_hashes.get(wheel.name):
+                    raise PythonDependencyError("dependency_provenance_unavailable")
+                pinned.append(wheel.as_uri() + "#sha256=" + approved_hashes[wheel.name])
             if not pinned:
                 return  # Existing compatible venv needs no mutation.
             # Direct hash-pinned local URI + --no-deps prevents pip from
