@@ -112,7 +112,7 @@ def test_private_cache_bounded_across_services_and_incomplete_projection_expires
         assert _commit(owner, "alice", ("bounded", index), _run()) is None
     assert len(stability._SLOTS) <= 2
     assert _commit(owners[0], "alice", ("bounded", 0), _run()) is None
-    assert _commit(owners[2], "alice", ("bounded", 2), _run()) is None
+    assert _commit(owners[2], "alice", ("bounded", 2), _run())["interpretation"] == "stable_inputs"
 
     # A consumed baseline does not survive an explicitly changed scope.
     owner = object()
@@ -121,7 +121,7 @@ def test_private_cache_bounded_across_services_and_incomplete_projection_expires
 
 
 def test_private_cache_aggregate_digest_budget_never_evicts_foreign_active_run(monkeypatch):
-    monkeypatch.setattr(stability, "_MAX_RETAINED_ENTRIES", 6)
+    monkeypatch.setattr(stability, "_MAX_RETAINED_ENTRIES", 20)
     owner, scope = object(), ("bounded",)
     ga, _ = begin_audit_stability(owner, "alice", scope)
     gb, _ = begin_audit_stability(owner, "bob", scope)
@@ -134,3 +134,5 @@ def test_private_cache_aggregate_digest_budget_never_evicts_foreign_active_run(m
     assert sum(stability._retained_entries(slot.value)
                for slot in stability._SLOTS) <= stability._MAX_RETAINED_ENTRIES
     assert len(stability._ACTIVE) <= stability._MAX_ACTIVE
+    assert _commit(owner, "alice", scope, _run("alice")) is None
+    assert _commit(owner, "bob", scope, _run("bob"))["interpretation"] == "stable_inputs"
