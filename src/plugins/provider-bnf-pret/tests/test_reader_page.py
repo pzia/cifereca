@@ -154,6 +154,25 @@ class BnfReaderPageTests(unittest.TestCase):
         self.assertNotIn("private-account", message)
         self.assertEqual(page.dom_probe_message(object()), page._DEFAULT_ERROR)
 
+    def test_manual_bnf_account_attestation_cannot_default_to_first_profile(self):
+        selected = ("cifereca-profile-a", "Profil actif")
+        self.assertFalse(page.account_confirmation_ready(selected, "cifereca-profile-a", False))
+        self.assertFalse(page.account_confirmation_ready(selected, "cifereca-profile-a", 1))
+        self.assertFalse(page.account_confirmation_ready(selected, "cifereca-profile-b", True))
+        self.assertFalse(page.account_confirmation_ready(None, "cifereca-profile-a", True))
+        self.assertFalse(page.account_confirmation_ready([*selected], "cifereca-profile-a", True))
+        self.assertFalse(page.account_confirmation_ready(("cifereca-profile-a",), "cifereca-profile-a", True))
+        self.assertTrue(page.account_confirmation_ready(selected, "cifereca-profile-a", True))
+
+    def test_selected_core_identity_is_unambiguous_before_attestation(self):
+        a = {"identity_id": "a", "label": "A", "selected": True}
+        b = {"identity_id": "b", "label": "B", "selected": True}
+        self.assertIsNone(page.selected_identity([a, b]))
+        self.assertFalse(page.account_confirmation_ready(
+            page.selected_identity([a, b]), "a", True))
+        self.assertTrue(page.account_confirmation_ready(
+            page.selected_identity([a]), "a", True))
+
     def test_browser_exception_is_never_rendered(self):
         secret = "reader@example.test?SAMLResponse=PRIVATE"
         self.assertNotIn(secret, page.safe_error(RuntimeError(secret)))
