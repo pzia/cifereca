@@ -417,6 +417,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
                     if isinstance(w,Gtk.SearchEntry)
                     and w.get_placeholder_text()=='Filtrer les fichiers non liés…')
         assert search.get_visible()
+        report['checks']['native_manual_panel_labels_validated'] = True
         # Direct physical selection from the NEW bounded list, not merely
         # next/previous navigation. The first page contains 25 of 600 files.
         file_list = next(w for w in walk(controller.dialog)
@@ -428,19 +429,54 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
             rows.append(child)
             child=child.get_next_sibling()
         assert len(rows) == 25, len(rows)
+        report['checks']['native_manual_list_has_25_rows'] = True
         selected_row=rows[1]
 
         def file_row_ready():
+            # The paginated file list has its own GtkScrolledWindow. With
+            # sticky actions, the outer panel also scrolls; both must
+            # physically expose this file row before sending XTEST events.
             selected_row.grab_focus()
             if not selected_row.get_mapped() or not selected_row.get_sensitive():
                 return False
+            ancestor = selected_row.get_parent()
+            while ancestor is not None:
+                if isinstance(ancestor, Gtk.ScrolledWindow):
+                    page = ancestor.get_child()
+                    if isinstance(page, Gtk.Viewport):
+                        page = page.get_child()
+                    ok, rect = selected_row.compute_bounds(page)
+                    if ok:
+                        adj = ancestor.get_vadjustment()
+                        adj.set_value(max(0, min(
+                            rect.get_y() - adj.get_page_size() / 2,
+                            adj.get_upper() - adj.get_page_size(),
+                        )))
+                ancestor = ancestor.get_parent()
+            window = controller.dialog
+            ok, rect = selected_row.compute_bounds(window)
+            if not ok or rect.get_width() <= 0 or rect.get_height() <= 0:
+                return False
+            cx = rect.get_x() + rect.get_width()/2
+            cy = rect.get_y() + rect.get_height()/2
+            if not (0 <= cx < window.get_width() and 0 <= cy < window.get_height()):
+                return False
+            picked = window.pick(cx, cy, Gtk.PickFlags.DEFAULT)
+            while picked is not None and picked is not selected_row:
+                picked = picked.get_parent()
+            if picked is not selected_row:
+                return False
             try:
-                x,y=device.widget_point(selected_row)
-                return x>=0 and y>=0
+                x, y = device.widget_point(selected_row)
+                if x < 0 or y < 0:
+                    return False
             except RuntimeError:
                 return False
+            report['checks']['native_manual_file_row_hit_tested'] = True
+            return True
 
         def click_file():
+            report['checks']['native_manual_file_row_clicked'] = True
             device.click_widget(selected_row)
             until(lambda:any(isinstance(w,Gtk.Label)
                              and '2 / 600 · exploration non probante' in w.get_text()
