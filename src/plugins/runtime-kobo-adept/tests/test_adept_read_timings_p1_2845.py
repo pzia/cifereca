@@ -40,6 +40,7 @@ def runtime(monkeypatch, *, response=None, stderr=b""):
     (["capabilities", "--json"], "capabilities"),
     (["profile", "list", "--json"], "profile list"),
     (["loans", "list", "--json"], "loans list"),
+    (["loans", "list", "--profile", "SECRET_ACCOUNT", "--json"], "loans list"),
 ))
 def test_each_readonly_observation_at_normal_level_without_private_evidence(
     monkeypatch, args, family,
