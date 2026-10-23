@@ -247,3 +247,78 @@ def test_broker_can_resume_after_file_inventory_cancellation(scoped):
     recovered = broker.audit(identity_id="alice")
     assert recovered["status"] == "complete"
     assert recovered["inventory"]["reused_files"] == 1
+
+
+def test_interleaved_identities_keep_independent_verified_checkpoints(tmp_path):
+    """An audit of B must not evict an eligible memory-only A checkpoint."""
+    alice_root = tmp_path / "ALICE_PRIVATE"
+    bob_root = tmp_path / "BOB_PRIVATE"
+    alice_root.mkdir()
+    bob_root.mkdir()
+    epub(alice_root / "alice.epub")
+    epub(bob_root / "bob.epub")
+    service = object()
+    alice = scan_identity_roots({"alice": (alice_root,)})
+    bob = scan_identity_roots({"bob": (bob_root,)})
+    scope_a = ("config", "alice", str(alice_root))
+    scope_b = ("config", "bob", str(bob_root))
+
+    ga, unused_a = begin_inventory_resume(service, "alice", scope_a)
+    assert not unused_a
+    remember_inventory_resume(service, "alice", scope_a, ga, alice, lambda: True)
+    gb, unused_b = begin_inventory_resume(service, "bob", scope_b)
+    assert not unused_b
+    remember_inventory_resume(service, "bob", scope_b, gb, bob, lambda: True)
+    next_a, cached_a = begin_inventory_resume(service, "alice", scope_a)
+    assert len(cached_a) == 1
+    with patch("cifereca.core.library_inventory.inspect_epub",
+               side_effect=AssertionError("A was unexpectedly rescanned")):
+        reused = scan_identity_roots({"alice": (alice_root,)}, _reuse=cached_a)
+    assert reused.reused_files == 1 and reused.phase_calls["structure"] == 0
+    next_b, cached_b = begin_inventory_resume(service, "bob", scope_b)
+    assert len(cached_b) == 1
+    assert {row.identity_id for row in cached_b.values()} == {"bob"}
+    assert set(cached_a).isdisjoint(set(cached_b))
+    # Checkpoints still never contain SQLite rights or share observations.
+    assert all(row.identity_id == "alice" for row in cached_a.values())
+    assert next_a != next_b
+
+
+def test_interleaved_generations_only_supersede_same_profile(tmp_path):
+    root = _books(tmp_path, 1)
+    inventory = _scan(root)
+    service = object()
+    scope_a = ("alice", str(root))
+    scope_b = ("bob", str(root))
+    ga, _ = begin_inventory_resume(service, "alice", scope_a)
+    gb, _ = begin_inventory_resume(service, "bob", scope_b)
+    # The unrelated bob audit must not invalidate the pending alice run.
+    remember_inventory_resume(service, "alice", scope_a, ga, inventory, lambda: True)
+    _next, cached = begin_inventory_resume(service, "alice", scope_a)
+    assert len(cached) == 1
+    # The previous alice generation, however, cannot resurrect its slot.
+    remember_inventory_resume(service, "alice", scope_a, ga, inventory, lambda: True)
+    # Neither can an inventory of alice be accidentally stored under bob.
+    remember_inventory_resume(service, "bob", scope_b, gb, inventory, lambda: True)
+    _, wrong = begin_inventory_resume(service, "bob", scope_b)
+    assert wrong == {}
+
+
+def test_multi_profile_cache_is_bounded_by_slot_count(tmp_path):
+    from cifereca.core import library_inventory_checkpoint as cache
+    root = _books(tmp_path, 1)
+    inventory = _scan(root)
+    services = [object() for _ in range(cache._MAX_SLOTS + 1)]
+    for index, service in enumerate(services):
+        scope = ("different-service", index)
+        generation, _ = begin_inventory_resume(service, "alice", scope)
+        remember_inventory_resume(service, "alice", scope, generation,
+                                  inventory, lambda: True)
+    assert len(cache._SLOTS) <= cache._MAX_SLOTS
+    assert sum(len(slot.rows) for slot in cache._SLOTS) <= cache._MAX_FILES
+    _, old = begin_inventory_resume(services[0], "alice",
+                                   ("different-service", 0))
+    assert not old
+    _, newest = begin_inventory_resume(
+        services[-1], "alice", ("different-service", len(services)-1))
+    assert len(newest) == 1
