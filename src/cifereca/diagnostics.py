@@ -141,6 +141,7 @@ class DiagnosticEntry:
     # Only Core's fixed connection-failure producer may set this field.
     # Arbitrary plugin detail={"provider_id": ...} is NOT an attestation.
     verified_public_provider_id: str | None = None
+    verified_public_provider_success: bool = False
     verified_source_sync: bool = False
     verified_kobo_adept: bool = False
     verified_numilog_startup: bool = False
@@ -269,6 +270,50 @@ class Diagnostics:
         except Exception:
             # Optional logging is never allowed to turn a connection failure
             # into a different outcome or leak the handler's private message.
+            pass
+
+    def add_core_provider_connect_success(
+        self, provider_id: str, *, singleton: bool = False,
+        account_count: int = 0, duration_ms: int | None = None,
+    ) -> None:
+        """Core-verified result of ONE successful connect and persistence.
+
+        Does not claim that the previous synchronisation succeeded. Neither
+        account identifier nor identity is retained. Generic add() never
+        grants the provenance flag required by the public event feed.
+        """
+        from .core.public_provider_diagnostics import (
+            CONNECTED_CODE, public_connection_success_fields,
+            public_connection_success_log_message,
+        )
+        fields = public_connection_success_fields({
+            "provider_id": provider_id,
+            "code": CONNECTED_CODE,
+            "source_kind": "singleton_public" if singleton else "configured",
+            "account_count": account_count,
+        })
+        if not fields:
+            return
+        if self.enabled and self.level != "errors":
+            entry = DiagnosticEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                category="PLUGIN",
+                operation="public provider connected" if singleton else "provider connected",
+                status="ok",
+                duration_ms=(duration_ms if type(duration_ms) is int
+                             and 0 <= duration_ms <= 600000 else None),
+                detail=fields,
+                verified_public_provider_success=True,
+            )
+            with self._lock:
+                self._items.append(entry)
+        # Normal log only. Unlike unstructured TRACE, this fixed schema is
+        # retained at INFO. A disabled collector does not disable local logs.
+        try:
+            logger = logging.getLogger("cifereca")
+            if logger.isEnabledFor(logging.INFO):
+                logger.info("%s", public_connection_success_log_message(fields))
+        except Exception:
             pass
 
     def clear(self) -> None:
@@ -453,6 +498,8 @@ class Diagnostics:
                     row.pop("task_ref", None)
                 if row.get("verified_public_provider_id") is None:
                     row.pop("verified_public_provider_id", None)
+                if row.get("verified_public_provider_success") is False:
+                    row.pop("verified_public_provider_success", None)
                 if row.get("verified_source_sync") is False:
                     row.pop("verified_source_sync", None)
                 if row.get("verified_kobo_adept") is False:
