@@ -47,7 +47,7 @@ class MaintenanceLineProgress:
         self._alive = alive
         # Labels are Core-owned constants; reject plugin-provided free text.
         self._activity_label = (
-            activity_label if activity_label in ("Purge", "Réconciliation", "Vérification des couvertures", "Vérification des langues", "Audit des noms", "Renormalisation des noms", "Nettoyage des doublons")
+            activity_label if activity_label in ("Purge", "Réconciliation", "Vérification des couvertures", "Vérification des langues", "Vérification d’intégrité", "Audit des noms", "Renormalisation des noms", "Nettoyage des doublons")
             else "Traitement"
         )
         self._lock = Lock()
