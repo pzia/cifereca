@@ -46,3 +46,27 @@ def resolve_archive(value: str | Path) -> Path:
         if candidate.is_file():
             return candidate
     raise ArchiveNotFoundError('Archive ZIP introuvable. Emplacements essayés : ' + '; '.join(map(str, tried)))
+
+def prefer_downloads_for_save(chooser) -> bool:
+    """Suggest desktop Downloads for a user-initiated GTK Save As dialog.
+
+    Resolve the desktop's configured XDG_DOWNLOAD_DIR (including localized
+    names), then ~/Downloads when it exists.  Never create a directory,
+    change a selected destination or make an export mandatory: the native
+    chooser remains free to select any other path.  GI is imported only on
+    invocation so headless Core paths keep working without GTK.
+    """
+    setter = getattr(chooser, "set_current_folder", None)
+    if not callable(setter):
+        return False
+    try:
+        folder = downloads_dir()
+        if not folder.is_dir():
+            folder = Path.home() / "Downloads"
+        if not folder.is_dir():
+            return False
+        from gi.repository import Gio
+        return setter(Gio.File.new_for_path(str(folder))) is not False
+    except Exception:
+        # A broken XDG/GTK/portal setup must not disable Save As.
+        return False
