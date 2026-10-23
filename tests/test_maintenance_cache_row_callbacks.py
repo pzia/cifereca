@@ -336,12 +336,12 @@ def test_legacy_unknown_tool_shows_honest_indeterminate_progress_and_safe_failur
     worker_args, _ = m.jobs[-1]
     with pytest.raises(RuntimeError) as caught:
         worker_args[1]()
-    assert str(caught.value) == "Nettoyage des caches impossible."
+    assert str(caught.value) == "Opération de maintenance indisponible."
     assert "PRIVATE_ACCOUNT" not in str(caught.value)
     worker_args[3](caught.value)
     flush(m)
     assert m.feedback.state.phase == "error"
-    assert m.errors[-1][0] == "Nettoyage des caches impossible."
+    assert m.errors[-1][0] == "Opération de maintenance indisponible."
 
 
 def test_failed_foreign_plugin_description_never_exposes_exception_or_plugin_id():
