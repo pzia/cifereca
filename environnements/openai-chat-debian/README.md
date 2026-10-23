@@ -13,6 +13,20 @@ Le bootstrap télécharge les paquets Debian signés dans un cache local puis le
 extrait sous `runtime/root/`. Aucun `sudo`, `apt install` système ou changement
 de `/etc/apt` n'est nécessaire.
 
+## Cache .deb prêt à l'emploi : GitHub Releases (prioritaire sur le relais temporaire)
+
+**Agents Debian 13 / Python 3.13 sans accès aux miroirs APT :** utiliser en premier [`GITHUB_RELEASE_CACHE.md`](GITHUB_RELEASE_CACHE.md) : archive GTK4/libadwaita/Xvfb déjà regroupée en **asset GitHub Release stable**, contrôle SHA-256, extraction stricte, puis `bootstrap.py --offline`. Entrée directe depuis la racine du dépôt :
+
+```bash
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/cifereca/gtk4-trixie-amd64-20261020"
+/usr/bin/python3 environnements/openai-chat-debian/fetch_release_cache.py --dest "$CACHE"
+cd environnements/openai-chat-debian
+/usr/bin/python3 bootstrap.py --offline --deb-cache "$CACHE" --python /usr/bin/python3
+GTK4_POC_PYTHON=/usr/bin/python3 ./gtk-python check_import.py
+```
+
+**Ne pas relancer le téléchargement si le cache existe déjà** : l'outil refuse volontairement d'écraser une destination. Le relais GitHub Actions documenté plus bas sert de **secours/reconstruction**, pas de préalable systématique. Aucune installation système ni archive privée.
+
 ## Préparer l'environnement
 
 Prérequis : Debian 13 `trixie`, Python 3.13, `apt-get`, `dpkg-deb`, `tar` et

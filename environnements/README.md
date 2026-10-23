@@ -16,6 +16,10 @@ Il ne contient ni code applicatif, ni faux services métier de référence. Il d
 Une recette peut fournir du bootstrap rootless, des lanceurs, des tests de validation, Xvfb/D-Bus et des outils de capture. Les caches de paquets, environnements virtuels, captures et autres artefacts générés ne sont pas des sources et ne doivent pas être versionnés.
 
 
+### GTK4 sur Debian 13 isolé : cache prêt à l'emploi
+
+**Réflexe prioritaire des agents :** [cache de 261 paquets Debian 13 GTK4 publié comme asset GitHub Releases](openai-chat-debian/GITHUB_RELEASE_CACHE.md), téléchargement et extraction sécurisés par [`fetch_release_cache.py`](openai-chat-debian/fetch_release_cache.py), puis `bootstrap.py --offline`. Contrairement aux artefacts temporaires d'Actions, la Release a une **URL stable**. Si GitHub lui-même est inaccessible, transférer seulement cette archive vérifiée depuis une machine connectée. Réserver le workflow de relais APT aux renouvellements du cache, pas à chaque agent.
+
 ## Choix de la recette : commencer ici
 
 Avant toute recette GTK, capture, démonstration ou E2E exploratoire, identifier
