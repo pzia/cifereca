@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
-_PUBLIC_BOOK_ID = re.compile(r"[0-9]{13}\\Z", re.ASCII)
+_PUBLIC_BOOK_ID = re.compile(r"[0-9]{13}\Z", re.ASCII)
 _PUBLIC_SITES = frozenset({
     "bibliotheques.paris.fr",
     "pnb-dilicom.centprod.com",
