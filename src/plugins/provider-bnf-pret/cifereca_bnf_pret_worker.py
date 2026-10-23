@@ -15,7 +15,7 @@ from threading import Event, RLock
 from cifereca_bnf_pret_browser import BrowserSessionError, ReaderBrowserSession
 from cifereca_bnf_pret_web import ProfileScope
 
-_OPERATIONS = frozenset({"confirm_account", "loans", "suggestions", "detail", "visible_detail", "search"})
+_OPERATIONS = frozenset({"confirm_account", "loans", "suggestions", "detail", "visible_detail", "search", "dom_probe"})
 _CODES = frozenset({
     "consent_required", "account_confirmation_required", "playwright_unavailable",
     "browser_unavailable", "login_not_verified", "auth_required", "access_refused",
@@ -135,6 +135,8 @@ class ReaderWorker:
                 value = session.current_detail(expected=command.scope)
             elif command.operation == "search":
                 value = session.search(command.query, expected=command.scope)
+            elif command.operation == "dom_probe":
+                value = session.probe_visible_dom(expected=command.scope)
             elif command.operation == "loans":
                 value = session.loans(expected=command.scope)
             else:
