@@ -162,8 +162,8 @@ def test_registered_broker_is_additive_to_legacy_library_read(scoped):
     assert isinstance(brokers['library.reconciliation.read'], LibraryReconciliationReadBroker)
 
 
-def test_explicit_scoped_audit_uses_full_600s_budget_not_generic_120s(scoped, tmp_path):
-    """The scan is fast in CI; assert the budget really reaches both layers."""
+def test_explicit_scoped_audit_uses_shared_600s_budget_not_generic_120s(scoped, tmp_path):
+    """The SQLite/WAL preflight is charged against the full 600s envelope."""
     from cifereca.core.library_audit import audit_library as real_audit
     service, _, _root = scoped
     before = filesystem(tmp_path)
@@ -172,8 +172,8 @@ def test_explicit_scoped_audit_uses_full_600s_budget_not_generic_120s(scoped, tm
     assert report['status'] == 'complete'
     assert audit.call_count == 1
     options = audit.call_args.kwargs
-    assert options['seconds'] == 600
-    assert options['limits'].seconds == 600
+    assert 120 < options['seconds'] <= 600
+    assert options['limits'].seconds == options['seconds']
     assert callable(options['cancelled'])
     assert callable(options['progress'])
     assert options['_snapshot'] is not None
