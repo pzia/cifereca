@@ -58,8 +58,8 @@ class SupportReportExport:
                 self.title, self.parent(),
                 self.Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
             )
-            self.dialog.set_current_name(self.filename)
             prefer_downloads_for_save(self.dialog)
+            self.dialog.set_current_name(self.filename)
             self.dialog.connect("response", self.response)
             self.button.set_sensitive(False)
             self.dialog.show()
