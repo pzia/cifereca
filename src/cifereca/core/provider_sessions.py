@@ -14,6 +14,7 @@ from ..providers import ProviderConfigurationError, ProviderSession
 from .public_provider_diagnostics import (
     CONNECT_FAILURE_CODE, MISSING_PROVIDER_CODE,
     public_connection_failure, bounded_connection_failures,
+    registered_public_provider_id, UNKNOWN_PROVIDER,
 )
 
 def attach_plugin_manager(self, manager: Any) -> list[str]:
@@ -517,6 +518,25 @@ def _publish_connection_failure(diagnostics: Any, failure: dict[str, str], *,
         )
 
 
+def _publish_connection_success(
+    diagnostics: Any, registry: Any, provider_id: object, *,
+    singleton: bool, account_count: int, duration_ms: int,
+) -> None:
+    """Observe only a Core-registered, completed connection.
+
+    Best effort: logging cannot change an actual successful provider result.
+    Do not expose credential IDs, identity IDs or labels to diagnostics.
+    """
+    try:
+        slug = registered_public_provider_id(registry, provider_id)
+        publish = getattr(diagnostics, "add_core_provider_connect_success", None)
+        if slug != UNKNOWN_PROVIDER and callable(publish):
+            publish(slug, singleton=singleton, account_count=account_count,
+                    duration_ms=duration_ms)
+    except Exception:
+        pass
+
+
 def connect_configured(self, *, logger) -> dict[str, Any]:
     """Connect all enabled provider identities from local preferences.
 
@@ -583,6 +603,11 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
             session.connect()
             self._sessions[key] = session
             connected.append(key)
+            _publish_connection_success(
+                self.diagnostics, self.registry, provider_id,
+                singleton=True, account_count=0,
+                duration_ms=int((time.monotonic() - public_started) * 1000),
+            )
             self.diagnostics.add(
                 "PLUGIN", "public provider connected", "ok",
                 detail={"provider": provider_id, "instantiation": "singleton_public"}, level="detailed",
@@ -656,6 +681,11 @@ def connect_configured(self, *, logger) -> dict[str, Any]:
                 })
             all_accounts.extend(accounts)
             connected.append(key)
+            _publish_connection_success(
+                self.diagnostics, self.registry, provider_id,
+                singleton=False, account_count=len(accounts),
+                duration_ms=int((time.monotonic() - item_started) * 1000),
+            )
             self.diagnostics.add(
                 "PLUGIN", "provider connected", "ok",
                 detail={"code": "provider_connected", "accounts": len(accounts)},
