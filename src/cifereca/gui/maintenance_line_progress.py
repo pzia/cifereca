@@ -149,6 +149,13 @@ class MaintenanceLineProgress:
             percent = min(99, (current * 100) // total)
             label = f"{self._activity_label} en cours · {percent} %"
             fraction = percent / 100.0
+        elif (type(current) is int and 0 <= current <= 1_000_000
+              and total is None):
+            # Discovery/inventory has no trustworthy denominator. Show the
+            # measured count without inventing a percentage or displaying
+            # plugin-provided prose (which can contain private data).
+            label = f"{self._activity_label} en cours · {current} élément(s)"
+            fraction = None
         else:
             label = f"{self._activity_label} en cours…"
             fraction = None
