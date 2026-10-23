@@ -455,3 +455,27 @@ def test_offline_plugin_fully_satisfied_installed_dependencies_no_mutation(
         ("sample-pkg",), (trusted,),
     )
     assert len(calls) == 1 and "--dry-run" in calls[0]
+
+
+def test_offline_plugin_wheel_changed_during_resolve_cannot_repin_new_bytes(
+    tmp_path, monkeypatch,
+):
+    trusted, wheel = _approved_offline_release(tmp_path, monkeypatch)
+    calls = []
+    def race(command, **kwargs):
+        calls.append(command)
+        assert "--dry-run" in command, "modified wheel reached pip install"
+        Path(command[command.index("--report") + 1]).write_text(
+            json.dumps({"install": [{
+                "metadata": {"name": "sample-pkg", "version": "1.2.3"},
+                "download_info": {"url": wheel.as_uri()},
+            }]}), encoding="utf-8",
+        )
+        wheel.write_bytes(b"attacker modified the file after initial verification")
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(subprocess, "run", race)
+    with pytest.raises(PythonDependencyError, match="dependency_provenance_unavailable"):
+        PythonDependencyManager(allow_index=False)._pip_install(
+            ("sample-pkg",), (trusted,),
+        )
+    assert len(calls) == 1
