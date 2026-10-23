@@ -77,3 +77,16 @@ def test_offline_archive_fails_closed_without_output(tmp_path, case):
     with pytest.raises(ValueError):
         packager.create_archive(source, output, files=files)
     assert not output.exists()
+
+
+def test_release_producer_captures_python_plugin_requirements_without_network():
+    producer = Path(__file__).resolve().parents[1] / "scripts" / "prepare-admitted-wheelhouse.py"
+    spec = importlib.util.spec_from_file_location("offline_wheel_producer", producer)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    rows = module._plugin_python_requirements()
+    assert any(req.startswith("Pillow") for req in rows)
+    assert any(req.startswith("httpx") for req in rows)
+    assert len(rows) == len(set(rows))
+    assert all("://" not in req for req in rows)
