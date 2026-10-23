@@ -32,6 +32,7 @@ def test_access_refusal_overrides_generic_outage_wrapper(status):
 
 @pytest.mark.parametrize("error", [
     httpx.ConnectError("PRIVATE"), httpx.ReadTimeout("PRIVATE"),
+    httpx.DecodingError("PRIVATE_TOKEN malformed content-encoding"),
     _http_error(429), _http_error(503), ParseError("PRIVATE"),
 ])
 def test_wrapped_outages_keep_the_same_no_retry_and_offline_fallback_policy(error):
