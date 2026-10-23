@@ -622,10 +622,34 @@ class GallicaSession(ProviderSession):
             )
         rows = list({item.id: item for item in rows}.values())
         if errors and not successful_branches:
-            error = ProviderError("Gallica : " + " ; ".join(errors))
-            error.code = "search_temporarily_unavailable"
-            error.retryable = True
-            raise error from causes[0]
+            # A 401/403 on either independent public branch is not a
+            # transport outage and must never authorize Core's stale
+            # catalogue fallback. Only inspect httpx status integers,
+            # never plugin exception messages or user-supplied code objects.
+            statuses = [
+                exc.response.status_code for exc in causes
+                if isinstance(exc, httpx.HTTPStatusError)
+            ]
+            if 403 in statuses:
+                error = ProviderError("Gallica : accès au catalogue refusé (access_denied)")
+                error.code = "search_access_denied"
+            elif 401 in statuses:
+                error = ProviderError("Gallica : authentification requise (auth_required)")
+                error.code = "search_authentication_required"
+            else:
+                error = ProviderError("Gallica : " + " ; ".join(errors))
+                # A semantic HTTP 4xx (400/404/422) is not a technical
+                # outage; the Core must not turn it into public stale rows.
+                semantic = any(
+                    400 <= status < 500 and status not in {408, 429}
+                    for status in statuses
+                )
+                if not semantic:
+                    error.code = "search_temporarily_unavailable"
+                    error.retryable = True
+            # Exceptions can contain signed request URLs, cookies and bodies.
+            # Do not attach a raw branch error as public __cause__.
+            raise error from None
         self._diagnostic("GALLICA", "federated public search", "ok", detail={
             "results": len(rows), "ebooks": sum(x.content_type == "ebook" for x in rows),
             "audiobooks": sum(x.content_type == "audiobook" for x in rows),
