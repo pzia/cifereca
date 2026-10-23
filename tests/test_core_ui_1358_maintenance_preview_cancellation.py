@@ -148,7 +148,7 @@ def _method():
     # to the progress registry. All maintenance.tool rows now get a safe
     # status line, so the inert GTK harness must supply that existing
     # presentation contract too (without starting a real GTK main loop).
-    def build_test_line(*, idle_add, render=None, alive, activity_label):
+    def build_test_line(*, Gtk, idle_add, alive, activity_label):
         feedback = MaintenanceLineProgress(
             idle_add=lambda callback: callback(),
             render=lambda state: None, alive=alive,
