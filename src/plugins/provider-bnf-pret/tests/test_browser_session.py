@@ -255,7 +255,7 @@ class BrowserSessionTests(unittest.TestCase):
 
     def test_search_rejects_control_and_empty_input_without_navigation(self):
         self.ready()
-        for query in ('', 'a', '   ', 'private\\nsecret', 'a' * 129, None, 1):
+        for query in ('', 'a', '   ', 'private\nsecret', 'a' * 129, None, 1):
             before = len([row for row in self.runtime.page.calls if row[0] == 'goto'])
             with self.assertRaisesRegex(browser.BrowserSessionError, '^invalid_search$'):
                 self.session.search(query, expected=self.session.scope)
