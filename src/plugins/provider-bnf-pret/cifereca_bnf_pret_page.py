@@ -232,7 +232,15 @@ class BnfReaderPage:
                   "au profil Cifereca affiché (déclaration personnelle, non vérifiée automatiquement)."
         )
         root.append(account_ack)
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        # Eight reader actions must remain reachable even in narrow GTK
+        # windows: a single horizontal Box clips the final safety controls.
+        row = Gtk.FlowBox()
+        row.set_selection_mode(Gtk.SelectionMode.NONE)
+        row.set_halign(Gtk.Align.FILL)
+        row.set_min_children_per_line(1)
+        row.set_max_children_per_line(3)
+        row.set_row_spacing(6)
+        row.set_column_spacing(6)
         root.append(row)
         open_button = Gtk.Button(label="Ouvrir le portail BnF")
         confirm_button = Gtk.Button(label="J'ai terminé la connexion BnF")
