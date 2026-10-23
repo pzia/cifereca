@@ -269,10 +269,30 @@ class PrivateReviewPanel:
             label="Option avancée, désactivée par défaut : Chromium décompresse "
                   "avant que Cifereca puisse limiter la taille décodée. Une "
                   "réponse malveillante peut provoquer un pic de mémoire ou "
-                  "un blocage malgré les plafonds de conservation (32 Kio/corps). "
+                  "un blocage malgré les plafonds de conservation (32 Kio "
+                  "par défaut, 128 Kio au maximum). "
                   "Les réponses trop grandes, binaires, licences et domaines "
                   "non autorisés restent exclus. Aucun ZIP n'est exporté "
                   "automatiquement. Choix réinitialisé après Démarrer.",
+            xalign=0, wrap=True,
+        ))
+        box.append(Gtk.Label(
+            label="Taille maximale par corps texte pour cette capture (défaut 32 Kio) :",
+            xalign=0, wrap=True,
+        ))
+        self.response_body_limit = Gtk.ComboBoxText()
+        for kib in (32, 64, 128):
+            self.response_body_limit.append(str(kib * 1024), f"{kib} Kio")
+        self.response_body_limit.set_active_id(str(32 * 1024))
+        box.append(self.response_body_limit)
+        box.append(Gtk.Label(
+            label="Ce plafond s'applique aux requêtes et réponses textuelles "
+                  "et n'augmente pas le budget total de 768 Kio. Les ressources "
+                  "statiques restent limitées séparément à 64 Kio au total. "
+                  "Les tailles réseau inconnues sont toujours exclues ; "
+                  "les réponses compressées peuvent présenter un pic mémoire "
+                  "avant contrôle si leur option dédiée est activée. "
+                  "Réinitialisé à 32 Kio au prochain démarrage.",
             xalign=0, wrap=True,
         ))
         self.diagnose_origins = Gtk.CheckButton(
@@ -713,6 +733,9 @@ class PrivateReviewPanel:
             label += " Aucune réponse conservée : analyse des réponses impossible."
         if metrics["limit"] and metrics["exchanges"] * 5 >= metrics["limit"] * 4:
             label += " Attention : capacité de capture presque atteinte."
+        cap = metrics.get("max_body")
+        if type(cap) is int and cap in (32768, 65536, 131072):
+            label += f" Plafond texte : {cap // 1024} Kio."
         self.coverage_status.set_label(label)
 
     def _show_origin_diagnostics(self, trace):
@@ -737,6 +760,7 @@ class PrivateReviewPanel:
 
     def _refresh(self):
         self.prefer_identity.set_sensitive(not self._closed and not self.is_recording())
+        self.response_body_limit.set_sensitive(not self._closed and not self.is_recording())
         self.accept_compressed.set_sensitive(not self._closed and not self.is_recording())
         busy = self.is_recording()
         self.diagnose_origins.set_sensitive(not self._closed and not busy)
@@ -1046,6 +1070,12 @@ class PrivateReviewPanel:
         pause_control = self._pause_control
         self._download_outcomes = {}
         prefer_identity = self.prefer_identity.get_active()
+        max_body_choice = self.response_body_limit.get_active_id()
+        if max_body_choice not in ("32768", "65536", "131072"):
+            self.status.set_label("Taille maximale du corps HTTP non autorisée.")
+            return
+        selected_body_limit = int(max_body_choice)
+        self.response_body_limit.set_active_id("32768")
         accept_compressed = self.accept_compressed.get_active()
         self.accept_compressed.set_active(False)
         diagnose_origins = self.diagnose_origins.get_active()
@@ -1069,6 +1099,8 @@ class PrivateReviewPanel:
                 "status": self._download_status,
                 "coverage_callback": progress,
             }
+            if selected_body_limit != 32768:
+                kwargs["max_body"] = selected_body_limit
             if accept_compressed:
                 kwargs["allow_compressed_responses"] = True
             if diagnose_origins:

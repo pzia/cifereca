@@ -19,7 +19,9 @@ from browser_recorder_download import (
 )
 
 MAX_EXCHANGES = 240
-MAX_BODY_BYTES = 32 * 1024
+DEFAULT_BODY_BYTES = 32 * 1024
+MAX_BODY_BYTES = 128 * 1024
+BODY_LIMIT_CHOICES = frozenset((DEFAULT_BODY_BYTES, 64 * 1024, MAX_BODY_BYTES))
 MAX_TOTAL_BODY_BYTES = 768 * 1024
 MAX_CAPTURE_SECONDS = 900
 MAX_STATIC_METADATA = 64
@@ -209,7 +211,7 @@ class PrivateHttpTrace:
 
     def __init__(self, origins: tuple[str, ...], *,
                  limit: int = MAX_EXCHANGES,
-                 max_body: int = MAX_BODY_BYTES,
+                 max_body: int = DEFAULT_BODY_BYTES,
                  total_body: int = MAX_TOTAL_BODY_BYTES,
                  pause_control: CapturePause | None = None,
                  metadata_only_origins: tuple[str, ...] = (),
@@ -270,6 +272,7 @@ class PrivateHttpTrace:
         """Closed numeric summary; never a URL, MIME or provider payload."""
         return {
             "exchanges": len(self.exchanges), "limit": self.limit,
+            "max_body": self.max_body,
             "text_responses": sum(type(e.response_body) is str for e in self.exchanges),
             "binary_skipped": self.omitted["binary_skipped"],
             "compressed": self.omitted["compressed"],
@@ -622,6 +625,7 @@ def record_http(start_url: str, stop: Event, *,
                 prefer_identity: bool = False,
                 diagnose_origins: bool = False,
                 allow_compressed_responses: bool = False,
+                max_body: int = DEFAULT_BODY_BYTES,
                 ) -> PrivateHttpTrace:
     """Observe a manually controlled Chromium session; return RAM-only trace.
 
@@ -629,7 +633,9 @@ def record_http(start_url: str, stop: Event, *,
     private vault writer may persist AES-GCM-encrypted snapshots, never
     plaintext. No extra requests or replay; LLM ZIP still requires review.
     """
-    if type(prefer_identity) is not bool or type(allow_compressed_responses) is not bool:
+    if (type(prefer_identity) is not bool or
+            type(allow_compressed_responses) is not bool or
+            type(max_body) is not int or max_body not in BODY_LIMIT_CHOICES):
         raise RecorderError("invalid_capture_strategy")
     origin = site_origin(start_url)
     trace = PrivateHttpTrace(
@@ -637,6 +643,7 @@ def record_http(start_url: str, stop: Event, *,
         metadata_only_origins=metadata_only_origins,
         diagnose_origins=diagnose_origins,
         allow_compressed_responses=allow_compressed_responses,
+        max_body=max_body,
     )
     if origin not in trace.origins:
         raise RecorderError("invalid_origin")

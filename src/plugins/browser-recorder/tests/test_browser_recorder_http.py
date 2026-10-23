@@ -11,7 +11,7 @@ import pytest
 
 from browser_recorder import RecorderError
 from browser_recorder_http import (
-    MAX_BODY_BYTES, PrivateHttpTrace, record_http,
+    DEFAULT_BODY_BYTES, MAX_BODY_BYTES, PrivateHttpTrace, record_http,
 )
 
 ORIGIN = "https://fake-books.example.org"
@@ -938,7 +938,7 @@ def test_static_scripts_cannot_exhaust_body_budget_before_api_responses():
     for index in range(64):
         req = Request(ORIGIN + '/script/' + str(index))
         req.resource_type = 'script'
-        response = Response(req, mime='application/javascript', data=b'x' * MAX_BODY_BYTES)
+        response = Response(req, mime='application/javascript', data=b'x' * DEFAULT_BODY_BYTES)
         emit(trace, req, response)
         reads += response.body_reads
     assert reads == 2  # static bodies use at most 64 KiB / one quarter
@@ -1024,3 +1024,46 @@ def test_compressed_opt_in_cannot_skip_measured_byte_guard():
     with pytest.raises(RecorderError, match="invalid_capture_strategy"):
         PrivateHttpTrace((ORIGIN,), allow_compressed_responses="yes")
     trace.destroy()
+
+
+@pytest.mark.parametrize("limit", [32768, 65536, 131072])
+def test_text_body_limit_is_explicit_bounded_and_default_unchanged(limit):
+    body = b'{"Title":"' + b"x" * 70000 + b'"}'
+    req = Request(ORIGIN + "/large-json")
+    response = Response(req, data=body)
+    trace = PrivateHttpTrace((ORIGIN,), max_body=limit)
+    emit(trace, req, response)
+    assert trace.max_body == limit
+    assert trace.coverage()["max_body"] == limit
+    assert (trace.exchanges[0].response_body is not None) == (limit >= len(body))
+    if limit < len(body):
+        assert response.body_reads == 0
+        assert trace.exchanges[0].response_body_reason == "over_budget"
+    else:
+        assert response.body_reads == 1
+        assert len(trace.exchanges[0].response_body.encode()) == len(body)
+    trace.destroy()
+
+    default = PrivateHttpTrace((ORIGIN,))
+    assert default.max_body == DEFAULT_BODY_BYTES == 32768
+    assert MAX_BODY_BYTES == 131072
+    default.destroy()
+
+
+@pytest.mark.parametrize("invalid", [0, 1, 32767, 32000, 262144, "65536", True, None])
+def test_record_http_rejects_unsupported_body_limit_before_browser(invalid):
+    with pytest.raises(RecorderError, match="invalid_capture_strategy"):
+        record_http(ORIGIN + "/catalog", Event(), max_body=invalid)
+
+
+def test_record_http_forwards_selected_body_limit_to_memory_trace():
+    stopped = Event()
+    stopped.set()
+    runtime = FakePlaywright(FakeContext(stopped))
+    trace = record_http(
+        ORIGIN + "/catalog", stopped, factory=lambda: runtime, max_body=131072,
+    )
+    try:
+        assert trace.max_body == 131072
+    finally:
+        trace.destroy()
