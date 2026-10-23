@@ -106,6 +106,13 @@ def _safe_url(value: str) -> str:
         return "<invalid-url>"
 
 
+def _unavailable_opds_xml():
+    """Malformed Atom is a technical search outage, not a confirmed zero."""
+    failure = ProviderError("Project Gutenberg OPDS : XML invalide (invalid_opds_feed)")
+    failure.code = "search_temporarily_unavailable"
+    failure.retryable = False  # No second equivalent OPDS GET.
+    return failure
+
 
 DESCRIPTOR = ProviderDescriptor(
     id="gutenberg",
@@ -280,7 +287,7 @@ class GutenbergSession(ProviderSession):
                 detail={"bytes": len(content), "reason": "invalid_opds_feed"},
                 level="detailed",
             )
-            raise ProviderError("Project Gutenberg OPDS : XML invalide (invalid_opds_feed)") from None
+            raise _unavailable_opds_xml() from None
 
         entries = root.findall(f"{{{ATOM}}}entry")
         stats = {
@@ -509,7 +516,7 @@ class GutenbergSession(ProviderSession):
             root = ET.fromstring(content)
         except ET.ParseError:
             # Malformed Atom is an XML failure, not a forged/missing next URL.
-            raise ProviderError("Project Gutenberg OPDS : XML invalide") from None
+            raise _unavailable_opds_xml() from None
         try:
             base = urlsplit(base_url)
             base_port = base.port or (443 if base.scheme == "https" else 80)
