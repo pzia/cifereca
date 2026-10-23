@@ -7,6 +7,9 @@ on:
       - "src/plugins/*/cifereca-plugin.json"
       - "scripts/ci-full-release-install-gate.py"
       - "scripts/prepare-admitted-wheelhouse.py"
+      - "scripts/package-offline-release.py"
+      - "scripts/ci-offline-release-gate.py"
+      - ".github/workflows/release.yml"
       - "scripts/plugin_packaging.py"
       - "scripts/package-dev-snapshot.py"
       - "scripts/verify-packaging.py"
@@ -55,9 +58,18 @@ jobs:
       - name: Prepare attested offline wheels for full updater test
         env:
           PYTHONPATH: ${{ github.workspace }}/src
-        run: python scripts/prepare-admitted-wheelhouse.py
+        run: python scripts/prepare-admitted-wheelhouse.py --include-plugin-deps
 
       - name: Exercise full release and Core rollback
         env:
           PYTHONPATH: ${{ github.workspace }}/src
         run: python scripts/ci-full-release-install-gate.py
+
+      - name: Rehearse cold offline ZIP install with all bundled plugin wheels
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          PIP_NO_INDEX: "1"
+          CIFERECA_PLUGIN_DEPS_OFFLINE: "1"
+        run: |
+          python scripts/package-offline-release.py --out dist/cifereca-offline-test.zip
+          python scripts/ci-offline-release-gate.py dist/cifereca-offline-test.zip
