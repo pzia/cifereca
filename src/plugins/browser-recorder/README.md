@@ -760,3 +760,33 @@ volontaire. Ce mode ne restaure pas les anciennes sessions.
 manifest du ZIP anonymisé ; les anciens coffres sans champ restent lisibles.
 La négociation `content_negotiation` demeure indépendante. Le corps du ZIP
 reste du **texte décodé**, jamais une archive HTTP gzip/br brute.
+
+
+## Taille maximale d'un corps textuel par capture (#2528)
+
+Dans **Paramètres**, l'opérateur peut choisir **32 / 64 / 128 Kio**
+par corps de requête ou réponse textuelle pour une **nouvelle capture**.
+Le défaut est toujours **32 Kio** et le choix revient à cette valeur dès le
+démarrage. La limite globale de **768 Kio** et la réserve statique de
+**64 Kio** restent inchangées. Les budgets sont vérifiés AVANT la lecture
+pour les réponses dont Chromium rapporte une taille réseau mesurée ;
+les autres portent toujours `size_unavailable` sans lecture. Les MIME
+binaires, licences/DRM, téléchargements et origines exclues le restent.
+
+Pour les réponses dont le serveur impose gzip/Brotli, l'option distincte
+« Accepter les réponses compressées » doit toujours être explicitement
+cochée ; Playwright décompresse alors avant que le code Python puisse
+vérifier le plafond décodé : risque de pic mémoire inchangé. Le réglage de
+taille ne vaut donc jamais consentement implicite à la compression.
+
+Les sessions chiffrées retiennent `max_body` pour identifier le plafond
+réellement utilisé. Le ZIP public revu publie uniquement la valeur numérique
+`max_capture_body_bytes` dans `coverage-report.json` et
+`manifest.json`. La revue anonymisée peut produire une projection textuelle
+plus courte que la source privée ; l'utilisateur doit consulter le rapport de
+couverture et les raisons d'omission avant d'inférer une couverture complète.
+
+Cette amélioration réduit potentiellement les exclusions `over_budget`
+observées sur le terrain, **sans garantir** la capture d'un corps de taille
+>128 Kio, ni résoudre `size_unavailable`. Aucune ancienne archive n'est
+réécrite ni complétée.

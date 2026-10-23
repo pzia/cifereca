@@ -284,3 +284,49 @@ def test_old_encrypted_session_without_compression_flag_remains_readable(tmp_pat
     finally:
         restored.trace.destroy()
         trace.destroy()
+
+
+def test_selected_128k_text_body_survives_encrypted_reopen_and_private_zip(tmp_path):
+    from browser_recorder_private_zip import save_session_llm_zip
+    from zipfile import ZipFile
+    body = json.dumps({"books": ["x" * 90000]}, separators=(",", ":"))
+    trace = PrivateHttpTrace((ORIGIN,), max_body=131072)
+    trace.exchanges.append(PrivateExchange(
+        1, "GET", url=ORIGIN + "/fixture/large",
+        status=200, mime="application/json",
+        response_headers={"content-type": "application/json"},
+        response_body=body,
+        response_body_state="captured", response_body_reason="captured",
+    ))
+    vault = PrivateSessionVault(tmp_path / "vault")
+    writer = vault.begin(PASSPHRASE)
+    writer.save(trace, "completed", force=True)
+    recovered = vault.open(writer.session_id, PASSPHRASE)
+    try:
+        assert recovered.trace.max_body == 131072
+        assert recovered.trace.exchanges[0].response_body == body
+        destination = tmp_path / "private.zip"
+        save_session_llm_zip(recovered, destination, confirmed=True)
+        with ZipFile(destination) as archive:
+            data = json.loads(archive.read("trace.json"))
+            assert data["max_body"] == 131072
+            assert data["exchanges"][0]["response_body"] == body
+    finally:
+        recovered.trace.destroy()
+        trace.destroy()
+
+
+def test_selected_limit_is_in_reviewed_coverage_and_manifest():
+    trace = sample_trace()
+    trace.max_body = 131072
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        plan = prepare_reviewed_zip(review)
+        contents = {m["name"]: m["text"] for m in plan.preview()["members"]}
+        for path in ("coverage-report.json", "manifest.json"):
+            assert json.loads(contents[path])["max_capture_body_bytes"] == 131072
+    finally:
+        review.destroy()
+        trace.destroy()

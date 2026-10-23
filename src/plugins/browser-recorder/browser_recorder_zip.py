@@ -847,6 +847,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         "body_coverage": body_coverage,
         "capture_omissions": capture_omissions,
         "compressed_responses_accepted": review.trace.allow_compressed_responses,
+        "max_capture_body_bytes": review.trace.max_body,
         "content_negotiation": (
             "identity_requested" if review.trace.content_negotiation == "identity_requested"
             else "browser_default"
@@ -868,6 +869,7 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
         "body_coverage": body_coverage,
         "body_capture_reasons": capture_reasons,
         "compressed_responses_accepted": review.trace.allow_compressed_responses,
+        "max_capture_body_bytes": review.trace.max_body,
         "secret_values_suppressed": preview["secrets_replaced"],
         "coverage": "JSON/XML structures with reviewed scalars and selected HTML selectors; free text omitted",
         "xml_namespaces": "Unknown namespace URIs are opaque labels local to each body; original URIs omitted",
