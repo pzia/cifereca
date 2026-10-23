@@ -432,7 +432,7 @@ class BrowserSessionTests(unittest.TestCase):
             (browser.ORIGIN + '/resources/synthetic', 'GET', True, 'continued'),
             (browser.ORIGIN + '/results?q=synthetic', 'GET', True, 'continued'),
             (browser.ORIGIN + '/my_profile/activity', 'GET', True, 'continued'),
-            ('https://cdn.example.invalid/style.css', 'GET', False, 'continued'),
+            ('https://cdn.example.invalid/style.css', 'GET', False, 'blocked'),
             (browser.ORIGIN + '/resources/synthetic', 'POST', False, 'blocked'),
             (browser.ORIGIN + '/loans/synthetic?signature=fake', 'GET', False, 'blocked'),
             (browser.ORIGIN + '/v1/resources.json', 'GET', False, 'blocked'),
@@ -447,6 +447,33 @@ class BrowserSessionTests(unittest.TestCase):
                 route = FakeRoute(url, method, document)
                 self.runtime.route_callback(route)
                 self.assertEqual(route.outcome, outcome)
+
+    def test_readonly_static_assets_cannot_contact_third_parties(self):
+        self.ready()
+        accepted = (
+            (browser.ORIGIN + '/assets/site.css', 'stylesheet'),
+            (browser.ORIGIN + '/assets/site.js', 'script'),
+            (browser.ORIGIN + '/assets/cover.jpg', 'image'),
+            (browser.ORIGIN + '/fonts/book.woff2', 'font'),
+        )
+        rejected = (
+            ('https://tracking.example.invalid/cover.jpg?user=private', 'image'),
+            ('https://cdn.example.invalid/site.css', 'stylesheet'),
+            ('https://cdn.example.invalid/site.js', 'script'),
+            ('https://pret.bnf.fr.evil.invalid/assets/cover.jpg', 'image'),
+            ('http://pret.bnf.fr/assets/site.css', 'stylesheet'),
+            (browser.ORIGIN + '/loans/private.jpg', 'image'),
+        )
+        for url, kind in accepted:
+            with self.subTest(url=url):
+                route = FakeRoute(url, document=False, resource_type=kind)
+                self.runtime.route_callback(route)
+                self.assertEqual(route.outcome, 'continued')
+        for url, kind in rejected:
+            with self.subTest(url=url):
+                route = FakeRoute(url, document=False, resource_type=kind)
+                self.runtime.route_callback(route)
+                self.assertEqual(route.outcome, 'blocked')
 
     def test_websocket_closed(self):
         self.ready()
