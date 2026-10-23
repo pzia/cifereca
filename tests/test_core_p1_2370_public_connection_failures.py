@@ -124,6 +124,8 @@ def test_reconnect_clears_previous_errors_and_no_fabricated_success():
         identity_id="identity-private", display_name="Private", is_primary=True,
         barcode=SECRET,
     )]
+    # A real successful reconnect commits its session state as well as rows.
+    session.connect.side_effect = lambda: (setattr(session, "connected", True), session.connect.return_value)[1]
     second = provider_sessions.connect_configured(service, logger=LOGGER)
     assert len(second["connected"]) == 1
     assert second["errors"] == {}
