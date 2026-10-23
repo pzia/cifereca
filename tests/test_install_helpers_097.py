@@ -205,9 +205,9 @@ class DesktopExportDirectory(unittest.TestCase):
 
         fake_gio = SimpleNamespace(File=SimpleNamespace(new_for_path=lambda p: ("gio", p)))
         fake_gi = SimpleNamespace(repository=SimpleNamespace(Gio=fake_gio))
-        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.cfg)}), \\
-             patch.dict(sys.modules, {"gi": fake_gi, "gi.repository": fake_gi.repository}):
-            return prefer_downloads_for_save(dialog)
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(self.cfg)}):
+            with patch.dict(sys.modules, {"gi": fake_gi, "gi.repository": fake_gi.repository}):
+                return prefer_downloads_for_save(dialog)
 
     def test_localized_xdg_folder_is_suggested_without_choosing_a_file(self):
         from unittest.mock import Mock
@@ -218,7 +218,7 @@ class DesktopExportDirectory(unittest.TestCase):
 
     def test_fallback_to_existing_home_downloads_if_xdg_missing(self):
         from unittest.mock import Mock
-        (self.cfg / "user-dirs.dirs").write_text('XDG_DOWNLOAD_DIR="/nonexistent/not-here"\\n')
+        (self.cfg / "user-dirs.dirs").write_text('XDG_DOWNLOAD_DIR="/nonexistent/not-here"\n')
         home = self.root / "home"
         (home / "Downloads").mkdir(parents=True)
         dialog = Mock()
@@ -228,7 +228,7 @@ class DesktopExportDirectory(unittest.TestCase):
 
     def test_no_destination_folder_keeps_native_default(self):
         from unittest.mock import Mock
-        (self.cfg / "user-dirs.dirs").write_text('XDG_DOWNLOAD_DIR="/nonexistent/not-here"\\n')
+        (self.cfg / "user-dirs.dirs").write_text('XDG_DOWNLOAD_DIR="/nonexistent/not-here"\n')
         home = self.root / "home"
         home.mkdir()
         dialog = Mock()
@@ -238,3 +238,18 @@ class DesktopExportDirectory(unittest.TestCase):
 
     def test_missing_setter_is_non_blocking(self):
         self.assertFalse(self._choose(object()))
+
+    def test_all_user_save_dialog_surfaces_use_desktop_default(self):
+        base = Path(__file__).resolve().parents[1]
+        cases = {
+            "src/cifereca/builtin_ui/system_page.py": 1,
+            "src/cifereca/gui/settings_diagnostic_actions.py": 1,
+            "src/cifereca/gui/settings_performance_actions.py": 1,
+            "src/plugins/diagnostics-page/diagnostics_support.py": 1,
+            "src/plugins/browser-recorder/browser_recorder_review_ui.py": 3,
+            "src/plugins/epub_optimizer/cifereca_epub_optimizer/ui.py": 1,
+        }
+        for name, expected in cases.items():
+            with self.subTest(path=name):
+                contents = (base / name).read_text(encoding="utf-8")
+                self.assertEqual(contents.count("prefer_downloads_for_save("), expected)
