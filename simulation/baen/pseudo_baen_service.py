@@ -76,6 +76,11 @@ class BaenFakeApp:
             return self.send(h, HTTPStatus.TOO_MANY_REQUESTS, "text/plain", b"429 simulated")
         if q == "down":
             return self.send(h, HTTPStatus.SERVICE_UNAVAILABLE, "text/plain", b"503 simulated")
+        if q == "layout-change":
+            # A 200 page without source-visible search/zero evidence is NOT
+            # a successful empty catalogue. Exercise the plugin's warnings.
+            return self.send(h, HTTPStatus.OK, "text/html",
+                             b"<html><body>Unknown synthetic catalogue layout</body></html>")
         page = _query_int(args, "page", 1)
         per_page = _query_int(args, "pageSize", 50)
         found = [b for b in BOOKS if not q or q in b[1].casefold() or q in b[2].casefold()]
@@ -84,10 +89,14 @@ class BaenFakeApp:
             f'<article><a href="/allbooks/{slug}">{_escape(title)}</a></article>'
             for slug, title, _, _, _, _ in rows
         )
+        # Both closed zero markers are included only for an actually empty
+        # search corpus. An exhausted page of a nonempty search is not zero.
+        empty_proof = ("<p>Showing 0-0 of 0</p><p>No results</p>"
+                       if not found else "")
         body = (
             "<!doctype html><html><body>"
             "<a href='/allbooks/not-a-record'>More...</a>"
-            + links + '<a href="/allbooks/not-a-record">Buy</a>'
+            + empty_proof + links + '<a href="/allbooks/not-a-record">Buy</a>'
             + "</body></html>"
         ).encode("utf-8")
         return self.send(h, HTTPStatus.OK, "text/html; charset=utf-8", body)
