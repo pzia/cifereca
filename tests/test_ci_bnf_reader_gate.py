@@ -1,4 +1,4 @@
-"""CI routing and no-empty/no-skipped acceptance proof invariants."""
+"""BnF HTTPX routing must never provision a browser."""
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -19,23 +19,21 @@ class BnfReaderGateTests(unittest.TestCase):
         (self.package / 'tests').mkdir(parents=True)
 
     def transport(self):
-        (self.package / 'cifereca_bnf_pret_browser.py').touch()
-        (self.package / 'tests/test_browser_chromium.py').touch()
+        (self.package / 'cifereca_bnf_pret_http.py').touch()
+        (self.root / gate.TEST).touch()
 
     def test_harness_can_land_before_transport(self):
         self.assertFalse(gate.selected(['.github/workflows/pr-ci.yml'], self.root))
 
-    def test_browser_parser_and_acceptance_changes_require_gate(self):
+    def test_http_parser_and_acceptance_changes_require_gate(self):
         self.transport()
-        for path in ('cifereca_bnf_pret_browser.py', 'cifereca_bnf_pret_web.py',
-                     'tests/test_browser_session.py', 'tests/test_browser_chromium.py',
-                     'tests/extract_dom_contract.js'):
+        for path in ('cifereca_bnf_pret_http.py', 'cifereca_bnf_pret_web.py',
+                     'tests/test_http_provider.py', 'cifereca-plugin.json', 'WEB.md'):
             self.assertTrue(gate.selected([gate.PACKAGE + path], self.root))
 
-    def test_docs_other_provider_and_core_do_not_provision_browser(self):
+    def test_other_provider_and_core_do_not_select_gate(self):
         self.transport()
-        for path in (gate.PACKAGE + 'WEB.md', 'README.md', 'src/plugins/provider-paris/a.py',
-                     'src/cifereca/services.py'):
+        for path in ('README.md', 'src/plugins/provider-paris/a.py', 'src/cifereca/services.py'):
             self.assertFalse(gate.selected([path], self.root))
 
     def test_workflow_harness_and_manual_full_run_revalidate(self):
@@ -44,33 +42,26 @@ class BnfReaderGateTests(unittest.TestCase):
         self.assertTrue(gate.selected(['scripts/ci_bnf_reader_gate.py'], self.root))
         self.assertTrue(gate.selected([], self.root, full=True))
 
-    def test_missing_browser_acceptance_is_failure(self):
+    def test_missing_http_acceptance_is_failure(self):
         self.transport()
-        (self.package / 'tests/test_browser_chromium.py').unlink()
-        with self.assertRaisesRegex(ValueError, '^bnf_chromium_acceptance_missing$'):
-            gate.selected([gate.PACKAGE + 'cifereca_bnf_pret_browser.py'], self.root)
+        (self.root / gate.TEST).unlink()
+        with self.assertRaisesRegex(ValueError, '^bnf_http_acceptance_missing$'):
+            gate.selected([gate.PACKAGE + 'cifereca_bnf_pret_http.py'], self.root)
 
-    def test_real_success_requires_nonempty_and_unskipped_results(self):
-        result = unittest.TestResult()
-        self.assertFalse(gate.successful(result))
-        result.testsRun = 2
-        self.assertTrue(gate.successful(result))
-        result.skipped.append(('case', 'browser unavailable'))
-        self.assertFalse(gate.successful(result))
-        result.skipped.clear()
-        result.failures.append(('case', 'failure'))
-        self.assertFalse(gate.successful(result))
-
-    def test_optional_browser_runtime_does_not_activate_generic_headed_tests(self):
+    def test_acceptance_uses_shared_python_without_browser_install(self):
         workflow = (ROOT / '.github/workflows/pr-ci.yml').read_text()
-        step = workflow.split('- name: BnF reader real Chromium acceptance', 1)[1].split('\n      - name:', 1)[0]
-        self.assertIn('python -m venv "$RUNNER_TEMP/bnf-reader-venv"', step)
-        self.assertNotIn('--system-site-packages', step)
-        self.assertNotIn('python -m pip install', step)
-        self.assertIn('"$bnf_python" -m pip install', step)
-        self.assertIn('"$bnf_python" -m playwright install --with-deps chromium', step)
-        self.assertIn('"$bnf_python" scripts/ci_bnf_reader_gate.py run', step)
+        step = workflow.split('- name: BnF HTTPX reader acceptance', 1)[1].split('\n      - name:', 1)[0]
+        self.assertIn('python scripts/ci_bnf_reader_gate.py run', step)
+        self.assertNotIn('playwright', step)
+        self.assertNotIn('chromium', step)
+        self.assertNotIn('pip install', step)
+        self.assertNotIn('CIFERECA_BNF_CHROMIUM_TEST', workflow)
 
+    def test_plugin_only_http_acceptance_installs_core_sqlite_dependencies(self):
+        workflow = (ROOT / '.github/workflows/pr-ci.yml').read_text()
+        step = workflow.split('- name: Install plugin-only test dependencies', 1)[1].split('      - name:', 1)[0]
+        self.assertIn('steps.scope.outputs.bnf_reader', step)
+        self.assertIn('pip install --disable-pip-version-check -e .', step)
 
 if __name__ == '__main__':
     unittest.main()
