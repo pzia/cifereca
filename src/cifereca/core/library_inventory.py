@@ -313,7 +313,13 @@ def scan_identity_roots(
                     'epub_structure_crc_ok', 'pdf_structure_minimal',
                 }
                 and previous.media_format == path.suffix.lower()[1:]):
-            metadata_size = len(json.dumps(previous.metadata, ensure_ascii=True).encode('utf-8'))
+            # PDF inspection produces no bibliographic metadata. A warm
+            # PDF observation must not consume a fabricated "{}" JSON budget,
+            # unlike an EPUB whose parsed metadata is retained.
+            metadata_size = (
+                len(json.dumps(previous.metadata, ensure_ascii=True).encode('utf-8'))
+                if previous.media_format == 'epub' else 0
+            )
             if metadata_size <= limits.metadata_bytes - result.metadata_bytes:
                 current = os.stat(name, dir_fd=directory_fds[-1], follow_symlinks=False)
                 if (_fingerprint(before) == _fingerprint(os.fstat(fd))
