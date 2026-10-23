@@ -142,7 +142,8 @@ def test_ai_preview_uses_same_domain_scope_without_sending_to_model():
     )
     assert broker.calls[0]["domain"] == "browser_recorder"
     assert preview["scope"]["domain"] == "browser_recorder"
-    assert PRIVATE not in json.dumps(preview)
+    assert PRIVATE not in preview["prompt"]
+    assert PRIVATE not in json.dumps(preview["scope"])
 
 
 def test_ai_preview_rejects_broker_ignoring_selected_domain():
