@@ -82,3 +82,34 @@ le futur HEAD fusionné.
 
 Cette matrice complète les commentaires de #1917 ; elle ne crée pas de
 nouveau contrat Core parallèle.
+
+
+## Qualification des erreurs de recherche — 23 octobre 2026
+
+Cette mise à jour est une **preuve de code et de CI synthétique**, pas une
+validation des services distants. Les codes Core ci-dessous sont reconnus
+par `search_failure_code` et ne proviennent jamais d'un message libre
+du fournisseur. Le repli `known_catalog_stale` demeure **public,
+identité/source-borné, sans acquisition ni droits privés**.
+
+| Fournisseur | 401 / 403 | 408 / 429 / 5xx / transport | HTTP 200 non qualifié | Preuves et limites |
+|---|---|---|---|---|
+| **BnF Catalogue** | Refus fermé, pas de secours local. | Indisponibilité fermée, requête SRU unique. | XML invalide/non SRU ou `numberOfRecords` absent = panne, **pas zéro** ; diagnostic SRU métier = refus non repliable. | [#3026](https://github.com/pzia/cifereca/pull/3026), fusion `b65280c`, CI synthétique PASS. **Hors BnF-Prêt**. |
+| **Gutenberg** | Refus fermé. | Transport/HTTP indisponible fermé. | XML invalide ou XML valide non Atom = panne ; un vrai `Atom feed` vide reste zéro ; `rel=next` suspect interdit. | [#3019](https://github.com/pzia/cifereca/pull/3019), fusion `af3c94e`, CI PASS. |
+| **Gallica** | Quand toutes les branches échouent, le refus l'emporte sur le timeout. | Panne fermée si aucune branche n'a réussi. | Branche saine avec zéro et autre branche en échec = `partial_results`, pas zéro global. | [#3021](https://github.com/pzia/cifereca/pull/3021), fusion `dd6e204`, CI PASS. |
+| **EbooksGratuits** | Refus fermé pour HTML optionnel et OPDS par défaut. | Indisponibilité fermée ; aucune relance identique. | Pagination/navigation non qualifiée et sélecteurs HTML absents restent des limites, pas un succès zéro. | [#3022](https://github.com/pzia/cifereca/pull/3022), fusion `a4636cc`, CI PASS. |
+| **Paris Syracuse** | Réponse HTTP de refus distincte de l'erreur métier de taille de recherche. | Échec HTTP non réparé par un second POST de taille 20. | La récupération métier 50 → 20 reste autorisée uniquement sur erreur Syracuse non HTTP typée. | [#3028](https://github.com/pzia/cifereca/pull/3028), **CI/merge en attente** à la date de rédaction. Ne concerne pas PNB. |
+| **Kobo-Vault public** | Catalogue explicitement public sans droit ; refus privé 401/403 peut conserver sa recherche publique avec `partial_results`. | Un échec public/privé de transport ou 429/5xx n'est pas un succès partiel. | Le schéma de réponse et la portée des droits restent validés côté fournisseur, aucun `owned` public. | [#3029](https://github.com/pzia/cifereca/pull/3029), **CI/merge en attente** à la date de rédaction. |
+
+Les codes de panne n'impliquent **aucun** retry automatique. Un HTTP 400/404
+sémantique, un `rel=next` non sûr ou un refus de droits ne doit pas
+activer le secours local. Le classement n'affirme pas que `Retry-After` a
+été pris en compte ni qu'un endpoint de recherche réellement indépendant
+existe : ces points restent dans [#1916](https://github.com/pzia/cifereca/issues/1916).
+
+Les **preuves manquantes** restent la recette live autorisée et expurgée
+(provider et champ hors cache), le succès/zéro/pagination sur les services
+réels, les avertissements Core/GTK selon identité et source activée, puis
+les gates sur le HEAD de livraison. Le ticket #1917 ne peut pas être clôturé
+sur les tests MockTransport seuls. BnF-Prêt, Numilog privé/P0 et opérations
+DRM ne sont pas dans ce périmètre.
