@@ -141,7 +141,7 @@ class DiagnosticsBroker(Protocol):
     def snapshot(self) -> tuple[Mapping[str, Any], ...]: ...
     def events(
         self, *, source: str = "all", module: str = "", severity: str = "",
-        provider_id: str = "",
+        provider_id: str = "", domain: str = "",
         since: str | None = None, until: str | None = None,
         limit: int = 50, offset: int = 0, reason_code: str = "",
     ) -> Mapping[str, Any]: ...
