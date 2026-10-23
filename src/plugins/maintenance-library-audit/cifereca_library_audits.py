@@ -869,13 +869,24 @@ class IntegrityAuditTool(_ReadOnlyTool):
     )
 
     def plan(self, context: MaintenanceContext) -> MaintenancePlan:
+        return self._plan_scan(context, None)
+
+    def plan_with_progress(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        return self._plan_scan(context, control)
+
+    def _plan_scan(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        if control is not None:
+            control.check_cancelled()
+            control.report(message="intégrité : chargement de l'inventaire")
         metadata=self._broker("metadata")
         library_read=self._broker("library.read")
         candidates=[]
         missing_path=0
         read_failures=0
         reference_failures=0
-        for row in _rows(metadata.library_entries(identity_id=context.identity_id)):
+        rows = _rows(metadata.library_entries(identity_id=context.identity_id))
+        for index, row in enumerate(rows, start=1):
+            _plan_tick(control, index, len(rows), "Intégrité : pré-inventaire")
             try:
                 if not row.get("local"):
                     continue
@@ -1148,9 +1159,14 @@ def _artifact_id(row: Mapping[str, Any]) -> str:
     return value
 
 
-def _iter_views(metadata, library_read, identity_id: str | None, failures: list[str] | None = None):
+def _iter_views(metadata, library_read, identity_id: str | None,
+                failures: list[str] | None = None, *,
+                control=None, phase: str = ""):
+    """Enumerate once; the same inventory drives scan count and candidates."""
     seen: set[str] = set()
-    for row in _rows(metadata.library_entries(identity_id=identity_id)):
+    rows = _rows(metadata.library_entries(identity_id=identity_id))
+    for index, row in enumerate(rows, start=1):
+        _plan_tick(control, index, len(rows), phase)
         artifact_id = _artifact_id(row)
         if not artifact_id or artifact_id in seen:
             continue
@@ -1181,6 +1197,15 @@ class NamingRepairTool(_ReadOnlyTool):
     )
 
     def plan(self, context: MaintenanceContext) -> MaintenancePlan:
+        return self._plan_scan(context, None)
+
+    def plan_with_progress(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        return self._plan_scan(context, control)
+
+    def _plan_scan(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        if control is not None:
+            control.check_cancelled()
+            control.report(message="renommage : chargement de l'inventaire")
         metadata = self._broker("metadata")
         naming = self._broker("library.naming")
         library_read = self._broker("library.read")
@@ -1191,7 +1216,10 @@ class NamingRepairTool(_ReadOnlyTool):
         read_failures: list[str] = []
         seen: set[str] = set()
 
-        for row, view in _iter_views(metadata, library_read, context.identity_id, read_failures):
+        for row, view in _iter_views(
+            metadata, library_read, context.identity_id, read_failures,
+            control=control, phase="Renommage : prévisualisation des placements",
+        ):
             # A poisoned metadata field or partial Core book view must not
             # interrupt planning unrelated, independently verifiable books.
             try:
@@ -1506,6 +1534,15 @@ class DuplicateCleanupTool(_ReadOnlyTool):
     )
 
     def plan(self, context: MaintenanceContext) -> MaintenancePlan:
+        return self._plan_scan(context, None)
+
+    def plan_with_progress(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        return self._plan_scan(context, control)
+
+    def _plan_scan(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        if control is not None:
+            control.check_cancelled()
+            control.report(message="doublons : chargement de l'inventaire")
         metadata = self._broker("metadata")
         library_read = self._broker("library.read")
         pairs: list[tuple[str, str]] = []
@@ -1513,7 +1550,10 @@ class DuplicateCleanupTool(_ReadOnlyTool):
         read_failures: list[str] = []
         seen_views: set[tuple[str, str, tuple[str, ...]]] = set()
 
-        for _row, view in _iter_views(metadata, library_read, context.identity_id, read_failures):
+        for _row, view in _iter_views(
+            metadata, library_read, context.identity_id, read_failures,
+            control=control, phase="Doublons : analyse des placements",
+        ):
             try:
                 # These values come from a third-party Core-backed view.
                 # Invalid fields must not abort other artifacts in the plan.
