@@ -18,7 +18,7 @@ def _query(tmp_path, diag, **kwargs):
 def _log(tmp_path, *bodies):
     (tmp_path / "cifereca.log").write_text(
         "".join(
-            f"2026-10-23 08:00:0{i},000 ERROR cifereca [MainThread] {body}\\n"
+            f"2026-10-23 08:00:0{i},000 ERROR cifereca [MainThread] {body}\n"
             for i, body in enumerate(bodies)
         ),
         encoding="utf-8",
