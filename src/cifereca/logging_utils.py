@@ -15,8 +15,13 @@ _diagnostic_level = "normal"
 # Do not mask provider_id, site or public book_id.
 _PRIVATE_LOG_IDENTIFIERS = re.compile(
     r"""(?i)\b(?P<name>loan_id|account_key|account_id|source_account_id|"""
-    r"""identity_id|credential_id|profile_id|reader_id|user_id|username|uid)\b"""
-    r"""['"]?\s*[:=]\s*(?:"[^"\r\n]{0,1024}"|'[^'\r\n]{0,1024}'|[^\s,;}'"]+)"""
+    r"""identity_id|credential_id|profile_id|reader_id|user_id|username|uid|"""
+    r"""identity|credential|profile|account|borrower|source_credential|source_item_id|"""
+    r"""email|account_name|profile_name|reader_name|user_name|full_name|"""
+    r"""api_key|client_secret|private_key|access_key|secret_key|"""
+    r"""access_token|refresh_token|id_token|session_id|session_key)\b"""
+    r"""['"]?\s*[:=]\s*(?:"(?:\\[^\r\n]|[^"\\\r\n])*(?:"|(?=\r|\n|$))"""
+    r"""|'(?:\\[^\r\n]|[^'\\\r\n])*(?:'|(?=\r|\n|$))|[^\s,;}'"]+)"""
 )
 
 
@@ -37,7 +42,16 @@ class RedactionFilter(logging.Filter):
         from .diagnostics import redact_text, redact
         if _diagnostic_level == "errors" and record.levelno < logging.WARNING:
             return False
-        if record.getMessage().startswith("TRACE") and _diagnostic_level != "trace":
+        message = record.getMessage()
+        from .core.diagnostic_log_policy import is_public_core_observation
+        if message.startswith("TRACE") and is_public_core_observation(record.name, message):
+            # A fully validated body is already public. Keep its canonical
+            # serialization intact instead of rewriting/truncating arguments.
+            # The validation does not attest any attached traceback/stack.
+            record.msg, record.args = message, ()
+            record.exc_info = record.exc_text = record.stack_info = None
+            return True
+        if message.startswith("TRACE") and _diagnostic_level != "trace":
             return False
         record.args = redact(record.args) if isinstance(record.args, dict) else tuple(redact(value) for value in (record.args or ()))
         record.msg = _redact_log_identifiers(redact_text(record.getMessage()))
@@ -47,6 +61,10 @@ class RedactionFilter(logging.Filter):
             record.exc_text = _redact_log_identifiers(
                 redact_text("".join(traceback.format_exception(*record.exc_info)))
             )
+        elif record.exc_text:
+            record.exc_text = _redact_log_identifiers(redact_text(record.exc_text))
+        if record.stack_info:
+            record.stack_info = _redact_log_identifiers(redact_text(record.stack_info))
         return True
 
 

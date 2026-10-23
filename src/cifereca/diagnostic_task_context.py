@@ -53,6 +53,8 @@ def diagnostic_task_scope():
         _CURRENT.reset(token)
         if scope.reference is not None:
             try:
-                _LOG.info('TRACE task correlation task_ref=%s status=%s', scope.reference, outcome)
+                level = (logging.ERROR if outcome == 'failed' else
+                         logging.WARNING if outcome == 'cancelled' else logging.INFO)
+                _LOG.log(level, 'TRACE task correlation task_ref=%s status=%s', scope.reference, outcome)
             except Exception:
                 pass
