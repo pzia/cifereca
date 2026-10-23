@@ -1277,6 +1277,7 @@ class LocalInspectionController:
                         return
                     reset_pair(chosen_file)
                     if valid():
+                        guide('blocked')
                         pair_explanation.set_text(_attachment_refusal_message(
                             outcome, selected_provider[0],
                             'Placement refusé ou indisponible : preuves ou '
@@ -1292,6 +1293,7 @@ class LocalInspectionController:
                             and selected_file[0] == chosen_file):
                         reset_pair(chosen_file)
                         if valid():
+                            guide('blocked')
                             pair_explanation.set_text(
                                 'Placement indisponible : relancez la '
                                 'réconciliation avant un autre essai.'
