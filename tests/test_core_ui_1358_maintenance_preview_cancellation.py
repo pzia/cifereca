@@ -14,6 +14,7 @@ import pytest
 from cifereca.gui import maintenance_tools as guard
 from cifereca.gui.library_inspection_view import LocalInspectionController
 from cifereca.gui.maintenance_result_view import MaintenanceResultView
+from cifereca.gui.maintenance_line_progress import MaintenanceLineProgress
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
@@ -146,6 +147,18 @@ def _method():
     namespace = {
         "MaintenanceResultView": MaintenanceResultView,
         "LocalInspectionController": LocalInspectionController,
+        # The minimal historical GTK harness exercises cancellation and
+        # consent, not widgets. Every maintenance.tool now has a progress
+        # relay; the dedicated widget harness tests the real GTK builder.
+        "build_maintenance_line": lambda **kw: (
+            Container(),
+            MaintenanceLineProgress(
+                idle_add=lambda callback: callback(),
+                render=lambda state: None,
+                alive=kw["alive"],
+                activity_label=kw["activity_label"],
+            ),
+        ),
         "clear_box": lambda box: box.children.clear(),
         "Gtk": NS(Button=Button, Label=lambda **_kw: Container(),
                   ScrolledWindow=Container,
@@ -193,7 +206,10 @@ def _mounted():
     )
     _method()(host)
     row = host._tools_box.children[0].children[0]
-    preview, cancel = row.children
+    preview, cancel = row.children[:2]
+    # The third child is the independent progress display, not a new
+    # confirmation/cancellation action.
+    assert len(row.children) == 3
     return host, tool, jobs, errors, preview, cancel
 
 
