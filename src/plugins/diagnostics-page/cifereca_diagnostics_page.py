@@ -647,6 +647,22 @@ class DiagnosticsPagePlugin:
         filters_bottom.append(sort_latest)
         journals_tab.append(filters_bottom)
 
+        # Separate from the module prefix and from the event-source channel.
+        # The Core filter is exact and runs before pagination.
+        provider_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        provider_caption = Gtk.Label(label="Fournisseur :", xalign=0)
+        provider_filter = Gtk.Entry()
+        provider_filter.set_width_chars(16)
+        provider_filter.set_max_width_chars(28)
+        provider_filter.set_hexpand(True)
+        provider_filter.set_placeholder_text("Identifiant canonique (ex. paris) · Entrée")
+        provider_filter.set_tooltip_text(
+            "Filtre Core exact sur le provider attesté ; ne pas utiliser un compte ou un email."
+        )
+        provider_row.append(provider_caption)
+        provider_row.append(provider_filter)
+        journals_tab.append(provider_row)
+
         # This is a SERVER-side exact Core reason-code filter, unlike the
         # search field above which only scans the 50 loaded observations.
         # A separate row keeps controls usable on 760/1024px desktops.
@@ -1255,7 +1271,9 @@ class DiagnosticsPagePlugin:
                     provenance = Gtk.Label(
                         label=_safe_text(
                             f"Source : {row['source']} · Module : {row['module']} "
-                            f"· Référence : {event_id[:16]}"
+                            + (f"· Fournisseur : {row['provider_id']} "
+                               if row.get("provider_id") else "")
+                            + f"· Référence : {event_id[:16]}"
                         ),
                         xalign=0,
                     )
@@ -1327,6 +1345,7 @@ class DiagnosticsPagePlugin:
             query = {
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
+                "provider_id": provider_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
                 "offset": page_offset,
@@ -1461,6 +1480,7 @@ class DiagnosticsPagePlugin:
             query = {
                 "source": SOURCES[int(source_selector.get_selected())],
                 "module": module_filter.get_text(),
+                "provider_id": provider_filter.get_text().strip(),
                 "severity": SEVERITIES[int(severity_selector.get_selected())],
                 "period": PERIODS[int(period_selector.get_selected())],
                 "search": search_filter.get_text().strip(),
@@ -1553,6 +1573,8 @@ class DiagnosticsPagePlugin:
         severity_selector.connect("notify::selected", reset_events)
         period_selector.connect("notify::selected", reset_events)
         module_filter.connect("activate", reset_events)
+        provider_filter.connect("activate", reset_events)
+        provider_filter.connect("changed", lambda *_: invalidate_selection())
         reason_code_filter.connect("activate", reset_events)
         reason_code_filter.connect("changed", lambda *_: invalidate_selection())
         search_filter.connect("changed", lambda *_: (invalidate_selection(), display_events()))
@@ -1630,6 +1652,7 @@ class DiagnosticsPagePlugin:
                 selected_source = SOURCES[int(source_selector.get_selected())]
                 selected_period = PERIODS[int(period_selector.get_selected())]
                 selected_module = module_filter.get_text().strip()
+                selected_provider = provider_filter.get_text().strip()
                 selected_severity = SEVERITIES[int(severity_selector.get_selected())]
                 selected_snapshot = ai_snapshot.get_active()
                 selected_support_report = ai_support_report.get_active()
@@ -1660,7 +1683,8 @@ class DiagnosticsPagePlugin:
                 )
                 return prepare_analysis(
                     self.llm, broker, source=selected_source,
-                    module=selected_module, severity=selected_severity,
+                    module=selected_module, provider_id=selected_provider,
+                    severity=selected_severity,
                     since=explorer_since(selected_period),
                     include_snapshot=selected_snapshot,
                     include_support_report=selected_support_report,
@@ -1868,6 +1892,7 @@ class DiagnosticsPagePlugin:
         severity_selector.connect("notify::selected", invalidate_ai)
         period_selector.connect("notify::selected", invalidate_ai)
         module_filter.connect("changed", invalidate_ai)
+        provider_filter.connect("changed", invalidate_ai)
         ai_snapshot.connect("toggled", invalidate_ai)
         ai_support_report.connect("toggled", invalidate_ai)
 
