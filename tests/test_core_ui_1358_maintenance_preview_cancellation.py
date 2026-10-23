@@ -14,6 +14,7 @@ import pytest
 from cifereca.gui import maintenance_tools as guard
 from cifereca.gui.library_inspection_view import LocalInspectionController
 from cifereca.gui.maintenance_result_view import MaintenanceResultView
+from cifereca.gui.maintenance_line_progress import MaintenanceLineProgress
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
@@ -143,7 +144,20 @@ def _method():
         ast.ImportFrom(module="__future__",
                        names=[ast.alias(name="annotations")], level=0), dispose, fn,
     ], type_ignores=[]))
+    # Historically this fixture only mounted tools whose IDs were known
+    # to the progress registry. All maintenance.tool rows now get a safe
+    # status line, so the inert GTK harness must supply that existing
+    # presentation contract too (without starting a real GTK main loop).
+    def build_test_line(*, idle_add, render=None, alive, activity_label):
+        feedback = MaintenanceLineProgress(
+            idle_add=lambda callback: callback(),
+            render=lambda state: None, alive=alive,
+            activity_label=activity_label,
+        )
+        return Container(), feedback
+
     namespace = {
+        "build_maintenance_line": build_test_line,
         "MaintenanceResultView": MaintenanceResultView,
         "LocalInspectionController": LocalInspectionController,
         "clear_box": lambda box: box.children.clear(),
@@ -166,6 +180,7 @@ def _method():
         "preview_maintenance_tool": guard.preview_maintenance_tool,
         "execute_maintenance_tool": guard.execute_maintenance_tool,
         "TaskPriority": NS(MAINTENANCE=1),
+        "GLib": NS(idle_add=lambda callback: callback()),
     }
     exec(compile(code, str(MAIN), "exec"), namespace)
     def refresh(host):
@@ -193,7 +208,8 @@ def _mounted():
     )
     _method()(host)
     row = host._tools_box.children[0].children[0]
-    preview, cancel = row.children
+    preview, cancel, status = row.children
+    assert status is not None  # future tools have a safe generic progress line
     return host, tool, jobs, errors, preview, cancel
 
 
