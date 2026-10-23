@@ -152,7 +152,11 @@ class MaintenanceLineProgress:
         else:
             label = f"{self._activity_label} en cours…"
             fraction = None
-        self._publish(MaintenanceLineState("running", label, fraction), ticket=ticket, phases=("running",))
+        # A live plan() report belongs to the analysis phase; keep that
+        # phase intact so the existing confirmation transition still works.
+        # Both preview and execution share the bounded numeric relay.
+        phase = "analysis" if self._current(ticket, phases=("analysis",)) else "running"
+        self._publish(MaintenanceLineState(phase, label, fraction), ticket=ticket, phases=(phase,))
 
     def finish(self, ticket: int, status: str) -> None:
         if status not in ("success", "error", "cancelled"):

@@ -200,6 +200,19 @@ def _file_integrity_issues(path: str | Path, media_format: str = "", *, expected
             issues.append("unreadable")
     return tuple(dict.fromkeys(issues))
 
+def _plan_tick(control, index: int, total: int, phase: str) -> None:
+    """Cooperative, throttled *observed* progress; no book or path strings."""
+    if control is None:
+        return
+    control.check_cancelled()
+    # At most ~1 callback per 16 records. Never schedule per-row GTK work
+    # for a library of many thousands of books.
+    if index == 1 or index % 16 == 0 or index == total:
+        control.report(
+            current=index - 1, total=total, message=phase,
+        )
+
+
 class _ReadOnlyTool:
     info: MaintenanceToolInfo
 
@@ -253,11 +266,21 @@ class CoverAuditTool(_ReadOnlyTool):
     )
 
     def plan(self, context: MaintenanceContext) -> MaintenancePlan:
+        return self._plan_scan(context, None)
+
+    def plan_with_progress(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        return self._plan_scan(context, control)
+
+    def _plan_scan(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        if control is not None:
+            control.check_cancelled()
+            control.report(message="Couvertures : examen des notices : chargement")
         entries = _rows(self._broker("catalog").catalog_entries(identity_id=context.identity_id))
         missing = 0
         invalid = 0
         samples: list[str] = []
         for notice_index, row in enumerate(entries, start=1):
+            _plan_tick(control, notice_index, len(entries), "Couvertures : examen des notices")
             try:
                 cover = _cover_value(row)
             except Exception:
@@ -451,6 +474,15 @@ class LanguageAuditTool(_ReadOnlyTool):
     )
 
     def plan(self, context: MaintenanceContext) -> MaintenancePlan:
+        return self._plan_scan(context, None)
+
+    def plan_with_progress(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        return self._plan_scan(context, control)
+
+    def _plan_scan(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        if control is not None:
+            control.check_cancelled()
+            control.report(message="Langues : examen des notices : chargement")
         entries = _rows(self._broker("catalog").catalog_entries(identity_id=context.identity_id))
         seen = 0
         invalid = 0
@@ -459,6 +491,7 @@ class LanguageAuditTool(_ReadOnlyTool):
         normalization_failures = 0
         samples: list[str] = []
         for notice_index, row in enumerate(entries, start=1):
+            _plan_tick(control, notice_index, len(entries), "Langues : examen des notices")
             # Tool plans and results can be exported to diagnostics/UI. Neither
             # free-form book titles nor untrusted raw language tags are safe
             # diagnostic labels (both may contain credentials or private paths).
@@ -632,6 +665,15 @@ class NamingAuditTool(_ReadOnlyTool):
     )
 
     def plan(self, context: MaintenanceContext) -> MaintenancePlan:
+        return self._plan_scan(context, None)
+
+    def plan_with_progress(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        return self._plan_scan(context, control)
+
+    def _plan_scan(self, context: MaintenanceContext, control) -> MaintenancePlan:
+        if control is not None:
+            control.check_cancelled()
+            control.report(message="Noms : examen des fichiers : chargement")
         entries = _rows(self._broker("metadata").library_entries(identity_id=context.identity_id))
         naming = self._broker("library.naming")
         checked = 0
@@ -640,6 +682,7 @@ class NamingAuditTool(_ReadOnlyTool):
         policy_failures = 0
         samples: list[str] = []
         for notice_index, row in enumerate(entries, start=1):
+            _plan_tick(control, notice_index, len(entries), "Noms : examen des fichiers")
             # Everything from a metadata row (including str(), pathlib and
             # broker output) is untrusted. An exception raised *before* the
             # old preview() try block used to abort the entire batch.

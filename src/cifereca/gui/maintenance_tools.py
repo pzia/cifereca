@@ -71,6 +71,18 @@ class MaintenanceCancelControl:
             return
 
 
+def _compute_preview_plan(tool: Any, context: Any, control: Any):
+    """Opt in explicitly; never pass a control to legacy plan(context).
+
+    Exceptions raised within a producer must propagate. In particular a
+    TypeError is not evidence that a plugin lacks this optional capability.
+    """
+    progressive = getattr(tool, "plan_with_progress", None)
+    if control is not None and callable(progressive):
+        return progressive(context, control)
+    return tool.plan(context)
+
+
 def preview_maintenance_tool(
     tool: Any, context: Any, *, destructive: bool,
     control: Any = None,
@@ -79,14 +91,15 @@ def preview_maintenance_tool(
     if control is not None:
         control.check_cancelled()
     if not destructive:
-        result = tool.plan(context)
+        result = _compute_preview_plan(tool, context, control)
     else:
         try:
             with InterProcessLock(acquisition_lock_file()):
                 if control is not None:
                     control.check_cancelled()
-                # Preserve the exact nested preview confirmed by the user.
-                result = deepcopy(tool.plan(context))
+                # Keep the user's exact preview snapshot and same lock. An
+                # actual mutation still replans under lock with plan(context).
+                result = deepcopy(_compute_preview_plan(tool, context, control))
         except LockBusyError as exc:
             raise MaintenanceBusyError(BUSY_MESSAGE) from exc
     if control is not None:
