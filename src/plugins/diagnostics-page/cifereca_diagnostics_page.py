@@ -1166,6 +1166,7 @@ class DiagnosticsPagePlugin:
 
         page_offset = 0
         page_generation = 0
+        applied_domain = ""  # Core-confirmed scope of the last loaded page
         current_page: dict[str, Any] = {
             "events": [], "sources": [], "total": 0, "offset": 0,
             "next_offset": None,
@@ -1240,13 +1241,16 @@ class DiagnosticsPagePlugin:
                     domain_filter.get_text().strip()
                 )
             except ValueError:
-                domain_label = "domaine invalide"
+                domain_label = "domaine invalide · Entrée pour appliquer"
             else:
-                domain_label = {
-                    "": "tous domaines",
-                    "browser_recorder": "Browser Recorder (Core attesté)",
-                    "reconciliation": "Réconciliation (Core attestée)",
-                }[requested_domain]
+                domain_label = (
+                    "filtre domaine saisi, non appliqué · Entrée"
+                    if requested_domain != applied_domain else {
+                        "": "tous domaines",
+                        "browser_recorder": "Browser Recorder (Core attesté)",
+                        "reconciliation": "Réconciliation (Core attestée)",
+                    }[applied_domain]
+                )
             journals_summary.set_text(
                 explorer_header(
                     current_page, rows, search=search_filter.get_text().strip()
@@ -1414,7 +1418,7 @@ class DiagnosticsPagePlugin:
             self._event_handle = handle
 
             def apply_result(token, data, error) -> bool:
-                nonlocal current_page
+                nonlocal current_page, applied_domain
                 if token != page_generation:
                     return False  # stale asynchronous result
                 if error is not None or not isinstance(data, Mapping):
@@ -1428,6 +1432,11 @@ class DiagnosticsPagePlugin:
                     )
                     return False
                 current_page = dict(data)
+                # The Core accepted the exact typed domain for this page.
+                # Typing without pressing Enter must not relabel a stale
+                # result as though the new server-side filter had run.
+                from diagnostics_explorer import canonical_diagnostic_domain_alias
+                applied_domain = canonical_diagnostic_domain_alias(query["domain"])
                 display_events()
                 return False
 
