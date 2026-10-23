@@ -87,13 +87,13 @@ avec `expected=session.scope` → `close()` dans un `finally`. Tous les appels,
 y compris `pump()` depuis une future boucle UI/worker, restent sur le **même
 thread propriétaire**. Une nouvelle connexion exige une nouvelle instance.
 
-**Preuves actuelles :** tests de cycle de vie avec double Playwright minimal et
-exécution réelle du JavaScript sur DOM synthétique sous Node ; **pas de recette
-Chromium ni SSO fournisseur réelle dans l'environnement agent**. Aucun manifeste
+**Preuves actuelles :** tests de cycle de vie et extraction JS sous Node, ainsi que
+2 tests de navigation Chromium réelle en CI sur pages totalement synthétiques.
+**Aucune connexion SSO BnF réelle ni identité amont n'est validée.** Aucun manifeste
 n'active encore un provider. Le raccordement Recherche/Emprunts/Sync reste à faire.
 
 Deux tests d'acceptation **Chromium réel sur pages synthétiques** sont fournis,
-à exécuter dans un environnement déjà provisionné avant fusion de cette tranche :
+exécutés par le gate PR CI isolé sur pages synthétiques :
 
 ```bash
 CIFERECA_BNF_CHROMIUM_TEST=1 python -m unittest discover \
@@ -105,6 +105,31 @@ Ils interceptent toutes les requêtes et fournissent uniquement du HTML synthét
 effective et les refus réseau POST/prêt/API. Sans opt-in, ces tests sont **ignorés,
 pas réussis** ; avec opt-in, une dépendance ou un binaire manquant fait échouer
 le gate. Cette preuve ne remplacera pas la qualification fournisseur du SSO.
+
+## Worker asynchrone lecteur
+
+### Worker pour le broker public tasks
+
+`cifereca_bnf_pret_worker.py` fournit une boucle de commandes pour le futur
+raccordement UI. La soumettre une seule fois via
+`tasks.submit(lambda control: worker.run(control, consent=True))`, uniquement
+après action et consentement utilisateur. Le navigateur est créé, utilisé et
+fermé sur ce même thread ; aucun appel Playwright ne part du thread GTK.
+
+Attendre `worker.state == "login"`, puis conserver `worker.scope`. Les commandes
+`confirm_account` (confirmation humaine explicite), `suggestions`, `detail` et
+`loans` exigent toutes `expected=scope` et renvoient un Future privé. Elles sont
+limitées à huit en attente ; aucun retry ni commande de mutation n'existe.
+Les callbacks UI doivent être rapatriés sur GTK et **revérifier le scope actuel**
+avant affichage. Le résultat de la tâche longue ne contient qu'un code fermé,
+jamais un snapshot privé.
+
+Appeler `worker.stop()` sur fermeture UI, changement d'identité ou déconnexion.
+Cela invalide immédiatement le scope ; le thread propriétaire ferme ensuite le
+navigateur. L'annulation TaskControl est également prise en compte. Un résultat
+arrivant après annulation est refusé, les commandes en attente sont terminées
+avec erreur fermée et une session fermée n'est jamais réutilisée. Cette boucle
+ne déclare toujours aucun compte/droit Core et ne crée aucun widget GTK.
 
 ## Prochaine tranche Plugins
 
@@ -130,10 +155,12 @@ le gate. Cette preuve ne remplacera pas la qualification fournisseur du SSO.
 python -m unittest discover -s src/plugins/provider-bnf-pret/tests -v
 python -m unittest discover -s tests -p test_bnf_pret_web_dom.py -v
 python -m unittest discover -s tests -p test_bnf_pret_browser_session.py -v
+python -m unittest discover -s tests -p test_bnf_pret_reader_worker.py -v
 ```
 
 Les ponts de collecte `tests/test_bnf_pret_web_dom.py` et
-`tests/test_bnf_pret_browser_session.py` exercent les mêmes assertions
+`tests/test_bnf_pret_browser_session.py` et
+`tests/test_bnf_pret_reader_worker.py` exercent les mêmes assertions
 dans le gate Core existant malgré l'absence volontaire de manifeste. Il ne
-modifie aucun runner. Tests synthétiques de contrat uniquement : aucune preuve
-GTK, Chromium, fournisseur réel, emprunt ou fulfillment n'est revendiquée.
+modifie aucun runner. Les tests du worker sont synthétiques : aucune preuve GTK, SSO réel,
+emprunt ou fulfillment n'est revendiquée.
