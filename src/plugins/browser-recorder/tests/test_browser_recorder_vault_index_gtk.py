@@ -99,7 +99,7 @@ def test_gtk_metadata_stays_opaque_until_unlock_then_reveals_private_labels(tmp_
     try:
         panel.sessions_refresh.emit("clicked")
         flush()
-        assert "3 sessions chiffrées" in panel.status.get_label()
+        assert "3 archives chiffrées trouvées" in panel.status.get_label()
         assert ORIGIN not in panel.status.get_label()
         assert all(ORIGIN not in panel.session_list.get_active_text()
                    for _ in range(1))
