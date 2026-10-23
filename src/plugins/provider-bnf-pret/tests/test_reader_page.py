@@ -67,6 +67,29 @@ class BnfReaderPageTests(unittest.TestCase):
         self.assertEqual(page.readable("a" * 300), "a" * 180)
         self.assertEqual(page.readable({"secret": "x"}), "")
 
+    def test_suggestions_are_bounded_local_text_not_html_markup(self):
+        from cifereca_bnf_pret_web import CatalogPage, CatalogRecord
+        records = tuple(CatalogRecord(f"id-{n}", "  Fiction  <Titre>  ",
+                          authors=("Auteur  fictif",)) for n in range(18))
+        lines = page.suggestion_lines(CatalogPage(records, "partial"))
+        self.assertEqual(len(lines), 12)
+        self.assertEqual(lines[0], "• Fiction <Titre> — Auteur fictif [BnF id-0]")
+        self.assertIn("id-11", lines[-1])
+        self.assertFalse(any("id-12" in text for text in lines))
+        self.assertEqual(page.suggestion_lines(CatalogPage((), "partial")), ())
+        self.assertEqual(page.suggestion_lines(CatalogPage(records, "partial"), limit=1000), ())
+        self.assertNotIn("https://", "\n".join(lines))
+
+    def test_unknown_projection_and_untrusted_ids_fail_closed(self):
+        from cifereca_bnf_pret_web import CatalogPage, CatalogRecord
+        self.assertEqual(page.suggestion_lines(object()), ())
+        self.assertEqual(page.suggestion_lines(
+            CatalogPage((CatalogRecord("abc", "X"),), "ok", scope="detail")), ())
+        self.assertEqual(page.suggestion_lines(
+            CatalogPage((CatalogRecord("bad/path", "X"),), "partial")), ())
+        self.assertEqual(page.suggestion_lines(
+            CatalogPage((CatalogRecord("abc", "X"),)*101, "partial")), ())
+
     def test_browser_exception_is_never_rendered(self):
         secret = "reader@example.test?SAMLResponse=PRIVATE"
         self.assertNotIn(secret, page.safe_error(RuntimeError(secret)))

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from cifereca.plugin_api import UiPageContribution
 from cifereca_bnf_pret_worker import ReaderWorker, BrowserSessionError
+from cifereca_bnf_pret_web import CatalogPage, CatalogRecord
+import re
 
 _MESSAGES = {
     "playwright_unavailable": "Installer Playwright et son Chromium pour utiliser ce lecteur.",
@@ -46,6 +48,28 @@ def selected_identity(rows):
 def readable(value, limit=180):
     """Bound text for this local GTK display, never for logs or a broker result."""
     return " ".join(value.split())[:limit] if type(value) is str else ""
+
+
+def suggestion_lines(result, *, limit=12):
+    """Local, bounded GTK text; never transmitted to Diagnostics/TaskBroker."""
+    if not isinstance(result, CatalogPage) or result.scope != "suggestions":
+        return ()
+    if type(result.records) not in (tuple, list) or len(result.records) > 100:
+        return ()
+    if type(limit) is not int or not 1 <= limit <= 12:
+        return ()
+    lines = []
+    for row in result.records[:limit]:
+        if not isinstance(row, CatalogRecord):
+            return ()
+        rid = row.resource_id
+        if type(rid) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", rid) is None:
+            return ()
+        title = readable(row.title) or "Sans titre"
+        authors = (readable(", ".join(a for a in row.authors if type(a) is str), 100)
+                   if type(row.authors) in (tuple, list) else "")
+        lines.append("• " + title + (" — " + authors if authors else "") + " [BnF " + rid + "]")
+    return tuple(lines)
 
 
 def safe_error(exc):
@@ -131,6 +155,14 @@ class BnfReaderPage:
         status = Gtk.Label(label="Aucune connexion ni lecture lancée.", xalign=0, wrap=True)
         status.set_selectable(True)
         root.append(status)
+        preview_frame = Gtk.ScrolledWindow()
+        preview_frame.set_min_content_height(150)
+        preview_frame.set_max_content_height(280)
+        preview_frame.set_vexpand(True)
+        preview = Gtk.Label(label="", xalign=0, wrap=True)
+        preview.set_selectable(True)
+        preview_frame.set_child(preview)
+        root.append(preview_frame)
 
         def current():
             try:
@@ -175,6 +207,7 @@ class BnfReaderPage:
                 self._stop()
                 busy = False
                 active_identity = new_id
+                preview.set_label("")
                 status.set_label("Le profil actif a changé : ancienne session révoquée.")
             current_profile = updated
             profile.set_label("Profil Cifereca : " +
@@ -213,8 +246,10 @@ class BnfReaderPage:
                     try:
                         result = fut.result()
                     except Exception as exc:
+                        preview.set_label("")
                         status.set_label(safe_error(exc))
                     else:
+                        preview.set_label("")
                         if name in ("confirm_account", "loans"):
                             count = len(result.loans)
                             status.set_label(
@@ -240,9 +275,11 @@ class BnfReaderPage:
                                              + " ; aucune capacité d'emprunt déduite.")
                                 status.set_label("\n".join(parts))
                         else:
+                            rows = suggestion_lines(result)
+                            preview.set_label("\n".join(rows))
                             status.set_label(
                                 f"{len(result.records)} suggestion(s) visibles ; "
-                                "ceci n'est pas une recherche exhaustive."
+                                f"{len(rows)} affichée(s) ici, non exhaustives."
                             )
                     reset_buttons()
                     return False
@@ -261,6 +298,7 @@ class BnfReaderPage:
                 status.set_label("Consentement explicite nécessaire avant l'ouverture.")
                 return
             consent.set_active(False)
+            preview.set_label("")
             generation = self._generation + 1
             self._generation = generation
             try:
@@ -299,6 +337,7 @@ class BnfReaderPage:
             nonlocal busy
             self._stop()
             busy = False
+            preview.set_label("")
             status.set_label("Session fermée et observations privées invalidées.")
             reset_buttons()
 
