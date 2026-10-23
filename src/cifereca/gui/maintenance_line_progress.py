@@ -127,7 +127,7 @@ class MaintenanceLineProgress:
     ) -> None:
         valid = (
             type(current) is int and type(total) is int
-            and total > 0 and 0 <= current <= total
+            and 0 < total <= 1_000_000 and 0 <= current <= total
         )
         if self._activity_label == "Réconciliation":
             # Phase names (not a plugin-provided numeric total) are the only
