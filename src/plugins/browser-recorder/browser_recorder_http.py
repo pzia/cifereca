@@ -291,6 +291,21 @@ class PrivateHttpTrace:
             "response_over_budget": sum(
                 e.response_body_reason == "over_budget" for e in self.exchanges
             ),
+            # A Playwright body() eviction after navigation is not a network
+            # failure. Count it separately so a completed archive with HTML
+            # metadata but no actual body is never described as exhaustive.
+            "response_read_failed": sum(
+                e.response_body_reason == "read_failed" for e in self.exchanges
+            ),
+            "request_read_failed": sum(
+                e.request_body_reason == "read_failed" for e in self.exchanges
+            ),
+            "response_unfinished": sum(
+                e.response_body_reason == "unfinished" for e in self.exchanges
+            ),
+            "request_unfinished": sum(
+                e.request_body_reason == "unfinished" for e in self.exchanges
+            ),
             "binary_skipped": self.omitted["binary_skipped"],
             "compressed": self.omitted["compressed"],
             "out_of_scope": self.omitted["out_of_scope"],
@@ -503,7 +518,11 @@ class PrivateHttpTrace:
                         entry.request_body_state = "body_omitted"
                         entry.request_body_reason = "measured_mismatch"
                         self.omitted["oversize"] += 1
-                except (AttributeError, TypeError, ValueError):
+                except Exception:
+                    # post_data_buffer can raise a Playwright Error after
+                    # navigation, just like Response.body(). Never abort the
+                    # event callback or log exception text (which may include
+                    # a POST payload, signed URL or user identity).
                     entry.request_body_state = "body_omitted"
                     entry.request_body_reason = "read_failed"
         if resp is None or entry.response_body_state == "redirect":
