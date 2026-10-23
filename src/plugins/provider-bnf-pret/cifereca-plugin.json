@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.bnf-pret",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "name": "BnF Prêt — HTTPX",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -11,20 +11,23 @@
     {
       "id": "provider.bnf-pret",
       "type": "provider.library",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "entrypoint": "cifereca_bnf_pret:PLUGIN",
       "display_name": "BnF Prêt",
-      "description": "Connexion HTTP lecteur et synchronisation non destructive des prêts observés.",
+      "description": "Catalogue HTML, fiches et synchronisation non destructive des prêts via HTTPX.",
       "enabled_by_default": false,
       "priority": 40,
       "capabilities": [
+        "catalog.search",
+        "catalog.detail",
         "sync.loans"
       ],
       "requires": [],
       "recommends": [],
       "requires_brokers": [],
       "requires_contracts": [],
-      "system_requires": []
+      "system_requires": [],
+      "help_text": "Catalogue BnF Prêt et fiches des livres, avec compte lecteur configuré. Une recherche lit au maximum cinq pages liées par le portail et reste signalée comme partielle. Un bouton Emprunter ne prouve pas une disponibilité. Aucun emprunt ni téléchargement automatique."
     }
   ]
 }

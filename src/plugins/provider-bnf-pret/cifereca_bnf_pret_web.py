@@ -178,7 +178,15 @@ def parse_suggestions(html: str) -> CatalogPage:
         if len(titles) != 1:
             partial = True
             continue
-        record = CatalogRecord(rid, titles[0])
+        props = _properties(card)
+        def single(key):
+            values = props.get(key, ())
+            return values[0] if len(values) == 1 else None
+        partial |= any(len(props.get(key, ())) > 1
+                       for key in ('publisher', 'isbn', 'inLanguage', 'description'))
+        record = CatalogRecord(rid, titles[0], tuple(props.get('author', ())),
+                               single('publisher'), single('isbn'), single('inLanguage'),
+                               single('description'))
         if rid in records and records[rid] != record:
             partial = True
         else:

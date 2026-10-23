@@ -1,6 +1,6 @@
 # BnF Prêt — fournisseur HTTPX (#2055)
 
-La version 0.2.0 remplace `ui.page.bnf-pret` par `provider.bnf-pret`, un
+Depuis la version 0.2.0, le package remplace `ui.page.bnf-pret` par `provider.bnf-pret`, un
 `ProviderPlugin` / `ProviderSession` utilisant `httpx.Client`, comme Paris.
 L'installation et l'activation ne démarrent aucun navigateur et ne nécessitent
 ni Playwright, ni Chromium, ni Browser Recorder. Les anciens modules navigateur sont supprimés.
@@ -11,7 +11,7 @@ Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.2.0.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.0.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -45,7 +45,7 @@ Limites : 512 Kio décompressés/document, 12 redirections/appel, 8 étapes de
 formulaire, timeout HTTP de 15 s et budget global connexion de 60 s.
 Les cookies restent dans le client du credential ; fermeture et échec de
 connexion les révoquent. Les erreurs publiques n'exposent que des codes fermés. Le fournisseur publie
-également ces codes dans Diagnostics avec la seule phase `login` ou `loans`,
+également ces codes dans Diagnostics avec la seule phase `login`, `loans`, `search` ou `detail`,
 car le Core affiche une erreur générique à la connexion. Aucun identifiant,
 URL, cookie, formulaire ou texte de réponse n'est ajouté au diagnostic ; une
 panne du collecteur n'altère pas le résultat de l'opération.
@@ -65,8 +65,45 @@ ne prouve aucune fin de droit. Le Core actuel (#2975) conserve les anciens droit
 sans preuve négative exhaustive ; #2055 interdit les acquisitions BnF implicites.
 Aucun fichier, placement ou historique n'est supprimé par ce fournisseur.
 
-Cette première tranche déclare seulement `sync.loans`. Recherche, emprunt,
-réservation, retour et téléchargement ADEPT ne sont pas annoncés.
+La version **0.3.0** ajoute `catalog.search` et `catalog.detail` à `sync.loans`.
+Emprunt, réservation, retour et téléchargement ADEPT ne sont pas annoncés.
+
+## Catalogue et fiches en lecture seule
+
+Dans le Core, après configuration et connexion du compte BnF, sélectionner
+**BnF Prêt** comme source de Recherche. La recherche textuelle générale accepte
+les périmètres « Tous » et « Numérique ». Auteur/ISBN comme champs spécialisés,
+recherche physique et formats de fichier ne sont pas déclarés. Le client peut
+lire les pages publiques sans s'authentifier, mais le Core sélectionne ses
+sources parmi les sessions connectées : aucune recherche anonyme dans l'IHM
+n'est promise par cette version.
+
+Le GET `/results?q=…` utilise le terme encodé, de 2 à 128 caractères. Le client
+suit seulement une ancre visible `rel=next` ou `.pagination a.next`, validée sur
+la même origine, les mêmes critères et le numéro suivant. Une recherche lit
+au maximum cinq pages dans un budget total de 30 secondes. Aucun numéro de page
+n'est reconstruit pour contourner une ancre absente ; l'argument SDK `page`
+reste à zéro puisque la pagination est automatique par liens observés.
+
+Les notices sont dédupliquées par ressource, pas par titre. Le titre, l'auteur,
+l'éditeur, l'ISBN, la langue et la description proviennent uniquement des
+propriétés HTML présentes. Les filtres, hôtes étrangers, liens de prêt/API,
+paramètres inconnus et redirections modifiant la requête sont refusés.
+Une panne de page ultérieure conserve les notices déjà observées avec un
+avertissement ; une panne de première page n'est jamais un catalogue vide réussi.
+L'absence de page suivante ne prouve pas l'exhaustivité : le Core reçoit toujours
+un avertissement de résultats partiels, et non un faux total ou un zéro exhaustif.
+
+La fiche utilise uniquement `/resources/{id}` du même fournisseur/credential.
+Le contrat `ItemDetail` restitue titre, auteur et disponibilité observée. Un
+bouton « Emprunter » seul laisse la disponibilité inconnue ; un marqueur
+explicite d'indisponibilité peut être restitué. Aucun exemplaire ou droit n'est
+fabriqué. Ni la recherche ni la fiche ne déclenchent SSO, emprunt ou téléchargement.
+La fermeture invalide les résultats en vol et interrompt la pagination.
+
+**Qualification restante :** les structures DOM et le garde microdata Book sont
+couverts par fixtures synthétiques ; aucune recette de catalogue/fiches réels
+n'est revendiquée tant que l'accès depuis l'environnement reste refusé.
 
 ## Validation
 
