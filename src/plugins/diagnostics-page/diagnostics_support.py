@@ -1,6 +1,8 @@
 """Explicit, local support export and selection preservation; no broker I/O."""
 from __future__ import annotations
 
+from cifereca.plugin_api import prefer_downloads_for_save
+
 
 def support_report_bytes(text):
     from cifereca_diagnostics_page import _redacted_text
@@ -57,6 +59,7 @@ class SupportReportExport:
                 self.Gtk.FileChooserAction.SAVE, "Enregistrer", "Annuler",
             )
             self.dialog.set_current_name(self.filename)
+            prefer_downloads_for_save(self.dialog)
             self.dialog.connect("response", self.response)
             self.button.set_sensitive(False)
             self.dialog.show()
