@@ -1151,6 +1151,8 @@ def test_evicted_playwright_response_body_is_isolated_and_later_json_survives(ca
     assert first.response_body is None
     assert first.response_body_state == "body_omitted"
     assert first.response_body_reason == "read_failed"
+    assert trace.coverage()["response_read_failed"] == 1
+    assert trace.coverage()["response_unfinished"] == 0
     assert not first.network_error
     assert response.body_reads == 1
     assert "PRIVATE_TOKEN_OR_URL" not in caplog.text
@@ -1215,4 +1217,52 @@ def test_sealing_detached_pending_post_does_not_drop_valid_request():
     assert entry.response_body is None
     assert entry.response_body_reason == "unfinished"
     assert trace.omitted["unfinished"] == 1
+    trace.destroy()
+
+
+def test_private_post_buffer_eviction_is_bounded_and_keeps_later_exchange(caplog):
+    """Playwright can evict POST data after navigation, not just responses."""
+    trace = PrivateHttpTrace((ORIGIN,))
+    class EvictedRequest(Request):
+        @property
+        def post_data_buffer(self):
+            self.read_post_data += 1
+            raise RuntimeError("Network.getRequestPostData: PRIVATE_BOOK_URL")
+
+    post = EvictedRequest(
+        ORIGIN + "/send?token=PRIVATE_TOKEN", method="POST",
+        headers={"content-type": "application/json"},
+        data=b'{"reader":"PRIVATE_READER"}',
+    )
+    emit(trace, post, Response(post, data=b'{"ok":true}'))
+    first = trace.exchanges[0]
+    assert first.method == "POST"
+    assert first.response_body == '{"ok":true}'
+    assert first.request_body is None
+    assert first.request_body_reason == "read_failed"
+    assert trace.coverage()["request_read_failed"] == 1
+    assert trace.coverage()["write_requests_observed"] == 1
+    assert trace.coverage()["write_requests_captured"] == 0
+    assert "PRIVATE_BOOK_URL" not in caplog.text + repr(trace.coverage())
+    assert "PRIVATE_READER" not in caplog.text + repr(trace.coverage())
+
+    req = Request(ORIGIN + "/next")
+    emit(trace, req, Response(req, data=b'{"next":true}'))
+    assert trace.exchanges[1].response_body == '{"next":true}'
+    assert not trace._pending and not trace._responses
+    trace.destroy()
+
+
+def test_closed_coverage_explains_unfinished_without_invented_response():
+    trace = PrivateHttpTrace((ORIGIN,))
+    req = Request(ORIGIN + "/stalled")
+    trace.request(req)
+    trace.response(Response(req, data=b'{"unread":true}'))
+    trace.finish_open_requests()
+    evidence = trace.coverage()
+    assert evidence["response_unfinished"] == 1
+    assert evidence["request_unfinished"] == 1
+    assert evidence["response_read_failed"] == 0
+    assert evidence["text_responses"] == 0
+    assert "unread" not in repr(evidence)
     trace.destroy()
