@@ -1,0 +1,40 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.provider.bnf-pret",
+    "version": "0.1.0",
+    "name": "BnF Prêt — lecteur Web (expérimental)",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.4,<2"
+  },
+  "plugins": [
+    {
+      "id": "ui.page.bnf-pret",
+      "type": "ui.page",
+      "version": "0.1.0",
+      "entrypoint": "cifereca_bnf_pret_page:PLUGIN",
+      "display_name": "BnF Prêt (lecteur Web expérimental)",
+      "description": "Session Web lecteur volontaire, lecture seule des prêts et suggestions visibles sans publication de droits.",
+      "enabled_by_default": false,
+      "priority": 40,
+      "capabilities": [
+        "bnf-pret.reader.readonly"
+      ],
+      "requires": [],
+      "recommends": [],
+      "requires_brokers": [
+        "tasks",
+        "identities"
+      ],
+      "requires_contracts": [],
+      "system_requires": [
+        {
+          "type": "python-package",
+          "name": "playwright",
+          "version": ">=1.50,<2",
+          "import": "playwright"
+        }
+      ]
+    }
+  ]
+}
