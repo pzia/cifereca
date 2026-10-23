@@ -382,3 +382,34 @@ def test_paris_disabled_and_legacy_unscoped_account_do_not_look_connected():
     ])
     refresh_query_providers(window)
     assert "profil du compte à vérifier" in controls.set_provider_status_notice.call_args.args[0]
+
+
+@pytest.mark.parametrize(("present", "enabled", "expected"), [
+    (False, True, "plugin absent"),
+    (True, False, "plugin désactivé"),
+    (True, True, "catalogue non disponible"),
+])
+def test_search_paris_plugin_absent_or_disabled_is_scoped(
+    present, enabled, expected,
+):
+    window, events, _calls, _changed, _activate, _caps, _create = _setup()
+    controls = NS(
+        set_provider_choices=Mock(), set_provider_search_capabilities=Mock(),
+        set_provider_status_notice=Mock(),
+    )
+    window.search_controls = controls
+    window.service.current_identity = NS(identity_id="alice")
+    window.service.catalogue_source_capabilities = lambda identity_id=None: []
+    window.service.config = NS(provider_accounts=lambda provider: [
+        {"provider": "paris", "identity_id": "alice", "enabled": True,
+         "credentials": {"password": "PRIVATE_NOT_FOR_DIAGNOSTICS"}},
+    ])
+    window.service.registry = NS(maybe_get=lambda provider: object() if present else None)
+    window.service._provider_enabled_for_identity = lambda provider, identity: enabled
+    refresh_query_providers(window)
+    text = controls.set_provider_status_notice.call_args.args[0]
+    assert expected in text
+    assert "PRIVATE_NOT_FOR_DIAGNOSTICS" not in text
+    window.service.current_identity = NS(identity_id="bob")
+    refresh_query_providers(window)
+    controls.set_provider_status_notice.assert_called_with("")
