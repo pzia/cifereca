@@ -14,6 +14,7 @@ from cifereca_bnf_pret_web import (
     MAX_HTML_BYTES, MAX_NODES, MAX_DEPTH, ORIGIN, ProfileScope, WebParseError,
     _id, parse_detail, parse_loans, parse_suggestions,
 )
+from cifereca_bnf_pret_dom_probe import DOM_PROBE_JS, DomProbe
 
 
 class BrowserSessionError(ValueError):
@@ -250,6 +251,32 @@ class ReaderBrowserSession:
             if kind == "detail":
                 return parse_detail(html, page_url=before)
             return parse_suggestions(html)
+        except (BrowserSessionError, WebParseError):
+            raise
+        except Exception:
+            raise BrowserSessionError("read_failed") from None
+
+    def probe_visible_dom(self, *, expected):
+        """Local counts only; no navigation and no raw DOM export."""
+        self._check()
+        if self._mode not in {"login", "readonly"}:
+            raise BrowserSessionError("invalid_session_state")
+        if not isinstance(expected, ProfileScope) or expected != self.scope:
+            raise BrowserSessionError("scope_mismatch")
+        generation = self._generation
+        try:
+            before = self._page.url
+            if not _reader_url(before):
+                raise BrowserSessionError("unexpected_page")
+            path = urlsplit(before).path
+            kind = ("activity" if path == "/my_profile/activity" else
+                    "results" if path == "/results" else
+                    "detail" if _id(before, "resources") is not None else
+                    "other")
+            value = self._page.evaluate(DOM_PROBE_JS, {})
+            if generation != self._generation or self._page.url != before:
+                raise BrowserSessionError("page_changed")
+            return DomProbe.from_browser(value, scope=self.scope, kind=kind)
         except (BrowserSessionError, WebParseError):
             raise
         except Exception:

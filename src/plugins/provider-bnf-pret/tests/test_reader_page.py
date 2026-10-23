@@ -142,6 +142,18 @@ class BnfReaderPageTests(unittest.TestCase):
                       "contact@example.com\nprivate", "unsafe\tquery"):
             self.assertFalse(page.valid_search_text(query))
 
+    def test_probe_message_shows_only_bounded_counts(self):
+        from cifereca_bnf_pret_dom_probe import DomProbe
+        from cifereca_bnf_pret_web import ProfileScope
+        scope = ProfileScope("private-identity", "private-account", "epoch")
+        result = DomProbe(scope, "activity", 1, 2, 0, 0, 0, 2, 2)
+        message = page.dom_probe_message(result)
+        self.assertIn("blocs prêts : 2", message)
+        self.assertIn("Aucun compte, droit ou inventaire attesté", message)
+        self.assertNotIn("private-identity", message)
+        self.assertNotIn("private-account", message)
+        self.assertEqual(page.dom_probe_message(object()), page._DEFAULT_ERROR)
+
     def test_browser_exception_is_never_rendered(self):
         secret = "reader@example.test?SAMLResponse=PRIVATE"
         self.assertNotIn(secret, page.safe_error(RuntimeError(secret)))

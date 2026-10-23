@@ -10,6 +10,7 @@ from cifereca_bnf_pret_worker import ReaderWorker, BrowserSessionError
 from cifereca_bnf_pret_web import CatalogPage, CatalogRecord
 from cifereca_bnf_pret_observations import ObservedLoans, ObservedLoanCounts
 from cifereca_bnf_pret_selection import VisibleResourceSelection
+from cifereca_bnf_pret_dom_probe import DomProbe
 import re
 
 _MESSAGES = {
@@ -90,6 +91,31 @@ def valid_search_text(value):
     return (type(value) is str and 2 <= len(value) <= 128
             and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
             and 2 <= len(" ".join(value.split())) <= 128)
+
+
+def dom_probe_message(probe):
+    """Show only hard-coded labels and bounded counts, never account/page text."""
+    if not isinstance(probe, DomProbe):
+        return _DEFAULT_ERROR
+    labels = {
+        "activity": "activité", "results": "résultats",
+        "detail": "fiche", "other": "autre page autorisée",
+    }
+    fields = (
+        ("sections prêts", probe.loan_sections),
+        ("blocs prêts", probe.loan_cards),
+        ("sections résultats", probe.search_sections),
+        ("notices résultats", probe.search_cards),
+        ("fiches Book", probe.book_scopes),
+        ("liens ressources", probe.resource_links),
+        ("liens prêts", probe.loan_links),
+    )
+    if probe.kind not in labels or any(type(n) is not int or not 0 <= n <= 101
+                                       for _, n in fields):
+        return _DEFAULT_ERROR
+    content = " ; ".join(f"{label} : {count}" for label, count in fields)
+    return (f"Structure DOM visible — page {labels[probe.kind]} : " + content
+            + ". Valeurs plafonnées à 101. Aucun compte, droit ou inventaire attesté.")
 
 
 def safe_error(exc):
@@ -177,8 +203,10 @@ class BnfReaderPage:
         loans_button = Gtk.Button(label="Relire mes prêts")
         search_button = Gtk.Button(label="Lire les résultats visibles")
         detail_button = Gtk.Button(label="Lire la fiche visible")
+        probe_button = Gtk.Button(label="Diagnostiquer les sélecteurs visibles")
         stop_button = Gtk.Button(label="Fermer la session")
-        for button in (open_button, confirm_button, loans_button, search_button, detail_button, stop_button):
+        for button in (open_button, confirm_button, loans_button, search_button,
+                       detail_button, probe_button, stop_button):
             row.append(button)
         search_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         search_field = Gtk.Entry()
@@ -235,6 +263,7 @@ class BnfReaderPage:
             search_field.set_sensitive(same and mode == "readonly" and not busy)
             search_action.set_sensitive(same and mode == "readonly" and not busy)
             detail_button.set_sensitive(same and mode == "readonly" and not busy)
+            probe_button.set_sensitive(same and mode in {"login", "readonly"} and not busy)
             choose_button.set_sensitive(
                 same and mode == "readonly" and not busy and self.selection is not None
             )
@@ -344,6 +373,8 @@ class BnfReaderPage:
                                 status.set_label(_DEFAULT_ERROR)
                             else:
                                 status.set_label(loan_observation_status(counts))
+                        elif name == "dom_probe":
+                            status.set_label(dom_probe_message(result))
                         elif name in ("visible_detail", "detail"):
                             if len(result.records) != 1:
                                 status.set_label("Fiche non reconnue : aucune notice publiée.")
@@ -465,6 +496,7 @@ class BnfReaderPage:
         search_button.connect("clicked", lambda _b: command("suggestions"))
         search_action.connect("clicked", lambda _b: command("search"))
         detail_button.connect("clicked", lambda _b: command("visible_detail"))
+        probe_button.connect("clicked", lambda _b: command("dom_probe"))
         choose_button.connect("clicked", lambda _b: command("detail"))
         stop_button.connect("clicked", stop)
         root.connect("unmap", lambda *_args: stop() if self.worker is not None else None)
