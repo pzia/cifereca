@@ -108,6 +108,29 @@ le gate. Cette preuve ne remplacera pas la qualification fournisseur du SSO.
 
 ## Prochaine tranche Plugins
 
+### Worker pour le broker public tasks
+
+`cifereca_bnf_pret_worker.py` fournit une boucle de commandes pour le futur
+raccordement UI. La soumettre une seule fois via
+`tasks.submit(lambda control: worker.run(control, consent=True))`, uniquement
+après action et consentement utilisateur. Le navigateur est créé, utilisé et
+fermé sur ce même thread ; aucun appel Playwright ne part du thread GTK.
+
+Attendre `worker.state == "login"`, puis conserver `worker.scope`. Les commandes
+`confirm_account` (confirmation humaine explicite), `suggestions`, `detail` et
+`loans` exigent toutes `expected=scope` et renvoient un Future privé. Elles sont
+limitées à huit en attente ; aucun retry ni commande de mutation n'existe.
+Les callbacks UI doivent être rapatriés sur GTK et **revérifier le scope actuel**
+avant affichage. Le résultat de la tâche longue ne contient qu'un code fermé,
+jamais un snapshot privé.
+
+Appeler `worker.stop()` sur fermeture UI, changement d'identité ou déconnexion.
+Cela invalide immédiatement le scope ; le thread propriétaire ferme ensuite le
+navigateur. L'annulation TaskControl est également prise en compte. Un résultat
+arrivant après annulation est refusé, les commandes en attente sont terminées
+avec erreur fermée et une session fermée n'est jamais réutilisée. Cette boucle
+ne déclare toujours aucun compte/droit Core et ne crée aucun widget GTK.
+
 1. Qualifier dans Chromium réel le contexte éphémère et les sélecteurs, notamment
    le garde Book exact, les états vides et la recherche du portail. L'identité
    amont reste à vérifier au bon niveau ; ne pas transformer le scope local ou
